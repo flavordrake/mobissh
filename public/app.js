@@ -188,21 +188,24 @@ function initIMEInput() {
   // ── input event ─────────────────────────────────────────────────────────
   // Fires for: swipe-typed words, voice-dictated text, regular key presses.
   // For swipe and voice the full word (or sentence) arrives as ime.value.
-  // Skipped in direct mode — keydown handles char-by-char forwarding instead.
+  // NOTE: direct mode keeps this path too — on Android soft keyboards,
+  // keydown always fires e.key='Unidentified', so input is the only reliable
+  // path for printable chars. e.preventDefault() in the keydown direct-mode
+  // branch already suppresses duplicates from Bluetooth keyboards.
   ime.addEventListener('input', (e) => {
-    if (!imeMode) return;   // direct mode: keydown handles everything
     if (isComposing) return; // Wait for compositionend
     const text = ime.value;
-    if (text) {
-      if (ctrlActive) {
-        const code = text[0].toLowerCase().charCodeAt(0) - 96;
-        sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
-        setCtrlActive(false);
-      } else {
-        sendSSHInput(text);
-      }
-    }
     ime.value = '';
+    if (!text) return;
+    // GBoard sends '\n' for Enter via input events — remap to '\r' for SSH
+    if (text === '\n') { sendSSHInput('\r'); return; }
+    if (ctrlActive) {
+      const code = text[0].toLowerCase().charCodeAt(0) - 96;
+      sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
+      setCtrlActive(false);
+    } else {
+      sendSSHInput(text);
+    }
   });
 
   // ── IME composition (multi-step input methods, e.g. CJK) ──────────────
@@ -210,11 +213,22 @@ function initIMEInput() {
     isComposing = true;
   });
 
+  // On Android, GBoard wraps EVERY soft-keyboard tap in a composition cycle.
+  // This means ctrlActive combos (e.g. Ctrl+b for tmux) must be handled here.
+  // GBoard also sends '\n' for Enter via compositionend — remap to '\r'.
   ime.addEventListener('compositionend', (e) => {
     isComposing = false;
     const text = e.data || ime.value;
-    if (text) sendSSHInput(text);
     ime.value = '';
+    if (!text) return;
+    if (text === '\n') { sendSSHInput('\r'); return; }
+    if (ctrlActive) {
+      const code = text[0].toLowerCase().charCodeAt(0) - 96;
+      sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
+      setCtrlActive(false);
+    } else {
+      sendSSHInput(text);
+    }
   });
 
   // ── keydown: special keys not captured by 'input' ─────────────────────
@@ -253,11 +267,53 @@ function initIMEInput() {
     }
   });
 
-  // ── Focus management ─────────────────────────────────────────────────
-  // Keep IME focused whenever the user interacts with the terminal area.
+  // ── Focus management + touch scroll (#32) ────────────────────────────
+  // Keep IME focused on tap; translate vertical swipe → WheelEvent so
+  // xterm.js scrollback and tmux mouse mode both receive scroll input.
   const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
-  termEl.addEventListener('touchend', () => setTimeout(focusIME, 50));
+
+  let _touchStartY = null, _touchStartX = null, _lastTouchY = null, _isTouchScroll = false;
+
+  termEl.addEventListener('touchstart', (e) => {
+    _touchStartY = e.touches[0].clientY;
+    _touchStartX = e.touches[0].clientX;
+    _lastTouchY  = _touchStartY;
+    _isTouchScroll = false;
+  }, { passive: true });
+
+  termEl.addEventListener('touchmove', (e) => {
+    if (_touchStartY === null) return;
+    const totalDy = _touchStartY - e.touches[0].clientY;
+    const totalDx = _touchStartX - e.touches[0].clientX;
+    const dy = _lastTouchY - e.touches[0].clientY;
+
+    // Lock to scroll once gesture exceeds tap threshold and is more vertical than horizontal
+    if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
+      _isTouchScroll = true;
+    }
+
+    if (_isTouchScroll) {
+      // Dispatch to xterm-viewport so both scrollback and mouse protocol receive it
+      const vp = document.querySelector('#terminal .xterm-viewport');
+      if (vp) {
+        vp.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: dy * 3,
+          deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+          bubbles: true,
+          cancelable: true,
+        }));
+      }
+    }
+    _lastTouchY = e.touches[0].clientY;
+  }, { passive: true });
+
+  termEl.addEventListener('touchend', () => {
+    const wasScroll = _isTouchScroll;
+    _touchStartY = _touchStartX = _lastTouchY = null;
+    _isTouchScroll = false;
+    if (!wasScroll) setTimeout(focusIME, 50);
+  });
 
   // Refocus after key-bar buttons (except Ctrl which handles its own focus)
   document.querySelectorAll('.key-btn:not(.modifier)').forEach((btn) => {
@@ -494,6 +550,11 @@ function initConnectForm() {
       privateKey: document.getElementById('privateKey').value.trim(),
       passphrase: document.getElementById('passphrase').value,
     };
+
+    // Clear credential fields immediately — prevents Chrome password manager
+    // from snapshotting the value before our vault stores it (#33)
+    document.getElementById('password').value = '';
+    document.getElementById('passphrase').value = '';
 
     await saveProfile(profile);
     switchToTerminal();

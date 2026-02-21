@@ -114,14 +114,22 @@
 
         <div id="passwordGroup">
           <label for="password">Password</label>
-          <input type="password" id="password" autocomplete="current-password" />
+          <input type="password" id="password"
+            autocomplete="new-password"
+            data-lpignore="true"
+            data-1p-ignore
+            data-form-type="other" />
         </div>
 
         <div id="keyGroup" style="display:none">
           <label for="privateKey">Private key</label>
           <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
           <label for="passphrase">Passphrase (if encrypted)</label>
-          <input type="password" id="passphrase" autocomplete="off" />
+          <input type="password" id="passphrase"
+            autocomplete="new-password"
+            data-lpignore="true"
+            data-1p-ignore
+            data-form-type="other" />
           <button type="button" id="useStoredKeyBtn" class="secondary-btn">Use stored key…</button>
         </div>
 
