@@ -12,7 +12,8 @@
   --text-dim: #888;
   --border: #2a2a4a;
   --tab-height: 56px;
-  --keybar-height: 44px;
+  --keybar-height: 80px;     /* two rows: 36px status + 44px keys */
+  --keybar-handle-height: 20px;
 }
 
 * {
@@ -65,6 +66,13 @@ html, body {
   order: 2; /* bottom nav on mobile */
   height: var(--tab-height);
   flex-shrink: 0;
+  overflow: hidden;
+  transition: height 0.2s ease;
+}
+
+#tabBar.hidden {
+  height: 0;
+  border-top: none;
 }
 
 .tab {
@@ -124,16 +132,79 @@ html, body {
   min-height: 0;
 }
 
-/* Key bar */
-#key-bar {
+/* Key bar handle — always-visible strip with two tap zones */
+#key-bar-handle {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  height: var(--keybar-handle-height);
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
-  height: var(--keybar-height);
   flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Left zone: tab bar toggle */
+#tabBarToggleBtn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 12px;
+  height: 100%;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#tabBarToggleBtn:active { color: var(--accent); }
+
+/* Right zone: key bar chevron */
+#handleChevron {
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 0 12px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#handleChevron:active { color: var(--accent); }
+
+/* Key bar — two-row layout */
+#key-bar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  flex-shrink: 0;
+  overflow: hidden;
+  height: var(--keybar-height);
+  transition: height 0.2s ease;
+}
+
+#key-bar.hidden { height: 0; }
+
+/* Row 1: mode toggle + status indicator + disconnect */
+#key-status-row {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--border);
   gap: 4px;
-  padding: 4px 6px 4px 0;
+}
+
+/* Row 2: scrollable special-key buttons */
+#key-keys-row {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  flex-shrink: 0;
+  padding: 0 4px;
 }
 
 #key-scroll {
@@ -141,12 +212,26 @@ html, body {
   gap: 4px;
   flex: 1;
   overflow-x: auto;
-  padding: 0 4px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
 
 #key-scroll::-webkit-scrollbar { display: none; }
+
+/* IME / direct-mode toggle button */
+.mode-btn {
+  font-size: 11px;
+  padding: 0 8px;
+  height: 28px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.mode-btn.direct-mode {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
 
 .key-btn {
   background: var(--bg-card);
@@ -178,10 +263,11 @@ html, body {
 #statusIndicator {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   font-size: 11px;
   white-space: nowrap;
-  flex-shrink: 0;
+  flex: 1;
   padding: 0 4px;
 }
 
@@ -426,7 +512,7 @@ hr {
 /* Toast notifications */
 #toast {
   position: fixed;
-  bottom: calc(var(--tab-height) + var(--keybar-height) + 12px);
+  bottom: calc(var(--tab-height) + var(--keybar-height) + var(--keybar-handle-height) + 12px);
   left: 50%;
   transform: translateX(-50%);
   background: var(--bg-panel);

@@ -69,6 +69,9 @@ let reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
 let isComposing = false;   // IME composition in progress
 let ctrlActive = false;    // sticky Ctrl modifier
 let vaultKey = null;       // AES-GCM CryptoKey, null when locked
+let keyBarVisible = true;  // key bar show/hide state (#1)
+let imeMode = true;        // true = IME/swipe, false = direct char entry (#2)
+let tabBarVisible = false; // tab bar hidden by default on terminal panel (#25)
 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabBar();
   initConnectForm();
   initTerminalActions();
+  initKeyBar();         // #1 auto-hide + #2 IME toggle
   initSettingsPanel();
   loadProfiles();
   loadKeys();
@@ -184,7 +188,9 @@ function initIMEInput() {
   // ── input event ─────────────────────────────────────────────────────────
   // Fires for: swipe-typed words, voice-dictated text, regular key presses.
   // For swipe and voice the full word (or sentence) arrives as ime.value.
+  // Skipped in direct mode — keydown handles char-by-char forwarding instead.
   ime.addEventListener('input', (e) => {
+    if (!imeMode) return;   // direct mode: keydown handles everything
     if (isComposing) return; // Wait for compositionend
     const text = ime.value;
     if (text) {
@@ -212,9 +218,11 @@ function initIMEInput() {
   });
 
   // ── keydown: special keys not captured by 'input' ─────────────────────
-  // Regular printable chars also fire here but 'input' handles them above.
+  // In IME mode: handles Ctrl combos and special keys; printable chars come via 'input'.
+  // In direct mode: also forwards every printable character immediately, bypassing
+  //   IME processing — lower latency, no autocorrect, best with a BT keyboard.
   ime.addEventListener('keydown', (e) => {
-    // Ctrl+<letter> combos → control characters
+    // Ctrl+<letter> combos → control characters (both modes)
     if (e.ctrlKey && !e.altKey && e.key.length === 1) {
       const code = e.key.toLowerCase().charCodeAt(0) - 96;
       if (code >= 1 && code <= 26) {
@@ -224,10 +232,24 @@ function initIMEInput() {
       }
     }
 
-    // Mapped special keys
+    // Mapped special keys (both modes)
     if (KEY_MAP[e.key]) {
       sendSSHInput(KEY_MAP[e.key]);
       e.preventDefault();
+      return;
+    }
+
+    // Direct mode only: forward printable characters char-by-char, skip IME
+    if (!imeMode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (ctrlActive) {
+        const code = e.key.toLowerCase().charCodeAt(0) - 96;
+        sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : e.key);
+        setCtrlActive(false);
+      } else {
+        sendSSHInput(e.key);
+      }
+      e.preventDefault();
+      ime.value = '';
     }
   });
 
@@ -399,6 +421,9 @@ function setStatus(state, text) {
 // ─── Tab navigation ───────────────────────────────────────────────────────────
 
 function initTabBar() {
+  // Apply initial hidden state (terminal panel starts active, tab bar hidden)
+  _applyTabBarVisibility();
+
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       const panelId = tab.dataset.panel;
@@ -408,11 +433,36 @@ function initTabBar() {
       document.getElementById(`panel-${panelId}`).classList.add('active');
 
       if (panelId === 'terminal') {
-        // Re-fit after panel becomes visible
+        // Auto-hide tab bar when returning to terminal
+        tabBarVisible = false;
+        _applyTabBarVisibility();
         setTimeout(() => { fitAddon.fit(); focusIME(); }, 50);
+      } else {
+        // Ensure tab bar stays visible on non-terminal panels
+        tabBarVisible = true;
+        _applyTabBarVisibility();
       }
     });
   });
+}
+
+function _applyTabBarVisibility() {
+  document.getElementById('tabBar').classList.toggle('hidden', !tabBarVisible);
+  // Keep --tab-height CSS var in sync for toast positioning
+  document.documentElement.style.setProperty(
+    '--tab-height',
+    tabBarVisible ? '56px' : '0px'
+  );
+}
+
+function toggleTabBar() {
+  tabBarVisible = !tabBarVisible;
+  _applyTabBarVisibility();
+  if (fitAddon) fitAddon.fit();
+  if (terminal) terminal.scrollToBottom();
+  if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+  }
 }
 
 function switchToTerminal() {
@@ -493,6 +543,61 @@ function initTerminalActions() {
   });
 
   document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+}
+
+// ─── Key bar visibility (#1) + IME/Direct mode (#2) ──────────────────────────
+
+function initKeyBar() {
+  keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
+  imeMode = localStorage.getItem('imeMode') !== 'direct';
+
+  // Apply initial state without animation
+  _applyKeyBarVisibility();
+  _applyImeModeUI();
+
+  // Right zone (chevron) toggles key bar; left zone (≡) toggles tab bar
+  document.getElementById('handleChevron').addEventListener('click', toggleKeyBar);
+  document.getElementById('tabBarToggleBtn').addEventListener('click', toggleTabBar);
+
+  // IME/Direct mode toggle
+  document.getElementById('keyModeBtn').addEventListener('click', () => {
+    toggleImeMode();
+    focusIME();
+  });
+}
+
+function toggleKeyBar() {
+  keyBarVisible = !keyBarVisible;
+  localStorage.setItem('keyBarVisible', keyBarVisible);
+  _applyKeyBarVisibility();
+  // Refit terminal after height change
+  if (fitAddon) fitAddon.fit();
+  if (terminal) terminal.scrollToBottom();
+  if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+  }
+}
+
+function _applyKeyBarVisibility() {
+  document.getElementById('key-bar').classList.toggle('hidden', !keyBarVisible);
+  document.getElementById('handleChevron').textContent = keyBarVisible ? '▾' : '▴';
+  // Keep --keybar-height CSS var in sync so toast positions correctly
+  document.documentElement.style.setProperty(
+    '--keybar-height',
+    keyBarVisible ? '80px' : '0px'
+  );
+}
+
+function toggleImeMode() {
+  imeMode = !imeMode;
+  localStorage.setItem('imeMode', imeMode ? 'ime' : 'direct');
+  _applyImeModeUI();
+}
+
+function _applyImeModeUI() {
+  const btn = document.getElementById('keyModeBtn');
+  btn.textContent = imeMode ? 'IME' : 'DIR';
+  btn.classList.toggle('direct-mode', !imeMode);
 }
 
 // ─── Vault ────────────────────────────────────────────────────────────────────

@@ -58,22 +58,34 @@
     <!-- Terminal panel -->
     <div id="panel-terminal" class="panel active">
       <div id="terminal"></div>
+      <!-- Handle strip: left zone toggles tab bar, right zone toggles key bar -->
+      <div id="key-bar-handle" aria-label="Terminal controls">
+        <button id="tabBarToggleBtn" title="Show navigation tabs" aria-label="Show navigation">≡</button>
+        <span id="handleChevron" title="Toggle key bar" role="button" aria-label="Toggle key bar">▾</span>
+      </div>
       <div id="key-bar">
-        <div id="key-scroll">
-          <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctrl</button>
-          <button id="keyEsc"   class="key-btn" title="Escape">Esc</button>
-          <button id="keyTab"   class="key-btn" title="Tab">⇥</button>
-          <button id="keySlash" class="key-btn" title="/">/</button>
-          <button id="keyUp"    class="key-btn" title="Up">↑</button>
-          <button id="keyDown"  class="key-btn" title="Down">↓</button>
-          <button id="keyLeft"  class="key-btn" title="Left">←</button>
-          <button id="keyRight" class="key-btn" title="Right">→</button>
+        <!-- Row 1: status + mode toggle + disconnect -->
+        <div id="key-status-row">
+          <button id="keyModeBtn" class="key-btn mode-btn" title="Toggle IME / direct key entry">IME</button>
+          <div id="statusIndicator" class="status disconnected">
+            <span id="statusDot"></span>
+            <span id="statusText">Off</span>
+          </div>
+          <button id="disconnectBtn" title="Disconnect" class="key-btn danger">✕</button>
         </div>
-        <div id="statusIndicator" class="status disconnected">
-          <span id="statusDot"></span>
-          <span id="statusText">Off</span>
+        <!-- Row 2: scrollable special keys -->
+        <div id="key-keys-row">
+          <div id="key-scroll">
+            <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctrl</button>
+            <button id="keyEsc"   class="key-btn" title="Escape">Esc</button>
+            <button id="keyTab"   class="key-btn" title="Tab">⇥</button>
+            <button id="keySlash" class="key-btn" title="/">/</button>
+            <button id="keyUp"    class="key-btn" title="Up">↑</button>
+            <button id="keyDown"  class="key-btn" title="Down">↓</button>
+            <button id="keyLeft"  class="key-btn" title="Left">←</button>
+            <button id="keyRight" class="key-btn" title="Right">→</button>
+          </div>
         </div>
-        <button id="disconnectBtn" title="Disconnect" class="key-btn danger">✕</button>
       </div>
     </div>
 
