@@ -1,0 +1,20 @@
+{
+  "name": "android-ssh-server",
+  "version": "0.1.0",
+  "description": "WebSocket SSH bridge for Android SSH PWA",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "ssh2": "^1.15.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

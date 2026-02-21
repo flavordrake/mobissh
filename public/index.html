@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Android SSH</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="app.css" />
+
+  <!-- xterm.js via CDN — no build step needed for POC -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+</head>
+<body>
+  <!-- Hidden IME input field — captures Android swipe/voice without Web Speech API -->
+  <!--
+    This textarea is positioned off-screen and always focused when the terminal is active.
+    Android's IME fires standard `input` events here for swipe-typed words and voice text.
+    We forward those events to the SSH stream. No Web Speech API required.
+  -->
+  <textarea
+    id="imeInput"
+    aria-label="SSH keyboard input"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"
+    spellcheck="false"
+    tabindex="-1"
+  ></textarea>
+
+  <div id="app">
+    <!-- Tab bar -->
+    <nav id="tabBar">
+      <button class="tab active" data-panel="terminal" aria-label="Terminal">
+        <span class="tab-icon">⌨</span>
+        <span class="tab-label">Terminal</span>
+      </button>
+      <button class="tab" data-panel="connect" aria-label="Connect">
+        <span class="tab-icon">⚡</span>
+        <span class="tab-label">Connect</span>
+      </button>
+      <button class="tab" data-panel="keys" aria-label="Keys">
+        <span class="tab-icon">🔑</span>
+        <span class="tab-label">Keys</span>
+      </button>
+      <button class="tab" data-panel="settings" aria-label="Settings">
+        <span class="tab-icon">⚙</span>
+        <span class="tab-label">Settings</span>
+      </button>
+    </nav>
+
+    <!-- Terminal panel -->
+    <div id="panel-terminal" class="panel active">
+      <div id="terminal"></div>
+      <div id="key-bar">
+        <div id="key-scroll">
+          <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctrl</button>
+          <button id="keyEsc"   class="key-btn" title="Escape">Esc</button>
+          <button id="keyTab"   class="key-btn" title="Tab">⇥</button>
+          <button id="keySlash" class="key-btn" title="/">/</button>
+          <button id="keyUp"    class="key-btn" title="Up">↑</button>
+          <button id="keyDown"  class="key-btn" title="Down">↓</button>
+          <button id="keyLeft"  class="key-btn" title="Left">←</button>
+          <button id="keyRight" class="key-btn" title="Right">→</button>
+        </div>
+        <div id="statusIndicator" class="status disconnected">
+          <span id="statusDot"></span>
+          <span id="statusText">Off</span>
+        </div>
+        <button id="disconnectBtn" title="Disconnect" class="key-btn danger">✕</button>
+      </div>
+    </div>
+
+    <!-- Connect panel -->
+    <div id="panel-connect" class="panel">
+      <h2>Connect</h2>
+
+      <form id="connectForm" autocomplete="off">
+        <label for="profileName">Profile name</label>
+        <input type="text" id="profileName" placeholder="My Server" />
+
+        <label for="host">Host</label>
+        <input type="text" id="host" placeholder="192.168.1.100" required inputmode="url" />
+
+        <label for="port">Port</label>
+        <input type="number" id="port" value="22" min="1" max="65535" inputmode="numeric" />
+
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="root" required autocapitalize="none" />
+
+        <label for="authType">Auth method</label>
+        <select id="authType">
+          <option value="password">Password</option>
+          <option value="key">Private key</option>
+        </select>
+
+        <div id="passwordGroup">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password" />
+        </div>
+
+        <div id="keyGroup" style="display:none">
+          <label for="privateKey">Private key</label>
+          <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
+          <label for="passphrase">Passphrase (if encrypted)</label>
+          <input type="password" id="passphrase" autocomplete="off" />
+          <button type="button" id="useStoredKeyBtn" class="secondary-btn">Use stored key…</button>
+        </div>
+
+        <button type="submit" class="primary-btn">Connect</button>
+      </form>
+
+      <h3>Saved profiles</h3>
+      <div id="profileList" class="item-list">
+        <p class="empty-hint">No saved profiles yet.</p>
+      </div>
+    </div>
+
+    <!-- Keys panel -->
+    <div id="panel-keys" class="panel">
+      <h2>SSH Keys</h2>
+      <p class="hint">Import your private keys here. They are stored in your browser's localStorage.
+         Do not use this on a shared device.</p>
+
+      <div class="form-section">
+        <label for="keyName">Key name</label>
+        <input type="text" id="keyName" placeholder="my-key" />
+
+        <label for="keyData">Private key (PEM)</label>
+        <textarea id="keyData" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea>
+
+        <button id="importKeyBtn" class="primary-btn">Save key</button>
+      </div>
+
+      <h3>Stored keys</h3>
+      <div id="keyList" class="item-list">
+        <p class="empty-hint">No keys stored.</p>
+      </div>
+    </div>
+
+    <!-- Settings panel -->
+    <div id="panel-settings" class="panel">
+      <h2>Settings</h2>
+
+      <label for="wsUrl">WebSocket server URL</label>
+      <input type="url" id="wsUrl" placeholder="ws://localhost:8080" inputmode="url" />
+      <p class="hint">The URL of your ssh-bridge server. Use <code>wss://</code> for secure connections.
+         When running in a Codespace, set this to the forwarded port URL for port 8080 with <code>wss://</code>.</p>
+      <button id="saveSettingsBtn" class="primary-btn">Save</button>
+
+      <hr />
+
+      <label for="fontSize">Terminal font size</label>
+      <input type="range" id="fontSize" min="10" max="24" value="14" />
+      <span id="fontSizeValue">14px</span>
+
+      <hr />
+
+      <button id="clearDataBtn" class="danger-btn">Clear all data (keys, profiles, settings)</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
