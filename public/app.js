@@ -340,13 +340,14 @@ function initIMEInput() {
   const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
 
-  let _touchStartY = null, _touchStartX = null, _lastTouchY = null, _isTouchScroll = false;
+  let _touchStartY = null, _touchStartX = null;
+  let _lastTouchY  = null, _lastTouchX  = null;
+  let _isTouchScroll = false;
   let _scrollRemainder = 0; // sub-line pixel accumulator for smooth scroll
 
   termEl.addEventListener('touchstart', (e) => {
-    _touchStartY = e.touches[0].clientY;
-    _touchStartX = e.touches[0].clientX;
-    _lastTouchY  = _touchStartY;
+    _touchStartY = _lastTouchY = e.touches[0].clientY;
+    _touchStartX = _lastTouchX = e.touches[0].clientX;
     _isTouchScroll = false;
     _scrollRemainder = 0;
   }, { passive: true });
@@ -357,14 +358,14 @@ function initIMEInput() {
     const totalDx = _touchStartX - e.touches[0].clientX;
     const dy = _lastTouchY - e.touches[0].clientY;
 
-    // Lock to vertical scroll once gesture exceeds tap threshold and is more vertical than horizontal
+    // Lock to vertical scroll once gesture is clearly more vertical than horizontal
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
       _isTouchScroll = true;
     }
 
     if (_isTouchScroll && terminal) {
       // Accumulate pixels; convert to discrete lines using approximate cell height.
-      // dy > 0 = finger moved up = want to see older content (scroll up).
+      // dy > 0 = finger moved up = want older content = scrollLines negative (up).
       const cellH = terminal.options.fontSize * 1.2;
       _scrollRemainder += dy;
       const lines = Math.trunc(_scrollRemainder / cellH);
@@ -372,9 +373,9 @@ function initIMEInput() {
         _scrollRemainder -= lines * cellH;
         const mouseMode = terminal.modes && terminal.modes.mouseTrackingMode;
         if (mouseMode && mouseMode !== 'none') {
-          // Remote app (tmux/vim) has mouse tracking active.
-          // Send SGR-encoded wheel events so tmux/vim handles scroll server-side.
-          // dy > 0 (up swipe) = wheel up = button 64; dy < 0 (down swipe) = wheel down = button 65.
+          // Remote app has mouse tracking — send SGR wheel events server-side.
+          // Swipe up (dy>0, lines>0) → wheel up → button 64.
+          // Swipe down (dy<0, lines<0) → wheel down → button 65.
           const btn = lines > 0 ? 64 : 65;
           const rect = termEl.getBoundingClientRect();
           const col = Math.max(1, Math.min(terminal.cols,
@@ -386,19 +387,35 @@ function initIMEInput() {
           }
         } else {
           // No remote mouse tracking — scroll local xterm.js scrollback buffer.
-          terminal.scrollLines(lines);
+          // Negate: lines>0 (swipe up) should show older content = scrollLines(-n).
+          terminal.scrollLines(-lines);
         }
       }
     }
+
     _lastTouchY = e.touches[0].clientY;
+    _lastTouchX = e.touches[0].clientX;
   }, { passive: true });
 
   termEl.addEventListener('touchend', () => {
     const wasScroll = _isTouchScroll;
-    _touchStartY = _touchStartX = _lastTouchY = null;
+    // Measure total horizontal displacement for swipe-to-switch gesture (#16).
+    const finalDx = (_lastTouchX ?? _touchStartX) - _touchStartX;
+    const finalDy = (_lastTouchY ?? _touchStartY) - _touchStartY;
+
+    _touchStartY = _touchStartX = _lastTouchY = _lastTouchX = null;
     _isTouchScroll = false;
     _scrollRemainder = 0;
-    if (!wasScroll) setTimeout(focusIME, 50);
+
+    if (!wasScroll) {
+      // Horizontal swipe: more than 40px X, dominant over Y → tmux window switch (#16).
+      if (Math.abs(finalDx) > 40 && Math.abs(finalDx) > Math.abs(finalDy)) {
+        // Swipe left (finalDx < 0) → next window; swipe right → previous window.
+        sendSSHInput(finalDx < 0 ? '\x02n' : '\x02p');
+      } else {
+        setTimeout(focusIME, 50);
+      }
+    }
   });
 
   // ── Direct input (type="password") — char-by-char mode (#44/#48) ─────
