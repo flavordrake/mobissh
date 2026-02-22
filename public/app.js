@@ -841,7 +841,7 @@ function _applyKeyBarVisibility() {
   // Keep --keybar-height CSS var in sync so toast positions correctly
   document.documentElement.style.setProperty(
     '--keybar-height',
-    keyBarVisible ? '38px' : '0px'
+    keyBarVisible ? '34px' : '0px'
   );
 }
 

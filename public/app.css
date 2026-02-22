@@ -12,8 +12,8 @@
   --text-dim: #888;
   --border: #2a2a4a;
   --tab-height: 56px;
-  --keybar-height: 38px;     /* single key row */
-  --keybar-handle-height: 18px;
+  --keybar-height: 34px;     /* single key row */
+  --keybar-handle-height: 16px;
 }
 
 * {
@@ -273,7 +273,7 @@ html, body {
 #key-keys-row {
   display: flex;
   align-items: center;
-  height: 44px;
+  height: var(--keybar-height);
   flex-shrink: 0;
   padding: 0 4px;
 }
@@ -292,8 +292,8 @@ html, body {
 /* IME / direct-mode toggle button — right-anchored in key row */
 .mode-btn {
   font-size: 11px;
-  padding: 0 8px;
-  height: 28px;
+  padding: 0 6px;
+  height: 22px;
   color: var(--text-dim);
   flex-shrink: 0;
   margin-left: 4px;
@@ -309,13 +309,14 @@ html, body {
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 4px;
-  padding: 0 10px;
-  font-size: 13px;
-  font-family: monospace;
+  padding: 0 6px;
+  font-size: 12px;
+  font-family: 'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', monospace;
+  letter-spacing: -0.2px;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  height: 27px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
