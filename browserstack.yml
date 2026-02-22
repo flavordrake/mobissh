@@ -1,0 +1,51 @@
+# browserstack.yml
+# BrowserStack SDK configuration for MobiSSH real-device testing.
+# Docs: https://www.browserstack.com/docs/automate/playwright/sdk-config
+#
+# Required secrets (GitHub Secrets / Codespaces Secrets):
+#   BROWSERSTACK_USERNAME
+#   BROWSERSTACK_ACCESS_KEY
+
+userName: ${BROWSERSTACK_USERNAME}
+accessKey: ${BROWSERSTACK_ACCESS_KEY}
+
+projectName: MobiSSH PWA
+buildName: "MobiSSH-${GITHUB_RUN_ID:-local}"
+buildTag: "${GITHUB_REF_NAME:-dev}"
+
+# BrowserStack Local tunnel: proxies requests from cloud devices back to the
+# GitHub Actions runner (or Codespace) running the WS bridge on port 8080.
+# Without this, real devices cannot reach localhost:8080.
+browserstackLocal: true
+browserstackLocalOptions:
+  # Unique ID per run prevents tunnel collisions in parallel builds
+  localIdentifier: "mobissh-${GITHUB_RUN_ID:-local}"
+  # Forward only the SSH bridge port — no need to tunnel the whole LAN
+  only: "localhost,8080,0"
+
+# Real Android Chrome devices — Samsung S23 + Pixel 6 for diverse OEM coverage
+browsers:
+  - browser: chrome
+    browser_version: latest
+    os: Android
+    os_version: "13.0"
+    device: Samsung Galaxy S23
+    real_mobile: true
+
+  - browser: chrome
+    browser_version: latest
+    os: Android
+    os_version: "12.0"
+    device: Google Pixel 6
+    real_mobile: true
+
+  - browser: chrome
+    browser_version: latest
+    os: iOS
+    os_version: "17"
+    device: iPhone 15
+    real_mobile: true
+
+testTimeout: 60000
+networkLogs: true
+consoleLogs: verbose

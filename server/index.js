@@ -14,17 +14,20 @@
  *     { type: 'input', data: string }
  *     { type: 'resize', cols: number, rows: number }
  *     { type: 'disconnect' }
+ *     { type: 'hostkey_response', accepted: boolean }
  *
  *   Server → Client:
  *     { type: 'connected' }
  *     { type: 'output', data: string }
  *     { type: 'error', message: string }
  *     { type: 'disconnected', reason: string }
+ *     { type: 'hostkey', host, port, keyType, fingerprint }
  */
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { createHash } = require('crypto');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
 
@@ -70,8 +73,8 @@ const server = http.createServer((req, res) => {
       'Content-Security-Policy': [
         "default-src 'self'",
         "script-src 'self' https://cdn.jsdelivr.net",
-        "style-src 'self' https://cdn.jsdelivr.net",
-        "font-src 'self' https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+        "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com",
         "connect-src 'self' wss: ws:",
         "img-src 'self' data: blob:",
         "worker-src 'self'",
@@ -134,6 +137,7 @@ wss.on('connection', (ws, req) => {
   let sshClient = null;
   let sshStream = null;
   let connecting = false;
+  let pendingVerify = null; // hostVerifier callback waiting for client response (#5)
 
   function send(obj) {
     if (ws.readyState === WebSocket.OPEN) {
@@ -142,6 +146,7 @@ wss.on('connection', (ws, req) => {
   }
 
   function cleanup(reason) {
+    pendingVerify = null; // discard any pending host-key verification (#5)
     if (sshStream) {
       try { sshStream.close(); } catch (_) {}
       sshStream = null;
@@ -223,6 +228,22 @@ wss.on('connection', (ws, req) => {
       readyTimeout: 15000,
       keepaliveInterval: 15000,  // SSH-layer keepalive every 15s
       keepaliveCountMax: 4,       // drop after 4 unanswered (~60s)
+      hostVerifier(keyBuffer, verify) {
+        // Compute SHA-256 fingerprint in OpenSSH format (#5)
+        const fp = createHash('sha256').update(keyBuffer).digest('base64');
+        const fingerprint = `SHA256:${fp}`;
+
+        // Parse key type from SSH wire-format: uint32 len + ASCII string
+        let keyType = 'unknown';
+        try {
+          const typeLen = keyBuffer.readUInt32BE(0);
+          keyType = keyBuffer.slice(4, 4 + typeLen).toString('ascii');
+        } catch (_) {}
+
+        // Suspend KEX until the browser client accepts or rejects the key
+        pendingVerify = verify;
+        send({ type: 'hostkey', host: cfg.host, port: parseInt(cfg.port) || 22, keyType, fingerprint });
+      },
     };
 
     if (cfg.privateKey) {
@@ -263,6 +284,14 @@ wss.on('connection', (ws, req) => {
         break;
       case 'disconnect': cleanup('User disconnected'); break;
       case 'ping': break; // application-layer keepalive (#29), no response needed
+      case 'hostkey_response': // host key accept/reject from browser client (#5)
+        if (pendingVerify) {
+          const fn = pendingVerify;
+          pendingVerify = null;
+          fn(msg.accepted === true);
+          // If rejected, ssh2 emits an error event which calls cleanup naturally
+        }
+        break;
       default: send({ type: 'error', message: `Unknown message type: ${msg.type}` });
     }
   });

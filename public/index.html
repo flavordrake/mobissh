@@ -9,6 +9,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>MobiSSH</title>
   <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Fira+Code:wght@400;700&display=swap" />
   <link rel="stylesheet" href="app.css" />
 
   <!-- xterm.js via CDN — no build step needed for POC -->
@@ -101,11 +104,6 @@
           <button id="sessionReconnectBtn"  class="session-menu-item" role="menuitem">Reconnect</button>
           <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
         </div>
-      </div>
-      <!-- Hidden status indicator kept for JS setStatus() compatibility -->
-      <div id="statusIndicator" class="status disconnected" style="display:none" aria-hidden="true">
-        <span id="statusDot"></span>
-        <span id="statusText">Off</span>
       </div>
       <div id="key-bar">
         <!-- Single row: scrollable special keys + right-anchored IME toggle -->
@@ -243,6 +241,16 @@
         <option value="highContrast">High Contrast</option>
       </select>
       <p class="hint">Persisted across sessions. Use the session menu to switch themes temporarily during a session.</p>
+
+      <hr />
+
+      <label for="termFontSelect">Terminal font</label>
+      <select id="termFontSelect">
+        <option value="jetbrains">'JetBrains Mono'</option>
+        <option value="firacode">'Fira Code'</option>
+        <option value="monospace">System monospace</option>
+      </select>
+      <p class="hint">Requires page reload to take effect.</p>
 
       <hr />
 

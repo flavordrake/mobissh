@@ -389,32 +389,7 @@ html, body {
 
 .key-btn.danger { color: var(--danger); border-color: var(--danger); }
 
-#statusIndicator {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  font-size: 11px;
-  white-space: nowrap;
-  flex: 1;
-  padding: 0 4px;
-}
 
-#statusDot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--danger);
-}
-
-.status.connected #statusDot { background: var(--accent); }
-.status.connecting #statusDot { background: #ffaa00; animation: pulse 1s infinite; }
-.status.disconnected #statusDot { background: var(--danger); }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
 
 /* xterm overrides */
 .xterm-viewport::-webkit-scrollbar { width: 4px; }
@@ -744,3 +719,109 @@ hr {
 }
 
 #toast.show { opacity: 1; }
+
+/* SSH host key verification overlay (#5) */
+.hostkey-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.hostkey-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hostkey-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.hostkey-title-warn {
+  color: #ffaa00;
+}
+
+.hostkey-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hostkey-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hostkey-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+  background: var(--bg-card);
+  padding: 5px 8px;
+  border-radius: 4px;
+  display: block;
+}
+
+.hostkey-fp-old {
+  color: var(--danger);
+}
+
+.hostkey-warn-text {
+  font-size: 13px;
+  color: #ffaa00;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.hostkey-info-text {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.hostkey-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.hostkey-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 6px;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.hostkey-reject {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.hostkey-reject:active { background: var(--bg-input); }
+
+.hostkey-accept {
+  background: var(--accent);
+  color: #000;
+}
+
+.hostkey-accept:active { background: var(--accent-dim); }

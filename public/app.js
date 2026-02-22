@@ -160,6 +160,36 @@ document.addEventListener('DOMContentLoaded', () => {
   initVault(); // async, silently unlocks if browser credential available
   initKeyboardAwareness();
 
+  // Event delegation for profile list — replaces inline onclick blocked by CSP
+  const profileList = document.getElementById('profileList');
+  profileList.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (btn) {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.idx);
+      if (btn.dataset.action === 'edit') loadProfileIntoForm(idx);
+      else if (btn.dataset.action === 'delete') deleteProfile(idx);
+      return;
+    }
+    const item = e.target.closest('.profile-item');
+    if (item) loadProfileIntoForm(parseInt(item.dataset.idx));
+  });
+  profileList.addEventListener('touchstart', (e) => {
+    e.target.closest('.profile-item')?.classList.add('tapped');
+  }, { passive: true });
+  profileList.addEventListener('touchend', (e) => {
+    e.target.closest('.profile-item')?.classList.remove('tapped');
+  }, { passive: true });
+
+  // Event delegation for key list — replaces inline onclick blocked by CSP
+  document.getElementById('keyList').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const idx = parseInt(btn.dataset.idx);
+    if (btn.dataset.action === 'use') useKey(idx);
+    else if (btn.dataset.action === 'delete') deleteKey(idx);
+  });
+
   // Cold start UX (#36): if profiles exist, land on Connect so user can tap to connect
   if (getProfiles().length > 0) {
     document.querySelector('[data-panel="connect"]').click();
@@ -176,8 +206,16 @@ function initTerminal() {
   const savedTheme = localStorage.getItem('termTheme') || 'dark';
   activeThemeName = THEMES[savedTheme] ? savedTheme : 'dark';
 
+  const FONT_FAMILIES = {
+    jetbrains: '"JetBrains Mono", monospace',
+    firacode:  '"Fira Code", monospace',
+    monospace: 'monospace',
+  };
+  const savedFont = localStorage.getItem('termFont') || 'jetbrains';
+  const fontFamily = FONT_FAMILIES[savedFont] || FONT_FAMILIES.jetbrains;
+
   terminal = new Terminal({
-    fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
+    fontFamily,
     fontSize,
     theme: THEMES[activeThemeName].theme,
     cursorBlink: true,
@@ -190,6 +228,12 @@ function initTerminal() {
   terminal.loadAddon(fitAddon);
   terminal.open(document.getElementById('terminal'));
   fitAddon.fit();
+
+  // Re-measure character cells after web fonts finish loading (#71)
+  document.fonts.ready.then(() => {
+    terminal.options.fontFamily = fontFamily;
+    fitAddon.fit();
+  });
 
   window.addEventListener('resize', handleResize);
 
@@ -668,6 +712,37 @@ function _openWebSocket() {
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
         scheduleReconnect();
         break;
+
+      case 'hostkey': { // SSH host key verification (#5)
+        const hostKey = `${msg.host}:${msg.port}`;
+        const knownHosts = JSON.parse(localStorage.getItem('knownHosts') || '{}');
+        const known = knownHosts[hostKey];
+
+        if (!known) {
+          // First connect — prompt user to accept and store
+          _showHostKeyPrompt(msg, null, (accepted) => {
+            if (accepted) {
+              knownHosts[hostKey] = { fingerprint: msg.fingerprint, keyType: msg.keyType, addedAt: new Date().toISOString() };
+              localStorage.setItem('knownHosts', JSON.stringify(knownHosts));
+            }
+            ws.send(JSON.stringify({ type: 'hostkey_response', accepted }));
+          });
+        } else if (known.fingerprint === msg.fingerprint) {
+          // Fingerprint matches stored value — proceed silently
+          ws.send(JSON.stringify({ type: 'hostkey_response', accepted: true }));
+        } else {
+          // Fingerprint changed — block and warn (possible MITM)
+          _showHostKeyPrompt(msg, known.fingerprint, (accepted) => {
+            if (accepted) {
+              const updated = JSON.parse(localStorage.getItem('knownHosts') || '{}');
+              updated[hostKey] = { fingerprint: msg.fingerprint, keyType: msg.keyType, addedAt: new Date().toISOString() };
+              localStorage.setItem('knownHosts', JSON.stringify(updated));
+            }
+            ws.send(JSON.stringify({ type: 'hostkey_response', accepted }));
+          });
+        }
+        break;
+      }
     }
   };
 
@@ -849,10 +924,6 @@ function _updateRecordingUI() {
 // ─── Status indicator ─────────────────────────────────────────────────────────
 
 function setStatus(state, text) {
-  const el = document.getElementById('statusIndicator');
-  el.className = `status ${state}`;
-  document.getElementById('statusText').textContent = text;
-
   // Keep session menu button in sync (#39)
   const btn = document.getElementById('sessionMenuBtn');
   if (btn) {
@@ -1338,12 +1409,12 @@ function loadProfiles() {
   }
 
   list.innerHTML = profiles.map((p, i) => `
-    <div class="profile-item" onclick="loadProfileIntoForm(${i})" ontouchstart="this.classList.add('tapped')" ontouchend="this.classList.remove('tapped')">
+    <div class="profile-item" data-idx="${i}">
       <span class="profile-name">${escHtml(p.name)}${p.hasVaultCreds ? ' <span class="vault-badge">saved</span>' : ''}</span>
       <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port || 22}</span>
       <div class="item-actions">
-        <button class="item-btn" onclick="loadProfileIntoForm(${i})">✎ Edit</button>
-        <button class="item-btn danger" onclick="event.stopPropagation(); deleteProfile(${i})">Delete</button>
+        <button class="item-btn" data-action="edit" data-idx="${i}">✎ Edit</button>
+        <button class="item-btn danger" data-action="delete" data-idx="${i}">Delete</button>
       </div>
     </div>
   `).join('');
@@ -1413,8 +1484,8 @@ function loadKeys() {
       <span class="key-name">${escHtml(k.name)}</span>
       <span class="key-created">Added ${new Date(k.created).toLocaleDateString()}</span>
       <div class="item-actions">
-        <button class="item-btn" onclick="useKey(${i})">Use in form</button>
-        <button class="item-btn danger" onclick="deleteKey(${i})">Delete</button>
+        <button class="item-btn" data-action="use" data-idx="${i}">Use in form</button>
+        <button class="item-btn danger" data-action="delete" data-idx="${i}">Delete</button>
       </div>
     </div>
   `).join('');
@@ -1521,6 +1592,12 @@ function initSettingsPanel() {
     applyTheme(themeSelect.value, { persist: true });
   });
 
+  const fontSelect = document.getElementById('termFontSelect');
+  fontSelect.value = localStorage.getItem('termFont') || 'jetbrains';
+  fontSelect.addEventListener('change', () => {
+    localStorage.setItem('termFont', fontSelect.value);
+  });
+
   document.getElementById('clearDataBtn').addEventListener('click', () => {
     if (!confirm('Clear all stored keys, profiles, and settings?')) return;
     localStorage.clear();
@@ -1562,4 +1639,64 @@ function toast(msg) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ─── Host key verification prompt (#5) ───────────────────────────────────────
+// Displays a blocking overlay asking the user to accept or reject the SSH host
+// key fingerprint. On first connect knownFingerprint is null; on mismatch it
+// contains the previously stored fingerprint.
+
+function _showHostKeyPrompt(msg, knownFingerprint, callback) {
+  // Remove stale overlay if present
+  const existing = document.getElementById('hostKeyOverlay');
+  if (existing) existing.remove();
+
+  const isMismatch = knownFingerprint !== null;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'hostKeyOverlay';
+  overlay.className = 'hostkey-overlay';
+  overlay.innerHTML = `
+    <div class="hostkey-dialog">
+      <div class="hostkey-title${isMismatch ? ' hostkey-title-warn' : ''}">
+        ${isMismatch ? '&#9888; HOST KEY MISMATCH' : 'New SSH Host Key'}
+      </div>
+      <div class="hostkey-row">
+        <span class="hostkey-label">Host</span>
+        <code class="hostkey-val">${escHtml(msg.host)}:${msg.port}</code>
+      </div>
+      <div class="hostkey-row">
+        <span class="hostkey-label">Type</span>
+        <code class="hostkey-val">${escHtml(msg.keyType)}</code>
+      </div>
+      ${isMismatch ? `
+      <div class="hostkey-row">
+        <span class="hostkey-label">Stored fingerprint</span>
+        <code class="hostkey-val hostkey-fp-old">${escHtml(knownFingerprint)}</code>
+      </div>
+      <div class="hostkey-row">
+        <span class="hostkey-label">Received fingerprint</span>
+        <code class="hostkey-val">${escHtml(msg.fingerprint)}</code>
+      </div>
+      <div class="hostkey-warn-text">This could indicate a MITM attack. Reject unless you know the key changed.</div>
+      ` : `
+      <div class="hostkey-row">
+        <span class="hostkey-label">Fingerprint</span>
+        <code class="hostkey-val">${escHtml(msg.fingerprint)}</code>
+      </div>
+      <div class="hostkey-info-text">Verify this fingerprint out-of-band before accepting.</div>
+      `}
+      <div class="hostkey-buttons">
+        <button class="hostkey-btn hostkey-reject">Reject</button>
+        <button class="hostkey-btn hostkey-accept">${isMismatch ? 'Accept New Key' : 'Accept &amp; Store'}</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  function dismiss() { overlay.remove(); }
+
+  overlay.querySelector('.hostkey-accept').addEventListener('click', () => { dismiss(); callback(true); });
+  overlay.querySelector('.hostkey-reject').addEventListener('click', () => { dismiss(); callback(false); });
 }

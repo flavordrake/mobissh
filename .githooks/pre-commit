@@ -1,0 +1,12 @@
+#!/bin/bash
+# Pre-commit hook: run Playwright tests (pixel-7 + chromium only — WebKit
+# requires a separate install and isn't available in all environments).
+#
+# Skip with: git commit --no-verify
+
+set -e
+
+echo "Running Playwright tests (pre-commit)..."
+npx playwright test --project=pixel-7 --project=chromium --reporter=line
+
+echo "All Playwright tests passed."
