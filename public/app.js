@@ -340,37 +340,8 @@ function initIMEInput() {
   const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
 
-  // ── DEBUG #37: on-screen touch event instrumentation ──────────────────
-  // Persistent overlay showing exactly which step in the chain fires.
-  // Remove this block once scroll is confirmed working.
-  const _dbgEl = document.createElement('div');
-  Object.assign(_dbgEl.style, {
-    position: 'fixed', top: '8px', right: '8px',
-    background: 'rgba(0,0,0,0.88)', color: '#00ff88',
-    fontFamily: 'monospace', fontSize: '12px',
-    padding: '6px 10px', borderRadius: '6px',
-    zIndex: '9999', pointerEvents: 'none',
-    lineHeight: '1.7', whiteSpace: 'pre',
-    border: '1px solid #333',
-  });
-  document.body.appendChild(_dbgEl);
-  const _dc = { start: 0, move: 0, lock: 0, lines: 0, totalDy: 0 };
-  let _dbgLast = 'waiting';
-  function _dbgPaint() {
-    _dbgEl.textContent =
-      `[touch debug #37]\n` +
-      `start  ${_dc.start}\n` +
-      `move   ${_dc.move}\n` +
-      `lock   ${_dc.lock}   (>12px vert)\n` +
-      `lines  ${_dc.lines}  (scrollLines)\n` +
-      `totalDy ${_dc.totalDy.toFixed(0)}px\n` +
-      `last: ${_dbgLast}`;
-  }
-  _dbgPaint();
-  // ── end DEBUG block ───────────────────────────────────────────────────
-
   let _touchStartY = null, _touchStartX = null, _lastTouchY = null, _isTouchScroll = false;
-  let _scrollRemainder = 0; // sub-line accumulator for smooth scroll
+  let _scrollRemainder = 0; // sub-line pixel accumulator for smooth scroll
 
   termEl.addEventListener('touchstart', (e) => {
     _touchStartY = e.touches[0].clientY;
@@ -378,7 +349,6 @@ function initIMEInput() {
     _lastTouchY  = _touchStartY;
     _isTouchScroll = false;
     _scrollRemainder = 0;
-    _dc.start++; _dc.totalDy = 0; _dbgLast = 'touchstart'; _dbgPaint(); // DEBUG #37
   }, { passive: true });
 
   termEl.addEventListener('touchmove', (e) => {
@@ -386,25 +356,38 @@ function initIMEInput() {
     const totalDy = _touchStartY - e.touches[0].clientY;
     const totalDx = _touchStartX - e.touches[0].clientX;
     const dy = _lastTouchY - e.touches[0].clientY;
-    _dc.move++; _dc.totalDy = totalDy; // DEBUG #37
 
     // Lock to vertical scroll once gesture exceeds tap threshold and is more vertical than horizontal
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
       _isTouchScroll = true;
-      _dc.lock++; _dbgLast = 'locked'; _dbgPaint(); // DEBUG #37
     }
 
     if (_isTouchScroll && terminal) {
-      // Use terminal.scrollLines() directly — synthetic WheelEvents are ignored by xterm.js 5.x.
-      // Accumulate sub-line pixels to avoid rounding every tiny touchmove to 0.
-      // Positive dy = finger moved up = scroll buffer UP (older content) = negative lines.
+      // Accumulate pixels; convert to discrete lines using approximate cell height.
+      // dy > 0 = finger moved up = want to see older content (scroll up).
       const cellH = terminal.options.fontSize * 1.2;
       _scrollRemainder += dy;
       const lines = Math.trunc(_scrollRemainder / cellH);
       if (lines !== 0) {
-        terminal.scrollLines(lines);
         _scrollRemainder -= lines * cellH;
-        _dc.lines += Math.abs(lines); _dbgLast = `scroll ${lines}L`; _dbgPaint(); // DEBUG #37
+        const mouseMode = terminal.modes && terminal.modes.mouseTrackingMode;
+        if (mouseMode && mouseMode !== 'none') {
+          // Remote app (tmux/vim) has mouse tracking active.
+          // Send SGR-encoded wheel events so tmux/vim handles scroll server-side.
+          // dy > 0 (up swipe) = wheel up = button 64; dy < 0 (down swipe) = wheel down = button 65.
+          const btn = lines > 0 ? 64 : 65;
+          const rect = termEl.getBoundingClientRect();
+          const col = Math.max(1, Math.min(terminal.cols,
+            Math.floor((e.touches[0].clientX - rect.left) / (rect.width  / terminal.cols)) + 1));
+          const row = Math.max(1, Math.min(terminal.rows,
+            Math.floor((e.touches[0].clientY - rect.top)  / (rect.height / terminal.rows)) + 1));
+          for (let i = 0; i < Math.abs(lines); i++) {
+            sendSSHInput(`\x1b[<${btn};${col};${row}M`);
+          }
+        } else {
+          // No remote mouse tracking — scroll local xterm.js scrollback buffer.
+          terminal.scrollLines(lines);
+        }
       }
     }
     _lastTouchY = e.touches[0].clientY;
@@ -415,7 +398,6 @@ function initIMEInput() {
     _touchStartY = _touchStartX = _lastTouchY = null;
     _isTouchScroll = false;
     _scrollRemainder = 0;
-    _dbgLast = `end (scroll=${wasScroll})`; _dbgPaint(); // DEBUG #37
     if (!wasScroll) setTimeout(focusIME, 50);
   });
 
