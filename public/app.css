@@ -12,8 +12,13 @@
   --text-dim: #888;
   --border: #2a2a4a;
   --tab-height: 56px;
-  --keybar-height: 34px;     /* single key row */
+  --keybar-height: 34px;
   --keybar-handle-height: 16px;
+  /* key-btn-height: keybar minus 10px vertical clearance; keep in sync with --keybar-height */
+  --key-btn-height: 24px;
+  /* Shared font stacks */
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-condensed: 'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', monospace;
 }
 
 * {
@@ -141,7 +146,7 @@ html, body {
   background: var(--bg-card);
   border-top: 1px solid var(--accent);
   color: var(--accent);
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   padding: 3px 12px;
   flex-shrink: 0;
@@ -293,7 +298,7 @@ html, body {
 .mode-btn {
   font-size: 11px;
   padding: 0 6px;
-  height: 22px;
+  height: var(--key-btn-height);
   color: var(--text-dim);
   flex-shrink: 0;
   margin-left: 4px;
@@ -311,12 +316,12 @@ html, body {
   border-radius: 4px;
   padding: 0 6px;
   font-size: 12px;
-  font-family: 'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', monospace;
+  font-family: var(--font-condensed);
   letter-spacing: -0.2px;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  height: 24px;
+  height: var(--key-btn-height);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -418,7 +423,7 @@ textarea {
 }
 
 textarea {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   resize: vertical;
 }

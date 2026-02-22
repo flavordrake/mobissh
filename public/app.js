@@ -56,6 +56,16 @@ const KEY_MAP = {
   F9: '\x1b[20~', F10: '\x1b[21~', F11: '\x1b[23~', F12: '\x1b[24~',
 };
 
+// ─── CSS layout constants (read from :root once; JS never hardcodes px values) ─
+
+const ROOT_CSS = (() => {
+  const s = getComputedStyle(document.documentElement);
+  return {
+    tabHeight:      s.getPropertyValue('--tab-height').trim(),
+    keybarHeight:   s.getPropertyValue('--keybar-height').trim(),
+  };
+})();
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let terminal = null;
@@ -697,7 +707,7 @@ function _applyTabBarVisibility() {
   // Keep --tab-height CSS var in sync for toast positioning
   document.documentElement.style.setProperty(
     '--tab-height',
-    tabBarVisible ? '56px' : '0px'
+    tabBarVisible ? ROOT_CSS.tabHeight : '0px'
   );
 }
 
@@ -841,7 +851,7 @@ function _applyKeyBarVisibility() {
   // Keep --keybar-height CSS var in sync so toast positions correctly
   document.documentElement.style.setProperty(
     '--keybar-height',
-    keyBarVisible ? '34px' : '0px'
+    keyBarVisible ? ROOT_CSS.keybarHeight : '0px'
   );
 }
 
