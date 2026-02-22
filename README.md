@@ -8,7 +8,7 @@ A mobile-first SSH PWA (Progressive Web App) with a WebSocket bridge. Install to
 
 ## Why this exists
 
-Most mobile SSH clients fail the same way: they treat the terminal as a text viewer with a keyboard bolted on. That works for quick `ls` or reading a log file. It breaks down the moment you open `vim`, `htop`, `tmux`, or Claude Code.
+Most mobile SSH clients fail the same way: they treat the terminal as a text viewer with a keyboard bolted on. That works for quick `ls` or reading a log file. It breaks down the moment you open `vim`, `htop`, `tmux`, or agentic coding tools like OpenCode, Gemini CLI, Codex, and Claude Code.
 
 ### The specific problems with existing mobile SSH apps
 
