@@ -12,8 +12,8 @@
   --text-dim: #888;
   --border: #2a2a4a;
   --tab-height: 56px;
-  --keybar-height: 44px;     /* single key row */
-  --keybar-handle-height: 20px;
+  --keybar-height: 38px;     /* single key row */
+  --keybar-handle-height: 18px;
 }
 
 * {
