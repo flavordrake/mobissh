@@ -141,6 +141,12 @@ html, body {
   touch-action: none; /* #37: prevent browser panning so JS touch-scroll handles all gestures */
 }
 
+/* touch-action is not inherited — explicitly suppress it on xterm.js internals so the
+   browser doesn't intercept touches on the canvas or viewport scrollbar separately. */
+#terminal * {
+  touch-action: none;
+}
+
 /* IME composition preview strip — visible while composing, hidden otherwise */
 #imePreview {
   background: var(--bg-card);

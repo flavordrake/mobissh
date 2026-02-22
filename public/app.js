@@ -366,6 +366,8 @@ function initIMEInput() {
     if (!_scrollRafId) _scrollRafId = requestAnimationFrame(_flushScroll);
   }
 
+  // capture:true — fires before xterm.js bubble-phase listeners on canvas/viewport,
+  // so stopPropagation() inside xterm.js doesn't swallow our gesture tracking.
   termEl.addEventListener('touchstart', (e) => {
     _touchStartY = _lastTouchY = e.touches[0].clientY;
     _touchStartX = _lastTouchX = e.touches[0].clientX;
@@ -374,7 +376,7 @@ function initIMEInput() {
     _pendingLines = 0;
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
-  }, { passive: true });
+  }, { passive: true, capture: true });
 
   termEl.addEventListener('touchmove', (e) => {
     if (_touchStartY === null) return;
@@ -420,7 +422,7 @@ function initIMEInput() {
 
     _lastTouchY = e.touches[0].clientY;
     _lastTouchX = e.touches[0].clientX;
-  }, { passive: true });
+  }, { passive: true, capture: true });
 
   termEl.addEventListener('touchend', () => {
     const wasScroll = _isTouchScroll;
@@ -444,7 +446,7 @@ function initIMEInput() {
         setTimeout(focusIME, 50);
       }
     }
-  });
+  }, { capture: true });
 
   // ── Direct input (type="password") — char-by-char mode (#44/#48) ─────
   // Chrome/Gboard treats password fields as no-swipe, no-autocorrect inputs,
