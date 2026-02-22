@@ -246,6 +246,36 @@ html, body {
 .session-menu-item:active { background: var(--bg-card); }
 .session-menu-item.danger { color: var(--danger); }
 
+/* Font size row — inline +/− controls that keep menu open */
+.font-size-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: default;
+  gap: 8px;
+}
+.font-size-row:active { background: none; }
+
+#fontSizeLabel {
+  font-size: 13px;
+  color: var(--text-dim);
+  min-width: 32px;
+  text-align: center;
+  flex: 1;
+}
+
+.font-adj-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 /* Right zone: key bar chevron */
 #handleChevron {
   color: var(--text-dim);

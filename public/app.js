@@ -107,11 +107,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('[data-panel="connect"]').click();
   }
 
-  // Apply saved font size
-  const savedSize = parseInt(localStorage.getItem('fontSize')) || 14;
-  applyFontSize(savedSize);
-  document.getElementById('fontSize').value = savedSize;
-  document.getElementById('fontSizeValue').textContent = `${savedSize}px`;
+  // Apply saved font size (applyFontSize syncs all UI)
+  applyFontSize(parseInt(localStorage.getItem('fontSize')) || 14);
 });
 
 // ─── Terminal ─────────────────────────────────────────────────────────────────
@@ -196,10 +193,24 @@ function initKeyboardAwareness() {
   window.visualViewport.addEventListener('resize', onViewportChange);
 }
 
+const FONT_SIZE = { MIN: 8, MAX: 24 };
+
 function applyFontSize(size) {
+  size = Math.max(FONT_SIZE.MIN, Math.min(FONT_SIZE.MAX, size));
+  localStorage.setItem('fontSize', size);
+  // Sync all font-size UI
+  const rangeEl = document.getElementById('fontSize');
+  const labelEl = document.getElementById('fontSizeValue');
+  const menuLabel = document.getElementById('fontSizeLabel');
+  if (rangeEl) rangeEl.value = size;
+  if (labelEl) labelEl.textContent = `${size}px`;
+  if (menuLabel) menuLabel.textContent = `${size}px`;
   if (terminal) {
     terminal.options.fontSize = size;
     if (fitAddon) fitAddon.fit();
+    if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+    }
   }
 }
 
@@ -316,9 +327,16 @@ function initIMEInput() {
     }
   });
 
-  // ── Focus management + touch scroll (#32) ────────────────────────────
-  // Keep IME focused on tap; translate vertical swipe → WheelEvent so
-  // xterm.js scrollback and tmux mouse mode both receive scroll input.
+  // ── Focus management + touch scroll (#32/#37) ─────────────────────────
+  // Gesture mapping:
+  //   tap          → focusIME (shows soft keyboard)
+  //   vertical swipe → WheelEvent on .xterm-viewport
+  //                    xterm.js handles this for BOTH scrollback (normal mode)
+  //                    and mouse protocol reporting (tmux mouse on / DECSET 1000/1002/1006)
+  //   horizontal swipe → ignored here (reserved for future tmux window gestures, #16)
+  //
+  // touch-action:none on #terminal prevents browser panning so we don't need
+  // e.preventDefault() — passive:true listeners are safe.
   const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
 
@@ -337,13 +355,12 @@ function initIMEInput() {
     const totalDx = _touchStartX - e.touches[0].clientX;
     const dy = _lastTouchY - e.touches[0].clientY;
 
-    // Lock to scroll once gesture exceeds tap threshold and is more vertical than horizontal
+    // Lock to vertical scroll once gesture exceeds tap threshold and is more vertical than horizontal
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
       _isTouchScroll = true;
     }
 
     if (_isTouchScroll) {
-      // Dispatch to xterm-viewport so both scrollback and mouse protocol receive it
       const vp = document.querySelector('#terminal .xterm-viewport');
       if (vp) {
         vp.dispatchEvent(new WheelEvent('wheel', {
@@ -352,11 +369,6 @@ function initIMEInput() {
           bubbles: true,
           cancelable: true,
         }));
-        // DEBUG #37: flash border to confirm scroll events are firing — remove when confirmed
-        const termEl2 = document.getElementById('terminal');
-        termEl2.style.outline = `2px solid ${dy > 0 ? '#ff4' : '#4ff'}`;
-        clearTimeout(termEl2._scrollDbgTimer);
-        termEl2._scrollDbgTimer = setTimeout(() => { termEl2.style.outline = ''; }, 300);
       }
     }
     _lastTouchY = e.touches[0].clientY;
@@ -632,6 +644,16 @@ function initSessionMenu() {
   });
 
   function closeMenu() { menu.classList.add('hidden'); }
+
+  // Font size +/− — menu stays open so user can tap repeatedly (#46)
+  document.getElementById('fontDecBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    applyFontSize((parseInt(localStorage.getItem('fontSize')) || 14) - 1);
+  });
+  document.getElementById('fontIncBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    applyFontSize((parseInt(localStorage.getItem('fontSize')) || 14) + 1);
+  });
 
   document.getElementById('sessionResetBtn').addEventListener('click', () => {
     closeMenu();
@@ -1143,12 +1165,8 @@ function initSettingsPanel() {
     toast('Settings saved.');
   });
 
-  const fontRange = document.getElementById('fontSize');
-  fontRange.addEventListener('input', () => {
-    const size = parseInt(fontRange.value);
-    document.getElementById('fontSizeValue').textContent = `${size}px`;
-    applyFontSize(size);
-    localStorage.setItem('fontSize', size);
+  document.getElementById('fontSize').addEventListener('input', (e) => {
+    applyFontSize(parseInt(e.target.value));
   });
 
   document.getElementById('clearDataBtn').addEventListener('click', () => {

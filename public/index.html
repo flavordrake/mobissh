@@ -78,6 +78,11 @@
         <span id="handleChevron" title="Toggle key bar" role="button" aria-label="Toggle key bar">▾</span>
         <!-- Session menu anchored inside the positioned parent so absolute positioning works -->
         <div id="sessionMenu" class="hidden" role="menu">
+          <div class="session-menu-item font-size-row" role="menuitem">
+            <button id="fontDecBtn"   class="font-adj-btn" title="Decrease font size">A−</button>
+            <span   id="fontSizeLabel">14px</span>
+            <button id="fontIncBtn"   class="font-adj-btn" title="Increase font size">A+</button>
+          </div>
           <button id="sessionResetBtn"      class="session-menu-item" role="menuitem">Reset terminal</button>
           <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
           <button id="sessionCtrlCBtn"      class="session-menu-item" role="menuitem">Send Ctrl+C</button>
