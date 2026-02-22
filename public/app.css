@@ -315,7 +315,7 @@ html, body {
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  height: 32px;
+  height: 27px;
   display: flex;
   align-items: center;
   justify-content: center;
