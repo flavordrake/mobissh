@@ -71,7 +71,8 @@ let ctrlActive = false;    // sticky Ctrl modifier
 let vaultKey = null;       // AES-GCM CryptoKey, null when locked
 let keyBarVisible = true;  // key bar show/hide state (#1)
 let imeMode = true;        // true = IME/swipe, false = direct char entry (#2)
-let tabBarVisible = false; // tab bar hidden by default on terminal panel (#25)
+let tabBarVisible = true;  // visible on cold start (#36); auto-hides after first connect
+let hasConnected = false;  // true after first successful SSH session (#36)
 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
@@ -82,12 +83,18 @@ document.addEventListener('DOMContentLoaded', () => {
   initConnectForm();
   initTerminalActions();
   initKeyBar();         // #1 auto-hide + #2 IME toggle
+  initSessionMenu();    // #39 handle strip session identity + menu
   initSettingsPanel();
   loadProfiles();
   loadKeys();
   registerServiceWorker();
   initVault(); // async, silently unlocks if browser credential available
   initKeyboardAwareness();
+
+  // Cold start UX (#36): if profiles exist, land on Connect so user can tap to connect
+  if (getProfiles().length > 0) {
+    document.querySelector('[data-panel="connect"]').click();
+  }
 
   // Apply saved font size
   const savedSize = parseInt(localStorage.getItem('fontSize')) || 14;
@@ -389,6 +396,12 @@ function _openWebSocket() {
         terminal.writeln(ANSI.green('✓ Connected'));
         // Sync terminal size to server
         ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+        // First connection: give the terminal focus and collapse nav chrome (#36)
+        if (!hasConnected) {
+          hasConnected = true;
+          tabBarVisible = false;
+          _applyTabBarVisibility();
+        }
         focusIME();
         break;
 
@@ -472,6 +485,34 @@ function setStatus(state, text) {
   const el = document.getElementById('statusIndicator');
   el.className = `status ${state}`;
   document.getElementById('statusText').textContent = text;
+
+  // Keep session menu button in sync (#39)
+  const btn = document.getElementById('sessionMenuBtn');
+  if (btn) {
+    btn.textContent = state === 'connected' ? text : 'MobiSSH';
+    btn.classList.toggle('connected', state === 'connected');
+  }
+}
+
+// ─── Session menu (#39) ───────────────────────────────────────────────────────
+
+function initSessionMenu() {
+  const menuBtn = document.getElementById('sessionMenuBtn');
+  const menu    = document.getElementById('sessionMenu');
+
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!sshConnected) return; // no-op when not connected
+    menu.classList.toggle('hidden');
+  });
+
+  document.getElementById('sessionDisconnectBtn').addEventListener('click', () => {
+    menu.classList.add('hidden');
+    disconnect();
+  });
+
+  // Dismiss on outside tap
+  document.addEventListener('click', () => menu.classList.add('hidden'));
 }
 
 // ─── Tab navigation ───────────────────────────────────────────────────────────
@@ -489,9 +530,12 @@ function initTabBar() {
       document.getElementById(`panel-${panelId}`).classList.add('active');
 
       if (panelId === 'terminal') {
-        // Auto-hide tab bar when returning to terminal
-        tabBarVisible = false;
-        _applyTabBarVisibility();
+        // Auto-hide tab bar when returning to terminal — but only once the
+        // user has had at least one connection (#36: on cold start keep it visible)
+        if (hasConnected) {
+          tabBarVisible = false;
+          _applyTabBarVisibility();
+        }
         setTimeout(() => { fitAddon.fit(); focusIME(); }, 50);
       } else {
         // Ensure tab bar stays visible on non-terminal panels
@@ -603,7 +647,7 @@ function initTerminalActions() {
     });
   });
 
-  document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+  // Disconnect is now in the session menu (#39); no standalone button
 }
 
 // ─── Key bar visibility (#1) + IME/Direct mode (#2) ──────────────────────────
