@@ -30,6 +30,7 @@
 html, body {
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none; /* prevent iOS rubber-band scroll (#12) */
   background: var(--bg-deep);
   color: var(--text);
   font-family: system-ui, -apple-system, sans-serif;
@@ -64,6 +65,7 @@ html, body {
   flex-direction: column;
   height: 100vh;
   height: 100dvh; /* dynamic viewport height for mobile */
+  padding-top: env(safe-area-inset-top); /* notch / Dynamic Island */
 }
 
 /* Tab bar */
@@ -72,7 +74,8 @@ html, body {
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
   order: 2; /* bottom nav on mobile */
-  height: var(--tab-height);
+  height: calc(var(--tab-height) + env(safe-area-inset-bottom)); /* home indicator */
+  padding-bottom: env(safe-area-inset-bottom);
   flex-shrink: 0;
   overflow: hidden;
   transition: height 0.2s ease;
@@ -137,6 +140,7 @@ html, body {
   background: #000;
   padding: 4px;
   overflow: hidden;
+  overscroll-behavior: none; /* prevent iOS rubber-band scroll (#12) */
   min-height: 0;
   touch-action: none; /* #37: prevent browser panning so JS touch-scroll handles all gestures */
 }
@@ -308,7 +312,8 @@ html, body {
   background: var(--bg-panel);
   flex-shrink: 0;
   overflow: hidden;
-  height: var(--keybar-height);
+  height: calc(var(--keybar-height) + env(safe-area-inset-bottom)); /* home indicator when tab bar hidden */
+  padding-bottom: env(safe-area-inset-bottom);
   transition: height 0.2s ease;
 }
 
