@@ -67,14 +67,14 @@ Profiles are stored in `localStorage` without credentials. Credentials are AES-G
 
 ## Security analysis
 
+**If you run the bridge on a public IP without authentication middleware, the threat model changes significantly — anyone who can reach port 8080 can proxy SSH connections through your server.**
+
 ### Trust model
 
 MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). The threat model is:
 
 - **In scope:** accidental credential exposure via browser storage, SSH MITM on first connect, SSRF from the bridge, XSS in the frontend.
 - **Out of scope (delegated to Tailscale):** unauthenticated access to the bridge, traffic interception between phone and server.
-
-If you run the bridge on a public IP without authentication middleware, the threat model changes significantly — anyone who can reach port 8080 can proxy SSH connections through your server.
 
 ### Current controls
 
