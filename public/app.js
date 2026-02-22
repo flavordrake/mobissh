@@ -343,13 +343,38 @@ function initIMEInput() {
   let _touchStartY = null, _touchStartX = null;
   let _lastTouchY  = null, _lastTouchX  = null;
   let _isTouchScroll = false;
-  let _scrollRemainder = 0; // sub-line pixel accumulator for smooth scroll
+  let _scrollRemainder = 0; // sub-line pixel accumulator
+  let _pendingLines = 0;    // lines queued for next rAF flush
+  let _pendingSGR = null;   // { btn, col, row, count } queued for next rAF flush
+  let _scrollRafId = null;
+
+  // Flush accumulated scroll once per animation frame — prevents event flooding
+  // when touchmove fires faster than xterm.js / the SSH pipe can drain.
+  function _flushScroll() {
+    _scrollRafId = null;
+    if (_pendingLines !== 0 && terminal) {
+      terminal.scrollLines(_pendingLines);
+      _pendingLines = 0;
+    }
+    if (_pendingSGR && _pendingSGR.count > 0) {
+      const { btn, col, row, count } = _pendingSGR;
+      for (let i = 0; i < count; i++) sendSSHInput(`\x1b[<${btn};${col};${row}M`);
+      _pendingSGR = null;
+    }
+  }
+
+  function _scheduleScrollFlush() {
+    if (!_scrollRafId) _scrollRafId = requestAnimationFrame(_flushScroll);
+  }
 
   termEl.addEventListener('touchstart', (e) => {
     _touchStartY = _lastTouchY = e.touches[0].clientY;
     _touchStartX = _lastTouchX = e.touches[0].clientX;
     _isTouchScroll = false;
     _scrollRemainder = 0;
+    _pendingLines = 0;
+    _pendingSGR = null;
+    if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
   }, { passive: true });
 
   termEl.addEventListener('touchmove', (e) => {
@@ -364,32 +389,32 @@ function initIMEInput() {
     }
 
     if (_isTouchScroll && terminal) {
-      // Accumulate pixels; convert to discrete lines using approximate cell height.
-      // dy > 0 = finger moved up = want older content = scrollLines negative (up).
-      const cellH = terminal.options.fontSize * 1.2;
+      // ~20px per line feels natural on mobile (slightly coarser than raw cell height).
+      const cellH = Math.max(20, terminal.options.fontSize * 1.5);
       _scrollRemainder += dy;
       const lines = Math.trunc(_scrollRemainder / cellH);
       if (lines !== 0) {
         _scrollRemainder -= lines * cellH;
         const mouseMode = terminal.modes && terminal.modes.mouseTrackingMode;
         if (mouseMode && mouseMode !== 'none') {
-          // Remote app has mouse tracking — send SGR wheel events server-side.
-          // Swipe up (dy>0, lines>0) → wheel up → button 64.
-          // Swipe down (dy<0, lines<0) → wheel down → button 65.
+          // Accumulate SGR wheel events — flush once per frame.
+          // Swipe up (lines>0) → wheel up → button 64; down → button 65.
           const btn = lines > 0 ? 64 : 65;
           const rect = termEl.getBoundingClientRect();
           const col = Math.max(1, Math.min(terminal.cols,
             Math.floor((e.touches[0].clientX - rect.left) / (rect.width  / terminal.cols)) + 1));
           const row = Math.max(1, Math.min(terminal.rows,
             Math.floor((e.touches[0].clientY - rect.top)  / (rect.height / terminal.rows)) + 1));
-          for (let i = 0; i < Math.abs(lines); i++) {
-            sendSSHInput(`\x1b[<${btn};${col};${row}M`);
+          if (_pendingSGR && _pendingSGR.btn === btn) {
+            _pendingSGR.count += Math.abs(lines);
+          } else {
+            _pendingSGR = { btn, col, row, count: Math.abs(lines) };
           }
         } else {
-          // No remote mouse tracking — scroll local xterm.js scrollback buffer.
-          // Negate: lines>0 (swipe up) should show older content = scrollLines(-n).
-          terminal.scrollLines(-lines);
+          // Negate: lines>0 (swipe up) → older content → scrollLines negative.
+          _pendingLines -= lines;
         }
+        _scheduleScrollFlush();
       }
     }
 
@@ -406,6 +431,9 @@ function initIMEInput() {
     _touchStartY = _touchStartX = _lastTouchY = _lastTouchX = null;
     _isTouchScroll = false;
     _scrollRemainder = 0;
+    _pendingLines = 0;
+    _pendingSGR = null;
+    if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
 
     if (!wasScroll) {
       // Horizontal swipe: more than 40px X, dominant over Y → tmux window switch (#16).
