@@ -24,7 +24,7 @@ Android and iOS soft keyboards were designed for messaging apps. When you type i
 
 1. **Dual input mode.** An IME mode uses a hidden textarea to capture swipe-typed words and voice-dictated text and forwards them to SSH verbatim — no autocorrect interference. A direct mode forwards keystrokes char-by-char for zero-latency response with a Bluetooth keyboard.
 
-2. **Persistent special-key bar.** Ctrl (sticky modifier), Esc, Tab, /, and arrow keys are always one tap away. The bar is two rows so status lives separately from keys. It auto-hides via a tap-toggle strip to give the terminal the full screen.
+2. **Persistent special-key bar.** Ctrl (sticky modifier), Esc, Tab, /, |, -, arrow keys, Home, End, PgUp, PgDn — all one tap away in a horizontally scrollable row. Auto-hides via a tap-toggle strip to give the terminal the full screen.
 
 3. **xterm.js rendering.** Full VT100/VT220 and xterm-256color support. `htop`, `vim`, `tmux`, `claude` — they all render correctly because xterm.js is the same engine used in VS Code and Warp.
 
@@ -49,9 +49,13 @@ Phone browser ──(WSS)──► Node.js bridge ──(SSH)──► Target se
 
 ### IME input strategy
 
-Android and iOS soft keyboards fire standard DOM `input` events on any focused editable element. MobiSSH keeps a visually hidden `<textarea>` focused during terminal sessions. Swipe-typed words and voice-dictated text arrive as `input` events; the full string is forwarded to SSH and the textarea is cleared. Special keys (Escape, arrows, Tab) are intercepted at `keydown` before the IME processes them.
+MobiSSH has two input modes, toggled via the IME button in the key bar:
 
-Direct mode skips the `input` event entirely and forwards each `keydown` character immediately. This eliminates IME buffering latency at the cost of swipe/voice support — useful with a Bluetooth keyboard.
+**IME mode (default):** A visually hidden `<textarea>` stays focused during terminal sessions. Swipe-typed words and voice-dictated text arrive as `input` events; the full committed string is forwarded to SSH and the textarea is cleared. Composition events (`compositionstart`/`update`/`end`) show a preview strip above the key bar so you can see the word being formed before it commits. Special keys (Escape, arrows, Tab) are intercepted at `keydown` before the IME processes them.
+
+**Direct mode:** A hidden `type="password"` input stays focused instead. Using a password field tells Gboard and other IMEs to disable swipe-to-type, autocorrect, and autocomplete — every keypress is a raw character. Each `keydown` event is forwarded immediately, eliminating IME buffering latency. Best with a Bluetooth keyboard or for interactive TUI commands where every character matters.
+
+The password-type field also suppresses browser password managers (via `autocomplete="off"`, `data-lpignore`, `data-1p-ignore`) to avoid save-password prompts appearing during an SSH session.
 
 ### Credential vault
 
@@ -81,6 +85,9 @@ If you run the bridge on a public IP without authentication middleware, the thre
 | `Cache-Control: no-store` on all static responses | ✅ Implemented | Prevents credential caching in shared proxies |
 | Service worker network-first | ✅ Implemented | No stale credential forms served from cache |
 | `autocorrect="off"` on IME textarea | ✅ Implemented | Prevents iOS keyboard logging typed SSH text |
+| Direct mode uses `type="password"` input | ✅ Implemented | Suppresses Gboard swipe prediction and autocorrect |
+| WS ping/pong keep-alive (25s) | ✅ Implemented | Terminates stale connections, prevents silent drops |
+| SSH keepalive (15s interval, max 4 missed) | ✅ Implemented | Drops idle SSH sessions that are no longer alive |
 
 ### Open risks (filed as issues)
 
@@ -129,8 +136,19 @@ Over Tailscale, point the Settings → WebSocket URL at `wss://your-tailscale-ho
 
 See GitHub Issues for the full list. Key open items:
 
+Recently completed:
+- **#22** Rename to MobiSSH
+- **#29** WS/SSH keep-alive (prevents silent drops)
+- **#38** Extra key bar keys (|, -, Home, End, PgUp, PgDn)
+- **#40** Session menu controls (reset, clear, Ctrl+C/Z, reconnect)
+- **#50** Removed broken WebLinksAddon
+- **#1, #2, #3** Key bar auto-hide, IME/direct toggle, scrollable key row
+- **#10** iOS autocorrect/autocapitalize fixes
+
+Key open items:
 - **#5** SSH host key verification (highest real security risk)
 - **#4** Multi-session tab support
 - **#14** WebAuthn vault path for iOS
-- **#1–3** Key bar UX (auto-hide, two-row layout, IME/direct toggle) — ✅ done
-- **#10–13** iOS compatibility (autocorrect attrs, safe area, Apple PWA meta)
+- **#6–9** Security hardening (SSRF, SRI, CSP, ws:// block)
+- **#11–13** iOS safe area, Apple PWA meta, standalone
+- **#37** Touch scroll / tmux mouse protocol
