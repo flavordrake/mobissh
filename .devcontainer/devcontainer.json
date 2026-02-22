@@ -14,12 +14,9 @@
     }
   },
 
-  // Make the OAuth token available as an env var inside the container.
-  // Set CLAUDE_CODE_OAUTH_TOKEN as a Codespaces user secret at:
-  // github.com/settings/codespaces → "Codespaces secrets"
-  "remoteEnv": {
-    "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}"
-  },
+  // GitHub Codespaces automatically injects repository/user secrets as env vars —
+  // no remoteEnv needed. Set CLAUDE_CODE_OAUTH_TOKEN at:
+  // github.com/settings/codespaces (user secret, attached to this repo)
 
   // On every start: if the OAuth token is present in the environment,
   // remove any stale interactive-auth credential files that would shadow it.
