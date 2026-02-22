@@ -582,6 +582,8 @@ function initSessionMenu() {
     e.stopPropagation();
     if (!sshConnected) return; // no-op when not connected
     menu.classList.toggle('hidden');
+    // Restore IME focus so the soft keyboard doesn't collapse on menu open
+    setTimeout(focusIME, 50);
   });
 
   document.getElementById('sessionDisconnectBtn').addEventListener('click', () => {
