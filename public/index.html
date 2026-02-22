@@ -220,9 +220,10 @@
       <h2>Settings</h2>
 
       <label for="wsUrl">WebSocket server URL</label>
-      <input type="url" id="wsUrl" placeholder="ws://localhost:8080" inputmode="url" />
-      <p class="hint">The URL of your ssh-bridge server. Use <code>wss://</code> for secure connections.
+      <input type="url" id="wsUrl" placeholder="wss://your-server:8080" inputmode="url" />
+      <p class="hint">The URL of your ssh-bridge server. Only <code>wss://</code> (TLS) is accepted.
          When running in a Codespace, set this to the forwarded port URL for port 8080 with <code>wss://</code>.</p>
+      <p id="wsWarnInsecure" class="hint hidden" style="color: var(--danger);">⚠ ws:// is unencrypted. Use wss:// for connections over any untrusted network.</p>
       <button id="saveSettingsBtn" class="primary-btn">Save</button>
 
       <hr />
@@ -244,6 +245,33 @@
       <p class="hint">Persisted across sessions. Use the session menu to switch themes temporarily during a session.</p>
 
       <hr />
+
+      <div class="danger-zone">
+        <h3 class="danger-zone-title">Danger Zone</h3>
+        <p class="hint">These settings weaken security protections. Only change them if you understand the risks.</p>
+
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Allow <code>ws://</code> (unencrypted)</span>
+            <p class="hint">By default, <code>ws://</code> URLs are rejected at save time. Enable to allow them with a warning only. Browsers block <code>ws://</code> on HTTPS pages regardless.</p>
+          </div>
+          <label class="toggle" aria-label="Allow ws:// connections">
+            <input type="checkbox" id="dangerAllowWs" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Allow private/loopback addresses</span>
+            <p class="hint">⚠ Disables SSRF protection. Only enable if you need to SSH to RFC-1918 addresses (10.x, 172.16–31.x, 192.168.x) or localhost.</p>
+          </div>
+          <label class="toggle" aria-label="Allow private address connections">
+            <input type="checkbox" id="allowPrivateHosts" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
 
       <button id="clearDataBtn" class="danger-btn">Clear all data (keys, profiles, settings)</button>
     </div>

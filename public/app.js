@@ -625,6 +625,7 @@ function _openWebSocket() {
       authMsg.password = currentProfile.password || '';
     }
     if (currentProfile.initialCommand) authMsg.initialCommand = currentProfile.initialCommand;
+    if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
     ws.send(JSON.stringify(authMsg));
     terminal.writeln(ANSI.dim(`SSH → ${currentProfile.username}@${currentProfile.host}:${currentProfile.port || 22}…`));
   };
@@ -1458,15 +1459,57 @@ function initSettingsPanel() {
   const wsInput = document.getElementById('wsUrl');
   wsInput.value = localStorage.getItem('wsUrl') || getDefaultWsUrl();
 
+  // Show ws:// warning on load if the stored URL is insecure
+  const wsWarn = document.getElementById('wsWarnInsecure');
+  if (wsWarn && wsInput.value.startsWith('ws://')) {
+    wsWarn.classList.remove('hidden');
+  }
+
+  // ── Danger Zone toggles ──────────────────────────────────────────────────
+  // Each toggle persists to localStorage on change. New danger settings can
+  // be added here by following the same pattern.
+  const dangerAllowWsEl = document.getElementById('dangerAllowWs');
+  dangerAllowWsEl.checked = localStorage.getItem('dangerAllowWs') === 'true';
+  dangerAllowWsEl.addEventListener('change', () => {
+    localStorage.setItem('dangerAllowWs', dangerAllowWsEl.checked ? 'true' : 'false');
+  });
+
   document.getElementById('saveSettingsBtn').addEventListener('click', () => {
     const url = wsInput.value.trim();
-    if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
-      toast('URL must start with ws:// or wss://');
+    if (url.startsWith('ws://')) {
+      if (dangerAllowWsEl.checked) {
+        localStorage.setItem('wsUrl', url);
+        toast('Saved — warning: ws:// may be blocked by browsers on HTTPS');
+      } else {
+        toast('ws:// is not allowed — use wss:// (or enable in Danger Zone)');
+      }
+      return;
+    }
+    if (!url.startsWith('wss://')) {
+      toast('URL must start with wss://');
       return;
     }
     localStorage.setItem('wsUrl', url);
-    toast('Settings saved.');
+    if (url.startsWith('ws://')) {
+      if (wsWarn) wsWarn.classList.remove('hidden');
+      toast('Settings saved — warning: ws:// is unencrypted.');
+    } else {
+      if (wsWarn) wsWarn.classList.add('hidden');
+      toast('Settings saved.');
+    }
   });
+
+  // Danger zone: allow connections to private/loopback addresses
+  const allowPrivateEl = document.getElementById('allowPrivateHosts');
+  if (allowPrivateEl) {
+    allowPrivateEl.checked = localStorage.getItem('allowPrivateHosts') === 'true';
+    allowPrivateEl.addEventListener('change', () => {
+      localStorage.setItem('allowPrivateHosts', allowPrivateEl.checked);
+      toast(allowPrivateEl.checked
+        ? '⚠ Private address connections enabled.'
+        : 'SSRF protection re-enabled.');
+    });
+  }
 
   document.getElementById('fontSize').addEventListener('input', (e) => {
     applyFontSize(parseInt(e.target.value));

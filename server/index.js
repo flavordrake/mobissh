@@ -105,6 +105,27 @@ const wsPingInterval = setInterval(() => {
 
 wss.on('close', () => clearInterval(wsPingInterval));
 
+// ─── SSRF prevention (issue #6) ───────────────────────────────────────────────
+// Blocks RFC-1918 private, loopback, and link-local addresses by default.
+// Clients may send allowPrivate:true to override (controlled by the danger zone
+// setting in the frontend — only for users who explicitly opt in).
+
+function isPrivateHost(host) {
+  const h = host.trim().toLowerCase();
+  // Loopback / unspecified
+  if (h === 'localhost' || h === '::1' || h === '0.0.0.0') return true;
+  if (h.startsWith('127.')) return true;           // 127.0.0.0/8
+  // RFC-1918 ranges
+  if (h.startsWith('10.')) return true;            // 10.0.0.0/8
+  if (h.startsWith('192.168.')) return true;       // 192.168.0.0/16
+  // 172.16.0.0/12 = 172.16.x – 172.31.x
+  const m = h.match(/^172\.(\d+)\./);
+  if (m && parseInt(m[1]) >= 16 && parseInt(m[1]) <= 31) return true;
+  // IPv6 link-local and ULA
+  if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
+  return false;
+}
+
 wss.on('connection', (ws, req) => {
   ws.on('pong', () => { ws._pongPending = false; });
   const clientIP = req.socket.remoteAddress;
@@ -145,6 +166,12 @@ wss.on('connection', (ws, req) => {
 
     if (!cfg.host || !cfg.username) {
       send({ type: 'error', message: 'host and username are required' });
+      connecting = false;
+      return;
+    }
+
+    if (isPrivateHost(cfg.host) && !cfg.allowPrivate) {
+      send({ type: 'error', message: 'Connections to private/loopback addresses are blocked. Enable "Allow private addresses" in Settings → Danger Zone to override.' });
       connecting = false;
       return;
     }
