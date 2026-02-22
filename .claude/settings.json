@@ -1,10 +1,17 @@
 {
   "permissions": {
     "allow": [
+      "WebSearch",
+      "WebFetch",
       "Bash(curl:*)",
       "Bash(jobs)",
       "Bash(ls:*)",
       "Bash(sort:*)",
+      "Bash(sleep:*)",
+      "Bash(cat:*)",
+      "Bash(ps:*)",
+      "Bash(kill:*)",
+      "Bash(pkill:*)",
       "Bash(npm install)",
       "Bash(npm install:*)",
       "Bash(npm start)",
@@ -48,7 +55,8 @@
       "Bash(git checkout:*)",
       "Bash(git switch:*)",
       "Bash(git show:*)",
-      "Bash(git remote:*)"
+      "Bash(git remote:*)",
+      "Bash(git rebase:*)"
     ]
   }
 }
