@@ -133,6 +133,22 @@ html, body {
   touch-action: none; /* #37: prevent browser panning so JS touch-scroll handles all gestures */
 }
 
+/* IME composition preview strip — visible while composing, hidden otherwise */
+#imePreview {
+  background: var(--bg-card);
+  border-top: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  padding: 3px 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+#imePreview.hidden { display: none; }
+
 /* Key bar handle — ≡ | session identity | ▾ */
 #key-bar-handle {
   display: flex;
@@ -183,17 +199,17 @@ html, body {
 #sessionMenuBtn.connected { color: var(--text); }
 #sessionMenuBtn:active { color: var(--accent); }
 
-/* Session menu popover — slides down from handle strip */
+/* Session menu popover — floats upward above handle strip */
 #sessionMenu {
   position: absolute;
-  top: var(--keybar-handle-height);
+  bottom: 100%;
   left: 0;
   right: 0;
   z-index: 200;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 8px 8px;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
 }
 
 #sessionMenu.hidden { display: none; }

@@ -58,6 +58,8 @@
     <!-- Terminal panel -->
     <div id="panel-terminal" class="panel active">
       <div id="terminal"></div>
+      <!-- IME composition preview — shows word being composed before commit (#44) -->
+      <div id="imePreview" class="hidden" aria-live="polite" aria-atomic="true"></div>
       <!-- Handle strip: ≡ tab toggle | session identity (center) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
         <button id="tabBarToggleBtn" title="Show navigation tabs" aria-label="Show navigation">≡</button>

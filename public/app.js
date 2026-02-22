@@ -192,6 +192,20 @@ function applyFontSize(size) {
 function initIMEInput() {
   const ime = document.getElementById('imeInput');
 
+  // ── IME composition preview helper (#44) ──────────────────────────────
+  // Shows a strip above the handle bar with the word currently being composed.
+  // Called with text while composing; called with null/'' to hide.
+  function _imePreviewShow(text) {
+    const el = document.getElementById('imePreview');
+    if (!el) return;
+    if (text) {
+      el.textContent = text;
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  }
+
   // ── input event ─────────────────────────────────────────────────────────
   // Fires for: swipe-typed words, voice-dictated text, regular key presses.
   // For swipe and voice the full word (or sentence) arrives as ime.value.
@@ -200,7 +214,11 @@ function initIMEInput() {
   // path for printable chars. e.preventDefault() in the keydown direct-mode
   // branch already suppresses duplicates from Bluetooth keyboards.
   ime.addEventListener('input', (e) => {
-    if (isComposing) return; // Wait for compositionend
+    if (isComposing) {
+      // Update preview with current composition text while the user is typing
+      _imePreviewShow(ime.value || null);
+      return;
+    }
     const text = ime.value;
     ime.value = '';
     if (!text) return;
@@ -215,9 +233,16 @@ function initIMEInput() {
     }
   });
 
-  // ── IME composition (multi-step input methods, e.g. CJK) ──────────────
+  // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
   ime.addEventListener('compositionstart', () => {
     isComposing = true;
+    // Preview strip appears on first compositionupdate or input event
+  });
+
+  // compositionupdate: fires repeatedly as Gboard refines the word candidate.
+  // Update preview text as the user's finger moves across the swipe keyboard.
+  ime.addEventListener('compositionupdate', (e) => {
+    if (e.data) _imePreviewShow(e.data);
   });
 
   // On Android, GBoard wraps EVERY soft-keyboard tap in a composition cycle.
@@ -225,6 +250,7 @@ function initIMEInput() {
   // GBoard also sends '\n' for Enter via compositionend — remap to '\r'.
   ime.addEventListener('compositionend', (e) => {
     isComposing = false;
+    _imePreviewShow(null); // hide preview on commit
     const text = e.data || ime.value;
     ime.value = '';
     if (!text) return;
