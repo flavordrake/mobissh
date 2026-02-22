@@ -164,6 +164,10 @@ wss.on('connection', (ws, req) => {
           stream.on('close', () => {
             cleanup('SSH stream closed');
           });
+
+          if (cfg.initialCommand) {
+            stream.write(cfg.initialCommand + '\r');
+          }
         }
       );
     });

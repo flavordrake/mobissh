@@ -619,6 +619,7 @@ function _openWebSocket() {
     } else {
       authMsg.password = currentProfile.password || '';
     }
+    if (currentProfile.initialCommand) authMsg.initialCommand = currentProfile.initialCommand;
     ws.send(JSON.stringify(authMsg));
     terminal.writeln(ANSI.dim(`SSH → ${currentProfile.username}@${currentProfile.host}:${currentProfile.port || 22}…`));
   };
@@ -960,6 +961,7 @@ function initConnectForm() {
       password: document.getElementById('password').value,
       privateKey: document.getElementById('privateKey').value.trim(),
       passphrase: document.getElementById('passphrase').value,
+      initialCommand: document.getElementById('initialCommand').value.trim(),
     };
 
     // Clear credential fields immediately — prevents Chrome password manager
@@ -1221,6 +1223,7 @@ async function saveProfile(profile) {
     port: profile.port,
     username: profile.username,
     authType: profile.authType,
+    initialCommand: profile.initialCommand || '',
     vaultId,
   };
 
@@ -1283,6 +1286,7 @@ async function loadProfileIntoForm(idx) {
   document.getElementById('password').value = '';
   document.getElementById('privateKey').value = '';
   document.getElementById('passphrase').value = '';
+  document.getElementById('initialCommand').value = profile.initialCommand || '';
 
   if (profile.vaultId && profile.hasVaultCreds) {
     // If vault is locked, explicitly prompt biometric now
