@@ -401,12 +401,10 @@ function _openWebSocket() {
         terminal.writeln(ANSI.green('✓ Connected'));
         // Sync terminal size to server
         ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
-        // First connection: give the terminal focus and collapse nav chrome (#36)
-        if (!hasConnected) {
-          hasConnected = true;
-          tabBarVisible = false;
-          _applyTabBarVisibility();
-        }
+        // On every connect/reconnect: collapse nav chrome for continuous-feel (#36)
+        hasConnected = true;
+        tabBarVisible = false;
+        _applyTabBarVisibility();
         focusIME();
         break;
 
