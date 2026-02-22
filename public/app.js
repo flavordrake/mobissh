@@ -353,6 +353,52 @@ function initIMEInput() {
     if (!wasScroll) setTimeout(focusIME, 50);
   });
 
+  // ── Direct input (type="password") — char-by-char mode (#44/#48) ─────
+  // Chrome/Gboard treats password fields as no-swipe, no-autocorrect inputs,
+  // giving us the keyboard behaviour we want for direct/SSH-precise typing.
+  const directEl = document.getElementById('directInput');
+
+  directEl.addEventListener('input', () => {
+    const text = directEl.value;
+    directEl.value = '';
+    if (!text) return;
+    if (text === '\n') { sendSSHInput('\r'); return; }
+    if (ctrlActive) {
+      const code = text[0].toLowerCase().charCodeAt(0) - 96;
+      sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
+      setCtrlActive(false);
+    } else {
+      sendSSHInput(text);
+    }
+  });
+
+  directEl.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && !e.altKey && e.key.length === 1) {
+      const code = e.key.toLowerCase().charCodeAt(0) - 96;
+      if (code >= 1 && code <= 26) {
+        sendSSHInput(String.fromCharCode(code));
+        e.preventDefault();
+        return;
+      }
+    }
+    if (KEY_MAP[e.key]) {
+      sendSSHInput(KEY_MAP[e.key]);
+      e.preventDefault();
+      return;
+    }
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (ctrlActive) {
+        const code = e.key.toLowerCase().charCodeAt(0) - 96;
+        sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : e.key);
+        setCtrlActive(false);
+      } else {
+        sendSSHInput(e.key);
+      }
+      e.preventDefault();
+      directEl.value = '';
+    }
+  });
+
   // Refocus after key-bar buttons (except Ctrl which handles its own focus)
   document.querySelectorAll('.key-btn:not(.modifier)').forEach((btn) => {
     btn.addEventListener('click', () => setTimeout(focusIME, 50));
@@ -360,8 +406,11 @@ function initIMEInput() {
 }
 
 function focusIME() {
-  const ime = document.getElementById('imeInput');
-  ime.focus({ preventScroll: true });
+  // In direct mode, focus the password-type input — Chrome/Gboard disables
+  // swipe-to-type and word autocorrect on password fields, giving true
+  // char-by-char entry (#44/#48). In IME mode use the normal textarea.
+  const id = imeMode ? 'imeInput' : 'directInput';
+  document.getElementById(id).focus({ preventScroll: true });
 }
 
 function sendSSHInput(data) {
@@ -726,12 +775,13 @@ function toggleImeMode() {
   imeMode = !imeMode;
   localStorage.setItem('imeMode', imeMode ? 'ime' : 'direct');
   _applyImeModeUI();
+  focusIME(); // immediately switch focus to the appropriate input element
 }
 
 function _applyImeModeUI() {
   const btn = document.getElementById('keyModeBtn');
-  btn.textContent = imeMode ? 'IME' : 'DIR';
-  btn.classList.toggle('direct-mode', !imeMode);
+  btn.textContent = 'IME'; // label is always IME; colour signals state (#48)
+  btn.classList.toggle('ime-active', imeMode);
 }
 
 // ─── Vault ────────────────────────────────────────────────────────────────────

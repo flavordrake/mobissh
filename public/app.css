@@ -31,8 +31,11 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Hidden IME textarea — invisible but reachable by Android IME */
-#imeInput {
+/* Hidden IME inputs — invisible but reachable by Android IME.
+   #imeInput  = textarea, normal keyboard (IME/swipe mode)
+   #directInput = password input, suppresses swipe/autocorrect (direct mode) */
+#imeInput,
+#directInput {
   position: fixed;
   opacity: 0;
   top: 0;
@@ -290,10 +293,9 @@ html, body {
   margin-left: 4px;
 }
 
-.mode-btn.direct-mode {
-  background: var(--accent);
-  color: #000;
-  border-color: var(--accent);
+/* IME active = accent colour; off = dim (no label change, always "IME") */
+.mode-btn.ime-active {
+  color: var(--accent);
 }
 
 .key-btn {

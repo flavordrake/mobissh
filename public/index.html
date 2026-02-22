@@ -33,6 +33,17 @@
     spellcheck="false"
     tabindex="-1"
   ></textarea>
+  <!-- Direct-mode input: type="password" suppresses Gboard swipe and autocorrect (#44/#48) -->
+  <input
+    id="directInput"
+    type="password"
+    aria-label="SSH direct key input"
+    autocomplete="new-password"
+    data-lpignore="true"
+    data-1p-ignore
+    data-form-type="other"
+    tabindex="-1"
+  />
 
   <div id="app">
     <!-- Tab bar -->
