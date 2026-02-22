@@ -128,6 +128,7 @@ function initTerminal() {
     cursorBlink: true,
     scrollback: 5000,
     convertEol: false,
+    copyOnSelect: true,
   });
 
   fitAddon = new FitAddon.FitAddon();
@@ -136,19 +137,6 @@ function initTerminal() {
   fitAddon.fit();
 
   window.addEventListener('resize', handleResize);
-
-  // Auto-copy on selection: xterm.js canvas is pixel-rendered so the browser's
-  // long-press menu never offers "Copy". Instead we watch for selection changes
-  // and write the selected text to the clipboard automatically (#55).
-  let _selCopyTimer = null;
-  terminal.onSelectionChange(() => {
-    const sel = terminal.getSelection();
-    if (!sel) return;
-    clearTimeout(_selCopyTimer);
-    _selCopyTimer = setTimeout(() => {
-      navigator.clipboard.writeText(sel).then(() => toast('Copied')).catch(() => {});
-    }, 300);
-  });
 
   // Show welcome banner
   terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
