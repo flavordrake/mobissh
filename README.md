@@ -2,6 +2,8 @@
 
 A mobile-first SSH PWA (Progressive Web App) with a WebSocket bridge. Install to your Android or iOS home screen and use it like a native app over Tailscale or any network.
 
+> **Not a remote agent controller.** MobiSSH is standard SSH, made mobile-friendly. The bridge is a thin WebSocket proxy — it forwards bytes between your browser and the SSH server, nothing more. No command interception, no custom control plane, no proprietary protocol.
+
 ---
 
 ## Why this exists
@@ -99,6 +101,14 @@ MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). 
 | No Content-Security-Policy header | Medium | #8 |
 | `ws://` (plaintext WebSocket) accepted in settings | Low | #9 |
 | `PasswordCredential` not available on iOS — creds not persisted | Low | #14 |
+
+### Transparency and auditability
+
+MobiSSH makes no attempt to interpret, route, or log what you type. The WebSocket bridge (`server/index.js`) forwards raw bytes between the browser and `ssh2`; what goes in comes out unchanged on the other side. There is no command parser, no action log, no proprietary protocol layer.
+
+This matters in contrast to projects that expose AI coding agents over HTTP/WebSocket APIs with custom control planes. Those tools route AI actions through application-specific channels that can obscure what commands are actually running and introduce unauditable control paths. MobiSSH has no such layer — your SSH session is captured by the same standard audit tools (`sshd` logs, `auditd`, shell history) that record any direct SSH connection.
+
+**Threat model summary:** if you can trust SSH, you can trust MobiSSH.
 
 ### Trade-offs
 
