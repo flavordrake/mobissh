@@ -327,16 +327,12 @@ function initIMEInput() {
     }
   });
 
-  // ── Focus management + touch scroll (#32/#37) ─────────────────────────
-  // Gesture mapping:
-  //   tap          → focusIME (shows soft keyboard)
-  //   vertical swipe → WheelEvent on .xterm-viewport
-  //                    xterm.js handles this for BOTH scrollback (normal mode)
-  //                    and mouse protocol reporting (tmux mouse on / DECSET 1000/1002/1006)
-  //   horizontal swipe → ignored here (reserved for future tmux window gestures, #16)
-  //
-  // touch-action:none on #terminal prevents browser panning so we don't need
-  // e.preventDefault() — passive:true listeners are safe.
+  // ── Tap + swipe gestures on terminal (#32/#37/#16) ────────────────────
+  // SWIPE_GESTURES=false: disable custom scroll/swipe so native xterm.js
+  // scrollbar + long-press copy work unobstructed for testing.
+  // Set true to re-enable direct-manipulation scroll + tmux window swipe.
+  const SWIPE_GESTURES = false;
+
   const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
 
@@ -366,6 +362,7 @@ function initIMEInput() {
     if (!_scrollRafId) _scrollRafId = requestAnimationFrame(_flushScroll);
   }
 
+  if (SWIPE_GESTURES) {
   // capture:true — fires before xterm.js bubble-phase listeners on canvas/viewport,
   // so stopPropagation() inside xterm.js doesn't swallow our gesture tracking.
   termEl.addEventListener('touchstart', (e) => {
@@ -447,6 +444,7 @@ function initIMEInput() {
       }
     }
   }, { capture: true });
+  } // end if (SWIPE_GESTURES)
 
   // ── Direct input (type="password") — char-by-char mode (#44/#48) ─────
   // Chrome/Gboard treats password fields as no-swipe, no-autocorrect inputs,
