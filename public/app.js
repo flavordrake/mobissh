@@ -340,6 +340,35 @@ function initIMEInput() {
   const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
 
+  // ── DEBUG #37: on-screen touch event instrumentation ──────────────────
+  // Persistent overlay showing exactly which step in the chain fires.
+  // Remove this block once scroll is confirmed working.
+  const _dbgEl = document.createElement('div');
+  Object.assign(_dbgEl.style, {
+    position: 'fixed', top: '8px', right: '8px',
+    background: 'rgba(0,0,0,0.88)', color: '#00ff88',
+    fontFamily: 'monospace', fontSize: '12px',
+    padding: '6px 10px', borderRadius: '6px',
+    zIndex: '9999', pointerEvents: 'none',
+    lineHeight: '1.7', whiteSpace: 'pre',
+    border: '1px solid #333',
+  });
+  document.body.appendChild(_dbgEl);
+  const _dc = { start: 0, move: 0, lock: 0, vpFound: 0, vpMiss: 0, wheel: 0 };
+  let _dbgLast = 'waiting';
+  function _dbgPaint() {
+    _dbgEl.textContent =
+      `[touch debug #37]\n` +
+      `start  ${_dc.start}\n` +
+      `move   ${_dc.move}\n` +
+      `lock   ${_dc.lock}   (>12px vert)\n` +
+      `vp✓    ${_dc.vpFound}  vp✗ ${_dc.vpMiss}\n` +
+      `wheel  ${_dc.wheel}\n` +
+      `last: ${_dbgLast}`;
+  }
+  _dbgPaint();
+  // ── end DEBUG block ───────────────────────────────────────────────────
+
   let _touchStartY = null, _touchStartX = null, _lastTouchY = null, _isTouchScroll = false;
 
   termEl.addEventListener('touchstart', (e) => {
@@ -347,6 +376,7 @@ function initIMEInput() {
     _touchStartX = e.touches[0].clientX;
     _lastTouchY  = _touchStartY;
     _isTouchScroll = false;
+    _dc.start++; _dbgLast = 'touchstart'; _dbgPaint(); // DEBUG #37
   }, { passive: true });
 
   termEl.addEventListener('touchmove', (e) => {
@@ -354,21 +384,27 @@ function initIMEInput() {
     const totalDy = _touchStartY - e.touches[0].clientY;
     const totalDx = _touchStartX - e.touches[0].clientX;
     const dy = _lastTouchY - e.touches[0].clientY;
+    _dc.move++; // DEBUG #37
 
     // Lock to vertical scroll once gesture exceeds tap threshold and is more vertical than horizontal
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
       _isTouchScroll = true;
+      _dc.lock++; _dbgLast = 'locked'; _dbgPaint(); // DEBUG #37
     }
 
     if (_isTouchScroll) {
       const vp = document.querySelector('#terminal .xterm-viewport');
       if (vp) {
+        _dc.vpFound++; // DEBUG #37
         vp.dispatchEvent(new WheelEvent('wheel', {
           deltaY: dy * 3,
           deltaMode: WheelEvent.DOM_DELTA_PIXEL,
           bubbles: true,
           cancelable: true,
         }));
+        _dc.wheel++; _dbgLast = `wheel dy=${dy.toFixed(0)}`; _dbgPaint(); // DEBUG #37
+      } else {
+        _dc.vpMiss++; _dbgLast = 'vp not found!'; _dbgPaint(); // DEBUG #37
       }
     }
     _lastTouchY = e.touches[0].clientY;
@@ -378,6 +414,7 @@ function initIMEInput() {
     const wasScroll = _isTouchScroll;
     _touchStartY = _touchStartX = _lastTouchY = null;
     _isTouchScroll = false;
+    _dbgLast = `end (scroll=${wasScroll})`; _dbgPaint(); // DEBUG #37
     if (!wasScroll) setTimeout(focusIME, 50);
   });
 
