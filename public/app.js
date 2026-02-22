@@ -578,12 +578,15 @@ function initSessionMenu() {
   const menuBtn = document.getElementById('sessionMenuBtn');
   const menu    = document.getElementById('sessionMenu');
 
+  // Prevent focus theft: mousedown is when the browser moves focus to the clicked
+  // element. Cancelling it keeps #imeInput focused (keyboard stays visible) while
+  // still allowing the click event to fire normally.
+  menuBtn.addEventListener('mousedown', (e) => e.preventDefault());
+
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!sshConnected) return; // no-op when not connected
     menu.classList.toggle('hidden');
-    // Restore IME focus so the soft keyboard doesn't collapse on menu open
-    setTimeout(focusIME, 50);
   });
 
   document.getElementById('sessionDisconnectBtn').addEventListener('click', () => {
