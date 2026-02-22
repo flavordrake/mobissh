@@ -343,13 +343,12 @@ function initIMEInput() {
   let _touchStartY = null, _touchStartX = null;
   let _lastTouchY  = null, _lastTouchX  = null;
   let _isTouchScroll = false;
-  let _scrollRemainder = 0; // sub-line pixel accumulator
-  let _pendingLines = 0;    // lines queued for next rAF flush
-  let _pendingSGR = null;   // { btn, col, row, count } queued for next rAF flush
+  let _scrolledLines = 0; // lines already scrolled in this gesture (absolute from start)
+  let _pendingLines = 0;  // delta queued for next rAF flush
+  let _pendingSGR = null; // { btn, col, row, count } queued for next rAF flush
   let _scrollRafId = null;
 
-  // Flush accumulated scroll once per animation frame — prevents event flooding
-  // when touchmove fires faster than xterm.js / the SSH pipe can drain.
+  // Flush once per animation frame — prevents flooding xterm.js / the SSH pipe.
   function _flushScroll() {
     _scrollRafId = null;
     if (_pendingLines !== 0 && terminal) {
@@ -371,8 +370,7 @@ function initIMEInput() {
     _touchStartY = _lastTouchY = e.touches[0].clientY;
     _touchStartX = _lastTouchX = e.touches[0].clientX;
     _isTouchScroll = false;
-    // _scrollRemainder intentionally NOT reset — sub-line pixels carry across gestures
-    // so a series of short swipes accumulates toward the next line naturally.
+    _scrolledLines = 0;
     _pendingLines = 0;
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
@@ -382,7 +380,6 @@ function initIMEInput() {
     if (_touchStartY === null) return;
     const totalDy = _touchStartY - e.touches[0].clientY;
     const totalDx = _touchStartX - e.touches[0].clientX;
-    const dy = _lastTouchY - e.touches[0].clientY;
 
     // Lock to vertical scroll once gesture is clearly more vertical than horizontal
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
@@ -390,31 +387,32 @@ function initIMEInput() {
     }
 
     if (_isTouchScroll && terminal) {
-      // ~20px per line feels natural on mobile (slightly coarser than raw cell height).
+      // Direct manipulation: compute where the finger IS relative to where it started,
+      // then dispatch only the delta from where we've already scrolled to.
+      // totalDy > 0 = finger went up = content should move up = newer content.
+      // totalDy < 0 = finger went down = content should move down = older content.
       const cellH = Math.max(20, terminal.options.fontSize * 1.5);
-      _scrollRemainder += dy;
-      const lines = Math.trunc(_scrollRemainder / cellH);
-      if (lines !== 0) {
-        _scrollRemainder -= lines * cellH;
+      const targetLines = Math.round(totalDy / cellH);
+      const delta = targetLines - _scrolledLines;
+      if (delta !== 0) {
+        _scrolledLines = targetLines;
         const mouseMode = terminal.modes && terminal.modes.mouseTrackingMode;
         if (mouseMode && mouseMode !== 'none') {
-          // Accumulate SGR wheel events — flush once per frame.
-          // Direct manipulation: swipe down (lines<0) → older = wheel up (64).
-          //                      swipe up   (lines>0) → newer = wheel down (65).
-          const btn = lines < 0 ? 64 : 65;
+          // delta > 0 (newer) → wheel down (65); delta < 0 (older) → wheel up (64).
+          const btn = delta > 0 ? 65 : 64;
           const rect = termEl.getBoundingClientRect();
           const col = Math.max(1, Math.min(terminal.cols,
             Math.floor((e.touches[0].clientX - rect.left) / (rect.width  / terminal.cols)) + 1));
           const row = Math.max(1, Math.min(terminal.rows,
             Math.floor((e.touches[0].clientY - rect.top)  / (rect.height / terminal.rows)) + 1));
+          const count = Math.abs(delta);
           if (_pendingSGR && _pendingSGR.btn === btn) {
-            _pendingSGR.count += Math.abs(lines);
+            _pendingSGR.count += count;
           } else {
-            _pendingSGR = { btn, col, row, count: Math.abs(lines) };
+            _pendingSGR = { btn, col, row, count };
           }
         } else {
-          // Direct manipulation: swipe down (lines<0) → older → scrollLines(negative).
-          _pendingLines += lines;
+          _pendingLines += delta;
         }
         _scheduleScrollFlush();
       }
@@ -432,7 +430,7 @@ function initIMEInput() {
 
     _touchStartY = _touchStartX = _lastTouchY = _lastTouchX = null;
     _isTouchScroll = false;
-    _scrollRemainder = 0;
+    _scrolledLines = 0;
     _pendingLines = 0;
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
