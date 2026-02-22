@@ -521,6 +521,7 @@ function _openWebSocket() {
       case 'connected':
         sshConnected = true;
         reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+        acquireWakeLock();
         setStatus('connected', `${currentProfile.username}@${currentProfile.host}`);
         terminal.writeln(ANSI.green('✓ Connected'));
         // Sync terminal size to server
@@ -612,9 +613,44 @@ function stopKeepAlive() {
   }
 }
 
+// ── Screen Wake Lock (#43) ────────────────────────────────────────────────────
+// Prevents Chrome from throttling/killing the PWA while an SSH session is live.
+// WakeLock is released automatically by the browser when the tab hides, so we
+// reacquire it on visibilitychange → visible.
+let _wakeLock = null;
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    _wakeLock = await navigator.wakeLock.request('screen');
+  } catch (_) {} // denied (low battery, etc.) — fail silently
+}
+
+function releaseWakeLock() {
+  if (_wakeLock) {
+    _wakeLock.release().catch(() => {});
+    _wakeLock = null;
+  }
+}
+
+// visibilitychange: immediately reconnect if the session dropped while hidden,
+// and reacquire the wake lock if a session is active.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (sshConnected) acquireWakeLock();
+    if (currentProfile && (!ws || ws.readyState !== WebSocket.OPEN)) {
+      cancelReconnect();
+      _openWebSocket();
+    }
+  } else {
+    releaseWakeLock(); // browser may do this automatically; belt-and-suspenders
+  }
+});
+
 function disconnect() {
   cancelReconnect();
   stopKeepAlive();
+  releaseWakeLock();
   currentProfile = null;
   sshConnected = false;
   wsConnected = false;
