@@ -354,7 +354,7 @@ function initIMEInput() {
     border: '1px solid #333',
   });
   document.body.appendChild(_dbgEl);
-  const _dc = { start: 0, move: 0, lock: 0, vpFound: 0, vpMiss: 0, wheel: 0 };
+  const _dc = { start: 0, move: 0, lock: 0, lines: 0, totalDy: 0 };
   let _dbgLast = 'waiting';
   function _dbgPaint() {
     _dbgEl.textContent =
@@ -362,21 +362,23 @@ function initIMEInput() {
       `start  ${_dc.start}\n` +
       `move   ${_dc.move}\n` +
       `lock   ${_dc.lock}   (>12px vert)\n` +
-      `vp✓    ${_dc.vpFound}  vp✗ ${_dc.vpMiss}\n` +
-      `wheel  ${_dc.wheel}\n` +
+      `lines  ${_dc.lines}  (scrollLines)\n` +
+      `totalDy ${_dc.totalDy.toFixed(0)}px\n` +
       `last: ${_dbgLast}`;
   }
   _dbgPaint();
   // ── end DEBUG block ───────────────────────────────────────────────────
 
   let _touchStartY = null, _touchStartX = null, _lastTouchY = null, _isTouchScroll = false;
+  let _scrollRemainder = 0; // sub-line accumulator for smooth scroll
 
   termEl.addEventListener('touchstart', (e) => {
     _touchStartY = e.touches[0].clientY;
     _touchStartX = e.touches[0].clientX;
     _lastTouchY  = _touchStartY;
     _isTouchScroll = false;
-    _dc.start++; _dbgLast = 'touchstart'; _dbgPaint(); // DEBUG #37
+    _scrollRemainder = 0;
+    _dc.start++; _dc.totalDy = 0; _dbgLast = 'touchstart'; _dbgPaint(); // DEBUG #37
   }, { passive: true });
 
   termEl.addEventListener('touchmove', (e) => {
@@ -384,7 +386,7 @@ function initIMEInput() {
     const totalDy = _touchStartY - e.touches[0].clientY;
     const totalDx = _touchStartX - e.touches[0].clientX;
     const dy = _lastTouchY - e.touches[0].clientY;
-    _dc.move++; // DEBUG #37
+    _dc.move++; _dc.totalDy = totalDy; // DEBUG #37
 
     // Lock to vertical scroll once gesture exceeds tap threshold and is more vertical than horizontal
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
@@ -392,19 +394,17 @@ function initIMEInput() {
       _dc.lock++; _dbgLast = 'locked'; _dbgPaint(); // DEBUG #37
     }
 
-    if (_isTouchScroll) {
-      const vp = document.querySelector('#terminal .xterm-viewport');
-      if (vp) {
-        _dc.vpFound++; // DEBUG #37
-        vp.dispatchEvent(new WheelEvent('wheel', {
-          deltaY: dy * 3,
-          deltaMode: WheelEvent.DOM_DELTA_PIXEL,
-          bubbles: true,
-          cancelable: true,
-        }));
-        _dc.wheel++; _dbgLast = `wheel dy=${dy.toFixed(0)}`; _dbgPaint(); // DEBUG #37
-      } else {
-        _dc.vpMiss++; _dbgLast = 'vp not found!'; _dbgPaint(); // DEBUG #37
+    if (_isTouchScroll && terminal) {
+      // Use terminal.scrollLines() directly — synthetic WheelEvents are ignored by xterm.js 5.x.
+      // Accumulate sub-line pixels to avoid rounding every tiny touchmove to 0.
+      // Positive dy = finger moved up = scroll buffer UP (older content) = negative lines.
+      const cellH = terminal.options.fontSize * 1.2;
+      _scrollRemainder += dy;
+      const lines = Math.trunc(_scrollRemainder / cellH);
+      if (lines !== 0) {
+        terminal.scrollLines(lines);
+        _scrollRemainder -= lines * cellH;
+        _dc.lines += Math.abs(lines); _dbgLast = `scroll ${lines}L`; _dbgPaint(); // DEBUG #37
       }
     }
     _lastTouchY = e.touches[0].clientY;
@@ -414,6 +414,7 @@ function initIMEInput() {
     const wasScroll = _isTouchScroll;
     _touchStartY = _touchStartX = _lastTouchY = null;
     _isTouchScroll = false;
+    _scrollRemainder = 0;
     _dbgLast = `end (scroll=${wasScroll})`; _dbgPaint(); // DEBUG #37
     if (!wasScroll) setTimeout(focusIME, 50);
   });
