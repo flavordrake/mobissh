@@ -247,6 +247,15 @@ html, body {
 .session-menu-item:active { background: var(--bg-card); }
 .session-menu-item.danger { color: var(--danger); }
 
+/* Recording controls (#54) */
+.session-menu-item.rec-start { color: var(--text); }
+.session-menu-item.rec-stop  { color: var(--danger); animation: recPulse 1.2s ease-in-out infinite; }
+
+@keyframes recPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
 /* Font size row — inline +/− controls that keep menu open */
 .font-size-row {
   display: flex;
