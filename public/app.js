@@ -1042,6 +1042,38 @@ function initKeyBar() {
     toggleImeMode();
     focusIME();
   });
+
+  // Backspace button: tap → \x7f, long-press (500 ms) → Ctrl+W (\x17 — word erase)
+  const bkspBtn = document.getElementById('keyBksp');
+  let _bkspTimer = null;
+
+  bkspBtn.addEventListener('touchstart', (e) => {
+    e.preventDefault(); // suppress click so we don't double-send
+    _bkspTimer = setTimeout(() => {
+      sendSSHInput('\x17'); // Ctrl+W — word erase
+      _bkspTimer = null;
+      focusIME();
+    }, 500);
+  }, { passive: false });
+
+  bkspBtn.addEventListener('touchend', () => {
+    if (_bkspTimer) {
+      clearTimeout(_bkspTimer);
+      _bkspTimer = null;
+      sendSSHInput('\x7f'); // regular backspace
+      focusIME();
+    }
+  });
+
+  bkspBtn.addEventListener('touchcancel', () => {
+    if (_bkspTimer) { clearTimeout(_bkspTimer); _bkspTimer = null; }
+  });
+
+  // Desktop fallback: click → regular backspace (touch path handles mobile)
+  bkspBtn.addEventListener('click', () => {
+    sendSSHInput('\x7f');
+    focusIME();
+  });
 }
 
 function toggleKeyBar() {
