@@ -203,16 +203,22 @@ html, body {
 #sessionMenuBtn:active { color: var(--accent); }
 
 /* Session menu popover — floats upward above handle strip */
+@keyframes sessionMenuSlideUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 #sessionMenu {
   position: absolute;
-  bottom: 100%;
+  bottom: calc(100% + 4px); /* 4px gap above the handle strip */
   left: 0;
   right: 0;
   z-index: 200;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
+  border-radius: 8px;
+  overflow: hidden;
+  animation: sessionMenuSlideUp 0.15s ease-out;
 }
 
 #sessionMenu.hidden { display: none; }
