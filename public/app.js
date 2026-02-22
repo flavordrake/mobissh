@@ -26,6 +26,58 @@ const RECONNECT = {
   BACKOFF_FACTOR: 1.5,
 };
 
+// ─── Terminal themes (#47) ────────────────────────────────────────────────────
+
+const THEMES = {
+  dark: {
+    label: 'Dark',
+    theme: {
+      background: '#000000',
+      foreground: '#e0e0e0',
+      cursor: '#00ff88',
+      selectionBackground: '#00ff8844',
+    },
+  },
+  light: {
+    label: 'Light',
+    theme: {
+      background: '#ffffff',
+      foreground: '#1a1a1a',
+      cursor: '#0055cc',
+      selectionBackground: '#0055cc44',
+    },
+  },
+  solarizedDark: {
+    label: 'Solarized Dark',
+    theme: {
+      background: '#002b36',
+      foreground: '#839496',
+      cursor: '#268bd2',
+      selectionBackground: '#268bd244',
+    },
+  },
+  solarizedLight: {
+    label: 'Solarized Light',
+    theme: {
+      background: '#fdf6e3',
+      foreground: '#657b83',
+      cursor: '#268bd2',
+      selectionBackground: '#268bd244',
+    },
+  },
+  highContrast: {
+    label: 'High Contrast',
+    theme: {
+      background: '#000000',
+      foreground: '#ffffff',
+      cursor: '#ffff00',
+      selectionBackground: '#ffff0044',
+    },
+  },
+};
+
+const THEME_ORDER = ['dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast'];
+
 // ANSI escape sequences for terminal colouring
 const ANSI = {
   green: (s) => `\x1b[32m${s}\x1b[0m`,
@@ -84,6 +136,7 @@ let keyBarVisible = true;  // key bar show/hide state (#1)
 let imeMode = true;        // true = IME/swipe, false = direct char entry (#2)
 let tabBarVisible = true;  // visible on cold start (#36); auto-hides after first connect
 let hasConnected = false;  // true after first successful SSH session (#36)
+let activeThemeName = 'dark'; // current terminal theme key (#47)
 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
@@ -115,16 +168,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initTerminal() {
   const fontSize = parseInt(localStorage.getItem('fontSize')) || 14;
+  const savedTheme = localStorage.getItem('termTheme') || 'dark';
+  activeThemeName = THEMES[savedTheme] ? savedTheme : 'dark';
 
   terminal = new Terminal({
     fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
     fontSize,
-    theme: {
-      background: '#000000',
-      foreground: '#e0e0e0',
-      cursor: '#00ff88',
-      selectionBackground: '#00ff8844',
-    },
+    theme: THEMES[activeThemeName].theme,
     cursorBlink: true,
     scrollback: 5000,
     convertEol: false,
@@ -213,6 +263,20 @@ function applyFontSize(size) {
       ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
     }
   }
+}
+
+function applyTheme(name, { persist = false } = {}) {
+  const t = THEMES[name];
+  if (!t) return;
+  activeThemeName = name;
+  if (terminal) terminal.options.theme = t.theme;
+  if (persist) localStorage.setItem('termTheme', name);
+  // Sync session menu label
+  const menuBtn = document.getElementById('sessionThemeBtn');
+  if (menuBtn) menuBtn.textContent = `Theme: ${t.label} ▸`;
+  // Sync settings selector
+  const sel = document.getElementById('termThemeSelect');
+  if (sel) sel.value = name;
 }
 
 // ─── IME Input Layer ──────────────────────────────────────────────────────────
@@ -733,6 +797,11 @@ function initSessionMenu() {
   const menuBtn = document.getElementById('sessionMenuBtn');
   const menu    = document.getElementById('sessionMenu');
 
+  // Sync session menu theme label with the active theme
+  const initialTheme = THEMES[activeThemeName];
+  const themeBtn = document.getElementById('sessionThemeBtn');
+  if (themeBtn && initialTheme) themeBtn.textContent = `Theme: ${initialTheme.label} ▸`;
+
   // Prevent focus theft only when the keyboard is already visible (#51).
   // If keyboard is dismissed, let focus move naturally so Android won't re-show it.
   menuBtn.addEventListener('mousedown', (e) => {
@@ -799,6 +868,14 @@ function initSessionMenu() {
   document.getElementById('sessionDisconnectBtn').addEventListener('click', () => {
     closeMenu();
     disconnect();
+  });
+
+  // Theme cycle — session-only (no localStorage write)
+  document.getElementById('sessionThemeBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const idx = THEME_ORDER.indexOf(activeThemeName);
+    const next = THEME_ORDER[(idx + 1) % THEME_ORDER.length];
+    applyTheme(next, { persist: false });
   });
 
   // Dismiss on outside tap
@@ -1279,6 +1356,12 @@ function initSettingsPanel() {
 
   document.getElementById('fontSize').addEventListener('input', (e) => {
     applyFontSize(parseInt(e.target.value));
+  });
+
+  const themeSelect = document.getElementById('termThemeSelect');
+  themeSelect.value = localStorage.getItem('termTheme') || 'dark';
+  themeSelect.addEventListener('change', () => {
+    applyTheme(themeSelect.value, { persist: true });
   });
 
   document.getElementById('clearDataBtn').addEventListener('click', () => {

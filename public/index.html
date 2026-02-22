@@ -88,6 +88,7 @@
           <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
           <button id="sessionCtrlCBtn"      class="session-menu-item" role="menuitem">Send Ctrl+C</button>
           <button id="sessionCtrlZBtn"      class="session-menu-item" role="menuitem">Send Ctrl+Z</button>
+          <button id="sessionThemeBtn"      class="session-menu-item" role="menuitem">Theme: Dark ▸</button>
           <button id="sessionReconnectBtn"  class="session-menu-item" role="menuitem">Reconnect</button>
           <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
         </div>
@@ -211,6 +212,18 @@
       <label for="fontSize">Terminal font size</label>
       <input type="range" id="fontSize" min="10" max="24" value="14" />
       <span id="fontSizeValue">14px</span>
+
+      <hr />
+
+      <label for="termThemeSelect">Default terminal theme</label>
+      <select id="termThemeSelect">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="solarizedDark">Solarized Dark</option>
+        <option value="solarizedLight">Solarized Light</option>
+        <option value="highContrast">High Contrast</option>
+      </select>
+      <p class="hint">Persisted across sessions. Use the session menu to switch themes temporarily during a session.</p>
 
       <hr />
 
