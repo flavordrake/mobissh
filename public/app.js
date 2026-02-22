@@ -137,6 +137,19 @@ function initTerminal() {
 
   window.addEventListener('resize', handleResize);
 
+  // Auto-copy on selection: xterm.js canvas is pixel-rendered so the browser's
+  // long-press menu never offers "Copy". Instead we watch for selection changes
+  // and write the selected text to the clipboard automatically (#55).
+  let _selCopyTimer = null;
+  terminal.onSelectionChange(() => {
+    const sel = terminal.getSelection();
+    if (!sel) return;
+    clearTimeout(_selCopyTimer);
+    _selCopyTimer = setTimeout(() => {
+      navigator.clipboard.writeText(sel).then(() => toast('Copied')).catch(() => {});
+    }, 300);
+  });
+
   // Show welcome banner
   terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
   terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
@@ -754,6 +767,16 @@ function initSessionMenu() {
   document.getElementById('fontIncBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     applyFontSize((parseInt(localStorage.getItem('fontSize')) || 14) + 1);
+  });
+
+  document.getElementById('sessionCopyBtn').addEventListener('click', () => {
+    const sel = terminal && terminal.getSelection();
+    if (sel) {
+      navigator.clipboard.writeText(sel).then(() => toast('Copied')).catch(() => toast('Copy failed'));
+    } else {
+      toast('No text selected');
+    }
+    closeMenu();
   });
 
   document.getElementById('sessionResetBtn').addEventListener('click', () => {
