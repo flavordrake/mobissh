@@ -442,10 +442,12 @@ function initIMEInput() {
   });
 
   // ── Tap + swipe gestures on terminal (#32/#37/#16) ────────────────────
-  // SWIPE_GESTURES=false: disable custom scroll/swipe so native xterm.js
-  // scrollbar + long-press copy work unobstructed for testing.
-  // Set true to re-enable direct-manipulation scroll + tmux window swipe.
-  const SWIPE_GESTURES = false;
+  // SWIPE_GESTURES: JS touch→scroll handler.  touch-action:none on #terminal
+  // (#37) blocks native pan; this handler provides vertical scroll (both tmux
+  // mouse-mode SGR sequences and xterm.js local scrollback) and horizontal
+  // swipe for tmux window switching (#16).  Set false only to test native
+  // xterm.js scrollbar / long-press copy without our gesture layer.
+  const SWIPE_GESTURES = true;
 
   const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
