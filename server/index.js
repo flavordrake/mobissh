@@ -67,6 +67,16 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store',
+      'Content-Security-Policy': [
+        "default-src 'self'",
+        "script-src 'self' https://cdn.jsdelivr.net",
+        "style-src 'self' https://cdn.jsdelivr.net",
+        "font-src 'self' https://cdn.jsdelivr.net",
+        "connect-src 'self' wss: ws:",
+        "img-src 'self' data: blob:",
+        "worker-src 'self'",
+        "frame-ancestors 'none'",
+      ].join('; '),
     });
     res.end(data);
   });
