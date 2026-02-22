@@ -1,0 +1,41 @@
+{
+  "name": "MobiSSH",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "SSH Bridge",
+      "onAutoForward": "notify"
+    }
+  },
+
+  // Make the OAuth token available as an env var inside the container.
+  // Set CLAUDE_CODE_OAUTH_TOKEN as a Codespaces user secret at:
+  // github.com/settings/codespaces → "Codespaces secrets"
+  "remoteEnv": {
+    "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}"
+  },
+
+  // On every start: if the OAuth token is present in the environment,
+  // remove any stale interactive-auth credential files that would shadow it.
+  // This prevents the "please log in" prompt when the token is already set.
+  "postStartCommand": "[ -n \"$CLAUDE_CODE_OAUTH_TOKEN\" ] && rm -f ~/.claude.json ~/.config/claude-code/auth.json 2>/dev/null; true",
+
+  "postCreateCommand": "cd server && npm install",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropics.claude-code"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
