@@ -371,7 +371,8 @@ function initIMEInput() {
     _touchStartY = _lastTouchY = e.touches[0].clientY;
     _touchStartX = _lastTouchX = e.touches[0].clientX;
     _isTouchScroll = false;
-    _scrollRemainder = 0;
+    // _scrollRemainder intentionally NOT reset — sub-line pixels carry across gestures
+    // so a series of short swipes accumulates toward the next line naturally.
     _pendingLines = 0;
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
