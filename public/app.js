@@ -398,8 +398,9 @@ function initIMEInput() {
         const mouseMode = terminal.modes && terminal.modes.mouseTrackingMode;
         if (mouseMode && mouseMode !== 'none') {
           // Accumulate SGR wheel events — flush once per frame.
-          // Swipe up (lines>0) → wheel up → button 64; down → button 65.
-          const btn = lines > 0 ? 64 : 65;
+          // Direct manipulation: swipe down (lines<0) → older = wheel up (64).
+          //                      swipe up   (lines>0) → newer = wheel down (65).
+          const btn = lines < 0 ? 64 : 65;
           const rect = termEl.getBoundingClientRect();
           const col = Math.max(1, Math.min(terminal.cols,
             Math.floor((e.touches[0].clientX - rect.left) / (rect.width  / terminal.cols)) + 1));
@@ -411,8 +412,8 @@ function initIMEInput() {
             _pendingSGR = { btn, col, row, count: Math.abs(lines) };
           }
         } else {
-          // Negate: lines>0 (swipe up) → older content → scrollLines negative.
-          _pendingLines -= lines;
+          // Direct manipulation: swipe down (lines<0) → older → scrollLines(negative).
+          _pendingLines += lines;
         }
         _scheduleScrollFlush();
       }
