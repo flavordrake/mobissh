@@ -12,7 +12,7 @@
   --text-dim: #888;
   --border: #2a2a4a;
   --tab-height: 56px;
-  --keybar-height: 80px;     /* two rows: 36px status + 44px keys */
+  --keybar-height: 44px;     /* single key row */
   --keybar-handle-height: 20px;
 }
 
@@ -244,18 +244,7 @@ html, body {
 
 #key-bar.hidden { height: 0; }
 
-/* Row 1: status indicator (flex: 1) + mode toggle */
-#key-status-row {
-  display: flex;
-  align-items: center;
-  height: 36px;
-  flex-shrink: 0;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border);
-  gap: 8px;
-}
-
-/* Row 2: scrollable special-key buttons */
+/* Single key row: scrollable keys + right-anchored IME toggle */
 #key-keys-row {
   display: flex;
   align-items: center;
@@ -275,13 +264,14 @@ html, body {
 
 #key-scroll::-webkit-scrollbar { display: none; }
 
-/* IME / direct-mode toggle button */
+/* IME / direct-mode toggle button — right-anchored in key row */
 .mode-btn {
   font-size: 11px;
   padding: 0 8px;
   height: 28px;
   color: var(--text-dim);
   flex-shrink: 0;
+  margin-left: 4px;
 }
 
 .mode-btn.direct-mode {

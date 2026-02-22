@@ -63,21 +63,18 @@
         <button id="tabBarToggleBtn" title="Show navigation tabs" aria-label="Show navigation">≡</button>
         <button id="sessionMenuBtn" title="Session menu" aria-label="Session menu">MobiSSH</button>
         <span id="handleChevron" title="Toggle key bar" role="button" aria-label="Toggle key bar">▾</span>
+        <!-- Session menu anchored inside the positioned parent so absolute positioning works -->
+        <div id="sessionMenu" class="hidden" role="menu">
+          <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
+        </div>
       </div>
-      <!-- Session menu — opens below handle strip -->
-      <div id="sessionMenu" class="hidden" role="menu">
-        <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
+      <!-- Hidden status indicator kept for JS setStatus() compatibility -->
+      <div id="statusIndicator" class="status disconnected" style="display:none" aria-hidden="true">
+        <span id="statusDot"></span>
+        <span id="statusText">Off</span>
       </div>
       <div id="key-bar">
-        <!-- Row 1: status indicator + mode toggle -->
-        <div id="key-status-row">
-          <div id="statusIndicator" class="status disconnected">
-            <span id="statusDot"></span>
-            <span id="statusText">Off</span>
-          </div>
-          <button id="keyModeBtn" class="key-btn mode-btn" title="Toggle IME / direct key entry">IME</button>
-        </div>
-        <!-- Row 2: scrollable special keys -->
+        <!-- Single row: scrollable special keys + right-anchored IME toggle -->
         <div id="key-keys-row">
           <div id="key-scroll">
             <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctrl</button>
@@ -89,6 +86,7 @@
             <button id="keyLeft"  class="key-btn" title="Left">←</button>
             <button id="keyRight" class="key-btn" title="Right">→</button>
           </div>
+          <button id="keyModeBtn" class="key-btn mode-btn" title="Toggle IME / direct key entry">IME</button>
         </div>
       </div>
     </div>

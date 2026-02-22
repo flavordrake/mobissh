@@ -310,6 +310,11 @@ function initIMEInput() {
           bubbles: true,
           cancelable: true,
         }));
+        // DEBUG #37: flash border to confirm scroll events are firing — remove when confirmed
+        const termEl2 = document.getElementById('terminal');
+        termEl2.style.outline = `2px solid ${dy > 0 ? '#ff4' : '#4ff'}`;
+        clearTimeout(termEl2._scrollDbgTimer);
+        termEl2._scrollDbgTimer = setTimeout(() => { termEl2.style.outline = ''; }, 300);
       }
     }
     _lastTouchY = e.touches[0].clientY;
@@ -689,7 +694,7 @@ function _applyKeyBarVisibility() {
   // Keep --keybar-height CSS var in sync so toast positions correctly
   document.documentElement.style.setProperty(
     '--keybar-height',
-    keyBarVisible ? '80px' : '0px'
+    keyBarVisible ? '44px' : '0px'
   );
 }
 
