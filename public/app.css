@@ -321,6 +321,7 @@ html, body {
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-x; /* allow horizontal swipe to scroll key row (#45) */
 }
 
 #key-scroll::-webkit-scrollbar { display: none; }
@@ -359,6 +360,17 @@ html, body {
 }
 
 .key-btn:active { background: var(--bg-input); }
+
+/* Arrow keys: wider tap target, less horizontal text to pad around */
+#keyUp, #keyDown, #keyLeft, #keyRight {
+  min-width: 36px;
+  padding: 0 4px;
+}
+
+/* Named word keys: tighter padding, they don't need much room */
+#keyEsc, #keyCtrl, #keyTab, #keyHome, #keyEnd, #keyPgUp, #keyPgDn {
+  padding: 0 5px;
+}
 
 .key-btn.modifier.active {
   background: var(--accent);
