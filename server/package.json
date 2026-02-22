@@ -1,7 +1,7 @@
 {
-  "name": "android-ssh-server",
+  "name": "mobissh-server",
   "version": "0.1.0",
-  "description": "WebSocket SSH bridge for Android SSH PWA",
+  "description": "WebSocket SSH bridge for MobiSSH PWA",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

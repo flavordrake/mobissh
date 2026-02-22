@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Android SSH PWA — Main application
+ * MobiSSH PWA — Main application
  *
  * IME Input Strategy:
  *   A visually hidden <textarea id="imeInput"> is kept focused whenever the
@@ -66,6 +66,7 @@ let sshConnected = false;  // SSH session established
 let currentProfile = null;
 let reconnectTimer = null;
 let reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+let keepAliveTimer = null; // application-layer WS keepalive (#29)
 let isComposing = false;   // IME composition in progress
 let ctrlActive = false;    // sticky Ctrl modifier
 let vaultKey = null;       // AES-GCM CryptoKey, null when locked
@@ -123,16 +124,14 @@ function initTerminal() {
   });
 
   fitAddon = new FitAddon.FitAddon();
-  const webLinksAddon = new WebLinksAddon.WebLinksAddon();
   terminal.loadAddon(fitAddon);
-  terminal.loadAddon(webLinksAddon);
   terminal.open(document.getElementById('terminal'));
   fitAddon.fit();
 
   window.addEventListener('resize', handleResize);
 
   // Show welcome banner
-  terminal.writeln(ANSI.bold(ANSI.green('Android SSH PWA')));
+  terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
   terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
   terminal.writeln('');
 }
@@ -153,6 +152,10 @@ function handleResize() {
 // reliably fire window.resize. We watch visualViewport directly so xterm.js
 // always refits and scrolls to keep the cursor above the keyboard.
 
+// Tracks whether the soft keyboard is currently visible (#51).
+// Heuristic: if visualViewport.height < 75% of window.outerHeight, keyboard is up.
+let keyboardVisible = false;
+
 function initKeyboardAwareness() {
   if (!window.visualViewport) return;
 
@@ -161,6 +164,9 @@ function initKeyboardAwareness() {
   function onViewportChange() {
     const vv = window.visualViewport;
     const h = Math.round(vv.height);
+
+    // Detect keyboard presence: keyboard shrinks the visual viewport below ~75% of screen
+    keyboardVisible = h < window.outerHeight * 0.75;
 
     // Pin #app to the visible viewport height so nothing is clipped behind keyboard
     app.style.height = `${h}px`;
@@ -448,6 +454,7 @@ function _openWebSocket() {
 
   ws.onopen = () => {
     wsConnected = true;
+    startKeepAlive();
     const authMsg = {
       type: 'connect',
       host: currentProfile.host,
@@ -503,6 +510,7 @@ function _openWebSocket() {
   ws.onclose = (event) => {
     wsConnected = false;
     sshConnected = false;
+    stopKeepAlive();
     if (currentProfile) {
       setStatus('disconnected', 'Disconnected');
       if (!event.wasClean) {
@@ -540,8 +548,31 @@ function cancelReconnect() {
   }
 }
 
+// Application-layer keepalive (#29): sends a ping every 25s so NAT/proxies don't
+// drop idle SSH sessions. The server ignores unknown message types gracefully.
+const WS_PING_INTERVAL_MS = 25_000;
+
+function startKeepAlive() {
+  stopKeepAlive();
+  keepAliveTimer = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping' }));
+    } else {
+      stopKeepAlive();
+    }
+  }, WS_PING_INTERVAL_MS);
+}
+
+function stopKeepAlive() {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+}
+
 function disconnect() {
   cancelReconnect();
+  stopKeepAlive();
   currentProfile = null;
   sshConnected = false;
   wsConnected = false;
@@ -578,10 +609,11 @@ function initSessionMenu() {
   const menuBtn = document.getElementById('sessionMenuBtn');
   const menu    = document.getElementById('sessionMenu');
 
-  // Prevent focus theft: mousedown is when the browser moves focus to the clicked
-  // element. Cancelling it keeps #imeInput focused (keyboard stays visible) while
-  // still allowing the click event to fire normally.
-  menuBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  // Prevent focus theft only when the keyboard is already visible (#51).
+  // If keyboard is dismissed, let focus move naturally so Android won't re-show it.
+  menuBtn.addEventListener('mousedown', (e) => {
+    if (keyboardVisible) e.preventDefault();
+  });
 
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -589,8 +621,39 @@ function initSessionMenu() {
     menu.classList.toggle('hidden');
   });
 
+  function closeMenu() { menu.classList.add('hidden'); }
+
+  document.getElementById('sessionResetBtn').addEventListener('click', () => {
+    closeMenu();
+    if (!sshConnected) return;
+    sendSSHInput('\x1bc');   // RIS — reset remote terminal state
+    terminal.reset();        // reset local xterm instance
+  });
+
+  document.getElementById('sessionClearBtn').addEventListener('click', () => {
+    closeMenu();
+    terminal.clear();
+  });
+
+  document.getElementById('sessionCtrlCBtn').addEventListener('click', () => {
+    closeMenu();
+    if (!sshConnected) return;
+    sendSSHInput('\x03');
+  });
+
+  document.getElementById('sessionCtrlZBtn').addEventListener('click', () => {
+    closeMenu();
+    if (!sshConnected) return;
+    sendSSHInput('\x1a');
+  });
+
+  document.getElementById('sessionReconnectBtn').addEventListener('click', () => {
+    closeMenu();
+    if (currentProfile) _openWebSocket();
+  });
+
   document.getElementById('sessionDisconnectBtn').addEventListener('click', () => {
-    menu.classList.add('hidden');
+    closeMenu();
     disconnect();
   });
 
@@ -717,10 +780,16 @@ function initTerminalActions() {
     keyEsc:   '\x1b',
     keyTab:   '\t',
     keySlash: '/',
+    keyPipe:  '|',
+    keyDash:  '-',
     keyUp:    '\x1b[A',
     keyDown:  '\x1b[B',
     keyLeft:  '\x1b[D',
     keyRight: '\x1b[C',
+    keyHome:  '\x1b[H',
+    keyEnd:   '\x1b[F',
+    keyPgUp:  '\x1b[5~',
+    keyPgDn:  '\x1b[6~',
   };
 
   Object.entries(keys).forEach(([id, seq]) => {

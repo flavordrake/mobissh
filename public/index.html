@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Android SSH</title>
+  <title>MobiSSH</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="app.css" />
 
@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+  <!-- WebLinksAddon removed: breaks wrapped URLs (issue #50) -->
 </head>
 <body>
   <!-- Hidden IME input field — captures Android swipe/voice without Web Speech API -->
@@ -78,6 +78,11 @@
         <span id="handleChevron" title="Toggle key bar" role="button" aria-label="Toggle key bar">▾</span>
         <!-- Session menu anchored inside the positioned parent so absolute positioning works -->
         <div id="sessionMenu" class="hidden" role="menu">
+          <button id="sessionResetBtn"      class="session-menu-item" role="menuitem">Reset terminal</button>
+          <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
+          <button id="sessionCtrlCBtn"      class="session-menu-item" role="menuitem">Send Ctrl+C</button>
+          <button id="sessionCtrlZBtn"      class="session-menu-item" role="menuitem">Send Ctrl+Z</button>
+          <button id="sessionReconnectBtn"  class="session-menu-item" role="menuitem">Reconnect</button>
           <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
         </div>
       </div>
@@ -94,10 +99,16 @@
             <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctrl</button>
             <button id="keyTab"   class="key-btn" title="Tab">Tab</button>
             <button id="keySlash" class="key-btn" title="/">/</button>
+            <button id="keyPipe"  class="key-btn" title="|">|</button>
+            <button id="keyDash"  class="key-btn" title="-">-</button>
             <button id="keyUp"    class="key-btn" title="Up">▲</button>
             <button id="keyDown"  class="key-btn" title="Down">▼</button>
             <button id="keyLeft"  class="key-btn" title="Left">◀</button>
             <button id="keyRight" class="key-btn" title="Right">▶</button>
+            <button id="keyHome"  class="key-btn" title="Home">Home</button>
+            <button id="keyEnd"   class="key-btn" title="End">End</button>
+            <button id="keyPgUp"  class="key-btn" title="Page Up">PgUp</button>
+            <button id="keyPgDn"  class="key-btn" title="Page Down">PgDn</button>
           </div>
           <button id="keyModeBtn" class="key-btn mode-btn" title="Toggle IME / direct key entry">IME</button>
         </div>

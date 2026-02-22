@@ -1,11 +1,11 @@
 /**
- * Android SSH PWA — Service Worker
+ * MobiSSH PWA — Service Worker
  *
  * Caches the app shell for offline/installable PWA.
  * The WebSocket connection itself is always live (no caching).
  */
 
-const CACHE_NAME = 'android-ssh-v2';
+const CACHE_NAME = 'mobissh-v1';
 
 // Files to cache for offline shell
 const SHELL_FILES = [

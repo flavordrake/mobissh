@@ -1,7 +1,7 @@
 {
-  "name": "Android SSH",
-  "short_name": "SSH",
-  "description": "SSH client PWA with swipe typing and voice input for Android",
+  "name": "MobiSSH",
+  "short_name": "MobiSSH",
+  "description": "Mobile-first SSH PWA with swipe typing and voice input",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0d0d1a",

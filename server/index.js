@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Android SSH PWA — WebSocket SSH Bridge + Static File Server
+ * MobiSSH PWA — WebSocket SSH Bridge + Static File Server
  *
  * Serves the PWA frontend on HTTP and the SSH bridge on WebSocket,
  * both on the same port so only one endpoint needs to be exposed.
@@ -75,9 +75,28 @@ const server = http.createServer((req, res) => {
 // ─── WebSocket server (SSH bridge) ────────────────────────────────────────────
 
 const MAX_MESSAGE_SIZE = 4 * 1024 * 1024;
+const WS_PING_INTERVAL_MS = 25_000;
+
 const wss = new WebSocket.Server({ server, maxPayload: MAX_MESSAGE_SIZE });
 
+// WebSocket-level ping/pong to keep idle connections alive through proxies/NAT.
+// Any client that doesn't pong within one interval is terminated.
+const wsPingInterval = setInterval(() => {
+  wss.clients.forEach((client) => {
+    if (client.readyState !== WebSocket.OPEN) return;
+    if (client._pongPending) {
+      client.terminate();
+      return;
+    }
+    client._pongPending = true;
+    client.ping();
+  });
+}, WS_PING_INTERVAL_MS);
+
+wss.on('close', () => clearInterval(wsPingInterval));
+
 wss.on('connection', (ws, req) => {
+  ws.on('pong', () => { ws._pongPending = false; });
   const clientIP = req.socket.remoteAddress;
   console.log(`[ssh-bridge] Client connected: ${clientIP}`);
 
@@ -161,6 +180,8 @@ wss.on('connection', (ws, req) => {
       port: parseInt(cfg.port) || 22,
       username: cfg.username,
       readyTimeout: 15000,
+      keepaliveInterval: 15000,  // SSH-layer keepalive every 15s
+      keepaliveCountMax: 4,       // drop after 4 unanswered (~60s)
     };
 
     if (cfg.privateKey) {
@@ -200,6 +221,7 @@ wss.on('connection', (ws, req) => {
           sshStream.setWindow(parseInt(msg.rows), parseInt(msg.cols), 0, 0);
         break;
       case 'disconnect': cleanup('User disconnected'); break;
+      case 'ping': break; // application-layer keepalive (#29), no response needed
       default: send({ type: 'error', message: `Unknown message type: ${msg.type}` });
     }
   });
