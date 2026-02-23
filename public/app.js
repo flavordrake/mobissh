@@ -557,8 +557,8 @@ function initIMEInput() {
     if (!wasScroll) {
       // Horizontal swipe: more than 40px X, dominant over Y → tmux window switch (#16).
       if (Math.abs(finalDx) > 40 && Math.abs(finalDx) > Math.abs(finalDy)) {
-        // Swipe left (finalDx < 0) → next window; swipe right → previous window.
-        sendSSHInput(finalDx < 0 ? '\x02n' : '\x02p');
+        // Swipe left (finalDx < 0) → previous window; swipe right → next window.
+        sendSSHInput(finalDx < 0 ? '\x02p' : '\x02n');
       } else {
         setTimeout(focusIME, 50);
       }
