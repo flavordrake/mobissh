@@ -126,7 +126,7 @@ const ROOT_CSS = (() => {
 let terminal = null;
 let fitAddon = null;
 let ws = null;
-let wsConnected = false;   // WebSocket open
+let _wsConnected = false;  // WebSocket open (tracked for future use)
 let sshConnected = false;  // SSH session established
 let currentProfile = null;
 let reconnectTimer = null;
@@ -358,7 +358,7 @@ function initIMEInput() {
   // keydown always fires e.key='Unidentified', so input is the only reliable
   // path for printable chars. e.preventDefault() in the keydown direct-mode
   // branch already suppresses duplicates from Bluetooth keyboards.
-  ime.addEventListener('input', (e) => {
+  ime.addEventListener('input', (_e) => {
     if (isComposing) {
       // Update preview with current composition text while the user is typing
       _imePreviewShow(ime.value || null);
@@ -700,7 +700,7 @@ function _openWebSocket() {
   }
 
   ws.onopen = () => {
-    wsConnected = true;
+    _wsConnected = true;
     startKeepAlive();
     const authMsg = {
       type: 'connect',
@@ -796,7 +796,7 @@ function _openWebSocket() {
   };
 
   ws.onclose = (event) => {
-    wsConnected = false;
+    _wsConnected = false;
     sshConnected = false;
     stopKeepAlive();
     if (currentProfile) {
@@ -899,7 +899,7 @@ function disconnect() {
   releaseWakeLock();
   currentProfile = null;
   sshConnected = false;
-  wsConnected = false;
+  _wsConnected = false;
 
   if (ws) {
     ws.onclose = null;
