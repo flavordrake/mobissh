@@ -297,7 +297,7 @@ function initKeyboardAwareness() {
   window.visualViewport.addEventListener('resize', onViewportChange);
 }
 
-const FONT_SIZE = { MIN: 8, MAX: 24 };
+const FONT_SIZE = { MIN: 8, MAX: 32 };
 
 function applyFontSize(size) {
   size = Math.max(FONT_SIZE.MIN, Math.min(FONT_SIZE.MAX, size));
@@ -565,6 +565,46 @@ function initIMEInput() {
     }
   }, { capture: true });
   } // end if (SWIPE_GESTURES)
+
+  // ── Pinch-to-zoom → font size (#17) ──────────────────────────────────────
+  // Two-finger pinch on the terminal adjusts xterm.js font size instead of
+  // triggering browser zoom. Registered with { passive: false } so we can
+  // call e.preventDefault() to block native pinch-zoom.
+  // Guards on e.touches.length === 2 avoid conflict with single-touch paths.
+  let _pinchStartDist = null;
+  let _pinchStartSize = null;
+
+  function _pinchDist(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  termEl.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 2) return;
+    _pinchStartDist = _pinchDist(e.touches);
+    _pinchStartSize = terminal
+      ? terminal.options.fontSize
+      : (parseInt(localStorage.getItem('fontSize')) || 14);
+    e.preventDefault();
+  }, { passive: false });
+
+  termEl.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 2 || _pinchStartDist === null) return;
+    e.preventDefault();
+    const newSize = Math.round(_pinchStartSize * (_pinchDist(e.touches) / _pinchStartDist));
+    applyFontSize(newSize);
+  }, { passive: false });
+
+  termEl.addEventListener('touchend', () => {
+    _pinchStartDist = null;
+    _pinchStartSize = null;
+  });
+
+  termEl.addEventListener('touchcancel', () => {
+    _pinchStartDist = null;
+    _pinchStartSize = null;
+  });
 
   // ── Direct input (type="password") — char-by-char mode (#44/#48) ─────
   // Chrome/Gboard treats password fields as no-swipe, no-autocorrect inputs,
