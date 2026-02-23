@@ -39,6 +39,7 @@ const test = base.extend({
    *   .messages      — array of parsed JSON messages received from the page
    *   .sendToPage(obj) — send a JSON message to the connected page
    */
+  // eslint-disable-next-line no-empty-pattern
   mockSshServer: async ({}, use) => {
     const port = await getFreePort();
     const messages = [];

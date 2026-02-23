@@ -1,0 +1,17 @@
+#!/bin/sh
+# MobiSSH pre-commit hook — lint staged JS files
+#
+# Runs ESLint on all staged .js files under public/, server/, and tests/.
+# Blocks the commit on any lint error (warnings are allowed through).
+
+set -e
+
+# Collect staged JS files under our lint targets
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep '^\(public\|server\|tests\)/.*\.js$' || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+echo "Running ESLint on staged files..."
+npx eslint --max-warnings=-1 $STAGED
