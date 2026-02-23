@@ -99,6 +99,8 @@ html, body {
   cursor: pointer;
   transition: color 0.15s;
   padding: 4px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .tab.active {
