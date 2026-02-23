@@ -39,6 +39,10 @@ fi
 TMP=$(mktemp)
 sed '/^}$/i \
 \
+    location = /ssh {\
+        return 301 /ssh/;\
+    }\
+\
     location /ssh {\
         rewrite ^/ssh(/.*)$ $1 break;\
         rewrite ^/ssh$ / break;\
