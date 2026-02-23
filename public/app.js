@@ -207,6 +207,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Apply saved font size (applyFontSize syncs all UI)
   applyFontSize(parseInt(localStorage.getItem('fontSize')) || 14);
+
+  // Signal the recovery watchdog that the app booted successfully (#84)
+  if (typeof window.__appReady === 'function') window.__appReady();
 });
 
 // ─── Terminal ─────────────────────────────────────────────────────────────────

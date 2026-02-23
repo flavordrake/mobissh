@@ -1,4 +1,5 @@
 {
+  "id": "mobissh",
   "name": "MobiSSH",
   "short_name": "MobiSSH",
   "description": "Mobile-first SSH PWA with swipe typing and voice input",

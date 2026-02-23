@@ -5,7 +5,7 @@
  * The WebSocket connection itself is always live (no caching).
  */
 
-const CACHE_NAME = 'mobissh-v3';
+const CACHE_NAME = 'mobissh-v4';
 
 // Files to cache for offline shell.
 // Relative paths so they resolve correctly when served at a subpath (e.g. /ssh/).
@@ -14,6 +14,7 @@ const SHELL_FILES = [
   './index.html',
   './app.js',
   './app.css',
+  './recovery.js',
   './manifest.json',
   './icon-192.svg',
   './icon-512.svg',
@@ -52,6 +53,20 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   if (event.request.url.startsWith('ws://') || event.request.url.startsWith('wss://')) return;
+
+  // Emergency recovery: ?reset=1 clears all SW caches and redirects to the
+  // app base URL. Handled here so recovery works even when the page itself
+  // can't render (e.g. corrupt cached index.html). The script in recovery.js
+  // provides a second fallback for when the SW itself is broken.
+  const url = new URL(event.request.url);
+  if (event.request.mode === 'navigate' && url.searchParams.get('reset') === '1') {
+    event.respondWith(
+      caches.keys()
+        .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+        .then(() => Response.redirect(new URL('./', event.request.url).href, 302))
+    );
+    return;
+  }
 
   event.respondWith(
     fetch(event.request)

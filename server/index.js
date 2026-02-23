@@ -50,6 +50,22 @@ const MIME = {
   '.ico':  'image/x-icon',
 };
 
+/**
+ * Rewrite manifest.json fields so the PWA installs correctly under any
+ * reverse-proxy subpath (#83).
+ *
+ * - id: stable "mobissh" identity prevents collision with other apps
+ * - start_url / scope: "./" is relative to the manifest URL, so Chrome
+ *   resolves them to the correct subpath regardless of where the app is hosted
+ */
+function rewriteManifest(buf) {
+  const manifest = JSON.parse(buf.toString());
+  manifest.id = 'mobissh';
+  manifest.start_url = './';
+  manifest.scope = './';
+  return Buffer.from(JSON.stringify(manifest));
+}
+
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
@@ -101,6 +117,11 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
         )
       );
     }
+    // Rewrite manifest.json when serving under a subpath so the PWA installs
+    // at the correct path and has a stable identity (#83).
+    if (path.basename(filePath) === 'manifest.json' && BASE_PATH) {
+      try { data = rewriteManifest(data); } catch (_) {}
+    }
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store',
@@ -128,19 +149,22 @@ const wss = new WebSocket.Server({ server, maxPayload: MAX_MESSAGE_SIZE });
 
 // WebSocket-level ping/pong to keep idle connections alive through proxies/NAT.
 // Any client that doesn't pong within one interval is terminated.
-const wsPingInterval = setInterval(() => {
-  wss.clients.forEach((client) => {
-    if (client.readyState !== WebSocket.OPEN) return;
-    if (client._pongPending) {
-      client.terminate();
-      return;
-    }
-    client._pongPending = true;
-    client.ping();
-  });
-}, WS_PING_INTERVAL_MS);
+// Only started when the server is actually running (not when imported for tests).
+if (require.main === module) {
+  const wsPingInterval = setInterval(() => {
+    wss.clients.forEach((client) => {
+      if (client.readyState !== WebSocket.OPEN) return;
+      if (client._pongPending) {
+        client.terminate();
+        return;
+      }
+      client._pongPending = true;
+      client.ping();
+    });
+  }, WS_PING_INTERVAL_MS);
 
-wss.on('close', () => clearInterval(wsPingInterval));
+  wss.on('close', () => clearInterval(wsPingInterval));
+}
 
 // ─── SSRF prevention (issue #6) ───────────────────────────────────────────────
 // Blocks RFC-1918 private, loopback, and link-local addresses by default.
@@ -342,15 +366,19 @@ wss.on('connection', (ws, req) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-server.listen(PORT, HOST, () => {
-  console.log(`[ssh-bridge] Listening on http://${HOST}:${PORT}`);
-});
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    console.log(`[ssh-bridge] Listening on http://${HOST}:${PORT}`);
+  });
 
-process.on('SIGTERM', () => {
-  console.log('[ssh-bridge] SIGTERM — shutting down');
-  server.close(() => process.exit(0));
-});
-process.on('SIGINT', () => {
-  console.log('[ssh-bridge] SIGINT — shutting down');
-  server.close(() => process.exit(0));
-});
+  process.on('SIGTERM', () => {
+    console.log('[ssh-bridge] SIGTERM — shutting down');
+    server.close(() => process.exit(0));
+  });
+  process.on('SIGINT', () => {
+    console.log('[ssh-bridge] SIGINT — shutting down');
+    server.close(() => process.exit(0));
+  });
+}
+
+module.exports = { rewriteManifest, server };

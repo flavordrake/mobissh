@@ -29,6 +29,25 @@
   <!-- WebLinksAddon removed: breaks wrapped URLs (issue #50) -->
 </head>
 <body>
+  <!-- Recovery overlay — displayed by the boot watchdog when the app fails to init.
+       Inline styles are intentional: this must render even if app.css fails to load. -->
+  <div id="recovery-overlay"
+       role="alertdialog"
+       aria-live="assertive"
+       aria-label="App failed to start"
+       style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#0d0d1a;color:#e0e0e0;flex-direction:column;align-items:center;justify-content:center;z-index:9999;font-family:system-ui,-apple-system,sans-serif;text-align:center;padding:24px;box-sizing:border-box;">
+    <h2 style="color:#ff4444;margin-bottom:12px;font-size:20px">App failed to start</h2>
+    <p style="color:#888;margin-bottom:32px;max-width:320px;line-height:1.5">
+      The app could not initialize. This is usually caused by a stale cached
+      version or a missing resource.
+    </p>
+    <button id="recovery-reset-btn"
+            style="background:#00ff88;color:#0d0d1a;border:none;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer;margin-bottom:16px;-webkit-tap-highlight-color:transparent">
+      Reset App
+    </button>
+    <p style="color:#555;font-size:13px">Clears the app cache and reloads.</p>
+  </div>
+
   <!-- Hidden IME input field — captures Android swipe/voice without Web Speech API -->
   <!--
     This textarea is positioned off-screen and always focused when the terminal is active.
@@ -286,6 +305,9 @@
     </div>
   </div>
 
+  <!-- Recovery watchdog — loaded before app.js so it fires even on init failure.
+       Handles ?reset=1 cache-clear and the 8-second boot-health timeout. -->
+  <script src="recovery.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
