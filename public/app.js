@@ -135,6 +135,7 @@ let keepAliveTimer = null; // application-layer WS keepalive (#29)
 let isComposing = false;   // IME composition in progress
 let ctrlActive = false;    // sticky Ctrl modifier
 let vaultKey = null;       // AES-GCM CryptoKey, null when locked
+let vaultMethod = null;    // 'passwordcred' | 'webauthn-prf' | null
 let keyBarVisible = true;  // key bar show/hide state (#1)
 let imeMode = true;        // true = IME/swipe, false = direct char entry (#2)
 let tabBarVisible = true;  // visible on cold start (#36); auto-hides after first connect
@@ -1238,9 +1239,11 @@ function _applyImeModeUI() {
 }
 
 // ─── Vault ────────────────────────────────────────────────────────────────────
-// Credentials are AES-GCM encrypted at rest. The vault key is a random 32-byte
-// value stored in the browser's credential store (navigator.credentials),
-// which on Android Chrome is backed by device biometric / screen lock.
+// Credentials are AES-GCM encrypted at rest. The vault key is derived from one
+// of two sources, depending on browser support:
+//   1. PasswordCredential (Chrome/Android) — random 32-byte key in credential store
+//   2. WebAuthn PRF (#14, Safari 18+/iOS 18+) — key derived from passkey + biometric
+// If neither is available, credentials are not saved (never stored in plaintext).
 
 const VAULT_CRED_ID = 'ssh-pwa-vault';
 
@@ -1253,47 +1256,128 @@ function _bytes(b64) {
   return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 }
 
-async function initVault() {
-  if (!window.PasswordCredential) {
-    // No vault on this browser (iOS Safari, Firefox) — credentials are never
-    // stored, user must enter them each session. No warning needed unless
-    // they migrated from Chrome with vault-encrypted profiles.
-    return;
-  }
-  if (!('credentials' in navigator)) return;
-  const vault = JSON.parse(localStorage.getItem('sshVault') || '{}');
-  if (!Object.keys(vault).length) return; // nothing stored yet
-  await _tryUnlockVault('silent');
+// Detect which vault key derivation method this browser supports.
+// PasswordCredential (Chrome/Android) > WebAuthn PRF (Safari 18+/iOS 18+) > null
+function _detectVaultMethod() {
+  if (window.PasswordCredential && 'credentials' in navigator) return 'passwordcred';
+  if (window.PublicKeyCredential && 'credentials' in navigator) return 'webauthn-prf';
+  return null;
 }
 
-async function _tryUnlockVault(mediation) {
-  if (!('credentials' in navigator)) return false;
-  try {
-    const cred = await navigator.credentials.get({ password: true, mediation });
-    if (cred && cred.password) {
-      const keyBytes = _bytes(cred.password);
-      vaultKey = await crypto.subtle.importKey(
-        'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
-      );
-      return true;
-    }
-  } catch (_) {}
-  return false;
+// ─── WebAuthn PRF helpers (#14) ──────────────────────────────────────────────
+// On browsers without PasswordCredential (iOS Safari), derive the vault AES key
+// from a passkey via the WebAuthn PRF extension. Requires iOS 18+ / Safari 18+.
+
+function _webauthnHasRegistration() {
+  return !!(localStorage.getItem('webauthnCredId') && localStorage.getItem('webauthnPrfSalt'));
 }
 
-async function _ensureVaultKey() {
-  if (vaultKey) return true;
-  if (!('credentials' in navigator) || !window.PasswordCredential) return false;
+async function _webauthnRegister() {
+  const salt = crypto.getRandomValues(new Uint8Array(32));
+  const userId = crypto.getRandomValues(new Uint8Array(16));
   try {
-    const keyBytes = crypto.getRandomValues(new Uint8Array(32));
-    const rawKey = _b64(keyBytes);
-    const cred = new PasswordCredential({ id: VAULT_CRED_ID, password: rawKey, name: 'SSH PWA' });
-    await navigator.credentials.store(cred);
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        rp: { name: 'MobiSSH', id: location.hostname },
+        user: { id: userId, name: 'MobiSSH Vault', displayName: 'MobiSSH Vault' },
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },
+          { type: 'public-key', alg: -257 },
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          residentKey: 'preferred',
+          userVerification: 'required',
+        },
+        extensions: { prf: {} },
+      },
+    });
+    const ext = credential.getClientExtensionResults();
+    if (!ext.prf || !ext.prf.enabled) return false;
+    localStorage.setItem('webauthnCredId', _b64(new Uint8Array(credential.rawId)));
+    localStorage.setItem('webauthnPrfSalt', _b64(salt));
+    return _webauthnDerive('required');
+  } catch (_) { return false; }
+}
+
+async function _webauthnDerive(mediation) {
+  const credIdB64 = localStorage.getItem('webauthnCredId');
+  const saltB64 = localStorage.getItem('webauthnPrfSalt');
+  if (!credIdB64 || !saltB64) return false;
+  const credId = _bytes(credIdB64);
+  const salt = _bytes(saltB64);
+  try {
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rpId: location.hostname,
+        allowCredentials: [{ type: 'public-key', id: credId.buffer }],
+        userVerification: 'required',
+        extensions: { prf: { eval: { first: salt.buffer } } },
+      },
+      mediation,
+    });
+    const ext = assertion.getClientExtensionResults();
+    if (!ext.prf || !ext.prf.results || !ext.prf.results.first) return false;
+    const keyBytes = new Uint8Array(ext.prf.results.first);
     vaultKey = await crypto.subtle.importKey(
       'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
     );
     return true;
   } catch (_) { return false; }
+}
+
+// ─── Vault lifecycle ─────────────────────────────────────────────────────────
+
+async function initVault() {
+  vaultMethod = _detectVaultMethod();
+  if (!vaultMethod) return;
+  const vault = JSON.parse(localStorage.getItem('sshVault') || '{}');
+  if (!Object.keys(vault).length) return;
+  await _tryUnlockVault('silent');
+}
+
+async function _tryUnlockVault(mediation) {
+  if (vaultMethod === 'passwordcred') {
+    try {
+      const cred = await navigator.credentials.get({ password: true, mediation });
+      if (cred && cred.password) {
+        const keyBytes = _bytes(cred.password);
+        vaultKey = await crypto.subtle.importKey(
+          'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
+        );
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+  if (vaultMethod === 'webauthn-prf') {
+    if (!_webauthnHasRegistration()) return false;
+    return _webauthnDerive(mediation);
+  }
+  return false;
+}
+
+async function _ensureVaultKey() {
+  if (vaultKey) return true;
+  if (vaultMethod === 'passwordcred') {
+    try {
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+      const rawKey = _b64(keyBytes);
+      const cred = new PasswordCredential({ id: VAULT_CRED_ID, password: rawKey, name: 'SSH PWA' });
+      await navigator.credentials.store(cred);
+      vaultKey = await crypto.subtle.importKey(
+        'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
+      );
+      return true;
+    } catch (_) { return false; }
+  }
+  if (vaultMethod === 'webauthn-prf') {
+    if (_webauthnHasRegistration()) return _webauthnDerive('required');
+    return _webauthnRegister();
+  }
+  return false;
 }
 
 async function _vaultStore(vaultId, data) {

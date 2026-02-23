@@ -78,3 +78,4 @@ All backlog items are filed as issues in this repo. Key priorities:
 - `node_modules/` is gitignored — install via `npm install` in `server/`
 - No secrets in code
 - Keep `Cache-Control: no-store` on static responses and SW network-first
+- **Never store sensitive data (passwords, private keys, passphrases) in plaintext** — use the encrypted vault (PasswordCredential + AES-GCM) or don't store at all. If the vault is unavailable, block the feature; do not fall back to plaintext storage with a warning.
