@@ -98,13 +98,9 @@ MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). 
 | WS ping/pong keep-alive (25s) | ✅ Implemented | Terminates stale connections, prevents silent drops |
 | SSH keepalive (15s interval, max 4 missed) | ✅ Implemented | Drops idle SSH sessions that are no longer alive |
 | Vault-or-nothing credential policy | ✅ Implemented | No plaintext fallback — credentials not saved if vault unavailable (#68) |
+| SSH keys encrypted via vault | ✅ Implemented | Keys panel uses same AES-GCM vault as profiles (#67, #69) |
 
-### Open risks (filed as issues)
-
-| Risk | Severity | Issue |
-|---|---|---|
-| `sshKeys` localStorage stores private keys in plaintext | **High** | #67 |
-| Dual key-store paths need merging (sshKeys + vault) | Medium | #69 |
+No known high or medium severity open risks. See GitHub Issues for UX and feature backlog.
 
 ### Transparency and auditability
 
