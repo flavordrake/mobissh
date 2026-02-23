@@ -1254,6 +1254,16 @@ function _bytes(b64) {
 }
 
 async function initVault() {
+  // Warn once per session if vault is unavailable but profiles have credentials (#68)
+  if (!window.PasswordCredential) {
+    const profiles = getProfiles();
+    const hasStoredCreds = profiles.some((p) => p.hasVaultCreds || p.plaintextCreds);
+    if (hasStoredCreds && !sessionStorage.getItem('vaultWarnShown')) {
+      sessionStorage.setItem('vaultWarnShown', '1');
+      setTimeout(() => toast('Credential vault not available on this browser. Stored passwords are unencrypted.'), 1500);
+    }
+    return;
+  }
   if (!('credentials' in navigator)) return;
   const vault = JSON.parse(localStorage.getItem('sshVault') || '{}');
   if (!Object.keys(vault).length) return; // nothing stored yet
@@ -1352,16 +1362,20 @@ async function saveProfile(profile) {
   };
 
   // Store credentials in vault
+  const creds = {};
+  if (profile.password)   creds.password   = profile.password;
+  if (profile.privateKey) creds.privateKey = profile.privateKey;
+  if (profile.passphrase) creds.passphrase = profile.passphrase;
+
   const hasVault = await _ensureVaultKey();
-  if (hasVault) {
-    const creds = {};
-    if (profile.password)   creds.password   = profile.password;
-    if (profile.privateKey) creds.privateKey = profile.privateKey;
-    if (profile.passphrase) creds.passphrase = profile.passphrase;
-    if (Object.keys(creds).length) {
-      await _vaultStore(vaultId, creds);
-      saved.hasVaultCreds = true;
-    }
+  if (hasVault && Object.keys(creds).length) {
+    await _vaultStore(vaultId, creds);
+    saved.hasVaultCreds = true;
+  } else if (!hasVault && Object.keys(creds).length) {
+    // Vault unavailable (iOS Safari, Firefox) — store credentials in plaintext
+    // so the profile is still functional, but warn the user (#68)
+    saved.plaintextCreds = creds;
+    toast('Credential vault not available — password stored unencrypted.');
   }
 
   if (existingIdx >= 0) {
@@ -1424,6 +1438,12 @@ async function loadProfileIntoForm(idx) {
     } else {
       toast('Vault locked — enter credentials manually');
     }
+  } else if (profile.plaintextCreds) {
+    // Vault was unavailable at save time — credentials stored unencrypted (#68)
+    const creds = profile.plaintextCreds;
+    if (creds.password)   document.getElementById('password').value   = creds.password;
+    if (creds.privateKey) document.getElementById('privateKey').value = creds.privateKey;
+    if (creds.passphrase) document.getElementById('passphrase').value = creds.passphrase;
   }
 
   document.querySelector('[data-panel="connect"]').click();
