@@ -287,6 +287,59 @@ test.describe('Settings panel', () => {
   });
 });
 
+// ─── Issue #87 — tab bar text selection prevention ──────────────────────────
+
+test.describe('Issue #87 — tab buttons prevent text selection on long-press', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+  });
+
+  test('tab buttons have user-select: none', async ({ page }) => {
+    const tabs = page.locator('.tab');
+    const count = await tabs.count();
+    expect(count).toBeGreaterThanOrEqual(4);
+    for (let i = 0; i < count; i++) {
+      const userSelect = await tabs.nth(i).evaluate(
+        (el) => {
+          const cs = getComputedStyle(el);
+          return cs.userSelect || cs.webkitUserSelect;
+        }
+      );
+      expect(userSelect).toBe('none');
+    }
+  });
+});
+
+// ─── Issue #89 — key bar key repeat ─────────────────────────────────────────
+
+test.describe('Issue #89 — key bar buttons use pointer events for repeat', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+  });
+
+  test('key bar buttons suppress context menu on long-press', async ({ page }) => {
+    const keyUp = page.locator('#keyUp');
+    const prevented = await keyUp.evaluate((el) => {
+      let blocked = false;
+      const handler = (e) => { blocked = e.defaultPrevented; };
+      el.addEventListener('contextmenu', handler, { once: true });
+      el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      return blocked;
+    });
+    expect(prevented).toBe(true);
+  });
+
+  test('key bar has all expected key IDs', async ({ page }) => {
+    const keyIds = ['keyEsc', 'keyUp', 'keyDown', 'keyLeft', 'keyRight',
+      'keyHome', 'keyEnd', 'keyPgUp', 'keyPgDn', 'keyTab', 'keyCtrl'];
+    for (const id of keyIds) {
+      await expect(page.locator(`#${id}`)).toBeAttached();
+    }
+  });
+});
+
 // ─── Issue #71 regressions ──────────────────────────────────────────────────
 
 test.describe('Issue #71 — no redundant status indicator', () => {

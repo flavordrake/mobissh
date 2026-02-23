@@ -209,6 +209,48 @@ test.describe('IME composition → SSH input routing', () => {
   });
 });
 
+test.describe('Issue #85 — compositioncancel resets IME state', () => {
+  test('compositioncancel clears isComposing so subsequent input is not dropped', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Start composition, then cancel (simulates voice recognition abort)
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'partial' }));
+      // Cancel — should reset isComposing
+      el.dispatchEvent(new Event('compositioncancel', { bubbles: true }));
+    });
+
+    // Now send a normal composition — it should NOT be suppressed
+    await imeCompose(page, 'hello');
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === 'hello')).toBe(true);
+  });
+
+  test('compositionend prefers ime.value over e.data', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Simulate: e.data is empty (voice dictation quirk) but textarea has the full text
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.value = 'full phrase';
+      el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true, data: 'full phrase', inputType: 'insertCompositionText',
+      }));
+      el.value = '';
+    });
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === 'full phrase')).toBe(true);
+  });
+});
+
 test.describe('Key bar buttons → SSH input', () => {
   test('Esc button sends \\x1b', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
@@ -248,6 +290,22 @@ test.describe('Key bar buttons → SSH input', () => {
 
     const msgs = await getInputMessages(page);
     expect(msgs.some((m) => m.data === '\t')).toBe(true);
+  });
+
+  test('key repeat: holding Up arrow sends multiple \\x1b[A (#89)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Simulate a long-press via pointerdown, wait for repeat, then pointerup
+    const keyUp = page.locator('#keyUp');
+    await keyUp.dispatchEvent('pointerdown', { bubbles: true });
+    // Wait 600ms — should get: immediate fire + at least one repeat (400ms delay + 80ms interval)
+    await page.waitForTimeout(600);
+    await keyUp.dispatchEvent('pointerup', { bubbles: true });
+
+    const msgs = await getInputMessages(page);
+    const upArrows = msgs.filter((m) => m.data === '\x1b[A');
+    expect(upArrows.length).toBeGreaterThanOrEqual(2);
   });
 
   test('screenshot: terminal in connected state with key bar', async ({ page, mockSshServer }) => {
