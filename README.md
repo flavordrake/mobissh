@@ -39,10 +39,10 @@ Android and iOS soft keyboards were designed for messaging apps. When you type i
 ```
 Phone browser ──(WSS)──► Node.js bridge ──(SSH)──► Target server
                               │
-              HTTP static file server (same port 8080)
+              HTTP static file server (same port)
 ```
 
-- **`server/index.js`** — single Node.js process: serves `public/` over HTTP and bridges WebSocket connections to SSH using `ssh2`. One port (8080) for everything.
+- **`server/index.js`** — single Node.js process: serves `public/` over HTTP and bridges WebSocket connections to SSH using `ssh2`. One port (default 8081) for everything.
 - **`public/app.js`** — all frontend logic: xterm.js init, WebSocket client, IME input capture, key bar, vault, profile storage.
 - **`public/app.css`** — mobile-first styles, no framework.
 - **`public/sw.js`** — service worker, network-first with offline fallback.
@@ -59,15 +59,18 @@ The password-type field also suppresses browser password managers (via `autocomp
 
 ### Credential vault
 
-Profiles are stored in `localStorage` without credentials. Credentials are AES-GCM encrypted with a 256-bit key that lives in `navigator.credentials` (Android Chrome: backed by device biometric / screen lock). On load, a silent `credentials.get` attempts to restore the vault key without user interaction. If locked, the app prompts on first profile use.
+Profiles are stored in `localStorage` without credentials. Credentials (passwords, private keys, passphrases) are AES-GCM encrypted with a 256-bit key derived from one of two browser APIs:
 
-**iOS caveat:** `PasswordCredential` is not supported in Safari. A WebAuthn fallback is planned (issue #14). Until then, credentials are not persisted on iOS.
+- **Chrome/Android:** `PasswordCredential` — random key stored in the browser's credential store, backed by device biometric / screen lock.
+- **Safari/iOS 18+:** WebAuthn PRF — key derived from a passkey via the PRF extension, biometric-gated via Face ID / Touch ID.
+
+On load, a silent unlock attempt restores the vault key. If locked, the app prompts on first profile use. Credentials are **never stored in plaintext** — if neither vault method is available (Firefox, iOS < 18), credentials are simply not persisted and must be entered each session.
 
 ---
 
 ## Security analysis
 
-**If you run the bridge on a public IP without authentication middleware, the threat model changes significantly — anyone who can reach port 8080 can proxy SSH connections through your server.**
+**If you run the bridge on a public IP without authentication middleware, the threat model changes significantly — anyone who can reach the bridge port can proxy SSH connections through your server.**
 
 ### Trust model
 
@@ -80,7 +83,13 @@ MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). 
 
 | Control | Status | Notes |
 |---|---|---|
-| AES-GCM credential encryption | ✅ Implemented | Key in `PasswordCredential` / biometric |
+| AES-GCM credential encryption | ✅ Implemented | Key from `PasswordCredential` (Chrome) or WebAuthn PRF (Safari) |
+| WebAuthn PRF vault for iOS | ✅ Implemented | Passkey + biometric key derivation on iOS 18+ (#14) |
+| SSH host key verification (TOFU) | ✅ Implemented | Store fingerprint on first connect, warn on mismatch (#5) |
+| SSRF prevention | ✅ Implemented | Blocks RFC-1918 / loopback targets (#6) |
+| SRI hashes on CDN scripts | ✅ Implemented | Pins xterm.js + addons cryptographically (#7) |
+| Content-Security-Policy header | ✅ Implemented | Restricts script/style/connect sources (#8) |
+| `ws://` rejected in settings | ✅ Implemented | Only `wss://` accepted for WebSocket URL (#9) |
 | WSS (TLS) in Codespaces / reverse proxy | ✅ Inherited | Codespaces enforces HTTPS |
 | `Cache-Control: no-store` on all static responses | ✅ Implemented | Prevents credential caching in shared proxies |
 | Service worker network-first | ✅ Implemented | No stale credential forms served from cache |
@@ -88,17 +97,14 @@ MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). 
 | Direct mode uses `type="password"` input | ✅ Implemented | Suppresses Gboard swipe prediction and autocorrect |
 | WS ping/pong keep-alive (25s) | ✅ Implemented | Terminates stale connections, prevents silent drops |
 | SSH keepalive (15s interval, max 4 missed) | ✅ Implemented | Drops idle SSH sessions that are no longer alive |
+| Vault-or-nothing credential policy | ✅ Implemented | No plaintext fallback — credentials not saved if vault unavailable (#68) |
 
 ### Open risks (filed as issues)
 
 | Risk | Severity | Issue |
 |---|---|---|
-| SSH host key not verified — MITM possible on first connect | **High** | #5 |
-| No SSRF prevention — bridge will connect to RFC-1918 addresses | Medium | #6 |
-| xterm.js loaded from CDN without SRI hashes | Medium | #7 |
-| No Content-Security-Policy header | Medium | #8 |
-| `ws://` (plaintext WebSocket) accepted in settings | Low | #9 |
-| `PasswordCredential` not available on iOS — creds not persisted | Low | #14 |
+| `sshKeys` localStorage stores private keys in plaintext | **High** | #67 |
+| Dual key-store paths need merging (sshKeys + vault) | Medium | #69 |
 
 ### Transparency and auditability
 
@@ -110,7 +116,7 @@ This matters in contrast to projects that expose AI coding agents over HTTP/WebS
 
 ### Trade-offs
 
-**Single-port design (HTTP + WS on 8080).** Simplifies Codespaces port forwarding (one forwarded port instead of two). Downside: the static file server and the SSH bridge share the same process — a bug in one can affect the other. For personal use this is acceptable.
+**Single-port design (HTTP + WS on one port).** Simplifies Codespaces port forwarding (one forwarded port instead of two). Downside: the static file server and the SSH bridge share the same process — a bug in one can affect the other. For personal use this is acceptable.
 
 **`localStorage` for profile metadata.** IndexedDB would be more appropriate for structured data but `localStorage` is synchronous and has no async edge cases. Profiles contain no secrets (credentials are vault-encrypted separately).
 
@@ -118,45 +124,67 @@ This matters in contrast to projects that expose AI coding agents over HTTP/WebS
 
 **Vanilla JS, no build step.** Means no tree-shaking, no TypeScript safety, no bundler. Acceptable for a focused single-page app; the entire frontend is one JS file that is easy to read and audit.
 
-**xterm.js from CDN.** Fast to set up, but the integrity of the terminal emulator depends on the CDN. SRI hashes (issue #7) would pin the version cryptographically.
+**xterm.js from CDN.** Fast to set up; SRI hashes pin the version cryptographically to prevent CDN tampering.
 
 ---
 
 ## Setup
 
 ```bash
-# Install server dependencies
 cd server && npm install
-
-# Start the bridge
 npm start
-# → Listening on http://0.0.0.0:8080
-
-# Open http://localhost:8080 in Chrome on Android
-# or the Codespace forwarded URL
+# → Listening on http://0.0.0.0:8081
 ```
 
-Over Tailscale, point the Settings → WebSocket URL at `wss://your-tailscale-hostname:8080` (or `ws://` if TLS terminates elsewhere).
+Open `http://localhost:8081` in a browser, or the Codespace forwarded URL.
+
+### Deployment options
+
+**Direct (Tailscale Serve):** Zero-config HTTPS over your WireGuard mesh.
+
+```bash
+cd server && npm start                        # listens on 8081
+tailscale serve https / http://localhost:8081  # automatic TLS
+```
+
+No `BASE_PATH` needed — MobiSSH serves at the root.
+
+**nginx reverse proxy (subpath):** Run MobiSSH at `/ssh/` alongside other services.
+
+```bash
+BASE_PATH=/ssh PORT=8081 node server/index.js
+```
+
+Add the provided `nginx-ssh-location.conf` inside your HTTPS `server {}` block, then `sudo nginx -s reload`. See `scripts/setup-nginx.sh` for an automated setup.
+
+**Cache busting:** Visit `/clear` (e.g. `https://host/ssh/clear`) to unregister service workers and clear all browser storage — useful during development when mobile Chrome serves stale content.
 
 ---
 
 ## Backlog highlights
 
-See GitHub Issues for the full list. Key open items:
+See GitHub Issues for the full list.
 
 Recently completed:
+- **#5** SSH host key verification — TOFU with mismatch warning
+- **#6–9** Security hardening (SSRF blocklist, SRI hashes, CSP header, ws:// rejection)
+- **#14** WebAuthn PRF vault for iOS 18+ credential encryption
+- **#68** Vault-or-nothing credential policy (no plaintext fallback)
+- **#11–13** iOS safe area insets, Apple PWA meta, overscroll-behavior
+- **#1, #2, #3** Key bar auto-hide, IME/direct toggle, scrollable key row
+- **#10** iOS autocorrect/autocapitalize fixes
 - **#22** Rename to MobiSSH
 - **#29** WS/SSH keep-alive (prevents silent drops)
 - **#38** Extra key bar keys (|, -, Home, End, PgUp, PgDn)
 - **#40** Session menu controls (reset, clear, Ctrl+C/Z, reconnect)
+- **#32** Touch scroll restored via swipe gestures
 - **#50** Removed broken WebLinksAddon
-- **#1, #2, #3** Key bar auto-hide, IME/direct toggle, scrollable key row
-- **#10** iOS autocorrect/autocapitalize fixes
 
 Key open items:
-- **#5** SSH host key verification (highest real security risk)
+- **#67** Private keys stored in plaintext in localStorage (security)
+- **#69** Merge dual key-store paths into vault-only (security)
 - **#4** Multi-session tab support
-- **#14** WebAuthn vault path for iOS
-- **#6–9** Security hardening (SSRF, SRI, CSP, ws:// block)
-- **#11–13** iOS safe area, Apple PWA meta, standalone
-- **#37** Touch scroll / tmux mouse protocol
+- **#55** Copy/paste on terminal long-press
+- **#53** TUI agent rendering/input issues
+- **#70** Connect screen refactor — profiles as primary action
+- **#19–21** Image passthrough (sixel/iTerm2, overlay, ImageAddon)
