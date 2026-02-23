@@ -126,13 +126,16 @@ This matters in contrast to projects that expose AI coding agents over HTTP/WebS
 
 ## Setup
 
+Requires Node.js 18+.
+
 ```bash
-cd server && npm install
+git clone https://github.com/flavordrake/mobissh.git
+cd mobissh/server && npm install
 npm start
 # → Listening on http://0.0.0.0:8081
 ```
 
-Open `http://localhost:8081` in a browser, or the Codespace forwarded URL.
+Open `http://localhost:8081` in a browser, or the Codespace forwarded URL. The server has no dependencies outside `server/node_modules` — the `public/` directory is served as static files with no build step.
 
 ### Deployment options
 
@@ -177,10 +180,9 @@ Recently completed:
 - **#50** Removed broken WebLinksAddon
 
 Key open items:
-- **#67** Private keys stored in plaintext in localStorage (security)
-- **#69** Merge dual key-store paths into vault-only (security)
-- **#4** Multi-session tab support
+- **#4, #28** Session persistence + multi-session (planned milestone)
 - **#55** Copy/paste on terminal long-press
 - **#53** TUI agent rendering/input issues
 - **#70** Connect screen refactor — profiles as primary action
+- **#82** Docker image for easy deployment
 - **#19–21** Image passthrough (sixel/iTerm2, overlay, ImageAddon)
