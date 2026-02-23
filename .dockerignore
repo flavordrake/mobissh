@@ -1,0 +1,14 @@
+.git
+.github
+.auth
+node_modules
+server/node_modules
+tests
+playwright-report
+test-results
+playwright*.config.*
+browserstack.yml
+hooks
+*.md
+*.log
+.DS_Store
