@@ -1194,6 +1194,7 @@ function setCtrlActive(active) {
 
 function initTerminalActions() {
   document.getElementById('keyCtrl').addEventListener('click', () => {
+    if (navigator.vibrate) navigator.vibrate(10);
     setCtrlActive(!ctrlActive);
     focusIME();
   });
@@ -1216,6 +1217,7 @@ function initTerminalActions() {
 
   Object.entries(keys).forEach(([id, seq]) => {
     document.getElementById(id).addEventListener('click', () => {
+      if (navigator.vibrate) navigator.vibrate(10);
       sendSSHInput(seq);
       focusIME();
     });

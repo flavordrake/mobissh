@@ -371,9 +371,15 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  touch-action: manipulation; /* prevent 300ms tap delay on mobile */
+  transition: background 0.08s, transform 0.08s, border-color 0.08s;
 }
 
-.key-btn:active { background: var(--bg-input); }
+.key-btn:active {
+  background: var(--bg-input);
+  transform: scale(0.88);
+  border-color: var(--accent-dim);
+}
 
 /* Arrow keys: wider tap target, less horizontal text to pad around */
 #keyUp, #keyDown, #keyLeft, #keyRight {
