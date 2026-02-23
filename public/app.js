@@ -186,11 +186,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }, { passive: true });
 
   // Event delegation for key list — replaces inline onclick blocked by CSP
-  document.getElementById('keyList').addEventListener('click', (e) => {
+  document.getElementById('keyList').addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const idx = parseInt(btn.dataset.idx);
-    if (btn.dataset.action === 'use') useKey(idx);
+    if (btn.dataset.action === 'use') await useKey(idx);
     else if (btn.dataset.action === 'delete') deleteKey(idx);
   });
 
@@ -1563,14 +1563,20 @@ function loadKeys() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('importKeyBtn').addEventListener('click', () => {
+  document.getElementById('importKeyBtn').addEventListener('click', async () => {
     const name = document.getElementById('keyName').value.trim();
     const data = document.getElementById('keyData').value.trim();
     if (!name || !data) { toast('Name and key data are required.'); return; }
     if (!data.includes('PRIVATE KEY')) { toast('Does not look like a PEM private key.'); return; }
 
+    const hasVault = await _ensureVaultKey();
+    if (!hasVault) { toast('Key not saved — vault unavailable on this browser.'); return; }
+
+    const vaultId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    await _vaultStore(vaultId, { data });
+
     const keys = getKeys();
-    keys.push({ name, data, created: new Date().toISOString() });
+    keys.push({ name, vaultId, created: new Date().toISOString() });
     localStorage.setItem('sshKeys', JSON.stringify(keys));
     loadKeys();
     document.getElementById('keyName').value = '';
@@ -1579,17 +1585,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-function useKey(idx) {
+async function useKey(idx) {
   const key = getKeys()[idx];
   if (!key) return;
+  if (!vaultKey) await _tryUnlockVault('required');
+  const creds = key.vaultId ? await _vaultLoad(key.vaultId) : null;
+  if (!creds) { toast('Vault locked — enter key manually.'); return; }
   document.getElementById('authType').value = 'key';
   document.getElementById('authType').dispatchEvent(new Event('change'));
-  document.getElementById('privateKey').value = key.data;
+  document.getElementById('privateKey').value = creds.data;
   toast(`Key "${key.name}" loaded into form.`);
 }
 
 function deleteKey(idx) {
   const keys = getKeys();
+  const key = keys[idx];
+  if (key && key.vaultId) _vaultDelete(key.vaultId);
   keys.splice(idx, 1);
   localStorage.setItem('sshKeys', JSON.stringify(keys));
   loadKeys();
