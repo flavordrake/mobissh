@@ -396,7 +396,9 @@ function initIMEInput() {
   ime.addEventListener('compositionend', (e) => {
     isComposing = false;
     _imePreviewShow(null); // hide preview on commit
-    const text = e.data || ime.value;
+    // Prefer ime.value (full accumulated phrase) over e.data, which on Android
+    // voice dictation is often "" or only the last recognised word.
+    const text = ime.value || e.data;
     ime.value = '';
     if (!text) return;
     if (text === '\n') { sendSSHInput('\r'); return; }
@@ -407,6 +409,17 @@ function initIMEInput() {
     } else {
       sendSSHInput(text);
     }
+  });
+
+  // compositioncancel fires when the IME aborts the composition without
+  // committing (focus loss, external textarea.value write during composition,
+  // voice recognition interrupted by terminal output, etc.).
+  // Without this handler isComposing stays true permanently and every
+  // subsequent input event is silently discarded as "preview only".
+  ime.addEventListener('compositioncancel', () => {
+    isComposing = false;
+    _imePreviewShow(null);
+    ime.value = '';
   });
 
   // ── keydown: special keys not captured by 'input' ─────────────────────
