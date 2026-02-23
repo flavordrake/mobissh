@@ -14,14 +14,14 @@ buildName: "MobiSSH-${GITHUB_RUN_ID:-local}"
 buildTag: "${GITHUB_REF_NAME:-dev}"
 
 # BrowserStack Local tunnel: proxies requests from cloud devices back to the
-# GitHub Actions runner (or Codespace) running the WS bridge on port 8080.
-# Without this, real devices cannot reach localhost:8080.
+# GitHub Actions runner (or Codespace) running the WS bridge on port 8081.
+# Without this, real devices cannot reach localhost:8081.
 browserstackLocal: true
 browserstackLocalOptions:
   # Unique ID per run prevents tunnel collisions in parallel builds
   localIdentifier: "mobissh-${GITHUB_RUN_ID:-local}"
   # Forward only the SSH bridge port — no need to tunnel the whole LAN
-  only: "localhost,8080,0"
+  only: "localhost,8081,0"
 
 # Real Android Chrome devices — Samsung S23 + Pixel 6 for diverse OEM coverage
 browsers:

@@ -9,6 +9,9 @@ const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './tests',
+  // Only run files prefixed with "browserstack-" — local tests (layout, ime)
+  // use fixtures that require ports not tunnelled by BrowserStack Local.
+  testMatch: ['**/browserstack-*.spec.js'],
   timeout: 60_000,
   retries: 1,
   workers: 5,
@@ -21,7 +24,7 @@ module.exports = defineConfig({
   // The tunnel is started by the GitHub Actions workflow (or `browserstack-node-sdk`
   // with browserstackLocal: true in browserstack.yml).
   use: {
-    baseURL: 'http://localhost:8080',
+    baseURL: 'http://localhost:8081',
     trace: 'on',
     screenshot: 'on',
     video: 'on',
