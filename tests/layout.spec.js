@@ -12,16 +12,53 @@ const { test, expect } = require('@playwright/test');
 
 test.describe('Initial page load', () => {
   test.beforeEach(async ({ page }) => {
+    // Collect JS errors — any uncaught exception will surface in the
+    // 'no JS errors on page load' test below.
+    page._jsErrors = [];
+    page.on('pageerror', (err) => page._jsErrors.push(err.message));
+
     // Clear all storage so we always start from a known state (no profiles,
     // no saved WS URL, default theme). Cold start lands on Terminal tab.
     await page.addInitScript(() => {
       localStorage.clear();
       sessionStorage.clear();
     });
-    await page.goto('/');
+    await page.goto('./');
     // Wait for DOMContentLoaded + xterm.js init
     // xterm.js uses a DOM renderer in headless Chrome (no GPU canvas)
     await page.waitForSelector('.xterm-screen', { timeout: 10_000 });
+  });
+
+  test('smoke: UI loads and all tabs switch panels', async ({ page }) => {
+    // App shell is up
+    await expect(page.locator('#terminal')).toBeVisible();
+
+    // All four tabs present and enabled
+    const tabs = [
+      { name: 'terminal', panel: '#panel-terminal' },
+      { name: 'connect',  panel: '#panel-connect'  },
+      { name: 'keys',     panel: '#panel-keys'     },
+      { name: 'settings', panel: '#panel-settings' },
+    ];
+    for (const { name } of tabs) {
+      const tab = page.locator(`[data-panel="${name}"]`);
+      await expect(tab).toBeVisible();
+      await expect(tab).not.toBeDisabled();
+    }
+
+    // Each tab click activates the right panel
+    for (const { name, panel } of tabs) {
+      await page.locator(`[data-panel="${name}"]`).click();
+      await expect(page.locator(panel)).toHaveClass(/active/);
+      // All other panels must be inactive
+      for (const { panel: other } of tabs.filter((t) => t.panel !== panel)) {
+        await expect(page.locator(other)).not.toHaveClass(/active/);
+      }
+    }
+  });
+
+  test('no JS errors on page load', async ({ page }) => {
+    expect(page._jsErrors).toEqual([]);
   });
 
   test('xterm.js initializes and renders terminal', async ({ page }) => {
@@ -80,7 +117,6 @@ test.describe('Initial page load', () => {
     await expect(page.locator('#keyEsc')).toBeVisible();
     await expect(page.locator('#keyCtrl')).toBeVisible();
     await expect(page.locator('#keyTab')).toBeVisible();
-    await expect(page.locator('#keyBksp')).toBeVisible();
     await expect(page.locator('#keyUp')).toBeVisible();
     await expect(page.locator('#keyDown')).toBeVisible();
   });
@@ -108,7 +144,7 @@ test.describe('Initial page load', () => {
 test.describe('Tab navigation', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
-    await page.goto('/');
+    await page.goto('./');
     await page.waitForSelector('.xterm-screen');
   });
 
@@ -141,7 +177,7 @@ test.describe('Tab navigation', () => {
 test.describe('Connect form', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
-    await page.goto('/');
+    await page.goto('./');
     await page.waitForSelector('.xterm-screen');
     await page.locator('[data-panel="connect"]').click();
   });
@@ -201,7 +237,7 @@ test.describe('Connect form', () => {
 test.describe('Settings panel', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
-    await page.goto('/');
+    await page.goto('./');
     await page.waitForSelector('.xterm-screen');
     await page.locator('[data-panel="settings"]').click();
   });
@@ -248,7 +284,7 @@ test.describe('Settings panel', () => {
 
 test.describe('Issue #71 — no redundant status indicator', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await page.goto('./');
     await page.waitForSelector('.xterm-screen', { timeout: 5000 });
   });
 

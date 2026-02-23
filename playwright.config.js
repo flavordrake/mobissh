@@ -6,6 +6,20 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { defineConfig, devices } = require('@playwright/test');
 
+// BASE_URL controls where tests run:
+//
+//   npx playwright test
+//     Direct localhost — fastest, no auth needed. Default for CI and dev.
+//
+//   BASE_URL=https://raserver.tailbe5094.ts.net/ssh npx playwright test
+//     Through nginx reverse proxy — matches the real user experience.
+//     Requires: nginx /ssh location pointing at localhost:8081 (see nginx-ssh-location.conf)
+//     Requires: MobiSSH started with  BASE_PATH=/ssh PORT=8081 node server/index.js
+//     No code-server auth needed — nginx /ssh bypasses code-server entirely.
+//
+const BASE_URL = (process.env.BASE_URL || 'http://localhost:8081').replace(/\/?$/, '/');
+const useExternalServer = !!process.env.BASE_URL;
+
 module.exports = defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -18,19 +32,19 @@ module.exports = defineConfig({
   ],
 
   // Start the MobiSSH server before tests; reuse if already running locally.
-  webServer: {
+  // Skipped when BASE_URL is set — the external server is already up.
+  webServer: useExternalServer ? undefined : {
     command: 'node server/index.js',
-    port: 8080,
+    port: 8081,
     reuseExistingServer: !process.env.CI,
     timeout: 15_000,
     env: {
-      // Disable nodemon-style restarts; plain node is enough
-      PORT: '8080',
+      PORT: '8081',
     },
   },
 
   use: {
-    baseURL: 'http://localhost:8080',
+    baseURL: BASE_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     // Disable service worker for tests so we always get fresh responses

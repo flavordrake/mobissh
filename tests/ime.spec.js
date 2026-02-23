@@ -82,7 +82,7 @@ async function setupConnected(page, mockSshServer) {
   // Clear localStorage (no profiles → app lands on Terminal tab)
   await page.addInitScript(() => { localStorage.clear(); });
 
-  await page.goto('/');
+  await page.goto('./');
   await page.waitForSelector('.xterm-screen', { timeout: 8000 });
 
   // Set WS URL to the mock server BEFORE connecting

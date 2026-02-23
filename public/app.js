@@ -15,9 +15,12 @@
 
 function getDefaultWsUrl() {
   // WebSocket bridge is served from the same origin as the frontend.
+  // When deployed behind a reverse proxy at a subpath (e.g. /ssh), the server
+  // injects <meta name="app-base-path"> so the WebSocket URL includes that prefix.
   const { protocol, host } = window.location;
   const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${wsProtocol}//${host}`;
+  const basePath = document.querySelector('meta[name="app-base-path"]')?.content || '';
+  return `${wsProtocol}//${host}${basePath}`;
 }
 
 const RECONNECT = {
@@ -1197,37 +1200,6 @@ function initKeyBar() {
     focusIME();
   });
 
-  // Backspace button: tap → \x7f, long-press (500 ms) → Ctrl+W (\x17 — word erase)
-  const bkspBtn = document.getElementById('keyBksp');
-  let _bkspTimer = null;
-
-  bkspBtn.addEventListener('touchstart', (e) => {
-    e.preventDefault(); // suppress click so we don't double-send
-    _bkspTimer = setTimeout(() => {
-      sendSSHInput('\x17'); // Ctrl+W — word erase
-      _bkspTimer = null;
-      focusIME();
-    }, 500);
-  }, { passive: false });
-
-  bkspBtn.addEventListener('touchend', () => {
-    if (_bkspTimer) {
-      clearTimeout(_bkspTimer);
-      _bkspTimer = null;
-      sendSSHInput('\x7f'); // regular backspace
-      focusIME();
-    }
-  });
-
-  bkspBtn.addEventListener('touchcancel', () => {
-    if (_bkspTimer) { clearTimeout(_bkspTimer); _bkspTimer = null; }
-  });
-
-  // Desktop fallback: click → regular backspace (touch path handles mobile)
-  bkspBtn.addEventListener('click', () => {
-    sendSSHInput('\x7f');
-    focusIME();
-  });
 }
 
 function toggleKeyBar() {
@@ -1607,16 +1579,39 @@ function initSettingsPanel() {
     loadKeys();
     toast('All data cleared.');
   });
+
+  document.getElementById('clearCacheBtn').addEventListener('click', () => {
+    if (!confirm('Unregister service workers, clear all caches, and reload?')) return;
+    clearCacheAndReload();
+  });
 }
 
 // ─── Service Worker ───────────────────────────────────────────────────────────
 
 function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch((err) => {
-      console.warn('Service worker registration failed:', err);
-    });
-  }
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    // Check for updates every 60s so stale SWs get replaced promptly
+    setInterval(() => reg.update(), 60_000);
+  }).catch((err) => {
+    console.warn('Service worker registration failed:', err);
+  });
+}
+
+// Nuke all service workers + caches + storage, then hard-reload.
+// Callable from Settings and from the /clear server endpoint.
+async function clearCacheAndReload() {
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+  } catch (_) {}
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+  } catch (_) {}
+  try { localStorage.clear(); } catch (_) {}
+  try { sessionStorage.clear(); } catch (_) {}
+  location.reload();
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

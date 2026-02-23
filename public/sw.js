@@ -5,17 +5,18 @@
  * The WebSocket connection itself is always live (no caching).
  */
 
-const CACHE_NAME = 'mobissh-v1';
+const CACHE_NAME = 'mobissh-v3';
 
-// Files to cache for offline shell
+// Files to cache for offline shell.
+// Relative paths so they resolve correctly when served at a subpath (e.g. /ssh/).
 const SHELL_FILES = [
-  '/',
-  '/index.html',
-  '/app.js',
-  '/app.css',
-  '/manifest.json',
-  '/icon-192.svg',
-  '/icon-512.svg',
+  './',
+  './index.html',
+  './app.js',
+  './app.css',
+  './manifest.json',
+  './icon-192.svg',
+  './icon-512.svg',
   // xterm.js loaded from CDN — won't be cached offline
 ];
 
@@ -66,7 +67,7 @@ self.addEventListener('fetch', (event) => {
         // Network failed — serve from cache (offline)
         return caches.match(event.request).then((cached) => {
           if (cached) return cached;
-          if (event.request.mode === 'navigate') return caches.match('/index.html');
+          if (event.request.mode === 'navigate') return caches.match('./index.html');
         });
       })
   );

@@ -1,0 +1,9 @@
+{
+  "remote.portsAttributes": {
+    "8081": {
+      "label": "MobiSSH",
+      "onAutoForward": "notify",
+      "protocol": "http"
+    }
+  }
+}

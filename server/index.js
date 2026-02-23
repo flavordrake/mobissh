@@ -31,8 +31,11 @@ const { createHash } = require('crypto');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8081;
 const HOST = process.env.HOST || '0.0.0.0';
+// BASE_PATH: set when served behind a reverse-proxy at a subpath (e.g. /ssh).
+// Must start with / and have no trailing slash.  Example: BASE_PATH=/ssh
+const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, '');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 
@@ -50,6 +53,27 @@ const MIME = {
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
+  // /clear — nuke SW cache + storage so mobile browsers get a fresh start.
+  // Visit https://<host>/ssh/clear after a bad SW deploy.
+  // Uses JS instead of Clear-Site-Data header (which hangs on some mobile browsers).
+  if (req.url === '/clear') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width"></head>
+<body><pre id="log">Clearing...</pre><script>
+(async()=>{const l=document.getElementById('log');function log(m){l.textContent+=m+'\\n'}
+try{const regs=await navigator.serviceWorker.getRegistrations();
+for(const r of regs){await r.unregister();log('Unregistered SW: '+r.scope)}
+}catch(e){log('SW: '+e.message)}
+try{const keys=await caches.keys();
+for(const k of keys){await caches.delete(k);log('Deleted cache: '+k)}
+}catch(e){log('Cache: '+e.message)}
+try{localStorage.clear();log('localStorage cleared')}catch(e){}
+try{sessionStorage.clear();log('sessionStorage cleared')}catch(e){}
+log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
+</script></body></html>`);
+    return;
+  }
+
   const urlPath = req.url.split('?')[0];
   const rel = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
   const filePath = path.join(PUBLIC_DIR, rel === '/' || rel === '' ? 'index.html' : rel);
@@ -67,6 +91,16 @@ const server = http.createServer((req, res) => {
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
+    // Inject base path into index.html as a <meta> tag so the client knows
+    // the subpath without needing unsafe-inline in the CSP.
+    if (ext === '.html' && BASE_PATH) {
+      data = Buffer.from(
+        data.toString().replace(
+          '<head>',
+          `<head><meta name="app-base-path" content="${BASE_PATH}">`
+        )
+      );
+    }
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store',

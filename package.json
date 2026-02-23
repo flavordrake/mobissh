@@ -2,8 +2,12 @@
   "name": "mobissh",
   "private": true,
   "scripts": {
+    "start": "node server/index.js",
+    "start:ssh": "BASE_PATH=/ssh PORT=8081 node server/index.js",
+    "setup:nginx": "sudo bash scripts/setup-nginx.sh",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
+    "test:proxy": "BASE_URL=https://raserver.tailbe5094.ts.net/ssh playwright test",
     "test:browserstack": "browserstack-node-sdk playwright test --config=playwright.browserstack.config.js"
   },
   "devDependencies": {
