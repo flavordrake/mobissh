@@ -145,7 +145,7 @@
         <input type="number" id="port" value="22" min="1" max="65535" inputmode="numeric" />
 
         <label for="username">Username</label>
-        <input type="text" id="username" placeholder="root" required autocapitalize="none" />
+        <input type="text" id="username" placeholder="root" required autocapitalize="none" autocomplete="off" />
 
         <label for="authType">Auth method</label>
         <select id="authType">
@@ -155,10 +155,10 @@
 
         <div id="passwordGroup">
           <label for="password">Password</label>
-          <input type="password" id="password"
-            autocomplete="new-password"
+          <input type="text" id="password"
+            autocomplete="off"
             data-lpignore="true"
-            data-1p-ignore
+            data-1p-ignore="true"
             data-form-type="other" />
         </div>
 
@@ -166,10 +166,10 @@
           <label for="privateKey">Private key</label>
           <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
           <label for="passphrase">Passphrase (if encrypted)</label>
-          <input type="password" id="passphrase"
-            autocomplete="new-password"
+          <input type="text" id="passphrase"
+            autocomplete="off"
             data-lpignore="true"
-            data-1p-ignore
+            data-1p-ignore="true"
             data-form-type="other" />
           <button type="button" id="useStoredKeyBtn" class="secondary-btn">Use stored key…</button>
         </div>
