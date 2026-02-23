@@ -29,6 +29,12 @@ const RECONNECT = {
   BACKOFF_FACTOR: 1.5,
 };
 
+// Key repeat timing for key bar buttons (#89)
+const KEY_REPEAT = {
+  DELAY_MS: 400,    // hold duration before first repeat (matches typical OS repeat delay)
+  INTERVAL_MS: 80,  // interval between repeats (matches typical OS repeat rate)
+};
+
 // ─── Terminal themes (#47) ────────────────────────────────────────────────────
 
 const THEMES = {
@@ -665,10 +671,6 @@ function initIMEInput() {
     }
   });
 
-  // Refocus after key-bar buttons (except Ctrl which handles its own focus)
-  document.querySelectorAll('.key-btn:not(.modifier)').forEach((btn) => {
-    btn.addEventListener('click', () => setTimeout(focusIME, 50));
-  });
 }
 
 function focusIME() {
@@ -1205,6 +1207,40 @@ function setCtrlActive(active) {
   document.getElementById('keyCtrl').classList.toggle('active', active);
 }
 
+// Attach a two-stage key-repeat handler to a key bar button (#89).
+// onRepeat fires immediately on press, then again after KEY_REPEAT.DELAY_MS,
+// then every KEY_REPEAT.INTERVAL_MS while held.
+// onPress (optional) fires once on the initial press only (used for haptic feedback).
+// e.preventDefault() on pointerdown suppresses the synthetic click event so the
+// action isn't fired twice and the button doesn't steal IME focus.
+function _attachRepeat(element, onRepeat, onPress) {
+  let _delayTimer = null;
+  let _intervalTimer = null;
+
+  function _clear() {
+    clearTimeout(_delayTimer);
+    clearInterval(_intervalTimer);
+    _delayTimer = _intervalTimer = null;
+  }
+
+  element.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); // suppress synthetic click; keeps IME input focused
+    if (onPress) onPress();
+    onRepeat();
+    _delayTimer = setTimeout(() => {
+      _intervalTimer = setInterval(onRepeat, KEY_REPEAT.INTERVAL_MS);
+    }, KEY_REPEAT.DELAY_MS);
+  });
+
+  // Stop repeat and restore IME focus on release or pointer leaving the button
+  element.addEventListener('pointerup',     () => { _clear(); setTimeout(focusIME, 50); });
+  element.addEventListener('pointercancel', _clear);
+  element.addEventListener('pointerleave',  _clear);
+
+  // Suppress the long-press context menu on Android/iOS
+  element.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
 function initTerminalActions() {
   document.getElementById('keyCtrl').addEventListener('click', () => {
     if (navigator.vibrate) navigator.vibrate(10);
@@ -1229,11 +1265,11 @@ function initTerminalActions() {
   };
 
   Object.entries(keys).forEach(([id, seq]) => {
-    document.getElementById(id).addEventListener('click', () => {
-      if (navigator.vibrate) navigator.vibrate(10);
-      sendSSHInput(seq);
-      focusIME();
-    });
+    _attachRepeat(
+      document.getElementById(id),
+      () => sendSSHInput(seq),
+      () => { if (navigator.vibrate) navigator.vibrate(10); },
+    );
   });
 
   // Disconnect is now in the session menu (#39); no standalone button
