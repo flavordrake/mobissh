@@ -729,6 +729,9 @@ function _openWebSocket() {
         sshConnected = true;
         reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
         acquireWakeLock();
+        // Reset terminal modes so stale mouse tracking from a previous session
+        // doesn't cause scroll gestures to send SGR codes to a plain shell (#81)
+        terminal.reset();
         setStatus('connected', `${currentProfile.username}@${currentProfile.host}`);
         terminal.writeln(ANSI.green('✓ Connected'));
         // Sync terminal size to server
