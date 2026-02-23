@@ -1,10 +1,10 @@
 /**
- * MobiSSH PWA — Recovery watchdog
+ * MobiSSH PWA — Recovery watchdog + emergency escape hatch
  *
- * Loaded before app.js. Two responsibilities:
+ * Loaded before app.js. Three responsibilities:
  *
  *   1. ?reset=1 handler — emergency cache clear + reload.
- *      The SW also handles this (sw.js), giving us two independent paths:
+ *      The SW also handles this (sw.js), giving two independent paths:
  *        a. SW working: SW intercepts navigate, clears caches, redirects.
  *        b. SW broken: server serves fresh index.html, this script runs.
  *
@@ -12,8 +12,9 @@
  *      BOOT_TIMEOUT_MS, show the inline recovery overlay (index.html).
  *      app.js calls window.__appReady() after DOMContentLoaded init.
  *
- *   NOTE: ?reset=1 and /clear are development aids. They should be stripped
- *   or gated before production release.
+ *   3. Long-press escape hatch — long-press (1.5s) on the Settings tab
+ *      clears SW caches and reloads. Works even when the app's JS event
+ *      handlers fail to attach.
  */
 
 (function () {
@@ -30,27 +31,22 @@
         var keys = await caches.keys();
         await Promise.all(keys.map(function (k) { return caches.delete(k); }));
       } catch (_) {}
-      // Navigate to the bare base path — strip query string.
       location.replace(location.pathname);
     }());
     return;
   }
 
-  // Boot watchdog
+  // Boot watchdog — only trust the __appReady signal, not DOM heuristics.
+  // Static HTML renders even when JS fails, so checking tabBar height is wrong.
   var BOOT_TIMEOUT_MS = 8000;
   var booted = false;
 
-  // app.js calls this once DOMContentLoaded initialization is complete.
   window.__appReady = function () {
     booted = true;
   };
 
   setTimeout(function () {
     if (booted) return;
-    // Secondary check: if #tabBar rendered, the app is alive.
-    var tabBar = document.getElementById('tabBar');
-    if (tabBar && tabBar.offsetHeight > 0) return;
-    // App appears broken — reveal the recovery overlay.
     var overlay = document.getElementById('recovery-overlay');
     if (overlay) overlay.style.display = 'flex';
   }, BOOT_TIMEOUT_MS);
@@ -63,5 +59,35 @@
         location.href = location.pathname + '?reset=1';
       });
     }
+  });
+
+  // Long-press escape hatch on Settings tab (1.5s hold clears SW + caches)
+  document.addEventListener('DOMContentLoaded', function () {
+    var settingsBtn = document.querySelector('[data-panel="settings"]');
+    if (!settingsBtn) return;
+    var timer = null;
+
+    function clearTimer() {
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+
+    function doReset() {
+      timer = null;
+      if (!confirm('Clear service workers and caches?\n(Profiles and settings are preserved)')) return;
+      Promise.resolve()
+        .then(function () { return navigator.serviceWorker.getRegistrations(); })
+        .then(function (regs) { return Promise.all(regs.map(function (r) { return r.unregister(); })); })
+        .catch(function () {})
+        .then(function () { return caches.keys(); })
+        .then(function (keys) { return Promise.all(keys.map(function (k) { return caches.delete(k); })); })
+        .catch(function () {})
+        .then(function () { location.reload(); });
+    }
+
+    settingsBtn.addEventListener('touchstart', function () {
+      timer = setTimeout(doReset, 1500);
+    }, { passive: true });
+    settingsBtn.addEventListener('touchend', clearTimer);
+    settingsBtn.addEventListener('touchmove', clearTimer);
   });
 }());
