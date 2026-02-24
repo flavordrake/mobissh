@@ -488,6 +488,7 @@ function initIMEInput() {
   const selOverlay = document.getElementById('selectionOverlay');
   const selBar = document.getElementById('selectionBar');
   let _selectionActive = false;
+  let _overlayCellH = 0; // cached cell height from last metric sync
 
   // URL regex — matches http/https URLs, strips common trailing punctuation
   const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
@@ -502,6 +503,7 @@ function initIMEInput() {
     if (!screen) return;
     const cellH = screen.offsetHeight / terminal.rows;
     const cellW = screen.offsetWidth / terminal.cols;
+    _overlayCellH = cellH;
     selOverlay.style.fontFamily = terminal.options.fontFamily;
     selOverlay.style.fontSize = terminal.options.fontSize + 'px';
     selOverlay.style.lineHeight = cellH + 'px';
@@ -537,6 +539,7 @@ function initIMEInput() {
       const text = line ? line.translateToString(true) : '';
       const div = document.createElement('div');
       div.className = 'sel-line';
+      if (_overlayCellH) div.style.height = _overlayCellH + 'px';
       // Detect and wrap URLs
       let lastIdx = 0;
       let match;
@@ -604,6 +607,7 @@ function initIMEInput() {
   function exitSelectionMode() {
     _selectionActive = false;
     selOverlay.classList.remove('active');
+    selOverlay.innerHTML = ''; // clear stale content (URL underlines etc.)
     selBar.classList.add('hidden');
     window.getSelection().removeAllRanges();
     // Re-focus IME so keyboard stays available

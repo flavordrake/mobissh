@@ -151,17 +151,13 @@ html, body {
 /* Selection overlay (#55) — transparent text mirror for native mobile copy */
 #selectionOverlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  /* top, left, width, height set dynamically by _syncOverlayMetrics() */
   pointer-events: none;
   z-index: 10;
   white-space: pre;
   color: transparent;
   -webkit-user-select: text;
   user-select: text;
-  /* font metrics set by JS to match terminal exactly */
 }
 
 #selectionOverlay.active {
@@ -171,9 +167,11 @@ html, body {
 #selectionOverlay .sel-line {
   display: block;
   width: 100%;
+  overflow: hidden; /* pin to exact cell height — prevent line-box drift */
 }
 
-#selectionOverlay .sel-url {
+/* URL underlines only visible in selection mode — prevents stale highlights */
+#selectionOverlay.active .sel-url {
   text-decoration: underline;
   text-decoration-color: rgba(0, 255, 136, 0.4);
   text-underline-offset: 2px;
