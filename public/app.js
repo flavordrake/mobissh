@@ -149,6 +149,10 @@ let hasConnected = false;  // true after first successful SSH session (#36)
 let activeThemeName = 'dark'; // current terminal theme key (#47)
 let _syncOverlayMetrics = null; // set by initIMEInput (#55)
 let _selectionActive = false;   // true while mobile text selection overlay is active (#55)
+// SELECTION_OVERLAY: mobile text selection via transparent DOM overlay (#55).
+// Disabled while #111 (Android UX review findings) is being addressed on a
+// feature branch. Set true to re-enable long-press → select → copy.
+const SELECTION_OVERLAY = false;
 
 // ─── Session recording state (#54) ───────────────────────────────────────────
 let recording = false;          // true while a recording is in progress
@@ -721,8 +725,10 @@ function initIMEInput() {
     }
   });
 
-  // Suppress browser's useless "Paste" context menu on terminal long-press (#55)
-  termEl.addEventListener('contextmenu', (e) => e.preventDefault());
+  // Suppress browser's "Paste" context menu on terminal long-press (#55)
+  if (SELECTION_OVERLAY) {
+    termEl.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
 
   // Long-press detection — 500ms hold without movement activates selection mode
   let _longPressTimer = null;
@@ -747,6 +753,7 @@ function initIMEInput() {
       _longPressTimer = null;
     }
   }
+
 
   // ── Tap + swipe gestures on terminal (#32/#37/#16) ────────────────────
   // SWIPE_GESTURES: JS touch→scroll handler.  touch-action:none on #terminal
@@ -796,7 +803,7 @@ function initIMEInput() {
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
     // Start long-press detection (#55) — single finger only
-    if (e.touches.length === 1 && !_selectionActive) {
+    if (SELECTION_OVERLAY && e.touches.length === 1 && !_selectionActive) {
       _startLongPress(e.touches[0].clientX, e.touches[0].clientY);
     }
   }, { passive: true, capture: true });
