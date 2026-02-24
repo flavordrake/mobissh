@@ -11,6 +11,10 @@ import {
   getKeys, loadKeys, importKey, useKey, deleteKey,
   escHtml,
 } from './modules/profiles.js';
+import {
+  initSettings, initSettingsPanel, registerServiceWorker,
+  clearCacheAndReload,
+} from './modules/settings.js';
 
 /**
  * MobiSSH PWA — Main application
@@ -45,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initKeyBar();         // #1 auto-hide + #2 IME toggle
     initRecording({ toast });
     initProfiles({ toast });
+    initSettings({ toast, applyFontSize, applyTheme });
     initSessionMenu();    // #39 handle strip session identity + menu
     initSettingsPanel();
     loadProfiles();
@@ -1460,122 +1465,6 @@ function _applyImeModeUI() {
   const btn = document.getElementById('keyModeBtn');
   btn.textContent = 'IME'; // label is always IME; colour signals state (#48)
   btn.classList.toggle('ime-active', appState.imeMode);
-}
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
-
-function initSettingsPanel() {
-  const wsInput = document.getElementById('wsUrl');
-  wsInput.value = localStorage.getItem('wsUrl') || getDefaultWsUrl();
-
-  // Show ws:// warning on load if the stored URL is insecure
-  const wsWarn = document.getElementById('wsWarnInsecure');
-  if (wsWarn && wsInput.value.startsWith('ws://')) {
-    wsWarn.classList.remove('hidden');
-  }
-
-  // ── Danger Zone toggles ──────────────────────────────────────────────────
-  // Each toggle persists to localStorage on change. New danger settings can
-  // be added here by following the same pattern.
-  const dangerAllowWsEl = document.getElementById('dangerAllowWs');
-  dangerAllowWsEl.checked = localStorage.getItem('dangerAllowWs') === 'true';
-  dangerAllowWsEl.addEventListener('change', () => {
-    localStorage.setItem('dangerAllowWs', dangerAllowWsEl.checked ? 'true' : 'false');
-  });
-
-  document.getElementById('saveSettingsBtn').addEventListener('click', () => {
-    const url = wsInput.value.trim();
-    if (url.startsWith('ws://')) {
-      if (dangerAllowWsEl.checked) {
-        localStorage.setItem('wsUrl', url);
-        toast('Saved — warning: ws:// may be blocked by browsers on HTTPS');
-      } else {
-        toast('ws:// is not allowed — use wss:// (or enable in Danger Zone)');
-      }
-      return;
-    }
-    if (!url.startsWith('wss://')) {
-      toast('URL must start with wss://');
-      return;
-    }
-    localStorage.setItem('wsUrl', url);
-    if (url.startsWith('ws://')) {
-      if (wsWarn) wsWarn.classList.remove('hidden');
-      toast('Settings saved — warning: ws:// is unencrypted.');
-    } else {
-      if (wsWarn) wsWarn.classList.add('hidden');
-      toast('Settings saved.');
-    }
-  });
-
-  // Danger zone: allow connections to private/loopback addresses
-  const allowPrivateEl = document.getElementById('allowPrivateHosts');
-  if (allowPrivateEl) {
-    allowPrivateEl.checked = localStorage.getItem('allowPrivateHosts') === 'true';
-    allowPrivateEl.addEventListener('change', () => {
-      localStorage.setItem('allowPrivateHosts', allowPrivateEl.checked);
-      toast(allowPrivateEl.checked
-        ? '⚠ Private address connections enabled.'
-        : 'SSRF protection re-enabled.');
-    });
-  }
-
-  document.getElementById('fontSize').addEventListener('input', (e) => {
-    applyFontSize(parseInt(e.target.value));
-  });
-
-  const themeSelect = document.getElementById('termThemeSelect');
-  themeSelect.value = localStorage.getItem('termTheme') || 'dark';
-  themeSelect.addEventListener('change', () => {
-    applyTheme(themeSelect.value, { persist: true });
-  });
-
-  const fontSelect = document.getElementById('termFontSelect');
-  fontSelect.value = localStorage.getItem('termFont') || 'jetbrains';
-  fontSelect.addEventListener('change', () => {
-    localStorage.setItem('termFont', fontSelect.value);
-  });
-
-  document.getElementById('clearDataBtn').addEventListener('click', () => {
-    if (!confirm('Clear all stored keys, profiles, and settings?')) return;
-    localStorage.clear();
-    loadProfiles();
-    loadKeys();
-    toast('All data cleared.');
-  });
-
-  document.getElementById('clearCacheBtn').addEventListener('click', () => {
-    if (!confirm('Unregister service workers, clear all caches, and reload?')) return;
-    clearCacheAndReload();
-  });
-}
-
-// ─── Service Worker ───────────────────────────────────────────────────────────
-
-function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('sw.js').then((reg) => {
-    // Check for updates every 60s so stale SWs get replaced promptly
-    setInterval(() => reg.update(), 60_000);
-  }).catch((err) => {
-    console.warn('Service worker registration failed:', err);
-  });
-}
-
-// Nuke all service workers + caches + storage, then hard-reload.
-// Callable from Settings and from the /clear server endpoint.
-async function clearCacheAndReload() {
-  try {
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(regs.map((r) => r.unregister()));
-  } catch (_) {}
-  try {
-    const keys = await caches.keys();
-    await Promise.all(keys.map((k) => caches.delete(k)));
-  } catch (_) {}
-  try { localStorage.clear(); } catch (_) {}
-  try { sessionStorage.clear(); } catch (_) {}
-  location.reload();
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
