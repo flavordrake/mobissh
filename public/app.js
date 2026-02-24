@@ -2,6 +2,7 @@ import {
   getDefaultWsUrl, RECONNECT, KEY_REPEAT, THEMES, THEME_ORDER,
   ANSI, KEY_MAP, FONT_SIZE, SELECTION_OVERLAY,
 } from './modules/constants.js';
+import { appState } from './modules/state.js';
 
 /**
  * MobiSSH PWA — Main application
@@ -23,34 +24,6 @@ const ROOT_CSS = (() => {
     keybarHeight:   s.getPropertyValue('--keybar-height').trim(),
   };
 })();
-
-// ─── State ───────────────────────────────────────────────────────────────────
-
-let terminal = null;
-let fitAddon = null;
-let ws = null;
-let _wsConnected = false;  // WebSocket open (tracked for future use)
-let sshConnected = false;  // SSH session established
-let currentProfile = null;
-let reconnectTimer = null;
-let reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
-let keepAliveTimer = null; // application-layer WS keepalive (#29)
-let isComposing = false;   // IME composition in progress
-let ctrlActive = false;    // sticky Ctrl modifier
-let vaultKey = null;       // AES-GCM CryptoKey, null when locked
-let vaultMethod = null;    // 'passwordcred' | 'webauthn-prf' | null
-let keyBarVisible = true;  // key bar show/hide state (#1)
-let imeMode = true;        // true = IME/swipe, false = direct char entry (#2)
-let tabBarVisible = true;  // visible on cold start (#36); auto-hides after first connect
-let hasConnected = false;  // true after first successful SSH session (#36)
-let activeThemeName = 'dark'; // current terminal theme key (#47)
-let _syncOverlayMetrics = null; // set by initIMEInput (#55)
-let _selectionActive = false;   // true while mobile text selection overlay is active (#55)
-
-// ─── Session recording state (#54) ───────────────────────────────────────────
-let recording = false;          // true while a recording is in progress
-let recordingStartTime = null;  // Date.now() at recording start (ms)
-let recordingEvents = [];       // asciicast v2 output events: [elapsed_s, 'o', data]
 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
@@ -123,7 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function initTerminal() {
   const fontSize = parseInt(localStorage.getItem('fontSize')) || 14;
   const savedTheme = localStorage.getItem('termTheme') || 'dark';
-  activeThemeName = THEMES[savedTheme] ? savedTheme : 'dark';
+  appState.activeThemeName = THEMES[savedTheme] ? savedTheme : 'dark';
 
   const FONT_FAMILIES = {
     jetbrains: '"JetBrains Mono", monospace',
@@ -133,43 +106,43 @@ function initTerminal() {
   const savedFont = localStorage.getItem('termFont') || 'jetbrains';
   const fontFamily = FONT_FAMILIES[savedFont] || FONT_FAMILIES.jetbrains;
 
-  terminal = new Terminal({
+  appState.terminal = new Terminal({
     fontFamily,
     fontSize,
-    theme: THEMES[activeThemeName].theme,
+    theme: THEMES[appState.activeThemeName].theme,
     cursorBlink: true,
     scrollback: 5000,
     convertEol: false,
     copyOnSelect: true,
   });
 
-  fitAddon = new FitAddon.FitAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.open(document.getElementById('terminal'));
-  fitAddon.fit();
+  appState.fitAddon = new FitAddon.FitAddon();
+  appState.terminal.loadAddon(appState.fitAddon);
+  appState.terminal.open(document.getElementById('terminal'));
+  appState.fitAddon.fit();
 
   // Re-measure character cells after web fonts finish loading (#71)
   document.fonts.ready.then(() => {
-    terminal.options.fontFamily = fontFamily;
-    fitAddon.fit();
+    appState.terminal.options.fontFamily = fontFamily;
+    appState.fitAddon.fit();
   });
 
   window.addEventListener('resize', handleResize);
 
   // Show welcome banner
-  terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
-  terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
-  terminal.writeln('');
+  appState.terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
+  appState.terminal.writeln(ANSI.dim('Tap appState.terminal to activate keyboard  •  Use Connect tab to open a session'));
+  appState.terminal.writeln('');
 }
 
 function handleResize() {
-  if (_selectionActive) return; // freeze layout during text selection (#55/#108)
-  if (fitAddon) fitAddon.fit();
-  if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
+  if (appState._selectionActive) return; // freeze layout during text selection (#55/#108)
+  if (appState.fitAddon) appState.fitAddon.fit();
+  if (appState.sshConnected && appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+    appState.ws.send(JSON.stringify({
       type: 'resize',
-      cols: terminal.cols,
-      rows: terminal.rows,
+      cols: appState.terminal.cols,
+      rows: appState.terminal.rows,
     }));
   }
 }
@@ -201,17 +174,17 @@ function initKeyboardAwareness() {
     // Freeze terminal layout while text selection overlay is active (#55/#108).
     // Keyboard dismiss during selection would resize the terminal, invalidating
     // the overlay's synced viewport. Resize happens on exitSelectionMode instead.
-    if (_selectionActive) return;
+    if (appState._selectionActive) return;
 
     // Refit terminal to the new dimensions
-    if (fitAddon) fitAddon.fit();
+    if (appState.fitAddon) appState.fitAddon.fit();
 
     // Keep cursor visible — scroll to bottom after keyboard appears
-    if (terminal) terminal.scrollToBottom();
+    if (appState.terminal) appState.terminal.scrollToBottom();
 
     // Tell the server the terminal changed size
-    if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+    if (appState.sshConnected && appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+      appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
     }
   }
 
@@ -228,22 +201,22 @@ function applyFontSize(size) {
   if (rangeEl) rangeEl.value = size;
   if (labelEl) labelEl.textContent = `${size}px`;
   if (menuLabel) menuLabel.textContent = `${size}px`;
-  if (terminal) {
-    terminal.options.fontSize = size;
-    if (fitAddon) fitAddon.fit();
-    if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+  if (appState.terminal) {
+    appState.terminal.options.fontSize = size;
+    if (appState.fitAddon) appState.fitAddon.fit();
+    if (appState.sshConnected && appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+      appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
     }
     // Re-sync selection overlay metrics after font change (#55)
-    if (typeof _syncOverlayMetrics === 'function') _syncOverlayMetrics();
+    if (typeof appState._syncOverlayMetrics === 'function') appState._syncOverlayMetrics();
   }
 }
 
 function applyTheme(name, { persist = false } = {}) {
   const t = THEMES[name];
   if (!t) return;
-  activeThemeName = name;
-  if (terminal) terminal.options.theme = t.theme;
+  appState.activeThemeName = name;
+  if (appState.terminal) appState.terminal.options.theme = t.theme;
   if (persist) localStorage.setItem('termTheme', name);
   // Sync session menu label
   const menuBtn = document.getElementById('sessionThemeBtn');
@@ -280,7 +253,7 @@ function initIMEInput() {
   // path for printable chars. e.preventDefault() in the keydown direct-mode
   // branch already suppresses duplicates from Bluetooth keyboards.
   ime.addEventListener('input', (_e) => {
-    if (isComposing) {
+    if (appState.isComposing) {
       // Update preview with current composition text while the user is typing
       _imePreviewShow(ime.value || null);
       return;
@@ -290,7 +263,7 @@ function initIMEInput() {
     if (!text) return;
     // GBoard sends '\n' for Enter via input events — remap to '\r' for SSH
     if (text === '\n') { sendSSHInput('\r'); return; }
-    if (ctrlActive) {
+    if (appState.ctrlActive) {
       const code = text[0].toLowerCase().charCodeAt(0) - 96;
       sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
       setCtrlActive(false);
@@ -301,7 +274,7 @@ function initIMEInput() {
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
   ime.addEventListener('compositionstart', () => {
-    isComposing = true;
+    appState.isComposing = true;
     // Preview strip appears on first compositionupdate or input event
   });
 
@@ -315,7 +288,7 @@ function initIMEInput() {
   // This means ctrlActive combos (e.g. Ctrl+b for tmux) must be handled here.
   // GBoard also sends '\n' for Enter via compositionend — remap to '\r'.
   ime.addEventListener('compositionend', (e) => {
-    isComposing = false;
+    appState.isComposing = false;
     _imePreviewShow(null); // hide preview on commit
     // Prefer ime.value (full accumulated phrase) over e.data, which on Android
     // voice dictation is often "" or only the last recognised word.
@@ -323,7 +296,7 @@ function initIMEInput() {
     ime.value = '';
     if (!text) return;
     if (text === '\n') { sendSSHInput('\r'); return; }
-    if (ctrlActive) {
+    if (appState.ctrlActive) {
       const code = text[0].toLowerCase().charCodeAt(0) - 96;
       sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
       setCtrlActive(false);
@@ -338,7 +311,7 @@ function initIMEInput() {
   // Without this handler isComposing stays true permanently and every
   // subsequent input event is silently discarded as "preview only".
   ime.addEventListener('compositioncancel', () => {
-    isComposing = false;
+    appState.isComposing = false;
     _imePreviewShow(null);
     ime.value = '';
   });
@@ -366,8 +339,8 @@ function initIMEInput() {
     }
 
     // Direct mode only: forward printable characters char-by-char, skip IME
-    if (!imeMode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (ctrlActive) {
+    if (!appState.imeMode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (appState.ctrlActive) {
         const code = e.key.toLowerCase().charCodeAt(0) - 96;
         sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : e.key);
         setCtrlActive(false);
@@ -398,15 +371,15 @@ function initIMEInput() {
   }
 
   // Compute and apply font metrics so overlay lines align with canvas cells
-  _syncOverlayMetrics = function _syncOverlayMetricsFn() {
-    if (!terminal || !selOverlay) return;
+  appState._syncOverlayMetrics = function _syncOverlayMetricsFn() {
+    if (!appState.terminal || !selOverlay) return;
     const screen = document.querySelector('.xterm-screen');
     if (!screen) return;
-    const cellH = screen.offsetHeight / terminal.rows;
-    const cellW = screen.offsetWidth / terminal.cols;
+    const cellH = screen.offsetHeight / appState.terminal.rows;
+    const cellW = screen.offsetWidth / appState.terminal.cols;
     _overlayCellH = cellH;
-    selOverlay.style.fontFamily = terminal.options.fontFamily;
-    selOverlay.style.fontSize = terminal.options.fontSize + 'px';
+    selOverlay.style.fontFamily = appState.terminal.options.fontFamily;
+    selOverlay.style.fontSize = appState.terminal.options.fontSize + 'px';
     selOverlay.style.lineHeight = cellH + 'px';
     // Padding to match xterm-screen position inside #terminal
     const screenRect = screen.getBoundingClientRect();
@@ -417,7 +390,7 @@ function initIMEInput() {
     selOverlay.style.height = screenRect.height + 'px';
     // Letter-spacing to match monospace cell width
     const testSpan = document.createElement('span');
-    testSpan.style.font = terminal.options.fontSize + 'px ' + terminal.options.fontFamily;
+    testSpan.style.font = appState.terminal.options.fontSize + 'px ' + appState.terminal.options.fontFamily;
     testSpan.style.visibility = 'hidden';
     testSpan.style.position = 'absolute';
     testSpan.textContent = 'M';
@@ -430,12 +403,12 @@ function initIMEInput() {
 
   // Populate overlay with current viewport text + URL detection
   function syncSelectionOverlay() {
-    if (!terminal || !selOverlay) return;
-    _syncOverlayMetrics();
-    const buf = terminal.buffer.active;
+    if (!appState.terminal || !selOverlay) return;
+    appState._syncOverlayMetrics();
+    const buf = appState.terminal.buffer.active;
     const startLine = buf.viewportY;
     const frag = document.createDocumentFragment();
-    for (let i = 0; i < terminal.rows; i++) {
+    for (let i = 0; i < appState.terminal.rows; i++) {
       const line = buf.getLine(startLine + i);
       const text = line ? line.translateToString(true) : '';
       const div = document.createElement('div');
@@ -478,8 +451,8 @@ function initIMEInput() {
   }
 
   function enterSelectionMode(x, y) {
-    if (_selectionActive) return;
-    _selectionActive = true;
+    if (appState._selectionActive) return;
+    appState._selectionActive = true;
     syncSelectionOverlay();
     selOverlay.classList.add('active');
 
@@ -506,7 +479,7 @@ function initIMEInput() {
   }
 
   function exitSelectionMode() {
-    _selectionActive = false;
+    appState._selectionActive = false;
     selOverlay.classList.remove('active');
     selOverlay.innerHTML = ''; // clear stale content (URL underlines etc.)
     selBar.classList.add('hidden');
@@ -587,14 +560,14 @@ function initIMEInput() {
 
   // Listen for selection changes to update the copy bar state
   document.addEventListener('selectionchange', () => {
-    if (!_selectionActive) return;
+    if (!appState._selectionActive) return;
     _updateSelBar();
     // Auto-dismiss if selection is cleared
     const sel = window.getSelection();
     if (!sel.toString()) {
       // Small delay — selection can briefly be empty during handle drag
       setTimeout(() => {
-        if (_selectionActive && !window.getSelection().toString()) {
+        if (appState._selectionActive && !window.getSelection().toString()) {
           exitSelectionMode();
         }
       }, 300);
@@ -603,7 +576,7 @@ function initIMEInput() {
 
   // URL tap handler — when in selection mode, tapping a URL auto-selects it
   selOverlay.addEventListener('click', (e) => {
-    if (!_selectionActive) return;
+    if (!appState._selectionActive) return;
     const urlEl = e.target.closest('.sel-url');
     if (urlEl) {
       const range = document.createRange();
@@ -667,8 +640,8 @@ function initIMEInput() {
   // Flush once per animation frame — prevents flooding xterm.js / the SSH pipe.
   function _flushScroll() {
     _scrollRafId = null;
-    if (_pendingLines !== 0 && terminal) {
-      terminal.scrollLines(_pendingLines);
+    if (_pendingLines !== 0 && appState.terminal) {
+      appState.terminal.scrollLines(_pendingLines);
       _pendingLines = 0;
     }
     if (_pendingSGR && _pendingSGR.count > 0) {
@@ -694,7 +667,7 @@ function initIMEInput() {
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
     // Start long-press detection (#55) — single finger only
-    if (SELECTION_OVERLAY && e.touches.length === 1 && !_selectionActive) {
+    if (SELECTION_OVERLAY && e.touches.length === 1 && !appState._selectionActive) {
       _startLongPress(e.touches[0].clientX, e.touches[0].clientY);
     }
   }, { passive: true, capture: true });
@@ -716,25 +689,25 @@ function initIMEInput() {
       _isTouchScroll = true;
     }
 
-    if (_isTouchScroll && terminal) {
+    if (_isTouchScroll && appState.terminal) {
       // Direct manipulation: compute where the finger IS relative to where it started,
       // then dispatch only the delta from where we've already scrolled to.
       // totalDy > 0 = finger went up = content should move up = newer content.
       // totalDy < 0 = finger went down = content should move down = older content.
-      const cellH = Math.max(20, terminal.options.fontSize * 1.5);
+      const cellH = Math.max(20, appState.terminal.options.fontSize * 1.5);
       const targetLines = Math.round(totalDy / cellH);
       const delta = targetLines - _scrolledLines;
       if (delta !== 0) {
         _scrolledLines = targetLines;
-        const mouseMode = terminal.modes && terminal.modes.mouseTrackingMode;
+        const mouseMode = appState.terminal.modes && appState.terminal.modes.mouseTrackingMode;
         if (mouseMode && mouseMode !== 'none') {
           // delta > 0 (newer) → wheel down (65); delta < 0 (older) → wheel up (64).
           const btn = delta > 0 ? 65 : 64;
           const rect = termEl.getBoundingClientRect();
-          const col = Math.max(1, Math.min(terminal.cols,
-            Math.floor((e.touches[0].clientX - rect.left) / (rect.width  / terminal.cols)) + 1));
-          const row = Math.max(1, Math.min(terminal.rows,
-            Math.floor((e.touches[0].clientY - rect.top)  / (rect.height / terminal.rows)) + 1));
+          const col = Math.max(1, Math.min(appState.terminal.cols,
+            Math.floor((e.touches[0].clientX - rect.left) / (rect.width  / appState.terminal.cols)) + 1));
+          const row = Math.max(1, Math.min(appState.terminal.rows,
+            Math.floor((e.touches[0].clientY - rect.top)  / (rect.height / appState.terminal.rows)) + 1));
           const count = Math.abs(delta);
           if (_pendingSGR && _pendingSGR.btn === btn) {
             _pendingSGR.count += count;
@@ -766,7 +739,7 @@ function initIMEInput() {
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
 
-    if (!wasScroll && !_selectionActive) {
+    if (!wasScroll && !appState._selectionActive) {
       // Horizontal swipe: more than 40px X, dominant over Y → tmux window switch (#16).
       if (Math.abs(finalDx) > 40 && Math.abs(finalDx) > Math.abs(finalDy)) {
         // Swipe left (finalDx < 0) → previous window; swipe right → next window.
@@ -795,8 +768,8 @@ function initIMEInput() {
   termEl.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 2) return;
     _pinchStartDist = _pinchDist(e.touches);
-    _pinchStartSize = terminal
-      ? terminal.options.fontSize
+    _pinchStartSize = appState.terminal
+      ? appState.terminal.options.fontSize
       : (parseInt(localStorage.getItem('fontSize')) || 14);
     e.preventDefault();
   }, { passive: false });
@@ -828,7 +801,7 @@ function initIMEInput() {
     directEl.value = '';
     if (!text) return;
     if (text === '\n') { sendSSHInput('\r'); return; }
-    if (ctrlActive) {
+    if (appState.ctrlActive) {
       const code = text[0].toLowerCase().charCodeAt(0) - 96;
       sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
       setCtrlActive(false);
@@ -852,7 +825,7 @@ function initIMEInput() {
       return;
     }
     if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (ctrlActive) {
+      if (appState.ctrlActive) {
         const code = e.key.toLowerCase().charCodeAt(0) - 96;
         sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : e.key);
         setCtrlActive(false);
@@ -870,103 +843,103 @@ function focusIME() {
   // In direct mode, focus the password-type input — Chrome/Gboard disables
   // swipe-to-type and word autocorrect on password fields, giving true
   // char-by-char entry (#44/#48). In IME mode use the normal textarea.
-  const id = imeMode ? 'imeInput' : 'directInput';
+  const id = appState.imeMode ? 'imeInput' : 'directInput';
   document.getElementById(id).focus({ preventScroll: true });
 }
 
 function sendSSHInput(data) {
-  if (!sshConnected || !ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'input', data }));
+  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
+  appState.ws.send(JSON.stringify({ type: 'input', data }));
 }
 
 // ─── WebSocket / SSH connection ───────────────────────────────────────────────
 
 function connect(profile) {
-  currentProfile = profile;
-  reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+  appState.currentProfile = profile;
+  appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
   cancelReconnect();
   _openWebSocket();
 }
 
 function _openWebSocket() {
-  if (ws) {
-    ws.onclose = null;
-    ws.close();
-    ws = null;
+  if (appState.ws) {
+    appState.ws.onclose = null;
+    appState.ws.close();
+    appState.ws = null;
   }
 
   const wsUrl = localStorage.getItem('wsUrl') || getDefaultWsUrl();
   setStatus('connecting', `Connecting to ${wsUrl}…`);
-  terminal.writeln(ANSI.yellow(`Connecting to ${wsUrl}…`));
+  appState.terminal.writeln(ANSI.yellow(`Connecting to ${wsUrl}…`));
 
   try {
-    ws = new WebSocket(wsUrl);
+    appState.ws = new WebSocket(wsUrl);
   } catch (err) {
-    terminal.writeln(ANSI.red(`WebSocket error: ${err.message}`));
+    appState.terminal.writeln(ANSI.red(`WebSocket error: ${err.message}`));
     scheduleReconnect();
     return;
   }
 
-  ws.onopen = () => {
-    _wsConnected = true;
+  appState.ws.onopen = () => {
+    appState._wsConnected = true;
     startKeepAlive();
     const authMsg = {
       type: 'connect',
-      host: currentProfile.host,
-      port: currentProfile.port || 22,
-      username: currentProfile.username,
+      host: appState.currentProfile.host,
+      port: appState.currentProfile.port || 22,
+      username: appState.currentProfile.username,
     };
-    if (currentProfile.authType === 'key' && currentProfile.privateKey) {
-      authMsg.privateKey = currentProfile.privateKey;
-      if (currentProfile.passphrase) authMsg.passphrase = currentProfile.passphrase;
+    if (appState.currentProfile.authType === 'key' && appState.currentProfile.privateKey) {
+      authMsg.privateKey = appState.currentProfile.privateKey;
+      if (appState.currentProfile.passphrase) authMsg.passphrase = appState.currentProfile.passphrase;
     } else {
-      authMsg.password = currentProfile.password || '';
+      authMsg.password = appState.currentProfile.password || '';
     }
-    if (currentProfile.initialCommand) authMsg.initialCommand = currentProfile.initialCommand;
+    if (appState.currentProfile.initialCommand) authMsg.initialCommand = appState.currentProfile.initialCommand;
     if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
-    ws.send(JSON.stringify(authMsg));
-    terminal.writeln(ANSI.dim(`SSH → ${currentProfile.username}@${currentProfile.host}:${currentProfile.port || 22}…`));
+    appState.ws.send(JSON.stringify(authMsg));
+    appState.terminal.writeln(ANSI.dim(`SSH → ${appState.currentProfile.username}@${appState.currentProfile.host}:${appState.currentProfile.port || 22}…`));
   };
 
-  ws.onmessage = (event) => {
+  appState.ws.onmessage = (event) => {
     let msg;
     try { msg = JSON.parse(event.data); } catch (_) { return; }
 
     switch (msg.type) {
       case 'connected':
-        sshConnected = true;
-        reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+        appState.sshConnected = true;
+        appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
         acquireWakeLock();
         // Reset terminal modes so stale mouse tracking from a previous session
         // doesn't cause scroll gestures to send SGR codes to a plain shell (#81)
-        terminal.reset();
-        setStatus('connected', `${currentProfile.username}@${currentProfile.host}`);
-        terminal.writeln(ANSI.green('✓ Connected'));
+        appState.terminal.reset();
+        setStatus('connected', `${appState.currentProfile.username}@${appState.currentProfile.host}`);
+        appState.terminal.writeln(ANSI.green('✓ Connected'));
         // Sync terminal size to server
-        ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+        appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
         // On every connect/reconnect: collapse nav chrome for continuous-feel (#36)
-        hasConnected = true;
-        tabBarVisible = false;
+        appState.hasConnected = true;
+        appState.tabBarVisible = false;
         _applyTabBarVisibility();
         focusIME();
         break;
 
       case 'output':
-        terminal.write(msg.data);
-        if (recording) {
-          recordingEvents.push([(Date.now() - recordingStartTime) / 1000, 'o', msg.data]);
+        appState.terminal.write(msg.data);
+        if (appState.recording) {
+          appState.recordingEvents.push([(Date.now() - appState.recordingStartTime) / 1000, 'o', msg.data]);
         }
         break;
 
       case 'error':
-        terminal.writeln(ANSI.red(`Error: ${msg.message}`));
+        appState.terminal.writeln(ANSI.red(`Error: ${msg.message}`));
         break;
 
       case 'disconnected':
-        sshConnected = false;
+        appState.sshConnected = false;
         setStatus('disconnected', 'Disconnected');
-        terminal.writeln(ANSI.yellow(`Disconnected: ${msg.reason || 'unknown reason'}`));
-        stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
+        appState.terminal.writeln(ANSI.yellow(`Disconnected: ${msg.reason || 'unknown reason'}`));
+        stopAndDownloadRecording(); // auto-save appState.recording on SSH disconnect (#54)
         scheduleReconnect();
         break;
 
@@ -982,11 +955,11 @@ function _openWebSocket() {
               knownHosts[hostKey] = { fingerprint: msg.fingerprint, keyType: msg.keyType, addedAt: new Date().toISOString() };
               localStorage.setItem('knownHosts', JSON.stringify(knownHosts));
             }
-            ws.send(JSON.stringify({ type: 'hostkey_response', accepted }));
+            appState.ws.send(JSON.stringify({ type: 'hostkey_response', accepted }));
           });
         } else if (known.fingerprint === msg.fingerprint) {
           // Fingerprint matches stored value — proceed silently
-          ws.send(JSON.stringify({ type: 'hostkey_response', accepted: true }));
+          appState.ws.send(JSON.stringify({ type: 'hostkey_response', accepted: true }));
         } else {
           // Fingerprint changed — block and warn (possible MITM)
           _showHostKeyPrompt(msg, known.fingerprint, (accepted) => {
@@ -995,7 +968,7 @@ function _openWebSocket() {
               updated[hostKey] = { fingerprint: msg.fingerprint, keyType: msg.keyType, addedAt: new Date().toISOString() };
               localStorage.setItem('knownHosts', JSON.stringify(updated));
             }
-            ws.send(JSON.stringify({ type: 'hostkey_response', accepted }));
+            appState.ws.send(JSON.stringify({ type: 'hostkey_response', accepted }));
           });
         }
         break;
@@ -1003,44 +976,44 @@ function _openWebSocket() {
     }
   };
 
-  ws.onclose = (event) => {
-    _wsConnected = false;
-    sshConnected = false;
+  appState.ws.onclose = (event) => {
+    appState._wsConnected = false;
+    appState.sshConnected = false;
     stopKeepAlive();
-    if (currentProfile) {
+    if (appState.currentProfile) {
       setStatus('disconnected', 'Disconnected');
       if (!event.wasClean) {
-        terminal.writeln(ANSI.red('Connection lost.'));
+        appState.terminal.writeln(ANSI.red('Connection lost.'));
         scheduleReconnect();
       }
     }
   };
 
-  ws.onerror = () => {
-    terminal.writeln(ANSI.red('WebSocket error — check server URL in Settings.'));
+  appState.ws.onerror = () => {
+    appState.terminal.writeln(ANSI.red('WebSocket error — check server URL in Settings.'));
   };
 }
 
 function scheduleReconnect() {
-  if (!currentProfile) return;
+  if (!appState.currentProfile) return;
 
-  const delaySec = Math.round(reconnectDelay / 1000);
-  terminal.writeln(ANSI.dim(`Reconnecting in ${delaySec}s… (tap ✕ to cancel)`));
+  const delaySec = Math.round(appState.reconnectDelay / 1000);
+  appState.terminal.writeln(ANSI.dim(`Reconnecting in ${delaySec}s… (tap ✕ to cancel)`));
   setStatus('connecting', `Reconnecting in ${delaySec}s…`);
 
-  reconnectTimer = setTimeout(() => {
-    reconnectDelay = Math.min(
-      reconnectDelay * RECONNECT.BACKOFF_FACTOR,
+  appState.reconnectTimer = setTimeout(() => {
+    appState.reconnectDelay = Math.min(
+      appState.reconnectDelay * RECONNECT.BACKOFF_FACTOR,
       RECONNECT.MAX_DELAY_MS
     );
     _openWebSocket();
-  }, reconnectDelay);
+  }, appState.reconnectDelay);
 }
 
 function cancelReconnect() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
+  if (appState.reconnectTimer) {
+    clearTimeout(appState.reconnectTimer);
+    appState.reconnectTimer = null;
   }
 }
 
@@ -1050,9 +1023,9 @@ const WS_PING_INTERVAL_MS = 25_000;
 
 function startKeepAlive() {
   stopKeepAlive();
-  keepAliveTimer = setInterval(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'ping' }));
+  appState.keepAliveTimer = setInterval(() => {
+    if (appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+      appState.ws.send(JSON.stringify({ type: 'ping' }));
     } else {
       stopKeepAlive();
     }
@@ -1060,9 +1033,9 @@ function startKeepAlive() {
 }
 
 function stopKeepAlive() {
-  if (keepAliveTimer) {
-    clearInterval(keepAliveTimer);
-    keepAliveTimer = null;
+  if (appState.keepAliveTimer) {
+    clearInterval(appState.keepAliveTimer);
+    appState.keepAliveTimer = null;
   }
 }
 
@@ -1090,8 +1063,8 @@ function releaseWakeLock() {
 // and reacquire the wake lock if a session is active.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    if (sshConnected) acquireWakeLock();
-    if (currentProfile && (!ws || ws.readyState !== WebSocket.OPEN)) {
+    if (appState.sshConnected) acquireWakeLock();
+    if (appState.currentProfile && (!appState.ws || appState.ws.readyState !== WebSocket.OPEN)) {
       cancelReconnect();
       _openWebSocket();
     }
@@ -1101,23 +1074,23 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function disconnect() {
-  stopAndDownloadRecording(); // auto-save any active recording (#54)
+  stopAndDownloadRecording(); // auto-save any active appState.recording (#54)
   cancelReconnect();
   stopKeepAlive();
   releaseWakeLock();
-  currentProfile = null;
-  sshConnected = false;
-  _wsConnected = false;
+  appState.currentProfile = null;
+  appState.sshConnected = false;
+  appState._wsConnected = false;
 
-  if (ws) {
-    ws.onclose = null;
-    try { ws.send(JSON.stringify({ type: 'disconnect' })); } catch (_) {}
-    ws.close();
-    ws = null;
+  if (appState.ws) {
+    appState.ws.onclose = null;
+    try { appState.ws.send(JSON.stringify({ type: 'disconnect' })); } catch (_) {}
+    appState.ws.close();
+    appState.ws = null;
   }
 
   setStatus('disconnected', 'Disconnected');
-  terminal.writeln(ANSI.yellow('Disconnected.'));
+  appState.terminal.writeln(ANSI.yellow('Disconnected.'));
 }
 
 // ─── Session recording (#54) ──────────────────────────────────────────────────
@@ -1126,17 +1099,17 @@ function disconnect() {
 // Event lines: JSON array [elapsed_seconds, "o", data]
 
 function startRecording() {
-  if (recording) return;
-  recording = true;
-  recordingStartTime = Date.now();
-  recordingEvents = [];
+  if (appState.recording) return;
+  appState.recording = true;
+  appState.recordingStartTime = Date.now();
+  appState.recordingEvents = [];
   _updateRecordingUI();
   toast('Recording started');
 }
 
 function stopAndDownloadRecording() {
-  if (!recording) return;
-  recording = false;
+  if (!appState.recording) return;
+  appState.recording = false;
   _downloadCastFile();
   _updateRecordingUI();
 }
@@ -1144,20 +1117,20 @@ function stopAndDownloadRecording() {
 function _downloadCastFile() {
   const header = JSON.stringify({
     version: 2,
-    width: terminal ? terminal.cols : 220,
-    height: terminal ? terminal.rows : 50,
-    timestamp: Math.floor(recordingStartTime / 1000),
-    title: currentProfile
-      ? `${currentProfile.username}@${currentProfile.host}:${currentProfile.port || 22}`
+    width: appState.terminal ? appState.terminal.cols : 220,
+    height: appState.terminal ? appState.terminal.rows : 50,
+    timestamp: Math.floor(appState.recordingStartTime / 1000),
+    title: appState.currentProfile
+      ? `${appState.currentProfile.username}@${appState.currentProfile.host}:${appState.currentProfile.port || 22}`
       : 'MobiSSH Session',
   });
-  const lines = [header, ...recordingEvents.map((e) => JSON.stringify(e))].join('\n');
+  const lines = [header, ...appState.recordingEvents.map((e) => JSON.stringify(e))].join('\n');
   const blob = new Blob([lines + '\n'], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   // Filename: mobissh-YYYY-MM-DDTHH-MM-SS.cast
-  const ts = new Date(recordingStartTime)
+  const ts = new Date(appState.recordingStartTime)
     .toISOString()
     .replace(/[:.]/g, '-')
     .slice(0, 19);
@@ -1166,16 +1139,16 @@ function _downloadCastFile() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  recordingEvents = [];
-  recordingStartTime = null;
+  appState.recordingEvents = [];
+  appState.recordingStartTime = null;
 }
 
 function _updateRecordingUI() {
   const startBtn = document.getElementById('sessionRecordStartBtn');
   const stopBtn  = document.getElementById('sessionRecordStopBtn');
   if (!startBtn || !stopBtn) return;
-  startBtn.classList.toggle('hidden', recording);
-  stopBtn.classList.toggle('hidden', !recording);
+  startBtn.classList.toggle('hidden', appState.recording);
+  stopBtn.classList.toggle('hidden', !appState.recording);
 }
 
 // ─── Status indicator ─────────────────────────────────────────────────────────
@@ -1196,7 +1169,7 @@ function initSessionMenu() {
   const menu    = document.getElementById('sessionMenu');
 
   // Sync session menu theme label with the active theme
-  const initialTheme = THEMES[activeThemeName];
+  const initialTheme = THEMES[appState.activeThemeName];
   const themeBtn = document.getElementById('sessionThemeBtn');
   if (themeBtn && initialTheme) themeBtn.textContent = `Theme: ${initialTheme.label} ▸`;
 
@@ -1208,7 +1181,7 @@ function initSessionMenu() {
 
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!sshConnected) return; // no-op when not connected
+    if (!appState.sshConnected) return; // no-op when not connected
     menu.classList.toggle('hidden');
   });
 
@@ -1225,7 +1198,7 @@ function initSessionMenu() {
   });
 
   document.getElementById('sessionCopyBtn').addEventListener('click', () => {
-    const sel = terminal && terminal.getSelection();
+    const sel = appState.terminal && appState.terminal.getSelection();
     if (sel) {
       navigator.clipboard.writeText(sel).then(() => toast('Copied')).catch(() => toast('Copy failed'));
     } else {
@@ -1236,14 +1209,14 @@ function initSessionMenu() {
 
   document.getElementById('sessionResetBtn').addEventListener('click', () => {
     closeMenu();
-    if (!sshConnected) return;
-    sendSSHInput('\x1bc');   // RIS — reset remote terminal state
-    terminal.reset();        // reset local xterm instance
+    if (!appState.sshConnected) return;
+    sendSSHInput('\x1bc');   // RIS — reset remote appState.terminal state
+    appState.terminal.reset();        // reset local xterm instance
   });
 
   document.getElementById('sessionClearBtn').addEventListener('click', () => {
     closeMenu();
-    terminal.clear();
+    appState.terminal.clear();
   });
 
   document.getElementById('sessionRecordStartBtn').addEventListener('click', () => {
@@ -1258,19 +1231,19 @@ function initSessionMenu() {
 
   document.getElementById('sessionCtrlCBtn').addEventListener('click', () => {
     closeMenu();
-    if (!sshConnected) return;
+    if (!appState.sshConnected) return;
     sendSSHInput('\x03');
   });
 
   document.getElementById('sessionCtrlZBtn').addEventListener('click', () => {
     closeMenu();
-    if (!sshConnected) return;
+    if (!appState.sshConnected) return;
     sendSSHInput('\x1a');
   });
 
   document.getElementById('sessionReconnectBtn').addEventListener('click', () => {
     closeMenu();
-    if (currentProfile) _openWebSocket();
+    if (appState.currentProfile) _openWebSocket();
   });
 
   document.getElementById('sessionDisconnectBtn').addEventListener('click', () => {
@@ -1281,7 +1254,7 @@ function initSessionMenu() {
   // Theme cycle — session-only (no localStorage write)
   document.getElementById('sessionThemeBtn').addEventListener('click', (e) => {
     e.stopPropagation();
-    const idx = THEME_ORDER.indexOf(activeThemeName);
+    const idx = THEME_ORDER.indexOf(appState.activeThemeName);
     const next = THEME_ORDER[(idx + 1) % THEME_ORDER.length];
     applyTheme(next, { persist: false });
   });
@@ -1307,14 +1280,14 @@ function initTabBar() {
       if (panelId === 'terminal') {
         // Auto-hide tab bar when returning to terminal — but only once the
         // user has had at least one connection (#36: on cold start keep it visible)
-        if (hasConnected) {
-          tabBarVisible = false;
+        if (appState.hasConnected) {
+          appState.tabBarVisible = false;
           _applyTabBarVisibility();
         }
-        setTimeout(() => { fitAddon.fit(); focusIME(); }, 50);
+        setTimeout(() => { appState.fitAddon.fit(); focusIME(); }, 50);
       } else {
         // Ensure tab bar stays visible on non-terminal panels
-        tabBarVisible = true;
+        appState.tabBarVisible = true;
         _applyTabBarVisibility();
       }
     });
@@ -1322,21 +1295,21 @@ function initTabBar() {
 }
 
 function _applyTabBarVisibility() {
-  document.getElementById('tabBar').classList.toggle('hidden', !tabBarVisible);
+  document.getElementById('tabBar').classList.toggle('hidden', !appState.tabBarVisible);
   // Keep --tab-height CSS var in sync for toast positioning
   document.documentElement.style.setProperty(
     '--tab-height',
-    tabBarVisible ? ROOT_CSS.tabHeight : '0px'
+    appState.tabBarVisible ? ROOT_CSS.tabHeight : '0px'
   );
 }
 
 function toggleTabBar() {
-  tabBarVisible = !tabBarVisible;
+  appState.tabBarVisible = !appState.tabBarVisible;
   _applyTabBarVisibility();
-  if (fitAddon) fitAddon.fit();
-  if (terminal) terminal.scrollToBottom();
-  if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+  if (appState.fitAddon) appState.fitAddon.fit();
+  if (appState.terminal) appState.terminal.scrollToBottom();
+  if (appState.sshConnected && appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+    appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
   }
 }
 
@@ -1396,7 +1369,7 @@ function initConnectForm() {
 // ─── Key bar ──────────────────────────────────────────────────────────────────
 
 function setCtrlActive(active) {
-  ctrlActive = active;
+  appState.ctrlActive = active;
   document.getElementById('keyCtrl').classList.toggle('active', active);
 }
 
@@ -1437,7 +1410,7 @@ function _attachRepeat(element, onRepeat, onPress) {
 function initTerminalActions() {
   document.getElementById('keyCtrl').addEventListener('click', () => {
     if (navigator.vibrate) navigator.vibrate(10);
-    setCtrlActive(!ctrlActive);
+    setCtrlActive(!appState.ctrlActive);
     focusIME();
   });
 
@@ -1471,8 +1444,8 @@ function initTerminalActions() {
 // ─── Key bar visibility (#1) + IME/Direct mode (#2) ──────────────────────────
 
 function initKeyBar() {
-  keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
-  imeMode = localStorage.getItem('imeMode') !== 'direct';
+  appState.keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
+  appState.imeMode = localStorage.getItem('imeMode') !== 'direct';
 
   // Apply initial state without animation
   _applyKeyBarVisibility();
@@ -1491,30 +1464,30 @@ function initKeyBar() {
 }
 
 function toggleKeyBar() {
-  keyBarVisible = !keyBarVisible;
-  localStorage.setItem('keyBarVisible', keyBarVisible);
+  appState.keyBarVisible = !appState.keyBarVisible;
+  localStorage.setItem('keyBarVisible', appState.keyBarVisible);
   _applyKeyBarVisibility();
   // Refit terminal after height change
-  if (fitAddon) fitAddon.fit();
-  if (terminal) terminal.scrollToBottom();
-  if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+  if (appState.fitAddon) appState.fitAddon.fit();
+  if (appState.terminal) appState.terminal.scrollToBottom();
+  if (appState.sshConnected && appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+    appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
   }
 }
 
 function _applyKeyBarVisibility() {
-  document.getElementById('key-bar').classList.toggle('hidden', !keyBarVisible);
-  document.getElementById('handleChevron').textContent = keyBarVisible ? '▾' : '▴';
+  document.getElementById('key-bar').classList.toggle('hidden', !appState.keyBarVisible);
+  document.getElementById('handleChevron').textContent = appState.keyBarVisible ? '▾' : '▴';
   // Keep --keybar-height CSS var in sync so toast positions correctly
   document.documentElement.style.setProperty(
     '--keybar-height',
-    keyBarVisible ? ROOT_CSS.keybarHeight : '0px'
+    appState.keyBarVisible ? ROOT_CSS.keybarHeight : '0px'
   );
 }
 
 function toggleImeMode() {
-  imeMode = !imeMode;
-  localStorage.setItem('imeMode', imeMode ? 'ime' : 'direct');
+  appState.imeMode = !appState.imeMode;
+  localStorage.setItem('imeMode', appState.imeMode ? 'ime' : 'direct');
   _applyImeModeUI();
   focusIME(); // immediately switch focus to the appropriate input element
 }
@@ -1522,7 +1495,7 @@ function toggleImeMode() {
 function _applyImeModeUI() {
   const btn = document.getElementById('keyModeBtn');
   btn.textContent = 'IME'; // label is always IME; colour signals state (#48)
-  btn.classList.toggle('ime-active', imeMode);
+  btn.classList.toggle('ime-active', appState.imeMode);
 }
 
 // ─── Vault ────────────────────────────────────────────────────────────────────
@@ -1608,7 +1581,7 @@ async function _webauthnDerive(mediation) {
     const ext = assertion.getClientExtensionResults();
     if (!ext.prf || !ext.prf.results || !ext.prf.results.first) return false;
     const keyBytes = new Uint8Array(ext.prf.results.first);
-    vaultKey = await crypto.subtle.importKey(
+    appState.vaultKey = await crypto.subtle.importKey(
       'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
     );
     return true;
@@ -1618,20 +1591,20 @@ async function _webauthnDerive(mediation) {
 // ─── Vault lifecycle ─────────────────────────────────────────────────────────
 
 async function initVault() {
-  vaultMethod = _detectVaultMethod();
-  if (!vaultMethod) return;
+  appState.vaultMethod = _detectVaultMethod();
+  if (!appState.vaultMethod) return;
   const vault = JSON.parse(localStorage.getItem('sshVault') || '{}');
   if (!Object.keys(vault).length) return;
   await _tryUnlockVault('silent');
 }
 
 async function _tryUnlockVault(mediation) {
-  if (vaultMethod === 'passwordcred') {
+  if (appState.vaultMethod === 'passwordcred') {
     try {
       const cred = await navigator.credentials.get({ password: true, mediation });
       if (cred && cred.password) {
         const keyBytes = _bytes(cred.password);
-        vaultKey = await crypto.subtle.importKey(
+        appState.vaultKey = await crypto.subtle.importKey(
           'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
         );
         return true;
@@ -1639,7 +1612,7 @@ async function _tryUnlockVault(mediation) {
     } catch (_) {}
     return false;
   }
-  if (vaultMethod === 'webauthn-prf') {
+  if (appState.vaultMethod === 'webauthn-prf') {
     if (!_webauthnHasRegistration()) return false;
     return _webauthnDerive(mediation);
   }
@@ -1647,20 +1620,20 @@ async function _tryUnlockVault(mediation) {
 }
 
 async function _ensureVaultKey() {
-  if (vaultKey) return true;
-  if (vaultMethod === 'passwordcred') {
+  if (appState.vaultKey) return true;
+  if (appState.vaultMethod === 'passwordcred') {
     try {
       const keyBytes = crypto.getRandomValues(new Uint8Array(32));
       const rawKey = _b64(keyBytes);
       const cred = new PasswordCredential({ id: VAULT_CRED_ID, password: rawKey, name: 'SSH PWA' });
       await navigator.credentials.store(cred);
-      vaultKey = await crypto.subtle.importKey(
+      appState.vaultKey = await crypto.subtle.importKey(
         'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
       );
       return true;
     } catch (_) { return false; }
   }
-  if (vaultMethod === 'webauthn-prf') {
+  if (appState.vaultMethod === 'webauthn-prf') {
     if (_webauthnHasRegistration()) return _webauthnDerive('required');
     return _webauthnRegister();
   }
@@ -1668,10 +1641,10 @@ async function _ensureVaultKey() {
 }
 
 async function _vaultStore(vaultId, data) {
-  if (!vaultKey) return;
+  if (!appState.vaultKey) return;
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv }, vaultKey,
+    { name: 'AES-GCM', iv }, appState.vaultKey,
     new TextEncoder().encode(JSON.stringify(data))
   );
   const vault = JSON.parse(localStorage.getItem('sshVault') || '{}');
@@ -1680,13 +1653,13 @@ async function _vaultStore(vaultId, data) {
 }
 
 async function _vaultLoad(vaultId) {
-  if (!vaultKey) return null;
+  if (!appState.vaultKey) return null;
   const vault = JSON.parse(localStorage.getItem('sshVault') || '{}');
   const entry = vault[vaultId];
   if (!entry) return null;
   try {
     const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: _bytes(entry.iv) }, vaultKey, _bytes(entry.ct)
+      { name: 'AES-GCM', iv: _bytes(entry.iv) }, appState.vaultKey, _bytes(entry.ct)
     );
     return JSON.parse(new TextDecoder().decode(plain));
   } catch (_) { return null; }
@@ -1795,7 +1768,7 @@ async function loadProfileIntoForm(idx) {
 
   if (profile.vaultId && profile.hasVaultCreds) {
     // If vault is locked, explicitly prompt biometric now
-    if (!vaultKey) await _tryUnlockVault('required');
+    if (!appState.vaultKey) await _tryUnlockVault('required');
     const creds = await _vaultLoad(profile.vaultId);
     if (creds) {
       if (creds.password)   document.getElementById('password').value   = creds.password;
@@ -1875,7 +1848,7 @@ document.addEventListener('DOMContentLoaded', () => {
 async function useKey(idx) {
   const key = getKeys()[idx];
   if (!key) return;
-  if (!vaultKey) await _tryUnlockVault('required');
+  if (!appState.vaultKey) await _tryUnlockVault('required');
   const creds = key.vaultId ? await _vaultLoad(key.vaultId) : null;
   if (!creds) { toast('Vault locked — enter key manually.'); return; }
   document.getElementById('authType').value = 'key';
