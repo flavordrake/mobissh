@@ -137,7 +137,7 @@ function initTerminal() {
 
   // Show welcome banner
   appState.terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
-  appState.terminal.writeln(ANSI.dim('Tap appState.terminal to activate keyboard  •  Use Connect tab to open a session'));
+  appState.terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
   appState.terminal.writeln('');
 }
 
@@ -1160,7 +1160,7 @@ function initSessionMenu() {
   document.getElementById('sessionResetBtn').addEventListener('click', () => {
     closeMenu();
     if (!appState.sshConnected) return;
-    sendSSHInput('\x1bc');   // RIS — reset remote appState.terminal state
+    sendSSHInput('\x1bc');   // RIS — reset remote terminal state
     appState.terminal.reset();        // reset local xterm instance
   });
 
