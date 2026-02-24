@@ -564,22 +564,38 @@ function initIMEInput() {
     selOverlay.appendChild(frag);
   }
 
+  function _selectAllOverlay() {
+    if (!selOverlay.firstChild) return;
+    const range = document.createRange();
+    range.selectNodeContents(selOverlay);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
   function enterSelectionMode(x, y) {
     if (_selectionActive) return;
     _selectionActive = true;
     syncSelectionOverlay();
     selOverlay.classList.add('active');
 
-    // Try to select the word at the touch point
-    const range = document.caretRangeFromPoint
-      ? document.caretRangeFromPoint(x, y)
-      : null;
-    if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
-      _expandToWord(range);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
+    // Try to select the word at the touch point first
+    let selected = false;
+    if (document.caretRangeFromPoint) {
+      const range = document.caretRangeFromPoint(x, y);
+      if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+        _expandToWord(range);
+        const wordText = range.toString().trim();
+        if (wordText.length > 0) {
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          selected = true;
+        }
+      }
     }
+    // Fallback: select all visible text if word selection failed
+    if (!selected) _selectAllOverlay();
 
     selBar.classList.remove('hidden');
     _updateSelBar();
@@ -632,6 +648,12 @@ function initIMEInput() {
   }
 
   // Copy bar button handlers
+  document.getElementById('selAllBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    _selectAllOverlay();
+    _updateSelBar();
+  });
+
   document.getElementById('selCopyBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     const text = window.getSelection().toString();
