@@ -156,7 +156,11 @@
         <input type="number" id="port" value="22" min="1" max="65535" inputmode="numeric" />
 
         <label for="username">Username</label>
-        <input type="text" id="username" placeholder="root" required autocapitalize="none" autocomplete="off" />
+        <input type="text" id="username" placeholder="root" required autocapitalize="none"
+          autocomplete="off"
+          data-lpignore="true"
+          data-1p-ignore="true"
+          data-form-type="other" />
 
         <label for="authType">Auth method</label>
         <select id="authType">
@@ -167,7 +171,7 @@
         <div id="passwordGroup">
           <label for="password">Password</label>
           <input type="password" id="password"
-            autocomplete="off"
+            autocomplete="new-password"
             data-lpignore="true"
             data-1p-ignore="true"
             data-form-type="other" />
@@ -178,7 +182,7 @@
           <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
           <label for="passphrase">Passphrase (if encrypted)</label>
           <input type="password" id="passphrase"
-            autocomplete="off"
+            autocomplete="new-password"
             data-lpignore="true"
             data-1p-ignore="true"
             data-form-type="other" />

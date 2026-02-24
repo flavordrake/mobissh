@@ -93,4 +93,66 @@ const test = base.extend({
   },
 });
 
-module.exports = { test, expect };
+/**
+ * setupConnected — shared helper
+ *
+ * Navigates to the app, fills the connect form with mock-server credentials,
+ * submits, waits for the mock SSH server to respond with `connected`, then
+ * leaves the terminal panel active and IME textarea focused.
+ *
+ * The WS spy (window.__mockWsSpy) is injected before navigation so every
+ * outbound WebSocket message is captured and can be queried in tests.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {{ port: number }} mockSshServer - fixture with the mock WS port
+ */
+async function setupConnected(page, mockSshServer) {
+  // Inject WS spy before any app code runs — wraps window.WebSocket.send
+  await page.addInitScript(() => {
+    window.__mockWsSpy = [];
+    const OrigWS = window.WebSocket;
+    window.WebSocket = class extends OrigWS {
+      send(data) {
+        window.__mockWsSpy.push(data);
+        super.send(data);
+      }
+    };
+  });
+
+  // Clear localStorage (no profiles → app lands on Terminal tab)
+  await page.addInitScript(() => { localStorage.clear(); });
+
+  await page.goto('./');
+  await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+  // Set WS URL to the mock server BEFORE connecting
+  await page.evaluate((port) => {
+    localStorage.setItem('wsUrl', `ws://localhost:${port}`);
+  }, mockSshServer.port);
+
+  // Navigate to Connect tab and fill the form
+  await page.locator('[data-panel="connect"]').click();
+  await page.locator('#host').fill('mock-host');
+  await page.locator('#port').fill('22');
+  await page.locator('#username').fill('testuser');
+  await page.locator('#password').fill('testpass');
+
+  // Submit — calls saveProfile() then connect()
+  await page.locator('#connectForm button[type="submit"]').click();
+
+  // Wait until the app sends a `resize` message — this is the first message sent
+  // after the app receives `{type: "connected"}` from the mock server.
+  await page.waitForFunction(() => {
+    return (window.__mockWsSpy || []).some((s) => {
+      try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+    });
+  }, null, { timeout: 10_000 });
+
+  // The app calls switchToTerminal() on form submit, then on receiving `connected`
+  // it calls focusIME() automatically and hides the tab bar (#36).
+  await page.waitForSelector('#panel-terminal.active', { timeout: 5000 });
+  await page.locator('#imeInput').focus().catch(() => {});
+  await page.waitForTimeout(100);
+}
+
+module.exports = { test, expect, setupConnected };
