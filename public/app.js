@@ -3,6 +3,7 @@ import {
   ANSI, KEY_MAP, FONT_SIZE, SELECTION_OVERLAY,
 } from './modules/constants.js';
 import { appState } from './modules/state.js';
+import { initRecording, startRecording, stopAndDownloadRecording } from './modules/recording.js';
 
 /**
  * MobiSSH PWA — Main application
@@ -35,6 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initConnectForm();
     initTerminalActions();
     initKeyBar();         // #1 auto-hide + #2 IME toggle
+    initRecording({ toast });
     initSessionMenu();    // #39 handle strip session identity + menu
     initSettingsPanel();
     loadProfiles();
@@ -1093,63 +1095,7 @@ function disconnect() {
   appState.terminal.writeln(ANSI.yellow('Disconnected.'));
 }
 
-// ─── Session recording (#54) ──────────────────────────────────────────────────
-// asciicast v2 format: https://github.com/asciinema/asciinema/blob/master/doc/asciicast-v2.md
-// Header line: JSON object with version, width, height, timestamp, title
-// Event lines: JSON array [elapsed_seconds, "o", data]
-
-function startRecording() {
-  if (appState.recording) return;
-  appState.recording = true;
-  appState.recordingStartTime = Date.now();
-  appState.recordingEvents = [];
-  _updateRecordingUI();
-  toast('Recording started');
-}
-
-function stopAndDownloadRecording() {
-  if (!appState.recording) return;
-  appState.recording = false;
-  _downloadCastFile();
-  _updateRecordingUI();
-}
-
-function _downloadCastFile() {
-  const header = JSON.stringify({
-    version: 2,
-    width: appState.terminal ? appState.terminal.cols : 220,
-    height: appState.terminal ? appState.terminal.rows : 50,
-    timestamp: Math.floor(appState.recordingStartTime / 1000),
-    title: appState.currentProfile
-      ? `${appState.currentProfile.username}@${appState.currentProfile.host}:${appState.currentProfile.port || 22}`
-      : 'MobiSSH Session',
-  });
-  const lines = [header, ...appState.recordingEvents.map((e) => JSON.stringify(e))].join('\n');
-  const blob = new Blob([lines + '\n'], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  // Filename: mobissh-YYYY-MM-DDTHH-MM-SS.cast
-  const ts = new Date(appState.recordingStartTime)
-    .toISOString()
-    .replace(/[:.]/g, '-')
-    .slice(0, 19);
-  a.download = `mobissh-${ts}.cast`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  appState.recordingEvents = [];
-  appState.recordingStartTime = null;
-}
-
-function _updateRecordingUI() {
-  const startBtn = document.getElementById('sessionRecordStartBtn');
-  const stopBtn  = document.getElementById('sessionRecordStopBtn');
-  if (!startBtn || !stopBtn) return;
-  startBtn.classList.toggle('hidden', appState.recording);
-  stopBtn.classList.toggle('hidden', !appState.recording);
-}
+// Session recording (#54) — extracted to modules/recording.js
 
 // ─── Status indicator ─────────────────────────────────────────────────────────
 
