@@ -148,6 +148,7 @@ let tabBarVisible = true;  // visible on cold start (#36); auto-hides after firs
 let hasConnected = false;  // true after first successful SSH session (#36)
 let activeThemeName = 'dark'; // current terminal theme key (#47)
 let _syncOverlayMetrics = null; // set by initIMEInput (#55)
+let _selectionActive = false;   // true while mobile text selection overlay is active (#55)
 
 // ─── Session recording state (#54) ───────────────────────────────────────────
 let recording = false;          // true while a recording is in progress
@@ -265,6 +266,7 @@ function initTerminal() {
 }
 
 function handleResize() {
+  if (_selectionActive) return; // freeze layout during text selection (#55/#108)
   if (fitAddon) fitAddon.fit();
   if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
@@ -298,6 +300,11 @@ function initKeyboardAwareness() {
 
     // Pin #app to the visible viewport height so nothing is clipped behind keyboard
     app.style.height = `${h}px`;
+
+    // Freeze terminal layout while text selection overlay is active (#55/#108).
+    // Keyboard dismiss during selection would resize the terminal, invalidating
+    // the overlay's synced viewport. Resize happens on exitSelectionMode instead.
+    if (_selectionActive) return;
 
     // Refit terminal to the new dimensions
     if (fitAddon) fitAddon.fit();
@@ -487,7 +494,6 @@ function initIMEInput() {
 
   const selOverlay = document.getElementById('selectionOverlay');
   const selBar = document.getElementById('selectionBar');
-  let _selectionActive = false;
   let _overlayCellH = 0; // cached cell height from last metric sync
 
   // URL regex — matches http/https URLs, strips common trailing punctuation
@@ -610,8 +616,13 @@ function initIMEInput() {
     selOverlay.innerHTML = ''; // clear stale content (URL underlines etc.)
     selBar.classList.add('hidden');
     window.getSelection().removeAllRanges();
-    // Re-focus IME so keyboard stays available
-    setTimeout(focusIME, 50);
+    // Re-focus IME synchronously so the user gesture context is preserved —
+    // Android won't open the keyboard from a setTimeout-delayed focus() (#108).
+    focusIME();
+    // Catch up on viewport changes suppressed during selection (keyboard
+    // dismiss may have changed the visual viewport). Delay lets the keyboard
+    // animation settle before we refit.
+    setTimeout(handleResize, 200);
   }
 
   // Expand a caret range to the surrounding word boundary
