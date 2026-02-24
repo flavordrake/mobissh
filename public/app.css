@@ -145,8 +145,83 @@ html, body {
   overscroll-behavior: none; /* prevent iOS rubber-band scroll (#12) */
   min-height: 0;
   touch-action: none; /* #37: prevent browser panning so JS touch-scroll handles all gestures */
+  position: relative; /* anchor for #selectionOverlay */
 }
 
+/* Selection overlay (#55) — transparent text mirror for native mobile copy */
+#selectionOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 10;
+  overflow: hidden;
+  white-space: pre;
+  color: transparent;
+  -webkit-user-select: text;
+  user-select: text;
+  /* font metrics set by JS to match terminal exactly */
+}
+
+#selectionOverlay.active {
+  pointer-events: auto;
+}
+
+#selectionOverlay .sel-line {
+  display: block;
+  width: 100%;
+}
+
+#selectionOverlay .sel-url {
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 255, 136, 0.4);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Make selection highlight visible even though text color is transparent */
+#selectionOverlay ::selection {
+  background: rgba(0, 255, 136, 0.3);
+}
+#selectionOverlay ::-moz-selection {
+  background: rgba(0, 255, 136, 0.3);
+}
+
+/* Floating copy bar — slides up when selection is active */
+#selectionBar {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+#selectionBar.hidden { display: none; }
+
+.sel-bar-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  border-radius: 14px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.sel-bar-btn:active { background: var(--bg-input); }
+.sel-bar-done { color: var(--text-dim); }
 
 /* IME composition preview strip — visible while composing, hidden otherwise */
 #imePreview {

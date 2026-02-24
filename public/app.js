@@ -147,6 +147,7 @@ let imeMode = true;        // true = IME/swipe, false = direct char entry (#2)
 let tabBarVisible = true;  // visible on cold start (#36); auto-hides after first connect
 let hasConnected = false;  // true after first successful SSH session (#36)
 let activeThemeName = 'dark'; // current terminal theme key (#47)
+let _syncOverlayMetrics = null; // set by initIMEInput (#55)
 
 // ─── Session recording state (#54) ───────────────────────────────────────────
 let recording = false;          // true while a recording is in progress
@@ -331,6 +332,8 @@ function applyFontSize(size) {
     if (sshConnected && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
     }
+    // Re-sync selection overlay metrics after font change (#55)
+    if (typeof _syncOverlayMetrics === 'function') _syncOverlayMetrics();
   }
 }
 
@@ -474,6 +477,240 @@ function initIMEInput() {
     }
   });
 
+  // termEl used by selection overlay, gesture handlers, and pinch-to-zoom below
+  const termEl = document.getElementById('terminal');
+
+  // ── Selection overlay for mobile copy (#55) ──────────────────────────
+  // Mirrors visible terminal text as real DOM nodes so the OS can offer native
+  // long-press → select → copy. Normally pointer-events:none; activated on
+  // long-press (500ms hold).
+
+  const selOverlay = document.getElementById('selectionOverlay');
+  const selBar = document.getElementById('selectionBar');
+  let _selectionActive = false;
+
+  // URL regex — matches http/https URLs, strips common trailing punctuation
+  const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+  function _stripTrailingPunct(url) {
+    return url.replace(/[.,;:!?)]+$/, '');
+  }
+
+  // Compute and apply font metrics so overlay lines align with canvas cells
+  _syncOverlayMetrics = function _syncOverlayMetricsFn() {
+    if (!terminal || !selOverlay) return;
+    const screen = document.querySelector('.xterm-screen');
+    if (!screen) return;
+    const cellH = screen.offsetHeight / terminal.rows;
+    const cellW = screen.offsetWidth / terminal.cols;
+    selOverlay.style.fontFamily = terminal.options.fontFamily;
+    selOverlay.style.fontSize = terminal.options.fontSize + 'px';
+    selOverlay.style.lineHeight = cellH + 'px';
+    // Padding to match xterm-screen position inside #terminal
+    const screenRect = screen.getBoundingClientRect();
+    const termRect = termEl.getBoundingClientRect();
+    selOverlay.style.top = (screenRect.top - termRect.top) + 'px';
+    selOverlay.style.left = (screenRect.left - termRect.left) + 'px';
+    selOverlay.style.width = screenRect.width + 'px';
+    selOverlay.style.height = screenRect.height + 'px';
+    // Letter-spacing to match monospace cell width
+    const testSpan = document.createElement('span');
+    testSpan.style.font = terminal.options.fontSize + 'px ' + terminal.options.fontFamily;
+    testSpan.style.visibility = 'hidden';
+    testSpan.style.position = 'absolute';
+    testSpan.textContent = 'M';
+    document.body.appendChild(testSpan);
+    const charW = testSpan.getBoundingClientRect().width;
+    document.body.removeChild(testSpan);
+    const spacing = cellW - charW;
+    selOverlay.style.letterSpacing = spacing + 'px';
+  };
+
+  // Populate overlay with current viewport text + URL detection
+  function syncSelectionOverlay() {
+    if (!terminal || !selOverlay) return;
+    _syncOverlayMetrics();
+    const buf = terminal.buffer.active;
+    const startLine = buf.viewportY;
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < terminal.rows; i++) {
+      const line = buf.getLine(startLine + i);
+      const text = line ? line.translateToString(true) : '';
+      const div = document.createElement('div');
+      div.className = 'sel-line';
+      // Detect and wrap URLs
+      let lastIdx = 0;
+      let match;
+      URL_RE.lastIndex = 0;
+      let hasUrl = false;
+      while ((match = URL_RE.exec(text)) !== null) {
+        hasUrl = true;
+        const url = _stripTrailingPunct(match[0]);
+        if (match.index > lastIdx) {
+          div.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+        }
+        const span = document.createElement('span');
+        span.className = 'sel-url';
+        span.dataset.url = url;
+        span.textContent = url;
+        div.appendChild(span);
+        lastIdx = match.index + match[0].length;
+      }
+      if (lastIdx < text.length || !hasUrl) {
+        div.appendChild(document.createTextNode(text.slice(lastIdx)));
+      }
+      frag.appendChild(div);
+    }
+    selOverlay.innerHTML = '';
+    selOverlay.appendChild(frag);
+  }
+
+  function enterSelectionMode(x, y) {
+    if (_selectionActive) return;
+    _selectionActive = true;
+    syncSelectionOverlay();
+    selOverlay.classList.add('active');
+
+    // Try to select the word at the touch point
+    const range = document.caretRangeFromPoint
+      ? document.caretRangeFromPoint(x, y)
+      : null;
+    if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+      _expandToWord(range);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    selBar.classList.remove('hidden');
+    _updateSelBar();
+  }
+
+  function exitSelectionMode() {
+    _selectionActive = false;
+    selOverlay.classList.remove('active');
+    selBar.classList.add('hidden');
+    window.getSelection().removeAllRanges();
+    // Re-focus IME so keyboard stays available
+    setTimeout(focusIME, 50);
+  }
+
+  // Expand a caret range to the surrounding word boundary
+  function _expandToWord(range) {
+    const node = range.startContainer;
+    const text = node.textContent;
+    let start = range.startOffset;
+    let end = start;
+    // Word chars: anything except whitespace
+    while (start > 0 && !/\s/.test(text[start - 1])) start--;
+    while (end < text.length && !/\s/.test(text[end])) end++;
+    range.setStart(node, start);
+    range.setEnd(node, end);
+  }
+
+  // Check if the current selection contains a URL and update copy bar
+  function _updateSelBar() {
+    const sel = window.getSelection();
+    const text = sel.toString();
+    const openBtn = document.getElementById('selOpenBtn');
+    // Check if selection is inside or overlaps a .sel-url span
+    let url = null;
+    if (sel.anchorNode) {
+      const urlEl = sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('.sel-url');
+      if (urlEl) url = urlEl.dataset.url;
+    }
+    if (!url) {
+      // Fallback: check if selected text itself looks like a URL
+      const m = text.match(/https?:\/\/[^\s]+/);
+      if (m) url = _stripTrailingPunct(m[0]);
+    }
+    if (url) {
+      openBtn.classList.remove('hidden');
+      openBtn.dataset.url = url;
+    } else {
+      openBtn.classList.add('hidden');
+    }
+  }
+
+  // Copy bar button handlers
+  document.getElementById('selCopyBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const text = window.getSelection().toString();
+    if (text) {
+      navigator.clipboard.writeText(text).then(() => toast('Copied')).catch(() => toast('Copy failed'));
+    }
+    exitSelectionMode();
+  });
+
+  document.getElementById('selOpenBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const url = e.currentTarget.dataset.url;
+    if (url) window.open(url, '_blank', 'noopener');
+    exitSelectionMode();
+  });
+
+  document.getElementById('selDoneBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    exitSelectionMode();
+  });
+
+  // Listen for selection changes to update the copy bar state
+  document.addEventListener('selectionchange', () => {
+    if (!_selectionActive) return;
+    _updateSelBar();
+    // Auto-dismiss if selection is cleared
+    const sel = window.getSelection();
+    if (!sel.toString()) {
+      // Small delay — selection can briefly be empty during handle drag
+      setTimeout(() => {
+        if (_selectionActive && !window.getSelection().toString()) {
+          exitSelectionMode();
+        }
+      }, 300);
+    }
+  });
+
+  // URL tap handler — when in selection mode, tapping a URL auto-selects it
+  selOverlay.addEventListener('click', (e) => {
+    if (!_selectionActive) return;
+    const urlEl = e.target.closest('.sel-url');
+    if (urlEl) {
+      const range = document.createRange();
+      range.selectNodeContents(urlEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      _updateSelBar();
+      e.preventDefault();
+    }
+  });
+
+  // Suppress browser's useless "Paste" context menu on terminal long-press (#55)
+  termEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Long-press detection — 500ms hold without movement activates selection mode
+  let _longPressTimer = null;
+  let _longPressX = 0;
+  let _longPressY = 0;
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_MOVE_THRESHOLD = 8; // px
+
+  function _startLongPress(x, y) {
+    _longPressX = x;
+    _longPressY = y;
+    _cancelLongPress();
+    _longPressTimer = setTimeout(() => {
+      _longPressTimer = null;
+      enterSelectionMode(x, y);
+    }, LONG_PRESS_MS);
+  }
+
+  function _cancelLongPress() {
+    if (_longPressTimer) {
+      clearTimeout(_longPressTimer);
+      _longPressTimer = null;
+    }
+  }
+
   // ── Tap + swipe gestures on terminal (#32/#37/#16) ────────────────────
   // SWIPE_GESTURES: JS touch→scroll handler.  touch-action:none on #terminal
   // (#37) blocks native pan; this handler provides vertical scroll (both tmux
@@ -482,7 +719,6 @@ function initIMEInput() {
   // xterm.js scrollbar / long-press copy without our gesture layer.
   const SWIPE_GESTURES = true;
 
-  const termEl = document.getElementById('terminal');
   termEl.addEventListener('click', focusIME);
 
   let _touchStartY = null, _touchStartX = null;
@@ -522,12 +758,23 @@ function initIMEInput() {
     _pendingLines = 0;
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
+    // Start long-press detection (#55) — single finger only
+    if (e.touches.length === 1 && !_selectionActive) {
+      _startLongPress(e.touches[0].clientX, e.touches[0].clientY);
+    }
   }, { passive: true, capture: true });
 
   termEl.addEventListener('touchmove', (e) => {
     if (_touchStartY === null) return;
     const totalDy = _touchStartY - e.touches[0].clientY;
     const totalDx = _touchStartX - e.touches[0].clientX;
+
+    // Cancel long-press if finger moved too far (#55)
+    if (_longPressTimer) {
+      const dx = e.touches[0].clientX - _longPressX;
+      const dy = e.touches[0].clientY - _longPressY;
+      if (Math.sqrt(dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD) _cancelLongPress();
+    }
 
     // Lock to vertical scroll once gesture is clearly more vertical than horizontal
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
@@ -571,6 +818,7 @@ function initIMEInput() {
   }, { passive: true, capture: true });
 
   termEl.addEventListener('touchend', () => {
+    _cancelLongPress(); // (#55)
     const wasScroll = _isTouchScroll;
     // Measure total horizontal displacement for swipe-to-switch gesture (#16).
     const finalDx = (_lastTouchX ?? _touchStartX) - _touchStartX;
@@ -583,7 +831,7 @@ function initIMEInput() {
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
 
-    if (!wasScroll) {
+    if (!wasScroll && !_selectionActive) {
       // Horizontal swipe: more than 40px X, dominant over Y → tmux window switch (#16).
       if (Math.abs(finalDx) > 40 && Math.abs(finalDx) > Math.abs(finalDy)) {
         // Swipe left (finalDx < 0) → previous window; swipe right → next window.
