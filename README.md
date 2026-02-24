@@ -45,7 +45,9 @@ Phone browser ──(WSS)──► Node.js bridge ──(SSH)──► Target se
 - **`server/index.js`** — single Node.js process: serves `public/` over HTTP and bridges WebSocket connections to SSH using `ssh2`. One port (default 8081) for everything.
 - **`public/app.js`** — all frontend logic: xterm.js init, WebSocket client, IME input capture, key bar, vault, profile storage.
 - **`public/app.css`** — mobile-first styles, no framework.
-- **`public/sw.js`** — service worker, network-first with offline fallback.
+- **`public/sw.js`** — service worker, network-first with offline fallback. Caches the full app shell including vendored xterm.js.
+- **`public/recovery.js`** — boot watchdog + emergency reset. Detects init failures, shows diagnostic errors, breaks reset loops, and provides a long-press escape hatch on the Settings tab.
+- **`public/vendor/`** — vendored xterm.js 5.3.0 and xterm-addon-fit 0.8.0 (served locally to avoid CDN/CSP conflicts).
 
 ### IME input strategy
 
@@ -87,7 +89,7 @@ MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). 
 | WebAuthn PRF vault for iOS | ✅ Implemented | Passkey + biometric key derivation on iOS 18+ (#14) |
 | SSH host key verification (TOFU) | ✅ Implemented | Store fingerprint on first connect, warn on mismatch (#5) |
 | SSRF prevention | ✅ Implemented | Blocks RFC-1918 / loopback targets (#6) |
-| SRI hashes on CDN scripts | ✅ Implemented | Pins xterm.js + addons cryptographically (#7) |
+| xterm.js bundled locally | ✅ Implemented | Eliminates CDN dependency and proxy CSP conflicts (#104) |
 | Content-Security-Policy header | ✅ Implemented | Restricts script/style/connect sources (#8) |
 | `ws://` rejected in settings | ✅ Implemented | Only `wss://` accepted for WebSocket URL (#9) |
 | WSS (TLS) in Codespaces / reverse proxy | ✅ Inherited | Codespaces enforces HTTPS |
@@ -99,6 +101,7 @@ MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). 
 | SSH keepalive (15s interval, max 4 missed) | ✅ Implemented | Drops idle SSH sessions that are no longer alive |
 | Vault-or-nothing credential policy | ✅ Implemented | No plaintext fallback — credentials not saved if vault unavailable (#68) |
 | SSH keys encrypted via vault | ✅ Implemented | Keys panel uses same AES-GCM vault as profiles (#67, #69) |
+| Boot recovery watchdog | ✅ Implemented | 8s timeout detects init failure, shows diagnostics, breaks reset loops (#84, #104) |
 
 No known high or medium severity open risks. See GitHub Issues for UX and feature backlog.
 
@@ -116,11 +119,11 @@ This matters in contrast to projects that expose AI coding agents over HTTP/WebS
 
 **`localStorage` for profile metadata.** IndexedDB would be more appropriate for structured data but `localStorage` is synchronous and has no async edge cases. Profiles contain no secrets (credentials are vault-encrypted separately).
 
-**No authentication on the WebSocket endpoint.** The bridge trusts that anyone who can establish a WebSocket connection is authorized to proxy SSH. On Tailscale this is enforced by the mesh ACLs. On a public network this is a significant open door — adding HTTP basic auth or a bearer token to the upgrade handshake is the correct fix.
+**No authentication on the WebSocket endpoint.** The bridge trusts that anyone who can establish a WebSocket connection is authorized to proxy SSH. On Tailscale this is enforced by the mesh ACLs. On a public network this is a significant open door. Rate limiting (#92) and page-load token authentication (#93) are planned.
 
 **Vanilla JS, no build step.** Means no tree-shaking, no TypeScript safety, no bundler. Acceptable for a focused single-page app; the entire frontend is one JS file that is easy to read and audit.
 
-**xterm.js from CDN.** Fast to set up; SRI hashes pin the version cryptographically to prevent CDN tampering.
+**xterm.js bundled in `public/vendor/`.** Originally loaded from CDN with SRI hashes, but code-server's reverse proxy CSP blocked cross-origin scripts. Now served locally from the same origin — works behind any proxy, enables offline caching via the service worker, and tightens CSP to `script-src 'self'`.
 
 ---
 
@@ -156,7 +159,7 @@ BASE_PATH=/ssh PORT=8081 node server/index.js
 
 Add the provided `nginx-ssh-location.conf` inside your HTTPS `server {}` block, then `sudo nginx -s reload`. See `scripts/setup-nginx.sh` for an automated setup.
 
-**Cache busting:** Visit `/clear` (e.g. `https://host/ssh/clear`) to unregister service workers and clear all browser storage — useful during development when mobile Chrome serves stale content.
+**Cache busting:** Visit `/clear` (e.g. `https://host/ssh/clear`) to unregister service workers and clear all browser storage. The app also has a boot watchdog that shows a Reset button if initialization fails, and a long-press (1.5s) escape hatch on the Settings tab.
 
 ---
 
@@ -165,24 +168,32 @@ Add the provided `nginx-ssh-location.conf` inside your HTTPS `server {}` block, 
 See GitHub Issues for the full list.
 
 Recently completed:
+- **#104** Bundle xterm.js locally, boot diagnostics, reset loop detection
+- **#83, #84** PWA manifest identity (`id: "mobissh"`) + boot recovery watchdog
+- **#85** IME composition fix (compositioncancel, textarea value preference)
+- **#86** Docker infrastructure (Dockerfile, compose, scripts)
+- **#87** Tab button text selection prevention on long-press
+- **#89** Key bar key repeat on hold (400ms delay, 80ms interval)
 - **#5** SSH host key verification — TOFU with mismatch warning
-- **#6–9** Security hardening (SSRF blocklist, SRI hashes, CSP header, ws:// rejection)
+- **#6–9** Security hardening (SSRF blocklist, CSP header, ws:// rejection)
 - **#14** WebAuthn PRF vault for iOS 18+ credential encryption
 - **#68** Vault-or-nothing credential policy (no plaintext fallback)
+- **#67, #69** SSH keys encrypted via vault
 - **#11–13** iOS safe area insets, Apple PWA meta, overscroll-behavior
 - **#1, #2, #3** Key bar auto-hide, IME/direct toggle, scrollable key row
 - **#10** iOS autocorrect/autocapitalize fixes
-- **#22** Rename to MobiSSH
 - **#29** WS/SSH keep-alive (prevents silent drops)
 - **#38** Extra key bar keys (|, -, Home, End, PgUp, PgDn)
 - **#40** Session menu controls (reset, clear, Ctrl+C/Z, reconnect)
-- **#32** Touch scroll restored via swipe gestures
-- **#50** Removed broken WebLinksAddon
 
 Key open items:
+- **#92** P0: Rate-limit WebSocket upgrades (DoS protection)
+- **#93** P1: Authenticate WebSocket upgrade (page-load token)
+- **#106** Vault locked on every restart (PasswordCredential unreliable behind proxy)
+- **#103** Add `beforeinstallprompt` handler for in-app install button
 - **#4, #28** Session persistence + multi-session (planned milestone)
-- **#55** Copy/paste on terminal long-press
-- **#53** TUI agent rendering/input issues
 - **#70** Connect screen refactor — profiles as primary action
-- **#82** Docker image for easy deployment
+- **#53** TUI agent rendering/input issues
 - **#19–21** Image passthrough (sixel/iTerm2, overlay, ImageAddon)
+- **#99** Haptic feedback fires during key bar scroll
+- **#90** Optional two-line key bar with grouping
