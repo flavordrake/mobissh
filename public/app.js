@@ -156,59 +156,66 @@ let recordingEvents = [];       // asciicast v2 output events: [elapsed_s, 'o', 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  initTerminal();
-  initIMEInput();
-  initTabBar();
-  initConnectForm();
-  initTerminalActions();
-  initKeyBar();         // #1 auto-hide + #2 IME toggle
-  initSessionMenu();    // #39 handle strip session identity + menu
-  initSettingsPanel();
-  loadProfiles();
-  loadKeys();
-  registerServiceWorker();
-  initVault(); // async, silently unlocks if browser credential available
-  initKeyboardAwareness();
+  try {
+    initTerminal();
+    initIMEInput();
+    initTabBar();
+    initConnectForm();
+    initTerminalActions();
+    initKeyBar();         // #1 auto-hide + #2 IME toggle
+    initSessionMenu();    // #39 handle strip session identity + menu
+    initSettingsPanel();
+    loadProfiles();
+    loadKeys();
+    registerServiceWorker();
+    initVault(); // async, silently unlocks if browser credential available
+    initKeyboardAwareness();
 
-  // Event delegation for profile list — replaces inline onclick blocked by CSP
-  const profileList = document.getElementById('profileList');
-  profileList.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-action]');
-    if (btn) {
-      e.stopPropagation();
+    // Event delegation for profile list — replaces inline onclick blocked by CSP
+    const profileList = document.getElementById('profileList');
+    profileList.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (btn) {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.idx);
+        if (btn.dataset.action === 'edit') loadProfileIntoForm(idx);
+        else if (btn.dataset.action === 'delete') deleteProfile(idx);
+        return;
+      }
+      const item = e.target.closest('.profile-item');
+      if (item) loadProfileIntoForm(parseInt(item.dataset.idx));
+    });
+    profileList.addEventListener('touchstart', (e) => {
+      e.target.closest('.profile-item')?.classList.add('tapped');
+    }, { passive: true });
+    profileList.addEventListener('touchend', (e) => {
+      e.target.closest('.profile-item')?.classList.remove('tapped');
+    }, { passive: true });
+
+    // Event delegation for key list — replaces inline onclick blocked by CSP
+    document.getElementById('keyList').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
       const idx = parseInt(btn.dataset.idx);
-      if (btn.dataset.action === 'edit') loadProfileIntoForm(idx);
-      else if (btn.dataset.action === 'delete') deleteProfile(idx);
-      return;
+      if (btn.dataset.action === 'use') await useKey(idx);
+      else if (btn.dataset.action === 'delete') deleteKey(idx);
+    });
+
+    // Cold start UX (#36): if profiles exist, land on Connect so user can tap to connect
+    if (getProfiles().length > 0) {
+      document.querySelector('[data-panel="connect"]').click();
     }
-    const item = e.target.closest('.profile-item');
-    if (item) loadProfileIntoForm(parseInt(item.dataset.idx));
-  });
-  profileList.addEventListener('touchstart', (e) => {
-    e.target.closest('.profile-item')?.classList.add('tapped');
-  }, { passive: true });
-  profileList.addEventListener('touchend', (e) => {
-    e.target.closest('.profile-item')?.classList.remove('tapped');
-  }, { passive: true });
 
-  // Event delegation for key list — replaces inline onclick blocked by CSP
-  document.getElementById('keyList').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-action]');
-    if (!btn) return;
-    const idx = parseInt(btn.dataset.idx);
-    if (btn.dataset.action === 'use') await useKey(idx);
-    else if (btn.dataset.action === 'delete') deleteKey(idx);
-  });
-
-  // Cold start UX (#36): if profiles exist, land on Connect so user can tap to connect
-  if (getProfiles().length > 0) {
-    document.querySelector('[data-panel="connect"]').click();
+    // Apply saved font size (applyFontSize syncs all UI)
+    applyFontSize(parseInt(localStorage.getItem('fontSize')) || 14);
+  } catch (err) {
+    console.error('[mobissh] Boot failed:', err);
+    // Show the error in the recovery overlay so the user sees what went wrong
+    if (typeof window.__appBootError === 'function') window.__appBootError(err);
   }
 
-  // Apply saved font size (applyFontSize syncs all UI)
-  applyFontSize(parseInt(localStorage.getItem('fontSize')) || 14);
-
-  // Signal the recovery watchdog that the app booted successfully (#84)
+  // Signal the recovery watchdog that the app booted (even on error — the overlay
+  // will show the error instead of the generic "App failed to start" message).
   if (typeof window.__appReady === 'function') window.__appReady();
 });
 

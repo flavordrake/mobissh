@@ -20,9 +20,23 @@
 (function () {
   'use strict';
 
+  var RESET_COUNT_KEY = 'mobissh_reset_count';
+  var RESET_TS_KEY = 'mobissh_reset_ts';
+  var MAX_RESETS = 2;         // stop looping after this many resets in the time window
+  var RESET_WINDOW_MS = 30000; // 30 seconds
+
   // ?reset=1 handler
   if (location.search.indexOf('reset=1') !== -1) {
     (async function () {
+      // Track reset count to detect loops
+      var now = Date.now();
+      var lastTs = parseInt(sessionStorage.getItem(RESET_TS_KEY)) || 0;
+      var count = parseInt(sessionStorage.getItem(RESET_COUNT_KEY)) || 0;
+      if (now - lastTs > RESET_WINDOW_MS) count = 0;
+      count++;
+      sessionStorage.setItem(RESET_COUNT_KEY, count);
+      sessionStorage.setItem(RESET_TS_KEY, now);
+
       try {
         var regs = await navigator.serviceWorker.getRegistrations();
         await Promise.all(regs.map(function (r) { return r.unregister(); }));
@@ -40,16 +54,76 @@
   // Static HTML renders even when JS fails, so checking tabBar height is wrong.
   var BOOT_TIMEOUT_MS = 8000;
   var booted = false;
+  var bootError = null;
 
   window.__appReady = function () {
     booted = true;
+    // Clear reset counter on successful boot
+    try {
+      sessionStorage.removeItem(RESET_COUNT_KEY);
+      sessionStorage.removeItem(RESET_TS_KEY);
+    } catch (_) {}
   };
 
-  setTimeout(function () {
-    if (booted) return;
+  // Called by app.js if the DOMContentLoaded handler throws
+  window.__appBootError = function (err) {
+    bootError = err;
+  };
+
+  function showOverlay() {
     var overlay = document.getElementById('recovery-overlay');
-    if (overlay) overlay.style.display = 'flex';
+    if (!overlay) return;
+    overlay.style.display = 'flex';
+
+    var resetCount = parseInt(sessionStorage.getItem(RESET_COUNT_KEY)) || 0;
+
+    // Show diagnostic info
+    var diagLines = [];
+    if (bootError) {
+      diagLines.push('Error: ' + bootError.message);
+      if (bootError.stack) {
+        var firstFrame = bootError.stack.split('\n').slice(0, 3).join('\n');
+        diagLines.push(firstFrame);
+      }
+    }
+    if (typeof Terminal === 'undefined') diagLines.push('xterm.js failed to load (CDN blocked?)');
+    if (typeof FitAddon === 'undefined') diagLines.push('xterm-addon-fit failed to load');
+
+    // Inject diagnostics below the existing overlay content
+    if (diagLines.length > 0) {
+      var pre = document.createElement('pre');
+      pre.style.cssText = 'color:#ff8800;font-size:11px;max-width:320px;text-align:left;' +
+        'margin-top:16px;white-space:pre-wrap;word-break:break-all;line-height:1.4';
+      pre.textContent = diagLines.join('\n');
+      overlay.appendChild(pre);
+    }
+
+    // If we've reset too many times, change the button to prevent further looping
+    if (resetCount >= MAX_RESETS) {
+      var btn = document.getElementById('recovery-reset-btn');
+      if (btn) {
+        btn.textContent = 'Reset (loop detected)';
+        btn.style.background = '#ff4444';
+      }
+      var hint = document.createElement('p');
+      hint.style.cssText = 'color:#ff8800;font-size:13px;margin-top:12px;max-width:320px;line-height:1.5';
+      hint.textContent = 'Multiple resets have not fixed the issue. Try: ' +
+        '(1) check network/VPN, (2) open in Chrome browser instead of installed app, ' +
+        '(3) uninstall and reinstall the app.';
+      overlay.appendChild(hint);
+    }
+  }
+
+  setTimeout(function () {
+    if (booted && !bootError) return;
+    showOverlay();
   }, BOOT_TIMEOUT_MS);
+
+  // If app.js reported an error, show overlay immediately (don't wait 8s)
+  window.__appBootError = function (err) {
+    bootError = err;
+    showOverlay();
+  };
 
   // Recovery button
   document.addEventListener('DOMContentLoaded', function () {

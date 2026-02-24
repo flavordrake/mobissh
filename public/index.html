@@ -15,18 +15,10 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Fira+Code:wght@400;700&display=swap" />
   <link rel="stylesheet" href="app.css" />
 
-  <!-- xterm.js via CDN — no build step needed for POC -->
-  <link rel="stylesheet"
-    href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css"
-    integrity="sha384-9ftsg11+LSxVUaknegCfeKvlkO9EdIPI2op725RqY87IvhyGjElmpjZlP3LhTQjn"
-    crossorigin="anonymous" />
-  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"
-    integrity="sha384-xjfWUeCWdMtvpAb/SmM6lMzS6pQGcQa0loOl1d97j6Odw0vjK9nW3+dTb/bn/mwH"
-    crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"
-    integrity="sha384-dpjGwSSISUTz2taP54Bor7qkyMR20sSO9oe11UVYnGs2/YdUBf7HW30XKQx9PCzn"
-    crossorigin="anonymous"></script>
-  <!-- WebLinksAddon removed: breaks wrapped URLs (issue #50) -->
+  <!-- xterm.js — bundled locally to avoid CDN dependency / CSP proxy conflicts -->
+  <link rel="stylesheet" href="vendor/xterm.min.css" />
+  <script src="vendor/xterm.min.js"></script>
+  <script src="vendor/xterm-addon-fit.min.js"></script>
 </head>
 <body>
   <!-- Recovery overlay — displayed by the boot watchdog when the app fails to init.

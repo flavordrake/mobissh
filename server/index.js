@@ -127,9 +127,9 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
       'Cache-Control': 'no-store',
       'Content-Security-Policy': [
         "default-src 'self'",
-        "script-src 'self' https://cdn.jsdelivr.net",
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
-        "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
         "connect-src 'self' wss: ws:",
         "img-src 'self' data: blob:",
         "worker-src 'self'",
