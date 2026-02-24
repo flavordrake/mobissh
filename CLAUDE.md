@@ -9,10 +9,11 @@ Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-
 
 ## Architecture
 - **`server/index.js`** — single Node.js process: HTTP static file server + WebSocket SSH bridge on port 8080
-- **`public/`** — PWA frontend (vanilla JS, no build step)
-  - `app.js` — all app logic
+- **`public/`** — PWA frontend (ES modules, TypeScript eligible)
+  - `app.js` — main application entry point (imports from `modules/`)
+  - `modules/constants.js` — pure constants and configuration
   - `app.css` — mobile-first styles
-  - `index.html` — shell
+  - `index.html` — shell (`<script type="module">`)
   - `sw.js` — service worker (network-first, cache for offline fallback)
   - `manifest.json`, `icon-*.svg` — PWA metadata
 
@@ -74,7 +75,7 @@ All backlog items are filed as issues in this repo. Key priorities:
 - `visualViewport.height` is the correct API (not `window.innerHeight`) for keyboard detection
 
 ## Rules
-- No build step — vanilla JS/CSS served directly from `public/`
+- Build step allowed — TypeScript compilation is acceptable for type safety and static error detection. Compiled output is served from `public/`. No heavy bundlers (webpack, vite) unless justified.
 - `node_modules/` is gitignored — install via `npm install` in `server/`
 - No secrets in code
 - Keep `Cache-Control: no-store` on static responses and SW network-first
