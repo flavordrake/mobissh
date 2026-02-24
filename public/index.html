@@ -315,6 +315,6 @@
   <!-- Recovery watchdog — loaded before app.js so it fires even on init failure.
        Handles ?reset=1 cache-clear and the 8-second boot-health timeout. -->
   <script src="recovery.js"></script>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
