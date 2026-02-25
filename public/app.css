@@ -609,6 +609,14 @@ input[type="range"] {
   margin-top: 8px;
 }
 
+.version-info {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: 24px;
+  opacity: 0.6;
+}
+
 .hint {
   font-size: 12px;
   color: var(--text-dim);

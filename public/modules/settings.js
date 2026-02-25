@@ -91,6 +91,12 @@ export function initSettingsPanel() {
             return;
         void clearCacheAndReload();
     });
+    const versionEl = document.getElementById('versionInfo');
+    const versionMeta = document.querySelector('meta[name="app-version"]');
+    if (versionEl && versionMeta?.content) {
+        const [version, hash] = versionMeta.content.split(':');
+        versionEl.textContent = `MobiSSH v${version ?? '?'} \u00b7 ${hash ?? '?'}`;
+    }
 }
 export function registerServiceWorker() {
     if (!('serviceWorker' in navigator))
