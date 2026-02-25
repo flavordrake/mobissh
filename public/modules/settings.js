@@ -1,125 +1,131 @@
 /**
- * modules/settings.js — Settings panel, service worker, and cache management
+ * modules/settings.ts — Settings panel, service worker, and cache management
  *
  * Handles WS URL persistence, danger zone toggles, font/theme selectors,
  * clear data, and service worker registration.
  */
-
 import { getDefaultWsUrl } from './constants.js';
 import { loadProfiles, loadKeys } from './profiles.js';
-
-let _toast = () => {};
-let _applyFontSize = () => {};
-let _applyTheme = () => {};
-
-/** Wire external dependencies that live outside this module. */
+let _toast = (_msg) => { };
+let _applyFontSize = (_size) => { };
+let _applyTheme = (_name, _opts) => { };
 export function initSettings({ toast, applyFontSize, applyTheme }) {
-  _toast = toast;
-  _applyFontSize = applyFontSize;
-  _applyTheme = applyTheme;
+    _toast = toast;
+    _applyFontSize = applyFontSize;
+    _applyTheme = applyTheme;
 }
-
 export function initSettingsPanel() {
-  const wsInput = document.getElementById('wsUrl');
-  wsInput.value = localStorage.getItem('wsUrl') || getDefaultWsUrl();
-
-  const wsWarn = document.getElementById('wsWarnInsecure');
-  if (wsWarn && wsInput.value.startsWith('ws://')) {
-    wsWarn.classList.remove('hidden');
-  }
-
-  // Danger Zone toggles
-  const dangerAllowWsEl = document.getElementById('dangerAllowWs');
-  dangerAllowWsEl.checked = localStorage.getItem('dangerAllowWs') === 'true';
-  dangerAllowWsEl.addEventListener('change', () => {
-    localStorage.setItem('dangerAllowWs', dangerAllowWsEl.checked ? 'true' : 'false');
-  });
-
-  document.getElementById('saveSettingsBtn').addEventListener('click', () => {
-    const url = wsInput.value.trim();
-    if (url.startsWith('ws://')) {
-      if (dangerAllowWsEl.checked) {
-        localStorage.setItem('wsUrl', url);
-        _toast('Saved — warning: ws:// may be blocked by browsers on HTTPS');
-      } else {
-        _toast('ws:// is not allowed — use wss:// (or enable in Danger Zone)');
-      }
-      return;
+    const wsInput = document.getElementById('wsUrl');
+    wsInput.value = localStorage.getItem('wsUrl') ?? getDefaultWsUrl();
+    const wsWarn = document.getElementById('wsWarnInsecure');
+    if (wsWarn && wsInput.value.startsWith('ws://')) {
+        wsWarn.classList.remove('hidden');
     }
-    if (!url.startsWith('wss://')) {
-      _toast('URL must start with wss://');
-      return;
-    }
-    localStorage.setItem('wsUrl', url);
-    if (url.startsWith('ws://')) {
-      if (wsWarn) wsWarn.classList.remove('hidden');
-      _toast('Settings saved — warning: ws:// is unencrypted.');
-    } else {
-      if (wsWarn) wsWarn.classList.add('hidden');
-      _toast('Settings saved.');
-    }
-  });
-
-  const allowPrivateEl = document.getElementById('allowPrivateHosts');
-  if (allowPrivateEl) {
-    allowPrivateEl.checked = localStorage.getItem('allowPrivateHosts') === 'true';
-    allowPrivateEl.addEventListener('change', () => {
-      localStorage.setItem('allowPrivateHosts', allowPrivateEl.checked);
-      _toast(allowPrivateEl.checked
-        ? '⚠ Private address connections enabled.'
-        : 'SSRF protection re-enabled.');
+    // Danger Zone toggles
+    const dangerAllowWsEl = document.getElementById('dangerAllowWs');
+    dangerAllowWsEl.checked = localStorage.getItem('dangerAllowWs') === 'true';
+    dangerAllowWsEl.addEventListener('change', () => {
+        localStorage.setItem('dangerAllowWs', dangerAllowWsEl.checked ? 'true' : 'false');
     });
-  }
-
-  document.getElementById('fontSize').addEventListener('input', (e) => {
-    _applyFontSize(parseInt(e.target.value));
-  });
-
-  const themeSelect = document.getElementById('termThemeSelect');
-  themeSelect.value = localStorage.getItem('termTheme') || 'dark';
-  themeSelect.addEventListener('change', () => {
-    _applyTheme(themeSelect.value, { persist: true });
-  });
-
-  const fontSelect = document.getElementById('termFontSelect');
-  fontSelect.value = localStorage.getItem('termFont') || 'jetbrains';
-  fontSelect.addEventListener('change', () => {
-    localStorage.setItem('termFont', fontSelect.value);
-  });
-
-  document.getElementById('clearDataBtn').addEventListener('click', () => {
-    if (!confirm('Clear all stored keys, profiles, and settings?')) return;
-    localStorage.clear();
-    loadProfiles();
-    loadKeys();
-    _toast('All data cleared.');
-  });
-
-  document.getElementById('clearCacheBtn').addEventListener('click', () => {
-    if (!confirm('Unregister service workers, clear all caches, and reload?')) return;
-    clearCacheAndReload();
-  });
+    document.getElementById('saveSettingsBtn').addEventListener('click', () => {
+        const url = wsInput.value.trim();
+        if (url.startsWith('ws://')) {
+            if (dangerAllowWsEl.checked) {
+                localStorage.setItem('wsUrl', url);
+                _toast('Saved — warning: ws:// may be blocked by browsers on HTTPS');
+            }
+            else {
+                _toast('ws:// is not allowed — use wss:// (or enable in Danger Zone)');
+            }
+            return;
+        }
+        if (!url.startsWith('wss://')) {
+            _toast('URL must start with wss://');
+            return;
+        }
+        localStorage.setItem('wsUrl', url);
+        if (url.startsWith('ws://')) {
+            if (wsWarn)
+                wsWarn.classList.remove('hidden');
+            _toast('Settings saved — warning: ws:// is unencrypted.');
+        }
+        else {
+            if (wsWarn)
+                wsWarn.classList.add('hidden');
+            _toast('Settings saved.');
+        }
+    });
+    const allowPrivateEl = document.getElementById('allowPrivateHosts');
+    if (allowPrivateEl) {
+        allowPrivateEl.checked = localStorage.getItem('allowPrivateHosts') === 'true';
+        allowPrivateEl.addEventListener('change', () => {
+            localStorage.setItem('allowPrivateHosts', String(allowPrivateEl.checked));
+            _toast(allowPrivateEl.checked
+                ? '⚠ Private address connections enabled.'
+                : 'SSRF protection re-enabled.');
+        });
+    }
+    document.getElementById('fontSize').addEventListener('input', (e) => {
+        _applyFontSize(parseInt(e.target.value));
+    });
+    const themeSelect = document.getElementById('termThemeSelect');
+    themeSelect.value = localStorage.getItem('termTheme') ?? 'dark';
+    themeSelect.addEventListener('change', () => {
+        _applyTheme(themeSelect.value, { persist: true });
+    });
+    const fontSelect = document.getElementById('termFontSelect');
+    fontSelect.value = localStorage.getItem('termFont') ?? 'jetbrains';
+    fontSelect.addEventListener('change', () => {
+        localStorage.setItem('termFont', fontSelect.value);
+    });
+    document.getElementById('clearDataBtn').addEventListener('click', () => {
+        if (!confirm('Clear all stored keys, profiles, and settings?'))
+            return;
+        localStorage.clear();
+        loadProfiles();
+        loadKeys();
+        _toast('All data cleared.');
+    });
+    document.getElementById('clearCacheBtn').addEventListener('click', () => {
+        if (!confirm('Unregister service workers, clear all caches, and reload?'))
+            return;
+        void clearCacheAndReload();
+    });
+    const versionEl = document.getElementById('versionInfo');
+    const versionMeta = document.querySelector('meta[name="app-version"]');
+    if (versionEl && versionMeta?.content) {
+        const [version, hash] = versionMeta.content.split(':');
+        versionEl.textContent = `MobiSSH v${version ?? '?'} \u00b7 ${hash ?? '?'}`;
+    }
 }
-
 export function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('sw.js').then((reg) => {
-    setInterval(() => reg.update(), 60_000);
-  }).catch((err) => {
-    console.warn('Service worker registration failed:', err);
-  });
+    if (!('serviceWorker' in navigator))
+        return;
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+        setInterval(() => { void reg.update(); }, 60_000);
+    }).catch((err) => {
+        console.warn('Service worker registration failed:', err);
+    });
 }
-
 export async function clearCacheAndReload() {
-  try {
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(regs.map((r) => r.unregister()));
-  } catch (_) {}
-  try {
-    const keys = await caches.keys();
-    await Promise.all(keys.map((k) => caches.delete(k)));
-  } catch (_) {}
-  try { localStorage.clear(); } catch (_) {}
-  try { sessionStorage.clear(); } catch (_) {}
-  location.reload();
+    try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+    }
+    catch { /* may not be available */ }
+    try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+    catch { /* may not be available */ }
+    try {
+        localStorage.clear();
+    }
+    catch { /* may not be available */ }
+    try {
+        sessionStorage.clear();
+    }
+    catch { /* may not be available */ }
+    location.reload();
 }
+//# sourceMappingURL=settings.js.map

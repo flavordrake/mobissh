@@ -4,3 +4,4 @@ npm-debug.log*
 .auth/
 playwright-report/
 test-results/
+*.js.map

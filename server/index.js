@@ -28,6 +28,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { createHash } = require('crypto');
+const { execSync } = require('child_process');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
 
@@ -38,6 +39,10 @@ const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, '');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
+
+const APP_VERSION = require('./package.json').version || '0.0.0';
+let GIT_HASH = 'unknown';
+try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(); } catch (_) {}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -107,15 +112,21 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
-    // Inject base path into index.html as a <meta> tag so the client knows
-    // the subpath without needing unsafe-inline in the CSP.
-    if (ext === '.html' && BASE_PATH) {
-      data = Buffer.from(
-        data.toString().replace(
+    if (ext === '.html') {
+      let html = data.toString();
+      // Inject version meta tag so the client can display build info.
+      html = html.replace(
+        '<head>',
+        `<head><meta name="app-version" content="${APP_VERSION}:${GIT_HASH}">`
+      );
+      // Inject base path so the client knows the subpath without unsafe-inline CSP.
+      if (BASE_PATH) {
+        html = html.replace(
           '<head>',
           `<head><meta name="app-base-path" content="${BASE_PATH}">`
-        )
-      );
+        );
+      }
+      data = Buffer.from(html);
     }
     // Rewrite manifest.json when serving under a subpath so the PWA installs
     // at the correct path and has a stable identity (#83).

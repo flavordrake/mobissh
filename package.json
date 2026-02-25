@@ -6,17 +6,30 @@
     "start:ssh": "BASE_PATH=/ssh PORT=8081 node server/index.js",
     "setup:nginx": "sudo bash scripts/setup-nginx.sh",
     "prepare": "git config core.hooksPath hooks",
-    "lint": "eslint public/ server/ tests/",
-    "lint:fix": "eslint --fix public/ server/ tests/",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint public/ server/ tests/ src/",
+    "lint:fix": "eslint --fix public/ server/ tests/ src/",
+    "pretest": "tsc",
     "test": "playwright test",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
     "test:ui": "playwright test --ui",
     "test:proxy": "BASE_URL=https://raserver.tailbe5094.ts.net/ssh playwright test",
-    "test:browserstack": "browserstack-node-sdk playwright test --config=playwright.browserstack.config.js"
+    "test:browserstack": "browserstack-node-sdk playwright test --config=playwright.browserstack.config.js",
+    "type:coverage": "type-coverage --at-least 80 --detail"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "@xterm/xterm": "^6.0.0",
     "browserstack-node-sdk": "^1.38.0",
     "eslint": "^8.57.1",
+    "type-coverage": "^2.29.7",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
     "ws": "^8.16.0"
   }
 }
