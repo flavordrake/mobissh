@@ -122,8 +122,10 @@
           <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
           <button id="sessionRecordStartBtn" class="session-menu-item rec-start" role="menuitem">● Start Recording</button>
           <button id="sessionRecordStopBtn"  class="session-menu-item rec-stop hidden" role="menuitem">■ Stop &amp; Download</button>
-          <button id="sessionCtrlCBtn"      class="session-menu-item" role="menuitem">Send Ctrl+C</button>
-          <button id="sessionCtrlZBtn"      class="session-menu-item" role="menuitem">Send Ctrl+Z</button>
+          <div class="session-menu-item ctrl-row" role="group" aria-label="Send control sequences">
+            <button id="sessionCtrlCBtn" class="ctrl-btn" role="menuitem">Ctrl+C</button>
+            <button id="sessionCtrlZBtn" class="ctrl-btn" role="menuitem">Ctrl+Z</button>
+          </div>
           <button id="sessionThemeBtn"      class="session-menu-item" role="menuitem">Theme: Dark ▸</button>
           <button id="sessionReconnectBtn"  class="session-menu-item" role="menuitem">Reconnect</button>
           <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
