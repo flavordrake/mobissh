@@ -307,6 +307,15 @@ html, body {
 
 #sessionMenu.hidden { display: none; }
 
+/* Transparent backdrop — covers viewport when session menu is open so outside
+   clicks (including on the xterm.js canvas) dismiss the menu. */
+#menuBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+}
+#menuBackdrop.hidden { display: none; }
+
 .session-menu-item {
   width: 100%;
   background: none;
