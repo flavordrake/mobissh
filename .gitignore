@@ -3,5 +3,6 @@ npm-debug.log*
 .DS_Store
 .auth/
 playwright-report/
+playwright-report-emulator/
 test-results/
 *.js.map
