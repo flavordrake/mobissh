@@ -156,6 +156,20 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
 const MAX_MESSAGE_SIZE = 4 * 1024 * 1024;
 const WS_PING_INTERVAL_MS = 25_000;
 
+// ─── Rate limiting / concurrency guard (issue #92) ────────────────────────────
+const MAX_CONNS_PER_IP    = 5;        // max new connection attempts per window
+const THROTTLE_WINDOW_MS  = 10_000;  // sliding window duration (ms)
+const MAX_ACTIVE_PER_IP   = 3;        // max concurrent WS/SSH sessions per IP
+
+// ip → { attempts: number, windowStart: number, active: number }
+const connTracker = new Map();
+
+function getIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.socket.remoteAddress
+    || 'unknown';
+}
+
 const wss = new WebSocket.Server({ server, maxPayload: MAX_MESSAGE_SIZE });
 
 // WebSocket-level ping/pong to keep idle connections alive through proxies/NAT.
@@ -174,7 +188,21 @@ if (require.main === module) {
     });
   }, WS_PING_INTERVAL_MS);
 
-  wss.on('close', () => clearInterval(wsPingInterval));
+  // Periodically evict stale connTracker entries to prevent unbounded Map growth.
+  // Only remove entries with no active sessions and an expired attempt window.
+  const connSweepInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, track] of connTracker) {
+      if (track.active === 0 && now - track.windowStart > THROTTLE_WINDOW_MS) {
+        connTracker.delete(ip);
+      }
+    }
+  }, 60_000);
+
+  wss.on('close', () => {
+    clearInterval(wsPingInterval);
+    clearInterval(connSweepInterval);
+  });
 }
 
 // ─── SSRF prevention (issue #6) ───────────────────────────────────────────────
@@ -200,8 +228,37 @@ function isPrivateHost(host) {
 
 wss.on('connection', (ws, req) => {
   ws.on('pong', () => { ws._pongPending = false; });
-  const clientIP = req.socket.remoteAddress;
-  console.log(`[ssh-bridge] Client connected: ${clientIP}`);
+
+  const clientIP = getIP(req);
+  const now = Date.now();
+
+  // Initialise or retrieve the tracker entry for this IP.
+  if (!connTracker.has(clientIP)) {
+    connTracker.set(clientIP, { attempts: 0, windowStart: now, active: 0 });
+  }
+  const track = connTracker.get(clientIP);
+
+  // Reset attempt counter when the window has expired.
+  if (now - track.windowStart > THROTTLE_WINDOW_MS) {
+    track.attempts = 0;
+    track.windowStart = now;
+  }
+  track.attempts++;
+
+  if (track.attempts > MAX_CONNS_PER_IP) {
+    console.warn(`[ssh-bridge] Rate limited: ${clientIP} (${track.attempts} attempts in window)`);
+    ws.close(1008, 'Rate limited');
+    return;
+  }
+
+  if (track.active >= MAX_ACTIVE_PER_IP) {
+    console.warn(`[ssh-bridge] Connection cap reached: ${clientIP} (${track.active} active)`);
+    ws.close(1008, 'Too many connections');
+    return;
+  }
+
+  track.active++;
+  console.log(`[ssh-bridge] Client connected: ${clientIP} (active: ${track.active})`);
 
   let sshClient = null;
   let sshStream = null;
@@ -283,12 +340,20 @@ wss.on('connection', (ws, req) => {
       );
     });
 
+    // ssh2 fires both 'end' and 'close' for a single tear-down; only handle once.
+    let sshClosed = false;
+    function sshCleanup(reason) {
+      if (sshClosed) return;
+      sshClosed = true;
+      cleanup(reason);
+    }
+
     sshClient.on('error', (err) => {
       send({ type: 'error', message: err.message });
-      cleanup(err.message);
+      sshCleanup(err.message);
     });
-    sshClient.on('end', () => { cleanup('SSH connection ended'); });
-    sshClient.on('close', () => { cleanup('SSH connection closed'); });
+    sshClient.on('end', () => { sshCleanup('SSH connection ended'); });
+    sshClient.on('close', () => { sshCleanup('SSH connection closed'); });
 
     const sshConfig = {
       host: cfg.host,
@@ -366,6 +431,8 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    const t = connTracker.get(clientIP);
+    if (t) t.active = Math.max(0, t.active - 1);
     console.log(`[ssh-bridge] WebSocket closed: ${clientIP}`);
     cleanup(null);
   });
