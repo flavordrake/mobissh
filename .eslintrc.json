@@ -16,6 +16,9 @@
   "overrides": [
     {
       "files": ["public/**/*.js"],
+      "parserOptions": {
+        "sourceType": "module"
+      },
       "env": {
         "browser": true,
         "node": false
@@ -40,6 +43,29 @@
         "browser": true,
         "node": true,
         "commonjs": true
+      }
+    },
+    {
+      "files": ["src/**/*.ts"],
+      "parser": "@typescript-eslint/parser",
+      "parserOptions": {
+        "project": "./tsconfig.json",
+        "sourceType": "module"
+      },
+      "plugins": ["@typescript-eslint"],
+      "extends": [
+        "eslint:recommended",
+        "plugin:@typescript-eslint/recommended",
+        "plugin:@typescript-eslint/strict-type-checked"
+      ],
+      "rules": {
+        "no-undef": "off",
+        "no-unused-vars": "off",
+        "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+        "semi": ["error", "always"],
+        "quotes": ["error", "single", { "avoidEscape": true }],
+        "@typescript-eslint/no-explicit-any": "error",
+        "@typescript-eslint/no-non-null-assertion": "warn"
       }
     }
   ]
