@@ -113,6 +113,15 @@ export const KEY_MAP: Record<string, string> = {
 
 export const FONT_SIZE = { MIN: 8, MAX: 32 } as const;
 
+// HTML escaping for safe rendering of user-supplied strings
+export function escHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 // SELECTION_OVERLAY: mobile text selection via transparent DOM overlay (#55).
 // Disabled while #111 (Android UX review findings) is being addressed on a
 // feature branch. Set true to re-enable long-press → select → copy.

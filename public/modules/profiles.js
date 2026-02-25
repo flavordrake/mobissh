@@ -6,17 +6,12 @@
  * in the vault (never plaintext).
  */
 import { appState } from './state.js';
+import { escHtml } from './constants.js';
 import { ensureVaultKey, tryUnlockVault, vaultStore, vaultLoad, vaultDelete, } from './vault.js';
+export { escHtml };
 let _toast = (_msg) => { };
 export function initProfiles({ toast }) {
     _toast = toast;
-}
-export function escHtml(str) {
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 export function getProfiles() {
     return JSON.parse(localStorage.getItem('sshProfiles') || '[]');

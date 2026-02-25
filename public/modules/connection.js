@@ -5,10 +5,9 @@
  * exponential backoff, keepalive pings, screen wake lock, host key
  * verification, and visibility-based reconnection.
  */
-import { getDefaultWsUrl, RECONNECT, ANSI } from './constants.js';
+import { getDefaultWsUrl, RECONNECT, ANSI, escHtml } from './constants.js';
 import { appState } from './state.js';
 import { stopAndDownloadRecording } from './recording.js';
-import { escHtml } from './profiles.js';
 let _toast = (_msg) => { };
 let _setStatus = (_state, _text) => { };
 let _focusIME = () => { };

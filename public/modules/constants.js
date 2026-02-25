@@ -101,6 +101,14 @@ export const KEY_MAP = {
     F9: '\x1b[20~', F10: '\x1b[21~', F11: '\x1b[23~', F12: '\x1b[24~',
 };
 export const FONT_SIZE = { MIN: 8, MAX: 32 };
+// HTML escaping for safe rendering of user-supplied strings
+export function escHtml(str) {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
 // SELECTION_OVERLAY: mobile text selection via transparent DOM overlay (#55).
 // Disabled while #111 (Android UX review findings) is being addressed on a
 // feature branch. Set true to re-enable long-press → select → copy.

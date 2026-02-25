@@ -8,23 +8,18 @@
 
 import type { ProfilesDeps, SSHProfile } from './types.js';
 import { appState } from './state.js';
+import { escHtml } from './constants.js';
 import {
   ensureVaultKey, tryUnlockVault,
   vaultStore, vaultLoad, vaultDelete,
 } from './vault.js';
 
+export { escHtml };
+
 let _toast = (_msg: string): void => {};
 
 export function initProfiles({ toast }: ProfilesDeps): void {
   _toast = toast;
-}
-
-export function escHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 // Profile storage

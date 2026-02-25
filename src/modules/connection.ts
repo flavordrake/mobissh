@@ -7,10 +7,9 @@
  */
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
-import { getDefaultWsUrl, RECONNECT, ANSI } from './constants.js';
+import { getDefaultWsUrl, RECONNECT, ANSI, escHtml } from './constants.js';
 import { appState } from './state.js';
 import { stopAndDownloadRecording } from './recording.js';
-import { escHtml } from './profiles.js';
 
 let _toast = (_msg: string): void => {};
 let _setStatus = (_state: ConnectionStatus, _text: string): void => {};
