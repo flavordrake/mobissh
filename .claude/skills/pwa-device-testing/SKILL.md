@@ -1,7 +1,7 @@
 ---
 name: pwa-device-testing
-description: This skill should be used when the user asks to "test on device", "test on emulator", "run emulator", "launch AVD", "test PWA", "test on Android", "test on mobile", "verify on real device", "check on phone", or discusses testing a feature on an actual device or emulator rather than headless Playwright. Also use when validating features that headless browsers cannot cover (biometric, PWA install, Chrome autofill, touch gestures, password managers).
-version: 0.1.0
+description: This skill should be used when the user asks to "test on device", "test on emulator", "run emulator", "launch AVD", "test PWA", "test on Android", "test on mobile", "verify on real device", "check on phone", or discusses testing a feature on an actual device or emulator rather than headless Playwright. Also use when validating features that headless browsers cannot cover (biometric, PWA install, Chrome autofill, touch gestures, password managers). Use proactively when a feature has been implemented that touches any of these capabilities.
+version: 0.2.0
 ---
 
 # PWA Device Testing
@@ -14,48 +14,106 @@ Headless Playwright tests cover logic and layout but cannot validate:
 - Service worker update UX on actual Chrome
 - CSS safe-area-inset rendering on notched devices
 
-This skill provides the correct setup and workflow for real-device testing using an Android emulator.
+This skill provides the correct setup, known pitfalls, and ready-to-use templates for testing on real Chrome via Android emulator.
 
-## Prerequisites
-
-The setup script lives at `scripts/setup-avd.sh` in the project root. It handles everything:
+## Quick Start
 
 ```bash
+# First time only:
 bash scripts/setup-avd.sh
+
+# Every session:
+npm run test:emulator
 ```
 
-What it installs (idempotent, safe to re-run):
-- Android SDK cmdline-tools (uses JDK bundled in android-studio snap)
-- platform-tools, emulator, Android 35 system image with Google Play
-- Creates `MobiSSH_Pixel7` AVD (Pixel 7 profile, 4GB RAM, KVM-accelerated)
-- Writes a launch helper at `~/Android/Sdk/launch-mobissh-avd.sh`
-- Adds `ANDROID_HOME` to `.bashrc`
+`npm run test:emulator` (via `scripts/run-emulator-tests.sh`) handles everything: boots emulator if needed, enables Chrome debugging, sets up port forwarding, runs Playwright over CDP.
 
-Requires: `android-studio` snap, KVM enabled (`/dev/kvm` must exist).
+## Architecture
 
-## Launch Workflow
+```
+Host machine                          Android Emulator (Pixel 7, API 35)
++-----------------------+             +---------------------------+
+| MobiSSH server :8081  |<--adb rev-->| Chrome tab: localhost:8081|
+| Playwright test runner|--CDP:9222-->| Chrome DevTools socket    |
++-----------------------+             +---------------------------+
+```
 
-### 1. Start the MobiSSH server
+- **CDP connection**: Playwright `connectOverCDP()` to real Chrome via ADB-forwarded DevTools port
+- **Port forwarding**: `adb reverse tcp:8081 tcp:8081` so emulator's localhost reaches host
+- **Single worker CDP**: One CDP connection per test file, fresh tab per test
+
+## Critical Pitfalls (learned the hard way)
+
+### Chrome DevTools socket requires `set-debug-app`
+
+Play Store Chrome ships as a release build. It does NOT expose the `@chrome_devtools_remote` Unix socket by default, even with USB debugging enabled. You must run:
 
 ```bash
-cd server && npm start
-# or for background:
-nohup bash -c 'PORT=8080 node server/index.js' > /tmp/mobissh-server.log 2>&1 &
+adb shell am set-debug-app --persistent com.android.chrome
+adb shell am force-stop com.android.chrome
+# then relaunch Chrome
 ```
 
-Verify it's running: `curl -s http://localhost:8080/ | head -5`
+Without this, `adb forward tcp:9222 localabstract:chrome_devtools_remote` connects to nothing. The `run-emulator-tests.sh` script handles this automatically.
 
-### 2. Launch the emulator
+### No `browser.newContext()` on Android Chrome
 
-```bash
-bash ~/Android/Sdk/launch-mobissh-avd.sh
+Android Chrome's CDP exposes a single default browser context. Calling `browser.newContext()` throws: `Protocol error (Target.createBrowserContext): Failed to create browser context.`
+
+Correct pattern:
+```javascript
+const context = browser.contexts()[0]; // use the default
+const page = await context.newPage();  // new tab within it
 ```
 
-This boots the AVD, waits for boot completion, and runs `adb reverse tcp:8080 tcp:8080` so the emulator's `localhost:8080` reaches the host's server.
+### Shared localStorage across tests
 
-### 3. Open Chrome on the emulator
+Since all tabs share the single default context, localStorage is shared. Every test fixture MUST clear localStorage before the test runs, or previous test state leaks in:
 
-Navigate to `http://localhost:8080`. First boot may need a Chrome update via Play Store.
+```javascript
+await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
+await page.evaluate(() => localStorage.clear());
+```
+
+### Worker-scoped CDP connection is mandatory
+
+Creating a new `connectOverCDP()` per test destabilises the DevTools socket. After ~4-5 connect/disconnect cycles, the connection drops with "Target page, context or browser has been closed." Use a worker-scoped fixture:
+
+```javascript
+cdpBrowser: [async ({}, use) => {
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
+  await use(browser);
+  browser.close();
+}, { scope: 'worker' }],
+```
+
+### KVM group membership requires session reload
+
+After `sudo usermod -aG kvm $USER`, the current shell doesn't pick up the new group. Use `sg kvm -c 'emulator ...'` or start a new login session.
+
+### AVD config uses ` = ` (with spaces)
+
+The `config.ini` generated by `avdmanager` uses `key = value` (space-equals-space), not `key=value`. Sed patterns without spaces silently fail and the fallback `echo` creates duplicate keys. The setup script uses a `set_avd_prop` helper that handles both formats.
+
+### WebAuthn biometric toggle in headless test browsers
+
+`prfAvailable()` returns `true` in Playwright's headless Chromium (PublicKeyCredential API exists) but `navigator.credentials.create()` hangs forever (no authenticator). In headless tests, uncheck the biometric toggle via `page.evaluate`:
+
+```javascript
+await page.evaluate(() => {
+  const cb = document.getElementById('vaultEnableBio');
+  if (cb) cb.checked = false;
+});
+```
+
+The CSS toggle hides the checkbox with `opacity:0; width:0; height:0`, so Playwright's `isVisible()` returns false and `uncheck()` silently skips it. Always use `page.evaluate` for CSS-hidden form elements.
+
+## Test File Templates
+
+Ready-to-use templates are in `assets/`. Copy and adapt for new test files:
+
+- `assets/emulator-test-template.js` — Single test file template with fixture import, screenshot helper usage, and localStorage cleanup pattern
+- `assets/emulator-config-template.js` — Playwright config for any project connecting to Android Chrome over CDP
 
 ## Testing Checklists
 
@@ -64,8 +122,7 @@ Navigate to `http://localhost:8080`. First boot may need a Chrome update via Pla
 - [ ] Password strength meter updates as you type
 - [ ] Vault creation completes, modal dismisses, toast shows
 - [ ] Chrome autofill does NOT interfere with vault password fields
-  (fields have `data-lpignore`, `data-1p-ignore`, `data-form-type="other"`)
-- [ ] Profile save encrypts credentials (check via Chrome DevTools > Application > localStorage)
+- [ ] Profile save encrypts credentials (check via DevTools > Application > localStorage)
 - [ ] Profile load decrypts and populates form fields
 - [ ] Lock vault from settings, verify status changes to "Locked"
 - [ ] Unlock via inline password bar
@@ -95,56 +152,33 @@ adb emu finger touch 1
 - [ ] Long-press on terminal doesn't trigger unwanted selection
 - [ ] Ctrl sticky modifier works (tap Ctrl, then tap letter)
 
-### Layout / Visual Testing
-- [ ] Tab bar renders correctly, auto-hides after connect
-- [ ] Terminal fills available space (no overflow, no gap)
-- [ ] Settings panel scrolls properly
-- [ ] Font size slider updates terminal in real-time
-- [ ] Theme changes apply immediately
-
 ## Useful ADB Commands
 
 ```bash
-# Device status
-adb devices
-adb shell getprop ro.build.version.release   # Android version
-
-# Port forwarding (already done by launch script)
-adb reverse tcp:8080 tcp:8080
-
-# Simulate fingerprint
-adb emu finger touch 1
-
-# Type text into focused field
-adb shell input text 'hello'
-
-# Take screenshot
-adb exec-out screencap -p > /tmp/emulator-screenshot.png
-
-# Chrome logs
-adb logcat -s chromium
-
-# Open Chrome DevTools on desktop
-# Navigate to chrome://inspect/#devices in desktop Chrome
-
-# Open a URL in emulator Chrome
-adb shell am start -a android.intent.action.VIEW -d 'http://localhost:8080'
-
-# Kill emulator
-adb emu kill
+adb devices                                        # list connected
+adb shell getprop ro.build.version.release         # Android version
+adb reverse tcp:8081 tcp:8081                      # port forwarding
+adb forward tcp:9222 localabstract:chrome_devtools_remote  # CDP
+curl -sf http://127.0.0.1:9222/json/version        # verify CDP
+adb emu finger touch 1                             # simulate fingerprint
+adb shell input text 'hello'                       # type text
+adb exec-out screencap -p > /tmp/screenshot.png    # screenshot
+adb logcat -s chromium                             # Chrome logs
+adb shell am start -a android.intent.action.VIEW -d 'http://localhost:8081'
+adb emu kill                                       # stop emulator
 ```
 
 ## Troubleshooting
 
-**Emulator won't start**: Check `emulator -list-avds` shows `MobiSSH_Pixel7`. If KVM permission denied: `sudo chmod 666 /dev/kvm` or add user to kvm group.
+**Emulator won't start / KVM error**: Add user to kvm group: `sudo usermod -aG kvm $USER`. Then `sg kvm -c 'emulator -avd MobiSSH_Pixel7'` or re-login.
 
-**Port forwarding not working**: Run `adb reverse --list` to verify. If empty, re-run `adb reverse tcp:8080 tcp:8080`.
+**CDP not reachable after Chrome launch**: Run `adb shell am set-debug-app --persistent com.android.chrome`, force-stop Chrome, relaunch it, then re-forward: `adb forward tcp:9222 localabstract:chrome_devtools_remote`.
 
-**Chrome not installed or outdated**: Open Play Store on emulator, update Chrome. Google Play system images include Play Store access.
+**Port forwarding not working**: `adb reverse --list` to verify. If empty, re-run `adb reverse tcp:8081 tcp:8081`.
 
-**WebAuthn not prompting for fingerprint**: Ensure Chrome is version 120+ (`chrome://version`). The emulator must have a fingerprint enrolled in Settings > Security > Fingerprint. Enroll via: `adb emu finger touch 1` while in the fingerprint setup flow.
+**Tests fail with "Target page, context or browser has been closed"**: CDP connection is being recreated per test. Use worker-scoped `cdpBrowser` fixture (see fixtures.js).
 
-**Slow emulator**: Verify KVM is active (`emulator -accel-check`). The AVD config sets `hw.gpu.mode=auto` for GPU acceleration. Close other heavy apps.
+**WebAuthn not prompting for fingerprint**: Chrome 120+ required. Emulator needs fingerprint enrolled in Settings > Security > Fingerprint (use `adb emu finger touch 1` during setup flow).
 
 ## When to Use This vs Playwright
 

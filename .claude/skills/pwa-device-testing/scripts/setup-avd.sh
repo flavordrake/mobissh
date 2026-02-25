@@ -67,14 +67,23 @@ else
 fi
 
 # 5. Patch AVD config for better performance
+# AVD config uses " = " (with spaces) as separator. Match both formats.
 AVD_INI="$HOME/.android/avd/${AVD_NAME}.avd/config.ini"
+set_avd_prop() {
+  local key="$1" val="$2"
+  if grep -q "^${key}" "$AVD_INI" 2>/dev/null; then
+    sed -i "s|^${key}.*|${key} = ${val}|" "$AVD_INI"
+  else
+    echo "${key} = ${val}" >> "$AVD_INI"
+  fi
+}
 if [[ -f "$AVD_INI" ]]; then
-  log "Tuning AVD config for performance..."
-  sed -i 's/^hw.ramSize=.*/hw.ramSize=4096/' "$AVD_INI" 2>/dev/null || echo "hw.ramSize=4096" >> "$AVD_INI"
-  sed -i 's/^vm.heapSize=.*/vm.heapSize=576/' "$AVD_INI" 2>/dev/null || echo "vm.heapSize=576" >> "$AVD_INI"
-  sed -i 's/^hw.gpu.enabled=.*/hw.gpu.enabled=yes/' "$AVD_INI" 2>/dev/null || echo "hw.gpu.enabled=yes" >> "$AVD_INI"
-  sed -i 's/^hw.gpu.mode=.*/hw.gpu.mode=auto/' "$AVD_INI" 2>/dev/null || echo "hw.gpu.mode=auto" >> "$AVD_INI"
-  grep -q "^hw.keyboard=" "$AVD_INI" || echo "hw.keyboard=yes" >> "$AVD_INI"
+  log "Tuning AVD config..."
+  set_avd_prop hw.ramSize 4096
+  set_avd_prop vm.heapSize 576
+  set_avd_prop hw.gpu.enabled yes
+  set_avd_prop hw.gpu.mode auto
+  set_avd_prop hw.keyboard yes
 fi
 
 # 6. Write helper scripts
