@@ -74,7 +74,7 @@ export function initSettingsPanel() {
         _applyTheme(themeSelect.value, { persist: true });
     });
     const fontSelect = document.getElementById('termFontSelect');
-    fontSelect.value = localStorage.getItem('termFont') ?? 'jetbrains';
+    fontSelect.value = localStorage.getItem('termFont') ?? 'monospace';
     fontSelect.addEventListener('change', () => {
         localStorage.setItem('termFont', fontSelect.value);
     });

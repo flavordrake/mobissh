@@ -10,9 +10,6 @@
   <title>MobiSSH</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="/icon-192.svg" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Fira+Code:wght@400;700&display=swap" />
   <link rel="stylesheet" href="app.css" />
 
   <!-- xterm.js — bundled locally to avoid CDN dependency / CSP proxy conflicts -->
@@ -275,9 +272,9 @@
 
       <label for="termFontSelect">Terminal font</label>
       <select id="termFontSelect">
-        <option value="jetbrains">'JetBrains Mono'</option>
-        <option value="firacode">'Fira Code'</option>
         <option value="monospace">System monospace</option>
+        <option value="jetbrains">JetBrains Mono</option>
+        <option value="firacode">Fira Code</option>
       </select>
       <p class="hint">Requires page reload to take effect.</p>
 

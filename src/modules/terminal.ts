@@ -19,9 +19,9 @@ export const ROOT_CSS: RootCSS = (() => {
 // ── Terminal ─────────────────────────────────────────────────────────────────
 
 const FONT_FAMILIES: Record<string, string> = {
+  monospace: 'ui-monospace, Menlo, "Cascadia Code", Consolas, monospace',
   jetbrains: '"JetBrains Mono", monospace',
   firacode: '"Fira Code", monospace',
-  monospace: 'monospace',
 };
 
 export function initTerminal(): void {
@@ -29,8 +29,8 @@ export function initTerminal(): void {
   const savedTheme = localStorage.getItem('termTheme') ?? 'dark';
   appState.activeThemeName = ((savedTheme as ThemeName) in THEMES ? savedTheme : 'dark') as ThemeName;
 
-  const savedFont = localStorage.getItem('termFont') ?? 'jetbrains';
-  const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.jetbrains;
+  const savedFont = localStorage.getItem('termFont') ?? 'monospace';
+  const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
 
   appState.terminal = new Terminal({
     fontFamily,

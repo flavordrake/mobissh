@@ -283,7 +283,7 @@ test.describe('Settings panel', () => {
     const opts = page.locator('#termFontSelect option');
     await expect(opts).toHaveCount(3);
     const values = await opts.evaluateAll((els) => els.map((el) => el.value));
-    expect(values).toEqual(['jetbrains', 'firacode', 'monospace']);
+    expect(values).toEqual(['monospace', 'jetbrains', 'firacode']);
   });
 });
 
@@ -358,9 +358,9 @@ test.describe('Issue #71 — no redundant status indicator', () => {
     await expect(el).toHaveCount(0);
   });
 
-  test('Google Fonts stylesheet is loaded (CSP allows it)', async ({ page }) => {
+  test('Google Fonts stylesheet is not loaded by default (#118)', async ({ page }) => {
     const link = page.locator('link[rel="stylesheet"][href*="fonts.googleapis.com"]');
-    await expect(link).toHaveCount(1);
+    await expect(link).toHaveCount(0);
   });
 
   test('no CSP violations for font loading', async ({ page }) => {

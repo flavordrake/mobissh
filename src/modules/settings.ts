@@ -82,7 +82,7 @@ export function initSettingsPanel(): void {
   });
 
   const fontSelect = document.getElementById('termFontSelect') as HTMLSelectElement;
-  fontSelect.value = localStorage.getItem('termFont') ?? 'jetbrains';
+  fontSelect.value = localStorage.getItem('termFont') ?? 'monospace';
   fontSelect.addEventListener('change', () => {
     localStorage.setItem('termFont', fontSelect.value);
   });

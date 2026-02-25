@@ -17,7 +17,7 @@
   /* key-btn-height: keybar minus 10px vertical clearance; keep in sync with --keybar-height */
   --key-btn-height: 24px;
   /* Shared font stacks */
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-mono: ui-monospace, Menlo, 'Cascadia Code', Consolas, monospace;
   --font-condensed: 'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', monospace;
 }
 
@@ -518,6 +518,7 @@ html, body {
 #panel-settings {
   padding: 16px;
   gap: 12px;
+  overscroll-behavior: contain;
 }
 
 h2 {

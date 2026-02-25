@@ -13,16 +13,16 @@ export const ROOT_CSS = (() => {
 })();
 // ── Terminal ─────────────────────────────────────────────────────────────────
 const FONT_FAMILIES = {
+    monospace: 'ui-monospace, Menlo, "Cascadia Code", Consolas, monospace',
     jetbrains: '"JetBrains Mono", monospace',
     firacode: '"Fira Code", monospace',
-    monospace: 'monospace',
 };
 export function initTerminal() {
     const fontSize = parseInt(localStorage.getItem('fontSize') ?? '14') || 14;
     const savedTheme = localStorage.getItem('termTheme') ?? 'dark';
     appState.activeThemeName = (savedTheme in THEMES ? savedTheme : 'dark');
-    const savedFont = localStorage.getItem('termFont') ?? 'jetbrains';
-    const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.jetbrains;
+    const savedFont = localStorage.getItem('termFont') ?? 'monospace';
+    const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
     appState.terminal = new Terminal({
         fontFamily,
         fontSize,
