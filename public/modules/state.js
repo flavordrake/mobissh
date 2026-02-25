@@ -24,6 +24,7 @@ export const appState = {
     // Vault
     vaultKey: null,
     vaultMethod: null,
+    vaultIdleTimer: null,
     // UI visibility
     keyBarVisible: true,
     imeMode: true,

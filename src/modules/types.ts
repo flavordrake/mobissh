@@ -24,7 +24,19 @@ export interface SSHProfile {
 
 export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast';
 
-export type VaultMethod = 'passwordcred' | 'webauthn-prf' | null;
+export type VaultMethod = 'master-pw' | 'master-pw+bio' | null;
+
+// Vault data stored in localStorage
+export interface WrappedKey {
+  iv: string;   // base64 AES-GCM IV
+  ct: string;   // base64 ciphertext of the DEK
+}
+
+export interface VaultMeta {
+  salt: string;         // base64 PBKDF2 salt (32 bytes)
+  dekPw: WrappedKey;    // DEK wrapped by password-derived KEK
+  dekBio?: WrappedKey;  // DEK wrapped by biometric-derived KEK (optional)
+}
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -63,6 +75,7 @@ export interface AppState {
   // Vault
   vaultKey: CryptoKey | null;
   vaultMethod: VaultMethod;
+  vaultIdleTimer: ReturnType<typeof setTimeout> | null;
 
   // UI visibility
   keyBarVisible: boolean;

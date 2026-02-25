@@ -951,3 +951,212 @@ hr {
 }
 
 .hostkey-accept:active { background: var(--accent-dim); }
+
+/* Vault setup / change password modal overlay */
+.vault-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.vault-overlay.hidden { display: none; }
+
+.vault-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vault-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.vault-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.vault-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 4px 0 2px;
+}
+
+.vault-error {
+  font-size: 12px;
+  color: var(--danger);
+  margin: 0;
+}
+
+.vault-error.hidden { display: none; }
+
+/* Password strength meter */
+.vault-strength {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-input);
+  overflow: hidden;
+  margin: 2px 0 4px;
+}
+
+.vault-strength::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: var(--strength, 0%);
+  border-radius: 2px;
+  background: var(--strength-color, var(--text-dim));
+  transition: width 0.2s, background 0.2s;
+}
+
+/* Biometric toggle in setup modal */
+.vault-bio-option {
+  display: flex;
+  align-items: center;
+  margin: 8px 0 4px;
+}
+
+.vault-bio-option.hidden { display: none; }
+
+.vault-bio-toggle {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.vault-bio-label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* Accent-colored toggle (non-danger) */
+.toggle-slider-accent {}
+
+.toggle input:checked + .toggle-slider-accent {
+  background: rgba(0, 255, 136, 0.2);
+  border-color: var(--accent);
+}
+
+.toggle input:checked + .toggle-slider-accent::after {
+  transform: translateX(20px);
+  background: var(--accent);
+}
+
+.vault-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.vault-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 6px;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.vault-btn-cancel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.vault-btn-cancel:active { background: var(--bg-input); }
+
+.vault-btn-create {
+  background: var(--accent);
+  color: #000;
+}
+
+.vault-btn-create:active { background: var(--accent-dim); }
+
+/* Inline vault unlock bar — slides into active panel when vault is locked */
+.vault-unlock-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.vault-unlock-bar.hidden { display: none; }
+
+.vault-unlock-bar input[type="password"] {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.vault-unlock-btn {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+
+.vault-unlock-btn:active { background: var(--accent-dim); }
+
+.vault-unlock-error {
+  width: 100%;
+  font-size: 12px;
+  color: var(--danger);
+  margin: 0;
+}
+
+.vault-unlock-error.hidden { display: none; }
+
+/* Vault settings section */
+.vault-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vault-settings-title {
+  margin-top: 0;
+}
+
+.vault-status {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.vault-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vault-actions .hidden { display: none; }

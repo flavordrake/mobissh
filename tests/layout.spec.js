@@ -217,6 +217,12 @@ test.describe('Connect form', () => {
   });
 
   test('profile saves to localStorage and appears in profile list', async ({ page }) => {
+    // Pre-create a test vault so saveProfile() doesn't show the setup modal
+    await page.evaluate(async () => {
+      const { createVault } = await import('./modules/vault.js');
+      await createVault('test', false);
+    });
+
     await page.locator('#profileName').fill('Test Server');
     await page.locator('#host').fill('192.168.1.100');
     await page.locator('#port').fill('22');

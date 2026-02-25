@@ -7,6 +7,7 @@
 
 import { initRecording } from './modules/recording.js';
 import { initVault } from './modules/vault.js';
+import { initVaultUI } from './modules/vault-ui.js';
 import {
   initProfiles, getProfiles, loadProfiles,
   loadProfileIntoForm, deleteProfile,
@@ -53,6 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadProfiles();
     loadKeys();
     registerServiceWorker();
+    initVaultUI({ toast });
     void initVault();
     initKeyboardAwareness();
 

@@ -106,6 +106,21 @@ const test = base.extend({
  * @param {import('@playwright/test').Page} page
  * @param {{ port: number }} mockSshServer - fixture with the mock WS port
  */
+/**
+ * ensureTestVault — create and unlock a test vault in the browser
+ *
+ * Pre-creates a vault with password 'test' so that ensureVaultKeyWithUI()
+ * finds appState.vaultKey already set and never shows the setup modal.
+ * Must be called after page.goto() and before any profile save / connect.
+ */
+async function ensureTestVault(page) {
+  await page.evaluate(async () => {
+    // Import the vault module dynamically from the already-loaded app
+    const { createVault } = await import('./modules/vault.js');
+    await createVault('test', false);
+  });
+}
+
 async function setupConnected(page, mockSshServer) {
   // Inject WS spy before any app code runs — wraps window.WebSocket.send
   await page.addInitScript(() => {
@@ -124,6 +139,9 @@ async function setupConnected(page, mockSshServer) {
 
   await page.goto('./');
   await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+  // Create and unlock a test vault before any profile operations
+  await ensureTestVault(page);
 
   // Set WS URL to the mock server BEFORE connecting
   await page.evaluate((port) => {
@@ -155,4 +173,4 @@ async function setupConnected(page, mockSshServer) {
   await page.waitForTimeout(100);
 }
 
-module.exports = { test, expect, setupConnected };
+module.exports = { test, expect, setupConnected, ensureTestVault };

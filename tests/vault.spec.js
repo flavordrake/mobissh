@@ -1,14 +1,12 @@
 /**
  * tests/vault.spec.js
  *
- * Credential vault (#68) — test gate for Phase 4 module extraction (#110).
- * Tests AES-GCM encrypt/decrypt lifecycle, vault method detection,
+ * Credential vault (#14) — master-password + DEK/KEK architecture.
+ * Tests encrypt/decrypt lifecycle, vault setup modal, unlock flow,
  * and the "never store plaintext" security invariant.
- *
- * Uses mock PasswordCredential since headless Chromium doesn't support it.
  */
 
-const { test, expect, setupConnected } = require('./fixtures.js');
+const { test, expect, setupConnected, ensureTestVault } = require('./fixtures.js');
 
 // After setupConnected the tab bar is auto-hidden (#36). Show it before switching tabs.
 async function showTabBar(page) {
@@ -16,71 +14,9 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
-// Inject a mock PasswordCredential API before any app code runs
-async function injectMockVault(page) {
-  await page.addInitScript(() => {
-    // Mock PasswordCredential store
-    const credentialStore = {};
-
-    window.PasswordCredential = class PasswordCredential {
-      constructor({ id, password, name }) {
-        this.id = id;
-        this.password = password;
-        this.name = name;
-        this.type = 'password';
-      }
-    };
-
-    // Mock navigator.credentials.store/get
-    const originalCredentials = navigator.credentials;
-    const mockCredentials = {
-      async store(cred) {
-        credentialStore[cred.id] = cred;
-      },
-      async get(opts) {
-        if (opts.password && opts.mediation === 'silent') {
-          // Return the stored credential if available
-          const key = Object.keys(credentialStore)[0];
-          return key ? credentialStore[key] : null;
-        }
-        if (opts.password) {
-          const key = Object.keys(credentialStore)[0];
-          return key ? credentialStore[key] : null;
-        }
-        return null;
-      },
-      async create(opts) {
-        return originalCredentials.create(opts);
-      },
-    };
-
-    Object.defineProperty(navigator, 'credentials', {
-      value: mockCredentials,
-      writable: true,
-      configurable: true,
-    });
-
-    // Expose credential store for test assertions
-    window.__testCredentialStore = credentialStore;
-  });
-}
-
-test.describe('Credential vault (#68)', () => {
-
-  test('vault method detected as passwordcred when PasswordCredential available', async ({ page, mockSshServer }) => {
-    await injectMockVault(page);
-    await setupConnected(page, mockSshServer);
-
-    const method = await page.evaluate(() => {
-      // PasswordCredential is defined by our mock, so _detectVaultMethod should pick it up.
-      // We can check appState indirectly — the app called initVault() on startup.
-      return !!window.PasswordCredential;
-    });
-    expect(method).toBe(true);
-  });
+test.describe('Credential vault (#14)', () => {
 
   test('saving a profile stores encrypted credentials in sshVault (not plaintext)', async ({ page, mockSshServer }) => {
-    await injectMockVault(page);
     await setupConnected(page, mockSshServer);
 
     // Save a new profile via the connect form
@@ -116,7 +52,6 @@ test.describe('Credential vault (#68)', () => {
   });
 
   test('profile hasVaultCreds flag is set when credentials are vaulted', async ({ page, mockSshServer }) => {
-    await injectMockVault(page);
     await setupConnected(page, mockSshServer);
 
     await showTabBar(page);
@@ -136,7 +71,6 @@ test.describe('Credential vault (#68)', () => {
   });
 
   test('vault encrypt-decrypt roundtrip preserves credential data', async ({ page, mockSshServer }) => {
-    await injectMockVault(page);
     await setupConnected(page, mockSshServer);
 
     // Save a profile with credentials
@@ -150,7 +84,6 @@ test.describe('Credential vault (#68)', () => {
     await page.waitForTimeout(500);
 
     // Now click that profile to load it back into the form
-    // Clicking a .profile-item triggers loadProfileIntoForm() via event delegation
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
     const profileItem = page.locator('.profile-item', { hasText: 'rounduser@roundtrip-host' });
@@ -164,7 +97,6 @@ test.describe('Credential vault (#68)', () => {
   });
 
   test('deleting a profile removes its vault entry', async ({ page, mockSshServer }) => {
-    await injectMockVault(page);
     await setupConnected(page, mockSshServer);
 
     // Save a profile
@@ -194,31 +126,129 @@ test.describe('Credential vault (#68)', () => {
     expect(vaultAfter).toBe(vaultBefore - 1);
   });
 
-  test('without PasswordCredential, credentials are not stored', async ({ page, mockSshServer }) => {
-    // Do NOT inject mock vault — PasswordCredential won't exist in headless Chromium
-    await setupConnected(page, mockSshServer);
+  test('without vault setup, credentials are not stored and modal appears', async ({ page, mockSshServer }) => {
+    // Use setupConnected but DON'T pre-create vault — we need a special flow
+    // Navigate manually without setupConnected to avoid the auto-vault
+    await page.addInitScript(() => {
+      window.__mockWsSpy = [];
+      const OrigWS = window.WebSocket;
+      window.WebSocket = class extends OrigWS {
+        send(data) { window.__mockWsSpy.push(data); super.send(data); }
+      };
+    });
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
 
-    await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('no-vault-host');
     await page.locator('#port').fill('22');
     await page.locator('#username').fill('novaultuser');
     await page.locator('#password').fill('should-not-persist');
-    await page.locator('#connectForm button[type="submit"]').click();
-    await page.waitForTimeout(500);
 
-    // Profile metadata should be saved
+    // Submit — vault setup modal should appear since no vault exists
+    await page.locator('#connectForm button[type="submit"]').click();
+    await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 5000 });
+
+    // Cancel the vault setup
+    await page.locator('#vaultSetupCancel').click();
+    await expect(page.locator('#vaultSetupOverlay')).toHaveClass(/hidden/, { timeout: 2000 });
+
+    // Profile metadata should still be saved (just without vault creds)
+    await page.waitForTimeout(500);
     const profiles = await page.evaluate(() => JSON.parse(localStorage.getItem('sshProfiles') || '[]'));
     const profile = profiles.find(p => p.host === 'no-vault-host');
     expect(profile).toBeTruthy();
-
-    // But credentials should NOT be in localStorage anywhere
     expect(profile.password).toBeUndefined();
     expect(profile.hasVaultCreds).toBeFalsy();
+  });
 
-    // And the vault should be empty
-    const vault = await page.evaluate(() => JSON.parse(localStorage.getItem('sshVault') || '{}'));
-    expect(Object.keys(vault).length).toBe(0);
+  test('vault setup modal creates vault and encrypts credentials', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#host').fill('setup-test-host');
+    await page.locator('#port').fill('22');
+    await page.locator('#username').fill('setupuser');
+    await page.locator('#password').fill('setupsecret');
+
+    // Submit — triggers vault setup modal
+    await page.locator('#connectForm button[type="submit"]').click();
+    await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 5000 });
+
+    // Fill in master password and create vault (uncheck biometric — no authenticator in headless)
+    await page.locator('#vaultNewPw').fill('masterpass');
+    await page.locator('#vaultConfirmPw').fill('masterpass');
+    await page.evaluate(() => {
+      const cb = document.getElementById('vaultEnableBio');
+      if (cb) cb.checked = false;
+    });
+    await page.locator('#vaultSetupCreate').click();
+
+    // Modal should close (PBKDF2 600k iterations takes ~300-500ms in browser)
+    await expect(page.locator('#vaultSetupOverlay')).toHaveClass(/hidden/, { timeout: 10000 });
+    await page.waitForTimeout(500);
+
+    // vaultMeta should exist in localStorage
+    const meta = await page.evaluate(() => JSON.parse(localStorage.getItem('vaultMeta') || 'null'));
+    expect(meta).toBeTruthy();
+    expect(meta.salt).toBeTruthy();
+    expect(meta.dekPw).toBeTruthy();
+    expect(meta.dekPw.iv).toBeTruthy();
+    expect(meta.dekPw.ct).toBeTruthy();
+
+    // Profile should have vault creds
+    const profiles = await page.evaluate(() => JSON.parse(localStorage.getItem('sshProfiles') || '[]'));
+    const profile = profiles.find(p => p.host === 'setup-test-host');
+    expect(profile).toBeTruthy();
+    expect(profile.hasVaultCreds).toBe(true);
+  });
+
+  test('vault settings section shows correct status', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Vault was created by setupConnected (via ensureTestVault) — refresh settings UI
+    await page.evaluate(async () => {
+      const { updateVaultSettingsUI } = await import('./modules/vault-ui.js');
+      updateVaultSettingsUI();
+    });
+
+    await showTabBar(page);
+    await page.locator('[data-panel="settings"]').click();
+
+    // Status should show unlocked
+    const status = await page.locator('#vaultStatus').textContent();
+    expect(status).toContain('Unlocked');
+
+    // Lock, Change Password, and Reset buttons should be visible
+    await expect(page.locator('#vaultLockBtn')).toBeVisible();
+    await expect(page.locator('#vaultChangePwBtn')).toBeVisible();
+    await expect(page.locator('#vaultResetBtn')).toBeVisible();
+  });
+
+  test('lock button locks vault and updates status', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Refresh settings UI after test vault creation
+    await page.evaluate(async () => {
+      const { updateVaultSettingsUI } = await import('./modules/vault-ui.js');
+      updateVaultSettingsUI();
+    });
+
+    await showTabBar(page);
+    await page.locator('[data-panel="settings"]').click();
+
+    // Click lock
+    await page.locator('#vaultLockBtn').click();
+    await page.waitForTimeout(200);
+
+    const status = await page.locator('#vaultStatus').textContent();
+    expect(status).toBe('Locked');
+
+    // Lock button should be hidden when locked
+    await expect(page.locator('#vaultLockBtn')).not.toBeVisible();
   });
 
 });

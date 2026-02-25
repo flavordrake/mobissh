@@ -6,6 +6,7 @@
  */
 import { initRecording } from './modules/recording.js';
 import { initVault } from './modules/vault.js';
+import { initVaultUI } from './modules/vault-ui.js';
 import { initProfiles, getProfiles, loadProfiles, loadProfileIntoForm, deleteProfile, loadKeys, importKey, useKey, deleteKey, } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
@@ -32,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadProfiles();
         loadKeys();
         registerServiceWorker();
+        initVaultUI({ toast });
         void initVault();
         initKeyboardAwareness();
         // Event delegation for profile list

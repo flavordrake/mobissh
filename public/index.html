@@ -64,6 +64,62 @@
     tabindex="-1"
   />
 
+  <!-- Vault setup modal — master password creation (first credential save) -->
+  <div id="vaultSetupOverlay" class="vault-overlay hidden" role="dialog" aria-label="Set up vault">
+    <div class="vault-dialog">
+      <h3 class="vault-title">Set a master password</h3>
+      <p class="vault-desc">This password encrypts your saved credentials. You'll need it each time you open MobiSSH.</p>
+      <label for="vaultNewPw" class="vault-label">Password</label>
+      <input type="password" id="vaultNewPw" autocomplete="new-password"
+        data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
+      <div id="vaultStrength" class="vault-strength"></div>
+      <label for="vaultConfirmPw" class="vault-label">Confirm password</label>
+      <input type="password" id="vaultConfirmPw" autocomplete="new-password"
+        data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
+      <p id="vaultPwError" class="vault-error hidden"></p>
+      <div id="vaultBioOption" class="vault-bio-option hidden">
+        <label class="toggle vault-bio-toggle" aria-label="Enable fingerprint unlock">
+          <span class="vault-bio-label">Enable fingerprint unlock</span>
+          <input type="checkbox" id="vaultEnableBio" checked />
+          <span class="toggle-slider toggle-slider-accent"></span>
+        </label>
+      </div>
+      <div class="vault-buttons">
+        <button id="vaultSetupCancel" class="vault-btn vault-btn-cancel">Cancel</button>
+        <button id="vaultSetupCreate" class="vault-btn vault-btn-create">Create Vault</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vault unlock prompt — inline password entry when vault is locked -->
+  <div id="vaultUnlockBar" class="vault-unlock-bar hidden">
+    <input type="password" id="vaultUnlockPw" placeholder="Master password"
+      autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
+    <button id="vaultUnlockBtn" class="vault-unlock-btn">Unlock</button>
+    <p id="vaultUnlockError" class="vault-unlock-error hidden">Wrong password</p>
+  </div>
+
+  <!-- Vault change password modal -->
+  <div id="vaultChangePwOverlay" class="vault-overlay hidden" role="dialog" aria-label="Change master password">
+    <div class="vault-dialog">
+      <h3 class="vault-title">Change master password</h3>
+      <label for="vaultOldPw" class="vault-label">Current password</label>
+      <input type="password" id="vaultOldPw" autocomplete="off"
+        data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
+      <label for="vaultChangePwNew" class="vault-label">New password</label>
+      <input type="password" id="vaultChangePwNew" autocomplete="new-password"
+        data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
+      <label for="vaultChangePwConfirm" class="vault-label">Confirm new password</label>
+      <input type="password" id="vaultChangePwConfirm" autocomplete="new-password"
+        data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
+      <p id="vaultChangePwError" class="vault-error hidden"></p>
+      <div class="vault-buttons">
+        <button id="vaultChangePwCancel" class="vault-btn vault-btn-cancel">Cancel</button>
+        <button id="vaultChangePwSave" class="vault-btn vault-btn-create">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="menuBackdrop" class="hidden"></div>
   <div id="app">
     <!-- Tab bar -->
@@ -277,6 +333,20 @@
         <option value="firacode">Fira Code</option>
       </select>
       <p class="hint">Requires page reload to take effect.</p>
+
+      <hr />
+
+      <div class="vault-settings">
+        <h3 class="vault-settings-title">Vault</h3>
+        <p id="vaultStatus" class="vault-status">Not set up</p>
+        <div id="vaultActions" class="vault-actions">
+          <button id="vaultLockBtn" class="secondary-btn hidden">Lock Now</button>
+          <button id="vaultChangePwBtn" class="secondary-btn hidden">Change Master Password</button>
+          <button id="vaultEnableBioBtn" class="secondary-btn hidden">Enable Fingerprint Unlock</button>
+          <button id="vaultDisableBioBtn" class="secondary-btn hidden">Disable Fingerprint Unlock</button>
+          <button id="vaultResetBtn" class="danger-btn hidden">Reset Vault</button>
+        </div>
+      </div>
 
       <hr />
 

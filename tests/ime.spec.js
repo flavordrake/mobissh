@@ -85,6 +85,12 @@ async function setupConnected(page, mockSshServer) {
   await page.goto('./');
   await page.waitForSelector('.xterm-screen', { timeout: 8000 });
 
+  // Pre-create a test vault so saveProfile() doesn't show the setup modal
+  await page.evaluate(async () => {
+    const { createVault } = await import('./modules/vault.js');
+    await createVault('test', false);
+  });
+
   // Set WS URL to the mock server BEFORE connecting
   await page.evaluate((port) => {
     localStorage.setItem('wsUrl', `ws://localhost:${port}`);

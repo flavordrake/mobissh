@@ -9,10 +9,8 @@
 import type { ProfilesDeps, SSHProfile } from './types.js';
 import { appState } from './state.js';
 import { escHtml } from './constants.js';
-import {
-  ensureVaultKey, tryUnlockVault,
-  vaultStore, vaultLoad, vaultDelete,
-} from './vault.js';
+import { vaultStore, vaultLoad, vaultDelete } from './vault.js';
+import { ensureVaultKeyWithUI } from './vault-ui.js';
 
 export { escHtml };
 
@@ -71,12 +69,12 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
   if (profile.privateKey) creds.privateKey = profile.privateKey;
   if (profile.passphrase) creds.passphrase = profile.passphrase;
 
-  const hasVault = await ensureVaultKey();
+  const hasVault = await ensureVaultKeyWithUI();
   if (hasVault && Object.keys(creds).length) {
     await vaultStore(vaultId, creds);
     saved.hasVaultCreds = true;
   } else if (!hasVault && Object.keys(creds).length) {
-    _toast('Credentials not saved — vault unavailable on this browser.');
+    _toast('Credentials not saved — vault setup cancelled.');
   }
 
   if (existingIdx >= 0) {
@@ -129,7 +127,14 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
   (document.getElementById('initialCommand') as HTMLInputElement).value = profile.initialCommand || '';
 
   if (profile.vaultId && profile.hasVaultCreds) {
-    if (!appState.vaultKey) await tryUnlockVault('required');
+    if (!appState.vaultKey) {
+      const unlocked = await ensureVaultKeyWithUI();
+      if (!unlocked) {
+        _toast('Vault locked — enter credentials manually');
+        (document.querySelector('[data-panel="connect"]') as HTMLElement).click();
+        return;
+      }
+    }
     const creds = await vaultLoad(profile.vaultId);
     if (creds) {
       if (creds.password) (document.getElementById('password') as HTMLInputElement).value = creds.password as string;
@@ -193,8 +198,8 @@ export async function importKey(name: string, data: string): Promise<boolean> {
   if (!name || !data) { _toast('Name and key data are required.'); return false; }
   if (!data.includes('PRIVATE KEY')) { _toast('Does not look like a PEM private key.'); return false; }
 
-  const hasVault = await ensureVaultKey();
-  if (!hasVault) { _toast('Key not saved — vault unavailable on this browser.'); return false; }
+  const hasVault = await ensureVaultKeyWithUI();
+  if (!hasVault) { _toast('Key not saved — vault setup cancelled.'); return false; }
 
   const vaultId = _generateId();
   await vaultStore(vaultId, { data });
@@ -210,9 +215,12 @@ export async function importKey(name: string, data: string): Promise<boolean> {
 export async function useKey(idx: number): Promise<void> {
   const key = getKeys()[idx];
   if (!key) return;
-  if (!appState.vaultKey) await tryUnlockVault('required');
+  if (!appState.vaultKey) {
+    const unlocked = await ensureVaultKeyWithUI();
+    if (!unlocked) { _toast('Vault locked — enter key manually.'); return; }
+  }
   const creds = key.vaultId ? await vaultLoad(key.vaultId) : null;
-  if (!creds) { _toast('Vault locked — enter key manually.'); return; }
+  if (!creds) { _toast('Could not load key from vault.'); return; }
   (document.getElementById('authType') as HTMLSelectElement).value = 'key';
   (document.getElementById('authType') as HTMLSelectElement).dispatchEvent(new Event('change'));
   (document.getElementById('privateKey') as HTMLTextAreaElement).value = creds.data as string;

@@ -7,7 +7,8 @@
  */
 import { appState } from './state.js';
 import { escHtml } from './constants.js';
-import { ensureVaultKey, tryUnlockVault, vaultStore, vaultLoad, vaultDelete, } from './vault.js';
+import { vaultStore, vaultLoad, vaultDelete } from './vault.js';
+import { ensureVaultKeyWithUI } from './vault-ui.js';
 export { escHtml };
 let _toast = (_msg) => { };
 export function initProfiles({ toast }) {
@@ -43,13 +44,13 @@ export async function saveProfile(profile) {
         creds.privateKey = profile.privateKey;
     if (profile.passphrase)
         creds.passphrase = profile.passphrase;
-    const hasVault = await ensureVaultKey();
+    const hasVault = await ensureVaultKeyWithUI();
     if (hasVault && Object.keys(creds).length) {
         await vaultStore(vaultId, creds);
         saved.hasVaultCreds = true;
     }
     else if (!hasVault && Object.keys(creds).length) {
-        _toast('Credentials not saved — vault unavailable on this browser.');
+        _toast('Credentials not saved — vault setup cancelled.');
     }
     if (existingIdx >= 0) {
         profiles[existingIdx] = saved;
@@ -96,8 +97,14 @@ export async function loadProfileIntoForm(idx) {
     document.getElementById('passphrase').value = '';
     document.getElementById('initialCommand').value = profile.initialCommand || '';
     if (profile.vaultId && profile.hasVaultCreds) {
-        if (!appState.vaultKey)
-            await tryUnlockVault('required');
+        if (!appState.vaultKey) {
+            const unlocked = await ensureVaultKeyWithUI();
+            if (!unlocked) {
+                _toast('Vault locked — enter credentials manually');
+                document.querySelector('[data-panel="connect"]').click();
+                return;
+            }
+        }
         const creds = await vaultLoad(profile.vaultId);
         if (creds) {
             if (creds.password)
@@ -158,9 +165,9 @@ export async function importKey(name, data) {
         _toast('Does not look like a PEM private key.');
         return false;
     }
-    const hasVault = await ensureVaultKey();
+    const hasVault = await ensureVaultKeyWithUI();
     if (!hasVault) {
-        _toast('Key not saved — vault unavailable on this browser.');
+        _toast('Key not saved — vault setup cancelled.');
         return false;
     }
     const vaultId = _generateId();
@@ -176,11 +183,16 @@ export async function useKey(idx) {
     const key = getKeys()[idx];
     if (!key)
         return;
-    if (!appState.vaultKey)
-        await tryUnlockVault('required');
+    if (!appState.vaultKey) {
+        const unlocked = await ensureVaultKeyWithUI();
+        if (!unlocked) {
+            _toast('Vault locked — enter key manually.');
+            return;
+        }
+    }
     const creds = key.vaultId ? await vaultLoad(key.vaultId) : null;
     if (!creds) {
-        _toast('Vault locked — enter key manually.');
+        _toast('Could not load key from vault.');
         return;
     }
     document.getElementById('authType').value = 'key';
