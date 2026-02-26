@@ -83,6 +83,15 @@ ok "Port forwarding configured (server :$MOBISSH_PORT, CDP :$CDP_PORT)"
 # expose the DevTools Unix socket)
 adb shell am set-debug-app --persistent com.android.chrome 2>/dev/null || true
 
+# Pre-grant notification permission so Chrome never shows the nag modal (#141).
+# On API 33+ (Android 13), POST_NOTIFICATIONS is a runtime permission — if not
+# granted, Chrome shows a full-screen "Turn on notifications" dialog on first use.
+adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+
+# Suppress Chrome first-run experience and default-browser check via command-line
+# flags. The file must start with an underscore (Chrome convention).
+adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check' > /data/local/tmp/chrome-command-line" 2>/dev/null || true
+
 # Check if Chrome is responding to CDP already
 if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
   log "Chrome not responding to CDP, restarting..."

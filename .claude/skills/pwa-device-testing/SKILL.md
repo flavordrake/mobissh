@@ -137,6 +137,28 @@ cdpBrowser: [async ({}, use) => {
 }, { scope: 'worker' }],
 ```
 
+### Chrome nag modals block test visibility on first launch
+
+Default emulator Chrome shows a full-screen "Turn on notifications" dialog (and sometimes sign-in or default-browser prompts) on first use. These cover your app's UI and make test screenshots useless. Three-layer defense:
+
+1. **Pre-grant POST_NOTIFICATIONS** in the test runner script (prevents the notification modal entirely):
+```bash
+adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+```
+
+2. **Chrome command-line flags** to suppress first-run experience:
+```bash
+adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check' > /data/local/tmp/chrome-command-line" 2>/dev/null || true
+```
+
+3. **Dismiss any remaining modals** in the Playwright fixture before navigating to your app:
+```javascript
+try {
+  const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
+  await nagBtn.first().click({ timeout: 2000 });
+} catch { /* no nag modal — normal after first run */ }
+```
+
 ### KVM group membership requires session reload
 
 After `sudo usermod -aG kvm $USER`, the current shell doesn't pick up the new group. Use `sg kvm -c 'emulator ...'` or start a new login session.

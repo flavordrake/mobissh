@@ -99,6 +99,14 @@ ok "Port forwarding configured (app :$APP_PORT, CDP :$CDP_PORT)"
 # DevTools Unix socket that Playwright connects to over CDP.
 adb shell am set-debug-app --persistent com.android.chrome 2>/dev/null || true
 
+# Pre-grant notification permission so Chrome never shows nag modals.
+# On API 33+ (Android 13), POST_NOTIFICATIONS is a runtime permission.
+adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+
+# Suppress Chrome first-run experience via command-line flags.
+# File must start with underscore (Chrome convention).
+adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check' > /data/local/tmp/chrome-command-line" 2>/dev/null || true
+
 # If Chrome isn't responding to CDP, restart it
 if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
   log "Chrome not responding to CDP, restarting..."

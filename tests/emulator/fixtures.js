@@ -84,6 +84,14 @@ const test = base.extend({
     const context = cdpBrowser.contexts()[0];
     const page = await context.newPage();
 
+    // Dismiss any Chrome nag modals (notification prompt, sign-in, etc.) that
+    // may appear on first launch (#141). These are native Chrome UI, not web
+    // content — look for common dismiss buttons.
+    try {
+      const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("No, thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
+      await nagBtn.first().click({ timeout: 2000 });
+    } catch { /* no nag modal present — normal case after first run */ }
+
     // Clear localStorage then reload — shared context means all tabs see the
     // same origin storage. The app reads localStorage on init (panel state,
     // vault, profiles), so we must clear BEFORE the app initializes.

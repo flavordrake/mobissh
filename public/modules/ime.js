@@ -7,7 +7,7 @@
  * Also manages: selection overlay for mobile copy (#55), touch/swipe
  * gesture handlers (#32/#37/#16), and pinch-to-zoom (#17).
  */
-import { KEY_MAP } from './constants.js';
+import { KEY_MAP, SELECTION_OVERLAY } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { toast, focusIME, setCtrlActive } from './ui.js';
@@ -121,6 +121,11 @@ export function initIMEInput() {
     const termEl = document.getElementById('terminal');
     // ── Selection overlay for mobile copy (#55) ──────────────────────────
     const selOverlay = document.getElementById('selectionOverlay');
+    // When the feature is off, hide the overlay entirely so Chrome's native
+    // double-tap-to-select can't trigger the green ::selection highlight.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- feature flag
+    if (!SELECTION_OVERLAY && selOverlay)
+        selOverlay.style.display = 'none';
     const selBar = document.getElementById('selectionBar');
     let _overlayCellH = 0;
     const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
@@ -403,6 +408,10 @@ export function initIMEInput() {
         if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
             _isTouchScroll = true;
         }
+        // Once we've claimed this gesture as a terminal scroll, prevent the
+        // browser's native scroll/bounce so it doesn't fight our handler.
+        if (_isTouchScroll)
+            e.preventDefault();
         if (_isTouchScroll && appState.terminal) {
             const cellH = Math.max(20, (appState.terminal.options.fontSize ?? 14) * 1.5);
             const targetLines = Math.round(totalDy / cellH);
@@ -434,7 +443,7 @@ export function initIMEInput() {
         }
         _lastTouchY = e.touches[0].clientY;
         _lastTouchX = e.touches[0].clientX;
-    }, { passive: true, capture: true });
+    }, { passive: false, capture: true });
     termEl.addEventListener('touchend', () => {
         _cancelLongPress();
         const wasScroll = _isTouchScroll;

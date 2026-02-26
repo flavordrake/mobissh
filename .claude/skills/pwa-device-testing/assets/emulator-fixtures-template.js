@@ -71,6 +71,14 @@ const test = base.extend({
     const context = cdpBrowser.contexts()[0];
     const page = await context.newPage();
 
+    // Dismiss Chrome nag modals (notification prompt, sign-in, etc.) that
+    // appear on first launch. Pre-granting POST_NOTIFICATIONS via ADB in the
+    // test runner prevents most of these, but this catches any stragglers.
+    try {
+      const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("No, thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
+      await nagBtn.first().click({ timeout: 2000 });
+    } catch { /* no nag modal — normal after first run */ }
+
     // Clear localStorage then reload — the app reads localStorage on init
     // (panel state, vault, profiles), so clearing alone isn't enough if the
     // app already initialized with stale state from a previous test.
