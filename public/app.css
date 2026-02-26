@@ -146,6 +146,8 @@ html, body {
   min-height: 0;
   touch-action: none; /* #37: prevent browser panning so JS touch-scroll handles all gestures */
   position: relative; /* anchor for #selectionOverlay */
+  -webkit-user-select: none;
+  user-select: none; /* prevent Chrome double-tap text selection on terminal */
 }
 
 /* Selection overlay (#55) — transparent text mirror for native mobile copy */
@@ -158,6 +160,8 @@ html, body {
   color: transparent;
   -webkit-user-select: text;
   user-select: text;
+  /* Hidden by default — JS sets display:block when SELECTION_OVERLAY is on */
+  display: none;
 }
 
 #selectionOverlay.active {

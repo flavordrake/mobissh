@@ -145,13 +145,17 @@ async function setupRealSSHConnection(page, sshServer) {
   // Submit — button has no id, select by form + type
   await page.locator('#connectForm button[type="submit"]').click();
 
-  // Accept host key on first connection
+  // Accept host key on first connection — each test clears localStorage so
+  // the stored fingerprint is always gone. Use multiple selectors and longer
+  // timeout to handle emulator rendering delays.
   try {
-    const acceptBtn = page.locator('.hostkey-accept');
-    await acceptBtn.waitFor({ timeout: 10_000 });
+    const acceptBtn = page.locator('.hostkey-accept, button:has-text("Accept")').first();
+    await acceptBtn.waitFor({ state: 'visible', timeout: 15_000 });
     await acceptBtn.click();
+    // Brief pause for the overlay to dismiss and connection to proceed
+    await page.waitForTimeout(500);
   } catch {
-    // Host key already trusted from a previous test in this worker
+    // Host key already trusted (shouldn't happen with fresh localStorage)
   }
 
   // Wait for connected state — resize message confirms shell is ready
