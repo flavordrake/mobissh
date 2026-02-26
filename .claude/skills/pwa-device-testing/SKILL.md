@@ -1,7 +1,6 @@
 ---
 name: pwa-device-testing
 description: This skill should be used when the user asks to "test on device", "test on emulator", "run emulator", "launch AVD", "test PWA", "test on Android", "test on mobile", "verify on real device", "check on phone", or discusses testing a feature on an actual device or emulator rather than headless Playwright. Also use when validating features that headless browsers cannot cover (biometric, PWA install, Chrome autofill, touch gestures, password managers). Use proactively when a feature has been implemented that touches any of these capabilities.
-version: 0.3.0
 ---
 
 # PWA Device Testing
@@ -216,12 +215,31 @@ Integration tests on real devices go through distinct phases. Tune verbosity and
 
 Key principle: never skip Phase 1. The debugging cost of silent failures in integration tests is 10x higher than in unit tests.
 
-## Test File Templates
+## Templates and Scripts
 
-Ready-to-use templates are in `assets/`. Copy and adapt for new test files:
+Everything needed to add Android emulator testing to a new project is in the skill assets. Copy, adapt the marked variables, and run.
 
-- `assets/emulator-test-template.js` — Single test file template with fixture import, screenshot helper usage, and localStorage cleanup pattern
-- `assets/emulator-config-template.js` — Playwright config for any project connecting to Android Chrome over CDP
+**Setup (one-time):**
+- `scripts/setup-avd.sh` — Installs Android SDK, creates AVD, tunes config. Adapt `AVD_NAME`, `SYSTEM_IMAGE`, `DEVICE_PROFILE`.
+
+**Test infrastructure:**
+- `assets/run-emulator-tests-template.sh` — Full test runner: boots emulator, sets up CDP, starts screen recording, runs Playwright, collects baseline screenshots + video. Adapt `APP_PORT`, `APP_SERVER_CMD`, `AVD_NAME`.
+- `assets/emulator-config-template.js` — Playwright config for CDP connection. Adapt `SERVER_PORT`, `SERVER_CMD`.
+- `assets/emulator-fixtures-template.js` — Worker-scoped CDP browser, per-test tab with localStorage isolation + reload pattern.
+- `assets/emulator-test-template.js` — Single test file with screenshot helpers and common patterns (vault setup, form interaction).
+
+**Baseline results:**
+The test runner collects results into `tests/emulator/baseline/` (tracked by git):
+- `screenshots/` — per-test PNG screenshots with descriptive names
+- `recording.mp4` — full screen recording of the test run
+
+Add to `.gitignore`:
+```
+playwright-report/
+playwright-report-emulator/
+test-results/
+!tests/emulator/baseline/
+```
 
 ## Testing Checklists
 

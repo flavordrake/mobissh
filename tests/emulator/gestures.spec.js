@@ -5,12 +5,12 @@
  * Tests vertical scroll, horizontal swipe (tmux), and pinch-to-zoom.
  *
  * Requires: Docker test-sshd running (port 2222), Android emulator with CDP.
- * Uses Page.screencastFrame for low-fps motion capture of gesture results.
+ * Screen recording is handled by run-emulator-tests.sh (adb screenrecord).
  */
 
 const {
   test, expect, screenshot, setupRealSSHConnection, sendCommand,
-  swipe, pinch, startScreencast, BASE_URL,
+  swipe, pinch,
 } = require('./fixtures');
 
 test.describe('Touch gestures (Android emulator + real SSH)', () => {
@@ -37,17 +37,11 @@ test.describe('Touch gestures (Android emulator + real SSH)', () => {
     // Terminal should be at the bottom (viewportY == baseY)
     const vpBefore = await page.evaluate(() => window.__testTerminal.buffer.active.viewportY);
 
-    // Start screencast to capture the scroll animation
-    const cast = startScreencast(page, null);
-    await cast.start();
-
     // Swipe DOWN (finger moves from top to bottom = scroll UP to see earlier content)
     // ime.ts: totalDy = startY - currentY; when finger goes down, totalDy < 0
     // scrollLines(negative delta) scrolls toward beginning of buffer
     await swipe(page, '#terminal', 200, 100, 200, 500, 20);
     await page.waitForTimeout(500);
-
-    const frameCount = await cast.stop(testInfo, 'scroll-animation');
     await screenshot(page, testInfo, '03-after-scroll');
 
     const vpAfter = await page.evaluate(() => window.__testTerminal.buffer.active.viewportY);
@@ -61,9 +55,6 @@ test.describe('Touch gestures (Android emulator + real SSH)', () => {
 
     // Clear WS spy to isolate swipe messages
     await page.evaluate(() => { window.__mockWsSpy = []; });
-
-    const cast = startScreencast(page, null);
-    await cast.start();
 
     // Swipe LEFT: finger moves right-to-left = negative finalDx
     // ime.ts line 461: finalDx < 0 → sends \x02p (tmux previous window)
@@ -91,8 +82,6 @@ test.describe('Touch gestures (Android emulator + real SSH)', () => {
     );
     await screenshot(page, testInfo, '05-after-right-swipe');
     expect(msgs.some(m => m.data === '\x02n')).toBe(true);
-
-    await cast.stop(testInfo, 'swipe-animation');
   });
 
   test('pinch-to-zoom changes terminal font size', async ({ emulatorPage: page, sshServer }, testInfo) => {
@@ -106,9 +95,6 @@ test.describe('Touch gestures (Android emulator + real SSH)', () => {
 
     const fontBefore = await page.evaluate(() => window.__testTerminal.options.fontSize);
     await screenshot(page, testInfo, '06-before-pinch');
-
-    const cast = startScreencast(page, null);
-    await cast.start();
 
     // Pinch OUT (spread fingers = zoom in = increase font size)
     await pinch(page, '#terminal', 50, 200, 12);
@@ -125,7 +111,5 @@ test.describe('Touch gestures (Android emulator + real SSH)', () => {
     const fontAfterZoomOut = await page.evaluate(() => window.__testTerminal.options.fontSize);
     await screenshot(page, testInfo, '08-after-pinch-in');
     expect(fontAfterZoomOut).toBeLessThan(fontAfterZoomIn);
-
-    await cast.stop(testInfo, 'pinch-animation');
   });
 });

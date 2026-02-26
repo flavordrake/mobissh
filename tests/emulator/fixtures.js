@@ -250,51 +250,7 @@ async function pinch(page, selector, startDist, endDist, steps = 10) {
   }, { sel: selector, sd: startDist, ed: endDist, steps });
 }
 
-/**
- * Start a screencast (low-fps video capture) on the page.
- * Returns a stop function that saves the frames as a webm attachment.
- */
-function startScreencast(page, cdpSession) {
-  const frames = [];
-  let listener = null;
-
-  const start = async () => {
-    if (!cdpSession) {
-      cdpSession = await page.context().newCDPSession(page);
-    }
-    listener = (params) => {
-      frames.push({ data: params.data, timestamp: params.metadata?.timestamp || Date.now() });
-      cdpSession.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
-    };
-    cdpSession.on('Page.screencastFrame', listener);
-    await cdpSession.send('Page.startScreencast', {
-      format: 'png',
-      quality: 50,
-      maxWidth: 412,
-      maxHeight: 915,
-      everyNthFrame: 3,
-    });
-  };
-
-  const stop = async (testInfo, name) => {
-    if (cdpSession && listener) {
-      await cdpSession.send('Page.stopScreencast').catch(() => {});
-      cdpSession.off('Page.screencastFrame', listener);
-    }
-    // Attach each frame as a numbered screenshot for report inspection
-    for (let i = 0; i < frames.length; i++) {
-      const buf = Buffer.from(frames[i].data, 'base64');
-      await testInfo.attach(`${name}-frame-${String(i).padStart(3, '0')}`, {
-        body: buf, contentType: 'image/png',
-      });
-    }
-    return frames.length;
-  };
-
-  return { start, stop };
-}
-
 module.exports = {
   test, expect, screenshot, setupRealSSHConnection, sendCommand,
-  swipe, pinch, startScreencast, CDP_PORT, BASE_URL,
+  swipe, pinch, CDP_PORT, BASE_URL,
 };

@@ -17,6 +17,8 @@ AVD_NAME="MobiSSH_Pixel7"
 MOBISSH_PORT="${MOBISSH_PORT:-8081}"
 CDP_PORT="${CDP_PORT:-9222}"
 SPEC="${1:-}"
+BASELINE_DIR="tests/emulator/baseline"
+RECORDING_PATH="/sdcard/emulator-test.mp4"
 
 log() { printf '\033[36m> %s\033[0m\n' "$*"; }
 ok()  { printf '\033[32m✓ %s\033[0m\n' "$*"; }
@@ -91,7 +93,7 @@ if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
 
   # Wait for CDP socket to come alive (Chrome needs a moment after launch)
   for i in $(seq 1 20); do
-    adb forward tcp:$CDP_PORT localabstract:chrome_devtools_remote 2>/dev/null || true
+    adb forward tcp:"$CDP_PORT" localabstract:chrome_devtools_remote 2>/dev/null || true
     if curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
       break
     fi
@@ -101,8 +103,14 @@ if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
 fi
 ok "Chrome CDP verified"
 
-# Phase 4: Run tests
+# Phase 4: Screen recording + tests
 log "Phase 4: Running Playwright emulator tests"
+
+# Start screen recording (180s limit covers most test runs; killed on completion)
+adb shell "rm -f $RECORDING_PATH" 2>/dev/null || true
+adb shell "screenrecord --time-limit 180 $RECORDING_PATH" &
+RECORD_PID=$!
+log "Screen recording started (PID $RECORD_PID)"
 
 EXTRA_ARGS=()
 if [[ -n "$SPEC" ]]; then
@@ -111,8 +119,45 @@ fi
 
 CDP_PORT=$CDP_PORT npx playwright test \
   --config=playwright.emulator.config.js \
-  "${EXTRA_ARGS[@]}"
+  "${EXTRA_ARGS[@]}" || true
+EXIT=${PIPESTATUS[0]:-$?}
 
-EXIT=$?
+# Stop recording
+kill "$RECORD_PID" 2>/dev/null || true
+wait "$RECORD_PID" 2>/dev/null || true
+sleep 1  # screenrecord needs a moment to finalize the mp4
+
+# Phase 5: Collect baseline results
+log "Phase 5: Collecting test results into $BASELINE_DIR"
+
+rm -rf "$BASELINE_DIR"
+mkdir -p "$BASELINE_DIR/screenshots"
+
+# Pull screen recording
+if adb shell "test -f $RECORDING_PATH" 2>/dev/null; then
+  adb pull "$RECORDING_PATH" "$BASELINE_DIR/recording.mp4" 2>/dev/null
+  ok "Screen recording saved to $BASELINE_DIR/recording.mp4"
+else
+  log "No screen recording found (emulator may not support it)"
+fi
+
+# Copy per-test screenshots with descriptive names
+# test-results dirs look like: gestures-Touch-gestures-An-a83a8-scrolls-terminal-scrollback-android-emulator/
+for dir in test-results/*-android-emulator; do
+  [[ -d "$dir" ]] || continue
+  basename=$(basename "$dir")
+  # Extract a readable name: strip the hash and "android-emulator" suffix
+  # e.g. "gestures-Touch-gestures-An-a83a8-scrolls-terminal-scrollback-android-emulator"
+  # → "gestures-scrolls-terminal-scrollback"
+  name=$(echo "$basename" | sed -E 's/-android-emulator$//' | sed -E 's/-[a-f0-9]{5}-/-/' | sed -E 's/^([^-]+)-[^-]+-[^-]+-[^-]+-[a-f0-9]+-/\1-/')
+  for png in "$dir"/*.png; do
+    [[ -f "$png" ]] || continue
+    cp "$png" "$BASELINE_DIR/screenshots/${name}.png"
+  done
+done
+
+SCREENSHOT_COUNT="$(find "$BASELINE_DIR/screenshots" -name "*.png" 2>/dev/null | wc -l)"
+ok "Baseline collected: $SCREENSHOT_COUNT screenshots"
+
 log "Tests finished (exit $EXIT). Report: npx playwright show-report playwright-report-emulator"
 exit $EXIT

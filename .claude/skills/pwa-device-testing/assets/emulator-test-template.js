@@ -1,25 +1,25 @@
 /**
- * tests/emulator/<name>.spec.js
+ * tests/emulator/<name>.spec.js — Template
  *
- * Emulator test template — runs on real Chrome via Android emulator CDP.
- * Copy this file, rename, and fill in tests.
+ * Emulator test template for real Chrome on Android via CDP.
+ * Screen recording is handled externally by run-emulator-tests.sh.
+ * Use screenshot() at each decision point for the Playwright HTML report.
  *
- * Run: npx playwright test --config=playwright.emulator.config.js
- * Run one: npx playwright test --config=playwright.emulator.config.js tests/emulator/<name>.spec.js
+ * Run all:  npm run test:emulator
+ * Run one:  bash scripts/run-emulator-tests.sh <name>.spec.js
  */
 
-const { test, expect, screenshot, BASE_URL } = require('./fixtures');
+const { test, expect, screenshot } = require('./fixtures');
 
 test.describe('<Feature name> (Android emulator)', () => {
 
   test('basic page load and render', async ({ emulatorPage: page }, testInfo) => {
-    // Fixture has already:
+    // emulatorPage fixture has already:
     //   1. Connected to Chrome via worker-scoped CDP
     //   2. Opened a new tab
-    //   3. Navigated to BASE_URL and cleared localStorage
+    //   3. Navigated to BASE_URL, cleared localStorage, reloaded
     //
-    // Navigate fresh for this test:
-    await page.goto(BASE_URL);
+    // The page is ready with clean state.
     await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
     await screenshot(page, testInfo, '01-initial-state');
 
@@ -28,11 +28,13 @@ test.describe('<Feature name> (Android emulator)', () => {
     await screenshot(page, testInfo, '02-after-action');
   });
 
-  test('interaction that needs real Chrome', async ({ emulatorPage: page }, testInfo) => {
-    await page.goto(BASE_URL);
+  test('interaction requiring real Chrome', async ({ emulatorPage: page }, testInfo) => {
     await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
 
     // Switch panels, fill forms, etc.
+    // Use semantic selectors — elements may not have IDs:
+    //   GOOD: page.locator('#connectForm button[type="submit"]')
+    //   BAD:  page.locator('#connectBtn')
     await page.locator('[data-panel="connect"]').click();
     await screenshot(page, testInfo, '03-connect-panel');
 
@@ -41,11 +43,10 @@ test.describe('<Feature name> (Android emulator)', () => {
     await screenshot(page, testInfo, '04-result');
   });
 
-  // For tests that modify vault/localStorage state significantly,
-  // the fixture auto-clears localStorage before each test.
-  // If you need a vault pre-created, do it inline:
+  // For tests that need pre-created state (vault, profiles, etc.),
+  // inject it via page.evaluate on the already-loaded page.
+  // Do NOT navigate again — the fixture already loaded the page.
   test('test requiring existing vault', async ({ emulatorPage: page }, testInfo) => {
-    await page.goto(BASE_URL);
     await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
 
     // Create vault in-page (same pattern as headless tests)

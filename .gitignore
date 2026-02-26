@@ -5,4 +5,6 @@ npm-debug.log*
 playwright-report/
 playwright-report-emulator/
 test-results/
+# Baseline results ARE tracked (overwritten each run)
+!tests/emulator/baseline/
 *.js.map
