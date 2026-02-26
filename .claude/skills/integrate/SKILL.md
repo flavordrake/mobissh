@@ -108,48 +108,76 @@ git stash pop 2>/dev/null || true
 
 ## Step 4: Acceptance gate
 
-If the fast gate passes, run acceptance tests. The scope depends on what's available.
+If the fast gate passes, run acceptance tests. Always attempt full emulator validation
+first — don't silently fall back to headless.
 
-### Check emulator availability
+### Bring up the emulator
+
+`run-emulator-tests.sh` already handles emulator boot (Phase 2), server startup (Phase 1),
+ADB forwarding (Phase 3), and Chrome CDP (Phase 3). It's the single entry point — don't
+reimplement these steps.
+
+But the emulator requires infrastructure that might not be present. Check prerequisites
+before attempting:
+
 ```bash
-if adb devices 2>/dev/null | grep -q 'emulator\|device$'; then
-  EMULATOR=true
-else
+# Can we even try?
+if [[ ! -e /dev/kvm ]]; then
+  echo "KVM not available — emulator cannot run on this machine"
   EMULATOR=false
+elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
+  echo "Android SDK not installed. Run: bash scripts/setup-avd.sh"
+  EMULATOR=false
+else
+  EMULATOR=true
 fi
 ```
 
+If prerequisites exist, try to bring the emulator up. `run-emulator-tests.sh` boots it
+if not already running (120s timeout), so just call it directly:
+
+```bash
+bash scripts/run-emulator-tests.sh
+```
+
+If the emulator is already running, this is a no-op for the boot phase — it detects
+the existing device and proceeds to tests.
+
+If boot fails (no AVD created yet), set up the AVD first:
+```bash
+bash scripts/setup-avd.sh   # one-time: downloads SDK components, creates AVD
+bash scripts/run-emulator-tests.sh  # now boot + test
+```
+
 ### With emulator (full validation)
-1. Restart server at the PR's HEAD:
-   ```bash
-   bash scripts/server-ctl.sh restart
-   ```
-2. Run emulator tests:
-   ```bash
-   bash scripts/run-emulator-tests.sh
-   ```
-3. Parse `test-results/emulator/report.json` for pass/fail summary
-4. Compare against main branch baseline — are there regressions?
-5. If the PR touches touch/gesture code, pay special attention to gesture test results
-6. If the recording exists but frames haven't been extracted, run:
+After `run-emulator-tests.sh` completes:
+1. Parse `test-results/emulator/report.json` for pass/fail summary
+2. Compare against main branch results — are there regressions?
+3. If the PR touches touch/gesture code, pay special attention to gesture test results
+4. If the recording exists but frames haven't been extracted, run:
    ```bash
    bash scripts/review-recording.sh
    ```
    Review the extracted frames for visual regressions.
 
-### Without emulator (headless only)
+### Fallback: headless only (emulator truly unavailable)
+Only use this path when KVM is missing or the machine genuinely can't host an emulator
+(CI runner, remote server, etc.). This is not the preferred path.
+
 1. Run headless Playwright tests:
    ```bash
+   bash scripts/server-ctl.sh ensure
    npx playwright test --config=playwright.config.js
    ```
-2. Check if the PR touches device-dependent areas. If any of these paths appear in the
-   diff, the PR **cannot be fully validated headless** and must be flagged:
-   - Touch/gesture: `gesture`, `swipe`, `pinch`, `touch` in filenames or diff
+2. Check if the PR touches device-dependent areas. If any of these keywords appear in
+   filenames or diff content, the PR **cannot be fully validated headless**:
+   - Touch/gesture: `gesture`, `swipe`, `pinch`, `touch`
    - Layout/keyboard: `keyboard`, `layout`, `viewport`, `safe-area`
    - Vault biometric: `bio`, `fingerprint`, `webauthn`, `PasswordCredential`
    - PWA install: `manifest`, `sw.js`, `beforeinstallprompt`
 3. Report to user: "PR #N passes headless tests but needs emulator validation for: [reasons]"
-4. Do NOT merge device-dependent PRs without emulator validation. Queue them.
+4. Do NOT merge device-dependent PRs without emulator validation. Queue them for when
+   emulator becomes available.
 
 ### Production server awareness
 The user often tests on the live production server while integration happens locally.
