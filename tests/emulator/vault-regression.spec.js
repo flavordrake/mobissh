@@ -54,17 +54,30 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     await expect(page.locator('#vaultNewPw')).toBeVisible();
     await expect(page.locator('#vaultSetupCreate')).toBeVisible();
 
-    // Verify the connect form's password field has autofill suppression
+    // Verify the connect form's password field is type="text" (not "password")
+    // and has autofill suppression attributes.
+    // type="password" is the primary signal Chrome uses to classify a form as
+    // a login form and trigger "Save password?" (#98).
     const pwAttrs = await page.locator('#password').evaluate(el => ({
+      type: el.type,
       autocomplete: el.getAttribute('autocomplete'),
       lpIgnore: el.getAttribute('data-lpignore'),
       onePIgnore: el.getAttribute('data-1p-ignore'),
       formType: el.getAttribute('data-form-type'),
     }));
-    expect(pwAttrs.autocomplete).toBe('new-password');
+    expect(pwAttrs.type).toBe('text');
+    expect(pwAttrs.autocomplete).toBe('off');
     expect(pwAttrs.lpIgnore).toBe('true');
     expect(pwAttrs.onePIgnore).toBe('true');
     expect(pwAttrs.formType).toBe('other');
+
+    // Same check for the passphrase field
+    const ppAttrs = await page.locator('#passphrase').evaluate(el => ({
+      type: el.type,
+      autocomplete: el.getAttribute('autocomplete'),
+    }));
+    expect(ppAttrs.type).toBe('text');
+    expect(ppAttrs.autocomplete).toBe('off');
 
     // Fill the vault password and create
     await page.locator('#vaultNewPw').fill('master-pw-test');

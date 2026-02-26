@@ -134,13 +134,16 @@ test.describe('PWA smoke (Android emulator)', () => {
     expect(vaultAttrs.formType).toBe('other');
     expect(vaultAttrs.autocomplete).toBe('new-password');
 
-    // Check connect form password field too
+    // Check connect form password field — must be type="text" not "password" (#98)
     const connectAttrs = await page.locator('#password').evaluate(el => ({
+      type: el.type,
       lpIgnore: el.getAttribute('data-lpignore'),
       onePIgnore: el.getAttribute('data-1p-ignore'),
       formType: el.getAttribute('data-form-type'),
       autocomplete: el.getAttribute('autocomplete'),
     }));
+    expect(connectAttrs.type).toBe('text');
+    expect(connectAttrs.autocomplete).toBe('off');
     expect(connectAttrs.lpIgnore).toBe('true');
     expect(connectAttrs.onePIgnore).toBe('true');
     expect(connectAttrs.formType).toBe('other');

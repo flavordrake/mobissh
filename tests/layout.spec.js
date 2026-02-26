@@ -203,11 +203,21 @@ test.describe('Connect form', () => {
     expect(second).toBe('key');
   });
 
-  test('password and passphrase fields are masked (type="password")', async ({ page }) => {
-    // Regression guard: #80 bot fix changed these to type="text", exposing passwords on screen
-    await expect(page.locator('#password')).toHaveAttribute('type', 'password');
+  test('password and passphrase fields are masked via CSS, not type="password" (#98)', async ({ page }) => {
+    // type="text" + -webkit-text-security:disc avoids Chrome autofill classification (#98)
+    // while still visually masking the input
+    await expect(page.locator('#password')).toHaveAttribute('type', 'text');
+    const pwSecurity = await page.locator('#password').evaluate(
+      el => getComputedStyle(el).webkitTextSecurity
+    );
+    expect(pwSecurity).toBe('disc');
+
     await page.locator('#authType').selectOption('key');
-    await expect(page.locator('#passphrase')).toHaveAttribute('type', 'password');
+    await expect(page.locator('#passphrase')).toHaveAttribute('type', 'text');
+    const ppSecurity = await page.locator('#passphrase').evaluate(
+      el => getComputedStyle(el).webkitTextSecurity
+    );
+    expect(ppSecurity).toBe('disc');
   });
 
   test('switching to key auth shows privateKey field', async ({ page }) => {

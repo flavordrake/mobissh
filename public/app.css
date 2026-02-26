@@ -512,6 +512,13 @@ html, body {
 .xterm-viewport::-webkit-scrollbar { width: 4px; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); }
 
+/* Connect form: mask password/passphrase with dots without using type="password",
+   which triggers Chrome autofill classification (#98) */
+#password,
+#passphrase {
+  -webkit-text-security: disc;
+}
+
 /* Scrollable panels */
 #panel-connect,
 #panel-keys,
