@@ -49,8 +49,6 @@ export function initTerminal() {
     appState.terminal.writeln('');
 }
 export function handleResize() {
-    if (appState._selectionActive)
-        return; // freeze layout during text selection (#55/#108)
     appState.fitAddon?.fit();
     if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
         appState.ws.send(JSON.stringify({
@@ -78,8 +76,6 @@ export function initKeyboardAwareness() {
         const h = Math.round(vv.height);
         keyboardVisible = h < window.outerHeight * 0.75;
         app.style.height = `${String(h)}px`;
-        if (appState._selectionActive)
-            return;
         appState.fitAddon?.fit();
         appState.terminal?.scrollToBottom();
         if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
@@ -107,8 +103,6 @@ export function applyFontSize(size) {
         if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
             appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
         }
-        if (typeof appState._syncOverlayMetrics === 'function')
-            appState._syncOverlayMetrics();
     }
 }
 export function applyTheme(name, { persist = false } = {}) {

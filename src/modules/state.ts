@@ -38,10 +38,6 @@ export const appState: AppState = {
   hasConnected: false,
   activeThemeName: 'dark',
 
-  // Selection overlay (#55)
-  _syncOverlayMetrics: null,
-  _selectionActive: false,
-
   // Session recording (#54)
   recording: false,
   recordingStartTime: null,

@@ -62,7 +62,6 @@ export function initTerminal(): void {
 }
 
 export function handleResize(): void {
-  if (appState._selectionActive) return; // freeze layout during text selection (#55/#108)
   appState.fitAddon?.fit();
   if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
     appState.ws.send(JSON.stringify({
@@ -96,8 +95,6 @@ export function initKeyboardAwareness(): void {
 
     app!.style.height = `${String(h)}px`;
 
-    if (appState._selectionActive) return;
-
     appState.fitAddon?.fit();
     appState.terminal?.scrollToBottom();
 
@@ -126,7 +123,6 @@ export function applyFontSize(size: number): void {
     if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
       appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
     }
-    if (typeof appState._syncOverlayMetrics === 'function') appState._syncOverlayMetrics();
   }
 }
 

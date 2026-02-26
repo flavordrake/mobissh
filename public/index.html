@@ -145,16 +145,6 @@
     <!-- Terminal panel -->
     <div id="panel-terminal" class="panel active">
       <div id="terminal">
-        <!-- Selection overlay — transparent text mirror for native mobile text selection (#55).
-             Must be a child of #terminal (position:relative) so absolute positioning matches the canvas. -->
-        <div id="selectionOverlay" aria-hidden="true"></div>
-        <!-- Floating copy bar — appears when text is selected via long-press -->
-        <div id="selectionBar" class="hidden">
-          <button id="selAllBtn" class="sel-bar-btn">Select All</button>
-          <button id="selCopyBtn" class="sel-bar-btn">Copy</button>
-          <button id="selOpenBtn" class="sel-bar-btn hidden">Open URL</button>
-          <button id="selDoneBtn" class="sel-bar-btn sel-bar-done">Done</button>
-        </div>
       </div>
       <!-- IME composition preview — shows word being composed before commit (#44) -->
       <div id="imePreview" class="hidden" aria-live="polite" aria-atomic="true"></div>

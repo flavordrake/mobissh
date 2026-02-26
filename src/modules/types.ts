@@ -84,10 +84,6 @@ export interface AppState {
   hasConnected: boolean;
   activeThemeName: ThemeName;
 
-  // Selection overlay (#55)
-  _syncOverlayMetrics: (() => void) | null;
-  _selectionActive: boolean;
-
   // Session recording (#54)
   recording: boolean;
   recordingStartTime: number | null;

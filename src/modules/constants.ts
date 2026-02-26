@@ -122,7 +122,3 @@ export function escHtml(str: string): string {
     .replace(/"/g, '&quot;');
 }
 
-// SELECTION_OVERLAY: mobile text selection via transparent DOM overlay (#55).
-// Disabled while #111 (Android UX review findings) is being addressed on a
-// feature branch. Set true to re-enable long-press → select → copy.
-export const SELECTION_OVERLAY = false;
