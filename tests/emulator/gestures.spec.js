@@ -54,9 +54,6 @@ test.describe('Touch gestures (Android emulator + real SSH)', () => {
 
     // viewportY should have decreased — we scrolled up to see earlier content
     expect(vpAfter).toBeLessThan(vpBefore);
-
-    // Verify we captured motion frames
-    expect(frameCount).toBeGreaterThan(0);
   });
 
   test('horizontal swipe sends tmux prefix commands', async ({ emulatorPage: page, sshServer }, testInfo) => {

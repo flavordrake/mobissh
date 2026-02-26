@@ -28,9 +28,12 @@ module.exports = defineConfig({
   testDir: './tests/emulator',
   timeout: 60_000,
   retries: 0,
+  workers: 1, // REQUIRED: single Chrome instance via CDP — parallel workers destabilise pages
 
   reporter: [
-    ['line'],
+    // Phase 1 (bootstrapping): use list with printSteps for maximum visibility
+    ['list', { printSteps: true }],
+    // Phase 3 (maintenance): switch to ['line'] for compact output
     ['html', { open: 'never', outputFolder: 'playwright-report-emulator' }],
   ],
 
@@ -51,6 +54,7 @@ module.exports = defineConfig({
         baseURL: BASE_URL,
         screenshot: 'on',
         trace: 'retain-on-failure',
+        actionTimeout: 10_000, // fail fast on bad selectors instead of waiting full test timeout
       },
     },
   ],

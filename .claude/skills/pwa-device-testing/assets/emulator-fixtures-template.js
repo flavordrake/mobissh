@@ -71,9 +71,12 @@ const test = base.extend({
     const context = cdpBrowser.contexts()[0];
     const page = await context.newPage();
 
-    // Clear localStorage — all tabs share it via the single context
+    // Clear localStorage then reload — the app reads localStorage on init
+    // (panel state, vault, profiles), so clearing alone isn't enough if the
+    // app already initialized with stale state from a previous test.
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => localStorage.clear());
+    await page.reload({ waitUntil: 'domcontentloaded' });
 
     await use(page);
     await page.close().catch(() => {});

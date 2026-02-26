@@ -84,10 +84,12 @@ const test = base.extend({
     const context = cdpBrowser.contexts()[0];
     const page = await context.newPage();
 
-    // Clear localStorage before each test — shared context means all tabs
-    // see the same origin storage, so previous test state leaks otherwise
+    // Clear localStorage then reload — shared context means all tabs see the
+    // same origin storage. The app reads localStorage on init (panel state,
+    // vault, profiles), so we must clear BEFORE the app initializes.
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => localStorage.clear());
+    await page.reload({ waitUntil: 'domcontentloaded' });
 
     await use(page);
 
@@ -99,24 +101,25 @@ const test = base.extend({
 /**
  * Connect to a real SSH server through the MobiSSH bridge.
  * Sets up vault, fills connect form, accepts host key, waits for shell.
+ *
+ * NOTE: The emulatorPage fixture already navigated to BASE_URL and cleared
+ * localStorage. We do NOT navigate again — injecting state on the live page.
  */
 async function setupRealSSHConnection(page, sshServer) {
-  // Inject WS spy before navigation
-  await page.evaluate(() => {
+  await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
+
+  // Enable private host connections (SSRF bypass for Docker sshd on localhost),
+  // inject WS spy, and create a test vault — all on the already-loaded page.
+  await page.evaluate(async () => {
+    localStorage.setItem('allowPrivateHosts', 'true');
+
+    // WS spy — must be injected AFTER navigation, on the live page
     window.__mockWsSpy = [];
     const OrigWS = window.WebSocket;
     window.WebSocket = class extends OrigWS {
       send(data) { window.__mockWsSpy.push(data); super.send(data); }
     };
-  });
 
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
-
-  // Enable private host connections (SSRF bypass for Docker sshd on localhost)
-  // and create a test vault so save doesn't trigger setup modal
-  await page.evaluate(async () => {
-    localStorage.setItem('allowPrivateHosts', 'true');
     const { createVault } = await import('./modules/vault.js');
     await createVault('test', false);
   });
@@ -131,8 +134,8 @@ async function setupRealSSHConnection(page, sshServer) {
   await page.locator('#username').fill(sshServer.user);
   await page.locator('#password').fill(sshServer.password);
 
-  // Submit
-  await page.locator('#connectBtn').click();
+  // Submit — button has no id, select by form + type
+  await page.locator('#connectForm button[type="submit"]').click();
 
   // Accept host key on first connection
   try {

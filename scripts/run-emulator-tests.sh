@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # scripts/run-emulator-tests.sh
 #
-# Boot the Android emulator (if not already running), set up ADB port
-# forwarding, launch Chrome, and run the Playwright emulator test suite.
+# Full setup/run/teardown for Android emulator tests.
+# Handles: server, Docker sshd, emulator boot, ADB forwarding, Chrome CDP, Playwright.
 #
 # Usage:
 #   bash scripts/run-emulator-tests.sh              # run all emulator tests
@@ -19,78 +19,91 @@ CDP_PORT="${CDP_PORT:-9222}"
 SPEC="${1:-}"
 
 log() { printf '\033[36m> %s\033[0m\n' "$*"; }
+ok()  { printf '\033[32m✓ %s\033[0m\n' "$*"; }
 err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; exit 1; }
 
-# 1. Ensure server is healthy and at HEAD
-log "Checking MobiSSH server..."
+wait_for_port() {
+  local host=$1 port=$2 label=$3 max=${4:-30}
+  for i in $(seq 1 "$max"); do
+    if bash -c "echo >/dev/tcp/$host/$port" 2>/dev/null; then
+      ok "$label ready on port $port"
+      return 0
+    fi
+    sleep 0.5
+  done
+  err "$label not ready on port $port after $((max / 2))s"
+}
+
+# Phase 1: Infrastructure
+log "Phase 1: Infrastructure setup"
+
+# 1a. MobiSSH server — healthy at HEAD
+log "Ensuring MobiSSH server..."
 PORT=$MOBISSH_PORT bash scripts/server-ctl.sh ensure
 
-# 1b. Ensure Docker test-sshd is running (for real SSH integration tests)
-log "Ensuring Docker test-sshd is running..."
-docker compose -f docker-compose.test.yml up -d test-sshd 2>&1 | tail -1 || true
+# 1b. Docker test-sshd — for real SSH integration tests
+log "Ensuring Docker test-sshd..."
+docker compose -f docker-compose.test.yml up -d test-sshd 2>&1 | grep -v '^$' || true
+wait_for_port localhost 2222 "test-sshd" 20
 
-# 2. Check emulator binary exists
+# Phase 2: Emulator
+log "Phase 2: Android emulator"
+
 command -v emulator &>/dev/null || err "emulator not found. Run: bash scripts/setup-avd.sh"
 command -v adb &>/dev/null || err "adb not found. Run: bash scripts/setup-avd.sh"
 
-# 3. Boot emulator if no device is connected
 if ! adb devices 2>/dev/null | grep -q 'emulator\|device$'; then
   log "No device detected. Booting emulator ($AVD_NAME)..."
-  emulator -avd "$AVD_NAME" -no-snapshot-save -gpu auto -no-audio &
+  sg kvm -c "emulator -avd \"$AVD_NAME\" -no-snapshot-save -gpu auto -no-audio" &
   EMU_PID=$!
 
-  log "Waiting for device to boot..."
   adb wait-for-device
-  # Wait for boot_completed property
   for i in $(seq 1 120); do
     if adb shell getprop sys.boot_completed 2>/dev/null | grep -q '^1$'; then
       break
     fi
-    if (( i == 120 )); then
-      err "Emulator failed to boot within 120s"
-    fi
+    if (( i == 120 )); then err "Emulator failed to boot within 120s"; fi
     sleep 1
   done
-  log "Emulator booted (PID $EMU_PID)."
+  ok "Emulator booted (PID $EMU_PID)"
 else
-  log "Emulator already running."
+  ok "Emulator already running"
 fi
 
-# 4. Set up port forwarding
-adb reverse tcp:$MOBISSH_PORT tcp:$MOBISSH_PORT 2>/dev/null || true
-adb forward tcp:$CDP_PORT localabstract:chrome_devtools_remote 2>/dev/null || true
-log "Port forwarding: emulator localhost:$MOBISSH_PORT -> host, CDP on :$CDP_PORT"
+# Phase 3: ADB forwarding + Chrome CDP
+log "Phase 3: ADB forwarding and Chrome CDP"
 
-# 5. Enable Chrome remote debugging and launch
-# Play Store Chrome is a release build — set-debug-app makes it expose the
-# DevTools Unix socket that Playwright connects to over CDP.
-log "Enabling Chrome remote debugging..."
+adb reverse tcp:"$MOBISSH_PORT" tcp:"$MOBISSH_PORT" 2>/dev/null || true
+adb forward tcp:"$CDP_PORT" localabstract:chrome_devtools_remote 2>/dev/null || true
+ok "Port forwarding configured (server :$MOBISSH_PORT, CDP :$CDP_PORT)"
+
+# Enable Chrome remote debugging (Play Store Chrome needs set-debug-app to
+# expose the DevTools Unix socket)
 adb shell am set-debug-app --persistent com.android.chrome 2>/dev/null || true
-adb shell am force-stop com.android.chrome 2>/dev/null || true
-sleep 1
 
-log "Launching Chrome on emulator..."
-adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main \
-  -a android.intent.action.VIEW -d 'about:blank' 2>/dev/null || true
-sleep 3
-
-# Re-forward CDP after Chrome launch (socket appears after process starts)
-adb forward tcp:$CDP_PORT localabstract:chrome_devtools_remote 2>/dev/null || true
-
-# 6. Verify CDP is reachable
+# Check if Chrome is responding to CDP already
 if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
-  log "CDP not reachable. Trying to enable Chrome DevTools..."
-  # Chrome needs to have been started at least once; retry forward
-  sleep 3
-  adb forward tcp:$CDP_PORT localabstract:chrome_devtools_remote 2>/dev/null || true
-  if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
-    err "Cannot reach Chrome DevTools on port $CDP_PORT. Ensure Chrome is running on the emulator."
-  fi
-fi
-log "CDP connection verified."
+  log "Chrome not responding to CDP, restarting..."
+  adb shell am force-stop com.android.chrome 2>/dev/null || true
+  sleep 1
+  adb shell am start -n com.android.chrome/com.google.android.apps.chrome.Main \
+    -a android.intent.action.VIEW -d 'about:blank' 2>/dev/null || true
 
-# 7. Run Playwright tests
-log "Running emulator tests..."
+  # Wait for CDP socket to come alive (Chrome needs a moment after launch)
+  for i in $(seq 1 20); do
+    adb forward tcp:$CDP_PORT localabstract:chrome_devtools_remote 2>/dev/null || true
+    if curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
+      break
+    fi
+    if (( i == 20 )); then err "Chrome CDP not reachable after 10s"; fi
+    sleep 0.5
+  done
+fi
+ok "Chrome CDP verified"
+
+# Phase 4: Run tests
+log "Phase 4: Running Playwright emulator tests"
+
 EXTRA_ARGS=()
 if [[ -n "$SPEC" ]]; then
   EXTRA_ARGS+=("tests/emulator/$SPEC")
@@ -101,5 +114,5 @@ CDP_PORT=$CDP_PORT npx playwright test \
   "${EXTRA_ARGS[@]}"
 
 EXIT=$?
-log "Tests finished. Report: npx playwright show-report playwright-report-emulator"
+log "Tests finished (exit $EXIT). Report: npx playwright show-report playwright-report-emulator"
 exit $EXIT
