@@ -48,7 +48,20 @@ Build a concise issue body. No filler.
   request. Add technical details you know (file paths, function names, config values).
 - **Reproduction**: for bugs, describe how to reproduce if apparent. For features, describe
   the user need.
-- **Current commit**: `git rev-parse --short HEAD`
+- **Version snapshot**: capture both the code state and what the user is actually seeing.
+  The user often tests on a running server while code changes happen in parallel, so these
+  may differ.
+  ```bash
+  CODE_HASH=$(git rev-parse --short HEAD)
+  # Server injects <meta name="app-version" content="version:hash"> into index.html
+  SERVER_META=$(curl -sf --max-time 3 "http://localhost:${MOBISSH_PORT:-8081}/" 2>/dev/null \
+    | grep -oP 'app-version"\s*content="\K[^"]+' || echo "server not responding")
+  ```
+  Include both in the issue body. If they differ, flag it:
+  ```
+  Code: abc1234 | Server: 0.1.0:def5678 (STALE — server hasn't been restarted)
+  ```
+  If the server isn't responding, just note the code hash and `(server not running)`.
 
 ## Step 3: Check for recent test artifacts
 
@@ -59,6 +72,10 @@ If `test-results/emulator/report.json` exists and was modified within 30 minutes
 2. **test-results/emulator/frames/**: list frame filenames that relate to the issue
 3. **test-results/emulator/recording.mp4**: note existence and timestamp
 4. **Per-test screenshots**: check `test-results/*-android-emulator/` for relevant PNGs
+
+If a recording exists but no frames have been extracted (no `frames/` directory or it's
+empty), run `bash scripts/review-recording.sh` to generate uniform frame samples. This
+is useful when the issue relates to visual behavior that screenshots alone don't capture.
 
 Only include artifacts clearly connected to the issue. If nothing is recent or relevant,
 skip this section entirely.
@@ -84,12 +101,36 @@ gh issue list --search "<key phrase from title>" --state open --json number,titl
 
 If a match exists, warn the user and ask whether to file or comment on the existing one.
 
-File the issue using a heredoc for the body:
+File the issue using a heredoc for the body. Template:
+
+```
+Filed while working on <context> (<branch>).
+
+<Problem statement or feature description with technical details.>
+
+## Reproduction
+<Steps to reproduce, or user need for features.>
+
+## Version
+Code: <CODE_HASH> | Server: <SERVER_META>
+<If mismatched: "(STALE — server hasn't been restarted since <hash>)">
+<If server down: "(server not running)">
+
+## Test Evidence
+<Only if recent artifacts exist (Step 3). Otherwise omit this section entirely.>
+- Run: <pass/fail summary from report.json>
+- Failed: <test names and error snippets>
+- Frames: <relevant filenames from frames/ or review/>
+- Recording: test-results/emulator/recording.mp4 (<timestamp>)
+
+@claude <Specific bot instructions, if actionable (Step 4).>
+```
+
 ```bash
 gh issue create --title "<prefix>: <concise title>" \
   --label "<primary>" --label "<secondary>" \
   --body "$(cat <<'ISSUE_EOF'
-<composed body>
+<composed body per template above>
 ISSUE_EOF
 )"
 ```
