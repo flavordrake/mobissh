@@ -423,7 +423,7 @@ export function initIMEInput() {
                 const mouseMode = termUnk.modes &&
                     termUnk.modes.mouseTrackingMode;
                 if (mouseMode && mouseMode !== 'none') {
-                    const btn = delta > 0 ? 65 : 64;
+                    const btn = delta > 0 ? 64 : 65;
                     const rect = termEl.getBoundingClientRect();
                     const col = Math.max(1, Math.min(appState.terminal.cols, Math.floor((e.touches[0].clientX - rect.left) / (rect.width / appState.terminal.cols)) + 1));
                     const row = Math.max(1, Math.min(appState.terminal.rows, Math.floor((e.touches[0].clientY - rect.top) / (rect.height / appState.terminal.rows)) + 1));

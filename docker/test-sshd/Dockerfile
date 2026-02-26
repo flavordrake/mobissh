@@ -1,6 +1,6 @@
 FROM alpine:3.19
 
-RUN apk add --no-cache openssh-server bash \
+RUN apk add --no-cache openssh-server bash tmux \
  && ssh-keygen -A \
  && adduser -D -s /bin/bash testuser \
  && echo 'testuser:testpass' | chpasswd \
@@ -16,6 +16,11 @@ RUN sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/
 COPY testuser_id_ed25519.pub /home/testuser/.ssh/authorized_keys
 RUN chmod 600 /home/testuser/.ssh/authorized_keys \
  && chown -R testuser:testuser /home/testuser/.ssh
+
+# tmux config: mouse mode on (required for SGR scroll wheel events)
+RUN printf 'set -g mouse on\nset -g history-limit 5000\n' \
+ > /home/testuser/.tmux.conf \
+ && chown testuser:testuser /home/testuser/.tmux.conf
 
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]

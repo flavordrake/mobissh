@@ -428,7 +428,7 @@ export function initIMEInput(): void {
         const mouseMode = termUnk.modes &&
           (termUnk.modes as Record<string, unknown>).mouseTrackingMode;
         if (mouseMode && mouseMode !== 'none') {
-          const btn = delta > 0 ? 65 : 64;
+          const btn = delta > 0 ? 64 : 65;
           const rect = termEl.getBoundingClientRect();
           const col = Math.max(1, Math.min(appState.terminal.cols,
             Math.floor((e.touches[0]!.clientX - rect.left) / (rect.width / appState.terminal.cols)) + 1));
