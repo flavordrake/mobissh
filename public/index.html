@@ -64,11 +64,14 @@
     tabindex="-1"
   />
 
-  <!-- Vault setup modal — master password creation (first credential save) -->
+  <!-- Vault setup modal — master password creation (first launch) -->
   <div id="vaultSetupOverlay" class="vault-overlay hidden" role="dialog" aria-label="Set up vault">
     <div class="vault-dialog">
       <h3 class="vault-title">Set a master password</h3>
       <p class="vault-desc">This password encrypts your saved credentials. You'll need it each time you open MobiSSH.</p>
+      <input type="text" id="vaultUsername" autocomplete="username"
+        value="MobiSSH Vault" tabindex="-1"
+        aria-hidden="true" class="vault-hidden-username" />
       <label for="vaultNewPw" class="vault-label">Password</label>
       <input type="password" id="vaultNewPw" autocomplete="new-password"
         data-lpignore="true" data-1p-ignore="true" data-form-type="other" />

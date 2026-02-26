@@ -314,6 +314,22 @@ export function updateVaultSettingsUI() {
     resetBtn.classList.remove('hidden');
 }
 /**
+ * On first launch (no vault in localStorage), show the vault setup modal
+ * immediately so the user creates their master password before interacting
+ * with the app. This decouples vault creation from the SSH connect flow.
+ *
+ * No-op if a vault already exists or is unlocked.
+ */
+export async function promptVaultSetupOnStartup() {
+    if (vaultExists())
+        return;
+    if (hasLegacyVault())
+        return;
+    if (appState.vaultKey)
+        return;
+    await showVaultSetup();
+}
+/**
  * Ensure vault key is available, with UI flows for creation and unlock.
  * This replaces direct calls to vault.ensureVaultKey() from profiles.ts.
  *

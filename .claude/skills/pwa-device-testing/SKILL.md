@@ -224,12 +224,14 @@ The `sshd-fixture.js` helper starts the container automatically and exposes cred
 
 ## Touch Gesture Testing
 
-Synthetic `TouchEvent` dispatch via `page.evaluate()` tests the same JS code path as real finger touches. This is more reliable than CDP `Input.dispatchTouchEvent` which behaves differently across Chrome versions.
+Gesture helpers use CDP `Input.dispatchTouchEvent` which goes through Chrome's real input pipeline and fires DOM touch events faithfully. An in-page touch visualizer draws green dots/trails at finger positions so gestures are visible in screen recordings (Android's `pointer_location` overlay doesn't register CDP touches).
 
 Helpers in `tests/emulator/fixtures.js`:
-- `swipe(page, selector, startX, startY, endX, endY, steps)` — single-finger swipe
-- `pinch(page, selector, startDist, endDist, steps)` — two-finger pinch
+- `swipe(page, selector, startX, startY, endX, endY, steps)` — single-finger swipe via CDP
+- `pinch(page, selector, startDist, endDist, steps)` — two-finger pinch via CDP
 - `sendCommand(page, cmd)` — type into IME input char-by-char
+
+The touch visualizer is injected automatically by `swipe()` and `pinch()`. Green dots show current finger positions, small trail dots persist for 2s to show the gesture path.
 
 Verify gesture effects through app state, not visual diffs:
 ```javascript
@@ -242,6 +244,83 @@ const msgs = await page.evaluate(() => window.__mockWsSpy.filter(...));
 // Pinch: check terminal font size
 const font = await page.evaluate(() => window.__testTerminal.options.fontSize);
 ```
+
+## Exploratory Interaction Testing (script-first, then assert)
+
+Before writing test assertions, use the emulator to explore what actually happens when a user performs a gesture. This inverts the typical TDD approach: instead of starting with expected behavior and checking if it matches, start by simulating the physical interaction, capturing what the device shows, and reviewing the visual evidence to discover the domain of possibilities.
+
+### The workflow
+
+**1. Script the interaction textually.** Before writing any test code, describe the interaction as a sequence of physical actions:
+```
+- Navigate to Settings panel
+- Place two fingers on screen, 200px apart
+- Move fingers apart to 400px (pinch out / zoom in)
+- Observe: does the bottom bar stay anchored? Does content scale?
+- Release fingers
+- Observe: does layout return to normal?
+```
+
+**2. Translate to emulator script.** Use the gesture helpers to replay the interaction on the emulator, with screen recording running but NO assertions:
+```javascript
+test('explore: pinch zoom on settings panel', async ({ emulatorPage: page }) => {
+  await page.locator('[data-panel="settings"]').click();
+  await page.waitForSelector('#panel-settings.active');
+  await screenshot(page, testInfo, '01-before-pinch');
+
+  // Simulate pinch-out (zoom in)
+  await pinch(page, '#panel-settings', 100, 300);
+  await page.waitForTimeout(500);
+  await screenshot(page, testInfo, '02-during-zoom');
+
+  // Release and observe
+  await page.waitForTimeout(1000);
+  await screenshot(page, testInfo, '03-after-zoom');
+});
+```
+
+**3. Capture the video baseline.** Run the test, extract frames, and review them:
+```bash
+bash scripts/run-emulator-tests.sh explore.spec.js
+bash scripts/extract-test-frames.sh --test "explore"
+```
+
+**4. Analyze the frames.** Read the extracted PNGs to understand what actually happened:
+- Did the layout break? Where did elements move?
+- Did the browser do something unexpected (native zoom, address bar animation)?
+- Is there a Chrome-native prompt or overlay appearing?
+- What does the user actually see at each step?
+
+**5. Form expectations from evidence.** Only after seeing what the device does, write assertions:
+- If the layout broke, the assertion documents the fix target
+- If it worked correctly, the assertion locks in the behavior
+- If something unexpected happened, investigate before asserting
+
+**6. Iterate against the baseline.** After making code changes:
+- Re-run the same interaction
+- Extract new frames
+- Compare visually against the baseline frames
+- Repeat until the new frames match the imagined expectation
+
+### Why this matters
+
+The AI cannot predict how Chrome on Android will behave with a specific gesture on a specific layout. The emulator is a real device running real Chrome — it has its own opinions about what pinch zoom does, how `visualViewport` reports changes, when the address bar hides, etc.
+
+By scripting the interaction first and observing the result, you:
+- Discover behaviors you didn't anticipate (Chrome ignoring `user-scalable=no`, keyboard pushing dialogs off-screen)
+- Build assertions from evidence, not assumptions
+- Create a visual baseline that makes regressions immediately visible
+- Avoid the trap of writing a test that passes but doesn't match what a real user sees
+
+### Example: discovering the #139 pinch zoom bug
+
+Without exploratory testing, you'd guess "pinch zoom should work because I set `user-scalable=no`." With it:
+1. Script: pinch on Settings panel
+2. Capture: frame shows bottom bar expanded over content
+3. Discover: Chrome ignores `user-scalable=no`, `visualViewport.resize` fires, handler shrinks `#app`
+4. Fix: guard with `vv.scale === 1`
+5. Re-capture: frame shows layout intact during zoom
+6. Assert: bottom bar height unchanged after pinch
 
 ## Test Maturation Phases
 
@@ -282,7 +361,7 @@ Everything needed to add Android emulator testing to a new project is in the ski
 - `assets/emulator-test-template.js` — Single test file with screenshot helpers and common patterns (vault setup, form interaction).
 
 **Baseline results:**
-The test runner collects results into `tests/emulator/baseline/` (tracked by git):
+The test runner collects results into `test-results/emulator/` (tracked by git):
 - `screenshots/` — per-test PNG screenshots with descriptive names
 - `recording.mp4` — full screen recording of the test run
 - `report.json` — Playwright JSON reporter output with per-test timing
@@ -293,7 +372,7 @@ Add to `.gitignore`:
 playwright-report/
 playwright-report-emulator/
 test-results/
-!tests/emulator/baseline/
+!test-results/emulator/
 ```
 
 ## Post-Run Video Frame Extraction
@@ -303,7 +382,7 @@ Playwright's failure screenshots only show the DOM state at timeout — after th
 `scripts/extract-test-frames.sh` bridges this gap: it reads the JSON test report, correlates each test's wall-clock timing with the video timeline, and extracts PNG frames at critical moments via ffmpeg. This gives the AI (or a human) a visual timeline of what was actually on screen when each test ran.
 
 **How it works:**
-1. Reads `tests/emulator/baseline/report.json` for test names, start times, durations, and pass/fail status
+1. Reads `test-results/emulator/report.json` for test names, start times, durations, and pass/fail status
 2. Calculates video offset: `test_startTime - earliest_startTime` maps wall-clock to video position
 3. Extracts frames at: 2s before test start, midpoint, 1s before end
 4. For failed tests: extracts additional quarter-point and three-quarter-point frames
@@ -319,7 +398,7 @@ bash scripts/extract-test-frames.sh --test "vault" # tests matching pattern
 
 **Output example:**
 ```
-tests/emulator/baseline/frames/
+test-results/emulator/frames/
   smoke-page-loads-and-renders-MobiSSH-shell-0-before.png
   smoke-page-loads-and-renders-MobiSSH-shell-1-midpoint.png
   smoke-page-loads-and-renders-MobiSSH-shell-2-end-passed.png
@@ -339,12 +418,53 @@ When the AI reviews a test failure, it can read the extracted frames to understa
 
 This is the exit route from "guess why it failed from the error message" to "see what the user would have seen."
 
+## Uniform Recording Review
+
+`scripts/extract-test-frames.sh` extracts frames aligned to test boundaries. But sometimes you need to see what happened *between* tests or across the full recording:
+- Diagnosing what Chrome showed during page load or vault setup (before the first test's start timestamp)
+- Understanding gaps between tests (teardown, reload, navigation)
+- When test-aligned frame timing is off (video/report clock skew)
+- Reviewing the full user-visible flow end-to-end
+
+`scripts/review-recording.sh` samples the recording at uniform intervals and dumps frames to `test-results/emulator/review/`.
+
+```bash
+bash scripts/review-recording.sh                    # every 5s (default)
+bash scripts/review-recording.sh --interval 3       # every 3s for more detail
+bash scripts/review-recording.sh --recording path   # custom recording path
+```
+
+Use this instead of writing one-off `ffmpeg -ss` commands. Read the output frames with the Read tool to visually inspect the recording.
+
+## Narrative Workflow Report
+
+After frame extraction, `scripts/generate-workflow-report.py` generates a self-contained HTML report that combines:
+- Per-test step screenshots (named screenshots from `screenshot()` helper, embedded as base64)
+- Video frames extracted at critical moments (before, midpoint, end, plus quarter-points for failures)
+- Error messages for failed tests
+- Full video embed with download link
+- Clickable images that expand on click for detailed inspection
+
+**Usage:**
+```bash
+# Standalone:
+python3 scripts/generate-workflow-report.py
+python3 scripts/generate-workflow-report.py --open   # opens in browser
+
+# Automatically run as Phase 7 of:
+bash scripts/run-emulator-tests.sh
+```
+
+**Output:** `test-results/emulator/workflow-report.html` — a single ~4MB HTML file with all images embedded (no external dependencies, viewable offline).
+
+This is the primary artifact for human review of exploratory workflow tests. Present it to the user after every emulator test run. The report answers: "What did the user see at each step of this workflow?"
+
 **Prerequisites:** `ffmpeg` and `jq` must be installed. The emulator Playwright config must include the JSON reporter (already configured):
 ```javascript
 reporter: [
   ['list', { printSteps: true }],
   ['html', { open: 'never', outputFolder: 'playwright-report-emulator' }],
-  ['json', { outputFile: 'tests/emulator/baseline/report.json' }],
+  ['json', { outputFile: 'test-results/emulator/report.json' }],
 ],
 ```
 

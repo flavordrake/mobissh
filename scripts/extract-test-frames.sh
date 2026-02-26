@@ -6,23 +6,21 @@
 # was on screen when a test started, failed, or ended.
 #
 # Reads:
-#   tests/emulator/baseline/report.json   — Playwright JSON reporter output
-#   tests/emulator/baseline/recording.mp4 — adb screenrecord capture
+#   <results>/report.json   — Playwright JSON reporter output
+#   <results>/recording.mp4 — adb screenrecord capture
 #
 # Writes:
-#   tests/emulator/baseline/frames/       — one PNG per extracted moment
+#   <results>/frames/       — one PNG per extracted moment
 #
 # Usage:
-#   bash scripts/extract-test-frames.sh              # all tests
-#   bash scripts/extract-test-frames.sh --failed      # only failed tests
-#   bash scripts/extract-test-frames.sh --test "vault" # tests matching pattern
+#   bash scripts/extract-test-frames.sh                                # all tests
+#   bash scripts/extract-test-frames.sh --failed                       # only failed tests
+#   bash scripts/extract-test-frames.sh --results test-results/emulator # custom dir
+#   bash scripts/extract-test-frames.sh --test "vault"                  # tests matching pattern
 
 set -euo pipefail
 
-BASELINE="tests/emulator/baseline"
-REPORT="$BASELINE/report.json"
-VIDEO="$BASELINE/recording.mp4"
-FRAMES="$BASELINE/frames"
+RESULTS_DIR="test-results/emulator"
 
 log() { printf '\033[36m> %s\033[0m\n' "$*"; }
 ok()  { printf '\033[32m✓ %s\033[0m\n' "$*"; }
@@ -33,11 +31,16 @@ FILTER_FAILED=false
 FILTER_PATTERN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --failed) FILTER_FAILED=true; shift ;;
-    --test)   FILTER_PATTERN="$2"; shift 2 ;;
-    *)        err "Unknown arg: $1. Usage: $0 [--failed] [--test pattern]" ;;
+    --failed)  FILTER_FAILED=true; shift ;;
+    --test)    FILTER_PATTERN="$2"; shift 2 ;;
+    --results) RESULTS_DIR="$2"; shift 2 ;;
+    *)         err "Unknown arg: $1. Usage: $0 [--failed] [--test pattern] [--results dir]" ;;
   esac
 done
+
+REPORT="$RESULTS_DIR/report.json"
+VIDEO="$RESULTS_DIR/recording.mp4"
+FRAMES="$RESULTS_DIR/frames"
 
 command -v ffmpeg &>/dev/null || err "ffmpeg not found. Install: sudo apt install ffmpeg"
 command -v jq &>/dev/null || err "jq not found. Install: sudo apt install jq"

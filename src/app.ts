@@ -7,7 +7,7 @@
 
 import { initRecording } from './modules/recording.js';
 import { initVault } from './modules/vault.js';
-import { initVaultUI } from './modules/vault-ui.js';
+import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
 import {
   initProfiles, getProfiles, loadProfiles,
   loadProfileIntoForm, deleteProfile,
@@ -35,7 +35,7 @@ declare global {
 
 // ── Startup ──
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', () => void (async () => {
   try {
     initTerminal();
     initUI({ keyboardVisible: getKeyboardVisible, ROOT_CSS, applyFontSize, applyTheme });
@@ -55,8 +55,14 @@ document.addEventListener('DOMContentLoaded', () => {
     loadKeys();
     registerServiceWorker();
     initVaultUI({ toast });
-    void initVault();
+    await initVault();
     initKeyboardAwareness();
+
+    // Signal boot complete before vault prompt — the app is fully initialized,
+    // event handlers attached, terminal ready. The vault setup is a user
+    // interaction (first-run only), not a boot failure.
+    if (typeof window.__appReady === 'function') window.__appReady();
+    await promptVaultSetupOnStartup();
 
     // Event delegation for profile list
     const profileList = document.getElementById('profileList')!;
@@ -112,6 +118,4 @@ document.addEventListener('DOMContentLoaded', () => {
     console.error('[mobissh] Boot failed:', err);
     if (typeof window.__appBootError === 'function') window.__appBootError(err);
   }
-
-  if (typeof window.__appReady === 'function') window.__appReady();
-});
+})());

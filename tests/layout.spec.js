@@ -8,7 +8,7 @@
  * Run on: Pixel 7, iPhone 14, Desktop Chrome (see playwright.config.js)
  */
 
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures.js');
 
 test.describe('Initial page load', () => {
   test.beforeEach(async ({ page }) => {

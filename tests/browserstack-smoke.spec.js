@@ -13,7 +13,7 @@
  * Devices are declared in browserstack.yml (Samsung S23, Pixel 6, iPhone 15).
  */
 
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures.js');
 
 test('smoke: page loads, title is MobiSSH, connect form and tab bar render', async ({ page }) => {
   await page.goto('./');

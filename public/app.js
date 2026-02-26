@@ -6,7 +6,7 @@
  */
 import { initRecording } from './modules/recording.js';
 import { initVault } from './modules/vault.js';
-import { initVaultUI } from './modules/vault-ui.js';
+import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
 import { initProfiles, getProfiles, loadProfiles, loadProfileIntoForm, deleteProfile, loadKeys, importKey, useKey, deleteKey, } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
@@ -14,7 +14,7 @@ import { initIME, initIMEInput } from './modules/ime.js';
 import { initUI, toast, setStatus, focusIME, _applyTabBarVisibility, initSessionMenu, initTabBar, initConnectForm, initTerminalActions, initKeyBar, } from './modules/ui.js';
 import { ROOT_CSS, initTerminal, handleResize, initKeyboardAwareness, getKeyboardVisible, applyFontSize, applyTheme, } from './modules/terminal.js';
 // ── Startup ──
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', () => void (async () => {
     try {
         initTerminal();
         initUI({ keyboardVisible: getKeyboardVisible, ROOT_CSS, applyFontSize, applyTheme });
@@ -34,8 +34,14 @@ document.addEventListener('DOMContentLoaded', () => {
         loadKeys();
         registerServiceWorker();
         initVaultUI({ toast });
-        void initVault();
+        await initVault();
         initKeyboardAwareness();
+        // Signal boot complete before vault prompt — the app is fully initialized,
+        // event handlers attached, terminal ready. The vault setup is a user
+        // interaction (first-run only), not a boot failure.
+        if (typeof window.__appReady === 'function')
+            window.__appReady();
+        await promptVaultSetupOnStartup();
         // Event delegation for profile list
         const profileList = document.getElementById('profileList');
         profileList.addEventListener('click', (e) => {
@@ -94,7 +100,5 @@ document.addEventListener('DOMContentLoaded', () => {
         if (typeof window.__appBootError === 'function')
             window.__appBootError(err);
     }
-    if (typeof window.__appReady === 'function')
-        window.__appReady();
-});
+})());
 //# sourceMappingURL=app.js.map

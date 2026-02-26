@@ -32,6 +32,51 @@ function getFreePort() {
 
 const test = base.extend({
   /**
+   * page — override built-in page fixture
+   *
+   * Auto-dismisses the startup vault setup modal on every navigation.
+   * The modal blocks all interaction until the user creates a vault.
+   * In tests, we cancel it immediately so boot completes and tests can run.
+   * Tests that need a real vault call ensureTestVault() after navigation.
+   */
+  page: async ({ page }, use) => {
+    // Seed vaultMeta before any page code runs. This runs LAST among all
+    // addInitScript calls (added here after test's beforeEach scripts).
+    // But tests that clear localStorage may wipe it — so we also add a
+    // fallback: a DOMContentLoaded listener that clicks Cancel if the
+    // vault modal appears.
+    await page.addInitScript(() => {
+      if (!localStorage.getItem('vaultMeta')) {
+        localStorage.setItem('vaultMeta', JSON.stringify({
+          salt: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+          dekPw: { iv: 'AAAAAAAAAAAAAAA=', ct: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+        }));
+      }
+      // Fallback: if the vault modal appears (e.g. because another
+      // addInitScript cleared localStorage after the seed), auto-dismiss it.
+      document.addEventListener('DOMContentLoaded', () => {
+        const obs = new MutationObserver(() => {
+          const overlay = document.getElementById('vaultSetupOverlay');
+          if (overlay && !overlay.classList.contains('hidden')) {
+            const cancel = document.getElementById('vaultSetupCancel');
+            if (cancel) { cancel.click(); obs.disconnect(); }
+          }
+        });
+        obs.observe(document.body || document.documentElement, { childList: true, subtree: true, attributes: true });
+        // Also check immediately
+        setTimeout(() => {
+          const overlay = document.getElementById('vaultSetupOverlay');
+          if (overlay && !overlay.classList.contains('hidden')) {
+            const cancel = document.getElementById('vaultSetupCancel');
+            if (cancel) { cancel.click(); obs.disconnect(); }
+          }
+        }, 100);
+      });
+    });
+    await use(page);
+  },
+
+  /**
    * mockSshServer — fixture
    *
    * Provides an object with:
@@ -107,11 +152,30 @@ const test = base.extend({
  * @param {{ port: number }} mockSshServer - fixture with the mock WS port
  */
 /**
+ * dismissVaultModal — dismiss the startup vault setup modal
+ *
+ * On first launch (clean localStorage), the app shows a vault setup modal
+ * that blocks all interaction. Click Cancel to dismiss it and unblock boot.
+ * No-op if the modal isn't visible.
+ */
+async function dismissVaultModal(page) {
+  try {
+    const cancelBtn = page.locator('#vaultSetupCancel');
+    await cancelBtn.waitFor({ state: 'visible', timeout: 2000 });
+    await cancelBtn.click();
+    await page.waitForSelector('#vaultSetupOverlay.hidden', { timeout: 2000 });
+  } catch { /* modal not present — vault already exists */ }
+}
+
+/**
  * ensureTestVault — create and unlock a test vault in the browser
  *
  * Pre-creates a vault with password 'test' so that ensureVaultKeyWithUI()
  * finds appState.vaultKey already set and never shows the setup modal.
  * Must be called after page.goto() and before any profile save / connect.
+ *
+ * Also dismisses the startup vault modal (which blocks boot) by clicking Cancel.
+ * The vault is already created programmatically, so Cancel just unblocks the UI.
  */
 async function ensureTestVault(page) {
   await page.evaluate(async () => {
@@ -119,6 +183,8 @@ async function ensureTestVault(page) {
     const { createVault } = await import('./modules/vault.js');
     await createVault('test', false);
   });
+  // Dismiss the startup vault setup modal to unblock boot
+  await dismissVaultModal(page);
 }
 
 async function setupConnected(page, mockSshServer) {

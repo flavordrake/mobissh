@@ -17,7 +17,7 @@ AVD_NAME="MobiSSH_Pixel7"
 MOBISSH_PORT="${MOBISSH_PORT:-8081}"
 CDP_PORT="${CDP_PORT:-9222}"
 SPEC="${1:-}"
-BASELINE_DIR="tests/emulator/baseline"
+RESULTS_DIR="test-results/emulator"
 RECORDING_PATH="/sdcard/emulator-test.mp4"
 
 log() { printf '\033[36m> %s\033[0m\n' "$*"; }
@@ -92,6 +92,11 @@ adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS 2>/d
 # flags. The file must start with an underscore (Chrome convention).
 adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check' > /data/local/tmp/chrome-command-line" 2>/dev/null || true
 
+# Enable "Show taps" for real taps (ADB/finger). CDP touches use an in-page
+# touch visualizer instead (pointer_location doesn't work with CDP).
+adb shell settings put system show_touches 1 2>/dev/null || true
+adb shell settings put system pointer_location 0 2>/dev/null || true
+
 # Check if Chrome is responding to CDP already
 if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
   log "Chrome not responding to CDP, restarting..."
@@ -136,55 +141,35 @@ kill "$RECORD_PID" 2>/dev/null || true
 wait "$RECORD_PID" 2>/dev/null || true
 sleep 1  # screenrecord needs a moment to finalize the mp4
 
-# Phase 5: Collect baseline results
-log "Phase 5: Collecting test results into $BASELINE_DIR"
+# Phase 5: Collect test results
+log "Phase 5: Collecting emulator artifacts into $RESULTS_DIR"
 
-# Preserve report.json (written by JSON reporter during Phase 4), wipe the rest
-SAVED_REPORT=""
-if [[ -f "$BASELINE_DIR/report.json" ]]; then
-  SAVED_REPORT=$(mktemp)
-  cp "$BASELINE_DIR/report.json" "$SAVED_REPORT"
-fi
-rm -rf "$BASELINE_DIR"
-mkdir -p "$BASELINE_DIR/screenshots"
-if [[ -n "$SAVED_REPORT" && -f "$SAVED_REPORT" ]]; then
-  mv "$SAVED_REPORT" "$BASELINE_DIR/report.json"
-  ok "Preserved report.json"
-fi
+mkdir -p "$RESULTS_DIR"
 
 # Pull screen recording
 if adb shell "test -f $RECORDING_PATH" 2>/dev/null; then
-  adb pull "$RECORDING_PATH" "$BASELINE_DIR/recording.mp4" 2>/dev/null
-  ok "Screen recording saved to $BASELINE_DIR/recording.mp4"
+  adb pull "$RECORDING_PATH" "$RESULTS_DIR/recording.mp4" 2>/dev/null
+  ok "Screen recording saved to $RESULTS_DIR/recording.mp4"
 else
   log "No screen recording found (emulator may not support it)"
 fi
 
-# Copy per-test screenshots with descriptive names
-# test-results dirs look like: gestures-Touch-gestures-An-a83a8-scrolls-terminal-scrollback-android-emulator/
-for dir in test-results/*-android-emulator; do
-  [[ -d "$dir" ]] || continue
-  basename=$(basename "$dir")
-  # Extract a readable name: strip the hash and "android-emulator" suffix
-  # e.g. "gestures-Touch-gestures-An-a83a8-scrolls-terminal-scrollback-android-emulator"
-  # → "gestures-scrolls-terminal-scrollback"
-  name=$(echo "$basename" | sed -E 's/-android-emulator$//' | sed -E 's/-[a-f0-9]{5}-/-/' | sed -E 's/^([^-]+)-[^-]+-[^-]+-[^-]+-[a-f0-9]+-/\1-/')
-  for png in "$dir"/*.png; do
-    [[ -f "$png" ]] || continue
-    cp "$png" "$BASELINE_DIR/screenshots/${name}.png"
-  done
-done
-
-SCREENSHOT_COUNT="$(find "$BASELINE_DIR/screenshots" -name "*.png" 2>/dev/null | wc -l)"
-ok "Baseline collected: $SCREENSHOT_COUNT screenshots"
+SCREENSHOT_COUNT="$(find test-results -name "*.png" 2>/dev/null | wc -l)"
+ok "Test results collected: $SCREENSHOT_COUNT screenshots"
 
 # Phase 6: Extract video frames at test-critical moments
-if [[ -f "$BASELINE_DIR/report.json" && -f "$BASELINE_DIR/recording.mp4" ]]; then
+if [[ -f "$RESULTS_DIR/report.json" && -f "$RESULTS_DIR/recording.mp4" ]]; then
   log "Phase 6: Extracting video frames"
-  bash scripts/extract-test-frames.sh --failed || log "Frame extraction had errors (non-fatal)"
+  bash scripts/extract-test-frames.sh --results "$RESULTS_DIR" || log "Frame extraction had errors (non-fatal)"
 else
   log "Skipping frame extraction (missing report.json or recording.mp4)"
 fi
 
-log "Tests finished (exit $EXIT). Report: npx playwright show-report playwright-report-emulator"
+# Phase 7: Generate narrative HTML report
+if [[ -f "$RESULTS_DIR/report.json" ]]; then
+  log "Phase 7: Generating workflow report"
+  python3 scripts/generate-workflow-report.py --baseline "$RESULTS_DIR" || log "Report generation had errors (non-fatal)"
+fi
+
+log "Tests finished (exit $EXIT). Report: $RESULTS_DIR/workflow-report.html"
 exit $EXIT

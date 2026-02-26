@@ -99,6 +99,28 @@ const test = base.extend({
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: 'domcontentloaded' });
 
+    // Vault setup modal appears on first launch (no vault in clean localStorage).
+    // Fill the form and click Create like a real user.
+    try {
+      await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
+      await page.locator('#vaultNewPw').fill('test');
+      await page.locator('#vaultConfirmPw').fill('test');
+      // Disable biometric — WebAuthn enrollment hangs without enrolled fingerprint
+      await page.evaluate(() => {
+        const cb = document.getElementById('vaultEnableBio');
+        if (cb) cb.checked = false;
+      });
+      // Dismiss keyboard so it doesn't cover the Create button
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.waitForTimeout(500);
+      // Use DOM click — Playwright click can be intercepted by overlay
+      await page.evaluate(() => {
+        const btn = document.getElementById('vaultSetupCreate');
+        if (btn) btn.click();
+      });
+      await page.waitForSelector('#vaultSetupOverlay.hidden', { timeout: 5000 });
+    } catch { /* vault already exists or modal didn't appear */ }
+
     await use(page);
 
     // Close the tab, leave the browser connection open for the next test
@@ -116,9 +138,9 @@ const test = base.extend({
 async function setupRealSSHConnection(page, sshServer) {
   await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
 
-  // Enable private host connections (SSRF bypass for Docker sshd on localhost),
-  // inject WS spy, and create a test vault — all on the already-loaded page.
-  await page.evaluate(async () => {
+  // Enable private host connections (SSRF bypass for Docker sshd on localhost)
+  // and inject WS spy. Vault is already created by the emulatorPage fixture.
+  await page.evaluate(() => {
     localStorage.setItem('allowPrivateHosts', 'true');
 
     // WS spy — must be injected AFTER navigation, on the live page
@@ -127,9 +149,6 @@ async function setupRealSSHConnection(page, sshServer) {
     window.WebSocket = class extends OrigWS {
       send(data) { window.__mockWsSpy.push(data); super.send(data); }
     };
-
-    const { createVault } = await import('./modules/vault.js');
-    await createVault('test', false);
   });
 
   // Navigate to connect form
@@ -146,14 +165,23 @@ async function setupRealSSHConnection(page, sshServer) {
   await page.locator('#connectForm button[type="submit"]').click();
 
   // Accept host key on first connection — each test clears localStorage so
-  // the stored fingerprint is always gone. Use multiple selectors and longer
-  // timeout to handle emulator rendering delays.
+  // the stored fingerprint is always gone. Wait for the dialog to appear,
+  // then dismiss keyboard (password field may have focused it) and click.
   try {
-    const acceptBtn = page.locator('.hostkey-accept, button:has-text("Accept")').first();
+    const acceptBtn = page.locator('.hostkey-accept');
     await acceptBtn.waitFor({ state: 'visible', timeout: 15_000 });
-    await acceptBtn.click();
-    // Brief pause for the overlay to dismiss and connection to proceed
+    // Dismiss keyboard — filling the password field may have opened it,
+    // and the keyboard can interfere with click routing on Android.
+    await page.evaluate(() => document.activeElement?.blur());
     await page.waitForTimeout(500);
+    // Use DOM click via evaluate — Playwright's click() reports the
+    // hostkey-overlay as intercepting even though the button is inside it.
+    await page.evaluate(() => {
+      const btn = document.querySelector('.hostkey-accept');
+      if (btn) btn.click();
+    });
+    // Wait for the overlay to dismiss and connection to proceed
+    await page.waitForTimeout(1000);
   } catch {
     // Host key already trusted (shouldn't happen with fresh localStorage)
   }
@@ -199,67 +227,164 @@ async function sendCommand(page, cmd) {
 }
 
 /**
- * Dispatch a swipe gesture on an element via synthetic TouchEvents.
- * Coordinates are relative to the element.
+ * Get a CDP session for the page. Caches on the page object to avoid
+ * creating multiple sessions per test.
  */
-async function swipe(page, selector, startX, startY, endX, endY, steps = 10) {
-  await page.evaluate(({ sel, sx, sy, ex, ey, steps }) => {
-    const el = document.querySelector(sel);
-    if (!el) throw new Error(`swipe: element ${sel} not found`);
-    const rect = el.getBoundingClientRect();
-    const ax = rect.left + sx;
-    const ay = rect.top + sy;
-    const bx = rect.left + ex;
-    const by = rect.top + ey;
-
-    function fire(type, x, y) {
-      const t = new Touch({ identifier: 0, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
-      el.dispatchEvent(new TouchEvent(type, {
-        bubbles: true, cancelable: true,
-        touches: type === 'touchend' ? [] : [t],
-        changedTouches: [t],
-        targetTouches: type === 'touchend' ? [] : [t],
-      }));
-    }
-
-    fire('touchstart', ax, ay);
-    for (let i = 1; i <= steps; i++) {
-      const f = i / steps;
-      fire('touchmove', ax + (bx - ax) * f, ay + (by - ay) * f);
-    }
-    fire('touchend', bx, by);
-  }, { sel: selector, sx: startX, sy: startY, ex: endX, ey: endY, steps });
+async function getCDPSession(page) {
+  if (!page.__cdpSession) {
+    page.__cdpSession = await page.context().newCDPSession(page);
+  }
+  return page.__cdpSession;
 }
 
 /**
- * Dispatch a 2-finger pinch gesture on an element.
- * startDist/endDist are the pixel distance between the two fingers.
+ * Inject a touch visualizer into the page that draws finger positions
+ * as colored circles. Renders in the DOM so screenrecord captures it.
+ * CDP touches bypass Android's pointer_location overlay, so we draw our own.
+ */
+async function ensureTouchViz(page) {
+  await page.evaluate(() => {
+    if (document.getElementById('__touchViz')) return;
+    const style = document.createElement('style');
+    style.id = '__touchViz';
+    style.textContent = `
+      .__touch-dot {
+        position: fixed; z-index: 99999; pointer-events: none;
+        width: 28px; height: 28px; border-radius: 50%;
+        background: rgba(0, 255, 136, 0.5); border: 2px solid #00ff88;
+        transform: translate(-50%, -50%); transition: opacity 0.3s;
+      }
+      .__touch-trail {
+        position: fixed; z-index: 99998; pointer-events: none;
+        width: 8px; height: 8px; border-radius: 50%;
+        background: rgba(0, 255, 136, 0.3);
+        transform: translate(-50%, -50%);
+      }
+    `;
+    document.head.appendChild(style);
+  });
+}
+
+/**
+ * Show touch dots at given positions, leave a trail, then fade.
+ */
+async function showTouchPoints(page, points) {
+  await page.evaluate((pts) => {
+    // Remove old dots
+    document.querySelectorAll('.__touch-dot').forEach(el => el.remove());
+    // Create new dots
+    pts.forEach(({ x, y }) => {
+      const dot = document.createElement('div');
+      dot.className = '__touch-dot';
+      dot.style.left = x + 'px';
+      dot.style.top = y + 'px';
+      document.body.appendChild(dot);
+      // Trail dot (persists longer)
+      const trail = document.createElement('div');
+      trail.className = '__touch-trail';
+      trail.style.left = x + 'px';
+      trail.style.top = y + 'px';
+      document.body.appendChild(trail);
+      setTimeout(() => trail.remove(), 2000);
+    });
+  }, points);
+}
+
+async function clearTouchDots(page) {
+  await page.evaluate(() => {
+    document.querySelectorAll('.__touch-dot').forEach(el => el.remove());
+  });
+}
+
+/**
+ * Dispatch a swipe gesture on an element via CDP Input.dispatchTouchEvent.
+ * Goes through Chrome's real input pipeline and fires DOM touch events.
+ * Touch positions are visualized in the page for screen recording.
+ * Coordinates are relative to the element (CSS pixels).
+ */
+async function swipe(page, selector, startX, startY, endX, endY, steps = 10) {
+  const box = await page.locator(selector).boundingBox();
+  if (!box) throw new Error(`swipe: element ${selector} not found`);
+
+  const ax = box.x + startX;
+  const ay = box.y + startY;
+  const bx = box.x + endX;
+  const by = box.y + endY;
+
+  await ensureTouchViz(page);
+  const client = await getCDPSession(page);
+
+  await showTouchPoints(page, [{ x: ax, y: ay }]);
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: ax, y: ay, id: 0 }],
+  });
+
+  for (let i = 1; i <= steps; i++) {
+    const f = i / steps;
+    const x = ax + (bx - ax) * f;
+    const y = ay + (by - ay) * f;
+    await showTouchPoints(page, [{ x, y }]);
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x, y, id: 0 }],
+    });
+    await new Promise(r => setTimeout(r, 30));
+  }
+
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await clearTouchDots(page);
+}
+
+/**
+ * Dispatch a 2-finger pinch gesture on an element via CDP Input.dispatchTouchEvent.
+ * Goes through Chrome's real input pipeline. Touch positions visualized for recording.
+ * startDist/endDist are the pixel distance between the two fingers (CSS pixels).
  * endDist > startDist = zoom in, endDist < startDist = zoom out.
  */
 async function pinch(page, selector, startDist, endDist, steps = 10) {
-  await page.evaluate(({ sel, sd, ed, steps }) => {
-    const el = document.querySelector(sel);
-    if (!el) throw new Error(`pinch: element ${sel} not found`);
-    const rect = el.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
+  const box = await page.locator(selector).boundingBox();
+  if (!box) throw new Error(`pinch: element ${selector} not found`);
 
-    function fire(type, dist) {
-      const t0 = new Touch({ identifier: 0, target: el, clientX: cx - dist / 2, clientY: cy, pageX: cx - dist / 2, pageY: cy });
-      const t1 = new Touch({ identifier: 1, target: el, clientX: cx + dist / 2, clientY: cy, pageX: cx + dist / 2, pageY: cy });
-      const tl = type === 'touchend' ? [] : [t0, t1];
-      el.dispatchEvent(new TouchEvent(type, {
-        bubbles: true, cancelable: true,
-        touches: tl, changedTouches: [t0, t1], targetTouches: tl,
-      }));
-    }
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
 
-    fire('touchstart', sd);
-    for (let i = 1; i <= steps; i++) {
-      fire('touchmove', sd + (ed - sd) * (i / steps));
-    }
-    fire('touchend', ed);
-  }, { sel: selector, sd: startDist, ed: endDist, steps });
+  await ensureTouchViz(page);
+  const client = await getCDPSession(page);
+
+  function points(dist) {
+    return [
+      { x: cx - dist / 2, y: cy, id: 0 },
+      { x: cx + dist / 2, y: cy, id: 1 },
+    ];
+  }
+
+  const startPts = points(startDist);
+  await showTouchPoints(page, startPts);
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: startPts,
+  });
+
+  for (let i = 1; i <= steps; i++) {
+    const dist = startDist + (endDist - startDist) * (i / steps);
+    const pts = points(dist);
+    await showTouchPoints(page, pts);
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: points(dist),
+    });
+    await new Promise(r => setTimeout(r, 30));
+  }
+
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await clearTouchDots(page);
 }
 
 module.exports = {

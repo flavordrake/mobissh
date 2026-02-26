@@ -18,7 +18,7 @@
  * and Chrome's PWA install flow is not available in WebKit.
  */
 
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures.js');
 
 const BASE_URL = (process.env.BASE_URL || 'http://localhost:8081').replace(/\/?$/, '/');
 
