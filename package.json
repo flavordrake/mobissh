@@ -20,6 +20,8 @@
     "test:unit:watch": "vitest",
     "test:ui": "playwright test --ui",
     "test:proxy": "BASE_URL=https://raserver.tailbe5094.ts.net/ssh playwright test",
+    "test:sshd:up": "docker compose -f docker-compose.test.yml up -d test-sshd",
+    "test:sshd:down": "docker compose -f docker-compose.test.yml down",
     "test:emulator": "bash scripts/run-emulator-tests.sh",
     "test:browserstack": "browserstack-node-sdk playwright test --config=playwright.browserstack.config.js",
     "type:coverage": "type-coverage --at-least 80 --detail"

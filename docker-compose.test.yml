@@ -1,0 +1,12 @@
+services:
+  test-sshd:
+    build:
+      context: ./docker/test-sshd
+    ports:
+      - "2222:22"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 5
+    restart: "no"

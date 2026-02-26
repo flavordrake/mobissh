@@ -452,6 +452,9 @@ export function initIMEInput(): void {
     _touchStartY = _touchStartX = _lastTouchY = _lastTouchX = null;
     _isTouchScroll = false;
     _scrolledLines = 0;
+    // Flush any remaining scroll deltas before clearing — if the last touchmove
+    // queued lines that rAF hasn't flushed yet, discarding them loses the scroll.
+    _flushScroll();
     _pendingLines = 0;
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }

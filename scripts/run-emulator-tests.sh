@@ -25,6 +25,10 @@ err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; exit 1; }
 log "Checking MobiSSH server..."
 PORT=$MOBISSH_PORT bash scripts/server-ctl.sh ensure
 
+# 1b. Ensure Docker test-sshd is running (for real SSH integration tests)
+log "Ensuring Docker test-sshd is running..."
+docker compose -f docker-compose.test.yml up -d test-sshd 2>&1 | tail -1 || true
+
 # 2. Check emulator binary exists
 command -v emulator &>/dev/null || err "emulator not found. Run: bash scripts/setup-avd.sh"
 command -v adb &>/dev/null || err "adb not found. Run: bash scripts/setup-avd.sh"

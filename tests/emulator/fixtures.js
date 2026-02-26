@@ -15,6 +15,7 @@
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
 const { execSync } = require('child_process');
+const { ensureTestSshd, SSHD_HOST, SSHD_PORT, TEST_USER, TEST_PASS } = require('./sshd-fixture');
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9222);
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
@@ -61,6 +62,18 @@ const test = base.extend({
   }, { scope: 'worker' }],
 
   /**
+   * sshServer — worker-scoped fixture
+   *
+   * Ensures the Docker test-sshd container is running and returns
+   * connection credentials for real SSH integration tests.
+   */
+  // eslint-disable-next-line no-empty-pattern
+  sshServer: [async ({}, use) => {
+    ensureTestSshd();
+    await use({ host: SSHD_HOST, port: SSHD_PORT, user: TEST_USER, password: TEST_PASS });
+  }, { scope: 'worker' }],
+
+  /**
    * emulatorPage — test-scoped fixture
    *
    * A fresh Chrome tab for each test. Clears localStorage on setup so
@@ -83,4 +96,202 @@ const test = base.extend({
   },
 });
 
-module.exports = { test, expect, screenshot, CDP_PORT, BASE_URL };
+/**
+ * Connect to a real SSH server through the MobiSSH bridge.
+ * Sets up vault, fills connect form, accepts host key, waits for shell.
+ */
+async function setupRealSSHConnection(page, sshServer) {
+  // Inject WS spy before navigation
+  await page.evaluate(() => {
+    window.__mockWsSpy = [];
+    const OrigWS = window.WebSocket;
+    window.WebSocket = class extends OrigWS {
+      send(data) { window.__mockWsSpy.push(data); super.send(data); }
+    };
+  });
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
+
+  // Enable private host connections (SSRF bypass for Docker sshd on localhost)
+  // and create a test vault so save doesn't trigger setup modal
+  await page.evaluate(async () => {
+    localStorage.setItem('allowPrivateHosts', 'true');
+    const { createVault } = await import('./modules/vault.js');
+    await createVault('test', false);
+  });
+
+  // Navigate to connect form
+  await page.locator('[data-panel="connect"]').click();
+  await page.waitForSelector('#panel-connect.active', { timeout: 5000 });
+
+  // Fill credentials
+  await page.locator('#host').fill(sshServer.host);
+  await page.locator('#port').fill(String(sshServer.port));
+  await page.locator('#username').fill(sshServer.user);
+  await page.locator('#password').fill(sshServer.password);
+
+  // Submit
+  await page.locator('#connectBtn').click();
+
+  // Accept host key on first connection
+  try {
+    const acceptBtn = page.locator('.hostkey-accept');
+    await acceptBtn.waitFor({ timeout: 10_000 });
+    await acceptBtn.click();
+  } catch {
+    // Host key already trusted from a previous test in this worker
+  }
+
+  // Wait for connected state — resize message confirms shell is ready
+  await page.waitForFunction(() => {
+    return (window.__mockWsSpy || []).some(s => {
+      try { return JSON.parse(s).type === 'resize'; } catch { return false; }
+    });
+  }, null, { timeout: 15_000 });
+
+  // Ensure terminal panel is active
+  await page.waitForSelector('#panel-terminal.active', { timeout: 5000 });
+}
+
+/**
+ * Type a command into the terminal via the IME input and send Enter.
+ */
+async function sendCommand(page, cmd) {
+  // Focus the IME input
+  await page.evaluate(() => {
+    const el = document.getElementById('imeInput') || document.getElementById('directInput');
+    if (el) el.focus();
+  });
+
+  for (const ch of cmd) {
+    await page.evaluate((c) => {
+      const el = document.getElementById('imeInput') || document.getElementById('directInput');
+      if (!el) return;
+      el.value = c;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: c }));
+      el.value = '';
+    }, ch);
+  }
+  // Enter
+  await page.evaluate(() => {
+    const el = document.getElementById('imeInput') || document.getElementById('directInput');
+    if (!el) return;
+    el.value = '\n';
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '\n' }));
+    el.value = '';
+  });
+}
+
+/**
+ * Dispatch a swipe gesture on an element via synthetic TouchEvents.
+ * Coordinates are relative to the element.
+ */
+async function swipe(page, selector, startX, startY, endX, endY, steps = 10) {
+  await page.evaluate(({ sel, sx, sy, ex, ey, steps }) => {
+    const el = document.querySelector(sel);
+    if (!el) throw new Error(`swipe: element ${sel} not found`);
+    const rect = el.getBoundingClientRect();
+    const ax = rect.left + sx;
+    const ay = rect.top + sy;
+    const bx = rect.left + ex;
+    const by = rect.top + ey;
+
+    function fire(type, x, y) {
+      const t = new Touch({ identifier: 0, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
+      el.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true,
+        touches: type === 'touchend' ? [] : [t],
+        changedTouches: [t],
+        targetTouches: type === 'touchend' ? [] : [t],
+      }));
+    }
+
+    fire('touchstart', ax, ay);
+    for (let i = 1; i <= steps; i++) {
+      const f = i / steps;
+      fire('touchmove', ax + (bx - ax) * f, ay + (by - ay) * f);
+    }
+    fire('touchend', bx, by);
+  }, { sel: selector, sx: startX, sy: startY, ex: endX, ey: endY, steps });
+}
+
+/**
+ * Dispatch a 2-finger pinch gesture on an element.
+ * startDist/endDist are the pixel distance between the two fingers.
+ * endDist > startDist = zoom in, endDist < startDist = zoom out.
+ */
+async function pinch(page, selector, startDist, endDist, steps = 10) {
+  await page.evaluate(({ sel, sd, ed, steps }) => {
+    const el = document.querySelector(sel);
+    if (!el) throw new Error(`pinch: element ${sel} not found`);
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    function fire(type, dist) {
+      const t0 = new Touch({ identifier: 0, target: el, clientX: cx - dist / 2, clientY: cy, pageX: cx - dist / 2, pageY: cy });
+      const t1 = new Touch({ identifier: 1, target: el, clientX: cx + dist / 2, clientY: cy, pageX: cx + dist / 2, pageY: cy });
+      const tl = type === 'touchend' ? [] : [t0, t1];
+      el.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true,
+        touches: tl, changedTouches: [t0, t1], targetTouches: tl,
+      }));
+    }
+
+    fire('touchstart', sd);
+    for (let i = 1; i <= steps; i++) {
+      fire('touchmove', sd + (ed - sd) * (i / steps));
+    }
+    fire('touchend', ed);
+  }, { sel: selector, sd: startDist, ed: endDist, steps });
+}
+
+/**
+ * Start a screencast (low-fps video capture) on the page.
+ * Returns a stop function that saves the frames as a webm attachment.
+ */
+function startScreencast(page, cdpSession) {
+  const frames = [];
+  let listener = null;
+
+  const start = async () => {
+    if (!cdpSession) {
+      cdpSession = await page.context().newCDPSession(page);
+    }
+    listener = (params) => {
+      frames.push({ data: params.data, timestamp: params.metadata?.timestamp || Date.now() });
+      cdpSession.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+    };
+    cdpSession.on('Page.screencastFrame', listener);
+    await cdpSession.send('Page.startScreencast', {
+      format: 'png',
+      quality: 50,
+      maxWidth: 412,
+      maxHeight: 915,
+      everyNthFrame: 3,
+    });
+  };
+
+  const stop = async (testInfo, name) => {
+    if (cdpSession && listener) {
+      await cdpSession.send('Page.stopScreencast').catch(() => {});
+      cdpSession.off('Page.screencastFrame', listener);
+    }
+    // Attach each frame as a numbered screenshot for report inspection
+    for (let i = 0; i < frames.length; i++) {
+      const buf = Buffer.from(frames[i].data, 'base64');
+      await testInfo.attach(`${name}-frame-${String(i).padStart(3, '0')}`, {
+        body: buf, contentType: 'image/png',
+      });
+    }
+    return frames.length;
+  };
+
+  return { start, stop };
+}
+
+module.exports = {
+  test, expect, screenshot, setupRealSSHConnection, sendCommand,
+  swipe, pinch, startScreencast, CDP_PORT, BASE_URL,
+};
