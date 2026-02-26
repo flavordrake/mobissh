@@ -8,103 +8,80 @@ description: Use when the user says "integrate", "review bot PRs", "merge bot fi
 Review, validate, and merge PRs created by the Claude bot from `@claude` issue tasks.
 Bot PRs follow the branch pattern `claude/issue-{N}-{DATE}-{TIME}`.
 
+## Scripts
+
+The integration pipeline is packaged as scripts in `scripts/`:
+
+| Script | Purpose |
+|---|---|
+| `integrate-discover.sh` | List all bot branches, group by issue, count attempts, score risk. Outputs JSON. |
+| `integrate-cleanup.sh` | Delete branches for over-attempted issues, comment on GitHub issues. Reads discover JSON. |
+| `integrate-gate.sh` | Fast gate a single branch: tsc + eslint + vitest. Stashes/restores local state. |
+| `run-emulator-tests.sh` | Acceptance gate: boots emulator, starts server, runs Playwright emulator tests. |
+| `server-ctl.sh` | Server lifecycle: start/stop/restart/ensure. Used post-merge. |
+
 ## Execution Model
 
 Run **foreground**. The user wants to see triage decisions and approve merges.
 Report progress per-PR: what was checked, what passed/failed, merge or reject decision.
 
-## Step 1: Discover candidates
+Use the Task tool to run scripts concurrently where steps are independent (e.g., fast-gating
+multiple low-risk branches in parallel). Present results to the user before proceeding to
+the next step.
+
+## Step 1: Discover and triage
 
 ```bash
-# Open bot PRs
-gh pr list --state open --author "claude-assistant" \
-  --json number,title,headRefName,additions,deletions,changedFiles,createdAt
-
-# Recently closed without merge (might deserve retry or re-scope)
-gh pr list --state closed --author "claude-assistant" \
-  --json number,title,headRefName,mergedAt,closedAt --limit 10 \
-  | jq '[.[] | select(.mergedAt == null)]'
-
-# Bot branches without PRs (abandoned attempts)
-git fetch --prune origin
-git branch -r --list "origin/claude/*" --sort=-committerdate | head -20
+bash scripts/integrate-discover.sh > /tmp/integrate-candidates.json
 ```
 
-Present the candidate list to the user with PR number, title, diff size, and age.
+This outputs a JSON array with each entry scored by risk:
+- `reject` — >2 attempts (know-when-to-quit rule)
+- `low` — single file, <50 lines
+- `medium` — multi-file within one module, or <100 lines across <=3 files
+- `high` — core code, >200 lines, server changes, vault/crypto
+- `skip` — branch has no commits ahead of main
 
-## Step 2: Triage by risk
+Present the triage table to the user: issue number, title, attempt count, risk, diff size.
+Ask the user how to proceed (evaluate candidates, clean up first, etc.).
 
-Score each candidate and present integration order to the user.
+## Step 2: Clean up rejects
 
-**Low risk (integrate first):**
-- Single file changed, <50 lines diff
-- Pure CSS/style changes
-- Config-only (manifest.json, meta tags, package.json)
-- Has corresponding passing unit test in the diff
-
-**Medium risk:**
-- Multi-file but within one module boundary
-- Adds new code paths without modifying existing ones
-- Touch/gesture changes (need emulator but low blast radius)
-
-**High risk (integrate last, or defer):**
-- Modifies core connection/vault/crypto code
-- Changes shared state or module interfaces
-- >200 lines changed
-- Touches `server/index.js`
-
-**Auto-reject (close immediately):**
-- PR contains changes for the wrong issue (seen in PR #133 — contained #102 changes instead of #66)
-- Diff includes unrelated changes or scope creep beyond the linked issue
-- >2 previous bot attempts for the same issue number. This triggers the know-when-to-quit
-  rule: the issue needs human re-scoping, not more bot retries. Close the PR and comment
-  on the issue explaining what the bot couldn't solve.
-
-To count prior attempts for an issue:
 ```bash
-git branch -r --list "origin/claude/issue-${ISSUE_NUM}-*" | wc -l
+bash scripts/integrate-cleanup.sh --file /tmp/integrate-candidates.json
 ```
+
+This deletes branches for all `reject`-risk issues and comments on the GitHub issues
+explaining that the bot couldn't converge and human re-scoping is needed.
+
+Options:
+- `--dry-run` — preview without acting
+- `--issue N` — clean up a specific issue's branches
+- `--all` — delete all bot branches (nuclear option)
 
 ## Step 3: Fast gate
 
-For each candidate (in priority order), checkout and run lightweight validation:
+For each candidate branch (in risk order: low first, then medium, then high):
 
 ```bash
-git stash --include-untracked  # preserve any local work
-git fetch origin <branch>
-git checkout <branch>
-
-# Typecheck
-npx tsc --noEmit
-
-# Lint
-npx eslint src/ public/
-
-# Unit tests
-npm test
+bash scripts/integrate-gate.sh <branch-name>
 ```
 
-**If any fail:** close the PR with a comment explaining the specific failure.
-Do not retry — the bot can create a new attempt from the issue if re-triggered.
+The script:
+1. Stashes any local uncommitted changes
+2. Fetches and checks out the branch (detached HEAD)
+3. Runs `npx tsc --noEmit`, `npx eslint src/ public/`, `npm test`
+4. Reports pass/fail per gate
+5. Restores the original branch and pops stash
 
+Exit code 0 = all gates passed, 1 = gate failed, 2 = setup error.
+
+To auto-close a PR on failure:
 ```bash
-gh pr close <N> --comment "$(cat <<'EOF'
-Closing: fast gate failed.
-
-**tsc:** <pass or error summary>
-**eslint:** <pass or error summary>
-**vitest:** <pass or error summary>
-
-The bot can retry from the issue if the root cause is addressed.
-EOF
-)"
+bash scripts/integrate-gate.sh <branch> --close-on-fail --pr <number>
 ```
 
-After validation (pass or fail), return to the previous branch:
-```bash
-git checkout -
-git stash pop 2>/dev/null || true
-```
+Run multiple fast gates in parallel using Task agents when candidates are independent.
 
 ## Step 4: Acceptance gate
 
@@ -113,58 +90,47 @@ first — don't silently fall back to headless.
 
 ### Bring up the emulator
 
-`run-emulator-tests.sh` already handles emulator boot (Phase 2), server startup (Phase 1),
-ADB forwarding (Phase 3), and Chrome CDP (Phase 3). It's the single entry point — don't
-reimplement these steps.
+`run-emulator-tests.sh` handles the full pipeline: emulator boot (Phase 2), server
+startup (Phase 1), ADB forwarding (Phase 3), Chrome CDP (Phase 3), test execution
+(Phase 4), and artifact collection (Phases 5-7). It's the single entry point.
 
-But the emulator requires infrastructure that might not be present. Check prerequisites
-before attempting:
+Check prerequisites and attempt boot:
 
 ```bash
-# Can we even try?
 if [[ ! -e /dev/kvm ]]; then
   echo "KVM not available — emulator cannot run on this machine"
   EMULATOR=false
 elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
-  echo "Android SDK not installed. Run: bash scripts/setup-avd.sh"
-  EMULATOR=false
+  echo "Android SDK not installed — running setup..."
+  bash scripts/setup-avd.sh
+  EMULATOR=true
 else
   EMULATOR=true
 fi
+
+if [ "$EMULATOR" = true ]; then
+  bash scripts/run-emulator-tests.sh
+fi
 ```
 
-If prerequisites exist, try to bring the emulator up. `run-emulator-tests.sh` boots it
-if not already running (120s timeout), so just call it directly:
-
-```bash
-bash scripts/run-emulator-tests.sh
-```
-
-If the emulator is already running, this is a no-op for the boot phase — it detects
-the existing device and proceeds to tests.
-
-If boot fails (no AVD created yet), set up the AVD first:
-```bash
-bash scripts/setup-avd.sh   # one-time: downloads SDK components, creates AVD
-bash scripts/run-emulator-tests.sh  # now boot + test
-```
+If no AVD exists, `setup-avd.sh` creates it (one-time). If the emulator is already
+running, boot is a no-op — it detects the existing device.
 
 ### With emulator (full validation)
 After `run-emulator-tests.sh` completes:
 1. Parse `test-results/emulator/report.json` for pass/fail summary
 2. Compare against main branch results — are there regressions?
 3. If the PR touches touch/gesture code, pay special attention to gesture test results
-4. If the recording exists but frames haven't been extracted, run:
+4. If the recording exists but frames haven't been extracted:
    ```bash
    bash scripts/review-recording.sh
    ```
-   Review the extracted frames for visual regressions.
 
 ### Fallback: headless only (emulator truly unavailable)
 Only use this path when KVM is missing or the machine genuinely can't host an emulator
 (CI runner, remote server, etc.). This is not the preferred path.
 
-1. Run headless Playwright tests:
+1. Start server and run headless tests:
    ```bash
    bash scripts/server-ctl.sh ensure
    npx playwright test --config=playwright.config.js
@@ -176,19 +142,14 @@ Only use this path when KVM is missing or the machine genuinely can't host an em
    - Vault biometric: `bio`, `fingerprint`, `webauthn`, `PasswordCredential`
    - PWA install: `manifest`, `sw.js`, `beforeinstallprompt`
 3. Report to user: "PR #N passes headless tests but needs emulator validation for: [reasons]"
-4. Do NOT merge device-dependent PRs without emulator validation. Queue them for when
-   emulator becomes available.
+4. Do NOT merge device-dependent PRs without emulator validation. Queue them.
 
 ### Production server awareness
 The user often tests on the live production server while integration happens locally.
-Check for version mismatch:
 ```bash
-CODE_HASH=$(git rev-parse --short HEAD)
-SERVER_META=$(curl -sf --max-time 3 "http://localhost:${MOBISSH_PORT:-8081}/" 2>/dev/null \
-  | grep -oP 'app-version"\s*content="\K[^"]+' || echo "not running")
+bash scripts/server-ctl.sh status
 ```
-If the user is actively testing on production, warn before merging — the server will
-need a restart to pick up the merged changes.
+If stale, warn before merging — the server will need a restart.
 
 ## Step 5: Merge or reject
 
@@ -203,6 +164,12 @@ need a restart to pick up the merged changes.
 gh pr merge <N> --squash --delete-branch
 ```
 
+For orphaned branches (no PR), create a PR first, then merge:
+```bash
+gh pr create --head <branch> --title "<issue title>" --body "Bot fix for #<N>" --label bot
+gh pr merge <N> --squash --delete-branch
+```
+
 ### Reject criteria (ANY one is sufficient)
 - Tests fail at any gate
 - Wrong scope or unrelated changes
@@ -213,27 +180,25 @@ gh pr merge <N> --squash --delete-branch
 gh pr close <N> --comment "Closing: <clear reason with specific failure details>"
 ```
 
+For orphaned branches (no PR), just delete the branch:
+```bash
+bash scripts/integrate-cleanup.sh --issue <N>
+```
+
 ## Step 6: Post-merge
 
 After each successful merge:
-1. Return to main and pull:
-   ```bash
-   git checkout main && git pull
-   ```
-2. Restart server:
-   ```bash
-   bash scripts/server-ctl.sh restart
-   ```
-3. Run full test suite on main to confirm no regressions:
-   ```bash
-   npm test && npx playwright test --config=playwright.config.js
-   ```
-4. Report: "Merged PR #N (<title>). Tests: X pass. Server restarted at <hash>."
+```bash
+git checkout main && git pull
+bash scripts/server-ctl.sh restart
+npm test && npx playwright test --config=playwright.config.js
+```
+Report: "Merged PR #N (<title>). Tests: X pass. Server restarted at <hash>."
 
 ## Batch Mode
 
 When processing multiple PRs:
-- Integrate in priority order (low risk first)
+- Integrate in risk order (low first)
 - Re-run tests between each merge — do not batch merges without validation
 - Stop on first systemic failure (main broken after merge)
 - If main breaks: revert the last merge, report which PR caused it
@@ -264,8 +229,8 @@ These rules come from real project history. They are not suggestions.
 
 ## Edge Cases
 
-- No open bot PRs — report "No bot PRs to integrate" and check if there are orphaned
-  bot branches that should be cleaned up
-- Bot PR conflicts with main — close with comment, the bot will need to rebase from the issue
-- User has uncommitted local changes — stash before checkout, pop after
-- Emulator boot takes too long — use 120s timeout (same as run-emulator-tests.sh)
+- No bot branches at all — report "No bot PRs to integrate"
+- Bot PR conflicts with main — close with comment, the bot will need to rebase
+- User has uncommitted local changes — `integrate-gate.sh` auto-stashes and restores
+- Emulator boot takes too long — 120s timeout in `run-emulator-tests.sh`
+- SSH key not loaded for git fetch — scripts use `gh api` which authenticates via `gh` token
