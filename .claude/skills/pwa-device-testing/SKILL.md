@@ -41,6 +41,37 @@ Host machine                          Android Emulator (Pixel 7, API 35)
 - **Port forwarding**: `adb reverse tcp:8081 tcp:8081` so emulator's localhost reaches host
 - **Single worker CDP**: One CDP connection per test file, fresh tab per test
 
+## Interaction Design Principles (learned the hard way)
+
+### Emulator tests must be faithful proxies for human interaction
+
+Every dialog, prompt, and overlay that appears during a test flow must be handled the way a real user would handle it: see it, understand what it's asking, and dismiss it appropriately. This includes both app-owned dialogs (host key accept, vault setup) and Chrome-native UI (save password bar, add username suggestion, notification prompt).
+
+If a test can't click a button, a real user can't either. The test is surfacing a real UX bug.
+
+### Never use `force: true` to work around click interception
+
+When Playwright reports `<div class="vault-dialog">…</div> intercepts pointer events`, the correct response is to fix the CSS/layout so the button is actually clickable, NOT to bypass Playwright's actionability checks with `{ force: true }`. Using `force: true`:
+- Hides real interaction bugs from the test suite
+- Creates a test that passes while the actual user flow is broken
+- Masks layout overflow on mobile viewports
+
+Common causes of click interception on mobile:
+- `align-items: center` on `position: fixed; inset: 0` overlays — when the dialog content is taller than the viewport, content overflows and sibling elements intercept clicks. Fix: `align-items: flex-start` + `overflow-y: auto` on the overlay, `margin: auto 0` on the dialog for vertical centering that still allows scrolling.
+- Chrome-native UI (password save bar, username suggestion) appearing as a layer between your app dialog and the click target. Fix: suppress Chrome autofill on test fields with `autocomplete="off"`, pre-grant notifications, use `--disable-fre` flag.
+- Keyboard pushing elements up so labels overlap buttons. Fix: ensure sufficient spacing, or scroll the button into view first.
+
+### Feature removal is a valid outcome
+
+The selection overlay feature (#55) went through 6+ commits, was feature-flagged off, still caused interference with core scroll behavior (#143), and was ultimately removed entirely (600 lines deleted in 0ac4010). This validates the "know when to quit" principle: if every fix introduces a new bug, the abstraction is wrong. Strip it, ship the working core, and re-approach later with a cleaner design.
+
+### Always verify server version before asking user to test
+
+The server caches git hash at startup. A stale server process serves stale code even after commits. Before ANY manual or emulator testing:
+1. Run `server-ctl.sh ensure` (checks HEAD matches running server)
+2. Verify via `curl` that the production endpoint returns the expected version
+3. Suggest `?reset=1` to the user to bust service worker cache
+
 ## Critical Pitfalls (learned the hard way)
 
 ### Chrome DevTools socket requires `set-debug-app`
@@ -254,6 +285,8 @@ Everything needed to add Android emulator testing to a new project is in the ski
 The test runner collects results into `tests/emulator/baseline/` (tracked by git):
 - `screenshots/` — per-test PNG screenshots with descriptive names
 - `recording.mp4` — full screen recording of the test run
+- `report.json` — Playwright JSON reporter output with per-test timing
+- `frames/` — extracted video frames at test-critical moments (see below)
 
 Add to `.gitignore`:
 ```
@@ -261,6 +294,58 @@ playwright-report/
 playwright-report-emulator/
 test-results/
 !tests/emulator/baseline/
+```
+
+## Post-Run Video Frame Extraction
+
+Playwright's failure screenshots only show the DOM state at timeout — after the problem has already manifested. The screen recording captures everything, but a 3-minute video is useless for debugging without timestamps.
+
+`scripts/extract-test-frames.sh` bridges this gap: it reads the JSON test report, correlates each test's wall-clock timing with the video timeline, and extracts PNG frames at critical moments via ffmpeg. This gives the AI (or a human) a visual timeline of what was actually on screen when each test ran.
+
+**How it works:**
+1. Reads `tests/emulator/baseline/report.json` for test names, start times, durations, and pass/fail status
+2. Calculates video offset: `test_startTime - earliest_startTime` maps wall-clock to video position
+3. Extracts frames at: 2s before test start, midpoint, 1s before end
+4. For failed tests: extracts additional quarter-point and three-quarter-point frames
+5. Filenames encode the test name, moment, and status for easy scanning
+
+**Usage:**
+```bash
+# After running emulator tests:
+bash scripts/extract-test-frames.sh              # all tests
+bash scripts/extract-test-frames.sh --failed      # only failed tests
+bash scripts/extract-test-frames.sh --test "vault" # tests matching pattern
+```
+
+**Output example:**
+```
+tests/emulator/baseline/frames/
+  smoke-page-loads-and-renders-MobiSSH-shell-0-before.png
+  smoke-page-loads-and-renders-MobiSSH-shell-1-midpoint.png
+  smoke-page-loads-and-renders-MobiSSH-shell-2-end-passed.png
+  gestures-vertical-swipe-scrolls-terminal-0-before.png
+  gestures-vertical-swipe-scrolls-terminal-1a-quarter.png    # failed: extra frames
+  gestures-vertical-swipe-scrolls-terminal-1-midpoint.png
+  gestures-vertical-swipe-scrolls-terminal-1b-threequarter.png
+  gestures-vertical-swipe-scrolls-terminal-2-end-failed.png
+```
+
+**Why this matters for AI-assisted debugging:**
+When the AI reviews a test failure, it can read the extracted frames to understand whether:
+- The app was showing the expected dialog (host key, vault) or an unexpected interruption (Chrome "Save password?" bar, notification prompt)
+- A button click failed because of a real layout bug vs. a Chrome-native overlay
+- The test flow reached the right screen before timing out
+- The emulator was responsive or frozen
+
+This is the exit route from "guess why it failed from the error message" to "see what the user would have seen."
+
+**Prerequisites:** `ffmpeg` and `jq` must be installed. The emulator Playwright config must include the JSON reporter (already configured):
+```javascript
+reporter: [
+  ['list', { printSteps: true }],
+  ['html', { open: 'never', outputFolder: 'playwright-report-emulator' }],
+  ['json', { outputFile: 'tests/emulator/baseline/report.json' }],
+],
 ```
 
 ## Testing Checklists
@@ -300,7 +385,7 @@ adb emu finger touch 1
 - [ ] Virtual keyboard appears when tapping terminal or IME area
 - [ ] Swipe typing produces correct characters
 - [ ] Key bar buttons (Ctrl, Esc, Tab, arrows) send correct sequences
-- [ ] Long-press on terminal doesn't trigger unwanted selection
+- [ ] No green overlay or unwanted selection on double-tap (selection overlay removed in 0ac4010)
 - [ ] Ctrl sticky modifier works (tap Ctrl, then tap letter)
 
 ## Useful ADB Commands

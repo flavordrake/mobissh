@@ -28,6 +28,7 @@ module.exports = defineConfig({
   reporter: [
     ['list', { printSteps: true }],
     ['html', { open: 'never', outputFolder: 'playwright-report-emulator' }],
+    ['json', { outputFile: 'tests/emulator/baseline/report.json' }],
   ],
 
   // Start MobiSSH server unless BASE_URL is provided

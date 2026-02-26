@@ -139,8 +139,18 @@ sleep 1  # screenrecord needs a moment to finalize the mp4
 # Phase 5: Collect baseline results
 log "Phase 5: Collecting test results into $BASELINE_DIR"
 
+# Preserve report.json (written by JSON reporter during Phase 4), wipe the rest
+SAVED_REPORT=""
+if [[ -f "$BASELINE_DIR/report.json" ]]; then
+  SAVED_REPORT=$(mktemp)
+  cp "$BASELINE_DIR/report.json" "$SAVED_REPORT"
+fi
 rm -rf "$BASELINE_DIR"
 mkdir -p "$BASELINE_DIR/screenshots"
+if [[ -n "$SAVED_REPORT" && -f "$SAVED_REPORT" ]]; then
+  mv "$SAVED_REPORT" "$BASELINE_DIR/report.json"
+  ok "Preserved report.json"
+fi
 
 # Pull screen recording
 if adb shell "test -f $RECORDING_PATH" 2>/dev/null; then
@@ -167,6 +177,14 @@ done
 
 SCREENSHOT_COUNT="$(find "$BASELINE_DIR/screenshots" -name "*.png" 2>/dev/null | wc -l)"
 ok "Baseline collected: $SCREENSHOT_COUNT screenshots"
+
+# Phase 6: Extract video frames at test-critical moments
+if [[ -f "$BASELINE_DIR/report.json" && -f "$BASELINE_DIR/recording.mp4" ]]; then
+  log "Phase 6: Extracting video frames"
+  bash scripts/extract-test-frames.sh --failed || log "Frame extraction had errors (non-fatal)"
+else
+  log "Skipping frame extraction (missing report.json or recording.mp4)"
+fi
 
 log "Tests finished (exit $EXIT). Report: npx playwright show-report playwright-report-emulator"
 exit $EXIT
