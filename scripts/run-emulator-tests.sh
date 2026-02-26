@@ -21,11 +21,15 @@ SPEC="${1:-}"
 log() { printf '\033[36m> %s\033[0m\n' "$*"; }
 err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; exit 1; }
 
-# 1. Check emulator binary exists
+# 1. Ensure server is healthy and at HEAD
+log "Checking MobiSSH server..."
+PORT=$MOBISSH_PORT bash scripts/server-ctl.sh ensure
+
+# 2. Check emulator binary exists
 command -v emulator &>/dev/null || err "emulator not found. Run: bash scripts/setup-avd.sh"
 command -v adb &>/dev/null || err "adb not found. Run: bash scripts/setup-avd.sh"
 
-# 2. Boot emulator if no device is connected
+# 3. Boot emulator if no device is connected
 if ! adb devices 2>/dev/null | grep -q 'emulator\|device$'; then
   log "No device detected. Booting emulator ($AVD_NAME)..."
   emulator -avd "$AVD_NAME" -no-snapshot-save -gpu auto -no-audio &
@@ -48,12 +52,12 @@ else
   log "Emulator already running."
 fi
 
-# 3. Set up port forwarding
+# 4. Set up port forwarding
 adb reverse tcp:$MOBISSH_PORT tcp:$MOBISSH_PORT 2>/dev/null || true
 adb forward tcp:$CDP_PORT localabstract:chrome_devtools_remote 2>/dev/null || true
 log "Port forwarding: emulator localhost:$MOBISSH_PORT -> host, CDP on :$CDP_PORT"
 
-# 4. Enable Chrome remote debugging and launch
+# 5. Enable Chrome remote debugging and launch
 # Play Store Chrome is a release build — set-debug-app makes it expose the
 # DevTools Unix socket that Playwright connects to over CDP.
 log "Enabling Chrome remote debugging..."
@@ -69,7 +73,7 @@ sleep 3
 # Re-forward CDP after Chrome launch (socket appears after process starts)
 adb forward tcp:$CDP_PORT localabstract:chrome_devtools_remote 2>/dev/null || true
 
-# 5. Verify CDP is reachable
+# 6. Verify CDP is reachable
 if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
   log "CDP not reachable. Trying to enable Chrome DevTools..."
   # Chrome needs to have been started at least once; retry forward
@@ -81,7 +85,7 @@ if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
 fi
 log "CDP connection verified."
 
-# 6. Run Playwright tests
+# 7. Run Playwright tests
 log "Running emulator tests..."
 EXTRA_ARGS=()
 if [[ -n "$SPEC" ]]; then

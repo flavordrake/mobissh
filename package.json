@@ -4,6 +4,9 @@
   "scripts": {
     "start": "node server/index.js",
     "start:ssh": "BASE_PATH=/ssh PORT=8081 node server/index.js",
+    "server": "bash scripts/server-ctl.sh",
+    "server:ensure": "bash scripts/server-ctl.sh ensure",
+    "server:status": "bash scripts/server-ctl.sh status",
     "setup:nginx": "sudo bash scripts/setup-nginx.sh",
     "prepare": "git config core.hooksPath hooks",
     "build": "tsc",
