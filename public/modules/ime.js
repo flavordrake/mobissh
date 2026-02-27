@@ -149,6 +149,7 @@ export function initIMEInput() {
         if (!_scrollRafId)
             _scrollRafId = requestAnimationFrame(_flushScroll);
     }
+    // nosemgrep: duplicate-event-listener -- scroll (1-finger) and pinch (2-finger) are separate gestures
     termEl.addEventListener('touchstart', (e) => {
         console.log('[scroll] touchstart y=', e.touches[0].clientY, 'touches=', e.touches.length);
         _touchStartY = _lastTouchY = e.touches[0].clientY;
@@ -162,6 +163,7 @@ export function initIMEInput() {
             _scrollRafId = null;
         }
     }, { passive: true, capture: true });
+    // nosemgrep: duplicate-event-listener
     termEl.addEventListener('touchmove', (e) => {
         if (_touchStartY === null || _touchStartX === null)
             return;
@@ -210,6 +212,7 @@ export function initIMEInput() {
         _lastTouchY = e.touches[0].clientY;
         _lastTouchX = e.touches[0].clientX;
     }, { passive: false, capture: true });
+    // nosemgrep: duplicate-event-listener
     termEl.addEventListener('touchend', () => {
         const wasScroll = _isTouchScroll;
         const finalDx = (_lastTouchX ?? _touchStartX ?? 0) - (_touchStartX ?? 0);
@@ -235,16 +238,19 @@ export function initIMEInput() {
             }
         }
     }, { capture: true });
-    // ── Pinch-to-zoom → font size (#17) ──────────────────────────────────────
+    // ── Pinch-to-zoom → font size (#17) — behind enablePinchZoom setting ────
     let _pinchStartDist = null;
     let _pinchStartSize = null;
+    function _pinchEnabled() {
+        return localStorage.getItem('enablePinchZoom') === 'true';
+    }
     function _pinchDist(touches) {
         const dx = touches[0].clientX - touches[1].clientX;
         const dy = touches[0].clientY - touches[1].clientY;
         return Math.sqrt(dx * dx + dy * dy);
     }
     termEl.addEventListener('touchstart', (e) => {
-        if (e.touches.length !== 2)
+        if (e.touches.length !== 2 || !_pinchEnabled())
             return;
         _pinchStartDist = _pinchDist(e.touches);
         _pinchStartSize = appState.terminal

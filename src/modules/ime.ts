@@ -154,6 +154,7 @@ export function initIMEInput(): void {
     if (!_scrollRafId) _scrollRafId = requestAnimationFrame(_flushScroll);
   }
 
+  // nosemgrep: duplicate-event-listener -- scroll (1-finger) and pinch (2-finger) are separate gestures
   termEl.addEventListener('touchstart', (e) => {
     console.log('[scroll] touchstart y=', e.touches[0]!.clientY, 'touches=', e.touches.length);
     _touchStartY = _lastTouchY = e.touches[0]!.clientY;
@@ -165,6 +166,7 @@ export function initIMEInput(): void {
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
   }, { passive: true, capture: true });
 
+  // nosemgrep: duplicate-event-listener
   termEl.addEventListener('touchmove', (e) => {
     if (_touchStartY === null || _touchStartX === null) return;
     const totalDy = _touchStartY - e.touches[0]!.clientY;
@@ -216,6 +218,7 @@ export function initIMEInput(): void {
     _lastTouchX = e.touches[0]!.clientX;
   }, { passive: false, capture: true });
 
+  // nosemgrep: duplicate-event-listener
   termEl.addEventListener('touchend', () => {
     const wasScroll = _isTouchScroll;
     const finalDx = (_lastTouchX ?? _touchStartX ?? 0) - (_touchStartX ?? 0);
@@ -240,9 +243,13 @@ export function initIMEInput(): void {
     }
   }, { capture: true });
 
-  // ── Pinch-to-zoom → font size (#17) ──────────────────────────────────────
+  // ── Pinch-to-zoom → font size (#17) — behind enablePinchZoom setting ────
   let _pinchStartDist: number | null = null;
   let _pinchStartSize: number | null = null;
+
+  function _pinchEnabled(): boolean {
+    return localStorage.getItem('enablePinchZoom') === 'true';
+  }
 
   function _pinchDist(touches: TouchList): number {
     const dx = touches[0]!.clientX - touches[1]!.clientX;
@@ -251,7 +258,7 @@ export function initIMEInput(): void {
   }
 
   termEl.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 2) return;
+    if (e.touches.length !== 2 || !_pinchEnabled()) return;
     _pinchStartDist = _pinchDist(e.touches);
     _pinchStartSize = appState.terminal
       ? (appState.terminal.options.fontSize ?? 14)

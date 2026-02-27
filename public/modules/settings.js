@@ -65,6 +65,13 @@ export function initSettingsPanel() {
                 : 'SSRF protection re-enabled.');
         });
     }
+    const pinchEl = document.getElementById('enablePinchZoom');
+    if (pinchEl) {
+        pinchEl.checked = localStorage.getItem('enablePinchZoom') === 'true';
+        pinchEl.addEventListener('change', () => {
+            localStorage.setItem('enablePinchZoom', pinchEl.checked ? 'true' : 'false');
+        });
+    }
     document.getElementById('fontSize').addEventListener('input', (e) => {
         _applyFontSize(parseInt(e.target.value));
     });

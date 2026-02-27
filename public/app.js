@@ -4,6 +4,7 @@
  * Pure orchestration: imports all modules, wires dependencies via DI,
  * and sets up event delegation. No business logic lives here.
  */
+import { initDebugOverlay } from './modules/debug.js';
 import { initRecording } from './modules/recording.js';
 import { initVault } from './modules/vault.js';
 import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
@@ -16,6 +17,7 @@ import { ROOT_CSS, initTerminal, handleResize, initKeyboardAwareness, getKeyboar
 // ── Startup ──
 document.addEventListener('DOMContentLoaded', () => void (async () => {
     try {
+        initDebugOverlay();
         initTerminal();
         initUI({ keyboardVisible: getKeyboardVisible, ROOT_CSS, applyFontSize, applyTheme });
         initIME({ handleResize, applyFontSize });

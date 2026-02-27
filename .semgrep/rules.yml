@@ -1,0 +1,63 @@
+rules:
+  # Duplicate addEventListener on same element + event type.
+  # LLMs commonly add new listeners without consolidating existing ones.
+  - id: duplicate-event-listener
+    patterns:
+      - pattern: |
+          $EL.addEventListener($EVENT, ...);
+          ...
+          $EL.addEventListener($EVENT, ...);
+    message: >
+      Duplicate addEventListener($EVENT) on $EL. Consolidate into a single handler
+      or suppress with nosemgrep if intentional (e.g. separate gesture phases).
+    languages: [typescript, javascript]
+    severity: WARNING
+
+  # Global listeners (window/document) without cleanup.
+  # Element listeners in a SPA are typically app-lifetime and fine.
+  - id: global-listener-without-cleanup
+    patterns:
+      - pattern-either:
+          - pattern: window.addEventListener($EVENT, $FN, ...)
+          - pattern: document.addEventListener($EVENT, $FN, ...)
+          - pattern: window.visualViewport.addEventListener($EVENT, $FN, ...)
+      - pattern-not-inside: |
+          $X.addEventListener($EVENT, $FN, ...);
+          ...
+          $X.removeEventListener($EVENT, $FN, ...);
+    message: >
+      Global listener $EVENT without removeEventListener.
+    languages: [typescript, javascript]
+    severity: INFO
+
+  # setInterval without capturing the return value.
+  - id: interval-without-clear
+    patterns:
+      - pattern: setInterval(...)
+      - pattern-not: $X = setInterval(...)
+      - pattern-not: $OBJ.$PROP = setInterval(...)
+    message: >
+      setInterval() without capturing the ID. Cannot be cleared.
+    languages: [typescript, javascript]
+    severity: INFO
+
+  # Sensitive data stored in plaintext localStorage.
+  - id: plaintext-secret-storage
+    patterns:
+      - pattern: localStorage.setItem($KEY, ...)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: "(?i)['\"].*(?:passw|secret|private.?key|token|credential).*['\"]"
+    message: >
+      Storing sensitive data ($KEY) in plaintext localStorage.
+    languages: [typescript, javascript]
+    severity: ERROR
+
+  # Raw ANSI/SGR escape sequences without named constants.
+  - id: magic-escape-sequence
+    patterns:
+      - pattern-regex: "sendSSHInput\\(`\\\\x1b\\["
+    message: >
+      Raw escape sequence in sendSSHInput. Use named constants.
+    languages: [typescript, javascript]
+    severity: INFO

@@ -368,6 +368,28 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
+
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Debug overlay</span>
+            <p class="hint">Shows touch/scroll event logs on screen. Tap log to copy.</p>
+          </div>
+          <label class="toggle" aria-label="Enable debug overlay">
+            <input type="checkbox" id="debugOverlay" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Enable pinch-to-zoom</span>
+            <p class="hint">Two-finger pinch changes terminal font size. Disable if it interferes with scrolling.</p>
+          </div>
+          <label class="toggle" aria-label="Enable pinch-to-zoom">
+            <input type="checkbox" id="enablePinchZoom" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
       <button id="clearDataBtn" class="danger-btn">Clear all data (keys, profiles, settings)</button>
@@ -375,6 +397,16 @@
 
       <p id="versionInfo" class="version-info"></p>
     </div>
+  </div>
+
+  <!-- Debug overlay — shows console output on mobile devices without DevTools -->
+  <div id="debugOverlayPanel" class="debug-overlay hidden">
+    <div class="debug-overlay-header">
+      <span>Debug Log</span>
+      <button id="debugCopyBtn" class="debug-overlay-btn">Copy</button>
+      <button id="debugClearBtn" class="debug-overlay-btn">Clear</button>
+    </div>
+    <div id="debugOverlayLog" class="debug-overlay-log"></div>
   </div>
 
   <!-- Recovery watchdog — loaded before app.js so it fires even on init failure.

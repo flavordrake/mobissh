@@ -21,3 +21,9 @@ fi
 
 echo "Running ESLint on staged files..."
 npx eslint --max-warnings=-1 $STAGED
+
+# Run semgrep on staged TS files (if semgrep is available)
+if [ -n "$STAGED_TS" ] && command -v semgrep >/dev/null 2>&1; then
+  echo "Running semgrep on staged TS files..."
+  semgrep --config .semgrep/rules.yml $STAGED_TS --no-git-ignore --error --severity WARNING
+fi
