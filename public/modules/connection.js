@@ -19,9 +19,18 @@ export function initConnection({ toast, setStatus, focusIME, applyTabBarVisibili
     _applyTabBarVisibility = applyTabBarVisibility;
 }
 // ── WebSocket / SSH connection ────────────────────────────────────────────────
+// Max consecutive pre-open WS close events before halting the reconnect loop.
+// A close before onopen fires typically indicates a server-side auth rejection.
+const WS_MAX_AUTH_FAILURES = 3;
+let _wsConsecFailures = 0;
+/** Read the HMAC token injected by the server on page load (#93). */
+function _getWsToken() {
+    return document.querySelector('meta[name="ws-token"]')?.content ?? '';
+}
 export function connect(profile) {
     appState.currentProfile = profile;
     appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+    _wsConsecFailures = 0;
     cancelReconnect();
     _openWebSocket();
 }
@@ -31,9 +40,12 @@ function _openWebSocket() {
         appState.ws.close();
         appState.ws = null;
     }
-    const wsUrl = localStorage.getItem('wsUrl') ?? getDefaultWsUrl();
-    _setStatus('connecting', `Connecting to ${wsUrl}…`);
-    appState.terminal?.writeln(ANSI.yellow(`Connecting to ${wsUrl}…`));
+    const baseUrl = localStorage.getItem('wsUrl') ?? getDefaultWsUrl();
+    const token = _getWsToken();
+    const wsUrl = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+    _setStatus('connecting', `Connecting to ${baseUrl}…`);
+    appState.terminal?.writeln(ANSI.yellow(`Connecting to ${baseUrl}…`));
+    let openedThisAttempt = false;
     try {
         appState.ws = new WebSocket(wsUrl);
     }
@@ -44,6 +56,8 @@ function _openWebSocket() {
         return;
     }
     appState.ws.onopen = () => {
+        openedThisAttempt = true;
+        _wsConsecFailures = 0;
         appState._wsConnected = true;
         startKeepAlive();
         if (!appState.currentProfile)
@@ -149,9 +163,24 @@ function _openWebSocket() {
         stopKeepAlive();
         if (appState.currentProfile) {
             _setStatus('disconnected', 'Disconnected');
-            if (!event.wasClean) {
+            if (!openedThisAttempt) {
+                // Connection closed before onopen — likely an auth rejection (HTTP 401).
+                _wsConsecFailures++;
+                if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
+                    _wsConsecFailures = 0;
+                    appState.terminal?.writeln(ANSI.red('Connection rejected repeatedly. Your session token may have expired — reload the page to get a fresh one.'));
+                    _setStatus('disconnected', 'Auth failed — reload to reconnect');
+                    return; // stop the reconnect loop
+                }
                 appState.terminal?.writeln(ANSI.red('Connection lost.'));
                 scheduleReconnect();
+            }
+            else {
+                _wsConsecFailures = 0;
+                if (!event.wasClean) {
+                    appState.terminal?.writeln(ANSI.red('Connection lost.'));
+                    scheduleReconnect();
+                }
             }
         }
     };

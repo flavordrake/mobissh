@@ -27,7 +27,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { createHash } = require('crypto');
+const { createHash, createHmac, randomBytes, timingSafeEqual } = require('crypto');
 const { execSync } = require('child_process');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
@@ -39,6 +39,35 @@ const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, '');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
+
+// ─── WS upgrade authentication (issue #93) ────────────────────────────────────
+// Per-boot secret — never stored, never logged, never leaves this process.
+const SESSION_SECRET = randomBytes(32);
+// Token expiry: 1 hour by default; covers normal sessions and auto-reconnects.
+const WS_TOKEN_EXPIRY_MS = parseInt(process.env.WS_TOKEN_EXPIRY_MS || '') || 3_600_000;
+
+/** Produces a `timestamp:nonce:hmac` token signed with SESSION_SECRET. */
+function generateWsToken() {
+  const ts = Date.now().toString();
+  const nonce = randomBytes(16).toString('hex');
+  const mac = createHmac('sha256', SESSION_SECRET).update(`${ts}:${nonce}`).digest('hex');
+  return `${ts}:${nonce}:${mac}`;
+}
+
+/** Returns true iff the token is well-formed, unexpired, and HMAC-valid. */
+function validateWsToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split(':');
+  if (parts.length !== 3) return false;
+  const [ts, nonce, mac] = parts;
+  const tsNum = parseInt(ts, 10);
+  if (isNaN(tsNum) || Date.now() - tsNum > WS_TOKEN_EXPIRY_MS) return false;
+  const expected = createHmac('sha256', SESSION_SECRET).update(`${ts}:${nonce}`).digest('hex');
+  const expectedBuf = Buffer.from(expected);
+  const macBuf = Buffer.from(mac);
+  if (expectedBuf.length !== macBuf.length) return false;
+  return timingSafeEqual(expectedBuf, macBuf);
+}
 
 const APP_VERSION = require('./package.json').version || '0.0.0';
 let GIT_HASH = 'unknown';
@@ -126,6 +155,11 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
           `<head><meta name="app-base-path" content="${BASE_PATH}">`
         );
       }
+      // Inject a fresh per-page-load HMAC token for WS upgrade auth (#93).
+      html = html.replace(
+        '<head>',
+        `<head><meta name="ws-token" content="${generateWsToken()}">`
+      );
       data = Buffer.from(html);
     }
     // Rewrite manifest.json when serving under a subpath so the PWA installs
@@ -170,7 +204,19 @@ function getIP(req) {
     || 'unknown';
 }
 
-const wss = new WebSocket.Server({ server, maxPayload: MAX_MESSAGE_SIZE });
+const wss = new WebSocket.Server({
+  server,
+  maxPayload: MAX_MESSAGE_SIZE,
+  verifyClient({ req }, callback) {
+    const url = new URL(req.url, 'http://localhost');
+    const token = url.searchParams.get('token');
+    if (!validateWsToken(token)) {
+      callback(false, 401, 'Unauthorized');
+      return;
+    }
+    callback(true);
+  },
+});
 
 // WebSocket-level ping/pong to keep idle connections alive through proxies/NAT.
 // Any client that doesn't pong within one interval is terminated.

@@ -8,3 +8,4 @@ test-results/
 # Baseline results ARE tracked (overwritten each run)
 !tests/emulator/baseline/
 *.js.map
+test-data/
