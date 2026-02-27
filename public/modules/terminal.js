@@ -73,6 +73,14 @@ export function initKeyboardAwareness() {
         const vv = window.visualViewport;
         if (!vv)
             return;
+        // Ignore pinch-zoom — only respond to keyboard-driven viewport changes.
+        // When scale ≠ 1 the user is zoomed; layout must stay fixed so the key bar
+        // does not reflow on top of the terminal (#139).
+        // (user-scalable=no is ignored by iOS 10+ / modern Android for a11y, so
+        // pinch-zoom still fires visualViewport resize events even though we ask for
+        // it not to.)
+        if (Math.abs(vv.scale - 1) > 0.01)
+            return;
         const h = Math.round(vv.height);
         keyboardVisible = h < window.outerHeight * 0.75;
         if (vv.scale === 1)
