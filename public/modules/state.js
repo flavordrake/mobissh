@@ -27,7 +27,7 @@ export const appState = {
     vaultIdleTimer: null,
     // UI visibility
     keyBarVisible: true,
-    imeMode: true,
+    imeMode: false,
     tabBarVisible: true,
     hasConnected: false,
     activeThemeName: 'dark',

@@ -2,7 +2,7 @@
  * modules/ui.ts — UI chrome
  *
  * Session menu, tab bar, key bar, connect form, status indicator,
- * toast utility, IME focus, and Ctrl modifier management.
+ * toast utility, IME focus, Ctrl modifier, and Compose mode management.
  */
 
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName } from './types.js';
@@ -318,20 +318,20 @@ export function initTerminalActions(): void {
   }
 }
 
-// ── Key bar visibility (#1) + IME/Direct mode (#2) ──────────────────────────
+// ── Key bar visibility (#1) + Compose/Direct mode (#146) ────────────────────
 
 export function initKeyBar(): void {
   appState.keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
-  appState.imeMode = localStorage.getItem('imeMode') !== 'direct';
+  appState.imeMode = localStorage.getItem('imeMode') === 'ime';
 
   _applyKeyBarVisibility();
-  _applyImeModeUI();
+  _applyComposeModeUI();
 
   document.getElementById('handleChevron')!.addEventListener('click', toggleKeyBar);
   document.getElementById('tabBarToggleBtn')!.addEventListener('click', toggleTabBar);
 
-  document.getElementById('keyModeBtn')!.addEventListener('click', () => {
-    toggleImeMode();
+  document.getElementById('composeModeBtn')!.addEventListener('click', () => {
+    toggleComposeMode();
     focusIME();
   });
 }
@@ -357,16 +357,16 @@ function _applyKeyBarVisibility(): void {
   );
 }
 
-function toggleImeMode(): void {
+export function toggleComposeMode(): void {
   appState.imeMode = !appState.imeMode;
   localStorage.setItem('imeMode', appState.imeMode ? 'ime' : 'direct');
-  _applyImeModeUI();
+  _applyComposeModeUI();
   focusIME();
 }
 
-function _applyImeModeUI(): void {
-  const btn = document.getElementById('keyModeBtn');
+function _applyComposeModeUI(): void {
+  const btn = document.getElementById('composeModeBtn');
   if (!btn) return;
-  btn.textContent = 'IME';
-  btn.classList.toggle('ime-active', appState.imeMode);
+  btn.classList.toggle('compose-active', appState.imeMode);
+  document.getElementById('key-bar')?.classList.toggle('compose-active', appState.imeMode);
 }

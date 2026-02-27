@@ -203,21 +203,19 @@ test.describe('Connect form', () => {
     expect(second).toBe('key');
   });
 
-  test('password and passphrase fields are masked via CSS, not type="password" (#98)', async ({ page }) => {
-    // type="text" + -webkit-text-security:disc avoids Chrome autofill classification (#98)
-    // while still visually masking the input
-    await expect(page.locator('#password')).toHaveAttribute('type', 'text');
-    const pwSecurity = await page.locator('#password').evaluate(
-      el => getComputedStyle(el).webkitTextSecurity
-    );
-    expect(pwSecurity).toBe('disc');
+  test('password and passphrase fields use type="password" with IME suppression (#147)', async ({ page }) => {
+    // type="password" prevents IME suggestion bar from learning keystrokes (#147)
+    // autocorrect/autocapitalize/spellcheck="off" suppress remaining IME features
+    await expect(page.locator('#password')).toHaveAttribute('type', 'password');
+    await expect(page.locator('#password')).toHaveAttribute('autocorrect', 'off');
+    await expect(page.locator('#password')).toHaveAttribute('autocapitalize', 'off');
+    await expect(page.locator('#password')).toHaveAttribute('spellcheck', 'false');
 
     await page.locator('#authType').selectOption('key');
-    await expect(page.locator('#passphrase')).toHaveAttribute('type', 'text');
-    const ppSecurity = await page.locator('#passphrase').evaluate(
-      el => getComputedStyle(el).webkitTextSecurity
-    );
-    expect(ppSecurity).toBe('disc');
+    await expect(page.locator('#passphrase')).toHaveAttribute('type', 'password');
+    await expect(page.locator('#passphrase')).toHaveAttribute('autocorrect', 'off');
+    await expect(page.locator('#passphrase')).toHaveAttribute('autocapitalize', 'off');
+    await expect(page.locator('#passphrase')).toHaveAttribute('spellcheck', 'false');
   });
 
   test('switching to key auth shows privateKey field', async ({ page }) => {

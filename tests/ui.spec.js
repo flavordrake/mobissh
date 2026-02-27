@@ -50,30 +50,36 @@ test.describe('UI chrome (#110 Phase 8)', () => {
     await expect(page.locator('#key-bar')).not.toHaveClass(/hidden/);
   });
 
-  test('IME/direct mode toggle switches and persists', async ({ page, mockSshServer }) => {
+  test('compose/direct mode toggle switches and persists (#146)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // Default is IME mode
+    // Default is Direct mode (secure by default)
     const modeBefore = await page.evaluate(() => localStorage.getItem('imeMode'));
-    expect(modeBefore).toBeNull(); // default — not set yet
+    expect(modeBefore).toBeNull(); // default — not set yet, resolves to direct
 
-    // Click IME mode button to switch to direct
-    await page.locator('#keyModeBtn').click();
+    // Click compose button to switch to compose (IME) mode
+    await page.locator('#composeModeBtn').click();
     await page.waitForTimeout(100);
 
     const modeAfter = await page.evaluate(() => localStorage.getItem('imeMode'));
-    expect(modeAfter).toBe('direct');
+    expect(modeAfter).toBe('ime');
 
-    // Button should still show "IME" text but toggle class
-    const btnText = await page.locator('#keyModeBtn').textContent();
-    expect(btnText).toBe('IME');
+    // Button should have compose-active class and accent line on key bar
+    const btnHasClass = await page.locator('#composeModeBtn').evaluate(
+      (el) => el.classList.contains('compose-active')
+    );
+    expect(btnHasClass).toBe(true);
+    const barHasClass = await page.locator('#key-bar').evaluate(
+      (el) => el.classList.contains('compose-active')
+    );
+    expect(barHasClass).toBe(true);
 
-    // Click again to switch back
-    await page.locator('#keyModeBtn').click();
+    // Click again to switch back to direct
+    await page.locator('#composeModeBtn').click();
     await page.waitForTimeout(100);
 
     const modeRestored = await page.evaluate(() => localStorage.getItem('imeMode'));
-    expect(modeRestored).toBe('ime');
+    expect(modeRestored).toBe('direct');
   });
 
   test('session menu opens only when connected', async ({ page }) => {

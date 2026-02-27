@@ -10,7 +10,7 @@
 import { KEY_MAP } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
-import { toast, focusIME, setCtrlActive } from './ui.js';
+import { toast, focusIME, setCtrlActive, toggleComposeMode } from './ui.js';
 let _handleResize = () => { };
 let _applyFontSize = (_size) => { };
 export function initIME({ handleResize, applyFontSize }) {
@@ -44,6 +44,8 @@ export function initIMEInput() {
             return;
         if (text === '\n') {
             sendSSHInput('\r');
+            if (appState.imeMode)
+                toggleComposeMode();
             return;
         }
         if (appState.ctrlActive) {
@@ -72,6 +74,8 @@ export function initIMEInput() {
             return;
         if (text === '\n') {
             sendSSHInput('\r');
+            if (appState.imeMode)
+                toggleComposeMode();
             return;
         }
         if (appState.ctrlActive) {

@@ -12,7 +12,7 @@ import type { IMEDeps } from './types.js';
 import { KEY_MAP } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
-import { toast, focusIME, setCtrlActive } from './ui.js';
+import { toast, focusIME, setCtrlActive, toggleComposeMode } from './ui.js';
 
 let _handleResize = (): void => {};
 let _applyFontSize = (_size: number): void => {};
@@ -46,7 +46,11 @@ export function initIMEInput(): void {
     const text = ime.value;
     ime.value = '';
     if (!text) return;
-    if (text === '\n') { sendSSHInput('\r'); return; }
+    if (text === '\n') {
+      sendSSHInput('\r');
+      if (appState.imeMode) toggleComposeMode();
+      return;
+    }
     if (appState.ctrlActive) {
       const code = text[0]!.toLowerCase().charCodeAt(0) - 96;
       sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
@@ -71,7 +75,11 @@ export function initIMEInput(): void {
     const text = ime.value || e.data;
     ime.value = '';
     if (!text) return;
-    if (text === '\n') { sendSSHInput('\r'); return; }
+    if (text === '\n') {
+      sendSSHInput('\r');
+      if (appState.imeMode) toggleComposeMode();
+      return;
+    }
     if (appState.ctrlActive) {
       const code = text[0]!.toLowerCase().charCodeAt(0) - 96;
       sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);

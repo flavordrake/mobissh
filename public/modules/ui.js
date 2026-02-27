@@ -2,7 +2,7 @@
  * modules/ui.ts — UI chrome
  *
  * Session menu, tab bar, key bar, connect form, status indicator,
- * toast utility, IME focus, and Ctrl modifier management.
+ * toast utility, IME focus, Ctrl modifier, and Compose mode management.
  */
 import { KEY_REPEAT, THEMES, THEME_ORDER } from './constants.js';
 import { appState } from './state.js';
@@ -277,16 +277,16 @@ export function initTerminalActions() {
             navigator.vibrate(10); });
     }
 }
-// ── Key bar visibility (#1) + IME/Direct mode (#2) ──────────────────────────
+// ── Key bar visibility (#1) + Compose/Direct mode (#146) ────────────────────
 export function initKeyBar() {
     appState.keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
-    appState.imeMode = localStorage.getItem('imeMode') !== 'direct';
+    appState.imeMode = localStorage.getItem('imeMode') === 'ime';
     _applyKeyBarVisibility();
-    _applyImeModeUI();
+    _applyComposeModeUI();
     document.getElementById('handleChevron').addEventListener('click', toggleKeyBar);
     document.getElementById('tabBarToggleBtn').addEventListener('click', toggleTabBar);
-    document.getElementById('keyModeBtn').addEventListener('click', () => {
-        toggleImeMode();
+    document.getElementById('composeModeBtn').addEventListener('click', () => {
+        toggleComposeMode();
         focusIME();
     });
 }
@@ -307,17 +307,17 @@ function _applyKeyBarVisibility() {
         chevron.textContent = appState.keyBarVisible ? '▾' : '▴';
     document.documentElement.style.setProperty('--keybar-height', appState.keyBarVisible ? _ROOT_CSS.keybarHeight : '0px');
 }
-function toggleImeMode() {
+export function toggleComposeMode() {
     appState.imeMode = !appState.imeMode;
     localStorage.setItem('imeMode', appState.imeMode ? 'ime' : 'direct');
-    _applyImeModeUI();
+    _applyComposeModeUI();
     focusIME();
 }
-function _applyImeModeUI() {
-    const btn = document.getElementById('keyModeBtn');
+function _applyComposeModeUI() {
+    const btn = document.getElementById('composeModeBtn');
     if (!btn)
         return;
-    btn.textContent = 'IME';
-    btn.classList.toggle('ime-active', appState.imeMode);
+    btn.classList.toggle('compose-active', appState.imeMode);
+    document.getElementById('key-bar')?.classList.toggle('compose-active', appState.imeMode);
 }
 //# sourceMappingURL=ui.js.map

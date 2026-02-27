@@ -33,7 +33,7 @@ export const appState: AppState = {
 
   // UI visibility
   keyBarVisible: true,
-  imeMode: true,
+  imeMode: false,
   tabBarVisible: true,
   hasConnected: false,
   activeThemeName: 'dark',

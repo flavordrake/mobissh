@@ -356,7 +356,7 @@ html, body {
 
 #key-bar.hidden { height: 0; }
 
-/* Single key row: scrollable keys + right-anchored IME toggle */
+/* Single key row: scrollable keys + right-anchored compose toggle */
 #key-keys-row {
   display: flex;
   align-items: center;
@@ -377,19 +377,36 @@ html, body {
 
 #key-scroll::-webkit-scrollbar { display: none; }
 
-/* IME / direct-mode toggle button — right-anchored in key row */
+/* Compose / direct-mode toggle button — right-anchored in key row (#146) */
 .mode-btn {
-  font-size: 11px;
   padding: 0 6px;
   height: var(--key-btn-height);
   color: var(--text-dim);
   flex-shrink: 0;
   margin-left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-/* IME active = accent colour; off = dim (no label change, always "IME") */
-.mode-btn.ime-active {
-  color: var(--accent);
+.mode-btn svg { display: block; }
+
+/* Compose active: filled accent button */
+.mode-btn.compose-active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+/* Mode indicator line between terminal and key bar */
+#key-bar {
+  border-top: 2px solid transparent;
+  transition: border-top-color 0.15s ease;
+}
+
+#key-bar.compose-active {
+  border-top-color: var(--accent);
 }
 
 .key-btn {
@@ -449,12 +466,6 @@ html, body {
 .xterm-viewport::-webkit-scrollbar { width: 4px; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); }
 
-/* Connect form: mask password/passphrase with dots without using type="password",
-   which triggers Chrome autofill classification (#98) */
-#password,
-#passphrase {
-  -webkit-text-security: disc;
-}
 
 /* Scrollable panels */
 #panel-connect,

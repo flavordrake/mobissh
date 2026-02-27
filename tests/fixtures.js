@@ -234,8 +234,12 @@ async function setupConnected(page, mockSshServer) {
 
   // The app calls switchToTerminal() on form submit, then on receiving `connected`
   // it calls focusIME() automatically and hides the tab bar (#36).
+  // Default is Direct mode (#146), so focus whichever input is active.
   await page.waitForSelector('#panel-terminal.active', { timeout: 5000 });
-  await page.locator('#imeInput').focus().catch(() => {});
+  const activeInput = await page.evaluate(() =>
+    document.getElementById('imeInput') === document.activeElement ? 'imeInput' : 'directInput'
+  );
+  await page.locator(`#${activeInput}`).focus().catch(() => {});
   await page.waitForTimeout(100);
 }
 
