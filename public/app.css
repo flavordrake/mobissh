@@ -92,13 +92,14 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 4px;
   background: none;
   border: none;
   color: var(--text-dim);
   cursor: pointer;
   transition: color 0.15s;
-  padding: 4px;
+  padding: 6px 8px;
+  min-width: 44px; /* WCAG 2.5.5 minimum touch target */
   -webkit-user-select: none;
   user-select: none;
 }
@@ -108,12 +109,12 @@ html, body {
 }
 
 .tab-icon {
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1;
 }
 
 .tab-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -424,8 +425,14 @@ html, body {
 }
 
 /* Named word keys: tighter padding, they don't need much room */
-#keyEsc, #keyCtrl, #keyTab, #keyHome, #keyEnd, #keyPgUp, #keyPgDn {
+#keyEsc, #keyTab, #keyHome, #keyEnd, #keyPgUp, #keyPgDn {
   padding: 0 5px;
+}
+
+/* Modifier keys (Ctrl, Shift) — narrower than action keys to save horizontal space */
+.key-btn.modifier {
+  padding: 0 4px;
+  max-width: 32px;
 }
 
 .key-btn.modifier.active {
