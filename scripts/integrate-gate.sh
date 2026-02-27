@@ -65,14 +65,31 @@ cleanup() {
 trap cleanup EXIT
 
 # Checkout the branch
+# Use HTTPS via gh CLI if SSH fetch fails (SSH key may not be loaded)
 log "Fetching and checking out ${BRANCH}..."
 if ! git fetch origin "$BRANCH" 2>/dev/null; then
-  err "Failed to fetch origin/${BRANCH}"
-  exit 2
-fi
-if ! git checkout "origin/${BRANCH}" --detach 2>/dev/null; then
-  err "Failed to checkout origin/${BRANCH}"
-  exit 2
+  log "SSH fetch failed, trying HTTPS via gh..."
+  REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)
+  if [ -n "$REPO" ]; then
+    HTTPS_URL="https://github.com/${REPO}.git"
+    if ! git fetch "$HTTPS_URL" "$BRANCH" 2>/dev/null; then
+      err "Failed to fetch ${BRANCH} via both SSH and HTTPS"
+      exit 2
+    fi
+    # FETCH_HEAD points to what we just fetched
+    if ! git checkout FETCH_HEAD --detach 2>/dev/null; then
+      err "Failed to checkout FETCH_HEAD for ${BRANCH}"
+      exit 2
+    fi
+  else
+    err "Failed to fetch origin/${BRANCH} and gh CLI unavailable"
+    exit 2
+  fi
+else
+  if ! git checkout "origin/${BRANCH}" --detach 2>/dev/null; then
+    err "Failed to checkout origin/${BRANCH}"
+    exit 2
+  fi
 fi
 
 # Gate 1: TypeScript
