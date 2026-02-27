@@ -128,7 +128,10 @@ test.describe('Touch gestures (Android emulator + real SSH)', () => {
 
     // Button 64 = WheelUp (scroll to see older content)
     const hasWheelUp = sgrEvents.some(m => m.data.startsWith('\x1b[<64;'));
+    const hasWheelDown = sgrEvents.some(m => m.data.startsWith('\x1b[<65;'));
     expect(hasWheelUp).toBe(true);
+    // Must NOT contain opposite direction — catches inverted button mapping
+    expect(hasWheelDown).toBe(false);
 
     // Clean up tmux
     await sendCommand(page, 'exit');

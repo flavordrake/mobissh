@@ -62,6 +62,18 @@ function ensureScript() {
   execSync(`docker cp "${FILL_SCRIPT}" mobissh-test-sshd-1:/tmp/fill-scrollback.sh`);
 }
 
+/** Extract SGR button codes from events. */
+function sgrButtons(events) {
+  return events.map(e => {
+    // SGR format: ESC[<btn;col;rowM — extract the button number
+    const idx = e.data.indexOf('[<');
+    if (idx === -1) return null;
+    const semi = e.data.indexOf(';', idx);
+    if (semi === -1) return null;
+    return parseInt(e.data.substring(idx + 2, semi));
+  }).filter(b => b !== null);
+}
+
 /** Perform 3 consecutive swipes. Returns screen content and SGR mouse events.
  *  useViewport: true for client-side scroll (plain shell), false for server-side (tmux). */
 async function swipeAndCapture(page, testInfo, label, y1, y2, useViewport = false) {
@@ -166,8 +178,21 @@ test.describe('vertical scroll (Android emulator + real SSH)', () => {
 
     // In tmux: SGR mouse wheel events sent to SSH
     expect(sgrEvents.length).toBeGreaterThan(0);
+
+    // Direction-aware: swipe UP (y 300→1200) = finger down = scroll to older
+    // SGR WheelUp = button 64; should NOT contain button 65
+    const buttonsUp1 = sgrButtons(sgrEvents);
+    expect(buttonsUp1).toContain(64);
+    expect(buttonsUp1).not.toContain(65);
+
+    // Content should have moved away from the bottom
     expect(afterUp1).not.toBe(bottomContent);
+    expect(afterUp1).not.toMatch(/END OF DATA/);
+
+    // Swipe down should return toward newer content
     expect(afterDown).not.toBe(afterUp1);
+
+    // Three positions should not all be the same
     expect(afterUp1 === afterDown && afterDown === afterUp2).toBe(false);
 
     await sendCommand(page, 'exit');
@@ -210,7 +235,14 @@ test.describe('vertical scroll (Android emulator + real SSH)', () => {
 
     // SGR events should still be sent even with keyboard visible
     expect(sgrEvents.length).toBeGreaterThan(0);
+
+    // Direction-aware: swipe UP (y 300→1050) = scroll to older = button 64
+    const buttonsUp = sgrButtons(sgrEvents);
+    expect(buttonsUp).toContain(64);
+    expect(buttonsUp).not.toContain(65);
+
     expect(afterUp).not.toBe(bottomContent);
+    expect(afterUp).not.toMatch(/END OF DATA/);
     expect(afterDown).not.toBe(afterUp);
     expect(afterUp === afterDown && afterDown === afterUp2).toBe(false);
 
