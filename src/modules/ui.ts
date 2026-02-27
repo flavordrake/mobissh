@@ -254,6 +254,11 @@ export function initConnectForm(): void {
 
 // ── Key bar ──────────────────────────────────────────────────────────────────
 
+/** Pixels of pointer movement required to classify a gesture as scroll (not tap). */
+const HAPTIC_SCROLL_THRESHOLD = 5;
+/** Milliseconds to defer the haptic press callback — cancelled if scroll detected first. */
+const HAPTIC_DEFER_MS = 50;
+
 export function setCtrlActive(active: boolean): void {
   appState.ctrlActive = active;
   document.getElementById('keyCtrl')?.classList.toggle('active', active);
@@ -262,20 +267,39 @@ export function setCtrlActive(active: boolean): void {
 function _attachRepeat(element: HTMLElement, onRepeat: () => void, onPress?: () => void): void {
   let _delayTimer: ReturnType<typeof setTimeout> | null = null;
   let _intervalTimer: ReturnType<typeof setInterval> | null = null;
+  let _hapticTimer: ReturnType<typeof setTimeout> | null = null;
+  let _startX = 0;
+  let _startY = 0;
 
   function _clear(): void {
     if (_delayTimer) clearTimeout(_delayTimer);
     if (_intervalTimer) clearInterval(_intervalTimer);
+    if (_hapticTimer) { clearTimeout(_hapticTimer); _hapticTimer = null; }
     _delayTimer = _intervalTimer = null;
   }
 
   element.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    if (onPress) onPress();
+    _startX = e.clientX;
+    _startY = e.clientY;
+    if (onPress) {
+      _hapticTimer = setTimeout(() => { _hapticTimer = null; onPress(); }, HAPTIC_DEFER_MS);
+    }
     onRepeat();
     _delayTimer = setTimeout(() => {
       _intervalTimer = setInterval(onRepeat, KEY_REPEAT.INTERVAL_MS);
     }, KEY_REPEAT.DELAY_MS);
+  });
+
+  element.addEventListener('pointermove', (e) => {
+    if (_hapticTimer !== null) {
+      const dx = Math.abs(e.clientX - _startX);
+      const dy = Math.abs(e.clientY - _startY);
+      if (dx > HAPTIC_SCROLL_THRESHOLD || dy > HAPTIC_SCROLL_THRESHOLD) {
+        clearTimeout(_hapticTimer);
+        _hapticTimer = null;
+      }
+    }
   });
 
   element.addEventListener('pointerup', () => { _clear(); setTimeout(focusIME, 50); });
