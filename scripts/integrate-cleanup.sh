@@ -33,9 +33,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-log() { printf '\033[36m> %s\033[0m\n' "$*"; }
-ok()  { printf '\033[32m+ %s\033[0m\n' "$*"; }
-err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; }
+log() { echo "> $*"; }
+ok()  { echo "+ $*"; }
+err() { echo "! $*" >&2; }
 
 delete_branch() {
   local branch="$1"

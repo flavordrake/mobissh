@@ -22,9 +22,9 @@ set -euo pipefail
 
 RESULTS_DIR="test-results/emulator"
 
-log() { printf '\033[36m> %s\033[0m\n' "$*"; }
-ok()  { printf '\033[32m✓ %s\033[0m\n' "$*"; }
-err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; exit 1; }
+log() { echo "> $*"; }
+ok()  { echo "+ $*"; }
+err() { echo "! $*" >&2; exit 1; }
 
 # Parse args
 FILTER_FAILED=false

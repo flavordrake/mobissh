@@ -19,8 +19,8 @@ DEVICE_PROFILE="pixel_7"
 export ANDROID_HOME JAVA_HOME
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 
-log() { printf '\033[36m> %s\033[0m\n' "$*"; }
-err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; exit 1; }
+log() { echo "> $*"; }
+err() { echo "! $*" >&2; exit 1; }
 
 # Sanity checks
 [[ -f "$JAVA_HOME/bin/java" ]] || err "Java not found at $JAVA_HOME/bin/java (is android-studio snap installed?)"

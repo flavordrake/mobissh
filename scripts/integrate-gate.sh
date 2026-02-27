@@ -36,9 +36,9 @@ fi
 
 cd "$(dirname "$0")/.."
 
-log() { printf '\033[36m> %s\033[0m\n' "$*"; }
-ok()  { printf '\033[32m+ %s\033[0m\n' "$*"; }
-err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; }
+log() { echo "> $*"; }
+ok()  { echo "+ $*"; }
+err() { echo "! $*" >&2; }
 
 # Track results
 TSC_RESULT=""

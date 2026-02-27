@@ -20,9 +20,9 @@ SPEC="${1:-}"
 RESULTS_DIR="test-results/emulator"
 RECORDING_PATH="/sdcard/emulator-test.mp4"
 
-log() { printf '\033[36m> %s\033[0m\n' "$*"; }
-ok()  { printf '\033[32m✓ %s\033[0m\n' "$*"; }
-err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; exit 1; }
+log() { echo "> $*"; }
+ok()  { echo "+ $*"; }
+err() { echo "! $*" >&2; exit 1; }
 
 wait_for_port() {
   local host=$1 port=$2 label=$3 max=${4:-30}
@@ -165,55 +165,40 @@ dismiss_chrome_modals
 # Phase 4: Screen recording + tests
 log "Phase 4: Running Playwright emulator tests"
 
-# Start screen recording (180s limit covers most test runs; killed on completion)
 adb shell "rm -f $RECORDING_PATH" 2>/dev/null || true
 adb shell "screenrecord --time-limit 180 $RECORDING_PATH" &
 RECORD_PID=$!
-log "Screen recording started (PID $RECORD_PID)"
 
 EXTRA_ARGS=()
-if [[ -n "$SPEC" ]]; then
-  EXTRA_ARGS+=("tests/emulator/$SPEC")
-fi
+[[ -n "$SPEC" ]] && EXTRA_ARGS+=("tests/emulator/$SPEC")
 
 CDP_PORT=$CDP_PORT npx playwright test \
   --config=playwright.emulator.config.js \
   "${EXTRA_ARGS[@]}" || true
 EXIT=${PIPESTATUS[0]:-$?}
 
-# Stop recording
 kill "$RECORD_PID" 2>/dev/null || true
 wait "$RECORD_PID" 2>/dev/null || true
-sleep 1  # screenrecord needs a moment to finalize the mp4
+sleep 1
 
-# Phase 5: Collect test results
-log "Phase 5: Collecting emulator artifacts into $RESULTS_DIR"
-
+# Phase 5: Collect artifacts
+log "Phase 5: Collecting artifacts"
 mkdir -p "$RESULTS_DIR"
-
-# Pull screen recording
 if adb shell "test -f $RECORDING_PATH" 2>/dev/null; then
   adb pull "$RECORDING_PATH" "$RESULTS_DIR/recording.mp4" 2>/dev/null
-  ok "Screen recording saved to $RESULTS_DIR/recording.mp4"
-else
-  log "No screen recording found (emulator may not support it)"
+  ok "Recording: $RESULTS_DIR/recording.mp4"
 fi
-
-SCREENSHOT_COUNT="$(find test-results -name "*.png" 2>/dev/null | wc -l)"
-ok "Test results collected: $SCREENSHOT_COUNT screenshots"
 
 # Phase 6: Extract video frames at test-critical moments
 if [[ -f "$RESULTS_DIR/report.json" && -f "$RESULTS_DIR/recording.mp4" ]]; then
   log "Phase 6: Extracting video frames"
-  bash scripts/extract-test-frames.sh --results "$RESULTS_DIR" || log "Frame extraction had errors (non-fatal)"
-else
-  log "Skipping frame extraction (missing report.json or recording.mp4)"
+  bash scripts/extract-test-frames.sh --results "$RESULTS_DIR" || true
 fi
 
 # Phase 7: Generate narrative HTML report
 if [[ -f "$RESULTS_DIR/report.json" ]]; then
   log "Phase 7: Generating workflow report"
-  python3 scripts/generate-workflow-report.py --baseline "$RESULTS_DIR" || log "Report generation had errors (non-fatal)"
+  python3 scripts/generate-workflow-report.py --baseline "$RESULTS_DIR" || true
 fi
 
 log "Tests finished (exit $EXIT). Report: $RESULTS_DIR/workflow-report.html"

@@ -28,9 +28,9 @@ PIDFILE="/tmp/mobissh-server-${PORT}.pid"
 # cd to project root (parent of scripts/)
 cd "$(dirname "$0")/.."
 
-log() { printf '\033[36m> %s\033[0m\n' "$*"; }
-err() { printf '\033[31m! %s\033[0m\n' "$*" >&2; }
-ok()  { printf '\033[32m✓ %s\033[0m\n' "$*"; }
+log() { echo "> $*"; }
+err() { echo "! $*" >&2; }
+ok()  { echo "+ $*"; }
 
 # Get the current git HEAD short hash
 head_hash() {
