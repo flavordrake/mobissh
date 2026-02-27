@@ -138,11 +138,13 @@ export function initIMEInput(): void {
   function _flushScroll(): void {
     _scrollRafId = null;
     if (_pendingLines !== 0 && appState.terminal) {
+      console.log('[scroll] flush scrollLines=', _pendingLines);
       appState.terminal.scrollLines(_pendingLines);
       _pendingLines = 0;
     }
     if (_pendingSGR && _pendingSGR.count > 0) {
       const { btn, col, row, count } = _pendingSGR;
+      console.log('[scroll] flush SGR btn=', btn, 'count=', count, 'col=', col, 'row=', row);
       for (let i = 0; i < count; i++) sendSSHInput(`\x1b[<${String(btn)};${String(col)};${String(row)}M`);
       _pendingSGR = null;
     }
@@ -153,6 +155,7 @@ export function initIMEInput(): void {
   }
 
   termEl.addEventListener('touchstart', (e) => {
+    console.log('[scroll] touchstart y=', e.touches[0]!.clientY, 'touches=', e.touches.length);
     _touchStartY = _lastTouchY = e.touches[0]!.clientY;
     _touchStartX = _lastTouchX = e.touches[0]!.clientX;
     _isTouchScroll = false;
@@ -169,6 +172,7 @@ export function initIMEInput(): void {
 
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
       _isTouchScroll = true;
+      console.log('[scroll] gesture claimed, totalDy=', totalDy);
     }
 
     // Once we've claimed this gesture as a terminal scroll, prevent the
@@ -185,8 +189,9 @@ export function initIMEInput(): void {
         const termUnk = appState.terminal as unknown as Record<string, unknown>;
         const mouseMode = termUnk.modes &&
           (termUnk.modes as Record<string, unknown>).mouseTrackingMode;
+        console.log('[scroll] delta=', delta, 'mouseMode=', mouseMode);
         if (mouseMode && mouseMode !== 'none') {
-          const btn = delta > 0 ? 64 : 65;
+          const btn = delta > 0 ? 65 : 64;
           const rect = termEl.getBoundingClientRect();
           const col = Math.max(1, Math.min(appState.terminal.cols,
             Math.floor((e.touches[0]!.clientX - rect.left) / (rect.width / appState.terminal.cols)) + 1));
@@ -198,8 +203,10 @@ export function initIMEInput(): void {
           } else {
             _pendingSGR = { btn, col, row, count };
           }
+          console.log('[scroll] SGR queued btn=', btn, 'count=', count);
         } else {
           _pendingLines += delta;
+          console.log('[scroll] scrollLines queued=', _pendingLines);
         }
         _scheduleScrollFlush();
       }
