@@ -72,6 +72,41 @@ else
   ok "Emulator already running"
 fi
 
+# Dismiss Chrome nag modals (first-run, notifications promo, etc.) using UI automation.
+# Dumps the screen UI hierarchy and taps the first known dismiss button found.
+# Called once after Chrome starts, before Playwright tests run.
+dismiss_chrome_modals() {
+  local dump_remote="/sdcard/mobissh_ui_dump.xml"
+  local dump_local="/tmp/mobissh_ui_dump.xml"
+  local dismiss_labels=("No thanks" "Skip" "Got it" "Dismiss" "Not now" "No Thanks")
+
+  adb shell "uiautomator dump $dump_remote" 2>/dev/null || return 0
+  adb pull "$dump_remote" "$dump_local" 2>/dev/null || return 0
+
+  for label in "${dismiss_labels[@]}"; do
+    local line bounds x1 y1 x2 y2 cx cy
+    line=$(grep "text=\"$label\"" "$dump_local" 2>/dev/null | head -1 || true)
+    [[ -z "$line" ]] && continue
+
+    bounds=$(echo "$line" | sed -n 's/.*bounds="\([^"]*\)".*/\1/p')
+    [[ -z "$bounds" ]] && continue
+
+    x1=$(echo "$bounds" | sed 's/\[\([0-9]*\),.*/\1/')
+    y1=$(echo "$bounds" | sed 's/\[[0-9]*,\([0-9]*\)\]\[.*/\1/')
+    x2=$(echo "$bounds" | sed 's/.*\]\[\([0-9]*\),.*/\1/')
+    y2=$(echo "$bounds" | sed 's/.*,\([0-9]*\)\]$/\1/')
+    cx=$(( (x1 + x2) / 2 ))
+    cy=$(( (y1 + y2) / 2 ))
+
+    log "Dismissing Chrome modal: tapping '$label' at ($cx, $cy)"
+    adb shell input tap "$cx" "$cy" 2>/dev/null || true
+    sleep 0.5
+    return 0
+  done
+  # No modals found — that's fine
+  return 0
+}
+
 # Phase 3: ADB forwarding + Chrome CDP
 log "Phase 3: ADB forwarding and Chrome CDP"
 
@@ -88,9 +123,11 @@ adb shell am set-debug-app --persistent com.android.chrome 2>/dev/null || true
 # granted, Chrome shows a full-screen "Turn on notifications" dialog on first use.
 adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 
-# Suppress Chrome first-run experience and default-browser check via command-line
-# flags. The file must start with an underscore (Chrome convention).
-adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check' > /data/local/tmp/chrome-command-line" 2>/dev/null || true
+# Suppress Chrome first-run experience, default-browser check, and in-product
+# help via command-line flags. The file must start with an underscore (Chrome convention).
+# --disable-features=FeatureEngagementTracker disables the IPH system that
+# drives the "Chrome notifications make things easier" modal (#141).
+adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check --disable-features=FeatureEngagementTracker' > /data/local/tmp/chrome-command-line" 2>/dev/null || true
 
 # Enable "Show taps" for real taps (ADB/finger). CDP touches use an in-page
 # touch visualizer instead (pointer_location doesn't work with CDP).
@@ -116,6 +153,14 @@ if ! curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
   done
 fi
 ok "Chrome CDP verified"
+
+# Dismiss any lingering Chrome nag modals (notifications promo, first-run
+# dialogs, etc.) before Playwright takes control of the browser.
+# The flags file above prevents most modals on a clean emulator, but this
+# handles edge cases where Chrome's state persists across sessions.
+log "Checking for Chrome nag modals..."
+sleep 1  # give Chrome a moment to render any dialogs
+dismiss_chrome_modals
 
 # Phase 4: Screen recording + tests
 log "Phase 4: Running Playwright emulator tests"
