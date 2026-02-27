@@ -11,9 +11,12 @@ export function getDefaultWsUrl(): string {
   // WebSocket bridge is served from the same origin as the frontend.
   // When deployed behind a reverse proxy at a subpath (e.g. /ssh), the server
   // injects <meta name="app-base-path"> so the WebSocket URL includes that prefix.
-  const { protocol, host } = window.location;
+  // Fall back to deriving the base path from window.location.pathname so the
+  // correct subpath is used even when BASE_PATH is not set on the server (#144).
+  const { protocol, host, pathname } = window.location;
   const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
-  const basePath = document.querySelector<HTMLMetaElement>('meta[name="app-base-path"]')?.content ?? '';
+  const basePath = document.querySelector<HTMLMetaElement>('meta[name="app-base-path"]')?.content
+    ?? pathname.slice(0, pathname.lastIndexOf('/'));
   return `${wsProtocol}//${host}${basePath}`;
 }
 
