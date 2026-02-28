@@ -52,12 +52,16 @@
     spellcheck="false"
     tabindex="-1"
   ></textarea>
-  <!-- Direct-mode input: type="password" suppresses Gboard swipe and autocorrect (#44/#48) -->
+  <!-- Direct-mode input: type="text" to suppress Chrome autofill (#155),
+       anti-autocorrect attrs to minimise IME interference in char-by-char mode -->
   <input
     id="directInput"
-    type="password"
+    type="text"
     aria-label="SSH direct key input"
     autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"
+    spellcheck="false"
     data-lpignore="true"
     data-1p-ignore="true"
     data-form-type="other"

@@ -24,13 +24,12 @@ test.describe('Input mode: secure by default (#146)', () => {
     const storedMode = await page.evaluate(() => localStorage.getItem('imeMode'));
     expect(storedMode).toBeNull();
 
-    // appState.imeMode should be false (direct)
-    const imeMode = await page.evaluate(() => {
-      // Access the module state via the global test hook
+    // appState.imeMode should be false (direct) — #directInput present in DOM
+    const hasDirectInput = await page.evaluate(() => {
       const state = document.getElementById('directInput');
-      return state === document.activeElement || state !== null;
+      return state !== null;
     });
-    expect(imeMode).toBe(true);
+    expect(hasDirectInput).toBe(true);
 
     // The compose button should exist (not the old IME button)
     const composeBtn = page.locator('#composeModeBtn');
@@ -132,27 +131,23 @@ test.describe('Input mode: real SSH with direct mode (#146)', () => {
     await setupRealSSHConnection(page, sshServer);
     await screenshot(page, testInfo, '01-ssh-connected');
 
-    // Verify we're in direct mode (default)
-    const activeInput = await page.evaluate(() => {
+    // Verify we're in direct mode (default) — #directInput is type="text" (#155)
+    const directType = await page.evaluate(() => {
       const direct = document.getElementById('directInput');
-      // In direct mode, focusIME() targets #directInput
       return direct ? direct.type : null;
     });
-    expect(activeInput).toBe('password');
+    expect(directType).toBe('text');
 
-    // The #directInput is type="password" which suppresses IME suggestions.
-    // Verify the input element attributes that suppress keyboard prediction.
+    // Verify type="text" (not password) to avoid Chrome autofill (#155)
     const attrs = await page.evaluate(() => {
       const el = document.getElementById('directInput');
       if (!el) return null;
       return {
         type: el.type,
         autocomplete: el.getAttribute('autocomplete'),
-        'data-lpignore': el.getAttribute('data-lpignore'),
-        'data-1p-ignore': el.getAttribute('data-1p-ignore'),
       };
     });
-    expect(attrs.type).toBe('password');
+    expect(attrs.type).toBe('text');
     expect(attrs.autocomplete).toBe('off');
 
     // Type a command in direct mode — chars should go through without IME buffering

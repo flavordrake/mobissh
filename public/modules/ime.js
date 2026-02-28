@@ -2,7 +2,7 @@
  * modules/ime.ts — IME input layer
  *
  * Handles all keyboard/IME input routing from hidden textarea (#imeInput)
- * and direct-mode password input (#directInput) to the SSH stream.
+ * and direct-mode text input (#directInput) to the SSH stream.
  *
  * Also manages: selection overlay for mobile copy (#55), touch/swipe
  * gesture handlers (#32/#37/#16), and pinch-to-zoom (#17).
@@ -277,7 +277,8 @@ export function initIMEInput() {
         _pinchStartDist = null;
         _pinchStartSize = null;
     });
-    // ── Direct input (type="password") — char-by-char mode (#44/#48) ─────
+    // ── Direct input (type="text") — char-by-char mode (#44/#48/#155) ──
+    // Uses type="text" instead of type="password" to avoid Chrome autofill.
     const directEl = document.getElementById('directInput');
     directEl.addEventListener('input', () => {
         const text = directEl.value;
@@ -312,7 +313,7 @@ export function initIMEInput() {
             e.preventDefault();
             return;
         }
-        if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (!appState.imeMode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
             if (appState.ctrlActive) {
                 const code = e.key.toLowerCase().charCodeAt(0) - 96;
                 sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : e.key);

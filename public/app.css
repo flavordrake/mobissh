@@ -39,8 +39,9 @@ html, body {
 }
 
 /* Hidden IME inputs — invisible but reachable by Android IME.
-   #imeInput  = textarea, normal keyboard (IME/swipe mode)
-   #directInput = password input, suppresses swipe/autocorrect (direct mode) */
+   #imeInput    = textarea, normal keyboard (IME/swipe mode)
+   #directInput = text input, suppresses swipe/autocorrect (direct mode)
+   #directInput uses type="text" (not password) to avoid Chrome autofill (#155). */
 #imeInput,
 #directInput {
   position: fixed;
