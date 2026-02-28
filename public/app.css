@@ -11,6 +11,7 @@
   --text: #e0e0e0;
   --text-dim: #888;
   --border: #2a2a4a;
+  --compose: #7c6ff7;
   --tab-height: 56px;
   --keybar-height: 34px;
   --keybar-handle-height: 16px;
@@ -179,22 +180,6 @@ html, body {
   -webkit-user-select: none;
   position: relative; /* anchor for #sessionMenu */
 }
-
-/* Left zone: tab bar toggle */
-#tabBarToggleBtn {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 12px;
-  height: 100%;
-  cursor: pointer;
-  touch-action: manipulation;
-  flex-shrink: 0;
-}
-
-#tabBarToggleBtn:active { color: var(--accent); }
 
 /* Center zone: current session identity */
 #sessionMenuBtn {
@@ -377,11 +362,12 @@ html, body {
 
 #key-scroll::-webkit-scrollbar { display: none; }
 
-/* Compose / direct-mode toggle button — right-anchored in key row (#146) */
+/* Compose / direct-mode toggle button — system-function key, visually separated (#146, #149) */
 .mode-btn {
   padding: 0 6px;
   height: var(--key-btn-height);
-  color: var(--text-dim);
+  color: var(--compose);
+  border-color: var(--compose);
   flex-shrink: 0;
   margin-left: 4px;
   display: flex;
@@ -1131,6 +1117,37 @@ hr {
 }
 
 .vault-actions .hidden { display: none; }
+
+/* Settings row — toggle item layout (used outside danger zone) */
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.setting-row-info { flex: 1; }
+
+.setting-row-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+/* Key controls dock — left/right positioning of compose toggle and keybar chevron (#149).
+   Default: controls on the right (DOM order).
+   html.key-dock-left: controls shift to the left side via flex order. */
+html.key-dock-left #handleChevron {
+  order: -1;
+}
+
+html.key-dock-left #composeModeBtn {
+  order: -1;
+  margin-left: 0;
+  margin-right: 4px;
+}
 
 /* Debug overlay */
 .debug-overlay {

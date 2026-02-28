@@ -17,10 +17,10 @@ test('rewriteManifest: sets id="mobissh"', () => {
   assert.equal(result.id, 'mobissh');
 });
 
-test('rewriteManifest: sets start_url="./"', () => {
+test('rewriteManifest: sets start_url="./#connect"', () => {
   const input = Buffer.from(JSON.stringify({ start_url: '/' }));
   const result = JSON.parse(rewriteManifest(input));
-  assert.equal(result.start_url, './');
+  assert.equal(result.start_url, './#connect');
 });
 
 test('rewriteManifest: sets scope="./"', () => {

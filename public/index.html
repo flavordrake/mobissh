@@ -157,9 +157,8 @@
       </div>
       <!-- IME composition preview — shows word being composed before commit (#44) -->
       <div id="imePreview" class="hidden" aria-live="polite" aria-atomic="true"></div>
-      <!-- Handle strip: ≡ tab toggle | session identity (center) | ▾ key bar toggle -->
+      <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
-        <button id="tabBarToggleBtn" title="Show navigation tabs" aria-label="Show navigation">≡</button>
         <button id="sessionMenuBtn" title="Session menu" aria-label="Session menu">MobiSSH</button>
         <span id="handleChevron" title="Toggle key bar" role="button" aria-label="Toggle key bar">▾</span>
         <!-- Session menu anchored inside the positioned parent so absolute positioning works -->
@@ -180,6 +179,7 @@
           </div>
           <button id="sessionThemeBtn"      class="session-menu-item" role="menuitem">Theme: Dark ▸</button>
           <button id="sessionReconnectBtn"  class="session-menu-item" role="menuitem">Reconnect</button>
+          <button id="sessionNavBarBtn"     class="session-menu-item" role="menuitem">Toggle nav bar</button>
           <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
         </div>
       </div>
@@ -338,6 +338,20 @@
         <option value="firacode">Fira Code</option>
       </select>
       <p class="hint">Requires page reload to take effect.</p>
+
+      <hr />
+
+      <h3>Key Bar</h3>
+      <div class="setting-row">
+        <div class="setting-row-info">
+          <span class="setting-row-label">Dock controls on left</span>
+          <p class="hint">Move the compose toggle and key bar chevron to the left side.</p>
+        </div>
+        <label class="toggle" aria-label="Dock key controls on left side">
+          <input type="checkbox" id="keyControlsDockLeft" />
+          <span class="toggle-slider toggle-slider-accent"></span>
+        </label>
+      </div>
 
       <hr />
 

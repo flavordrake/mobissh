@@ -79,6 +79,16 @@ export function initSettingsPanel(): void {
     });
   }
 
+  const dockEl = document.getElementById('keyControlsDockLeft') as HTMLInputElement | null;
+  if (dockEl) {
+    dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';
+    dockEl.addEventListener('change', () => {
+      const dock = dockEl.checked ? 'left' : 'right';
+      localStorage.setItem('keyControlsDock', dock);
+      document.documentElement.classList.toggle('key-dock-left', dock === 'left');
+    });
+  }
+
   document.getElementById('fontSize')!.addEventListener('input', (e) => {
     _applyFontSize(parseInt((e.target as HTMLInputElement).value));
   });

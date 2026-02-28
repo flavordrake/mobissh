@@ -8,9 +8,10 @@
 
 const { test, expect, setupConnected, ensureTestVault } = require('./fixtures.js');
 
-// After setupConnected the tab bar is auto-hidden (#36). Show it before switching tabs.
+// After setupConnected the tab bar is auto-hidden (#36). Show it via session menu (#149).
 async function showTabBar(page) {
-  await page.locator('#tabBarToggleBtn').click();
+  await page.locator('#sessionMenuBtn').click();
+  await page.locator('#sessionNavBarBtn').click();
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 

@@ -148,6 +148,32 @@ export function initSessionMenu(): void {
 
   function closeMenu(): void { menu.classList.add('hidden'); backdrop.classList.add('hidden'); }
 
+  // Swipe up on handle → show tab bar; swipe down → hide tab bar (#149).
+  // Replaces the hamburger ≡ button as primary gesture surface.
+  const handle = document.getElementById('key-bar-handle')!;
+  let _swipeTouchId = -1;
+  let _swipeStartY = 0;
+
+  handle.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    if (e.touches.length === 1 && t) {
+      _swipeTouchId = t.identifier;
+      _swipeStartY = t.clientY;
+    }
+  }, { passive: true });
+
+  handle.addEventListener('touchend', (e) => {
+    const touch = Array.from(e.changedTouches).find((t) => t.identifier === _swipeTouchId);
+    if (!touch) return;
+    _swipeTouchId = -1;
+    const deltaY = _swipeStartY - touch.clientY;
+    if (deltaY > 30 && !appState.tabBarVisible) {
+      toggleTabBar();
+    } else if (deltaY < -30 && appState.tabBarVisible) {
+      toggleTabBar();
+    }
+  }, { passive: true });
+
   backdrop.addEventListener('click', closeMenu);
 
   // Font size +/− — menu stays open so user can tap repeatedly (#46)
@@ -209,6 +235,11 @@ export function initSessionMenu(): void {
     reconnect();
   });
 
+  document.getElementById('sessionNavBarBtn')!.addEventListener('click', () => {
+    closeMenu();
+    toggleTabBar();
+  });
+
   document.getElementById('sessionDisconnectBtn')!.addEventListener('click', () => {
     closeMenu();
     disconnect();
@@ -255,11 +286,7 @@ export function _applyTabBarVisibility(): void {
 function toggleTabBar(): void {
   appState.tabBarVisible = !appState.tabBarVisible;
   _applyTabBarVisibility();
-  appState.fitAddon?.fit();
-  appState.terminal?.scrollToBottom();
-  if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
-    appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal?.cols ?? 80, rows: appState.terminal?.rows ?? 24 }));
-  }
+  // ResizeObserver on #terminal handles fit() + resize message after layout settles.
 }
 
 function switchToTerminal(): void {
@@ -417,6 +444,32 @@ export function initTerminalActions(): void {
   }
 }
 
+// ── Terminal resize observer ─────────────────────────────────────────────────
+// A single ResizeObserver on #terminal fires fit() after the browser has
+// committed all layout changes (tab bar hide, key bar hide, keyboard, etc.).
+// This replaces per-toggle rAF/timeout hacks — any CSS-driven resize "just works".
+
+let _resizeObserverActive = false;
+
+export function initTerminalResizeObserver(): void {
+  const container = document.getElementById('terminal');
+  if (!container || _resizeObserverActive) return;
+  _resizeObserverActive = true;
+
+  const observer = new ResizeObserver(() => {
+    appState.fitAddon?.fit();
+    appState.terminal?.scrollToBottom();
+    if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
+      appState.ws.send(JSON.stringify({
+        type: 'resize',
+        cols: appState.terminal?.cols ?? 80,
+        rows: appState.terminal?.rows ?? 24,
+      }));
+    }
+  });
+  observer.observe(container);
+}
+
 // ── Key bar visibility (#1) + Compose/Direct mode (#146) ────────────────────
 
 export function initKeyBar(): void {
@@ -425,9 +478,9 @@ export function initKeyBar(): void {
 
   _applyKeyBarVisibility();
   _applyComposeModeUI();
+  _applyKeyControlsDock();
 
   document.getElementById('handleChevron')!.addEventListener('click', toggleKeyBar);
-  document.getElementById('tabBarToggleBtn')!.addEventListener('click', toggleTabBar);
 
   document.getElementById('composeModeBtn')!.addEventListener('click', () => {
     toggleComposeMode();
@@ -439,11 +492,7 @@ function toggleKeyBar(): void {
   appState.keyBarVisible = !appState.keyBarVisible;
   localStorage.setItem('keyBarVisible', String(appState.keyBarVisible));
   _applyKeyBarVisibility();
-  appState.fitAddon?.fit();
-  appState.terminal?.scrollToBottom();
-  if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
-    appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal?.cols ?? 80, rows: appState.terminal?.rows ?? 24 }));
-  }
+  // ResizeObserver on #terminal handles fit() + resize message after layout settles.
 }
 
 function _applyKeyBarVisibility(): void {
@@ -454,6 +503,11 @@ function _applyKeyBarVisibility(): void {
     '--keybar-height',
     appState.keyBarVisible ? _ROOT_CSS.keybarHeight : '0px'
   );
+}
+
+function _applyKeyControlsDock(): void {
+  const dock = localStorage.getItem('keyControlsDock') ?? 'right';
+  document.documentElement.classList.toggle('key-dock-left', dock === 'left');
 }
 
 export function toggleComposeMode(): void {

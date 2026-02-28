@@ -8,26 +8,29 @@
 
 const { test, expect, setupConnected } = require('./fixtures.js');
 
-// After setupConnected the tab bar is auto-hidden (#36). Show it before switching tabs.
+// After setupConnected the tab bar is auto-hidden (#36). Show it via session menu (#149).
 async function showTabBar(page) {
-  await page.locator('#tabBarToggleBtn').click();
+  await page.locator('#sessionMenuBtn').click();
+  await page.locator('#sessionNavBarBtn').click();
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
 test.describe('UI chrome (#110 Phase 8)', () => {
 
-  test('tab bar toggle button shows and hides the tab bar', async ({ page, mockSshServer }) => {
+  test('session menu "Toggle nav bar" shows and hides the tab bar (#149)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
     // After connection, tab bar is hidden
     await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
 
-    // Click toggle to show
-    await page.locator('#tabBarToggleBtn').click();
+    // Open session menu and toggle nav bar to show
+    await page.locator('#sessionMenuBtn').click();
+    await page.locator('#sessionNavBarBtn').click();
     await expect(page.locator('#tabBar')).not.toHaveClass(/hidden/);
 
-    // Click toggle to hide again
-    await page.locator('#tabBarToggleBtn').click();
+    // Toggle again to hide
+    await page.locator('#sessionMenuBtn').click();
+    await page.locator('#sessionNavBarBtn').click();
     await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
   });
 
