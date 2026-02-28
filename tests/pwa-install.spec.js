@@ -294,9 +294,8 @@ test.describe('Issue #97 — 5. Manifest fields', () => {
       // Changing it (PR #83 regression) creates a duplicate install entry.
       expect(manifest.id).toBe('mobissh');
 
-      // start_url and scope must be './' so the PWA installs at the right scope
-      // whether served at / or at a subpath (e.g. /ssh/).
-      expect(manifest.start_url).toBe('./');
+      // start_url lands on connect form; scope stays './' for subpath compat (#137)
+      expect(manifest.start_url).toBe('./#connect');
       expect(manifest.scope).toBe('./');
 
       // Chrome requires display: standalone (or fullscreen/minimal-ui) for

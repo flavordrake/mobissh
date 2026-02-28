@@ -11,8 +11,10 @@ import { vaultStore, vaultLoad, vaultDelete } from './vault.js';
 import { ensureVaultKeyWithUI } from './vault-ui.js';
 export { escHtml };
 let _toast = (_msg) => { };
-export function initProfiles({ toast }) {
+let _navigateToConnect = () => { };
+export function initProfiles({ toast, navigateToConnect }) {
     _toast = toast;
+    _navigateToConnect = navigateToConnect;
 }
 export function getProfiles() {
     return JSON.parse(localStorage.getItem('sshProfiles') || '[]');
@@ -101,7 +103,7 @@ export async function loadProfileIntoForm(idx) {
             const unlocked = await ensureVaultKeyWithUI();
             if (!unlocked) {
                 _toast('Vault locked — enter credentials manually');
-                document.querySelector('[data-panel="connect"]').click();
+                _navigateToConnect();
                 return;
             }
         }
@@ -122,7 +124,7 @@ export async function loadProfileIntoForm(idx) {
     else if (!profile.hasVaultCreds) {
         _toast('Enter credentials — not saved on this browser.');
     }
-    document.querySelector('[data-panel="connect"]').click();
+    _navigateToConnect();
 }
 export function deleteProfile(idx) {
     const profiles = getProfiles();

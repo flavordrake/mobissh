@@ -15,9 +15,11 @@ import { ensureVaultKeyWithUI } from './vault-ui.js';
 export { escHtml };
 
 let _toast = (_msg: string): void => {};
+let _navigateToConnect = (): void => {};
 
-export function initProfiles({ toast }: ProfilesDeps): void {
+export function initProfiles({ toast, navigateToConnect }: ProfilesDeps): void {
   _toast = toast;
+  _navigateToConnect = navigateToConnect;
 }
 
 // Profile storage
@@ -131,7 +133,7 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
       const unlocked = await ensureVaultKeyWithUI();
       if (!unlocked) {
         _toast('Vault locked — enter credentials manually');
-        (document.querySelector('[data-panel="connect"]') as HTMLElement).click();
+        _navigateToConnect();
         return;
       }
     }
@@ -148,7 +150,7 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
     _toast('Enter credentials — not saved on this browser.');
   }
 
-  (document.querySelector('[data-panel="connect"]') as HTMLElement).click();
+  _navigateToConnect();
 }
 
 export function deleteProfile(idx: number): void {

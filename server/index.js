@@ -95,7 +95,7 @@ const MIME = {
 function rewriteManifest(buf) {
   const manifest = JSON.parse(buf.toString());
   manifest.id = 'mobissh';
-  manifest.start_url = './';
+  manifest.start_url = './#connect';
   manifest.scope = './';
   return Buffer.from(JSON.stringify(manifest));
 }

@@ -105,6 +105,7 @@ export interface RecordingDeps {
 
 export interface ProfilesDeps {
   toast: (msg: string) => void;
+  navigateToConnect: () => void;
 }
 
 export interface SettingsDeps {

@@ -21,6 +21,7 @@ import {
   initUI, toast, setStatus, focusIME,
   _applyTabBarVisibility, initSessionMenu, initTabBar,
   initConnectForm, initTerminalActions, initKeyBar,
+  initRouting, navigateToPanel,
 } from './modules/ui.js';
 import {
   ROOT_CSS, initTerminal, handleResize, initKeyboardAwareness,
@@ -48,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initTerminalActions();
     initKeyBar();
     initRecording({ toast });
-    initProfiles({ toast });
+    initProfiles({ toast, navigateToConnect: () => { navigateToPanel('connect'); } });
     initSettings({ toast, applyFontSize, applyTheme });
     initConnection({ toast, setStatus, focusIME, applyTabBarVisibility: _applyTabBarVisibility });
     initSessionMenu();
@@ -109,10 +110,8 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
       });
     });
 
-    // Cold start UX (#36): if profiles exist, land on Connect so user can tap to connect
-    if (getProfiles().length > 0) {
-      document.querySelector<HTMLElement>('[data-panel="connect"]')?.click();
-    }
+    // Cold start routing (#137): hash > "has profiles" heuristic > terminal default
+    initRouting(getProfiles().length > 0);
 
     // Apply saved font size (syncs all UI)
     applyFontSize(parseInt(localStorage.getItem('fontSize') ?? '14') || 14);

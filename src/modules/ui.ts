@@ -12,6 +12,71 @@ import { sendSSHInput, disconnect, reconnect, connect } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, getKeys } from './profiles.js';
 
+// ── Hash routing (#137) ─────────────────────────────────────────────────────
+
+type PanelName = 'terminal' | 'connect' | 'keys' | 'settings';
+
+const VALID_PANELS: ReadonlySet<string> = new Set<PanelName>(['terminal', 'connect', 'keys', 'settings']);
+
+function _isValidPanel(hash: string): hash is PanelName {
+  return VALID_PANELS.has(hash);
+}
+
+function _panelFromHash(): PanelName | null {
+  const raw = location.hash.replace(/^#/, '');
+  return _isValidPanel(raw) ? raw : null;
+}
+
+export function navigateToPanel(
+  panel: PanelName,
+  options?: { pushHistory?: boolean; updateHash?: boolean },
+): void {
+  const pushHistory = options?.pushHistory ?? false;
+  const updateHash = options?.updateHash ?? true;
+
+  document.querySelectorAll('.tab').forEach((t) => { t.classList.remove('active'); });
+  document.querySelectorAll('.panel').forEach((p) => { p.classList.remove('active'); });
+
+  document.querySelector<HTMLElement>(`[data-panel="${panel}"]`)?.classList.add('active');
+  document.getElementById(`panel-${panel}`)?.classList.add('active');
+
+  if (panel === 'terminal') {
+    if (appState.hasConnected) {
+      appState.tabBarVisible = false;
+      _applyTabBarVisibility();
+    }
+    setTimeout(() => { appState.fitAddon?.fit(); focusIME(); }, 50);
+  } else {
+    appState.tabBarVisible = true;
+    _applyTabBarVisibility();
+  }
+
+  if (updateHash) {
+    const newHash = `#${panel}`;
+    if (location.hash !== newHash) {
+      if (pushHistory) {
+        history.pushState(null, '', newHash);
+      } else {
+        history.replaceState(null, '', newHash);
+      }
+    }
+  }
+}
+
+/** Resolve the initial panel on cold start (#137). */
+export function initRouting(hasProfiles: boolean): void {
+  const fromHash = _panelFromHash();
+  if (fromHash) {
+    navigateToPanel(fromHash);
+  } else if (hasProfiles) {
+    navigateToPanel('connect');
+  } else {
+    history.replaceState(null, '', '#terminal');
+  }
+}
+
+// ── Module state ────────────────────────────────────────────────────────────
+
 let _keyboardVisible = (): boolean => false;
 let _ROOT_CSS: RootCSS = { tabHeight: '56px', keybarHeight: '34px' };
 let _applyFontSize = (_size: number): void => {};
@@ -166,23 +231,16 @@ export function initTabBar(): void {
   document.querySelectorAll<HTMLElement>('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       const panelId = tab.dataset.panel;
-      document.querySelectorAll('.tab').forEach((t) => { t.classList.remove('active'); });
-      document.querySelectorAll('.panel').forEach((p) => { p.classList.remove('active'); });
-      tab.classList.add('active');
-      document.getElementById(`panel-${panelId ?? ''}`)?.classList.add('active');
-
-      if (panelId === 'terminal') {
-        if (appState.hasConnected) {
-          appState.tabBarVisible = false;
-          _applyTabBarVisibility();
-        }
-        setTimeout(() => { appState.fitAddon?.fit(); focusIME(); }, 50);
-      } else {
-        appState.tabBarVisible = true;
-        _applyTabBarVisibility();
+      if (panelId && _isValidPanel(panelId)) {
+        navigateToPanel(panelId, { pushHistory: true });
       }
-
     });
+  });
+
+  // Browser back/forward (#137)
+  window.addEventListener('hashchange', () => {
+    const panel = _panelFromHash();
+    if (panel) navigateToPanel(panel, { updateHash: false });
   });
 }
 
@@ -205,7 +263,7 @@ function toggleTabBar(): void {
 }
 
 function switchToTerminal(): void {
-  document.querySelector<HTMLElement>('[data-panel="terminal"]')?.click();
+  navigateToPanel('terminal');
 }
 
 /**
