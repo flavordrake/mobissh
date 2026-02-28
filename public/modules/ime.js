@@ -278,13 +278,12 @@ export function initIMEInput() {
         _pinchStartSize = null;
     });
     // ── Direct input (type="text") — char-by-char mode (#44/#48/#155) ──
-    // Uses type="text" instead of type="password" to avoid Chrome autofill.
+    // Uses type="text" instead of type="password" to avoid Chrome credential
+    // save prompts.  Characters are intercepted via beforeinput so they never
+    // reach the field value — Chrome autocomplete has nothing to suggest.
     const directEl = document.getElementById('directInput');
-    directEl.addEventListener('input', () => {
-        const text = directEl.value;
-        directEl.value = '';
-        if (!text)
-            return;
+    /** Send direct-mode text to SSH, handling sticky Ctrl modifier. */
+    function _sendDirectText(text) {
         if (text === '\n') {
             sendSSHInput('\r');
             return;
@@ -297,6 +296,37 @@ export function initIMEInput() {
         else {
             sendSSHInput(text);
         }
+    }
+    // Intercept text BEFORE it modifies the field value — characters never
+    // appear in the input, so Chrome autocomplete sees nothing to suggest.
+    let _sentByBeforeInput = false;
+    directEl.addEventListener('beforeinput', (e) => {
+        e.preventDefault();
+        _sentByBeforeInput = false;
+        if (e.inputType === 'insertText' && e.data) {
+            _sendDirectText(e.data);
+            _sentByBeforeInput = true;
+        }
+        else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+            sendSSHInput('\r');
+            _sentByBeforeInput = true;
+        }
+        else if (e.inputType === 'deleteContentBackward') {
+            sendSSHInput('\x7f');
+            _sentByBeforeInput = true;
+        }
+    });
+    // Fallback: clear any characters that slip past beforeinput (non-cancelable
+    // composition events or very old browsers without beforeinput support).
+    directEl.addEventListener('input', () => {
+        const text = directEl.value;
+        directEl.value = '';
+        if (_sentByBeforeInput) {
+            _sentByBeforeInput = false;
+            return;
+        }
+        if (text)
+            _sendDirectText(text);
     });
     directEl.addEventListener('keydown', (e) => {
         if (e.ctrlKey && !e.altKey && e.key.length === 1) {
