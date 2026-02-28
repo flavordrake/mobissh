@@ -8,7 +8,7 @@
  * Run on: Pixel 7, iPhone 14, Desktop Chrome (see playwright.config.js)
  */
 
-const { test, expect } = require('./fixtures.js');
+const { test, expect, COMPOSE_INPUT_ID } = require('./fixtures.js');
 
 test.describe('Initial page load', () => {
   test.beforeEach(async ({ page }) => {
@@ -122,7 +122,7 @@ test.describe('Initial page load', () => {
   });
 
   test('IME textarea has mobile-friendly attributes', async ({ page }) => {
-    const imeInput = page.locator('#imeInput');
+    const imeInput = page.locator(`#${COMPOSE_INPUT_ID}`);
     await expect(imeInput).toHaveAttribute('autocorrect', 'off');
     await expect(imeInput).toHaveAttribute('autocapitalize', 'off');
     await expect(imeInput).toHaveAttribute('spellcheck', 'false');

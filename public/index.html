@@ -52,11 +52,12 @@
     spellcheck="false"
     tabindex="-1"
   ></textarea>
-  <!-- Direct-mode input: type="text" to suppress Chrome autofill (#155),
-       anti-autocorrect attrs to minimise IME interference in char-by-char mode -->
+  <!-- Direct-mode input: type="password" suppresses Gboard predictions so typed
+       characters don't leak into the keyboard suggestion bar (#155).
+       The "Save password?" bar seen on Android is from the connect form, not this field. -->
   <input
     id="directInput"
-    type="text"
+    type="password"
     aria-label="SSH direct key input"
     autocomplete="off"
     autocorrect="off"

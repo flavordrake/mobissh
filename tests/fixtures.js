@@ -18,6 +18,26 @@ const { test: base, expect } = require('@playwright/test');
 const { WebSocketServer } = require('ws');
 const { createServer } = require('net');
 
+// ── Input element helpers ────────────────────────────────────────────────────
+// Centralises element IDs and expected properties so tests don't hardcode them.
+// When the input strategy changes (type, id, approach), update here only.
+
+/** ID of the compose-mode textarea (IME/swipe input). */
+const COMPOSE_INPUT_ID = 'imeInput';
+/** ID of the direct-mode hidden input (char-by-char, no IME). */
+const DIRECT_INPUT_ID  = 'directInput';
+/** Expected `type` attribute of the direct-mode input. */
+const DIRECT_INPUT_TYPE = 'password';
+
+/** Return the active IME input element ID based on current mode. */
+function activeInputSelector(page) {
+  return page.evaluate((ids) =>
+    document.getElementById(ids.compose) === document.activeElement
+      ? ids.compose : ids.direct,
+    { compose: COMPOSE_INPUT_ID, direct: DIRECT_INPUT_ID }
+  );
+}
+
 // Find a random free TCP port
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -236,11 +256,12 @@ async function setupConnected(page, mockSshServer) {
   // it calls focusIME() automatically and hides the tab bar (#36).
   // Default is Direct mode (#146), so focus whichever input is active.
   await page.waitForSelector('#panel-terminal.active', { timeout: 5000 });
-  const activeInput = await page.evaluate(() =>
-    document.getElementById('imeInput') === document.activeElement ? 'imeInput' : 'directInput'
-  );
-  await page.locator(`#${activeInput}`).focus().catch(() => {});
+  const inputId = await activeInputSelector(page);
+  await page.locator(`#${inputId}`).focus().catch(() => {});
   await page.waitForTimeout(100);
 }
 
-module.exports = { test, expect, setupConnected, ensureTestVault };
+module.exports = {
+  test, expect, setupConnected, ensureTestVault,
+  COMPOSE_INPUT_ID, DIRECT_INPUT_ID, DIRECT_INPUT_TYPE, activeInputSelector,
+};

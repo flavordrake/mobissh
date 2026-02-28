@@ -291,10 +291,10 @@ export function initIMEInput(): void {
     _pinchStartSize = null;
   });
 
-  // ── Direct input (type="text") — char-by-char mode (#44/#48/#155) ──
-  // Uses type="text" instead of type="password" to avoid Chrome credential
-  // save prompts.  Characters are intercepted via beforeinput so they never
-  // reach the field value — Chrome autocomplete has nothing to suggest.
+  // ── Direct input (type="password") — char-by-char mode (#44/#48/#155) ──
+  // type="password" suppresses Gboard predictions so typed characters don't
+  // leak into the keyboard suggestion bar.  Characters are also intercepted
+  // via beforeinput so they never reach the field value.
   const directEl = document.getElementById('directInput') as HTMLInputElement;
 
   /** Send direct-mode text to SSH, handling sticky Ctrl modifier. */

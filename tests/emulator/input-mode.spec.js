@@ -12,7 +12,7 @@
  *   4. Real SSH — direct mode handles password entry without IME leakage
  */
 
-const { test, expect, screenshot, setupRealSSHConnection, sendCommand } = require('./fixtures');
+const { test, expect, screenshot, setupRealSSHConnection, sendCommand, DIRECT_INPUT_ID, DIRECT_INPUT_TYPE } = require('./fixtures');
 
 test.describe('Input mode: secure by default (#146)', () => {
 
@@ -24,11 +24,10 @@ test.describe('Input mode: secure by default (#146)', () => {
     const storedMode = await page.evaluate(() => localStorage.getItem('imeMode'));
     expect(storedMode).toBeNull();
 
-    // appState.imeMode should be false (direct) — #directInput present in DOM
-    const hasDirectInput = await page.evaluate(() => {
-      const state = document.getElementById('directInput');
-      return state !== null;
-    });
+    // appState.imeMode should be false (direct) — directInput present in DOM
+    const hasDirectInput = await page.evaluate(
+      (id) => document.getElementById(id) !== null, DIRECT_INPUT_ID
+    );
     expect(hasDirectInput).toBe(true);
 
     // The compose button should exist (not the old IME button)
@@ -131,24 +130,18 @@ test.describe('Input mode: real SSH with direct mode (#146)', () => {
     await setupRealSSHConnection(page, sshServer);
     await screenshot(page, testInfo, '01-ssh-connected');
 
-    // Verify we're in direct mode (default) — #directInput is type="text" (#155)
-    const directType = await page.evaluate(() => {
-      const direct = document.getElementById('directInput');
-      return direct ? direct.type : null;
-    });
-    expect(directType).toBe('text');
+    // Verify direct mode: input exists with expected type (#155)
+    const directType = await page.evaluate(
+      (id) => { const el = document.getElementById(id); return el ? el.type : null; },
+      DIRECT_INPUT_ID
+    );
+    expect(directType).toBe(DIRECT_INPUT_TYPE);
 
-    // Verify type="text" (not password) to avoid Chrome autofill (#155)
-    const attrs = await page.evaluate(() => {
-      const el = document.getElementById('directInput');
-      if (!el) return null;
-      return {
-        type: el.type,
-        autocomplete: el.getAttribute('autocomplete'),
-      };
-    });
-    expect(attrs.type).toBe('text');
-    expect(attrs.autocomplete).toBe('off');
+    const autocomplete = await page.evaluate(
+      (id) => document.getElementById(id)?.getAttribute('autocomplete'),
+      DIRECT_INPUT_ID
+    );
+    expect(autocomplete).toBe('off');
 
     // Type a command in direct mode — chars should go through without IME buffering
     await sendCommand(page, 'echo direct-mode-test');

@@ -20,6 +20,16 @@ const { ensureTestSshd, SSHD_HOST, SSHD_PORT, TEST_USER, TEST_PASS } = require('
 const CDP_PORT = Number(process.env.CDP_PORT || 9222);
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
 
+// ── Input element helpers ────────────────────────────────────────────────────
+// Centralises element IDs and expected properties so tests don't hardcode them.
+
+/** ID of the compose-mode textarea (IME/swipe input). */
+const COMPOSE_INPUT_ID = 'imeInput';
+/** ID of the direct-mode hidden input (char-by-char, no IME). */
+const DIRECT_INPUT_ID  = 'directInput';
+/** Expected `type` attribute of the direct-mode input. */
+const DIRECT_INPUT_TYPE = 'password';
+
 /**
  * Ensure ADB is forwarding the Chrome DevTools port from the emulator.
  * Idempotent — safe to call multiple times.
@@ -201,29 +211,21 @@ async function setupRealSSHConnection(page, sshServer) {
  * Type a command into the terminal via the IME input and send Enter.
  */
 async function sendCommand(page, cmd) {
-  // Focus the IME input
-  await page.evaluate(() => {
-    const el = document.getElementById('imeInput') || document.getElementById('directInput');
-    if (el) el.focus();
-  });
+  const ids = [COMPOSE_INPUT_ID, DIRECT_INPUT_ID];
+  // Focus whichever input element exists
+  await page.evaluate((ids) => {
+    for (const id of ids) { const el = document.getElementById(id); if (el) { el.focus(); return; } }
+  }, ids);
 
   for (const ch of cmd) {
-    await page.evaluate((c) => {
-      const el = document.getElementById('imeInput') || document.getElementById('directInput');
-      if (!el) return;
-      el.value = c;
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: c }));
-      el.value = '';
-    }, ch);
+    await page.evaluate(([c, ids]) => {
+      for (const id of ids) { const el = document.getElementById(id); if (el) { el.value = c; el.dispatchEvent(new InputEvent('input', { bubbles: true, data: c })); el.value = ''; return; } }
+    }, [ch, ids]);
   }
   // Enter
-  await page.evaluate(() => {
-    const el = document.getElementById('imeInput') || document.getElementById('directInput');
-    if (!el) return;
-    el.value = '\n';
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '\n' }));
-    el.value = '';
-  });
+  await page.evaluate((ids) => {
+    for (const id of ids) { const el = document.getElementById(id); if (el) { el.value = '\n'; el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '\n' })); el.value = ''; return; } }
+  }, ids);
 }
 
 /**
@@ -390,4 +392,5 @@ async function pinch(page, selector, startDist, endDist, steps = 10) {
 module.exports = {
   test, expect, screenshot, setupRealSSHConnection, sendCommand,
   swipe, pinch, CDP_PORT, BASE_URL,
+  COMPOSE_INPUT_ID, DIRECT_INPUT_ID, DIRECT_INPUT_TYPE,
 };

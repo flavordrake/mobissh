@@ -5,7 +5,7 @@
  * No assertions — captures screenshots and video for human review.
  */
 
-const { test, expect, screenshot, setupRealSSHConnection, sendCommand, swipe, pinch } = require('./fixtures');
+const { test, expect, screenshot, setupRealSSHConnection, sendCommand, swipe, pinch, COMPOSE_INPUT_ID, DIRECT_INPUT_ID } = require('./fixtures');
 
 test.describe('Workflow exploration — clear, login, interact', () => {
 
@@ -79,22 +79,22 @@ test.describe('Workflow exploration — clear, login, interact', () => {
       // Fallback: type the key sequence through IME
     });
     // Use the IME to send Ctrl-B then c
-    await page.evaluate(() => {
-      const el = document.getElementById('imeInput') || document.getElementById('directInput');
-      if (!el) return;
-      // Ctrl-B (tmux prefix)
-      el.value = '\x02';
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '\x02' }));
-      el.value = '';
-    });
+    const ids = [COMPOSE_INPUT_ID, DIRECT_INPUT_ID];
+    await page.evaluate((ids) => {
+      for (const id of ids) { const el = document.getElementById(id); if (el) {
+        el.value = '\x02';
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '\x02' }));
+        el.value = ''; return;
+      } }
+    }, ids);
     await page.waitForTimeout(200);
-    await page.evaluate(() => {
-      const el = document.getElementById('imeInput') || document.getElementById('directInput');
-      if (!el) return;
-      el.value = 'c';
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'c' }));
-      el.value = '';
-    });
+    await page.evaluate((ids) => {
+      for (const id of ids) { const el = document.getElementById(id); if (el) {
+        el.value = 'c';
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'c' }));
+        el.value = ''; return;
+      } }
+    }, ids);
     await page.waitForTimeout(1000);
     await screenshot(page, testInfo, '03-tmux-second-window');
 
