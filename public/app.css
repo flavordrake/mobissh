@@ -466,6 +466,13 @@ html, body {
 .xterm-viewport::-webkit-scrollbar { width: 4px; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); }
 
+/* Connect form credential fields: type="text" at rest (avoids Chrome login-form
+   detection), promoted to type="password" on focus via JS cloaking (#147/#150).
+   CSS masking ensures dots are visible even while type="text". */
+#remote_c,
+#remote_pp {
+  -webkit-text-security: disc;
+}
 
 /* Scrollable panels */
 #panel-connect,

@@ -181,6 +181,7 @@ export function initTabBar(): void {
         appState.tabBarVisible = true;
         _applyTabBarVisibility();
       }
+
     });
   });
 }
@@ -207,6 +208,18 @@ function switchToTerminal(): void {
   document.querySelector<HTMLElement>('[data-panel="terminal"]')?.click();
 }
 
+/**
+ * Attach focus/blur handlers that promote a field to type="password" only while
+ * focused, then demote back to type="text" on blur.  This prevents Chrome from
+ * detecting a login-form pattern at rest (username + password in same form) while
+ * still suppressing IME/Gboard while the user is actively typing. (#147/#150)
+ */
+function _initPasswordFieldCloaking(field: HTMLInputElement): void {
+  field.type = 'text';
+  field.addEventListener('focus', () => { field.type = 'password'; });
+  field.addEventListener('blur',  () => { field.type = 'text'; });
+}
+
 // ── Connect form ─────────────────────────────────────────────────────────────
 
 export function initConnectForm(): void {
@@ -219,6 +232,10 @@ export function initConnectForm(): void {
     (document.getElementById('keyGroup') as HTMLElement).style.display = isKey ? 'block' : 'none';
   });
 
+  // Cloak password fields: type="text" at rest, type="password" only while focused (#150)
+  _initPasswordFieldCloaking(document.getElementById('remote_c') as HTMLInputElement);
+  _initPasswordFieldCloaking(document.getElementById('remote_pp') as HTMLInputElement);
+
   form.addEventListener('submit', (e) => {
     e.preventDefault();
 
@@ -226,16 +243,16 @@ export function initConnectForm(): void {
       name: (document.getElementById('profileName') as HTMLInputElement).value.trim() || 'Server',
       host: (document.getElementById('host') as HTMLInputElement).value.trim(),
       port: parseInt((document.getElementById('port') as HTMLInputElement).value) || 22,
-      username: (document.getElementById('username') as HTMLInputElement).value.trim(),
+      username: (document.getElementById('remote_a') as HTMLInputElement).value.trim(),
       authType: authType.value as 'password' | 'key',
-      password: (document.getElementById('password') as HTMLInputElement).value,
+      password: (document.getElementById('remote_c') as HTMLInputElement).value,
       privateKey: (document.getElementById('privateKey') as HTMLTextAreaElement).value.trim(),
-      passphrase: (document.getElementById('passphrase') as HTMLInputElement).value,
+      passphrase: (document.getElementById('remote_pp') as HTMLInputElement).value,
       initialCommand: (document.getElementById('initialCommand') as HTMLInputElement).value.trim(),
     };
 
-    (document.getElementById('password') as HTMLInputElement).value = '';
-    (document.getElementById('passphrase') as HTMLInputElement).value = '';
+    (document.getElementById('remote_c') as HTMLInputElement).value = '';
+    (document.getElementById('remote_pp') as HTMLInputElement).value = '';
 
     void saveProfile(profile);
     switchToTerminal();

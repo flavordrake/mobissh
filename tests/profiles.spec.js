@@ -55,8 +55,8 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await page.locator('#profileName').fill('Original');
     await page.locator('#host').fill('upsert-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('upsertuser');
-    await page.locator('#password').fill('pass1');
+    await page.locator('#remote_a').fill('upsertuser');
+    await page.locator('#remote_c').fill('pass1');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
@@ -66,8 +66,8 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await page.locator('#profileName').fill('Updated');
     await page.locator('#host').fill('upsert-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('upsertuser');
-    await page.locator('#password').fill('pass2');
+    await page.locator('#remote_a').fill('upsertuser');
+    await page.locator('#remote_c').fill('pass2');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
@@ -89,8 +89,8 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await page.locator('#profileName').fill('<img src=x onerror=alert(1)>');
     await page.locator('#host').fill('xss-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('xssuser');
-    await page.locator('#password').fill('xsspass');
+    await page.locator('#remote_a').fill('xssuser');
+    await page.locator('#remote_c').fill('xsspass');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
@@ -117,8 +117,8 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await page.locator('#profileName').fill('LoadTest');
     await page.locator('#host').fill('load-host');
     await page.locator('#port').fill('2222');
-    await page.locator('#username').fill('loaduser');
-    await page.locator('#password').fill('loadpass');
+    await page.locator('#remote_a').fill('loaduser');
+    await page.locator('#remote_c').fill('loadpass');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
@@ -127,7 +127,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#profileName').fill('');
     await page.locator('#host').fill('');
-    await page.locator('#username').fill('');
+    await page.locator('#remote_a').fill('');
 
     // Click the profile item to load it
     const profileItem = page.locator('.profile-item', { hasText: 'loaduser@load-host' });
@@ -139,7 +139,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     expect(await page.locator('#profileName').inputValue()).toBe('LoadTest');
     expect(await page.locator('#host').inputValue()).toBe('load-host');
     expect(await page.locator('#port').inputValue()).toBe('2222');
-    expect(await page.locator('#username').inputValue()).toBe('loaduser');
+    expect(await page.locator('#remote_a').inputValue()).toBe('loaduser');
   });
 
   test('deleting a profile removes it from localStorage', async ({ page, mockSshServer }) => {
@@ -152,8 +152,8 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await page.locator('#profileName').fill('ToDelete');
     await page.locator('#host').fill('delete-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('deluser');
-    await page.locator('#password').fill('delpass');
+    await page.locator('#remote_a').fill('deluser');
+    await page.locator('#remote_c').fill('delpass');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 

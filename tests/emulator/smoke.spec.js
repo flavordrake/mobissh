@@ -42,13 +42,13 @@ test.describe('PWA smoke (Android emulator)', () => {
     // Fill the form
     await page.locator('#host').fill('emulator-test-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('testuser');
-    await page.locator('#password').fill('testpass');
+    await page.locator('#remote_a').fill('testuser');
+    await page.locator('#remote_c').fill('testpass');
     await screenshot(page, testInfo, '04-form-filled');
 
     // Verify fields hold their values
     await expect(page.locator('#host')).toHaveValue('emulator-test-host');
-    await expect(page.locator('#username')).toHaveValue('testuser');
+    await expect(page.locator('#remote_a')).toHaveValue('testuser');
   });
 
   test('settings panel renders with vault section', async ({ emulatorPage: page }, testInfo) => {
@@ -81,8 +81,8 @@ test.describe('PWA smoke (Android emulator)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('vault-test-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('vaultuser');
-    await page.locator('#password').fill('vaultpass');
+    await page.locator('#remote_a').fill('vaultuser');
+    await page.locator('#remote_c').fill('vaultpass');
     await screenshot(page, testInfo, '07-pre-vault-setup');
 
     await page.locator('#connectForm button[type="submit"]').click();
@@ -135,7 +135,7 @@ test.describe('PWA smoke (Android emulator)', () => {
     expect(vaultAttrs.autocomplete).toBe('new-password');
 
     // Check connect form password field — must be type="text" not "password" (#98)
-    const connectAttrs = await page.locator('#password').evaluate(el => ({
+    const connectAttrs = await page.locator('#remote_c').evaluate(el => ({
       type: el.type,
       lpIgnore: el.getAttribute('data-lpignore'),
       onePIgnore: el.getAttribute('data-1p-ignore'),

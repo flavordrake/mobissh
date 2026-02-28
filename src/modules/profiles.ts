@@ -115,15 +115,15 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
   (document.getElementById('profileName') as HTMLInputElement).value = profile.name || '';
   (document.getElementById('host') as HTMLInputElement).value = profile.host || '';
   (document.getElementById('port') as HTMLInputElement).value = String(profile.port || 22);
-  (document.getElementById('username') as HTMLInputElement).value = profile.username || '';
+  (document.getElementById('remote_a') as HTMLInputElement).value = profile.username || '';
 
   const authTypeEl = document.getElementById('authType') as HTMLSelectElement;
   authTypeEl.value = profile.authType || 'password';
   authTypeEl.dispatchEvent(new Event('change'));
 
-  (document.getElementById('password') as HTMLInputElement).value = '';
+  (document.getElementById('remote_c') as HTMLInputElement).value = '';
   (document.getElementById('privateKey') as HTMLTextAreaElement).value = '';
-  (document.getElementById('passphrase') as HTMLInputElement).value = '';
+  (document.getElementById('remote_pp') as HTMLInputElement).value = '';
   (document.getElementById('initialCommand') as HTMLInputElement).value = profile.initialCommand || '';
 
   if (profile.vaultId && profile.hasVaultCreds) {
@@ -137,9 +137,9 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
     }
     const creds = await vaultLoad(profile.vaultId);
     if (creds) {
-      if (creds.password) (document.getElementById('password') as HTMLInputElement).value = creds.password as string;
+      if (creds.password) (document.getElementById('remote_c') as HTMLInputElement).value = creds.password as string;
       if (creds.privateKey) (document.getElementById('privateKey') as HTMLTextAreaElement).value = creds.privateKey as string;
-      if (creds.passphrase) (document.getElementById('passphrase') as HTMLInputElement).value = creds.passphrase as string;
+      if (creds.passphrase) (document.getElementById('remote_pp') as HTMLInputElement).value = creds.passphrase as string;
       _toast('Credentials unlocked');
     } else {
       _toast('Vault locked — enter credentials manually');

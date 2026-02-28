@@ -84,8 +84,8 @@ test.describe('Terminal (#110 Phase 10)', () => {
 
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('mock-host');
-    await page.locator('#username').fill('testuser');
-    await page.locator('#password').fill('testpass');
+    await page.locator('#remote_a').fill('testuser');
+    await page.locator('#remote_c').fill('testpass');
     await page.locator('#connectForm button[type="submit"]').click();
 
     await page.waitForFunction(() => {

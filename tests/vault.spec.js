@@ -24,8 +24,8 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('vault-test-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('vaultuser');
-    await page.locator('#password').fill('supersecretpassword');
+    await page.locator('#remote_a').fill('vaultuser');
+    await page.locator('#remote_c').fill('supersecretpassword');
     await page.locator('#connectForm button[type="submit"]').click();
 
     // Wait for profile to be saved
@@ -58,8 +58,8 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('flag-test-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('flaguser');
-    await page.locator('#password').fill('mypassword');
+    await page.locator('#remote_a').fill('flaguser');
+    await page.locator('#remote_c').fill('mypassword');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
@@ -78,8 +78,8 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('roundtrip-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('rounduser');
-    await page.locator('#password').fill('roundtrip-secret');
+    await page.locator('#remote_a').fill('rounduser');
+    await page.locator('#remote_c').fill('roundtrip-secret');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
@@ -92,7 +92,7 @@ test.describe('Credential vault (#14)', () => {
     await page.waitForTimeout(500);
 
     // The password field should be populated with the decrypted value
-    const password = await page.locator('#password').inputValue();
+    const password = await page.locator('#remote_c').inputValue();
     expect(password).toBe('roundtrip-secret');
   });
 
@@ -104,8 +104,8 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('delete-test-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('deleteuser');
-    await page.locator('#password').fill('deleteme');
+    await page.locator('#remote_a').fill('deleteuser');
+    await page.locator('#remote_c').fill('deleteme');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
@@ -143,8 +143,8 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('no-vault-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('novaultuser');
-    await page.locator('#password').fill('should-not-persist');
+    await page.locator('#remote_a').fill('novaultuser');
+    await page.locator('#remote_c').fill('should-not-persist');
 
     // Submit — vault setup modal should appear since no vault exists
     await page.locator('#connectForm button[type="submit"]').click();
@@ -171,8 +171,8 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('setup-test-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('setupuser');
-    await page.locator('#password').fill('setupsecret');
+    await page.locator('#remote_a').fill('setupuser');
+    await page.locator('#remote_c').fill('setupsecret');
 
     // Submit — triggers vault setup modal
     await page.locator('#connectForm button[type="submit"]').click();

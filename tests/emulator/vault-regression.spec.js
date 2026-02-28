@@ -34,8 +34,8 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('regression-test-host');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('testuser');
-    await page.locator('#password').fill('secretpassword123');
+    await page.locator('#remote_a').fill('testuser');
+    await page.locator('#remote_c').fill('secretpassword123');
     await screenshot(page, testInfo, 'regression-02-form-filled');
 
     await page.locator('#connectForm button[type="submit"]').click();
@@ -58,7 +58,7 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     // and has autofill suppression attributes.
     // type="password" is the primary signal Chrome uses to classify a form as
     // a login form and trigger "Save password?" (#98).
-    const pwAttrs = await page.locator('#password').evaluate(el => ({
+    const pwAttrs = await page.locator('#remote_c').evaluate(el => ({
       type: el.type,
       autocomplete: el.getAttribute('autocomplete'),
       lpIgnore: el.getAttribute('data-lpignore'),
@@ -72,7 +72,7 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     expect(pwAttrs.formType).toBe('other');
 
     // Same check for the passphrase field
-    const ppAttrs = await page.locator('#passphrase').evaluate(el => ({
+    const ppAttrs = await page.locator('#remote_pp').evaluate(el => ({
       type: el.type,
       autocomplete: el.getAttribute('autocomplete'),
     }));
@@ -135,8 +135,8 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     // Go through the full credential save flow
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('api-check-host');
-    await page.locator('#username').fill('user');
-    await page.locator('#password').fill('pass');
+    await page.locator('#remote_a').fill('user');
+    await page.locator('#remote_c').fill('pass');
     await page.locator('#connectForm button[type="submit"]').click();
 
     await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
@@ -178,8 +178,8 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     // Save a profile with credentials
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('plaintext-check-host');
-    await page.locator('#username').fill('secretuser');
-    await page.locator('#password').fill('hunter2-should-not-appear');
+    await page.locator('#remote_a').fill('secretuser');
+    await page.locator('#remote_c').fill('hunter2-should-not-appear');
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(2000);
     await screenshot(page, testInfo, 'plaintext-01-profile-saved');

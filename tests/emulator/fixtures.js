@@ -158,8 +158,8 @@ async function setupRealSSHConnection(page, sshServer) {
   // Fill credentials
   await page.locator('#host').fill(sshServer.host);
   await page.locator('#port').fill(String(sshServer.port));
-  await page.locator('#username').fill(sshServer.user);
-  await page.locator('#password').fill(sshServer.password);
+  await page.locator('#remote_a').fill(sshServer.user);
+  await page.locator('#remote_c').fill(sshServer.password);
 
   // Submit — button has no id, select by form + type
   await page.locator('#connectForm button[type="submit"]').click();

@@ -177,6 +177,17 @@ function toggleTabBar() {
 function switchToTerminal() {
     document.querySelector('[data-panel="terminal"]')?.click();
 }
+/**
+ * Attach focus/blur handlers that promote a field to type="password" only while
+ * focused, then demote back to type="text" on blur.  This prevents Chrome from
+ * detecting a login-form pattern at rest (username + password in same form) while
+ * still suppressing IME/Gboard while the user is actively typing. (#147/#150)
+ */
+function _initPasswordFieldCloaking(field) {
+    field.type = 'text';
+    field.addEventListener('focus', () => { field.type = 'password'; });
+    field.addEventListener('blur', () => { field.type = 'text'; });
+}
 // ── Connect form ─────────────────────────────────────────────────────────────
 export function initConnectForm() {
     const form = document.getElementById('connectForm');
@@ -186,21 +197,24 @@ export function initConnectForm() {
         document.getElementById('passwordGroup').style.display = isKey ? 'none' : 'block';
         document.getElementById('keyGroup').style.display = isKey ? 'block' : 'none';
     });
+    // Cloak password fields: type="text" at rest, type="password" only while focused (#150)
+    _initPasswordFieldCloaking(document.getElementById('remote_c'));
+    _initPasswordFieldCloaking(document.getElementById('remote_pp'));
     form.addEventListener('submit', (e) => {
         e.preventDefault();
         const profile = {
             name: document.getElementById('profileName').value.trim() || 'Server',
             host: document.getElementById('host').value.trim(),
             port: parseInt(document.getElementById('port').value) || 22,
-            username: document.getElementById('username').value.trim(),
+            username: document.getElementById('remote_a').value.trim(),
             authType: authType.value,
-            password: document.getElementById('password').value,
+            password: document.getElementById('remote_c').value,
             privateKey: document.getElementById('privateKey').value.trim(),
-            passphrase: document.getElementById('passphrase').value,
+            passphrase: document.getElementById('remote_pp').value,
             initialCommand: document.getElementById('initialCommand').value.trim(),
         };
-        document.getElementById('password').value = '';
-        document.getElementById('passphrase').value = '';
+        document.getElementById('remote_c').value = '';
+        document.getElementById('remote_pp').value = '';
         void saveProfile(profile);
         switchToTerminal();
         connect(profile);

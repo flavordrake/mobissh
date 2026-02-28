@@ -88,13 +88,13 @@ export async function loadProfileIntoForm(idx) {
     document.getElementById('profileName').value = profile.name || '';
     document.getElementById('host').value = profile.host || '';
     document.getElementById('port').value = String(profile.port || 22);
-    document.getElementById('username').value = profile.username || '';
+    document.getElementById('remote_a').value = profile.username || '';
     const authTypeEl = document.getElementById('authType');
     authTypeEl.value = profile.authType || 'password';
     authTypeEl.dispatchEvent(new Event('change'));
-    document.getElementById('password').value = '';
+    document.getElementById('remote_c').value = '';
     document.getElementById('privateKey').value = '';
-    document.getElementById('passphrase').value = '';
+    document.getElementById('remote_pp').value = '';
     document.getElementById('initialCommand').value = profile.initialCommand || '';
     if (profile.vaultId && profile.hasVaultCreds) {
         if (!appState.vaultKey) {
@@ -108,11 +108,11 @@ export async function loadProfileIntoForm(idx) {
         const creds = await vaultLoad(profile.vaultId);
         if (creds) {
             if (creds.password)
-                document.getElementById('password').value = creds.password;
+                document.getElementById('remote_c').value = creds.password;
             if (creds.privateKey)
                 document.getElementById('privateKey').value = creds.privateKey;
             if (creds.passphrase)
-                document.getElementById('passphrase').value = creds.passphrase;
+                document.getElementById('remote_pp').value = creds.passphrase;
             _toast('Credentials unlocked');
         }
         else {

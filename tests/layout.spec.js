@@ -185,7 +185,7 @@ test.describe('Connect form', () => {
   test('form has required fields', async ({ page }) => {
     await expect(page.locator('#host')).toBeVisible();
     await expect(page.locator('#port')).toBeVisible();
-    await expect(page.locator('#username')).toBeVisible();
+    await expect(page.locator('#remote_a')).toBeVisible();
     await expect(page.locator('#authType')).toBeVisible();
   });
 
@@ -203,25 +203,39 @@ test.describe('Connect form', () => {
     expect(second).toBe('key');
   });
 
-  test('password and passphrase fields use type="password" with IME suppression (#147)', async ({ page }) => {
-    // type="password" prevents IME suggestion bar from learning keystrokes (#147)
-    // autocorrect/autocapitalize/spellcheck="off" suppress remaining IME features
-    await expect(page.locator('#password')).toHaveAttribute('type', 'password');
-    await expect(page.locator('#password')).toHaveAttribute('autocorrect', 'off');
-    await expect(page.locator('#password')).toHaveAttribute('autocapitalize', 'off');
-    await expect(page.locator('#password')).toHaveAttribute('spellcheck', 'false');
+  test('password fields cloak: type="text" at rest, type="password" on focus (#147/#150)', async ({ page }) => {
+    const pw = page.locator('#remote_c');
 
+    // At rest: type="text" with CSS disc masking (avoids Chrome login-form detection)
+    await expect(pw).toHaveAttribute('type', 'text');
+    await expect(pw).toHaveAttribute('autocorrect', 'off');
+    await expect(pw).toHaveAttribute('autocapitalize', 'off');
+    await expect(pw).toHaveAttribute('spellcheck', 'false');
+    const pwSecurity = await pw.evaluate(el => getComputedStyle(el).webkitTextSecurity);
+    expect(pwSecurity).toBe('disc');
+
+    // On focus: promoted to type="password" (suppresses IME/Gboard)
+    await pw.focus();
+    await expect(pw).toHaveAttribute('type', 'password');
+
+    // On blur: back to type="text"
+    await pw.blur();
+    await expect(pw).toHaveAttribute('type', 'text');
+
+    // Same for passphrase
     await page.locator('#authType').selectOption('key');
-    await expect(page.locator('#passphrase')).toHaveAttribute('type', 'password');
-    await expect(page.locator('#passphrase')).toHaveAttribute('autocorrect', 'off');
-    await expect(page.locator('#passphrase')).toHaveAttribute('autocapitalize', 'off');
-    await expect(page.locator('#passphrase')).toHaveAttribute('spellcheck', 'false');
+    const pp = page.locator('#remote_pp');
+    await expect(pp).toHaveAttribute('type', 'text');
+    await pp.focus();
+    await expect(pp).toHaveAttribute('type', 'password');
+    await pp.blur();
+    await expect(pp).toHaveAttribute('type', 'text');
   });
 
   test('switching to key auth shows privateKey field', async ({ page }) => {
     await page.locator('#authType').selectOption('key');
     await expect(page.locator('#keyGroup')).toBeVisible();
-    await expect(page.locator('#passwordGroup')).not.toBeVisible();
+    await expect(page.locator('#remote_cGroup')).not.toBeVisible();
   });
 
   test('profile saves to localStorage and appears in profile list', async ({ page }) => {
@@ -234,8 +248,8 @@ test.describe('Connect form', () => {
     await page.locator('#profileName').fill('Test Server');
     await page.locator('#host').fill('192.168.1.100');
     await page.locator('#port').fill('22');
-    await page.locator('#username').fill('admin');
-    await page.locator('#password').fill('secret');
+    await page.locator('#remote_a').fill('admin');
+    await page.locator('#remote_c').fill('secret');
 
     // Submit the form — app saves profile then calls connect() (which will fail — ok)
     await page.locator('#connectForm button[type="submit"]').click();

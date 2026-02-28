@@ -38,7 +38,7 @@ test('smoke: page loads, title is MobiSSH, connect form and tab bar render', asy
   await expect(connectPanel).toHaveClass(/active/);
   await expect(page.locator('#host')).toBeVisible();
   await expect(page.locator('#port')).toBeVisible();
-  await expect(page.locator('#username')).toBeVisible();
+  await expect(page.locator('#remote_a')).toBeVisible();
 
   // 4. Screenshot (saved by BrowserStack Automate and available in the dashboard)
   await page.screenshot({ path: 'test-results/screenshots/browserstack-smoke.png' });
