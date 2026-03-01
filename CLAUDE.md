@@ -80,3 +80,4 @@ All backlog items are filed as issues in this repo. Key priorities:
 - No secrets in code
 - Keep `Cache-Control: no-store` on static responses and SW network-first
 - **Never store sensitive data (passwords, private keys, passphrases) in plaintext** — use the encrypted vault (PasswordCredential + AES-GCM) or don't store at all. If the vault is unavailable, block the feature; do not fall back to plaintext storage with a warning.
+- **Never prefix script calls with `bash`** — all scripts have shebangs and execute permissions. Call `scripts/foo.sh` not `bash scripts/foo.sh`. The `bash` prefix is redundant and widens the permission surface.

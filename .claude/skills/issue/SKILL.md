@@ -66,16 +66,10 @@ Build a concise issue body. No filler.
   The user often tests on a running server while code changes happen in parallel, so these
   may differ.
   ```bash
-  CODE_HASH=$(git rev-parse --short HEAD)
-  # Server injects <meta name="app-version" content="version:hash"> into index.html
-  SERVER_META=$(curl -sf --max-time 3 "http://localhost:${MOBISSH_PORT:-8081}/" 2>/dev/null \
-    | grep -oP 'app-version"\s*content="\K[^"]+' || echo "server not responding")
+  scripts/gh-ops.sh version
   ```
-  Include both in the issue body. If they differ, flag it:
-  ```
-  Code: abc1234 | Server: 0.1.0:def5678 (STALE — server hasn't been restarted)
-  ```
-  If the server isn't responding, just note the code hash and `(server not running)`.
+  This outputs `Code: abc1234 | Server: 0.1.0:def5678` (or `server not running`).
+  If they differ, flag it as `(STALE — server hasn't been restarted)`.
 
 ## Step 3: Check for recent test artifacts
 
@@ -88,7 +82,7 @@ If `test-results/emulator/report.json` exists and was modified within 30 minutes
 4. **Per-test screenshots**: check `test-results/*-android-emulator/` for relevant PNGs
 
 If a recording exists but no frames have been extracted (no `frames/` directory or it's
-empty), run `bash scripts/review-recording.sh` to generate uniform frame samples. This
+empty), run `scripts/review-recording.sh` to generate uniform frame samples. This
 is useful when the issue relates to visual behavior that screenshots alone don't capture.
 
 Only include artifacts clearly connected to the issue. If nothing is recent or relevant,
@@ -112,12 +106,12 @@ lightweight hint for obviously bot-ready issues.
 
 Before filing, check for existing issues:
 ```bash
-gh issue list --search "<key phrase from title>" --state open --json number,title --limit 5
+scripts/gh-ops.sh search "<key phrase from title>"
 ```
 
 If a match exists, warn the user and ask whether to file or comment on the existing one.
 
-File the issue using a heredoc for the body. Template:
+Write the body to a temp file, then file using the wrapper script. Body template:
 
 ```
 Filed while working on <context> (<branch>).
@@ -128,9 +122,8 @@ Filed while working on <context> (<branch>).
 <Steps to reproduce, or user need for features.>
 
 ## Version
-Code: <CODE_HASH> | Server: <SERVER_META>
-<If mismatched: "(STALE — server hasn't been restarted since <hash>)">
-<If server down: "(server not running)">
+<output from `scripts/gh-ops.sh version`>
+<If mismatched: "(STALE — server hasn't been restarted)">
 
 ## Test Evidence
 <Only if recent artifacts exist (Step 3). Otherwise omit this section entirely.>
@@ -142,14 +135,17 @@ Code: <CODE_HASH> | Server: <SERVER_META>
 @claude <Specific bot instructions, if actionable (Step 4).>
 ```
 
+Write the composed body to a temp file, then file:
+
 ```bash
-gh issue create --title "<prefix>: <concise title>" \
-  --label "<type>" --label "<domain>" --label "<shape>" \
-  --body "$(cat <<'ISSUE_EOF'
-<composed body per template above>
-ISSUE_EOF
-)"
+# Write body to temp file (use the Write tool, not a heredoc)
+# Then file:
+scripts/gh-file-issue.sh --title "<prefix>: <title>" --label "<type>" --label "<domain>" --body-file /tmp/issue-body.md
 ```
+
+**Important:** Use the Write tool to create `/tmp/issue-body.md`, then call the script.
+Do NOT use heredocs or `$(cat <<EOF)` in the bash command — that's what causes
+per-command approval prompts. One Write + one `scripts/gh-file-issue.sh` call.
 
 Only include `--label` flags for labels that apply. Type is always one. Domain and shape
 are zero or more. See `.claude/process.md` for the full label taxonomy.

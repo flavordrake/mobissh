@@ -19,7 +19,7 @@ This skill provides the correct setup, known pitfalls, and ready-to-use template
 
 ```bash
 # First time only:
-bash scripts/setup-avd.sh
+scripts/setup-avd.sh
 
 # Every session:
 npm run test:emulator
@@ -281,8 +281,8 @@ test('explore: pinch zoom on settings panel', async ({ emulatorPage: page }) => 
 
 **3. Capture the video baseline.** Run the test, extract frames, and review them:
 ```bash
-bash scripts/run-emulator-tests.sh explore.spec.js
-bash scripts/extract-test-frames.sh --test "explore"
+scripts/run-emulator-tests.sh explore.spec.js
+scripts/extract-test-frames.sh --test "explore"
 ```
 
 **4. Analyze the frames.** Read the extracted PNGs to understand what actually happened:
@@ -391,9 +391,9 @@ Playwright's failure screenshots only show the DOM state at timeout — after th
 **Usage:**
 ```bash
 # After running emulator tests:
-bash scripts/extract-test-frames.sh              # all tests
-bash scripts/extract-test-frames.sh --failed      # only failed tests
-bash scripts/extract-test-frames.sh --test "vault" # tests matching pattern
+scripts/extract-test-frames.sh              # all tests
+scripts/extract-test-frames.sh --failed      # only failed tests
+scripts/extract-test-frames.sh --test "vault" # tests matching pattern
 ```
 
 **Output example:**
@@ -429,9 +429,9 @@ This is the exit route from "guess why it failed from the error message" to "see
 `scripts/review-recording.sh` samples the recording at uniform intervals and dumps frames to `test-results/emulator/review/`.
 
 ```bash
-bash scripts/review-recording.sh                    # every 5s (default)
-bash scripts/review-recording.sh --interval 3       # every 3s for more detail
-bash scripts/review-recording.sh --recording path   # custom recording path
+scripts/review-recording.sh                    # every 5s (default)
+scripts/review-recording.sh --interval 3       # every 3s for more detail
+scripts/review-recording.sh --recording path   # custom recording path
 ```
 
 Use this instead of writing one-off `ffmpeg -ss` commands. Read the output frames with the Read tool to visually inspect the recording.
@@ -452,7 +452,7 @@ python3 scripts/generate-workflow-report.py
 python3 scripts/generate-workflow-report.py --open   # opens in browser
 
 # Automatically run as Phase 7 of:
-bash scripts/run-emulator-tests.sh
+scripts/run-emulator-tests.sh
 ```
 
 **Output:** `test-results/emulator/workflow-report.html` — a single ~4MB HTML file with all images embedded (no external dependencies, viewable offline).

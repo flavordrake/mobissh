@@ -37,8 +37,8 @@ agent's job is coordination, research, prototyping, and synthesis — not data f
 Launch as a Task agent:
 
 ```bash
-bash scripts/delegate-discover.sh --out /tmp/delegate-data.json
-bash scripts/delegate-classify.sh --data /tmp/delegate-data.json > /tmp/delegate-classified.json
+scripts/delegate-discover.sh --out /tmp/delegate-data.json
+scripts/delegate-classify.sh --data /tmp/delegate-data.json > /tmp/delegate-classified.json
 ```
 
 This produces `/tmp/delegate-classified.json` with every open issue classified into:
@@ -58,7 +58,7 @@ for all subsequent phases.
 For each `already-attempted` issue, launch parallel Task agents:
 
 ```bash
-bash scripts/delegate-failure-analysis.sh <issue-number> --data /tmp/delegate-data.json
+scripts/delegate-failure-analysis.sh <issue-number> --data /tmp/delegate-data.json
 ```
 
 Each outputs JSON with: `failure_type`, `signals`, `diff_sample`, `filenames`, `attempts`.
@@ -275,22 +275,31 @@ add context, or skip issues.
 
 Run approved actions as Task agents where possible:
 
-- Post `@claude` comments on delegate issues
-- Apply labels per `.claude/process.md`:
+- Post `@claude` comments: write body to `/tmp/delegate-comment-N.md`, then:
+  ```bash
+  scripts/gh-ops.sh comment N --body-file /tmp/delegate-comment-N.md
+  ```
+- Apply labels via `scripts/gh-ops.sh`:
   ```bash
   # New delegation
-  gh issue edit N --add-label bot
+  scripts/gh-ops.sh labels N --add bot
   # Re-delegation (swap divergence → bot)
-  gh issue edit N --remove-label divergence --add-label bot
-  # Add shape labels as determined in Phase 4
-  gh issue edit N --add-label device  # if needs emulator validation
-  gh issue edit N --add-label spike   # if needs research first
-  gh issue edit N --add-label conflict --add-label blocked  # if sequencing needed
+  scripts/gh-ops.sh labels N --rm divergence --add bot
+  # Shape labels
+  scripts/gh-ops.sh labels N --add device
+  scripts/gh-ops.sh labels N --add spike
+  scripts/gh-ops.sh labels N --add conflict --add blocked
   ```
-- Create sub-issues for decompose issues (with embedded `@claude` tasks, labeled `bot`)
+- Create sub-issues: write body to `/tmp/sub-issue-N.md`, then:
+  ```bash
+  scripts/gh-file-issue.sh --title "..." --label bot --body-file /tmp/sub-issue-N.md
+  ```
 - Comment on parent issue linking sub-issues, apply `composite` label
-- Clean up branches: `bash scripts/integrate-cleanup.sh --issue <N>`
-- Close superseded issues with explanation
+- Clean up branches: `scripts/integrate-cleanup.sh --issue <N>`
+- Close superseded issues:
+  ```bash
+  scripts/gh-ops.sh close N --comment "Superseded by #M"
+  ```
 
 Report:
 ```

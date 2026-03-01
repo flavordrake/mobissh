@@ -10,7 +10,7 @@ MobiSSH caches the git hash at startup. A running server will serve stale code u
 
 ## The Rule
 
-Before ANY of these actions, run `bash scripts/server-ctl.sh ensure`:
+Before ANY of these actions, run `scripts/server-ctl.sh ensure`:
 - Asking the user to test in their browser
 - Running emulator tests (`run-emulator-tests.sh` does this automatically)
 - Curling localhost to verify behavior
@@ -21,11 +21,11 @@ Before ANY of these actions, run `bash scripts/server-ctl.sh ensure`:
 ## Commands
 
 ```bash
-bash scripts/server-ctl.sh ensure    # start or restart until healthy at HEAD
-bash scripts/server-ctl.sh status    # health check + version gate
-bash scripts/server-ctl.sh start     # start if not running, restart if stale
-bash scripts/server-ctl.sh stop      # stop server
-bash scripts/server-ctl.sh restart   # force restart
+scripts/server-ctl.sh ensure    # start or restart until healthy at HEAD
+scripts/server-ctl.sh status    # health check + version gate
+scripts/server-ctl.sh start     # start if not running, restart if stale
+scripts/server-ctl.sh stop      # stop server
+scripts/server-ctl.sh restart   # force restart
 ```
 
 Or via npm:
@@ -80,6 +80,6 @@ If production is stale, the server process needs restarting on the Tailscale hos
 
 **"Server failed to become healthy within 10s"**: Check `/tmp/mobissh-server-$PORT.log`. Common causes: port already in use by another process, missing `node_modules/` (run `cd server && npm install`), syntax error in server code.
 
-**PID exists but server not healthy**: The process started but is crashing or hanging. Check the log file. Kill it manually with `bash scripts/server-ctl.sh stop` and investigate.
+**PID exists but server not healthy**: The process started but is crashing or hanging. Check the log file. Kill it manually with `scripts/server-ctl.sh stop` and investigate.
 
 **Port conflict**: Another process holds the port. Find it with `lsof -ti tcp:8081` and decide whether to kill it or use a different port.

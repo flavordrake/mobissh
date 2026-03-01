@@ -69,7 +69,7 @@ npx playwright test                 # Headless E2E
 
 If an emulator is available (`adb devices | grep emulator`), also run:
 ```bash
-bash scripts/run-emulator-tests.sh
+scripts/run-emulator-tests.sh
 ```
 
 Do NOT tag if any validation fails. Fix first, commit, then re-run.
@@ -101,15 +101,14 @@ Scan the changelog commits for issue references (`#N`, `fix(#N)`, `feat(#N)`). F
 2. Close with a comment linking the release, and clean up delegation labels per `.claude/process.md`:
 
 ```bash
-gh issue close N --comment "Fixed in v{VERSION} ({COMMIT_SHA})"
-# Remove delegation labels if present (issue is resolved, no longer in delegation lifecycle)
-gh issue edit N --remove-label bot --remove-label divergence 2>/dev/null || true
+scripts/gh-ops.sh close N --comment "Fixed in v{VERSION} ({COMMIT_SHA})"
+scripts/gh-ops.sh labels N --rm bot --rm divergence
 ```
 
 3. Add the release version label:
 
 ```bash
-gh issue edit N --add-label "v{VERSION}"
+scripts/gh-ops.sh labels N --add "v{VERSION}"
 ```
 
 If there's no label for this version yet, create one:
@@ -147,8 +146,8 @@ git push origin main --follow-tags
 After push, verify the production server if accessible:
 
 ```bash
-bash scripts/server-ctl.sh ensure
-bash scripts/server-ctl.sh status
+scripts/server-ctl.sh ensure
+scripts/server-ctl.sh status
 ```
 
 Check that the version meta tag matches the new release.

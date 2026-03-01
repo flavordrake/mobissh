@@ -35,7 +35,7 @@ the next step.
 ## Step 1: Discover and triage
 
 ```bash
-bash scripts/integrate-discover.sh > /tmp/integrate-candidates.json
+scripts/integrate-discover.sh > /tmp/integrate-candidates.json
 ```
 
 This outputs a JSON array with each entry scored by risk:
@@ -51,7 +51,7 @@ Ask the user how to proceed (evaluate candidates, clean up first, etc.).
 ## Step 2: Clean up rejects
 
 ```bash
-bash scripts/integrate-cleanup.sh --file /tmp/integrate-candidates.json
+scripts/integrate-cleanup.sh --file /tmp/integrate-candidates.json
 ```
 
 This deletes branches for all `reject`-risk issues and comments on the GitHub issues
@@ -59,8 +59,7 @@ explaining that the bot couldn't converge and human re-scoping is needed.
 
 After cleanup, update labels per `.claude/process.md`:
 ```bash
-# For each rejected issue: swap bot → divergence
-gh issue edit N --remove-label bot --add-label divergence
+scripts/gh-ops.sh labels N --rm bot --add divergence
 ```
 
 Options:
@@ -73,7 +72,7 @@ Options:
 For each candidate branch (in risk order: low first, then medium, then high):
 
 ```bash
-bash scripts/integrate-gate.sh <branch-name>
+scripts/integrate-gate.sh <branch-name>
 ```
 
 The script:
@@ -87,7 +86,7 @@ Exit code 0 = all gates passed, 1 = gate failed, 2 = setup error.
 
 To auto-close a PR on failure:
 ```bash
-bash scripts/integrate-gate.sh <branch> --close-on-fail --pr <number>
+scripts/integrate-gate.sh <branch> --close-on-fail --pr <number>
 ```
 
 Run multiple fast gates in parallel using Task agents when candidates are independent.
@@ -114,14 +113,14 @@ if [[ ! -e /dev/kvm ]]; then
   EMULATOR=false
 elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
   echo "Android SDK not installed — running setup..."
-  bash scripts/setup-avd.sh
+  scripts/setup-avd.sh
   EMULATOR=true
 else
   EMULATOR=true
 fi
 
 if [ "$EMULATOR" = true ]; then
-  bash scripts/run-emulator-tests.sh
+  scripts/run-emulator-tests.sh
 fi
 ```
 
@@ -135,7 +134,7 @@ After `run-emulator-tests.sh` completes:
 3. If the PR touches touch/gesture code, pay special attention to gesture test results
 4. If the recording exists but frames haven't been extracted:
    ```bash
-   bash scripts/review-recording.sh
+   scripts/review-recording.sh
    ```
 
 ### Fallback: headless only (emulator truly unavailable)
@@ -144,7 +143,7 @@ Only use this path when KVM is missing or the machine genuinely can't host an em
 
 1. Start server and run headless tests:
    ```bash
-   bash scripts/server-ctl.sh ensure
+   scripts/server-ctl.sh ensure
    npx playwright test --config=playwright.config.js
    ```
 2. Check if the PR touches device-dependent areas. If any of these keywords appear in
@@ -159,7 +158,7 @@ Only use this path when KVM is missing or the machine genuinely can't host an em
 ### Production server awareness
 The user often tests on the live production server while integration happens locally.
 ```bash
-bash scripts/server-ctl.sh status
+scripts/server-ctl.sh status
 ```
 If stale, warn before merging — the server will need a restart.
 
@@ -178,16 +177,16 @@ gh pr merge <N> --squash --delete-branch
 
 After merge, update labels and close the issue per `.claude/process.md`:
 ```bash
-gh issue edit <issue-N> --remove-label bot
-gh issue close <issue-N> --comment "Fixed in PR #<pr-N>"
+scripts/gh-ops.sh labels <issue-N> --rm bot
+scripts/gh-ops.sh close <issue-N> --comment "Fixed in PR #<pr-N>"
 ```
 
 For orphaned branches (no PR), create a PR first, then merge:
 ```bash
 gh pr create --head <branch> --title "<issue title>" --body "Bot fix for #<N>" --label bot
 gh pr merge <PR-N> --squash --delete-branch
-gh issue edit <issue-N> --remove-label bot
-gh issue close <issue-N> --comment "Fixed in PR #<PR-N>"
+scripts/gh-ops.sh labels <issue-N> --rm bot
+scripts/gh-ops.sh close <issue-N> --comment "Fixed in PR #<PR-N>"
 ```
 
 ### Reject criteria (ANY one is sufficient)
@@ -198,14 +197,13 @@ gh issue close <issue-N> --comment "Fixed in PR #<PR-N>"
 
 ```bash
 gh pr close <N> --comment "Closing: <clear reason with specific failure details>"
-# Swap bot → divergence per process.md
-gh issue edit <issue-N> --remove-label bot --add-label divergence
+scripts/gh-ops.sh labels <issue-N> --rm bot --add divergence
 ```
 
 For orphaned branches (no PR), just delete the branch and update labels:
 ```bash
-bash scripts/integrate-cleanup.sh --issue <N>
-gh issue edit <N> --remove-label bot --add-label divergence
+scripts/integrate-cleanup.sh --issue <N>
+scripts/gh-ops.sh labels <N> --rm bot --add divergence
 ```
 
 ## Step 6: Post-merge
@@ -213,7 +211,7 @@ gh issue edit <N> --remove-label bot --add-label divergence
 After each successful merge:
 ```bash
 git checkout main && git pull
-bash scripts/server-ctl.sh restart
+scripts/server-ctl.sh restart
 npm test && npx playwright test --config=playwright.config.js
 ```
 Report: "Merged PR #N (<title>). Tests: X pass. Server restarted at <hash>."
