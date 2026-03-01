@@ -28,10 +28,10 @@ export function stopAndDownloadRecording() {
     if (!appState.recording)
         return;
     appState.recording = false;
-    _downloadCastFile();
+    void _downloadCastFile();
     _updateRecordingUI();
 }
-function _downloadCastFile() {
+async function _downloadCastFile() {
     const header = {
         version: 2,
         width: appState.terminal ? appState.terminal.cols : 220,
@@ -42,22 +42,36 @@ function _downloadCastFile() {
             : 'MobiSSH Session',
     };
     const lines = [JSON.stringify(header), ...appState.recordingEvents.map((e) => JSON.stringify(e))].join('\n');
-    const blob = new Blob([lines + '\n'], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     // Filename: mobissh-YYYY-MM-DDTHH-MM-SS.cast
     const ts = new Date(appState.recordingStartTime ?? 0)
         .toISOString()
         .replace(/[:.]/g, '-')
         .slice(0, 19);
-    a.download = `mobissh-${ts}.cast`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const filename = `mobissh-${ts}.cast`;
+    const blob = new Blob([lines + '\n'], { type: 'text/plain' });
     appState.recordingEvents = [];
     appState.recordingStartTime = null;
+    const file = new File([blob], filename, { type: 'text/plain' });
+    if (navigator.canShare?.({ files: [file] })) {
+        try {
+            await navigator.share({ files: [file], title: filename });
+        }
+        catch (err) {
+            if (err instanceof Error && err.name !== 'AbortError') {
+                _toast('Download failed — try again');
+            }
+        }
+    }
+    else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => { URL.revokeObjectURL(url); }, 1000);
+    }
 }
 export function updateRecordingUI() {
     _updateRecordingUI();
