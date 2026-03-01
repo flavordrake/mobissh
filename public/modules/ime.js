@@ -13,12 +13,35 @@ import { sendSSHInput } from './connection.js';
 import { toast, focusIME, setCtrlActive, toggleComposeMode } from './ui.js';
 let _handleResize = () => { };
 let _applyFontSize = (_size) => { };
+// ── Password-prompt detection — suppress keyboard suggestions (#123) ─────────
+// Matches common password/passphrase/PIN prompts at the end of a terminal line.
+const _PASSWORD_RE = /(?:password|passphrase|PIN)[^:]*:\s*$/i;
+let _pwdListenerSetup = false;
+function _checkPasswordPrompt(el) {
+    if (!appState.terminal)
+        return;
+    const buf = appState.terminal.buffer.active;
+    const lastLine = (buf.getLine(buf.cursorY)?.translateToString(true) ?? '').trimEnd();
+    el.setAttribute('autocomplete', _PASSWORD_RE.test(lastLine) ? 'new-password' : 'off');
+}
 export function initIME({ handleResize, applyFontSize }) {
     _handleResize = handleResize;
     _applyFontSize = applyFontSize;
 }
 export function initIMEInput() {
     const ime = document.getElementById('imeInput');
+    // Register cursor-move listener once the terminal is available, and re-check
+    // whenever focus lands on the textarea (covers the "prompt just appeared" case).
+    function _lazySetupPwdListener() {
+        if (_pwdListenerSetup || !appState.terminal)
+            return;
+        _pwdListenerSetup = true;
+        appState.terminal.onCursorMove(() => { _checkPasswordPrompt(ime); });
+    }
+    ime.addEventListener('focus', () => {
+        _lazySetupPwdListener();
+        _checkPasswordPrompt(ime);
+    });
     // ── IME composition preview helper (#44) ──────────────────────────────
     function _imePreviewShow(text) {
         const el = document.getElementById('imePreview');
@@ -44,6 +67,7 @@ export function initIMEInput() {
             return;
         if (text === '\n') {
             sendSSHInput('\r');
+            ime.setAttribute('autocomplete', 'off'); // reset password-mode suppression
             if (appState.imeMode)
                 toggleComposeMode();
             return;
@@ -74,6 +98,7 @@ export function initIMEInput() {
             return;
         if (text === '\n') {
             sendSSHInput('\r');
+            ime.setAttribute('autocomplete', 'off'); // reset password-mode suppression
             if (appState.imeMode)
                 toggleComposeMode();
             return;
@@ -94,6 +119,9 @@ export function initIMEInput() {
     });
     // ── keydown: special keys not captured by 'input' ─────────────────────
     ime.addEventListener('keydown', (e) => {
+        // Reset password-mode suggestion suppression when user submits with Enter (#123)
+        if (e.key === 'Enter')
+            ime.setAttribute('autocomplete', 'off');
         if (e.ctrlKey && !e.altKey && e.key.length === 1) {
             const code = e.key.toLowerCase().charCodeAt(0) - 96;
             if (code >= 1 && code <= 26) {
