@@ -34,7 +34,12 @@ agent's job is coordination, research, prototyping, and synthesis — not data f
 
 ## Phase 1: Discover and classify
 
-Launch as a Task agent:
+Invoke the **delegate-scout** agent (`.claude/agents/delegate-scout.md`) in the background.
+It runs discovery, classification, failure analysis, and body fetching, then returns a
+summary with file paths. Do NOT use the built-in `general-purpose` agent (it does not
+inherit permissions; see `docs/agents.md`).
+
+The scout runs these scripts and writes results to /tmp:
 
 ```bash
 scripts/delegate-discover.sh --out /tmp/delegate-data.json

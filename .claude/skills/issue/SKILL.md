@@ -13,8 +13,15 @@ File a GitHub issue from an in-conversation observation. The user types somethin
 
 ## Execution Model
 
-Run this as a **background Task**. The user's main workflow continues uninterrupted.
-Return the issue URL when done.
+Invoke the **issue-manager** agent (`.claude/agents/issue-manager.md`). It runs as a
+background task with the /issue skill preloaded and proper permissions inherited.
+
+**Do NOT use the built-in `general-purpose` agent.** It does not inherit the parent
+session's permission allow-list. Background general-purpose agents auto-deny Write and
+Bash calls with no approval UI, causing silent failures. See `docs/agents.md` for details.
+
+If the issue-manager agent is unavailable (e.g., session started before agent was
+defined), fall back to filing directly in the main conversation (foreground).
 
 ## Step 1: Parse the trigger
 

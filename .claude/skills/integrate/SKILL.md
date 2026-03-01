@@ -89,7 +89,10 @@ To auto-close a PR on failure:
 scripts/integrate-gate.sh <branch> --close-on-fail --pr <number>
 ```
 
-Run multiple fast gates in parallel using Task agents when candidates are independent.
+Run multiple fast gates in parallel using the **integrate-gater** agent
+(`.claude/agents/integrate-gater.md`). Each instance validates one branch and returns
+pass/fail results. Do NOT use the built-in `general-purpose` agent for this
+(it does not inherit permissions; see `docs/agents.md`).
 
 ## Step 4: Acceptance gate
 
