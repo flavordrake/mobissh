@@ -28,6 +28,21 @@ export function initSettingsPanel(): void {
     wsWarn.classList.remove('hidden');
   }
 
+  const wsWarnHost = document.getElementById('wsWarnHostMismatch');
+  function updateHostMismatchWarning(url: string): void {
+    if (!wsWarnHost) return;
+    try {
+      wsWarnHost.classList.toggle('hidden', new URL(url).host === location.host);
+    } catch {
+      wsWarnHost.classList.add('hidden');
+    }
+  }
+  updateHostMismatchWarning(wsInput.value);
+
+  wsInput.addEventListener('input', () => {
+    updateHostMismatchWarning(wsInput.value);
+  });
+
   // Danger Zone toggles
   const dangerAllowWsEl = document.getElementById('dangerAllowWs') as HTMLInputElement;
   dangerAllowWsEl.checked = localStorage.getItem('dangerAllowWs') === 'true';
@@ -51,6 +66,7 @@ export function initSettingsPanel(): void {
       return;
     }
     localStorage.setItem('wsUrl', url);
+    updateHostMismatchWarning(url);
     if (url.startsWith('ws://')) {
       if (wsWarn) wsWarn.classList.remove('hidden');
       _toast('Settings saved — warning: ws:// is unencrypted.');

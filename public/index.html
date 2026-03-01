@@ -317,6 +317,7 @@
       <p class="hint">The URL of your ssh-bridge server. Only <code>wss://</code> (TLS) is accepted.
          When running in a Codespace, set this to the forwarded port URL for port 8080 with <code>wss://</code>.</p>
       <p id="wsWarnInsecure" class="hint hidden" style="color: var(--danger);">⚠ ws:// is unencrypted. Use wss:// for connections over any untrusted network.</p>
+      <p id="wsWarnHostMismatch" class="hint warn hidden">⚠ WSS host differs from page origin — connection may fail.</p>
       <button id="saveSettingsBtn" class="primary-btn">Save</button>
 
       <hr />

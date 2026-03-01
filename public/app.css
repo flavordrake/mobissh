@@ -606,6 +606,10 @@ input[type="range"] {
   line-height: 1.5;
 }
 
+.warn {
+  color: #ffaa00;
+}
+
 code {
   background: var(--bg-card);
   padding: 2px 4px;
