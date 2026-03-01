@@ -102,9 +102,11 @@ test.describe('Settings panel (#110 Phase 6)', () => {
     page.on('dialog', dialog => dialog.accept());
 
     await page.locator('[data-panel="settings"]').click();
-    // clearDataBtn is below the fold; click via evaluate
-    await page.evaluate(() => document.getElementById('clearDataBtn').click());
-    await page.waitForTimeout(300);
+    // resetAppBtn clears all data, caches, and reloads; wait for navigation
+    const [navigation] = await Promise.all([
+      page.waitForNavigation({ timeout: 8000 }),
+      page.evaluate(() => document.getElementById('resetAppBtn').click()),
+    ]);
 
     const profiles = await page.evaluate(() => localStorage.getItem('sshProfiles'));
     expect(profiles).toBeNull();

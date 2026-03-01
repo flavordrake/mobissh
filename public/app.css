@@ -702,6 +702,23 @@ hr {
   flex-direction: column;
 }
 
+/* Advanced section */
+.advanced-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.advanced-section-title {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
 /* Danger Zone section */
 .danger-zone {
   border: 1px solid var(--danger);

@@ -412,6 +412,32 @@
 
       <hr />
 
+      <div class="advanced-section">
+        <h3 class="advanced-section-title">Advanced</h3>
+
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Debug overlay</span>
+            <p class="hint">Shows touch/scroll event logs on screen. Tap log to copy.</p>
+          </div>
+          <label class="toggle" aria-label="Enable debug overlay">
+            <input type="checkbox" id="debugOverlay" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Enable pinch-to-zoom</span>
+            <p class="hint">Two-finger pinch changes terminal font size. Disable if it interferes with scrolling.</p>
+          </div>
+          <label class="toggle" aria-label="Enable pinch-to-zoom">
+            <input type="checkbox" id="enablePinchZoom" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
       <div class="danger-zone">
         <h3 class="danger-zone-title">Danger Zone</h3>
         <p class="hint">These settings weaken security protections. Only change them if you understand the risks.</p>
@@ -438,21 +464,8 @@
           </label>
         </div>
 
-        <div class="danger-zone-item">
-          <div class="danger-zone-item-info">
-            <span class="danger-zone-item-label">Debug overlay</span>
-            <p class="hint">Shows touch/scroll event logs on screen. Tap log to copy.</p>
-          </div>
-          <label class="toggle" aria-label="Enable debug overlay">
-            <input type="checkbox" id="debugOverlay" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-
+        <button id="resetAppBtn" class="danger-btn">Reset app (clears all data &amp; cache)</button>
       </div>
-
-      <button id="clearDataBtn" class="danger-btn">Clear all data (keys, profiles, settings)</button>
-      <button id="clearCacheBtn" class="danger-btn">Clear cache &amp; reload</button>
 
       <p id="versionInfo" class="version-info"></p>
     </div>

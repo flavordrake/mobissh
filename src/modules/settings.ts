@@ -137,16 +137,8 @@ export function initSettingsPanel(): void {
     localStorage.setItem('termFont', fontSelect.value);
   });
 
-  document.getElementById('clearDataBtn')!.addEventListener('click', () => {
-    if (!confirm('Clear all stored keys, profiles, and settings?')) return;
-    localStorage.clear();
-    loadProfiles();
-    loadKeys();
-    _toast('All data cleared.');
-  });
-
-  document.getElementById('clearCacheBtn')!.addEventListener('click', () => {
-    if (!confirm('Unregister service workers, clear all caches, and reload?')) return;
+  document.getElementById('resetAppBtn')!.addEventListener('click', () => {
+    if (!confirm('Clear all stored keys, profiles, settings, and caches, then reload?')) return;
     void clearCacheAndReload();
   });
 
