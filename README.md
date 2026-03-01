@@ -112,6 +112,19 @@ The WebSocket bridge forwards raw bytes between the browser and `ssh2`. There is
 
 **TypeScript with tsc compilation.** Source lives in `src/modules/*.ts`, compiled output served from `public/modules/*.js`. No heavy bundler (webpack, vite). Adds a build step but provides strict type checking and static analysis.
 
+### Claude security review (v0.4.0, Feb 2026)
+
+Automated review of 37 commits (v0.3.0..v0.4.0) covering WebSocket HMAC authentication, input mode changes, hash-based routing, credential field cloaking, recording UI, and documentation updates. **No high-confidence vulnerabilities found.**
+
+Areas examined and results:
+
+- **WebSocket authentication** (`server/index.js`): HMAC-SHA256 with per-boot secret, timing-safe comparison, timestamp expiry. Sound implementation.
+- **SSRF prevention** (`server/index.js`): RFC-1918 and loopback blocking intact, no bypass introduced.
+- **Credential handling** (`vault.ts`, `profiles.ts`, `ui.ts`): AES-GCM encryption unchanged, no plaintext credential storage introduced.
+- **XSS surface** (`profiles.ts`, `connection.ts`, `ui.ts`): `escHtml()` used consistently for dynamic content. Hash routing validates against `VALID_PANELS` whitelist.
+- **Static file serving** (`server/index.js`): No path traversal vectors introduced.
+- **Input handling** (`ime.ts`): `beforeinput` interception and direct mode changes are DOM-only with no injection surface.
+
 ---
 
 ## Setup
