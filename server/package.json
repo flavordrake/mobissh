@@ -1,6 +1,6 @@
 {
   "name": "mobissh-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "WebSocket SSH bridge for MobiSSH PWA",
   "main": "index.js",
   "scripts": {
