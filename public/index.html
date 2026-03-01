@@ -176,8 +176,11 @@
           <button id="sessionCopyBtn"       class="session-menu-item" role="menuitem">Copy selection</button>
           <button id="sessionResetBtn"      class="session-menu-item" role="menuitem">Reset terminal</button>
           <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
-          <button id="sessionRecordStartBtn" class="session-menu-item rec-start" role="menuitem">● Start Recording</button>
-          <button id="sessionRecordStopBtn"  class="session-menu-item rec-stop hidden" role="menuitem">■ Stop &amp; Download</button>
+          <div class="session-menu-item rec-row" role="group" aria-label="Recording">
+            <button id="sessionRecordStartBtn" class="rec-btn" role="menuitem">Record</button>
+            <span id="recIndicator" class="rec-indicator hidden"><span id="recTimer">0:00</span></span>
+            <button id="sessionRecordStopBtn" class="rec-btn rec-stop hidden" role="menuitem">Stop</button>
+          </div>
           <div class="session-menu-item ctrl-row" role="group" aria-label="Send control sequences">
             <button id="sessionCtrlCBtn" class="ctrl-btn" role="menuitem">Ctrl+C</button>
             <button id="sessionCtrlZBtn" class="ctrl-btn" role="menuitem">Ctrl+Z</button>

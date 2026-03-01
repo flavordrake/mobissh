@@ -14,6 +14,7 @@ import { appState } from './state.js';
 
 // Injected dependency — set by initRecording()
 let _toast = (_msg: string): void => {};
+let _timerInterval: ReturnType<typeof setInterval> | null = null;
 
 export function initRecording({ toast }: RecordingDeps): void {
   _toast = toast;
@@ -68,10 +69,34 @@ export function updateRecordingUI(): void {
   _updateRecordingUI();
 }
 
+function _formatElapsed(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${String(h)}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(m)}:${String(s).padStart(2, '0')}`;
+}
+
+function _updateTimer(): void {
+  const timerEl = document.getElementById('recTimer');
+  if (!timerEl || !appState.recordingStartTime) return;
+  timerEl.textContent = _formatElapsed(Date.now() - appState.recordingStartTime);
+}
+
 function _updateRecordingUI(): void {
   const startBtn = document.getElementById('sessionRecordStartBtn');
   const stopBtn = document.getElementById('sessionRecordStopBtn');
+  const indicator = document.getElementById('recIndicator');
   if (!startBtn || !stopBtn) return;
   startBtn.classList.toggle('hidden', appState.recording);
   stopBtn.classList.toggle('hidden', !appState.recording);
+  indicator?.classList.toggle('hidden', !appState.recording);
+
+  if (appState.recording) {
+    _updateTimer();
+    if (!_timerInterval) _timerInterval = setInterval(_updateTimer, 1000);
+  } else {
+    if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+  }
 }
