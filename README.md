@@ -22,7 +22,7 @@ Android and iOS soft keyboards were designed for messaging apps. When you type i
 
 ### What MobiSSH does differently
 
-1. **Dual input mode.** An IME mode uses a hidden textarea to capture swipe-typed words and voice-dictated text and forwards them to SSH verbatim — no autocorrect interference. A direct mode forwards keystrokes char-by-char for zero-latency response with a Bluetooth keyboard.
+1. **Dual input mode.** Direct mode forwards keystrokes char-by-char for zero-latency TUI interaction. Compose mode uses a hidden textarea to capture swipe-typed words and voice-dictated text and forwards them to SSH verbatim — no autocorrect interference.
 
 2. **Persistent special-key bar.** Ctrl (sticky modifier), Esc, Tab, /, |, -, arrow keys, Home, End, PgUp, PgDn — all one tap away in a horizontally scrollable row. Auto-hides via a tap-toggle strip to give the terminal the full screen.
 
@@ -43,19 +43,20 @@ Phone browser ──(WSS)──► Node.js bridge ──(SSH)──► Target se
 ```
 
 - **`server/index.js`** — single Node.js process: serves `public/` over HTTP and bridges WebSocket connections to SSH using `ssh2`. One port (default 8081) for everything.
-- **`public/app.js`** — all frontend logic: xterm.js init, WebSocket client, IME input capture, key bar, vault, profile storage.
+- **`src/modules/*.ts`** — frontend source in TypeScript (strict mode). Compiled via `tsc` to `public/modules/*.js` as ES modules.
+- **`public/app.js`** — entry point that imports the compiled modules.
 - **`public/app.css`** — mobile-first styles, no framework.
 - **`public/sw.js`** — service worker, network-first with offline fallback. Caches the full app shell including vendored xterm.js.
 - **`public/recovery.js`** — boot watchdog + emergency reset. Detects init failures, shows diagnostic errors, breaks reset loops, and provides a long-press escape hatch on the Settings tab.
-- **`public/vendor/`** — vendored xterm.js 5.3.0 and xterm-addon-fit 0.8.0 (served locally to avoid CDN/CSP conflicts).
+- **`public/vendor/`** — vendored @xterm/xterm 6.0.0 and @xterm/addon-fit 0.11.0 (served locally to avoid CDN/CSP conflicts).
 
 ### IME input strategy
 
-MobiSSH has two input modes, toggled via the IME button in the key bar:
+MobiSSH has two input modes, toggled via the compose button in the key bar:
 
-**IME mode (default):** A visually hidden `<textarea>` stays focused during terminal sessions. Swipe-typed words and voice-dictated text arrive as `input` events; the full committed string is forwarded to SSH and the textarea is cleared. Composition events (`compositionstart`/`update`/`end`) show a preview strip above the key bar so you can see the word being formed before it commits. Special keys (Escape, arrows, Tab) are intercepted at `keydown` before the IME processes them.
+**Direct mode (default):** A hidden `type="password"` input stays focused. Using a password field tells Gboard and other IMEs to disable swipe-to-type, autocorrect, and autocomplete — every keypress is a raw character. Each `keydown` event is forwarded immediately, eliminating IME buffering latency. Best for interactive TUI commands and Bluetooth keyboards.
 
-**Direct mode:** A hidden `type="password"` input stays focused instead. Using a password field tells Gboard and other IMEs to disable swipe-to-type, autocorrect, and autocomplete — every keypress is a raw character. Each `keydown` event is forwarded immediately, eliminating IME buffering latency. Best with a Bluetooth keyboard or for interactive TUI commands where every character matters.
+**Compose mode:** A visually hidden `<textarea>` stays focused instead. Swipe-typed words and voice-dictated text arrive as `input` events; the full committed string is forwarded to SSH and the textarea is cleared. Composition events (`compositionstart`/`update`/`end`) show a preview strip above the key bar so you can see the word being formed before it commits. Special keys (Escape, arrows, Tab) are intercepted at `keydown` before the IME processes them. Best for writing long text like commit messages.
 
 The password-type field also suppresses browser password managers (via `autocomplete="off"`, `data-lpignore`, `data-1p-ignore`) to avoid save-password prompts appearing during an SSH session.
 
@@ -70,60 +71,46 @@ On load, a silent unlock attempt restores the vault key. If locked, the app prom
 
 ---
 
-## Security analysis
+## Security
 
-**If you run the bridge on a public IP without authentication middleware, the threat model changes significantly — anyone who can reach the bridge port can proxy SSH connections through your server.**
+**If you run the bridge on a public IP without additional network controls, anyone who can reach the port can proxy SSH connections through your server.** MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale).
 
-### Trust model
+### Threat model
 
-MobiSSH is designed for personal use over a private WireGuard mesh (Tailscale). The threat model is:
+- **In scope:** credential exposure via browser storage, SSH MITM on first connect, SSRF from the bridge, XSS in the frontend.
+- **Out of scope (delegated to Tailscale):** network-level access control, traffic interception between phone and server.
 
-- **In scope:** accidental credential exposure via browser storage, SSH MITM on first connect, SSRF from the bridge, XSS in the frontend.
-- **Out of scope (delegated to Tailscale):** unauthenticated access to the bridge, traffic interception between phone and server.
+### Controls
 
-### Current controls
+**Credential storage.** Passwords, private keys, and passphrases are AES-GCM encrypted with a 256-bit key. On Chrome/Android the key lives in `PasswordCredential` (biometric-gated). On Safari/iOS 18+ it's derived from a passkey via WebAuthn PRF (Face ID / Touch ID). If neither vault is available, credentials are not persisted at all — no plaintext fallback.
 
-| Control | Status | Notes |
-|---|---|---|
-| AES-GCM credential encryption | ✅ Implemented | Key from `PasswordCredential` (Chrome) or WebAuthn PRF (Safari) |
-| WebAuthn PRF vault for iOS | ✅ Implemented | Passkey + biometric key derivation on iOS 18+ (#14) |
-| SSH host key verification (TOFU) | ✅ Implemented | Store fingerprint on first connect, warn on mismatch (#5) |
-| SSRF prevention | ✅ Implemented | Blocks RFC-1918 / loopback targets (#6) |
-| xterm.js bundled locally | ✅ Implemented | Eliminates CDN dependency and proxy CSP conflicts (#104) |
-| Content-Security-Policy header | ✅ Implemented | Restricts script/style/connect sources (#8) |
-| `ws://` rejected in settings | ✅ Implemented | Only `wss://` accepted for WebSocket URL (#9) |
-| WSS (TLS) in Codespaces / reverse proxy | ✅ Inherited | Codespaces enforces HTTPS |
-| `Cache-Control: no-store` on all static responses | ✅ Implemented | Prevents credential caching in shared proxies |
-| Service worker network-first | ✅ Implemented | No stale credential forms served from cache |
-| `autocorrect="off"` on IME textarea | ✅ Implemented | Prevents iOS keyboard logging typed SSH text |
-| Direct mode uses `type="password"` input | ✅ Implemented | Suppresses Gboard swipe prediction and autocorrect |
-| WS ping/pong keep-alive (25s) | ✅ Implemented | Terminates stale connections, prevents silent drops |
-| SSH keepalive (15s interval, max 4 missed) | ✅ Implemented | Drops idle SSH sessions that are no longer alive |
-| Vault-or-nothing credential policy | ✅ Implemented | No plaintext fallback — credentials not saved if vault unavailable (#68) |
-| SSH keys encrypted via vault | ✅ Implemented | Keys panel uses same AES-GCM vault as profiles (#67, #69) |
-| Boot recovery watchdog | ✅ Implemented | 8s timeout detects init failure, shows diagnostics, breaks reset loops (#84, #104) |
+**SSH host key verification.** TOFU (trust on first use). The fingerprint is stored on first connect; subsequent connections warn on mismatch.
 
-No known high or medium severity open risks. See GitHub Issues for UX and feature backlog.
+**SSRF prevention.** The bridge blocks connections to RFC-1918 and loopback addresses.
 
-### Transparency and auditability
+**WebSocket authentication.** Each page load generates an HMAC token; the WS upgrade must present a valid, unexpired token.
 
-MobiSSH makes no attempt to interpret, route, or log what you type. The WebSocket bridge (`server/index.js`) forwards raw bytes between the browser and `ssh2`; what goes in comes out unchanged on the other side. There is no command parser, no action log, no proprietary protocol layer.
+**Transport.** Only `wss://` is accepted for WebSocket URLs. `Cache-Control: no-store` on all static responses. Service worker is network-first (no stale forms served from cache).
 
-This matters in contrast to projects that expose AI coding agents over HTTP/WebSocket APIs with custom control planes. Those tools route AI actions through application-specific channels that can obscure what commands are actually running and introduce unauditable control paths. MobiSSH has no such layer — your SSH session is captured by the same standard audit tools (`sshd` logs, `auditd`, shell history) that record any direct SSH connection.
+**CSP.** `Content-Security-Policy` header restricts script, style, and connect sources. xterm.js is bundled locally (`public/vendor/`) to avoid CDN dependencies and tighten CSP to `script-src 'self'`.
 
-**Threat model summary:** if you can trust SSH, you can trust MobiSSH.
+**IME privacy.** Direct mode uses `type="password"` to suppress Gboard prediction at the OS level. Compose mode textarea has `autocorrect="off"` to prevent iOS keyboard logging.
+
+**Connection health.** WS ping/pong every 25s terminates stale connections. SSH keepalive every 15s (max 4 missed) drops dead sessions.
+
+**Boot recovery.** 8-second watchdog detects init failures, shows diagnostics, breaks reset loops, and provides an emergency cache-clear path.
+
+### Transparency
+
+The WebSocket bridge forwards raw bytes between the browser and `ssh2`. There is no command parser, no action log, no proprietary protocol layer. Your SSH session is captured by the same standard audit tools (`sshd` logs, `auditd`, shell history) as any direct SSH connection.
 
 ### Trade-offs
 
-**Single-port design (HTTP + WS on one port).** Simplifies Codespaces port forwarding (one forwarded port instead of two). Downside: the static file server and the SSH bridge share the same process — a bug in one can affect the other. For personal use this is acceptable.
+**Single-port design.** HTTP static server and WS bridge share one Node.js process on one port. Simplifies deployment and port forwarding. A bug in one can affect the other; acceptable for personal use.
 
-**`localStorage` for profile metadata.** IndexedDB would be more appropriate for structured data but `localStorage` is synchronous and has no async edge cases. Profiles contain no secrets (credentials are vault-encrypted separately).
+**`localStorage` for profile metadata.** Synchronous and simple. Profiles contain no secrets — credentials are vault-encrypted separately.
 
-**No authentication on the WebSocket endpoint.** The bridge trusts that anyone who can establish a WebSocket connection is authorized to proxy SSH. On Tailscale this is enforced by the mesh ACLs. On a public network this is a significant open door. Rate limiting (#92) and page-load token authentication (#93) are planned.
-
-**Vanilla JS, no build step.** Means no tree-shaking, no TypeScript safety, no bundler. Acceptable for a focused single-page app; the entire frontend is one JS file that is easy to read and audit.
-
-**xterm.js bundled in `public/vendor/`.** Originally loaded from CDN with SRI hashes, but code-server's reverse proxy CSP blocked cross-origin scripts. Now served locally from the same origin — works behind any proxy, enables offline caching via the service worker, and tightens CSP to `script-src 'self'`.
+**TypeScript with tsc compilation.** Source lives in `src/modules/*.ts`, compiled output served from `public/modules/*.js`. No heavy bundler (webpack, vite). Adds a build step but provides strict type checking and static analysis.
 
 ---
 
@@ -138,7 +125,7 @@ npm start
 # → Listening on http://0.0.0.0:8081
 ```
 
-Open `http://localhost:8081` in a browser, or the Codespace forwarded URL. The server has no dependencies outside `server/node_modules` — the `public/` directory is served as static files with no build step.
+Open `http://localhost:8081` in a browser, or the Codespace forwarded URL. The server has no dependencies outside `server/node_modules`. Frontend TypeScript is pre-compiled; the `public/` directory is served as static files.
 
 ### Deployment options
 
@@ -161,39 +148,3 @@ Add the provided `nginx-ssh-location.conf` inside your HTTPS `server {}` block, 
 
 **Cache busting:** Visit `/clear` (e.g. `https://host/ssh/clear`) to unregister service workers and clear all browser storage. The app also has a boot watchdog that shows a Reset button if initialization fails, and a long-press (1.5s) escape hatch on the Settings tab.
 
----
-
-## Backlog highlights
-
-See GitHub Issues for the full list.
-
-Recently completed:
-- **#104** Bundle xterm.js locally, boot diagnostics, reset loop detection
-- **#83, #84** PWA manifest identity (`id: "mobissh"`) + boot recovery watchdog
-- **#85** IME composition fix (compositioncancel, textarea value preference)
-- **#86** Docker infrastructure (Dockerfile, compose, scripts)
-- **#87** Tab button text selection prevention on long-press
-- **#89** Key bar key repeat on hold (400ms delay, 80ms interval)
-- **#5** SSH host key verification — TOFU with mismatch warning
-- **#6–9** Security hardening (SSRF blocklist, CSP header, ws:// rejection)
-- **#14** WebAuthn PRF vault for iOS 18+ credential encryption
-- **#68** Vault-or-nothing credential policy (no plaintext fallback)
-- **#67, #69** SSH keys encrypted via vault
-- **#11–13** iOS safe area insets, Apple PWA meta, overscroll-behavior
-- **#1, #2, #3** Key bar auto-hide, IME/direct toggle, scrollable key row
-- **#10** iOS autocorrect/autocapitalize fixes
-- **#29** WS/SSH keep-alive (prevents silent drops)
-- **#38** Extra key bar keys (|, -, Home, End, PgUp, PgDn)
-- **#40** Session menu controls (reset, clear, Ctrl+C/Z, reconnect)
-
-Key open items:
-- **#92** P0: Rate-limit WebSocket upgrades (DoS protection)
-- **#93** P1: Authenticate WebSocket upgrade (page-load token)
-- **#106** Vault locked on every restart (PasswordCredential unreliable behind proxy)
-- **#103** Add `beforeinstallprompt` handler for in-app install button
-- **#4, #28** Session persistence + multi-session (planned milestone)
-- **#70** Connect screen refactor — profiles as primary action
-- **#53** TUI agent rendering/input issues
-- **#19–21** Image passthrough (sixel/iTerm2, overlay, ImageAddon)
-- **#99** Haptic feedback fires during key bar scroll
-- **#90** Optional two-line key bar with grouping
