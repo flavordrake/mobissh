@@ -250,10 +250,10 @@ html, body {
 .session-menu-item:active { background: var(--bg-card); }
 .session-menu-item.danger { color: var(--danger); }
 
-/* Recording controls (#54, #156) */
-.rec-row { display: flex; align-items: center; gap: 8px; cursor: default; }
-.rec-row:active { background: none; }
-.rec-btn {
+/* Inline button rows — recording (#54, #156), Ctrl shortcuts (#102) */
+.rec-row, .ctrl-row { display: flex; align-items: center; gap: 8px; cursor: default; }
+.rec-row:active, .ctrl-row:active { background: none; }
+.rec-btn, .ctrl-btn {
   flex: 1;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -266,7 +266,7 @@ html, body {
   cursor: pointer;
   touch-action: manipulation;
 }
-.rec-btn:active { opacity: 0.7; }
+.rec-btn:active, .ctrl-btn:active { opacity: 0.7; }
 .rec-btn.hidden { display: none; }
 .rec-btn.rec-stop { color: var(--danger); border-color: var(--danger); }
 .rec-indicator.hidden { display: none; }
@@ -292,29 +292,6 @@ html, body {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.3; }
 }
-
-/* Ctrl shortcut row — Ctrl+C and Ctrl+Z side by side (#102) */
-.ctrl-row {
-  display: flex;
-  gap: 8px;
-  cursor: default;
-}
-.ctrl-row:active { background: none; }
-
-.ctrl-btn {
-  flex: 1;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 4px;
-  padding: 8px 4px;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-.ctrl-btn:active { opacity: 0.7; }
 
 /* Font size row — inline +/− controls that keep menu open */
 .font-size-row {

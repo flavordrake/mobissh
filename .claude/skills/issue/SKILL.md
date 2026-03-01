@@ -5,6 +5,9 @@ description: Use when the user says "bug:", "feature:", "feat:", "fix:", "issue:
 
 # Issue Filing
 
+> **Process reference:** `.claude/process.md` defines the label taxonomy, workflow states,
+> and conventions that this skill must follow.
+
 File a GitHub issue from an in-conversation observation. The user types something like
 `bug: default WSS URL is missing /ssh` and expects it handled without derailing current work.
 
@@ -15,28 +18,39 @@ Return the issue URL when done.
 
 ## Step 1: Parse the trigger
 
-Extract from the user's message:
+Extract from the user's message. Apply exactly one **Type** label per `.claude/process.md`:
 
-| Prefix | GitHub label | Title prefix |
+| Prefix | Type label | Title prefix |
 |---|---|---|
-| bug: | bug | bug: |
-| fix: | bug | fix: |
-| feature: | enhancement | feature: |
-| feat: | enhancement | feat: |
-| chore: | chore | chore: |
+| bug: | `bug` | bug: |
+| fix: | `bug` | fix: |
+| feature: | `feature` | feature: |
+| feat: | `feature` | feat: |
+| chore: | `chore` | chore: |
 | issue: | (classify from description) | (classify from description) |
 
-If the prefix is `issue:` or `/issue`, read the description and pick the best label yourself.
+If the prefix is `issue:` or `/issue`, read the description and pick the best type label.
 
-Add a secondary label if the description matches a domain keyword:
+Add **Domain** labels if the description matches keywords:
 
 | Keywords | Label |
 |---|---|
-| touch, gesture, swipe, pinch, scroll | touch |
-| ios, safari, webkit, iphone, ipad | ios |
-| security, vault, credential, encrypt | security |
-| ux, ui, layout, mobile, keyboard, panel | ux |
-| image, sixel, kitty, iterm | image |
+| touch, gesture, swipe, pinch, scroll | `touch` |
+| ios, safari, webkit, iphone, ipad | `ios` |
+| security, vault, credential, encrypt | `security` |
+| ux, ui, layout, mobile, keyboard, panel | `ux` |
+| image, sixel, kitty, iterm | `image` |
+
+Add **Shape** labels when applicable:
+
+| Condition | Label |
+|---|---|
+| Issue needs research before code can be written | `spike` |
+| Issue needs emulator/device validation | `device` |
+| Issue is too large for one bot pass | `composite` |
+
+Do NOT apply delegation labels (`bot`, `divergence`) — those are managed by `/delegate`
+and `/integrate` respectively.
 
 ## Step 2: Gather context
 
@@ -89,8 +103,10 @@ If the issue is actionable (bug with clear reproduction, feature with clear scop
 Reference relevant files, test commands, or prior issues.>
 ```
 
-Do NOT add @claude for research issues, things needing real-device validation, or
-vague requests that need scoping.
+Do NOT add `@claude` for research issues (`spike`), things needing real-device validation
+(`device`), or vague requests that need scoping. The `/delegate` skill handles enriching
+issues with full delegation context and applying the `bot` label — this step is just a
+lightweight hint for obviously bot-ready issues.
 
 ## Step 5: Duplicate check and file
 
@@ -128,12 +144,15 @@ Code: <CODE_HASH> | Server: <SERVER_META>
 
 ```bash
 gh issue create --title "<prefix>: <concise title>" \
-  --label "<primary>" --label "<secondary>" \
+  --label "<type>" --label "<domain>" --label "<shape>" \
   --body "$(cat <<'ISSUE_EOF'
 <composed body per template above>
 ISSUE_EOF
 )"
 ```
+
+Only include `--label` flags for labels that apply. Type is always one. Domain and shape
+are zero or more. See `.claude/process.md` for the full label taxonomy.
 
 ## Step 6: Report back
 
@@ -145,4 +164,4 @@ If filing failed, report the error. Do not retry silently.
 
 - Bare prefix with no description (e.g. just `bug:`) — ask for at least a one-phrase description
 - `gh` not authenticated — report error immediately
-- Label doesn't exist on repo — omit it rather than failing (gh will error on unknown labels)
+- Only use labels defined in `.claude/process.md` — all are pre-created on the repo

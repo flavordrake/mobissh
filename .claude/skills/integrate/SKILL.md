@@ -5,6 +5,9 @@ description: Use when the user says "integrate", "review bot PRs", "merge bot fi
 
 # Bot PR Integration
 
+> **Process reference:** `.claude/process.md` defines the label taxonomy, workflow states,
+> and conventions that this skill must follow.
+
 Review, validate, and merge PRs created by the Claude bot from `@claude` issue tasks.
 Bot PRs follow the branch pattern `claude/issue-{N}-{DATE}-{TIME}`.
 
@@ -54,6 +57,12 @@ bash scripts/integrate-cleanup.sh --file /tmp/integrate-candidates.json
 This deletes branches for all `reject`-risk issues and comments on the GitHub issues
 explaining that the bot couldn't converge and human re-scoping is needed.
 
+After cleanup, update labels per `.claude/process.md`:
+```bash
+# For each rejected issue: swap bot → divergence
+gh issue edit N --remove-label bot --add-label divergence
+```
+
 Options:
 - `--dry-run` — preview without acting
 - `--issue N` — clean up a specific issue's branches
@@ -87,6 +96,9 @@ Run multiple fast gates in parallel using Task agents when candidates are indepe
 
 If the fast gate passes, run acceptance tests. Always attempt full emulator validation
 first — don't silently fall back to headless.
+
+**`device` label check:** If the issue has the `device` label (per `.claude/process.md`),
+emulator or real-device validation is mandatory. Do NOT merge with headless-only results.
 
 ### Bring up the emulator
 
@@ -164,10 +176,18 @@ If stale, warn before merging — the server will need a restart.
 gh pr merge <N> --squash --delete-branch
 ```
 
+After merge, update labels and close the issue per `.claude/process.md`:
+```bash
+gh issue edit <issue-N> --remove-label bot
+gh issue close <issue-N> --comment "Fixed in PR #<pr-N>"
+```
+
 For orphaned branches (no PR), create a PR first, then merge:
 ```bash
 gh pr create --head <branch> --title "<issue title>" --body "Bot fix for #<N>" --label bot
-gh pr merge <N> --squash --delete-branch
+gh pr merge <PR-N> --squash --delete-branch
+gh issue edit <issue-N> --remove-label bot
+gh issue close <issue-N> --comment "Fixed in PR #<PR-N>"
 ```
 
 ### Reject criteria (ANY one is sufficient)
@@ -178,11 +198,14 @@ gh pr merge <N> --squash --delete-branch
 
 ```bash
 gh pr close <N> --comment "Closing: <clear reason with specific failure details>"
+# Swap bot → divergence per process.md
+gh issue edit <issue-N> --remove-label bot --add-label divergence
 ```
 
-For orphaned branches (no PR), just delete the branch:
+For orphaned branches (no PR), just delete the branch and update labels:
 ```bash
 bash scripts/integrate-cleanup.sh --issue <N>
+gh issue edit <N> --remove-label bot --add-label divergence
 ```
 
 ## Step 6: Post-merge

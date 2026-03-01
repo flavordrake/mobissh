@@ -5,6 +5,9 @@ description: Use when the user says "release", "tag a release", "cut a release",
 
 # Release
 
+> **Process reference:** `.claude/process.md` defines the label taxonomy, workflow states,
+> and conventions that this skill must follow.
+
 Automated release process for MobiSSH. Handles version bumping across all touchpoints, changelog generation from git history, full validation, and tagging.
 
 ## Version Touchpoints
@@ -95,13 +98,15 @@ The tag message should contain the full changelog section (not just the version 
 Scan the changelog commits for issue references (`#N`, `fix(#N)`, `feat(#N)`). For each referenced issue that is still open:
 
 1. Check the issue is actually fixed by this release (read the issue, verify the fix commit)
-2. Close with a comment linking the release:
+2. Close with a comment linking the release, and clean up delegation labels per `.claude/process.md`:
 
 ```bash
 gh issue close N --comment "Fixed in v{VERSION} ({COMMIT_SHA})"
+# Remove delegation labels if present (issue is resolved, no longer in delegation lifecycle)
+gh issue edit N --remove-label bot --remove-label divergence 2>/dev/null || true
 ```
 
-3. Add the release milestone/label if one exists:
+3. Add the release version label:
 
 ```bash
 gh issue edit N --add-label "v{VERSION}"
