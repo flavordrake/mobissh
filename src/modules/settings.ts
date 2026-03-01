@@ -7,7 +7,6 @@
 
 import type { SettingsDeps } from './types.js';
 import { getDefaultWsUrl } from './constants.js';
-import { loadProfiles, loadKeys } from './profiles.js';
 
 let _toast = (_msg: string): void => {};
 let _applyFontSize = (_size: number): void => {};

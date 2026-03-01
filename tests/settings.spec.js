@@ -103,7 +103,7 @@ test.describe('Settings panel (#110 Phase 6)', () => {
 
     await page.locator('[data-panel="settings"]').click();
     // resetAppBtn clears all data, caches, and reloads; wait for navigation
-    const [navigation] = await Promise.all([
+    await Promise.all([
       page.waitForNavigation({ timeout: 8000 }),
       page.evaluate(() => document.getElementById('resetAppBtn').click()),
     ]);
