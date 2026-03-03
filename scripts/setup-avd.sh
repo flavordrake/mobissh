@@ -109,7 +109,7 @@ AVD_NAME="MobiSSH_Pixel7"
 MOBISSH_PORT="${MOBISSH_PORT:-8080}"
 
 echo "> Starting emulator ($AVD_NAME)..."
-emulator -avd "$AVD_NAME" -no-snapshot-save -gpu auto &
+emulator -avd "$AVD_NAME" -no-snapshot-save -gpu auto -no-audio -no-qt &
 EMU_PID=$!
 
 echo "> Waiting for device to boot..."

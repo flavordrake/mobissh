@@ -75,7 +75,7 @@ command -v adb &>/dev/null || err "adb not found. Run scripts/setup-avd.sh"
 
 if ! adb devices 2>/dev/null | grep -q 'emulator\|device$'; then
   log "Booting emulator ($AVD_NAME)..."
-  sg kvm -c "emulator -avd \"$AVD_NAME\" -no-snapshot-save -gpu auto -no-audio" &
+  sg kvm -c "emulator -avd \"$AVD_NAME\" -no-snapshot-save -gpu auto -no-audio -no-qt" &
   EMU_PID=$!
   adb wait-for-device
   for i in $(seq 1 120); do
