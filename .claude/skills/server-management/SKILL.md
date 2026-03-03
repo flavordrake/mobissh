@@ -76,6 +76,28 @@ curl -sf https://raserver.tailbe5094.ts.net/ssh/ | grep -oP 'app-version.*?conte
 
 If production is stale, the server process needs restarting on the Tailscale host. `server-ctl.sh` only manages the local dev server.
 
+## TypeScript Compilation and Server Freshness
+
+The server reads files from `public/` on each request (`fs.readFile`). TypeScript source in `src/` must be compiled with `npx tsc` to produce output in `public/modules/`. The server does NOT watch for file changes.
+
+**Critical workflow for uncommitted TypeScript changes:**
+
+1. Edit `src/modules/*.ts`
+2. Run `npx tsc` (NOT `npx tsc --noEmit` — that only type-checks without producing output)
+3. Run `scripts/server-ctl.sh restart` to guarantee the server re-reads files from disk
+4. Verify: `curl -s http://localhost:8081/modules/<file>.js | grep '<your change>'`
+
+**`ensure` does NOT detect uncommitted changes**: It only checks the git hash in the HTML meta tag vs `git rev-parse --short HEAD`. If you compile TypeScript without committing, the hash doesn't change, so `ensure` sees the server as "healthy at HEAD" even though the JS files on disk are newer. **Use `restart` (not `ensure`) after compiling uncommitted TypeScript changes.**
+
+## BASE_PATH Gotcha
+
+When `BASE_PATH=/ssh`, the server injects path info into HTML and manifests but does NOT strip the prefix from URLs. Static files are served at root:
+
+- `http://localhost:8081/modules/ime.js` — correct (serves `public/modules/ime.js`)
+- `http://localhost:8081/ssh/modules/ime.js` — 404 (looks for `public/ssh/modules/ime.js`)
+
+When curling to verify file content, always use the root path (no BASE_PATH prefix). The browser loads modules via relative paths from the HTML (`./modules/ime.js`), which resolve correctly to the root.
+
 ## Troubleshooting
 
 **"Server failed to become healthy within 10s"**: Check `/tmp/mobissh-server-$PORT.log`. Common causes: port already in use by another process, missing `node_modules/` (run `cd server && npm install`), syntax error in server code.
@@ -83,3 +105,5 @@ If production is stale, the server process needs restarting on the Tailscale hos
 **PID exists but server not healthy**: The process started but is crashing or hanging. Check the log file. Kill it manually with `scripts/server-ctl.sh stop` and investigate.
 
 **Port conflict**: Another process holds the port. Find it with `lsof -ti tcp:8081` and decide whether to kill it or use a different port.
+
+**"My changes aren't showing" after TypeScript edit**: Did you run `npx tsc` (without `--noEmit`)? Did you run `scripts/server-ctl.sh restart`? Verify with `curl -s http://localhost:8081/modules/<file>.js | grep '<marker>'`. The most common cause is running `tsc --noEmit` (type-check only) instead of `tsc` (compile).

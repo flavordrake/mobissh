@@ -47,6 +47,257 @@ function ensureAdbForward() {
 }
 
 /**
+ * ADB helpers — real Android input for reliable gesture testing.
+ * These go through the kernel/compositor/DOM pipeline, unlike CDP touches.
+ */
+function adbSwipe(x1, y1, x2, y2, durationMs = 300) {
+  execSync(`adb shell input swipe ${x1} ${y1} ${x2} ${y2} ${durationMs}`);
+}
+
+function adbTap(x, y) {
+  execSync(`adb shell input tap ${x} ${y}`);
+}
+
+/**
+ * Prime the emulator's ADB touch pipeline with throwaway swipes.
+ * Chrome Android has a "cold start" where the first ADB swipes after
+ * page load may not reliably deliver touch events to JavaScript.
+ * Call this before any scroll assertions.
+ *
+ * @param {object} [bounds] - If provided, swipes within the visible terminal
+ *   area (important when keyboard is visible). Falls back to mid-screen coords.
+ */
+function warmupTouch(bounds) {
+  if (bounds) {
+    const margin = Math.round((bounds.bottom - bounds.top) * 0.15);
+    const y1 = bounds.top + margin;
+    const y2 = bounds.bottom - margin;
+    adbSwipe(bounds.centerX, y1, bounds.centerX, y2, 300);
+    adbSwipe(bounds.centerX, y2, bounds.centerX, y1, 300);
+  } else {
+    adbSwipe(540, 800, 540, 1400, 300);
+    adbSwipe(540, 1400, 540, 800, 300);
+  }
+}
+
+function dismissKeyboard() {
+  execSync('adb shell input keyevent KEYCODE_BACK');
+}
+
+/**
+ * Reliably dismiss the on-screen keyboard AND ensure it's actually gone.
+ *
+ * CRITICAL: Only sends KEYCODE_BACK if the keyboard is actually visible.
+ * If the keyboard is NOT visible, KEYCODE_BACK navigates Chrome back,
+ * destroying the test page and all state.
+ *
+ * Steps:
+ *   1. Blur any focused input (prevents keyboard from auto-reopening)
+ *   2. Check if keyboard is visible via visualViewport
+ *   3. Only send KEYCODE_BACK if keyboard is actually showing
+ *   4. Wait for keyboard animation to complete
+ *   5. Verify keyboard is gone
+ */
+async function ensureKeyboardDismissed(page) {
+  // Blur first — prevents keyboard from reopening on next touch
+  await page.evaluate(() => {
+    const el = document.activeElement;
+    if (el && el !== document.body) el.blur();
+  });
+
+  // Check if keyboard is actually visible before sending KEYCODE_BACK
+  const isVisible = await page.evaluate(() => {
+    const vv = window.visualViewport;
+    return vv ? vv.height < window.innerHeight * 0.75 : false;
+  });
+
+  if (isVisible) {
+    dismissKeyboard();
+    await new Promise(r => setTimeout(r, 800));
+
+    // Verify
+    const stillVisible = await page.evaluate(() => {
+      const vv = window.visualViewport;
+      return vv ? vv.height < window.innerHeight * 0.75 : false;
+    });
+
+    if (stillVisible) {
+      await page.evaluate(() => {
+        const el = document.activeElement;
+        if (el && el !== document.body) el.blur();
+      });
+      dismissKeyboard();
+      await new Promise(r => setTimeout(r, 800));
+    }
+  } else {
+    // Keyboard not visible — just wait a moment for blur to settle
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
+
+/**
+ * Measure the Y offset from the top of the screen to Chrome's content area.
+ * ADB coordinates are screen-absolute; CSS coordinates are viewport-relative.
+ * The offset accounts for the Android status bar + Chrome URL bar.
+ *
+ * Technique: send an ADB tap at a known screen position, capture the resulting
+ * DOM touchstart event's clientY, then compute:
+ *   offset = adbY - (clientY * devicePixelRatio)
+ *
+ * Uses ADB (not CDP) because CDP synthetic touches don't report correct
+ * screenY values in Android Chrome, making screenY-based calibration unreliable.
+ *
+ * The probe listener calls stopImmediatePropagation + preventDefault to
+ * prevent the tap from triggering app handlers (scroll, focus, etc.).
+ *
+ * Cached per page (the offset doesn't change during a test).
+ */
+async function measureScreenOffset(page) {
+  if (page.__screenOffset !== undefined) return page.__screenOffset;
+
+  // Capture-phase listener on document fires before all app handlers.
+  // stopImmediatePropagation prevents any other handler from seeing this probe.
+  await page.evaluate(() => {
+    window.__offsetProbeResult = null;
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 0) {
+        window.__offsetProbeResult = { clientY: e.touches[0].clientY };
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }, { once: true, capture: true });
+  });
+
+  // ADB tap in the middle of the screen — guaranteed to be in Chrome's content area
+  const adbProbeX = 540;
+  const adbProbeY = 1200;
+  adbTap(adbProbeX, adbProbeY);
+  await new Promise(r => setTimeout(r, 300));
+
+  const result = await page.evaluate(() => {
+    const r = window.__offsetProbeResult;
+    delete window.__offsetProbeResult;
+    return r;
+  });
+
+  if (result && typeof result.clientY === 'number') {
+    const dpr = await page.evaluate(() => window.devicePixelRatio || 1);
+    // offset_device_px = adb_screen_y - css_client_y * dpr
+    page.__screenOffset = Math.round(adbProbeY - result.clientY * dpr);
+  } else {
+    // Fallback: typical Pixel 7 Chrome UI offset (status bar + URL bar)
+    page.__screenOffset = 280;
+  }
+
+  return page.__screenOffset;
+}
+
+/**
+ * Get the visible terminal bounds in ADB screen pixels.
+ * Accounts for keyboard visibility via visualViewport and the Chrome UI
+ * offset (status bar + URL bar) so coordinates are screen-absolute for ADB.
+ * Returns null if the terminal element isn't found.
+ */
+async function getVisibleTerminalBounds(page) {
+  const screenOffset = await measureScreenOffset(page);
+
+  return page.evaluate((offset) => {
+    const el = document.querySelector('.xterm-screen') || document.querySelector('#terminal');
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const vv = window.visualViewport;
+    const dpr = window.devicePixelRatio || 1;
+
+    // Visible viewport bounds in CSS pixels (accounts for keyboard)
+    const vpTop = vv ? vv.offsetTop : 0;
+    const vpBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+
+    // Intersection: visible portion of terminal
+    const visTop = Math.max(rect.top, vpTop);
+    const visBottom = Math.min(rect.bottom, vpBottom);
+
+    // Convert to screen pixels for ADB, adding Chrome UI offset
+    const bounds = {
+      top: Math.round(visTop * dpr) + offset,
+      bottom: Math.round(visBottom * dpr) + offset,
+      left: Math.round(rect.left * dpr),
+      right: Math.round(rect.right * dpr),
+      centerX: Math.round((rect.left + rect.right) / 2 * dpr),
+      keyboardVisible: vv ? vv.height < window.innerHeight * 0.75 : false,
+    };
+
+    // Sanity check: ADB coordinates must be non-negative and within screen
+    if (bounds.top < 0 || bounds.bottom <= bounds.top) {
+      console.warn('[bounds] Invalid ADB bounds detected:', JSON.stringify(bounds),
+        'offset=', offset, 'rect.top=', rect.top, 'visTop=', visTop, 'dpr=', dpr);
+    }
+
+    return bounds;
+  }, screenOffset);
+}
+
+/**
+ * Intent-based swipe helpers.
+ * Tests express WHAT they want ("scroll to older content") and the helper
+ * computes the physical ADB swipe direction based on the current
+ * naturalVerticalScroll / naturalHorizontalScroll setting.
+ *
+ * Emulates human thumb positioning:
+ * - X: right 1/4 of the screen (natural right-hand thumb rest), NOT center
+ * - Y: starts just above keyboard or ~2/3 down the screen
+ * - Slight horizontal drift (5%) for natural diagonal motion
+ * - Uses ADB (full Android input pipeline), NEVER CDP for scroll assertions
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {{ top: number, bottom: number, left: number, right: number, centerX: number }} bounds
+ *   Screen-absolute ADB coordinates from getVisibleTerminalBounds()
+ * @param {number} [marginPct=0.15] Inset from edges (fraction of height/width)
+ * @param {number} [duration=600] Swipe duration in ms
+ */
+async function swipeToOlderContent(page, bounds, marginPct = 0.15, duration = 1000) {
+  const natural = await page.evaluate(() =>
+    localStorage.getItem('naturalVerticalScroll') !== 'false');
+  const margin = (bounds.bottom - bounds.top) * marginPct;
+  // Human thumb: right 3/4 of the terminal width (right-hand thumb rest)
+  const thumbX = Math.round(bounds.left + (bounds.right - bounds.left) * 0.75);
+  // Slight horizontal drift for natural diagonal motion
+  const drift = Math.round((bounds.right - bounds.left) * 0.05);
+  // Natural: finger DOWN (top→bottom) = see older content
+  // Traditional: finger UP (bottom→top) = see older content
+  const [y1, y2] = natural
+    ? [bounds.top + margin, bounds.bottom - margin]
+    : [bounds.bottom - margin, bounds.top + margin];
+  adbSwipe(thumbX, Math.round(y1), thumbX - drift, Math.round(y2), duration);
+}
+
+async function swipeToNewerContent(page, bounds, marginPct = 0.15, duration = 1000) {
+  const natural = await page.evaluate(() =>
+    localStorage.getItem('naturalVerticalScroll') !== 'false');
+  const margin = (bounds.bottom - bounds.top) * marginPct;
+  const thumbX = Math.round(bounds.left + (bounds.right - bounds.left) * 0.75);
+  const drift = Math.round((bounds.right - bounds.left) * 0.05);
+  // Natural: finger UP (bottom→top) = see newer content
+  // Traditional: finger DOWN (top→bottom) = see newer content
+  const [y1, y2] = natural
+    ? [bounds.bottom - margin, bounds.top + margin]
+    : [bounds.top + margin, bounds.bottom - margin];
+  adbSwipe(thumbX, Math.round(y1), thumbX + drift, Math.round(y2), duration);
+}
+
+/**
+ * Expected SGR mouse wheel button for "scroll to older content".
+ * Natural scroll: finger down sends WheelUp (64).
+ * Traditional scroll: finger up sends WheelUp (64).
+ * Either way, scrolling to older always produces button 64.
+ */
+function expectedSGRButton(/* intent = 'older' */) {
+  // WheelUp (64) = scroll to older content, regardless of natural/traditional setting.
+  // The direction setting only changes which physical swipe direction maps to which intent.
+  // The SGR button code for "scroll to older" is always 64.
+  return { older: 64, newer: 65 };
+}
+
+/**
  * Attach a named screenshot to the Playwright test report.
  */
 async function screenshot(page, testInfo, name) {
@@ -109,31 +360,67 @@ const test = base.extend({
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: 'domcontentloaded' });
 
-    // Vault setup modal appears on first launch (no vault in clean localStorage).
-    // Fill the form and click Create like a real user.
-    try {
-      await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
+    // Vault setup modal should appear on first launch (no vault in clean localStorage).
+    // Fill the form and click Create. Fail loudly if this doesn't work — a stuck
+    // overlay blocks every subsequent test.
+    const modalAppeared = await page.locator('#vaultSetupOverlay:not(.hidden)')
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!modalAppeared) {
+      // Vault might exist from a prior tab's write in the shared context — verify
+      const hasVault = await page.evaluate(() => !!localStorage.getItem('vaultMeta'));
+      if (!hasVault) {
+        throw new Error('emulatorPage fixture: vault setup modal did not appear and no vault in localStorage');
+      }
+    } else {
       await page.locator('#vaultNewPw').fill('test');
       await page.locator('#vaultConfirmPw').fill('test');
-      // Disable biometric — WebAuthn enrollment hangs without enrolled fingerprint
       await page.evaluate(() => {
         const cb = document.getElementById('vaultEnableBio');
         if (cb) cb.checked = false;
       });
       // Dismiss keyboard so it doesn't cover the Create button
-      await page.evaluate(() => document.activeElement?.blur());
-      await page.waitForTimeout(500);
-      // Use DOM click — Playwright click can be intercepted by overlay
+      dismissKeyboard();
+      await page.waitForTimeout(300);
       await page.evaluate(() => {
-        const btn = document.getElementById('vaultSetupCreate');
-        if (btn) btn.click();
+        document.getElementById('vaultSetupCreate')?.click();
       });
-      await page.waitForSelector('#vaultSetupOverlay.hidden', { timeout: 5000 });
-    } catch { /* vault already exists or modal didn't appear */ }
+      await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
+    }
+
+    // Ensure terminal panel is active — vault creation or app init may show Connect
+    await page.locator('[data-panel="terminal"]').click();
 
     await use(page);
 
     // Close the tab, leave the browser connection open for the next test
+    await page.close().catch(() => {});
+  },
+
+  /**
+   * cleanPage — test-scoped fixture
+   *
+   * Like emulatorPage but does NOT create a vault. Use this for tests that
+   * need to exercise the vault setup flow from scratch (vault-regression,
+   * vault smoke tests). After setup: page is at BASE_URL with empty
+   * localStorage and any vault overlay left as-is.
+   */
+  cleanPage: async ({ cdpBrowser }, use) => {
+    const context = cdpBrowser.contexts()[0];
+    const page = await context.newPage();
+
+    try {
+      const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("No, thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
+      await nagBtn.first().click({ timeout: 2000 });
+    } catch { /* no nag modal */ }
+
+    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => localStorage.clear());
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await use(page);
     await page.close().catch(() => {});
   },
 });
@@ -391,6 +678,9 @@ async function pinch(page, selector, startDist, endDist, steps = 10) {
 
 module.exports = {
   test, expect, screenshot, setupRealSSHConnection, sendCommand,
-  swipe, pinch, CDP_PORT, BASE_URL,
+  swipe, pinch, adbSwipe, adbTap, dismissKeyboard, ensureKeyboardDismissed,
+  warmupTouch, getVisibleTerminalBounds,
+  swipeToOlderContent, swipeToNewerContent, expectedSGRButton,
+  CDP_PORT, BASE_URL,
   COMPOSE_INPUT_ID, DIRECT_INPUT_ID, DIRECT_INPUT_TYPE,
 };

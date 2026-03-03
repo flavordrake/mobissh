@@ -79,6 +79,22 @@ export function initSettingsPanel(): void {
     });
   }
 
+  const natVEl = document.getElementById('naturalVerticalScroll') as HTMLInputElement | null;
+  if (natVEl) {
+    natVEl.checked = localStorage.getItem('naturalVerticalScroll') !== 'false';
+    natVEl.addEventListener('change', () => {
+      localStorage.setItem('naturalVerticalScroll', natVEl.checked ? 'true' : 'false');
+    });
+  }
+
+  const natHEl = document.getElementById('naturalHorizontalScroll') as HTMLInputElement | null;
+  if (natHEl) {
+    natHEl.checked = localStorage.getItem('naturalHorizontalScroll') !== 'false';
+    natHEl.addEventListener('change', () => {
+      localStorage.setItem('naturalHorizontalScroll', natHEl.checked ? 'true' : 'false');
+    });
+  }
+
   const dockEl = document.getElementById('keyControlsDockLeft') as HTMLInputElement | null;
   if (dockEl) {
     dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';

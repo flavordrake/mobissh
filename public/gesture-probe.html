@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Gesture Probe</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #0f0; font: 14px/1.4 monospace; }
+    #target {
+      width: 100vw;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    #summary {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      background: rgba(0,0,0,0.9);
+      padding: 8px;
+      border-bottom: 1px solid #0f0;
+      z-index: 10;
+    }
+    .event { padding: 1px 0; }
+    .start { color: #0ff; }
+    .move { color: #0f0; }
+    .end { color: #f80; }
+  </style>
+</head>
+<body>
+  <div id="summary">Waiting for touch events...</div>
+  <div id="target"></div>
+  <script>
+    const target = document.getElementById('target');
+    const summary = document.getElementById('summary');
+    let eventId = 0;
+    let starts = 0, moves = 0, ends = 0;
+
+    window.__probeEvents = [];
+
+    function updateSummary() {
+      summary.textContent = `starts=${starts} moves=${moves} ends=${ends} total=${starts + moves + ends}`;
+    }
+
+    function logEvent(type, e) {
+      const touch = e.touches[0] || e.changedTouches[0];
+      const data = {
+        id: ++eventId,
+        type,
+        clientX: touch ? Math.round(touch.clientX) : null,
+        clientY: touch ? Math.round(touch.clientY) : null,
+        screenX: touch ? Math.round(touch.screenX) : null,
+        screenY: touch ? Math.round(touch.screenY) : null,
+        touches: e.touches.length,
+        cancelable: e.cancelable,
+        defaultPrevented: e.defaultPrevented,
+        ts: Date.now()
+      };
+
+      window.__probeEvents.push(data);
+
+      if (type === 'start') starts++;
+      else if (type === 'move') moves++;
+      else if (type === 'end') ends++;
+      updateSummary();
+
+      const div = document.createElement('div');
+      div.className = `event ${type}`;
+      div.textContent = `${data.id} ${type} client=(${data.clientX},${data.clientY}) screen=(${data.screenX},${data.screenY}) touches=${data.touches}`;
+      target.appendChild(div);
+      target.scrollTop = target.scrollHeight;
+    }
+
+    // L0: bare listeners, no options (defaults to passive: true in Chrome)
+    target.addEventListener('touchstart', e => logEvent('start', e));
+    target.addEventListener('touchmove', e => logEvent('move', e));
+    target.addEventListener('touchend', e => logEvent('end', e));
+
+    // Also listen at window level to catch events that bypass #target
+    window.addEventListener('touchstart', e => {
+      if (e.target !== target && e.target !== summary) {
+        logEvent('win-start', e);
+      }
+    }, { capture: true });
+    window.addEventListener('touchmove', e => {
+      if (e.target !== target && e.target !== summary) {
+        logEvent('win-move', e);
+      }
+    }, { capture: true });
+    window.addEventListener('touchend', e => {
+      if (e.target !== target && e.target !== summary) {
+        logEvent('win-end', e);
+      }
+    }, { capture: true });
+  </script>
+</body>
+</html>

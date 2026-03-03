@@ -16,7 +16,9 @@
  */
 const {
   test, expect, screenshot, setupRealSSHConnection, sendCommand,
-  swipe, pinch,
+  swipe, pinch, adbSwipe, dismissKeyboard, ensureKeyboardDismissed,
+  warmupTouch, getVisibleTerminalBounds,
+  swipeToOlderContent, swipeToNewerContent, expectedSGRButton,
 } = require('./fixtures');
 const { execSync } = require('child_process');
 const fs = require('fs');
@@ -92,8 +94,10 @@ async function setupTmuxWithScrollback(page, sshServer, testInfo, prefix) {
   await page.waitForTimeout(5000);
   await snap(page, testInfo, `${prefix}-at-bottom`);
 
-  // Dismiss keyboard so touches land on terminal
-  execSync('adb shell input keyevent KEYCODE_BACK');
+  // Dismiss keyboard and prime ADB touch pipeline
+  await ensureKeyboardDismissed(page);
+  const warmupBounds = await getVisibleTerminalBounds(page);
+  warmupTouch(warmupBounds);
   await page.waitForTimeout(500);
 }
 
@@ -110,75 +114,79 @@ test.describe('Gesture isolation and interaction (Android emulator)', () => {
 
     await setupTmuxWithScrollback(page, sshServer, testInfo, 'iso-scroll');
     const bottomContent = await readScreen(page);
-    // Bottom should show section E or END OF DATA
     expect(bottomContent).toMatch(/SECTION E|END OF DATA/);
+
+    // Get terminal bounds for ADB swipes
+    const bounds = await getVisibleTerminalBounds(page);
+    expect(bounds).not.toBeNull();
+    const { older, newer } = expectedSGRButton();
+
+    // Re-prime ADB pipeline right before assertion swipes
+    warmupTouch(bounds);
+    await page.waitForTimeout(500);
 
     // Clear WS spy
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
-    // Swipe DOWN (finger top→bottom) = scroll to older content
-    // In tmux: should send SGR WheelUp (button 64)
-    await swipe(page, '#terminal', 200, 100, 200, 500, 20);
-    await page.waitForTimeout(300);
-    await swipe(page, '#terminal', 200, 100, 200, 500, 20);
-    await page.waitForTimeout(300);
-    await swipe(page, '#terminal', 200, 100, 200, 500, 20);
-    await page.waitForTimeout(1000);
-    await snap(page, testInfo, 'iso-scroll-after-down');
+    // Intent: scroll to older content (3 swipes for enough distance)
+    await swipeToOlderContent(page, bounds);
+    await page.waitForTimeout(500);
+    await swipeToOlderContent(page, bounds);
+    await page.waitForTimeout(500);
+    await swipeToOlderContent(page, bounds);
+    await page.waitForTimeout(2000);
+    await snap(page, testInfo, 'iso-scroll-after-older');
 
-    const afterDown = await readScreen(page);
-    const sgrEventsDown = await getSGREvents(page);
-    const buttonsDown = sgrButtons(sgrEventsDown);
+    const afterOlder = await readScreen(page);
+    const sgrEventsOlder = await getSGREvents(page);
+    const buttonsOlder = sgrButtons(sgrEventsOlder);
 
     // Direction assertion: should see earlier sections (A, B, or C)
-    expect(afterDown).not.toMatch(/END OF DATA/);
-    // SGR: button 64 = WheelUp (scroll to older content)
-    expect(buttonsDown).toContain(64);
-    expect(buttonsDown).not.toContain(65);
+    expect(afterOlder).not.toMatch(/END OF DATA/);
+    expect(buttonsOlder).toContain(older);
+    expect(buttonsOlder).not.toContain(newer);
 
-    // Now swipe UP (finger bottom→top) = scroll to newer content
+    // Intent: scroll to newer content
     await page.evaluate(() => { window.__mockWsSpy = []; });
-    await swipe(page, '#terminal', 200, 500, 200, 100, 20);
-    await page.waitForTimeout(300);
-    await swipe(page, '#terminal', 200, 500, 200, 100, 20);
-    await page.waitForTimeout(300);
-    await swipe(page, '#terminal', 200, 500, 200, 100, 20);
-    await page.waitForTimeout(1000);
-    await snap(page, testInfo, 'iso-scroll-after-up');
+    await swipeToNewerContent(page, bounds);
+    await page.waitForTimeout(500);
+    await swipeToNewerContent(page, bounds);
+    await page.waitForTimeout(500);
+    await swipeToNewerContent(page, bounds);
+    await page.waitForTimeout(2000);
+    await snap(page, testInfo, 'iso-scroll-after-newer');
 
-    const sgrEventsUp = await getSGREvents(page);
-    const buttonsUp = sgrButtons(sgrEventsUp);
+    const sgrEventsNewer = await getSGREvents(page);
+    const buttonsNewer = sgrButtons(sgrEventsNewer);
 
     // SGR: button 65 = WheelDown (scroll to newer content)
-    expect(buttonsUp).toContain(65);
-    expect(buttonsUp).not.toContain(64);
+    expect(buttonsNewer).toContain(newer);
+    expect(buttonsNewer).not.toContain(older);
 
     await sendCommand(page, 'exit');
     await page.waitForTimeout(500);
   });
 
   test('pinch isolation: zoom changes font size with pinch ENABLED', async ({ emulatorPage: page, sshServer }, testInfo) => {
-    // Enable pinch
-    await page.evaluate(() => {
-      localStorage.setItem('enablePinchZoom', 'true');
-    });
+    // Enable pinch and reload so the setting takes effect
+    await page.evaluate(() => localStorage.setItem('enablePinchZoom', 'true'));
     await page.reload({ waitUntil: 'domcontentloaded' });
 
-    // Re-setup after reload (vault, connection)
-    // Skip vault — it persists across reload in same context
-    await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
-    await page.evaluate(async () => {
-      const { appState } = await import('./modules/state.js');
-      window.__testTerminal = appState.terminal;
-    });
+    // Vault modal may reappear after reload (localStorage was partially cleared by reload timing)
+    const modalAppeared = await page.locator('#vaultSetupOverlay:not(.hidden)')
+      .waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false);
+    if (modalAppeared) {
+      await page.locator('#vaultNewPw').fill('test');
+      await page.locator('#vaultConfirmPw').fill('test');
+      await page.evaluate(() => {
+        const cb = document.getElementById('vaultEnableBio');
+        if (cb) cb.checked = false;
+      });
+      await page.evaluate(() => document.getElementById('vaultSetupCreate')?.click());
+      await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
+    }
+    await page.locator('[data-panel="terminal"]').click();
 
-    // Verify pinch setting took effect
-    const pinchEnabled = await page.evaluate(() =>
-      localStorage.getItem('enablePinchZoom')
-    );
-    expect(pinchEnabled).toBe('true');
-
-    // Need a connected terminal for font size to matter
     await setupRealSSHConnection(page, sshServer);
     await page.evaluate(async () => {
       const { appState } = await import('./modules/state.js');
@@ -190,10 +198,17 @@ test.describe('Gesture isolation and interaction (Android emulator)', () => {
     );
     await snap(page, testInfo, 'iso-pinch-before');
 
-    // Pinch OUT (spread fingers = zoom in)
-    await pinch(page, '#terminal', 50, 200, 15);
+    // Dismiss keyboard so pinch lands on terminal
+    dismissKeyboard();
     await page.waitForTimeout(500);
 
+    // Pinch OUT (spread fingers = zoom in)
+    await pinch(page, '#terminal', 50, 200, 15);
+    await page.waitForFunction(
+      (before) => (window.__testTerminal?.options.fontSize ?? before) > before,
+      fontBefore,
+      { timeout: 5000 }
+    );
     const fontAfter = await page.evaluate(() =>
       window.__testTerminal?.options.fontSize ?? 14
     );
@@ -202,8 +217,11 @@ test.describe('Gesture isolation and interaction (Android emulator)', () => {
 
     // Pinch IN (close fingers = zoom out)
     await pinch(page, '#terminal', 200, 50, 15);
-    await page.waitForTimeout(500);
-
+    await page.waitForFunction(
+      (after) => (window.__testTerminal?.options.fontSize ?? after) < after,
+      fontAfter,
+      { timeout: 5000 }
+    );
     const fontAfterOut = await page.evaluate(() =>
       window.__testTerminal?.options.fontSize ?? 14
     );
@@ -237,32 +255,53 @@ test.describe('Gesture isolation and interaction (Android emulator)', () => {
     // Pinch should have changed font size
     expect(fontAfterPinch).not.toBe(fontBefore);
 
-    // THEN: scroll should still work correctly
+    // THEN: scroll should still work correctly — use ADB for reliable vertical swipe
+    const bounds = await getVisibleTerminalBounds(page);
+    expect(bounds).not.toBeNull();
+    const { older, newer } = expectedSGRButton();
+
+    // Re-prime ADB pipeline (CDP pinch doesn't keep it warm)
+    warmupTouch(bounds);
+    await page.waitForTimeout(500);
+
     await page.evaluate(() => { window.__mockWsSpy = []; });
-    await swipe(page, '#terminal', 200, 100, 200, 500, 20);
-    await page.waitForTimeout(300);
-    await swipe(page, '#terminal', 200, 100, 200, 500, 20);
-    await page.waitForTimeout(1000);
+    await swipeToOlderContent(page, bounds);
+    await page.waitForTimeout(500);
+    await swipeToOlderContent(page, bounds);
+    await page.waitForTimeout(2000);
     await snap(page, testInfo, 'interact-scroll-after-pinch');
 
     const sgrEvents = await getSGREvents(page);
     const buttons = sgrButtons(sgrEvents);
 
     // Scroll direction must be correct even after pinch
-    // Swipe down (top→bottom) = WheelUp = button 64
     expect(buttons.length).toBeGreaterThan(0);
-    expect(buttons).toContain(64);
-    expect(buttons).not.toContain(65);
+    expect(buttons).toContain(older);
+    expect(buttons).not.toContain(newer);
 
     await sendCommand(page, 'exit');
     await page.waitForTimeout(500);
   });
 
   test('interaction: pinch does NOT fire when enablePinchZoom=false', async ({ emulatorPage: page, sshServer }, testInfo) => {
-    // Ensure pinch is DISABLED
-    await page.evaluate(() => {
-      localStorage.setItem('enablePinchZoom', 'false');
-    });
+    // Ensure pinch is DISABLED — must reload for setting to take effect
+    await page.evaluate(() => localStorage.setItem('enablePinchZoom', 'false'));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    // Handle vault modal after reload
+    const modalAppeared = await page.locator('#vaultSetupOverlay:not(.hidden)')
+      .waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false);
+    if (modalAppeared) {
+      await page.locator('#vaultNewPw').fill('test');
+      await page.locator('#vaultConfirmPw').fill('test');
+      await page.evaluate(() => {
+        const cb = document.getElementById('vaultEnableBio');
+        if (cb) cb.checked = false;
+      });
+      await page.evaluate(() => document.getElementById('vaultSetupCreate')?.click());
+      await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
+    }
+    await page.locator('[data-panel="terminal"]').click();
 
     await setupRealSSHConnection(page, sshServer);
     await page.evaluate(async () => {

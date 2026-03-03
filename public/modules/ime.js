@@ -193,7 +193,13 @@ export function initIMEInput() {
                     termUnk.modes.mouseTrackingMode;
                 console.log('[scroll] delta=', delta, 'mouseMode=', mouseMode);
                 if (mouseMode && mouseMode !== 'none') {
-                    const btn = delta > 0 ? 65 : 64;
+                    const natural = _naturalVerticalScroll();
+                    // delta>0 = finger UP, delta<0 = finger DOWN
+                    // Natural: finger down(-delta) = see older = WheelUp(64)
+                    // Traditional: finger up(+delta) = see older = WheelUp(64)
+                    const btn = natural
+                        ? (delta > 0 ? 65 : 64)
+                        : (delta > 0 ? 64 : 65);
                     const rect = termEl.getBoundingClientRect();
                     const col = Math.max(1, Math.min(appState.terminal.cols, Math.floor((e.touches[0].clientX - rect.left) / (rect.width / appState.terminal.cols)) + 1));
                     const row = Math.max(1, Math.min(appState.terminal.rows, Math.floor((e.touches[0].clientY - rect.top) / (rect.height / appState.terminal.rows)) + 1));
@@ -207,7 +213,9 @@ export function initIMEInput() {
                     console.log('[scroll] SGR queued btn=', btn, 'count=', count);
                 }
                 else {
-                    _pendingLines += delta;
+                    // Natural: delta maps directly (finger down = -delta = scrollLines(-) = older)
+                    // Traditional: invert (finger up = +delta → -delta = scrollLines(-) = older)
+                    _pendingLines += _naturalVerticalScroll() ? delta : -delta;
                     console.log('[scroll] scrollLines queued=', _pendingLines);
                 }
                 _scheduleScrollFlush();
@@ -235,7 +243,11 @@ export function initIMEInput() {
         }
         if (!wasScroll) {
             if (Math.abs(finalDx) > 40 && Math.abs(finalDx) > Math.abs(finalDy)) {
-                sendSSHInput(finalDx < 0 ? '\x02p' : '\x02n');
+                const hNatural = _naturalHorizontalScroll();
+                const hCmd = hNatural
+                    ? (finalDx < 0 ? '\x02p' : '\x02n') // natural: finger left = prev
+                    : (finalDx < 0 ? '\x02n' : '\x02p'); // traditional: finger left = next
+                sendSSHInput(hCmd);
             }
             else {
                 setTimeout(focusIME, 50);
@@ -247,6 +259,12 @@ export function initIMEInput() {
     let _pinchStartSize = null;
     function _pinchEnabled() {
         return localStorage.getItem('enablePinchZoom') === 'true';
+    }
+    function _naturalVerticalScroll() {
+        return localStorage.getItem('naturalVerticalScroll') !== 'false';
+    }
+    function _naturalHorizontalScroll() {
+        return localStorage.getItem('naturalHorizontalScroll') !== 'false';
     }
     function _pinchDist(touches) {
         const dx = touches[0].clientX - touches[1].clientX;

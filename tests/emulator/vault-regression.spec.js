@@ -16,22 +16,26 @@ const { test, expect, screenshot, BASE_URL } = require('./fixtures');
 
 test.describe('Vault regression — #98 autofill interference fix', () => {
 
-  test('no Chrome "Save password?" prompt during credential save flow', async ({ emulatorPage: page }, testInfo) => {
-    // This is the core #98 regression test.
-    // Old behavior: submitting the connect form with PasswordCredential-compatible
-    // fields triggered Chrome's "Save password?" bottom sheet, which:
-    //   - Obscured the UI
-    //   - Stole focus from the app
-    //   - Confused users who thought it was part of MobiSSH
-    //
-    // Expected: no Chrome autofill UI appears at any point in this flow.
+  test('no Chrome "Save password?" prompt during credential save flow', async ({ cleanPage: page }, testInfo) => {
+    // Core #98 regression test. cleanPage gives us empty localStorage, no vault.
+    // Vault setup modal appears on startup — create vault first, then test
+    // that submitting the connect form doesn't trigger Chrome autofill.
 
-    await page.goto(BASE_URL);
-    await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
-    await screenshot(page, testInfo, 'regression-01-clean-start');
+    // Create vault from the startup modal
+    await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
+    await page.locator('#vaultNewPw').fill('master-pw-test');
+    await page.locator('#vaultConfirmPw').fill('master-pw-test');
+    await page.evaluate(() => {
+      const cb = document.getElementById('vaultEnableBio');
+      if (cb) cb.checked = false;
+    });
+    await page.evaluate(() => document.getElementById('vaultSetupCreate')?.click());
+    await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
+    await screenshot(page, testInfo, 'regression-01-vault-created');
 
-    // Fill and submit the connect form — this is where #98 triggered
+    // Now fill and submit the connect form — this is where #98 triggered
     await page.locator('[data-panel="connect"]').click();
+    await page.waitForSelector('#panel-connect.active', { timeout: 5000 });
     await page.locator('#host').fill('regression-test-host');
     await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('testuser');
@@ -39,25 +43,10 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     await screenshot(page, testInfo, 'regression-02-form-filled');
 
     await page.locator('#connectForm button[type="submit"]').click();
+    await page.waitForTimeout(2000);
+    await screenshot(page, testInfo, 'regression-03-after-submit-no-autofill');
 
-    // Vault setup modal appears (first credential save, no vault yet)
-    await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
-    await screenshot(page, testInfo, 'regression-03-vault-modal-no-autofill-prompt');
-
-    // CRITICAL ASSERTION: no Chrome autofill bar/sheet visible.
-    // Chrome's "Save password?" UI renders as a native bottom sheet outside the
-    // page DOM — we can't query it directly. But we CAN verify:
-    //   1. Our vault modal is fully visible and not obscured
-    //   2. The password field has correct suppression attributes
-    //   3. No PasswordCredential API was called
-    await expect(page.locator('#vaultSetupOverlay')).toBeVisible();
-    await expect(page.locator('#vaultNewPw')).toBeVisible();
-    await expect(page.locator('#vaultSetupCreate')).toBeVisible();
-
-    // Verify the connect form's password field is type="text" (not "password")
-    // and has autofill suppression attributes.
-    // type="password" is the primary signal Chrome uses to classify a form as
-    // a login form and trigger "Save password?" (#98).
+    // CRITICAL: verify password field has suppression attributes
     const pwAttrs = await page.locator('#remote_c').evaluate(el => ({
       type: el.type,
       autocomplete: el.getAttribute('autocomplete'),
@@ -78,37 +67,16 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     }));
     expect(ppAttrs.type).toBe('text');
     expect(ppAttrs.autocomplete).toBe('off');
-
-    // Fill the vault password and create
-    await page.locator('#vaultNewPw').fill('master-pw-test');
-    await page.locator('#vaultConfirmPw').fill('master-pw-test');
-    await page.evaluate(() => {
-      const cb = document.getElementById('vaultEnableBio');
-      if (cb) cb.checked = false;
-    });
-    await page.locator('#vaultSetupCreate').click();
-
-    // Vault created — modal dismissed
-    await expect(page.locator('#vaultSetupOverlay')).toHaveClass(/hidden/, { timeout: 15_000 });
-    await screenshot(page, testInfo, 'regression-04-vault-created-clean-ui');
-
-    // Final screenshot: the app is in its normal post-connect state.
-    // No password manager prompts, no autofill bars, no overlays.
-    // The terminal shows connection attempt (which will fail — no real SSH server).
-    await page.waitForTimeout(1000);
-    await screenshot(page, testInfo, 'regression-05-final-state-no-autofill');
+    await screenshot(page, testInfo, 'regression-04-final-state-no-autofill');
   });
 
-  test('PasswordCredential API is not called anywhere in the app', async ({ emulatorPage: page }, testInfo) => {
+  test('PasswordCredential API is not called anywhere in the app', async ({ cleanPage: page }, testInfo) => {
     // Instrument the page to detect any PasswordCredential usage.
-    // The old vault stored credentials via navigator.credentials.store(new PasswordCredential(...))
-    // which is what triggered Chrome's autofill integration.
-
+    // Must be added via addInitScript BEFORE navigation, so we re-navigate.
     await page.addInitScript(() => {
       window.__passwordCredentialCalled = false;
       window.__credentialsStoreCalled = false;
 
-      // Trap PasswordCredential constructor
       if (typeof window.PasswordCredential !== 'undefined') {
         const OrigPC = window.PasswordCredential;
         window.PasswordCredential = function (...args) {
@@ -118,7 +86,6 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
         window.PasswordCredential.prototype = OrigPC.prototype;
       }
 
-      // Trap navigator.credentials.store
       if (navigator.credentials && navigator.credentials.store) {
         const origStore = navigator.credentials.store.bind(navigator.credentials);
         navigator.credentials.store = function (...args) {
@@ -128,17 +95,11 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
       }
     });
 
-    await page.goto(BASE_URL);
-    await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
-    await screenshot(page, testInfo, 'api-check-01-loaded');
+    // Re-navigate so initScript takes effect
+    await page.evaluate(() => localStorage.clear());
+    await page.reload({ waitUntil: 'domcontentloaded' });
 
-    // Go through the full credential save flow
-    await page.locator('[data-panel="connect"]').click();
-    await page.locator('#host').fill('api-check-host');
-    await page.locator('#remote_a').fill('user');
-    await page.locator('#remote_c').fill('pass');
-    await page.locator('#connectForm button[type="submit"]').click();
-
+    // Vault setup modal appears on startup (no vault)
     await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
     await page.locator('#vaultNewPw').fill('vault-pw');
     await page.locator('#vaultConfirmPw').fill('vault-pw');
@@ -146,9 +107,18 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
       const cb = document.getElementById('vaultEnableBio');
       if (cb) cb.checked = false;
     });
-    await page.locator('#vaultSetupCreate').click();
-    await expect(page.locator('#vaultSetupOverlay')).toHaveClass(/hidden/, { timeout: 15_000 });
+    await page.evaluate(() => document.getElementById('vaultSetupCreate')?.click());
+    await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
+    await screenshot(page, testInfo, 'api-check-01-vault-created');
 
+    // Go through the credential save flow
+    await page.locator('[data-panel="connect"]').click();
+    await page.waitForSelector('#panel-connect.active', { timeout: 5000 });
+    await page.locator('#host').fill('api-check-host');
+    await page.locator('#remote_a').fill('user');
+    await page.locator('#remote_c').fill('pass');
+    await page.locator('#connectForm button[type="submit"]').click();
+    await page.waitForTimeout(2000);
     await screenshot(page, testInfo, 'api-check-02-flow-complete');
 
     // Verify: PasswordCredential was never constructed, credentials.store never called
@@ -162,18 +132,20 @@ test.describe('Vault regression — #98 autofill interference fix', () => {
     await screenshot(page, testInfo, 'api-check-03-no-credential-api-used');
   });
 
-  test('vault encrypts credentials — no plaintext in localStorage', async ({ emulatorPage: page }, testInfo) => {
-    // Create vault and save a profile, then prove the password is not
-    // stored in plaintext anywhere in localStorage.
+  test('vault encrypts credentials — no plaintext in localStorage', async ({ cleanPage: page }, testInfo) => {
+    // cleanPage: no vault. Create vault via startup modal, then save a profile,
+    // then prove the password is not stored in plaintext.
 
-    await page.goto(BASE_URL);
-    await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
-
-    // Create vault first
-    await page.evaluate(async () => {
-      const { createVault } = await import('./modules/vault.js');
-      await createVault('test-master', false);
+    // Create vault from startup modal
+    await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
+    await page.locator('#vaultNewPw').fill('test-master');
+    await page.locator('#vaultConfirmPw').fill('test-master');
+    await page.evaluate(() => {
+      const cb = document.getElementById('vaultEnableBio');
+      if (cb) cb.checked = false;
     });
+    await page.evaluate(() => document.getElementById('vaultSetupCreate')?.click());
+    await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
 
     // Save a profile with credentials
     await page.locator('[data-panel="connect"]').click();

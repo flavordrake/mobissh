@@ -1,0 +1,55 @@
+rules:
+  - id: no-waitForSelector-hidden-class
+    patterns:
+      - pattern: |
+          $PAGE.waitForSelector('...hidden...', ...)
+    message: >
+      waitForSelector with .hidden class selector waits for VISIBILITY of a
+      CSS-hidden element, which never resolves. Use
+      locator('#el').waitFor({ state: 'hidden' }) instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    paths:
+      include:
+        - tests/
+
+  - id: no-force-true-in-tests
+    pattern: |
+      $LOCATOR.click({..., force: true, ...})
+    message: >
+      force:true bypasses actionability checks. If a Playwright click needs
+      force, the underlying layout or timing issue should be fixed instead.
+    languages: [javascript, typescript]
+    severity: WARNING
+    paths:
+      include:
+        - tests/
+
+  - id: no-excessive-timeout-in-tests
+    patterns:
+      - pattern: |
+          { ..., timeout: $T, ... }
+      - metavariable-comparison:
+          metavariable: $T
+          comparison: $T > 30000
+    message: >
+      Timeout > 30s in a test assertion. If a test needs this long, the
+      underlying wait condition or test design should be reconsidered.
+    languages: [javascript, typescript]
+    severity: WARNING
+    paths:
+      include:
+        - tests/
+
+  - id: prefer-adb-swipe-for-vertical
+    pattern: |
+      swipe($PAGE, $SEL, $SX, $SY, $EX, $EY, ...)
+    message: >
+      CDP swipe() does not reliably fire DOM touch events on Android for
+      vertical gestures. Use adbSwipe() from fixtures for vertical swipes.
+      CDP swipe is acceptable for horizontal swipes and multi-touch (pinch).
+    languages: [javascript, typescript]
+    severity: INFO
+    paths:
+      include:
+        - tests/emulator/

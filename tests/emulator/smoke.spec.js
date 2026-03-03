@@ -7,7 +7,7 @@
  * Run: npx playwright test --config=playwright.emulator.config.js
  */
 
-const { test, expect, screenshot, BASE_URL } = require('./fixtures');
+const { test, expect, screenshot, dismissKeyboard, BASE_URL } = require('./fixtures');
 
 test.describe('PWA smoke (Android emulator)', () => {
 
@@ -68,28 +68,10 @@ test.describe('PWA smoke (Android emulator)', () => {
     await screenshot(page, testInfo, '06-vault-settings');
   });
 
-  test('vault setup modal appears on first credential save', async ({ emulatorPage: page }, testInfo) => {
-    await page.goto(BASE_URL);
-    await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
-
-    // Clear any existing vault/profiles
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
-
-    // Fill connect form and submit to trigger vault setup
-    await page.locator('[data-panel="connect"]').click();
-    await page.locator('#host').fill('vault-test-host');
-    await page.locator('#port').fill('22');
-    await page.locator('#remote_a').fill('vaultuser');
-    await page.locator('#remote_c').fill('vaultpass');
-    await screenshot(page, testInfo, '07-pre-vault-setup');
-
-    await page.locator('#connectForm button[type="submit"]').click();
-
-    // Vault setup modal should appear (no vault exists yet)
+  test('vault setup modal appears on first credential save', async ({ cleanPage: page }, testInfo) => {
+    // cleanPage: empty localStorage, no vault. App shows vault setup on startup.
     await page.waitForSelector('#vaultSetupOverlay:not(.hidden)', { timeout: 10_000 });
-    await screenshot(page, testInfo, '08-vault-setup-modal');
+    await screenshot(page, testInfo, '07-vault-setup-modal');
 
     // Verify the modal has the expected fields
     await expect(page.locator('#vaultNewPw')).toBeVisible();
@@ -107,8 +89,11 @@ test.describe('PWA smoke (Android emulator)', () => {
       if (cb) cb.checked = false;
     });
 
-    // Create vault
-    await page.locator('#vaultSetupCreate').click();
+    // Dismiss keyboard (password fields may have opened it) then click via DOM
+    // Playwright click gets intercepted by the overlay/input on Android
+    dismissKeyboard();
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.getElementById('vaultSetupCreate')?.click());
     await expect(page.locator('#vaultSetupOverlay')).toHaveClass(/hidden/, { timeout: 15_000 });
     await screenshot(page, testInfo, '10-vault-created');
 

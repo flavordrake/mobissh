@@ -10,6 +10,9 @@
  */
 const {
   test, expect, screenshot, setupRealSSHConnection, sendCommand,
+  adbSwipe, dismissKeyboard, ensureKeyboardDismissed,
+  warmupTouch, getVisibleTerminalBounds,
+  swipeToOlderContent, swipeToNewerContent, expectedSGRButton,
 } = require('./fixtures');
 const { execSync } = require('child_process');
 const fs = require('fs');
@@ -25,9 +28,7 @@ async function snap(page, testInfo, name) {
   fs.writeFileSync(path.join(SCREENSHOT_DIR, `${name}.png`), buf);
 }
 
-function adbSwipe(x1, y1, x2, y2, durationMs = 300) {
-  execSync(`adb shell input swipe ${x1} ${y1} ${x2} ${y2} ${durationMs}`);
-}
+// adbSwipe imported from fixtures
 
 /** Read what the user sees.
  *  viewportY mode: reads at viewportY (for client-side xterm.js scroll, outside tmux)
@@ -74,17 +75,20 @@ function sgrButtons(events) {
   }).filter(b => b !== null);
 }
 
-/** Perform 3 consecutive swipes. Returns screen content and SGR mouse events.
+/** Perform 3 consecutive intent-based swipes. Returns screen content and SGR mouse events.
+ *  direction: 'older' or 'newer' — physical swipe direction computed from scroll setting.
  *  useViewport: true for client-side scroll (plain shell), false for server-side (tmux). */
-async function swipeAndCapture(page, testInfo, label, y1, y2, useViewport = false) {
-  const cx = 540;
+async function swipeAndCapture(page, testInfo, label, direction, useViewport = false) {
+  const bounds = await getVisibleTerminalBounds(page);
+  expect(bounds).not.toBeNull();
+  const swipeFn = direction === 'older' ? swipeToOlderContent : swipeToNewerContent;
   await page.evaluate(() => { window.__mockWsSpy = []; });
 
-  adbSwipe(cx, y1, cx, y2, 600);
+  await swipeFn(page, bounds);
   await page.waitForTimeout(500);
-  adbSwipe(cx, y1, cx, y2, 600);
+  await swipeFn(page, bounds);
   await page.waitForTimeout(500);
-  adbSwipe(cx, y1, cx, y2, 600);
+  await swipeFn(page, bounds);
   await page.waitForTimeout(2000);
   await snap(page, testInfo, label);
 
@@ -118,21 +122,23 @@ test.describe('vertical scroll (Android emulator + real SSH)', () => {
     const bottomContent = await readScreen(page, true);
     const bottomViewport = await readViewportY(page);
 
-    // Dismiss keyboard
-    execSync('adb shell input keyevent KEYCODE_BACK');
+    // Dismiss keyboard and prime ADB touch pipeline
+    await ensureKeyboardDismissed(page);
+    const warmupBounds = await getVisibleTerminalBounds(page);
+    warmupTouch(warmupBounds);
     await page.waitForTimeout(500);
 
-    // Swipe UP (finger down) — scroll back through output (client-side scroll)
+    // Intent: scroll to older content (client-side scroll)
     const { content: afterUp, viewport: vpUp } = await swipeAndCapture(
-      page, testInfo, 'plain-02-scroll-up', 300, 1200, true);
+      page, testInfo, 'plain-02-scroll-older', 'older', true);
 
-    // Swipe DOWN (finger up) — scroll forward
+    // Intent: scroll to newer content
     const { content: afterDown, viewport: vpDown } = await swipeAndCapture(
-      page, testInfo, 'plain-03-scroll-down', 1200, 300, true);
+      page, testInfo, 'plain-03-scroll-newer', 'newer', true);
 
-    // Swipe UP again
+    // Intent: scroll to older again
     const { content: afterUp2 } = await swipeAndCapture(
-      page, testInfo, 'plain-04-scroll-up-2', 300, 1200, true);
+      page, testInfo, 'plain-04-scroll-older-2', 'older', true);
 
     // Outside tmux, xterm.js viewportY changes (client-side scroll)
     expect(vpUp.viewportY).toBeLessThan(bottomViewport.baseY);
@@ -162,28 +168,30 @@ test.describe('vertical scroll (Android emulator + real SSH)', () => {
     await snap(page, testInfo, 'tmux-02-at-bottom');
     const bottomContent = await readScreen(page);
 
-    // Dismiss keyboard
-    execSync('adb shell input keyevent KEYCODE_BACK');
+    // Dismiss keyboard and prime ADB touch pipeline
+    await ensureKeyboardDismissed(page);
+    const warmupBounds = await getVisibleTerminalBounds(page);
+    warmupTouch(warmupBounds);
     await page.waitForTimeout(500);
 
-    // Swipe UP, DOWN, UP
+    // Intent: older, newer, older
     const { content: afterUp1, sgrEvents } = await swipeAndCapture(
-      page, testInfo, 'tmux-03-scroll-up', 300, 1200);
+      page, testInfo, 'tmux-03-scroll-older', 'older');
 
     const { content: afterDown } = await swipeAndCapture(
-      page, testInfo, 'tmux-04-scroll-down', 1200, 300);
+      page, testInfo, 'tmux-04-scroll-newer', 'newer');
 
     const { content: afterUp2 } = await swipeAndCapture(
-      page, testInfo, 'tmux-05-scroll-up-2', 300, 1200);
+      page, testInfo, 'tmux-05-scroll-older-2', 'older');
 
     // In tmux: SGR mouse wheel events sent to SSH
     expect(sgrEvents.length).toBeGreaterThan(0);
 
-    // Direction-aware: swipe UP (y 300→1200) = finger down = scroll to older
-    // SGR WheelUp = button 64; should NOT contain button 65
+    // Direction-aware SGR: scrolling to older = WheelUp button
+    const { older, newer } = expectedSGRButton();
     const buttonsUp1 = sgrButtons(sgrEvents);
-    expect(buttonsUp1).toContain(64);
-    expect(buttonsUp1).not.toContain(65);
+    expect(buttonsUp1).toContain(older);
+    expect(buttonsUp1).not.toContain(newer);
 
     // Content should have moved away from the bottom
     expect(afterUp1).not.toBe(bottomContent);
@@ -218,28 +226,47 @@ test.describe('vertical scroll (Android emulator + real SSH)', () => {
     await snap(page, testInfo, 'kb-on-01-at-bottom');
     const bottomContent = await readScreen(page);
 
-    // Tap terminal to ensure keyboard is raised
-    execSync('adb shell input tap 540 600');
-    await page.waitForTimeout(1500);
+    // Focus input to raise keyboard: JS focus + ADB tap on the terminal area.
+    // JS focus alone may not trigger the soft keyboard; the ADB tap ensures
+    // Android's InputMethodManager shows it.
+    await page.evaluate(() => {
+      const el = document.getElementById('directInput') || document.getElementById('imeInput');
+      if (el) { el.focus(); el.click(); }
+    });
+    await page.waitForTimeout(500);
+    // ADB tap on terminal to trigger keyboard through Android input pipeline
+    const preBounds = await getVisibleTerminalBounds(page);
+    if (preBounds) adbSwipe(preBounds.centerX, preBounds.top + 50, preBounds.centerX, preBounds.top + 50, 50);
+    await page.waitForTimeout(2000);
     await snap(page, testInfo, 'kb-on-02-keyboard-check');
 
-    // Swipe in narrower zone above potential keyboard
+    // Get visible terminal bounds WITH keyboard showing
+    const bounds = await getVisibleTerminalBounds(page);
+    expect(bounds).not.toBeNull();
+    expect(bounds.keyboardVisible).toBe(true);
+
+    // Prime ADB touch pipeline (keyboard stays visible — warmup within terminal bounds)
+    warmupTouch(bounds);
+    await page.waitForTimeout(500);
+
+    // Intent: older, newer, older — swipe helpers confine to visible bounds
     const { content: afterUp, sgrEvents } = await swipeAndCapture(
-      page, testInfo, 'kb-on-03-scroll-up', 300, 1050);
+      page, testInfo, 'kb-on-03-scroll-older', 'older');
 
     const { content: afterDown } = await swipeAndCapture(
-      page, testInfo, 'kb-on-04-scroll-down', 1050, 300);
+      page, testInfo, 'kb-on-04-scroll-newer', 'newer');
 
     const { content: afterUp2 } = await swipeAndCapture(
-      page, testInfo, 'kb-on-05-scroll-up-2', 300, 1050);
+      page, testInfo, 'kb-on-05-scroll-older-2', 'older');
 
     // SGR events should still be sent even with keyboard visible
     expect(sgrEvents.length).toBeGreaterThan(0);
 
-    // Direction-aware: swipe UP (y 300→1050) = scroll to older = button 64
+    // Direction-aware SGR: scrolling to older = WheelUp button
+    const { older, newer } = expectedSGRButton();
     const buttonsUp = sgrButtons(sgrEvents);
-    expect(buttonsUp).toContain(64);
-    expect(buttonsUp).not.toContain(65);
+    expect(buttonsUp).toContain(older);
+    expect(buttonsUp).not.toContain(newer);
 
     expect(afterUp).not.toBe(bottomContent);
     expect(afterUp).not.toMatch(/END OF DATA/);

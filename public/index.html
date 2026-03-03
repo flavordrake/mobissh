@@ -363,6 +363,40 @@
 
       <hr />
 
+      <h3>Gestures</h3>
+      <div class="setting-row">
+        <div class="setting-row-info">
+          <span class="setting-row-label">Natural vertical scroll</span>
+          <p class="hint">Content follows finger direction (like iOS). Off = traditional scrollbar style.</p>
+        </div>
+        <label class="toggle" aria-label="Natural vertical scroll">
+          <input type="checkbox" id="naturalVerticalScroll" checked />
+          <span class="toggle-slider toggle-slider-accent"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row-info">
+          <span class="setting-row-label">Natural horizontal swipe</span>
+          <p class="hint">Swipe left = previous tmux window. Off = swipe left = next window.</p>
+        </div>
+        <label class="toggle" aria-label="Natural horizontal swipe">
+          <input type="checkbox" id="naturalHorizontalScroll" checked />
+          <span class="toggle-slider toggle-slider-accent"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row-info">
+          <span class="setting-row-label">Pinch-to-zoom</span>
+          <p class="hint">Two-finger pinch changes terminal font size.</p>
+        </div>
+        <label class="toggle" aria-label="Enable pinch-to-zoom">
+          <input type="checkbox" id="enablePinchZoom" />
+          <span class="toggle-slider toggle-slider-accent"></span>
+        </label>
+      </div>
+
+      <hr />
+
       <div class="vault-settings">
         <h3 class="vault-settings-title">Vault</h3>
         <p id="vaultStatus" class="vault-status">Not set up</p>
@@ -414,16 +448,6 @@
           </label>
         </div>
 
-        <div class="danger-zone-item">
-          <div class="danger-zone-item-info">
-            <span class="danger-zone-item-label">Enable pinch-to-zoom</span>
-            <p class="hint">Two-finger pinch changes terminal font size. Disable if it interferes with scrolling.</p>
-          </div>
-          <label class="toggle" aria-label="Enable pinch-to-zoom">
-            <input type="checkbox" id="enablePinchZoom" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
       </div>
 
       <button id="clearDataBtn" class="danger-btn">Clear all data (keys, profiles, settings)</button>

@@ -72,6 +72,20 @@ export function initSettingsPanel() {
             localStorage.setItem('enablePinchZoom', pinchEl.checked ? 'true' : 'false');
         });
     }
+    const natVEl = document.getElementById('naturalVerticalScroll');
+    if (natVEl) {
+        natVEl.checked = localStorage.getItem('naturalVerticalScroll') !== 'false';
+        natVEl.addEventListener('change', () => {
+            localStorage.setItem('naturalVerticalScroll', natVEl.checked ? 'true' : 'false');
+        });
+    }
+    const natHEl = document.getElementById('naturalHorizontalScroll');
+    if (natHEl) {
+        natHEl.checked = localStorage.getItem('naturalHorizontalScroll') !== 'false';
+        natHEl.addEventListener('change', () => {
+            localStorage.setItem('naturalHorizontalScroll', natHEl.checked ? 'true' : 'false');
+        });
+    }
     const dockEl = document.getElementById('keyControlsDockLeft');
     if (dockEl) {
         dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';
