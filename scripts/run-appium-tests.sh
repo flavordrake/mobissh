@@ -149,7 +149,7 @@ fi
 # Phase 7: Archive to persistent git-committed history
 # test-history/ is tracked in git for historical regression comparison.
 # Playwright never touches this directory.
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+TIMESTAMP=$(date +%Y%m%dT%H%M%S%z)
 HISTORY_DIR="test-history/appium/${TIMESTAMP}"
 log "Phase 7: Archiving to $HISTORY_DIR"
 mkdir -p "$HISTORY_DIR"
