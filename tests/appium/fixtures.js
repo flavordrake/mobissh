@@ -507,31 +507,43 @@ async function attachScreenshot(driver, testInfo, name) {
 
 const test = base.extend({
   /**
-   * Appium WebDriverIO driver fixture.
-   * Creates a session, navigates to the app, and provides the driver.
+   * Worker-scoped Appium session — ONE session for all tests in a worker.
+   * Avoids UiAutomator2 instrumentation crash from repeated session create/destroy.
+   * @private — tests should use `driver`, not `_workerDriver`.
    */
   // eslint-disable-next-line no-empty-pattern
-  driver: async ({}, use, testInfo) => {
+  _workerDriver: [async ({}, use) => {
     const driver = await createDriver();
-
     try {
-      await driver.url(BASE_URL);
-      await driver.pause(2000);
-      await dismissNativeDialogs(driver);
-      await switchToWebview(driver);
-
       await use(driver);
     } finally {
-      if (testInfo.status !== testInfo.expectedStatus) {
-        try {
-          const screenshot = await driver.takeScreenshot();
-          await testInfo.attach('appium-screenshot', {
-            body: Buffer.from(screenshot, 'base64'),
-            contentType: 'image/png',
-          });
-        } catch { /* best effort */ }
-      }
-      await driver.deleteSession();
+      try { await driver.deleteSession(); } catch { /* best effort */ }
+    }
+  }, { scope: 'worker' }],
+
+  /**
+   * Test-scoped driver: navigates to BASE_URL, dismisses dialogs, and
+   * switches to webview before each test. Screenshots on failure.
+   * Reuses the worker-scoped session underneath.
+   */
+  driver: async ({ _workerDriver }, use, testInfo) => {
+    const driver = _workerDriver;
+
+    await driver.url(BASE_URL);
+    await driver.pause(2000);
+    await dismissNativeDialogs(driver);
+    await switchToWebview(driver);
+
+    await use(driver);
+
+    if (testInfo.status !== testInfo.expectedStatus) {
+      try {
+        const screenshot = await driver.takeScreenshot();
+        await testInfo.attach('appium-screenshot', {
+          body: Buffer.from(screenshot, 'base64'),
+          contentType: 'image/png',
+        });
+      } catch { /* best effort */ }
     }
   },
 

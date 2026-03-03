@@ -100,7 +100,13 @@ do_start() {
   load_nvm
   load_android_env
   log "Starting Appium on :${APPIUM_PORT}..."
-  nohup appium --port "$APPIUM_PORT" --relaxed-security > "$LOGFILE" 2>&1 &
+  local appium_bin
+  appium_bin=$(which appium 2>/dev/null || find "$NVM_DIR/versions" -name appium \( -type f -o -type l \) 2>/dev/null | head -1)
+  if [ -z "$appium_bin" ]; then
+    err "appium binary not found. Install with: npm install -g appium"
+    return 1
+  fi
+  nohup "$appium_bin" --port "$APPIUM_PORT" --relaxed-security > "$LOGFILE" 2>&1 &
   local pid=$!
   local attempts=0
   while [ $attempts -lt 15 ]; do

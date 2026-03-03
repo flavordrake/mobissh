@@ -28,7 +28,8 @@ module.exports = defineConfig({
   workers: 1,  // single emulator, single Chrome — no parallelism
 
   reporter: [
-    ['list', { printSteps: true }],
+    ['line'],
+    ['json', { outputFile: 'test-results-appium/results.json' }],
     ['html', { open: 'never', outputFolder: 'playwright-report-appium' }],
   ],
 
