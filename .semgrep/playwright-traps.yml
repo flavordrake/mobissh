@@ -53,3 +53,21 @@ rules:
     paths:
       include:
         - tests/emulator/
+
+  # Frozen baseline tests must not have their test structure modified.
+  # This rule triggers on any expect() call in a baseline file, acting as a
+  # lint-time reminder that the file is frozen. The rule itself is nosemgrep'd
+  # in the original baseline file; if someone adds or changes an expect(), the
+  # new line won't have the nosemgrep annotation, triggering the warning.
+  - id: frozen-baseline-test
+    pattern: |
+      expect(...)
+    message: >
+      This file is a frozen regression baseline (*-baseline.spec.*). Do not
+      modify test logic or assertions. To test new behavior, create a new spec
+      file. See CLAUDE.md "Test Layering Policy".
+    languages: [javascript, typescript]
+    severity: ERROR
+    paths:
+      include:
+        - "**/tests/**/*-baseline.spec.*"

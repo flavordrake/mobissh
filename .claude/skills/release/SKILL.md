@@ -112,7 +112,7 @@ done
 git add test-history/
 ```
 
-Video files (.webm, .mp4) and screenshot PNGs are marked as binary in `.gitattributes` (no diff, no merge). They are the primary evidence that gestures work correctly at each release point. Keep them in git for now — a future release step can archive to external storage if the repo grows too large.
+Video files (.webm, .mp4) are stored in Git LFS (`.gitattributes` has `filter=lfs diff=lfs merge=lfs -text`). Screenshot PNGs use `binary -diff`. Videos are the primary evidence that gestures work correctly at each release point. If new video files were committed before the LFS rules existed, run `git lfs migrate import --include="test-history/**/*.webm,test-history/**/*.mp4"` to convert them to LFS pointers before pushing.
 
 If no test-history runs exist (e.g., no emulator was available), skip this step. Don't fail the release for missing test evidence.
 

@@ -15,7 +15,23 @@ Systematic methodology for diagnosing touch and gesture issues in PWAs running o
 
 ## Architecture Note
 
-ADB gesture testing (Playwright+CDP+`adb shell input swipe`) is **retired**. See `memory/adb-gesture-testing-postmortem.md` for why. Migrating to Appium v2 + UiAutomator2 + WebDriverIO. The diagnostic methodology below is tool-agnostic and applies to any gesture testing approach.
+ADB gesture testing is **retired**. Appium v2 + UiAutomator2 + WebDriverIO is operational with 5 baseline scroll tests passing. Run with `scripts/run-appium-tests.sh`. Key infrastructure:
+- `tests/appium/fixtures.js` — session management, gesture helpers, SSH connection
+- `tests/appium/gesture-scroll-baseline.spec.js` — 5 direction-aware scroll regression tests (**FROZEN**)
+- `scripts/setup-appium.sh` — environment setup (run as normal user, NOT sudo)
+- Screen recording via `adb emu screenrecord start/stop` (webm, validated by ffprobe)
+- All scripts log to `/tmp/*.log` for post-run diagnosis
+
+## Test Layering (READ BEFORE ADDING TESTS)
+
+**Baseline tests (`*-baseline.spec.*`) are frozen.** They capture known-correct behavior and must not be modified. When adding gesture features:
+
+1. Create a **new spec file** alongside the baseline (e.g. `gesture-horizontal.spec.js`)
+2. Import the same fixtures from `fixtures.js` — add new helpers there if needed
+3. The baseline tests run alongside new tests; if baselines fail, the feature broke existing behavior
+4. Never weaken a baseline assertion to accommodate a new feature
+
+Enforcement: semgrep `frozen-baseline-test` rule (ERROR), pre-commit hook blocks staged changes to baseline files. See CLAUDE.md "Test Layering Policy".
 
 ## Core Principles
 

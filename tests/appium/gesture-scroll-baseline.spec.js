@@ -1,5 +1,25 @@
 /**
+ * @frozen-baseline
+ *
  * tests/appium/gesture-scroll-baseline.spec.js
+ *
+ * FROZEN REGRESSION BASELINE — DO NOT MODIFY TEST LOGIC OR ASSERTIONS.
+ *
+ * This file captures known-correct vertical scroll behavior as of 2026-03-03.
+ * It exists to catch regressions when new gesture features are developed.
+ *
+ * Allowed changes:
+ *   - Fixing import/require paths after a file move
+ *   - Updating fixture API calls if a shared fixture changes its signature
+ *     (behavior must remain identical)
+ *
+ * NOT allowed:
+ *   - Changing assertions or expected values
+ *   - Adding, removing, or skipping tests
+ *   - Relaxing timeouts or thresholds to make a failing test pass
+ *
+ * To test new features, create a new spec file (e.g. gesture-horizontal.spec.js).
+ * See CLAUDE.md "Test Layering Policy" for the full policy.
  *
  * Regression baseline: vertical scroll gestures via Appium W3C Actions.
  * Verifies scroll DIRECTION using fill-scrollback.sh labeled sections (A-E).
@@ -21,7 +41,7 @@ const {
   swipeToOlderContent, swipeToNewerContent, warmupSwipes,
   setupRealSSHConnection, setupVault, sendCommand,
   dismissKeyboardViaBack, exposeTerminal,
-  getVisibleTerminalBounds, appiumSwipe,
+  getVisibleTerminalBounds, appiumSwipe: _appiumSwipe,
   readScreen, attachScreenshot,
   switchToNative, switchToWebview,
   dismissNativeDialogs,
@@ -85,9 +105,9 @@ async function setupTmuxWithScrollback(driver, testInfo, label) {
 /** Perform 3 consecutive swipes in a direction, capture content and SGR buttons. */
 async function swipeAndCapture(driver, testInfo, label, direction) {
   const bounds = await getVisibleTerminalBounds(driver);
-  expect(bounds).not.toBeNull();
+  expect(bounds).not.toBeNull(); // nosemgrep: frozen-baseline-test
 
-  await driver.executeScript("window.__mockWsSpy = []", []);
+  await driver.executeScript('window.__mockWsSpy = []', []);
 
   const swipeFn = direction === 'older' ? swipeToOlderContent : swipeToNewerContent;
   for (let i = 0; i < 3; i++) {
@@ -122,7 +142,7 @@ test.describe('Gesture scroll baseline (Appium)', () => {
 
     // Verify we start at the bottom
     const bottomContent = await readScreen(driver);
-    expect(bottomContent).toMatch(/SECTION E|END OF DATA/);
+    expect(bottomContent).toMatch(/SECTION E|END OF DATA/); // nosemgrep: frozen-baseline-test
 
     const bounds = await getVisibleTerminalBounds(driver);
     await warmupSwipes(driver, bounds);
@@ -131,9 +151,9 @@ test.describe('Gesture scroll baseline (Appium)', () => {
       driver, testInfo, 'tmux-older-after-scroll', 'older');
 
     // Direction: should see earlier sections, not the end marker
-    expect(content).not.toMatch(/END OF DATA/);
+    expect(content).not.toMatch(/END OF DATA/); // nosemgrep: frozen-baseline-test
     // SGR button 64 = WheelUp = scroll to older content
-    expect(buttons).toContain(64);
+    expect(buttons).toContain(64); // nosemgrep: frozen-baseline-test
   });
 
   test('tmux: scroll to newer after older returns toward section E', async ({ driver }, testInfo) => {
@@ -150,7 +170,7 @@ test.describe('Gesture scroll baseline (Appium)', () => {
       driver, testInfo, 'tmux-newer-step2-newer', 'newer');
 
     // SGR button 65 = WheelDown = scroll to newer content
-    expect(buttons).toContain(65);
+    expect(buttons).toContain(65); // nosemgrep: frozen-baseline-test
   });
 
   test('tmux: older -> newer -> older produces 3 distinct positions', async ({ driver }, testInfo) => {
@@ -169,9 +189,9 @@ test.describe('Gesture scroll baseline (Appium)', () => {
 
     // All 4 snapshots should not all be identical (proves movement happened)
     const unique = new Set([bottomContent, pos1, pos2, pos3]);
-    expect(unique.size).toBeGreaterThanOrEqual(2);
+    expect(unique.size).toBeGreaterThanOrEqual(2); // nosemgrep: frozen-baseline-test
     // And specifically, the older snapshots should differ from bottom
-    expect(pos1).not.toBe(bottomContent);
+    expect(pos1).not.toBe(bottomContent); // nosemgrep: frozen-baseline-test
   });
 
   test('plain shell: scroll changes xterm.js viewportY', async ({ driver }, testInfo) => {
@@ -194,7 +214,7 @@ test.describe('Gesture scroll baseline (Appium)', () => {
     `, []);
 
     // At bottom, viewportY should equal baseY
-    expect(bottomViewportY).toBe(bottomBaseY);
+    expect(bottomViewportY).toBe(bottomBaseY); // nosemgrep: frozen-baseline-test
 
     await dismissKeyboardViaBack(driver);
     const bounds = await getVisibleTerminalBounds(driver);
@@ -214,7 +234,7 @@ test.describe('Gesture scroll baseline (Appium)', () => {
     `, []);
 
     // viewportY should have decreased (scrolled up from bottom)
-    expect(afterViewportY).toBeLessThan(bottomBaseY);
+    expect(afterViewportY).toBeLessThan(bottomBaseY); // nosemgrep: frozen-baseline-test
   });
 
   test('mobile:swipeGesture API produces scroll events', async ({ driver }, testInfo) => {
@@ -223,7 +243,7 @@ test.describe('Gesture scroll baseline (Appium)', () => {
     const bounds = await getVisibleTerminalBounds(driver);
     await warmupSwipes(driver, bounds);
 
-    await driver.executeScript("window.__mockWsSpy = []", []);
+    await driver.executeScript('window.__mockWsSpy = []', []);
 
     // Use Appium's high-level swipe command via native context
     await switchToNative(driver);
@@ -246,6 +266,6 @@ test.describe('Gesture scroll baseline (Appium)', () => {
     const buttons = await getSGRButtons(driver);
     const content = await readScreen(driver);
     const scrollHappened = buttons.length > 0 || !content.includes('END OF DATA');
-    expect(scrollHappened).toBe(true);
+    expect(scrollHappened).toBe(true); // nosemgrep: frozen-baseline-test
   });
 });

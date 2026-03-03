@@ -1,16 +1,35 @@
 #!/bin/sh
-# MobiSSH pre-commit hook — lint staged JS and TS files
+# MobiSSH pre-commit hook
 #
-# Runs ESLint on all staged .js/.ts files under public/, server/, tests/, and src/.
-# Blocks the commit on any lint error (warnings are allowed through).
+# 1. Blocks commits that modify frozen baseline test files
+# 2. Runs ESLint on staged JS/TS files
+# 3. Runs semgrep on staged TS files and baseline test files
 
 set -e
 
+# Frozen baseline check: *-baseline.spec.* files must not be modified.
+# Only the header comment and nosemgrep annotations are allowed to exist;
+# structural changes (test logic, assertions) should go in new spec files.
+STAGED_BASELINES=$(git diff --cached --name-only --diff-filter=M | grep '\-baseline\.spec\.' || echo "")
+if [ -n "$STAGED_BASELINES" ]; then
+  echo ""
+  echo "BLOCKED: Frozen baseline test(s) modified:"
+  echo "$STAGED_BASELINES" | sed 's/^/  /'
+  echo ""
+  echo "Baseline tests capture known-correct behavior and must not be changed."
+  echo "To test new features, create a new spec file alongside the baseline."
+  echo "See CLAUDE.md \"Test Layering Policy\" for the full policy."
+  echo ""
+  echo "If this is a legitimate infrastructure fix (import path, fixture API change),"
+  echo "use: git commit --no-verify"
+  exit 1
+fi
+
 # Collect staged JS files under our lint targets
-STAGED_JS=$(git diff --cached --name-only --diff-filter=ACMR | grep '^\(public\|server\|tests\)/.*\.js$' || true)
+STAGED_JS=$(git diff --cached --name-only --diff-filter=ACMR | grep '^\(public\|server\|tests\)/.*\.js$' || echo "")
 
 # Collect staged TS files under src/
-STAGED_TS=$(git diff --cached --name-only --diff-filter=ACMR | grep '^src/.*\.ts$' || true)
+STAGED_TS=$(git diff --cached --name-only --diff-filter=ACMR | grep '^src/.*\.ts$' || echo "")
 
 STAGED="$STAGED_JS $STAGED_TS"
 STAGED=$(echo "$STAGED" | xargs)
@@ -26,4 +45,11 @@ npx eslint --max-warnings=-1 $STAGED
 if [ -n "$STAGED_TS" ] && command -v semgrep >/dev/null 2>&1; then
   echo "Running semgrep on staged TS files..."
   semgrep --config .semgrep/rules.yml $STAGED_TS --no-git-ignore --error --severity WARNING
+fi
+
+# Run semgrep playwright-traps on staged test JS files (catches baseline violations)
+STAGED_TEST_JS=$(echo "$STAGED_JS" | tr ' ' '\n' | grep '^tests/' || echo "")
+if [ -n "$STAGED_TEST_JS" ] && command -v semgrep >/dev/null 2>&1; then
+  echo "Running semgrep playwright-traps on staged test files..."
+  semgrep --config .semgrep/playwright-traps.yml $STAGED_TEST_JS --no-git-ignore --error --severity ERROR
 fi

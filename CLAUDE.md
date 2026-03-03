@@ -74,6 +74,26 @@ All backlog items are filed as issues in this repo. Key priorities:
 - Hidden textarea needs `autocorrect="off"` etc. or iOS corrupts SSH commands (issue #10)
 - `visualViewport.height` is the correct API (not `window.innerHeight`) for keyboard detection
 
+## Test Layering Policy
+Regression baselines are **frozen reference points**. They capture known-correct behavior
+and exist to catch regressions when new features are developed. The policy:
+
+- **Files matching `*-baseline.spec.*` are frozen.** Do not modify test logic, assertions,
+  or expected values. The only acceptable changes are: fixing a broken `require`/`import`
+  path after a file move, or updating infrastructure calls when a shared fixture API changes
+  its signature (and even then, behavior must remain identical).
+- **Add new tests alongside baselines, never modify them.** To test new features (horizontal
+  swipe, pinch-to-zoom, multi-panel), create new spec files that import the same fixtures.
+  Name them descriptively: `gesture-horizontal.spec.js`, `gesture-pinch.spec.js`,
+  `gesture-multi-feature.spec.js`.
+- **Baselines are additive.** Once a behavior is captured in a baseline, it stays. If the
+  application behavior changes intentionally, add a new baseline that captures the new
+  behavior and keep the old one (mark it `.skip` with a comment referencing the issue/PR
+  that changed behavior, so the history is preserved).
+- **Semgrep enforces this.** The `frozen-baseline-test` rule in `.semgrep/playwright-traps.yml`
+  flags structural test changes (describe/test/expect) in baseline files. It runs in the
+  pre-commit hook and CI.
+
 ## Rules
 - Build step allowed — TypeScript compilation is acceptable for type safety and static error detection. Compiled output is served from `public/`. No heavy bundlers (webpack, vite) unless justified.
 - `node_modules/` is gitignored — install via `npm install` in `server/`
