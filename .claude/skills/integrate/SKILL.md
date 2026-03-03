@@ -94,69 +94,21 @@ Run multiple fast gates in parallel using the **integrate-gater** agent
 pass/fail results. Do NOT use the built-in `general-purpose` agent for this
 (it does not inherit permissions; see `docs/agents.md`).
 
-## Step 4: Acceptance gate
+## Step 4: Acceptance gate (per-branch, headless)
 
-If the fast gate passes, run acceptance tests. Always attempt full emulator validation
-first — don't silently fall back to headless.
-
-**`device` label check:** If the issue has the `device` label (per `.claude/process.md`),
-emulator or real-device validation is mandatory. Do NOT merge with headless-only results.
-
-### Bring up the emulator
-
-`run-emulator-tests.sh` handles the full pipeline: emulator boot (Phase 2), server
-startup (Phase 1), ADB forwarding (Phase 3), Chrome CDP (Phase 3), test execution
-(Phase 4), and artifact collection (Phases 5-7). It's the single entry point.
-
-Check prerequisites and attempt boot:
+Between merges, run headless Playwright to catch regressions quickly:
 
 ```bash
-if [[ ! -e /dev/kvm ]]; then
-  echo "KVM not available — emulator cannot run on this machine"
-  EMULATOR=false
-elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
-  echo "Android SDK not installed — running setup..."
-  scripts/setup-avd.sh
-  EMULATOR=true
-else
-  EMULATOR=true
-fi
-
-if [ "$EMULATOR" = true ]; then
-  scripts/run-emulator-tests.sh
-fi
+scripts/server-ctl.sh ensure
+npx playwright test --config=playwright.config.js
 ```
 
-If no AVD exists, `setup-avd.sh` creates it (one-time). If the emulator is already
-running, boot is a no-op — it detects the existing device.
+This is a regression check, not final acceptance. The full emulator acceptance run
+happens once after all merges complete (Step 7).
 
-### With emulator (full validation)
-After `run-emulator-tests.sh` completes:
-1. Parse `test-results/emulator/report.json` for pass/fail summary
-2. Compare against main branch results — are there regressions?
-3. If the PR touches touch/gesture code, pay special attention to gesture test results
-4. If the recording exists but frames haven't been extracted:
-   ```bash
-   scripts/review-recording.sh
-   ```
-
-### Fallback: headless only (emulator truly unavailable)
-Only use this path when KVM is missing or the machine genuinely can't host an emulator
-(CI runner, remote server, etc.). This is not the preferred path.
-
-1. Start server and run headless tests:
-   ```bash
-   scripts/server-ctl.sh ensure
-   npx playwright test --config=playwright.config.js
-   ```
-2. Check if the PR touches device-dependent areas. If any of these keywords appear in
-   filenames or diff content, the PR **cannot be fully validated headless**:
-   - Touch/gesture: `gesture`, `swipe`, `pinch`, `touch`
-   - Layout/keyboard: `keyboard`, `layout`, `viewport`, `safe-area`
-   - Vault biometric: `bio`, `fingerprint`, `webauthn`, `PasswordCredential`
-   - PWA install: `manifest`, `sw.js`, `beforeinstallprompt`
-3. Report to user: "PR #N passes headless tests but needs emulator validation for: [reasons]"
-4. Do NOT merge device-dependent PRs without emulator validation. Queue them.
+**`device` label check:** If the issue has the `device` label (per `.claude/process.md`),
+emulator or real-device validation is mandatory. Do NOT merge with headless-only results
+unless the full Appium run in Step 7 will cover it.
 
 ### Production server awareness
 The user often tests on the live production server while integration happens locally.
@@ -209,23 +161,62 @@ scripts/integrate-cleanup.sh --issue <N>
 scripts/gh-ops.sh labels <N> --rm bot --add divergence
 ```
 
-## Step 6: Post-merge
+## Step 6: Post-merge (per-PR)
 
 After each successful merge:
 ```bash
 git checkout main && git pull
 scripts/server-ctl.sh restart
-npm test && npx playwright test --config=playwright.config.js
+npx playwright test --config=playwright.config.js
 ```
-Report: "Merged PR #N (<title>). Tests: X pass. Server restarted at <hash>."
+Report: "Merged PR #N (<title>). Headless tests: X pass. Server restarted at <hash>."
+
+This is a regression gate between merges. The full acceptance run is Step 7.
+
+## Step 7: Final acceptance — Appium emulator run with recording
+
+After ALL merges are complete, run the full Appium test suite on the emulator.
+This produces a screen recording for human review of new features.
+
+```bash
+if [[ ! -e /dev/kvm ]]; then
+  echo "KVM not available — emulator cannot run on this machine"
+  EMULATOR=false
+elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
+  echo "Android SDK not installed — running setup..."
+  scripts/setup-avd.sh
+  EMULATOR=true
+else
+  EMULATOR=true
+fi
+
+if [ "$EMULATOR" = true ]; then
+  scripts/run-appium-tests.sh
+fi
+```
+
+`run-appium-tests.sh` handles the full pipeline: server startup, Docker sshd,
+emulator boot, ADB forwarding, Appium server, screen recording with debug overlays,
+Playwright test execution, artifact collection, and archival to `test-history/appium/`.
+
+After the run completes:
+1. Parse the HTML report in `playwright-report-appium/`
+2. Check `test-results-appium/` for per-test artifacts
+3. The recording is archived to `test-history/appium/<ISO-8601-timestamp>/recording.webm`
+4. Extract review frames if needed: `scripts/review-recording.sh`
+5. Report: "Appium acceptance: X pass, Y fail. Recording: test-history/appium/<ts>/recording.webm"
+
+If the emulator is unavailable (no KVM, CI runner), report which PRs need emulator
+validation and skip this step. Do NOT silently omit it.
 
 ## Batch Mode
 
 When processing multiple PRs:
 - Integrate in risk order (low first)
-- Re-run tests between each merge — do not batch merges without validation
+- Run headless Playwright between each merge (Step 6) — do not batch merges without validation
 - Stop on first systemic failure (main broken after merge)
 - If main breaks: revert the last merge, report which PR caused it
+- After all merges: run `scripts/run-appium-tests.sh` (Step 7) for final acceptance with recording
 
 ## Encoded Lessons
 
