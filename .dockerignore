@@ -1,9 +1,11 @@
 .git
 .github
+.claude
 .auth
 node_modules
 server/node_modules
 tests
+scripts
 playwright-report
 test-results
 playwright*.config.*
