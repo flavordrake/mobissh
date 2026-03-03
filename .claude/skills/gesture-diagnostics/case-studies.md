@@ -16,7 +16,7 @@ Category 0 wastes debugging time on the wrong layer. Category 1 makes the featur
 
 Pinch-to-zoom handlers were registered unconditionally on `#terminal` with `passive: false`. Even though the handler returned early for 1-finger touches (`if (e.touches.length !== 2) return`), the registration itself changed Chrome's touch event dispatch behavior. Chrome cannot optimize the pipeline when any non-passive handler exists on the element.
 
-**Fix:** Gate the entire feature behind `localStorage.enablePinchZoom` (default=disabled) so handlers are never registered unless opted in.
+**Fix:** Gate the entire feature behind `localStorage.enablePinchZoom` (default=enabled, #160) so handlers can be explicitly disabled. Originally defaulted to disabled; flipped to enabled after gesture conflict resolution proved stable.
 
 **Lesson:** If a feature intercepts touch events, it MUST be feature-gated from day one. Do not register non-passive touch handlers unconditionally.
 

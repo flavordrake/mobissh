@@ -67,7 +67,7 @@ export function initSettingsPanel() {
     }
     const pinchEl = document.getElementById('enablePinchZoom');
     if (pinchEl) {
-        pinchEl.checked = localStorage.getItem('enablePinchZoom') === 'true';
+        pinchEl.checked = localStorage.getItem('enablePinchZoom') !== 'false';
         pinchEl.addEventListener('change', () => {
             localStorage.setItem('enablePinchZoom', pinchEl.checked ? 'true' : 'false');
         });

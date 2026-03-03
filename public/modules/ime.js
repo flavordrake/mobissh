@@ -258,7 +258,7 @@ export function initIMEInput() {
     let _pinchStartDist = null;
     let _pinchStartSize = null;
     function _pinchEnabled() {
-        return localStorage.getItem('enablePinchZoom') === 'true';
+        return localStorage.getItem('enablePinchZoom') !== 'false';
     }
     function _naturalVerticalScroll() {
         return localStorage.getItem('naturalVerticalScroll') !== 'false';

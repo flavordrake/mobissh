@@ -268,7 +268,7 @@ export function initIMEInput(): void {
   let _pinchStartSize: number | null = null;
 
   function _pinchEnabled(): boolean {
-    return localStorage.getItem('enablePinchZoom') === 'true';
+    return localStorage.getItem('enablePinchZoom') !== 'false';
   }
 
   function _naturalVerticalScroll(): boolean {

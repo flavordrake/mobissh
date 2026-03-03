@@ -73,7 +73,7 @@ export function initSettingsPanel(): void {
 
   const pinchEl = document.getElementById('enablePinchZoom') as HTMLInputElement | null;
   if (pinchEl) {
-    pinchEl.checked = localStorage.getItem('enablePinchZoom') === 'true';
+    pinchEl.checked = localStorage.getItem('enablePinchZoom') !== 'false';
     pinchEl.addEventListener('change', () => {
       localStorage.setItem('enablePinchZoom', pinchEl.checked ? 'true' : 'false');
     });

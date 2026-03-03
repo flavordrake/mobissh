@@ -101,7 +101,7 @@ Every gesture feature that intercepts touches MUST be behind a localStorage togg
 
 | Feature | localStorage Key | Default | Handler Guard |
 |---------|-----------------|---------|---------------|
-| Pinch-to-zoom | `enablePinchZoom` | `false` | `_pinchEnabled()` in touchstart |
+| Pinch-to-zoom | `enablePinchZoom` | `true` | `_pinchEnabled()` in touchstart |
 | Debug overlay | `debugOverlay` | `false` | `_enabled` flag in console hook |
 | IME mode | `imeMode` | `true` | `appState.imeMode` in keydown |
 
