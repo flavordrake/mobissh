@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
 # scripts/review-recording.sh
 #
-# Extracts evenly-spaced frames from an emulator screen recording for quick
-# visual review. Outputs to a review/ subdirectory next to the recording.
+# Extracts evenly-spaced frames from a screen recording for quick visual review.
+# Outputs to a review/ subdirectory next to the recording.
 #
 # Usage:
-#   bash scripts/review-recording.sh                          # defaults
-#   bash scripts/review-recording.sh --interval 3             # every 3 seconds
-#   bash scripts/review-recording.sh --recording path/to/mp4  # custom recording
-#   bash scripts/review-recording.sh --open                   # open output dir
+#   scripts/review-recording.sh                                  # defaults (Appium recording)
+#   scripts/review-recording.sh --interval 3                     # every 3 seconds
+#   scripts/review-recording.sh --recording path/to/file.webm    # custom recording
+#   scripts/review-recording.sh --open                           # open output dir
+#
+# Default recording path: test-results-appium/recording.webm (run-appium-tests.sh output)
+# For emulator tests use: --recording test-results/emulator/recording.mp4
+#
+# NOTE — debug overlay artifacts in recordings:
+#   run-appium-tests.sh enables show_touches and pointer_location for the
+#   entire test run. These are cosmetic overlays and appear in all recordings:
+#   - Green circles at touch points (show_touches): disappear on finger lift;
+#     the last circle may linger ~100ms between test cases — expected behavior.
+#   - Coordinate bar at screen top (pointer_location): always visible when
+#     enabled, holds last-touch coordinates between gestures — also expected.
+#   Both overlays are disabled after the run. They do not affect assertions.
 
 set -euo pipefail
 
-RECORDING="test-results/emulator/recording.mp4"
+RECORDING="test-results-appium/recording.webm"
 INTERVAL=5
 OPEN=false
 

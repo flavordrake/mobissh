@@ -92,9 +92,16 @@ fi
 log "Phase 3: ADB setup and debug overlays"
 adb_try reverse tcp:"$MOBISSH_PORT" tcp:"$MOBISSH_PORT"
 
-# Enable BOTH touch debug overlays for video evidence
-# show_touches: green circles at touch points
-# pointer_location: crosshair + coordinate readout at screen top
+# Enable BOTH touch debug overlays for video evidence.
+# These are cosmetic for recording review only — assertions are JS-based (buffer
+# content, SGR codes, viewportY) and are unaffected by on-screen visuals.
+#
+# Persistence behavior (by Android design):
+#   show_touches: green circles disappear on pointerUp; may linger <100ms
+#     at end of a test before the next gesture replaces them.
+#   pointer_location: bar is always visible when enabled and holds last-touch
+#     coordinates between gestures — it never "clears" between test cases.
+# Both overlays are disabled at the end of the run (see cleanup below).
 adb_try shell settings put system show_touches 1
 adb_try shell settings put system pointer_location 1
 ok "Debug visualizations enabled (show_touches + pointer_location)"
@@ -184,8 +191,11 @@ exit_code: $EXIT
 RUNEOF
 ok "Archived to $HISTORY_DIR"
 
-# Disable pointer_location after test (distracting for normal use)
+# Disable both debug overlays after the run (distracting for normal device use).
+# Note: this runs after screenrecord stop — overlays are visible in recordings
+# by design. They are cosmetic only and do not affect assertion reliability.
 adb_try shell settings put system pointer_location 0
+adb_try shell settings put system show_touches 0
 
 log "Tests finished (exit $EXIT)"
 log "HTML report: playwright-report-appium/"
