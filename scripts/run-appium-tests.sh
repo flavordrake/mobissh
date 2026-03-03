@@ -92,6 +92,16 @@ fi
 log "Phase 3: ADB setup and debug overlays"
 adb_try reverse tcp:"$MOBISSH_PORT" tcp:"$MOBISSH_PORT"
 
+# Dismiss any lingering ANR (Application Not Responding) dialogs.
+# System UI crashes are common on emulators; the dialog blocks the screen
+# and corrupts recordings even if JS-based tests pass underneath.
+if adb shell uiautomator dump /sdcard/window_dump.xml 2>/dev/null &&
+   adb shell cat /sdcard/window_dump.xml 2>/dev/null | grep -q 'aerr_wait'; then
+  adb shell input tap 540 1367   # "Wait" button coordinates (standard ANR dialog)
+  log "Dismissed ANR dialog"
+  sleep 1
+fi
+
 # Enable BOTH touch debug overlays for video evidence.
 # These are cosmetic for recording review only — assertions are JS-based (buffer
 # content, SGR codes, viewportY) and are unaffected by on-screen visuals.
