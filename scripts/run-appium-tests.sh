@@ -8,6 +8,8 @@
 # Usage:
 #   scripts/run-appium-tests.sh                            # all Appium tests
 #   scripts/run-appium-tests.sh gesture-scroll-baseline    # specific test file
+#   scripts/run-appium-tests.sh --suite baseline-pre       # all tests, suite-tagged archive
+#   scripts/run-appium-tests.sh integrate-117 --suite integrate-117-before
 # Log: /tmp/run-appium-tests.log
 
 set -euo pipefail
@@ -22,7 +24,14 @@ export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 AVD_NAME="MobiSSH_Pixel7"
 MOBISSH_PORT="${MOBISSH_PORT:-8081}"
 APPIUM_PORT="${APPIUM_PORT:-4723}"
-SPEC="${1:-}"
+SPEC=""
+SUITE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --suite) SUITE="$2"; shift 2 ;;
+    *) SPEC="$1"; shift ;;
+  esac
+done
 RESULTS_DIR="test-results-appium"
 # Record to /tmp first — Playwright cleans RESULTS_DIR at startup, which would
 # delete a recording in progress. Move the finalized file in afterward.
@@ -150,7 +159,8 @@ fi
 # test-history/ is tracked in git for historical regression comparison.
 # Playwright never touches this directory.
 TIMESTAMP=$(date +%Y%m%dT%H%M%S%z)
-HISTORY_DIR="test-history/appium/${TIMESTAMP}"
+SUITE_SUFFIX="${SUITE:+-$SUITE}"
+HISTORY_DIR="test-history/appium/${TIMESTAMP}${SUITE_SUFFIX}"
 log "Phase 7: Archiving to $HISTORY_DIR"
 mkdir -p "$HISTORY_DIR"
 
@@ -169,6 +179,7 @@ cat > "$HISTORY_DIR/run-info.txt" <<RUNEOF
 timestamp: $TIMESTAMP
 git_hash: $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 test_spec: ${SPEC:-all}
+suite: ${SUITE:-default}
 exit_code: $EXIT
 RUNEOF
 ok "Archived to $HISTORY_DIR"
