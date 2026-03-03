@@ -458,22 +458,32 @@ async function setupRealSSHConnection(driver) {
   await driver.executeScript(
     "document.querySelector('#connectForm button[type=\"submit\"]')?.click()", []);
 
-  // Accept host key dialog
+  // Accept host key dialog (may not appear if key already trusted from earlier test)
   await driver.waitUntil(async () => {
     return driver.executeScript(`
       const btn = document.querySelector('.hostkey-accept');
-      return btn && btn.offsetParent !== null;
+      const hostKeyVisible = btn && btn.offsetParent !== null;
+      const connected = (window.__mockWsSpy || []).some(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch { return false; }
+      });
+      return hostKeyVisible || connected;
     `, []);
-  }, { timeout: 15000, interval: 500, timeoutMsg: 'Host key dialog did not appear' });
+  }, { timeout: 15000, interval: 500, timeoutMsg: 'Neither host key dialog nor connection appeared' });
 
-  await driver.executeScript("document.activeElement?.blur()", []);
-  await driver.pause(500);
-  await dismissKeyboardViaBack(driver);
-  await driver.pause(300);
-
-  await driver.executeScript(
-    "document.querySelector('.hostkey-accept')?.click()", []);
-  await driver.pause(1000);
+  // Click accept if the host key dialog is showing
+  const hostKeyVisible = await driver.executeScript(`
+    const btn = document.querySelector('.hostkey-accept');
+    return btn && btn.offsetParent !== null;
+  `, []);
+  if (hostKeyVisible) {
+    await driver.executeScript("document.activeElement?.blur()", []);
+    await driver.pause(500);
+    await dismissKeyboardViaBack(driver);
+    await driver.pause(300);
+    await driver.executeScript(
+      "document.querySelector('.hostkey-accept')?.click()", []);
+    await driver.pause(1000);
+  }
 
   // Wait for SSH connection (resize message = shell ready)
   await driver.waitUntil(async () => {
