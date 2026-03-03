@@ -4,6 +4,7 @@ description: Runs the discovery and classification phases of bot delegation. Use
 tools: Bash, Read, Grep, Glob
 model: haiku
 background: true
+permissionMode: default
 ---
 
 You are a data-gathering agent for MobiSSH bot delegation. Your job is to run the

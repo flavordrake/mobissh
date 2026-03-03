@@ -4,6 +4,7 @@ description: Runs fast-gate validation (tsc + eslint + vitest) on a bot branch. 
 tools: Bash, Read, Grep, Glob
 model: haiku
 background: true
+permissionMode: default
 ---
 
 You are a validation agent for MobiSSH bot PR integration. Your job is to run the

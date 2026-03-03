@@ -4,6 +4,7 @@ description: Use when filing GitHub issues, adding issue comments, or managing i
 tools: Write, Bash, Read, Grep, Glob
 model: haiku
 background: true
+permissionMode: default
 skills:
   - issue
 ---
