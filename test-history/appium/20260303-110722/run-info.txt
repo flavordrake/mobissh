@@ -1,0 +1,5 @@
+timestamp: 20260303-110722
+git_hash: 59fdd8a
+test_spec: gesture-scroll-baseline
+exit_code: 0
+tests_passed: ?

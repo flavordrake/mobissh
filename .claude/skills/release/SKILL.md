@@ -70,6 +70,7 @@ npx playwright test                 # Headless E2E
 If an emulator is available (`adb devices | grep emulator`), also run:
 ```bash
 scripts/run-emulator-tests.sh
+scripts/run-appium-tests.sh         # Appium gesture baseline
 ```
 
 Do NOT tag if any validation fails. Fix first, commit, then re-run.
@@ -86,12 +87,34 @@ The SW cache suffix is a monotonically increasing integer, not tied to semver. J
 ## Step 5: Commit and Tag
 
 ```bash
-git add server/package.json public/sw.js
+git add server/package.json public/sw.js test-history/
 git commit -m "release: v{VERSION}"
 git tag -a "v{VERSION}" -m "{CHANGELOG_SUMMARY}"
 ```
 
 The tag message should contain the full changelog section (not just the version number). This is the primary record of what changed.
+
+## Step 5.5: Archive Test History
+
+Move timestamped test-history runs into a versioned directory for the release. This creates a permanent record of test evidence (video recordings with gesture debug overlays, screenshots, HTML reports) tied to each version.
+
+```bash
+# Create versioned archive directory
+mkdir -p test-history/appium/v{VERSION}
+
+# Move all timestamped runs since last release into versioned dir
+# (each run-appium-tests.sh invocation creates test-history/appium/YYYYMMDD-HHMMSS/)
+for dir in test-history/appium/20*; do
+  [ -d "$dir" ] && mv "$dir" "test-history/appium/v{VERSION}/$(basename "$dir")"
+done
+
+# Stage and include in the release commit
+git add test-history/
+```
+
+Video files (.webm, .mp4) and screenshot PNGs are marked as binary in `.gitattributes` (no diff, no merge). They are the primary evidence that gestures work correctly at each release point. Keep them in git for now — a future release step can archive to external storage if the repo grows too large.
+
+If no test-history runs exist (e.g., no emulator was available), skip this step. Don't fail the release for missing test evidence.
 
 ## Step 6: Close Fixed Issues
 

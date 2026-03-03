@@ -4,7 +4,9 @@ npm-debug.log*
 .auth/
 playwright-report/
 playwright-report-emulator/
+playwright-report-appium/
 test-results/
+test-results-appium/
 # Baseline results ARE tracked (overwritten each run)
 !tests/emulator/baseline/
 *.js.map

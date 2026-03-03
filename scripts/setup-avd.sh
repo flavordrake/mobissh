@@ -5,9 +5,14 @@
 # a Pixel 7 AVD with Google Play (for real Chrome + WebAuthn testing).
 #
 # Prerequisites: android-studio snap, KVM enabled
-# Usage: bash scripts/setup-avd.sh
+# Usage: ./scripts/setup-avd.sh
+# Log: /tmp/setup-avd.log
 
 set -euo pipefail
+
+SETUP_LOG="/tmp/setup-avd.log"
+exec > >(tee -a "$SETUP_LOG") 2>&1
+echo "$(date '+%Y-%m-%d %H:%M:%S') setup-avd.sh started"
 
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
@@ -43,7 +48,9 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 
 # 2. Accept licenses
 log "Accepting SDK licenses..."
-yes | sdkmanager --licenses >/dev/null 2>&1 || true
+if ! yes | sdkmanager --licenses 2>&1; then
+  log "sdkmanager --licenses exited non-zero (licenses may already be accepted)"
+fi
 
 # 3. Install SDK components
 log "Installing SDK components (emulator, platform-tools, system image)..."
@@ -139,6 +146,8 @@ PROFILE
 fi
 
 log "Setup complete."
+echo "$(date '+%Y-%m-%d %H:%M:%S') setup-avd.sh finished"
+echo "Log saved to: $SETUP_LOG"
 echo ""
 echo "To launch the emulator:"
 echo "  bash $LAUNCH_SCRIPT"
