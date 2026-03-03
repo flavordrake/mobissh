@@ -5,7 +5,6 @@
  * clear data, and service worker registration.
  */
 import { getDefaultWsUrl } from './constants.js';
-import { loadProfiles, loadKeys } from './profiles.js';
 let _toast = (_msg) => { };
 let _applyFontSize = (_size) => { };
 let _applyTheme = (_name, _opts) => { };
@@ -124,16 +123,8 @@ export function initSettingsPanel() {
     fontSelect.addEventListener('change', () => {
         localStorage.setItem('termFont', fontSelect.value);
     });
-    document.getElementById('clearDataBtn').addEventListener('click', () => {
-        if (!confirm('Clear all stored keys, profiles, and settings?'))
-            return;
-        localStorage.clear();
-        loadProfiles();
-        loadKeys();
-        _toast('All data cleared.');
-    });
-    document.getElementById('clearCacheBtn').addEventListener('click', () => {
-        if (!confirm('Unregister service workers, clear all caches, and reload?'))
+    document.getElementById('resetAppBtn').addEventListener('click', () => {
+        if (!confirm('Clear all stored keys, profiles, settings, and caches, then reload?'))
             return;
         void clearCacheAndReload();
     });

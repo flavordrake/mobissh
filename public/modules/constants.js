@@ -21,7 +21,9 @@ export const RECONNECT = {
     MAX_DELAY_MS: 30000,
     BACKOFF_FACTOR: 1.5,
 };
-// Key repeat timing for key bar buttons (#89)
+// Key repeat timing for key bar buttons (#89).
+// Updated at runtime by _initKeyRepeatCalibration() in ui.ts once the OS
+// repeat delay and rate have been measured from physical keydown events.
 export const KEY_REPEAT = {
     DELAY_MS: 400, // hold duration before first repeat (matches typical OS repeat delay)
     INTERVAL_MS: 80, // interval between repeats (matches typical OS repeat rate)

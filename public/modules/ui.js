@@ -410,12 +410,53 @@ export function initTerminalResizeObserver() {
     observer.observe(container);
 }
 // ── Key bar visibility (#1) + Compose/Direct mode (#146) ────────────────────
+/**
+ * One-time calibration listener that measures OS key repeat timing from
+ * physical keyboard events and updates KEY_REPEAT in place.
+ *
+ * Collects TARGET_REPEATS auto-repeat events for a single held key, then:
+ *   - delay   = time from initial keydown to first repeat (clamped 100–1000 ms)
+ *   - interval = average gap between the subsequent repeats  (clamped 16–250 ms)
+ *
+ * Falls back to the hardcoded defaults if no physical key events occur.
+ */
+function _initKeyRepeatCalibration() {
+    const TARGET_REPEATS = 4; // 1 delay sample + 3 interval samples
+    let pressTime = 0;
+    const repeatTimes = [];
+    function handler(e) {
+        if (!e.repeat) {
+            // Fresh keydown — reset for a new measurement cycle.
+            pressTime = e.timeStamp;
+            repeatTimes.length = 0;
+            return;
+        }
+        if (pressTime === 0)
+            return;
+        repeatTimes.push(e.timeStamp);
+        if (repeatTimes.length < TARGET_REPEATS)
+            return;
+        // Enough samples — remove listener and apply calibration.
+        window.removeEventListener('keydown', handler);
+        const delayMs = Math.min(1000, Math.max(100, repeatTimes[0] - pressTime));
+        KEY_REPEAT.DELAY_MS = delayMs;
+        if (repeatTimes.length >= 2) {
+            let total = 0;
+            for (let i = 1; i < repeatTimes.length; i++) {
+                total += repeatTimes[i] - repeatTimes[i - 1];
+            }
+            KEY_REPEAT.INTERVAL_MS = Math.min(250, Math.max(16, total / (repeatTimes.length - 1)));
+        }
+    }
+    window.addEventListener('keydown', handler);
+}
 export function initKeyBar() {
     appState.keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
     appState.imeMode = localStorage.getItem('imeMode') === 'ime';
     _applyKeyBarVisibility();
     _applyComposeModeUI();
     _applyKeyControlsDock();
+    _initKeyRepeatCalibration();
     document.getElementById('handleChevron').addEventListener('click', toggleKeyBar);
     document.getElementById('composeModeBtn').addEventListener('click', () => {
         toggleComposeMode();
