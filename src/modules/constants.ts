@@ -26,11 +26,13 @@ export const RECONNECT = {
   BACKOFF_FACTOR: 1.5,
 } as const;
 
-// Key repeat timing for key bar buttons (#89)
-export const KEY_REPEAT = {
+// Key repeat timing for key bar buttons (#89).
+// Updated at runtime by _initKeyRepeatCalibration() in ui.ts once the OS
+// repeat delay and rate have been measured from physical keydown events.
+export const KEY_REPEAT: { DELAY_MS: number; INTERVAL_MS: number } = {
   DELAY_MS: 400,    // hold duration before first repeat (matches typical OS repeat delay)
   INTERVAL_MS: 80,  // interval between repeats (matches typical OS repeat rate)
-} as const;
+};
 
 // ─── Terminal themes (#47) ────────────────────────────────────────────────────
 
