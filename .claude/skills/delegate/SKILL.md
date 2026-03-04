@@ -193,7 +193,7 @@ its own patterns. Read the actual source files to produce this — do not guess.
 
 **Verify** — Exact command sequence:
 ```
-npx tsc --noEmit && npx eslint src/ public/ && npm test
+scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
 ```
 
 ### Template
@@ -210,7 +210,7 @@ npx tsc --noEmit && npx eslint src/ public/ && npm test
 
 **Acceptance criteria:**
 1. <verifiable criterion>
-2. All existing tests pass (`npm test`)
+2. All existing tests pass (`scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`)
 
 **Context:**
 <code snippets from actual files on main>
@@ -220,9 +220,12 @@ npx tsc --noEmit && npx eslint src/ public/ && npm test
 - <constraint from project rules>
 - <constraint from failure analysis>
 
+**Prerequisites:**
+1. `git fetch origin main && git merge origin/main` — ensure your branch is up to date
+
 **Verify:**
 1. Run `/simplify` to review your changes for reuse, quality, and efficiency. Fix any issues found.
-2. Run `npx tsc --noEmit && npx eslint src/ public/ && npm test`
+2. Run `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`
 ```
 
 ### Quality gate
