@@ -1347,3 +1347,57 @@ html.key-dock-left #composeModeBtn {
   word-break: break-all;
   -webkit-overflow-scrolling: touch;
 }
+
+/* Connection status overlay (#172) */
+.conn-status-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.conn-status-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  max-width: 440px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.conn-status-message {
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conn-status-cancel {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  pointer-events: auto;
+  flex-shrink: 0;
+}
+
+.conn-status-cancel:active {
+  background: var(--bg-input);
+}

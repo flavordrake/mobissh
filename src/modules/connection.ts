@@ -7,7 +7,7 @@
  */
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
-import { getDefaultWsUrl, RECONNECT, ANSI, escHtml } from './constants.js';
+import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState } from './state.js';
 import { stopAndDownloadRecording } from './recording.js';
 
@@ -55,7 +55,7 @@ function _openWebSocket(): void {
   const wsUrl = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
 
   _setStatus('connecting', `Connecting to ${baseUrl}…`);
-  appState.terminal?.writeln(ANSI.yellow(`Connecting to ${baseUrl}…`));
+  _showConnectionStatus(`Connecting to ${baseUrl}…`);
 
   let openedThisAttempt = false;
 
@@ -63,7 +63,7 @@ function _openWebSocket(): void {
     appState.ws = new WebSocket(wsUrl);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    appState.terminal?.writeln(ANSI.red(`WebSocket error: ${message}`));
+    _showConnectionStatus(`WebSocket error: ${message}`);
     scheduleReconnect();
     return;
   }
@@ -89,7 +89,7 @@ function _openWebSocket(): void {
     if (appState.currentProfile.initialCommand) authMsg.initialCommand = appState.currentProfile.initialCommand;
     if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
     appState.ws?.send(JSON.stringify(authMsg));
-    appState.terminal?.writeln(ANSI.dim(`SSH → ${appState.currentProfile.username}@${appState.currentProfile.host}:${String(appState.currentProfile.port || 22)}…`));
+    _showConnectionStatus(`SSH → ${appState.currentProfile.username}@${appState.currentProfile.host}:${String(appState.currentProfile.port || 22)}…`);
   };
 
   appState.ws.onmessage = (event: MessageEvent) => {
@@ -107,7 +107,8 @@ function _openWebSocket(): void {
         if (appState.currentProfile) {
           _setStatus('connected', `${appState.currentProfile.username}@${appState.currentProfile.host}`);
         }
-        appState.terminal?.writeln(ANSI.green('✓ Connected'));
+        _showConnectionStatus('Connected');
+        _dismissConnectionStatus(1500);
         // Sync terminal size to server
         appState.ws?.send(JSON.stringify({ type: 'resize', cols: appState.terminal?.cols ?? 80, rows: appState.terminal?.rows ?? 24 }));
         // On every connect/reconnect: collapse nav chrome for continuous-feel (#36)
@@ -125,13 +126,13 @@ function _openWebSocket(): void {
         break;
 
       case 'error':
-        appState.terminal?.writeln(ANSI.red(`Error: ${msg.message}`));
+        _showConnectionStatus(`Error: ${msg.message}`);
         break;
 
       case 'disconnected':
         appState.sshConnected = false;
         _setStatus('disconnected', 'Disconnected');
-        appState.terminal?.writeln(ANSI.yellow(`Disconnected: ${msg.reason ?? 'unknown reason'}`));
+        _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`);
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
         scheduleReconnect();
         break;
@@ -177,18 +178,16 @@ function _openWebSocket(): void {
         _wsConsecFailures++;
         if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
           _wsConsecFailures = 0;
-          appState.terminal?.writeln(ANSI.red(
-            'Connection rejected repeatedly. Your session token may have expired — reload the page to get a fresh one.'
-          ));
+          _showConnectionStatus('Connection rejected repeatedly. Your session token may have expired — reload the page to get a fresh one.');
           _setStatus('disconnected', 'Auth failed — reload to reconnect');
           return; // stop the reconnect loop
         }
-        appState.terminal?.writeln(ANSI.red('Connection lost.'));
+        _showConnectionStatus('Connection lost.');
         scheduleReconnect();
       } else {
         _wsConsecFailures = 0;
         if (!event.wasClean) {
-          appState.terminal?.writeln(ANSI.red('Connection lost.'));
+          _showConnectionStatus('Connection lost.');
           scheduleReconnect();
         }
       }
@@ -196,7 +195,7 @@ function _openWebSocket(): void {
   };
 
   appState.ws.onerror = () => {
-    appState.terminal?.writeln(ANSI.red('WebSocket error — check server URL in Settings.'));
+    _showConnectionStatus('WebSocket error — check server URL in Settings.');
   };
 }
 
@@ -204,8 +203,9 @@ export function scheduleReconnect(): void {
   if (!appState.currentProfile) return;
 
   const delaySec = Math.round(appState.reconnectDelay / 1000);
-  _toast(`Reconnecting in ${String(delaySec)}s… (tap ✕ to cancel)`);
+  _toast(`Reconnecting in ${String(delaySec)}s…`);
   _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
+  _showConnectionStatus(`Reconnecting in ${String(delaySec)}s…`, { cancelable: true });
 
   appState.reconnectTimer = setTimeout(() => {
     appState.reconnectDelay = Math.min(
@@ -297,12 +297,55 @@ export function disconnect(): void {
   }
 
   _setStatus('disconnected', 'Disconnected');
-  appState.terminal?.writeln(ANSI.yellow('Disconnected.'));
+  _showConnectionStatus('Disconnected.');
 }
 
 export function sendSSHInput(data: string): void {
   if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
   appState.ws.send(JSON.stringify({ type: 'input', data }));
+}
+
+// ── Connection status overlay (#172) ─────────────────────────────────────────
+
+let _currentOverlay: HTMLDivElement | null = null;
+
+function _showConnectionStatus(message: string, options?: { cancelable?: boolean }): void {
+  _currentOverlay?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'connectionStatusOverlay';
+  overlay.className = 'conn-status-overlay';
+  const cancelable = options?.cancelable ?? false;
+
+  overlay.innerHTML = `
+    <div class="conn-status-dialog">
+      <div class="conn-status-message">${escHtml(message)}</div>
+      ${cancelable ? '<button class="conn-status-cancel">Cancel</button>' : ''}
+    </div>
+  `;
+
+  if (cancelable) {
+    overlay.querySelector('.conn-status-cancel')!.addEventListener('click', () => {
+      cancelReconnect();
+      _setStatus('disconnected', 'Reconnect cancelled');
+      overlay.remove();
+      _currentOverlay = null;
+    });
+  }
+
+  document.body.appendChild(overlay);
+  _currentOverlay = overlay;
+}
+
+function _dismissConnectionStatus(delayMs = 0): void {
+  const target = _currentOverlay;
+  const remove = (): void => {
+    if (target !== null && target === _currentOverlay) {
+      target.remove();
+      _currentOverlay = null;
+    }
+  };
+  if (delayMs > 0) setTimeout(remove, delayMs); else remove();
 }
 
 // ── Host key verification prompt (#5) ─────────────────────────────────────────
