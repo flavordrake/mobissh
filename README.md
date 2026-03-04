@@ -26,11 +26,15 @@ Android and iOS soft keyboards were designed for messaging apps. When you type i
 
 2. **Persistent special-key bar.** Ctrl (sticky modifier), Esc, Tab, /, |, -, arrow keys, Home, End, PgUp, PgDn — all one tap away in a horizontally scrollable row. Auto-hides via a tap-toggle strip to give the terminal the full screen.
 
-3. **xterm.js rendering.** Full VT100/VT220 and xterm-256color support. `htop`, `vim`, `tmux`, `claude` — they all render correctly because xterm.js is the same engine used in VS Code and Warp.
+3. **Touch gestures.** Vertical swipe scrolls tmux scrollback. Horizontal swipe switches tmux windows (`Ctrl-b n` / `Ctrl-b p`). Pinch-to-zoom adjusts terminal font size. All three work simultaneously without interfering. Natural scrolling (matches phone direction) is the default; each gesture direction is configurable via Settings.
 
-4. **PWA install.** No app store. Add to home screen, get an icon, launch fullscreen. Works offline for the shell UI; the SSH bridge needs network.
+4. **xterm.js rendering.** Full VT100/VT220 and xterm-256color support. `htop`, `vim`, `tmux`, `claude` — they all render correctly because xterm.js is the same engine used in VS Code and Warp.
 
-5. **Tailscale-native.** Designed to connect to servers on a WireGuard mesh. No port exposure to the internet. SSH host key verification is the trust anchor.
+5. **PWA install.** No app store. Add to home screen, get an icon, launch fullscreen. Works offline for the shell UI; the SSH bridge needs network.
+
+6. **Tailscale-native.** Designed to connect to servers on a WireGuard mesh. No port exposure to the internet. SSH host key verification is the trust anchor.
+
+7. **Reconnect with backoff.** WebSocket drops (screen lock, background tab, flaky network) trigger automatic reconnection with exponential backoff. Reconnect status is shown outside the terminal so it doesn't pollute shell output.
 
 ---
 
@@ -160,4 +164,37 @@ BASE_PATH=/ssh PORT=8081 node server/index.js
 Add the provided `nginx-ssh-location.conf` inside your HTTPS `server {}` block, then `sudo nginx -s reload`. See `scripts/setup-nginx.sh` for an automated setup.
 
 **Cache busting:** Visit `/clear` (e.g. `https://host/ssh/clear`) to unregister service workers and clear all browser storage. The app also has a boot watchdog that shows a Reset button if initialization fails, and a long-press (1.5s) escape hatch on the Settings tab.
+
+---
+
+## Development
+
+### Build
+
+Frontend source lives in `src/modules/*.ts`. Compile with `npx tsc`. Output goes to `public/modules/*.js` and is served as static ES modules. No bundler.
+
+### Testing
+
+Three test layers, each serving a different purpose:
+
+| Layer | Runner | What it covers | How to run |
+|---|---|---|---|
+| Headless browser | Playwright | UI rendering, navigation, vault, forms, settings | `npm test` |
+| Android emulator (Appium) | Playwright + Appium + UiAutomator2 | Touch gestures, real Chrome, PWA install | `scripts/run-appium-tests.sh` |
+| Manual device | Human | iOS, biometric, Bluetooth keyboard, real-world latency | On-device |
+
+Headless tests run in CI and locally. Appium tests require an Android emulator (`MobiSSH_Pixel7` AVD) and record per-test screen video to `test-history/appium/`.
+
+Pre-commit validation: `npx tsc --noEmit && npx eslint src/ public/ && npm test`.
+
+### Bot delegation
+
+Issues labeled `bot` are worked by the Claude Code GitHub integration. The cycle:
+
+1. `/delegate` classifies open issues, posts `@claude` comments with structured instructions
+2. The bot creates a branch (`claude/issue-{N}-{date}-{time}`) and opens a PR
+3. `/integrate` runs fast gates (tsc, eslint, vitest), optionally acceptance tests, then merges or rejects
+4. Failed attempts get `divergence` label; `/delegate` can re-delegate with corrections
+
+Process details are in `.claude/process.md`. The authoritative delegation and integration logic lives in `.claude/skills/delegate/SKILL.md` and `.claude/skills/integrate/SKILL.md`.
 

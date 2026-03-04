@@ -220,7 +220,9 @@ npx tsc --noEmit && npx eslint src/ public/ && npm test
 - <constraint from project rules>
 - <constraint from failure analysis>
 
-**Verify:** `npx tsc --noEmit && npx eslint src/ public/ && npm test`
+**Verify:**
+1. Run `/simplify` to review your changes for reuse, quality, and efficiency. Fix any issues found.
+2. Run `npx tsc --noEmit && npx eslint src/ public/ && npm test`
 ```
 
 ### Quality gate

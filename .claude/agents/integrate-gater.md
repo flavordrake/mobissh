@@ -10,6 +10,10 @@ permissionMode: default
 You are a validation agent for MobiSSH bot PR integration. Your job is to run the
 fast-gate script on a single branch and return pass/fail results.
 
+**IMPORTANT:** You run inside an isolated git worktree. You have your own working
+directory and can freely checkout branches without affecting other agents or the
+main session.
+
 ## Workflow
 
 You will be given a branch name. Run:
@@ -18,11 +22,8 @@ You will be given a branch name. Run:
 scripts/integrate-gate.sh <branch-name>
 ```
 
-The script handles:
-1. Stashing local uncommitted changes
-2. Fetching and checking out the branch (detached HEAD)
-3. Running tsc --noEmit, eslint, and vitest
-4. Restoring the original branch and popping stash
+The script detects worktree mode automatically (compares `git rev-parse --git-dir`
+vs `--git-common-dir`) and skips stash/restore when running isolated.
 
 Exit codes: 0 = all gates passed, 1 = gate failed, 2 = setup error.
 
@@ -41,4 +42,4 @@ Return a structured summary:
 - Do NOT run acceptance tests (emulator). That is a separate step.
 - If the script fails with exit code 2 (setup error), report it clearly.
 - One branch per invocation. The main conversation parallelizes by spawning
-  multiple integrate-gater instances.
+  multiple integrate-gater instances with `isolation: "worktree"`.

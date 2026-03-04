@@ -4,10 +4,12 @@
 # Checks out a bot branch, runs typecheck + lint + unit tests, reports results.
 # Optionally closes the PR/branch on failure.
 #
+# When running inside a worktree (agent isolation), stash/restore is skipped
+# since the working directory is already isolated.
+#
 # Usage:
-#   bash scripts/integrate-gate.sh <branch-name>
-#   bash scripts/integrate-gate.sh <branch-name> --close-on-fail
-#   bash scripts/integrate-gate.sh <branch-name> --close-on-fail --pr <number>
+#   scripts/integrate-gate.sh <branch-name>
+#   scripts/integrate-gate.sh <branch-name> --close-on-fail --pr <number>
 #
 # Exit codes:
 #   0 — all gates passed
@@ -30,7 +32,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$BRANCH" ]; then
-  echo "Usage: bash scripts/integrate-gate.sh <branch-name> [--close-on-fail] [--pr N]" >&2
+  echo "Usage: scripts/integrate-gate.sh <branch-name> [--close-on-fail] [--pr N]" >&2
   exit 2
 fi
 
@@ -46,26 +48,41 @@ LINT_RESULT=""
 TEST_RESULT=""
 GATE_PASSED=true
 
-# Save current state
-ORIG_BRANCH=$(git branch --show-current)
+# Detect worktree isolation: if we're in a worktree (not the main .git dir),
+# skip stash/restore since we have our own working directory.
+IS_WORKTREE=false
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null) || true
+GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null) || true
+if [ -n "$GIT_DIR" ] && [ -n "$GIT_COMMON" ] && [ "$GIT_DIR" != "$GIT_COMMON" ]; then
+  IS_WORKTREE=true
+  log "Running in worktree isolation — skipping stash/restore."
+fi
+
+ORIG_BRANCH=""
 STASHED=false
-if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-  log "Stashing local changes..."
-  git stash --include-untracked
-  STASHED=true
+
+if [ "$IS_WORKTREE" = false ]; then
+  # Save current state (shared repo mode)
+  ORIG_BRANCH=$(git branch --show-current)
+  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    log "Stashing local changes..."
+    git stash --include-untracked
+    STASHED=true
+  fi
 fi
 
 cleanup() {
-  log "Returning to ${ORIG_BRANCH}..."
-  git checkout "$ORIG_BRANCH" 2>/dev/null || true
-  if [ "$STASHED" = true ]; then
-    git stash pop 2>/dev/null || true
+  if [ "$IS_WORKTREE" = false ] && [ -n "$ORIG_BRANCH" ]; then
+    log "Returning to ${ORIG_BRANCH}..."
+    git checkout "$ORIG_BRANCH" 2>/dev/null || true
+    if [ "$STASHED" = true ]; then
+      git stash pop 2>/dev/null || true
+    fi
   fi
 }
 trap cleanup EXIT
 
 # Checkout the branch
-# Use HTTPS via gh CLI if SSH fetch fails (SSH key may not be loaded)
 log "Fetching and checking out ${BRANCH}..."
 if ! git fetch origin "$BRANCH" 2>/dev/null; then
   log "SSH fetch failed, trying HTTPS via gh..."
@@ -76,7 +93,6 @@ if ! git fetch origin "$BRANCH" 2>/dev/null; then
       err "Failed to fetch ${BRANCH} via both SSH and HTTPS"
       exit 2
     fi
-    # FETCH_HEAD points to what we just fetched
     if ! git checkout FETCH_HEAD --detach 2>/dev/null; then
       err "Failed to checkout FETCH_HEAD for ${BRANCH}"
       exit 2

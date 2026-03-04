@@ -92,11 +92,10 @@ branches can be gated in parallel using separate agent instances.
 **What it does NOT do:** Merge decisions, acceptance testing (emulator), label management.
 Those stay in the main conversation.
 
-**Decision: isolation `worktree`**
-Considered using `isolation: worktree` so each gate runs on an isolated copy.
-Not using it yet because `integrate-gate.sh` already handles stash/restore and detached
-HEAD checkout. Adding worktree isolation is a future optimization if stash conflicts
-become a problem.
+**Decision: isolation `worktree`** (adopted)
+Each gate agent runs with `isolation: "worktree"`, giving it an isolated copy of the repo.
+The gate script detects worktree mode via `git rev-parse --git-dir` vs `--git-common-dir`
+and skips stash/restore when isolated. This resolved git lock contention from parallel agents.
 
 **Tools:** Bash, Read, Grep, Glob (no Write, no Edit)
 **Background:** true

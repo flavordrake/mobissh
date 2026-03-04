@@ -90,8 +90,18 @@ scripts/integrate-gate.sh <branch> --close-on-fail --pr <number>
 ```
 
 Run multiple fast gates in parallel using the **integrate-gater** agent
-(`.claude/agents/integrate-gater.md`). Each instance validates one branch and returns
-pass/fail results. Do NOT use the built-in `general-purpose` agent for this
+(`.claude/agents/integrate-gater.md`). **Always spawn with `isolation: "worktree"`** so
+each agent gets its own git worktree and can checkout branches without conflicting.
+Start with **2 parallel agents** and increase if the machine handles it well. The
+original 8-agent crash was likely git lock contention (now solved by worktrees),
+not pure CPU.
+
+Example agent invocation:
+```
+Agent(subagent_type="integrate-gater", isolation="worktree", prompt="...", description="...")
+```
+
+Do NOT use the built-in `general-purpose` agent for this
 (it does not inherit permissions; see `docs/agents.md`).
 
 ## Step 4: Acceptance gate (per-branch, headless)

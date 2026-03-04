@@ -11,3 +11,4 @@ test-results-appium/
 !tests/emulator/baseline/
 *.js.map
 test-data/
+.claude/worktrees/
