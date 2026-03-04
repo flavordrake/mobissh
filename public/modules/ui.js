@@ -6,9 +6,9 @@
  */
 import { KEY_REPEAT, THEMES, THEME_ORDER } from './constants.js';
 import { appState } from './state.js';
-import { sendSSHInput, disconnect, reconnect, connect } from './connection.js';
+import { sendSSHInput, disconnect, reconnect } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
-import { saveProfile, getKeys } from './profiles.js';
+import { saveProfile, getKeys, connectFromProfile, revealConnectForm, newConnection } from './profiles.js';
 const VALID_PANELS = new Set(['terminal', 'connect', 'keys', 'settings']);
 function _isValidPanel(hash) {
     return VALID_PANELS.has(hash);
@@ -239,9 +239,6 @@ function toggleTabBar() {
     _applyTabBarVisibility();
     // ResizeObserver on #terminal handles fit() + resize message after layout settles.
 }
-function switchToTerminal() {
-    navigateToPanel('terminal');
-}
 /**
  * Attach focus/blur handlers that promote a field to type="password" only while
  * focused, then demote back to type="text" on blur.  This prevents Chrome from
@@ -259,8 +256,8 @@ export function initConnectForm() {
     const authType = document.getElementById('authType');
     authType.addEventListener('change', () => {
         const isKey = authType.value === 'key';
-        document.getElementById('passwordGroup').style.display = isKey ? 'none' : 'block';
-        document.getElementById('keyGroup').style.display = isKey ? 'block' : 'none';
+        document.getElementById('passwordGroup').classList.toggle('hidden', isKey);
+        document.getElementById('keyGroup').classList.toggle('hidden', !isKey);
     });
     // Cloak password fields: type="text" at rest, type="password" only while focused (#150)
     _initPasswordFieldCloaking(document.getElementById('remote_c'));
@@ -280,9 +277,15 @@ export function initConnectForm() {
         };
         document.getElementById('remote_c').value = '';
         document.getElementById('remote_pp').value = '';
-        void saveProfile(profile);
-        switchToTerminal();
-        connect(profile);
+        void saveProfile(profile).then(() => {
+            // Hide form after save, show profile list
+            const formSection = document.getElementById('connect-form-section');
+            if (formSection)
+                formSection.classList.add('connect-form-hidden');
+            const newBtn = document.getElementById('newConnBtn');
+            if (newBtn)
+                newBtn.classList.remove('hidden');
+        });
     });
     document.getElementById('useStoredKeyBtn').addEventListener('click', () => {
         const keys = getKeys();
@@ -295,6 +298,17 @@ export function initConnectForm() {
             return;
         document.getElementById('privateKey').value = key.vaultId;
         toast(`Using key: ${key.name}`);
+    });
+    document.getElementById('newConnBtn').addEventListener('click', () => {
+        newConnection();
+    });
+    document.getElementById('profileList').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action="connect"]');
+        if (!btn)
+            return;
+        const idx = parseInt(btn.dataset.idx ?? '0', 10);
+        void connectFromProfile(idx).then((ok) => { if (ok)
+            navigateToPanel('terminal'); });
     });
 }
 // ── Key bar ──────────────────────────────────────────────────────────────────

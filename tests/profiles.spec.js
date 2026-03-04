@@ -15,6 +15,14 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
+// Reveal the connect form if hidden (profiles exist → form is hidden by default)
+async function revealConnectForm(page) {
+  const btn = page.locator('#newConnBtn');
+  if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
+    await btn.click();
+  }
+}
+
 // Inject mock PasswordCredential so vault operations work in headless Chromium
 async function injectMockVault(page) {
   await page.addInitScript(() => {
@@ -53,6 +61,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     // Save first profile
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#profileName').fill('Original');
     await page.locator('#host').fill('upsert-host');
     await page.locator('#port').fill('22');
@@ -64,6 +73,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     // Save again with same host+port+username but different name
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#profileName').fill('Updated');
     await page.locator('#host').fill('upsert-host');
     await page.locator('#port').fill('22');
@@ -87,6 +97,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     // Save a profile with XSS payload in the name
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#profileName').fill('<img src=x onerror=alert(1)>');
     await page.locator('#host').fill('xss-host');
     await page.locator('#port').fill('22');
@@ -115,6 +126,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     // Save a profile with all fields
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#profileName').fill('LoadTest');
     await page.locator('#host').fill('load-host');
     await page.locator('#port').fill('2222');
@@ -126,6 +138,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     // Clear form fields manually
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#profileName').fill('');
     await page.locator('#host').fill('');
     await page.locator('#remote_a').fill('');
@@ -150,6 +163,7 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     // Save a profile
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#profileName').fill('ToDelete');
     await page.locator('#host').fill('delete-host');
     await page.locator('#port').fill('22');

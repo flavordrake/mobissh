@@ -7,4 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+LOGFILE=/tmp/test-typecheck.log
+exec > >(tee "$LOGFILE") 2>&1
+
 npx tsc --noEmit

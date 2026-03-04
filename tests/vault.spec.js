@@ -15,6 +15,14 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
+// Reveal the connect form if hidden (profiles exist → form is hidden by default)
+async function revealConnectForm(page) {
+  const btn = page.locator('#newConnBtn');
+  if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
+    await btn.click();
+  }
+}
+
 test.describe('Credential vault (#14)', () => {
 
   test('saving a profile stores encrypted credentials in sshVault (not plaintext)', async ({ page, mockSshServer }) => {
@@ -23,6 +31,7 @@ test.describe('Credential vault (#14)', () => {
     // Save a new profile via the connect form
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#host').fill('vault-test-host');
     await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('vaultuser');
@@ -57,6 +66,7 @@ test.describe('Credential vault (#14)', () => {
 
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#host').fill('flag-test-host');
     await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('flaguser');
@@ -77,6 +87,7 @@ test.describe('Credential vault (#14)', () => {
     // Save a profile with credentials
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#host').fill('roundtrip-host');
     await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('rounduser');
@@ -103,6 +114,7 @@ test.describe('Credential vault (#14)', () => {
     // Save a profile
     await showTabBar(page);
     await page.locator('[data-panel="connect"]').click();
+    await revealConnectForm(page);
     await page.locator('#host').fill('delete-test-host');
     await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('deleteuser');

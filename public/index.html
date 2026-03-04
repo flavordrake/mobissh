@@ -228,71 +228,76 @@
     <div id="panel-connect" class="panel">
       <h2>Connect</h2>
 
-      <form id="connectForm" autocomplete="off">
-        <label for="profileName">Profile name</label>
-        <input type="text" id="profileName" placeholder="My Server" />
-
-        <label for="host">Host</label>
-        <input type="text" id="host" placeholder="192.168.1.100" required inputmode="url" />
-
-        <label for="port">Port</label>
-        <input type="number" id="port" value="22" min="1" max="65535" inputmode="numeric" />
-
-        <label for="remote_a">Username</label>
-        <input type="text" id="remote_a" placeholder="root" required autocapitalize="none"
-          autocomplete="off"
-          data-lpignore="true"
-          data-1p-ignore="true"
-          data-form-type="other" />
-
-        <label for="authType">Auth method</label>
-        <select id="authType">
-          <option value="password">Password</option>
-          <option value="key">Private key</option>
-        </select>
-
-        <div id="passwordGroup">
-          <label for="remote_c">Password</label>
-          <input type="text" id="remote_c"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-            spellcheck="false"
-            data-lpignore="true"
-            data-1p-ignore="true"
-            data-form-type="other" />
-        </div>
-
-        <div id="keyGroup" style="display:none">
-          <label for="privateKey">Private key</label>
-          <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
-          <label for="remote_pp">Passphrase (if encrypted)</label>
-          <input type="text" id="remote_pp"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-            spellcheck="false"
-            data-lpignore="true"
-            data-1p-ignore="true"
-            data-form-type="other" />
-          <button type="button" id="useStoredKeyBtn" class="secondary-btn">Use stored key…</button>
-        </div>
-
-        <label for="initialCommand">Initial command (optional)</label>
-        <input type="text" id="initialCommand"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-          spellcheck="false" />
-        <p class="hint">Runs automatically after connecting. Leave blank for a normal shell.</p>
-
-        <button type="submit" class="primary-btn">Connect</button>
-      </form>
-
-      <h3>Saved profiles</h3>
       <div id="profileList" class="item-list">
         <p class="empty-hint">No saved profiles yet.</p>
       </div>
+
+      <div id="connect-form-section">
+        <form id="connectForm" class="compact-form" autocomplete="off">
+          <label for="profileName">Name</label>
+          <input type="text" id="profileName" placeholder="My Server" />
+
+          <label for="host">Host</label>
+          <input type="text" id="host" placeholder="192.168.1.100" required inputmode="url" />
+
+          <label for="port">Port</label>
+          <input type="number" id="port" value="22" min="1" max="65535" inputmode="numeric" />
+
+          <label for="remote_a">User</label>
+          <input type="text" id="remote_a" placeholder="root" required autocapitalize="none"
+            autocomplete="off"
+            data-lpignore="true"
+            data-1p-ignore="true"
+            data-form-type="other" />
+
+          <label for="authType">Auth</label>
+          <select id="authType">
+            <option value="password">Password</option>
+            <option value="key">Private key</option>
+          </select>
+
+          <div id="passwordGroup" class="compact-form-span">
+            <label for="remote_c">Password</label>
+            <input type="text" id="remote_c"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-form-type="other" />
+          </div>
+
+          <div id="keyGroup" class="compact-form-span hidden">
+            <label for="privateKey">Private key</label>
+            <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
+            <label for="remote_pp">Passphrase (if encrypted)</label>
+            <input type="text" id="remote_pp"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-form-type="other" />
+            <button type="button" id="useStoredKeyBtn" class="secondary-btn">Use stored key…</button>
+          </div>
+
+          <label for="initialCommand">Command</label>
+          <input type="text" id="initialCommand"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            placeholder="Optional initial command" />
+
+          <div class="compact-form-span">
+            <button type="submit" class="primary-btn">Save</button>
+          </div>
+        </form>
+      </div>
+
+      <button type="button" id="newConnBtn" class="secondary-btn" hidden>+ New connection</button>
     </div>
 
     <!-- Keys panel -->

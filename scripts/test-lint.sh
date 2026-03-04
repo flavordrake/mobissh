@@ -7,4 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+LOGFILE=/tmp/test-lint.log
+exec > >(tee "$LOGFILE") 2>&1
+
 npx eslint src/ public/ server/ tests/

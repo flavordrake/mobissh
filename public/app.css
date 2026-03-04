@@ -773,6 +773,50 @@ hr {
   flex-direction: column;
 }
 
+/* Connect panel: form hidden when profiles exist */
+.connect-form-hidden {
+  display: none;
+}
+
+#passwordGroup.hidden,
+#keyGroup.hidden {
+  display: none;
+}
+
+#newConnBtn {
+  margin-top: 12px;
+  width: 100%;
+  position: sticky;
+  bottom: 0;
+}
+
+/* Compact form: labels to left of inputs */
+.compact-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.compact-form label {
+  margin: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.compact-form input,
+.compact-form select {
+  margin: 0;
+}
+
+.compact-form .compact-form-span {
+  grid-column: 1 / -1;
+}
+
+.compact-form .primary-btn {
+  margin-top: 8px;
+}
+
 /* Advanced section */
 .advanced-section {
   border: 1px solid var(--border);

@@ -8,4 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+LOGFILE=/tmp/test-unit.log
+exec > >(tee "$LOGFILE") 2>&1
+
 npx vitest run

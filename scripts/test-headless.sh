@@ -12,4 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+LOGFILE=/tmp/test-headless.log
+exec > >(tee "$LOGFILE") 2>&1
+
 npx playwright test --config=playwright.config.js

@@ -11,6 +11,7 @@ import { appState } from './state.js';
 import { escHtml } from './constants.js';
 import { vaultStore, vaultLoad, vaultDelete } from './vault.js';
 import { ensureVaultKeyWithUI } from './vault-ui.js';
+import { connect } from './connection.js';
 
 export { escHtml };
 
@@ -93,8 +94,13 @@ export function loadProfiles(): void {
   const list = document.getElementById('profileList');
   if (!list) return;
 
+  const formSection = document.getElementById('connect-form-section');
+  const newConnBtn = document.getElementById('newConnBtn') as HTMLButtonElement | null;
+
   if (!profiles.length) {
     list.innerHTML = '<p class="empty-hint">No saved profiles yet.</p>';
+    formSection?.classList.remove('connect-form-hidden');
+    if (newConnBtn) newConnBtn.hidden = true;
     return;
   }
 
@@ -103,11 +109,31 @@ export function loadProfiles(): void {
       <span class="profile-name">${escHtml(p.name)}${p.hasVaultCreds ? ' <span class="vault-badge">saved</span>' : ''}</span>
       <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
       <div class="item-actions">
-        <button class="item-btn" data-action="edit" data-idx="${String(i)}">✎ Edit</button>
+        <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
+        <button class="item-btn" data-action="connect" data-idx="${String(i)}">Connect</button>
         <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
       </div>
     </div>
   `).join('');
+
+  formSection?.classList.add('connect-form-hidden');
+  if (newConnBtn) newConnBtn.hidden = false;
+}
+
+/** Reveal the connect form section. */
+export function revealConnectForm(): void {
+  document.getElementById('connect-form-section')?.classList.remove('connect-form-hidden');
+  const newConnBtn = document.getElementById('newConnBtn') as HTMLButtonElement | null;
+  if (newConnBtn) newConnBtn.hidden = true;
+}
+
+/** Reset form for a brand-new connection and reveal it. */
+export function newConnection(): void {
+  const form = document.getElementById('connectForm') as HTMLFormElement | null;
+  if (form) form.reset();
+  (document.getElementById('port') as HTMLInputElement).value = '22';
+  revealConnectForm();
+  (document.getElementById('host') as HTMLInputElement)?.focus();
 }
 
 export async function loadProfileIntoForm(idx: number): Promise<void> {
@@ -150,7 +176,50 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
     _toast('Enter credentials — not saved on this browser.');
   }
 
+  revealConnectForm();
   _navigateToConnect();
+}
+
+export async function connectFromProfile(idx: number): Promise<boolean> {
+  const profile = getProfiles()[idx];
+  if (!profile) return false;
+
+  const sshProfile: SSHProfile = {
+    name: profile.name,
+    host: profile.host,
+    port: profile.port,
+    username: profile.username,
+    authType: profile.authType as 'password' | 'key',
+    initialCommand: profile.initialCommand,
+  };
+
+  if (profile.vaultId && profile.hasVaultCreds) {
+    if (!appState.vaultKey) {
+      const unlocked = await ensureVaultKeyWithUI();
+      if (!unlocked) {
+        _toast('Vault locked — enter credentials manually');
+        _navigateToConnect();
+        return false;
+      }
+    }
+    const creds = await vaultLoad(profile.vaultId);
+    if (creds) {
+      if (creds.password) sshProfile.password = creds.password as string;
+      if (creds.privateKey) sshProfile.privateKey = creds.privateKey as string;
+      if (creds.passphrase) sshProfile.passphrase = creds.passphrase as string;
+    } else {
+      _toast('Vault locked — enter credentials manually');
+      _navigateToConnect();
+      return false;
+    }
+  } else if (!profile.hasVaultCreds) {
+    _toast('Enter credentials — not saved on this browser.');
+    void loadProfileIntoForm(idx);
+    return false;
+  }
+
+  connect(sshProfile);
+  return true;
 }
 
 export function deleteProfile(idx: number): void {
