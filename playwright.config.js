@@ -22,7 +22,7 @@ const useExternalServer = !!process.env.BASE_URL;
 
 module.exports = defineConfig({
   testDir: './tests',
-  testIgnore: ['**/emulator/**'],
+  testIgnore: ['**/emulator/**', '**/appium/**', '**/browserstack*'],
   outputDir: 'test-results/headless',
   timeout: 30_000,
   // One retry on CI to tolerate transient xterm.js canvas init timing

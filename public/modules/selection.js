@@ -1,12 +1,13 @@
 /**
  * modules/selection.ts — Mobile text selection (#55)
  *
- * Long-press on the terminal surface shows an action chip with selection
- * options (Paste, Select Visible, Select All). When xterm.js has an active
- * selection, a Copy button appears on the session handle bar.
+ * Phase 1: Long-press shows action chip (Paste, Select Visible, Select All).
+ * Phase 2: Long-press also word-selects at touch position via synthetic mouse
+ *          events. Dragging after long-press extends the selection.
  *
- * Uses xterm.js's built-in selection system — selection is rendered on the
- * canvas using the theme's selectionBackground. No DOM overlay.
+ * When xterm.js has an active selection, a Copy button appears on the session
+ * handle bar. Uses xterm.js's built-in selection system — selection is rendered
+ * on the canvas using the theme's selectionBackground. No DOM overlay.
  */
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
@@ -14,6 +15,7 @@ import { toast, focusIME } from './ui.js';
 // ── State ────────────────────────────────────────────────────────────────────
 let _selectionActive = false;
 let _longPressTimer = null;
+let _dragActive = false; // true while finger is down after long-press triggered
 let _touchAnchorX = 0;
 let _touchAnchorY = 0;
 const LONG_PRESS_MS = 500;
@@ -28,7 +30,7 @@ export function initSelection() {
     const termEl = document.getElementById('terminal');
     const chip = document.getElementById('selectionChip');
     const copyBtn = document.getElementById('handleCopyBtn');
-    // ── Long-press detection ─────────────────────────────────────────────────
+    // ── Long-press detection + drag-to-select (Phase 2) ─────────────────────
     termEl.addEventListener('touchstart', (e) => {
         if (e.touches.length !== 1)
             return;
@@ -37,9 +39,18 @@ export function initSelection() {
         _longPressTimer = setTimeout(() => {
             _longPressTimer = null;
             _onLongPress();
+            // Phase 2: word-select at touch position via synthetic mousedown
+            _startDragSelect(_touchAnchorX, _touchAnchorY);
         }, LONG_PRESS_MS);
     }, { passive: true });
     termEl.addEventListener('touchmove', (e) => {
+        // Phase 2: extend selection while dragging after long-press
+        if (_dragActive) {
+            const tx = e.touches[0].clientX;
+            const ty = e.touches[0].clientY;
+            _extendDragSelect(tx, ty);
+            return;
+        }
         if (_longPressTimer === null)
             return;
         const dx = e.touches[0].clientX - _touchAnchorX;
@@ -53,6 +64,10 @@ export function initSelection() {
         if (_longPressTimer !== null) {
             clearTimeout(_longPressTimer);
             _longPressTimer = null;
+        }
+        // Phase 2: finalize drag-select on finger up
+        if (_dragActive) {
+            _endDragSelect();
         }
     }, { passive: true });
     // Dismiss chip on tap outside it (but inside terminal)
@@ -126,7 +141,8 @@ export function initSelection() {
         }
         catch { /* vibrate not available */ }
         // Blur IME to dismiss soft keyboard before showing chip
-        document.activeElement?.blur();
+        if (document.activeElement instanceof HTMLElement)
+            document.activeElement.blur();
         chip.classList.remove('hidden');
         // Push history entry so Android back gesture dismisses the chip
         history.pushState({ selectionChip: true }, '');
@@ -138,14 +154,56 @@ export function initSelection() {
         if (!_selectionActive)
             return;
         _selectionActive = false;
+        _dragActive = false;
         _hideChip();
         appState.terminal?.clearSelection();
         copyBtn.classList.add('hidden');
         // Pop the history entry we pushed (unless back gesture already did it)
-        if (history.state?.selectionChip === true) {
+        if (history.state != null && history.state.selectionChip === true) {
             history.back();
         }
         setTimeout(focusIME, 50);
+    }
+    // ── Phase 2: Synthetic mouse events for drag-to-select ────────────────
+    /** True if mouse tracking mode (DECSET 1000/1002/1006) is active. */
+    function _isMouseTrackingActive() {
+        // xterm.js adds 'enable-mouse-events' class when mouse protocol is on
+        return appState.terminal?.element?.classList.contains('enable-mouse-events') ?? false;
+    }
+    /** Dispatch synthetic mousedown(detail:2) to word-select at touch coords. */
+    function _startDragSelect(clientX, clientY) {
+        if (!appState.terminal?.element || _isMouseTrackingActive())
+            return;
+        const target = appState.terminal.element;
+        target.dispatchEvent(new MouseEvent('mousedown', {
+            clientX, clientY,
+            button: 0, buttons: 1, detail: 2,
+            bubbles: true, cancelable: true,
+        }));
+        _dragActive = true;
+    }
+    /** Dispatch synthetic mousemove to extend selection during drag. */
+    function _extendDragSelect(clientX, clientY) {
+        if (!_dragActive)
+            return;
+        // Hide chip during drag — user is actively selecting
+        _hideChip();
+        document.dispatchEvent(new MouseEvent('mousemove', {
+            clientX, clientY,
+            button: 0, buttons: 1,
+            bubbles: true, cancelable: true,
+        }));
+    }
+    /** Dispatch synthetic mouseup to finalize selection. */
+    function _endDragSelect() {
+        if (!_dragActive)
+            return;
+        _dragActive = false;
+        document.dispatchEvent(new MouseEvent('mouseup', {
+            button: 0,
+            bubbles: true, cancelable: true,
+        }));
+        // Copy button visibility is handled by _watchSelection via onSelectionChange
     }
 }
 // ── Selection watcher ────────────────────────────────────────────────────────

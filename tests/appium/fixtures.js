@@ -35,10 +35,41 @@ const DIRECT_INPUT_ID = 'directInput';
 // ── Session management ──────────────────────────────────────────────────
 
 /**
+ * Fast check: is Appium server reachable? Fails in <3s instead of hanging
+ * for 60s+ on connectionRetryTimeout.
+ */
+async function checkAppiumReachable() {
+  const http = require('http');
+  return new Promise((resolve, reject) => {
+    const req = http.get(
+      `http://${APPIUM_HOST}:${APPIUM_PORT}/status`,
+      { timeout: 3000 },
+      (res) => {
+        res.resume(); // drain
+        resolve(res.statusCode === 200);
+      },
+    );
+    req.on('error', () => reject(new Error(
+      `Appium server not reachable at ${APPIUM_HOST}:${APPIUM_PORT}. ` +
+      'Start it with: ./scripts/start-appium.sh'
+    )));
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(
+        `Appium server timeout at ${APPIUM_HOST}:${APPIUM_PORT}. ` +
+        'Start it with: ./scripts/start-appium.sh'
+      ));
+    });
+  });
+}
+
+/**
  * Create a WebDriverIO session connected to Appium.
  * Opens Chrome on the running emulator.
+ * Fails fast (<3s) if Appium is not reachable.
  */
 async function createDriver() {
+  await checkAppiumReachable();
   const driver = await remote({
     hostname: APPIUM_HOST,
     port: APPIUM_PORT,
@@ -57,8 +88,8 @@ async function createDriver() {
         ],
       },
     },
-    connectionRetryTimeout: 60000,
-    connectionRetryCount: 3,
+    connectionRetryTimeout: 15000,
+    connectionRetryCount: 1,
   });
   return driver;
 }
