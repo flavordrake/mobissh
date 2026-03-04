@@ -15,6 +15,10 @@
  *     { type: 'resize', cols: number, rows: number }
  *     { type: 'disconnect' }
  *     { type: 'hostkey_response', accepted: boolean }
+ *     { type: 'sftp_ls', path: string, requestId: string }
+ *     { type: 'sftp_download', path: string, requestId: string }
+ *     { type: 'sftp_upload', path: string, data: string, requestId: string }
+ *     { type: 'sftp_stat', path: string, requestId: string }
  *
  *   Server → Client:
  *     { type: 'connected' }
@@ -22,6 +26,11 @@
  *     { type: 'error', message: string }
  *     { type: 'disconnected', reason: string }
  *     { type: 'hostkey', host, port, keyType, fingerprint }
+ *     { type: 'sftp_ls_result', requestId, entries: [{name, isDir, size, mtime}] }
+ *     { type: 'sftp_download_result', requestId, data: string }  (base64)
+ *     { type: 'sftp_upload_result', requestId, ok: boolean, error?: string }
+ *     { type: 'sftp_stat_result', requestId, stat: {isDir, size, mtime} }
+ *     { type: 'sftp_error', requestId, message: string }
  */
 
 const http = require('http');
@@ -98,6 +107,65 @@ function rewriteManifest(buf) {
   manifest.start_url = './#connect';
   manifest.scope = './';
   return Buffer.from(JSON.stringify(manifest));
+}
+
+// ─── SFTP message handler (exported for unit tests) ──────────────────────────
+
+/**
+ * Dispatch a single SFTP message to the open sftp channel.
+ * `send` is a function(obj) that sends a JSON message to the WS client.
+ * All errors are returned as { type: 'sftp_error', requestId, message } so the
+ * WebSocket connection is never terminated by an SFTP failure.
+ */
+function handleSftpMessage(msg, sftp, send) {
+  const { requestId, path: filePath } = msg;
+  const sftpErr = (message) => send({ type: 'sftp_error', requestId, message });
+
+  switch (msg.type) {
+    case 'sftp_ls':
+      sftp.readdir(filePath, (err, list) => {
+        if (err) { sftpErr(err.message); return; }
+        const entries = list.map(f => ({
+          name: f.filename,
+          isDir: f.attrs.isDirectory(),
+          size: f.attrs.size,
+          mtime: f.attrs.mtime,
+        }));
+        send({ type: 'sftp_ls_result', requestId, entries });
+      });
+      break;
+
+    case 'sftp_download': {
+      const chunks = [];
+      const rs = sftp.createReadStream(filePath);
+      rs.on('data', chunk => chunks.push(chunk));
+      rs.on('end', () => {
+        send({ type: 'sftp_download_result', requestId, data: Buffer.concat(chunks).toString('base64') });
+      });
+      rs.on('error', err => sftpErr(err.message));
+      break;
+    }
+
+    case 'sftp_upload': {
+      if (typeof msg.data !== 'string') { sftpErr('data must be a base64 string'); return; }
+      const buf = Buffer.from(msg.data, 'base64');
+      const ws = sftp.createWriteStream(filePath);
+      ws.on('finish', () => { send({ type: 'sftp_upload_result', requestId, ok: true }); });
+      ws.on('error', err => sftpErr(err.message));
+      ws.end(buf);
+      break;
+    }
+
+    case 'sftp_stat':
+      sftp.stat(filePath, (err, stats) => {
+        if (err) { sftpErr(err.message); return; }
+        send({ type: 'sftp_stat_result', requestId, stat: { isDir: stats.isDirectory(), size: stats.size, mtime: stats.mtime } });
+      });
+      break;
+
+    default:
+      sftpErr(`Unknown SFTP message type: ${msg.type}`);
+  }
 }
 
 // ─── HTTP server (static files) ───────────────────────────────────────────────
@@ -308,6 +376,8 @@ wss.on('connection', (ws, req) => {
 
   let sshClient = null;
   let sshStream = null;
+  let sftpClient = null;
+  let sftpPending = null; // pending callbacks while SFTP channel is being opened
   let connecting = false;
   let pendingVerify = null; // hostVerifier callback waiting for client response (#5)
 
@@ -317,12 +387,30 @@ wss.on('connection', (ws, req) => {
     }
   }
 
+  /** Lazily open the SFTP subsystem on first use; reuse the same channel.
+   *  Concurrent callers are queued so only one sshClient.sftp() is ever in flight. */
+  function getSftp(callback) {
+    if (sftpClient) { callback(null, sftpClient); return; }
+    if (!sshClient) { callback(new Error('Not connected')); return; }
+    if (sftpPending) { sftpPending.push(callback); return; }
+    sftpPending = [callback];
+    sshClient.sftp((err, sftp) => {
+      const pending = sftpPending;
+      sftpPending = null;
+      if (err) { pending.forEach(cb => cb(err)); return; }
+      sftpClient = sftp;
+      pending.forEach(cb => cb(null, sftp));
+    });
+  }
+
   function cleanup(reason) {
     pendingVerify = null; // discard any pending host-key verification (#5)
     if (sshStream) {
       try { sshStream.close(); } catch (_) {}
       sshStream = null;
     }
+    sftpClient = null;   // closed with the SSH connection
+    sftpPending = null;  // discard any pending SFTP open requests
     if (sshClient) {
       try { sshClient.end(); } catch (_) {}
       sshClient = null;
@@ -472,6 +560,15 @@ wss.on('connection', (ws, req) => {
           // If rejected, ssh2 emits an error event which calls cleanup naturally
         }
         break;
+      case 'sftp_ls':
+      case 'sftp_download':
+      case 'sftp_upload':
+      case 'sftp_stat':
+        getSftp((err, sftp) => {
+          if (err) { send({ type: 'sftp_error', requestId: msg.requestId, message: err.message }); return; }
+          handleSftpMessage(msg, sftp, send);
+        });
+        break;
       default: send({ type: 'error', message: `Unknown message type: ${msg.type}` });
     }
   });
@@ -505,4 +602,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { rewriteManifest, server };
+module.exports = { rewriteManifest, server, handleSftpMessage };
