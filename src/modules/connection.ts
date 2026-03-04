@@ -204,7 +204,7 @@ export function scheduleReconnect(): void {
   if (!appState.currentProfile) return;
 
   const delaySec = Math.round(appState.reconnectDelay / 1000);
-  appState.terminal?.writeln(ANSI.dim(`Reconnecting in ${String(delaySec)}s… (tap ✕ to cancel)`));
+  _toast(`Reconnecting in ${String(delaySec)}s… (tap ✕ to cancel)`);
   _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
 
   appState.reconnectTimer = setTimeout(() => {
