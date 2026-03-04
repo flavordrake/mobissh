@@ -152,6 +152,13 @@ html, body {
   user-select: none; /* prevent Chrome double-tap text selection on terminal */
 }
 
+/* Suppress xterm.js accessibility tree's user-select: text which lets the OS
+   detect selected text, triggering native paste/URL-open context menus (#55). */
+#terminal .xterm-accessibility-tree {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* IME composition preview strip — visible while composing, hidden otherwise */
 #imePreview {
   background: var(--bg-card);
@@ -353,6 +360,22 @@ html, body {
 }
 .handle-copy-btn.hidden { display: none; }
 .handle-copy-btn:active { opacity: 0.7; }
+
+/* Paste button in handle bar — appears when clipboard has content (#55) */
+.handle-paste-btn {
+  background: var(--bg-card);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 2px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-ui);
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+.handle-paste-btn.hidden { display: none; }
+.handle-paste-btn:active { opacity: 0.7; }
 
 /* Selection action chip — long-press popup (#55) */
 .selection-chip {

@@ -1,0 +1,5 @@
+timestamp: 20260304T113957-0500
+git_hash: 314fdae
+test_spec: selection-dragselect-baseline
+suite: selection-baseline-v3
+exit_code: 0
