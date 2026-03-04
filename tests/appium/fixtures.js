@@ -555,7 +555,10 @@ const test = base.extend({
         .substring(0, 80);
       recordingFile = path.join(RECORDING_DIR, `${safeName}.webm`);
       try {
-        execSync(`adb emu screenrecord start "${recordingFile}"`, { timeout: 5000 });
+        execSync(
+          `adb emu screenrecord start --size 540x1200 --bit-rate 1000000 --fps 12 "${recordingFile}"`,
+          { timeout: 5000 },
+        );
       } catch { /* best effort — recording is optional */ }
     }
 
