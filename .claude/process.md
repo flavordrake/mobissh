@@ -97,11 +97,35 @@ open issue
   → /delegate classifies as bot-ready
   → /delegate posts @claude comment, applies `bot` label
   → bot creates branch claude/issue-{N}-{date}-{time}
-  → /integrate discovers branch, runs gates
-  → gates pass → merge, close issue
-  → gates fail → /integrate applies `divergence`, removes `bot`
+  → /integrate discovers branch, runs fast gate
+  → fast gate pass → human reviews UX/approach
+    → UX approved, headless tests need updating → test-fixup pass (see below)
+    → UX approved, tests pass → merge, close issue
+    → UX rejected → reject with feedback
+  → fast gate fail → /integrate applies `divergence`, removes `bot`
   → /delegate analyzes failure, re-delegates with corrections → `divergence` → `bot`
 ```
+
+### Two-pass delegation (test-fixup pass)
+
+When a bot PR passes the fast gate but headless tests fail because the UX changed
+(not flaky tests — outdated assertions that don't match the new behavior):
+
+1. `/integrate` reviews the feature, approves the UX approach
+2. We merge the feature to main (or the bot merges from main)
+3. `/delegate` posts a **test-fixup** `@claude` comment on the same issue:
+   - Objective: merge from main, run headless tests, fix failures to match new UX
+   - Scope: test files only — no application code changes
+   - Verify: `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh`
+4. Bot creates a new branch, fixes test assertions, runs full gate including headless
+5. `/integrate` validates the test-fixup branch (headless must pass)
+
+This is NOT a re-delegation (no `divergence` label swap). The feature was approved;
+only the test harness needs updating. The test-fixup pass counts as a separate attempt
+only if it fails.
+
+Key distinction: **outdated ≠ flaky**. Tests that fail because the UX intentionally
+changed need updating. Tests that fail intermittently need investigation.
 
 ### Attempt limits (know-when-to-quit)
 

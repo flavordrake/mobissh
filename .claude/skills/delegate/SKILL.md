@@ -228,6 +228,47 @@ scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
 2. Run `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`
 ```
 
+### Test-fixup template
+
+Used when a bot feature has been approved by human review but headless tests fail because
+the UX changed (outdated assertions, not flaky tests). This is a second pass on the same
+issue — the feature code is already on main, only test code needs updating.
+
+```
+@claude
+
+**Objective:** Update headless Playwright tests to match the new UX from #{issue}.
+
+**Files in scope:**
+- `tests/<file>.spec.js` — <what changed in the UX that breaks this test>
+- `tests/fixtures.js` — <if shared helpers need updating>
+
+**Do NOT touch:** Any file outside `tests/`. Application code is correct and merged.
+
+**Acceptance criteria:**
+1. All headless Playwright tests pass (`scripts/test-headless.sh`)
+2. No changes to application source (`src/`, `public/`, `server/`)
+3. Test updates match the new UX behavior, not workarounds
+
+**Context:**
+<describe the UX change: what the old behavior was, what the new behavior is>
+<specific DOM changes: new selectors, removed elements, changed visibility>
+<code snippets from the updated application code showing new behavior>
+
+**Do NOT:**
+- Change any application code — only test code
+- Add `force: true` or extended timeouts to Playwright tests
+- Skip or delete tests — update assertions to match new behavior
+- Add new test files — update existing tests
+
+**Prerequisites:**
+1. `git fetch origin main && git merge origin/main` — get the merged feature code
+
+**Verify:**
+1. Run `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`
+2. Run `scripts/test-headless.sh` — ALL 510 tests must pass (7 skipped is OK)
+```
+
 ### Quality gate
 
 Before posting, verify each comment against:
@@ -328,9 +369,11 @@ These come from real project history. They are not suggestions — they are hard
 boundaries. "Only touch X and Y" is mandatory. Without it, the bot adds abstractions,
 refactors adjacent code, and "improves" beyond scope.
 
-**Bot doesn't run Playwright.** Acceptance criteria must be verifiable with
-tsc + eslint + unit tests. Flag issues that need Playwright-only validation so
-/integrate knows to run extra checks.
+**Bot CAN run headless Playwright** (via `scripts/test-headless.sh`). For initial
+feature work, the fast gate (tsc + eslint + unit) is sufficient. For test-fixup passes
+where the bot must update test assertions to match new UX, include headless in the
+verify step. The distinction: feature passes verify with fast gate only; test-fixup
+passes verify with fast gate + headless.
 
 **Previous failure context is gold.** The bot has no memory of its own branches. When
 re-delegating, include exactly what the prior attempt got wrong and why.

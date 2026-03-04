@@ -161,8 +161,26 @@ scripts/gh-ops.sh labels <issue-N> --rm bot
 scripts/gh-ops.sh close <issue-N> --comment "Fixed in PR #<PR-N>"
 ```
 
+### Approve-with-test-fixup (UX approved, tests outdated)
+
+When a bot PR:
+- Passes fast gate (tsc + lint + unit)
+- UX/approach is approved by human review
+- But headless tests fail because the UX intentionally changed (outdated assertions, not bugs)
+
+This is NOT a rejection. The feature is correct; the test harness is outdated. Action:
+
+1. Merge the feature PR to main (or have the bot merge from main in a test-fixup pass)
+2. Use `/delegate` to post a **test-fixup** `@claude` comment on the same issue
+   (see the test-fixup template in the delegate skill)
+3. Keep `bot` label — do NOT swap to `divergence`
+4. The test-fixup pass verifies with full gate including `scripts/test-headless.sh`
+
+Key distinction: **outdated ≠ flaky**. Tests that fail because the UX intentionally
+changed need their assertions updated. Tests that fail intermittently need investigation.
+
 ### Reject criteria (ANY one is sufficient)
-- Tests fail at any gate
+- Tests fail at any gate AND the failures are bugs (not outdated assertions)
 - Wrong scope or unrelated changes
 - >2 prior bot attempts for same issue
 - Introduces security anti-pattern
@@ -258,6 +276,15 @@ These rules come from real project history. They are not suggestions.
   off rather than iterated on main.
 
 - **No inline styles**: prefer CSS classes. This is a project rule (CLAUDE.md).
+
+- **Outdated ≠ flaky**: When a UX change causes headless test failures, those tests need
+  their assertions updated — they aren't broken or intermittent. Use the test-fixup pass
+  (approve-with-test-fixup) to delegate this to the bot rather than rejecting the feature.
+  The bot can run `scripts/test-headless.sh` and fix mismatched selectors/assertions.
+
+- **Two-pass delegation works**: Feature pass (fast gate) → human UX review → test-fixup
+  pass (full gate including headless). This prevents the bot from guessing UX decisions
+  while still automating the mechanical test updates.
 
 ## Edge Cases
 
