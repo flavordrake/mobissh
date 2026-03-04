@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # scripts/integrate-gate.sh — Run fast gate validation on a bot branch
 #
-# Checks out a bot branch, runs typecheck + lint + unit tests, reports results.
+# Checks out a bot branch, runs the fast gate tier scripts, reports results.
 # Optionally closes the PR/branch on failure.
+#
+# Fast gate = typecheck + lint + unit tests (NO browser tests).
+# Headless Playwright is a separate acceptance step (scripts/test-headless.sh).
 #
 # When running inside a worktree (agent isolation), stash/restore is skipped
 # since the working directory is already isolated.
@@ -45,7 +48,7 @@ err() { echo "! $*" >&2; }
 # Track results
 TSC_RESULT=""
 LINT_RESULT=""
-TEST_RESULT=""
+UNIT_RESULT=""
 GATE_PASSED=true
 
 # Detect worktree isolation: if we're in a worktree (not the main .git dir),
@@ -108,6 +111,10 @@ else
   fi
 fi
 
+# Gate commands are inlined here, NOT delegated to external scripts.
+# After checkout the working directory is the bot branch, which may not have
+# the latest tier scripts. The gate must be self-contained.
+
 # Gate 1: TypeScript
 log "Gate 1/3: TypeScript typecheck..."
 if npx tsc --noEmit 2>&1; then
@@ -121,7 +128,7 @@ fi
 
 # Gate 2: ESLint
 log "Gate 2/3: ESLint..."
-if npx eslint src/ public/ 2>&1; then
+if npx eslint src/ public/ server/ tests/ 2>&1; then
   LINT_RESULT="pass"
   ok "eslint: pass"
 else
@@ -130,13 +137,13 @@ else
   GATE_PASSED=false
 fi
 
-# Gate 3: Unit tests
+# Gate 3: Unit tests (vitest only — no browser tests)
 log "Gate 3/3: Unit tests (vitest)..."
-if npm test 2>&1; then
-  TEST_RESULT="pass"
+if npx vitest run 2>&1; then
+  UNIT_RESULT="pass"
   ok "vitest: pass"
 else
-  TEST_RESULT="fail"
+  UNIT_RESULT="fail"
   err "vitest: FAIL"
   GATE_PASSED=false
 fi
@@ -145,10 +152,10 @@ fi
 echo ""
 if [ "$GATE_PASSED" = true ]; then
   ok "FAST GATE PASSED: ${BRANCH}"
-  ok "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${TEST_RESULT}"
+  ok "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT}"
 else
   err "FAST GATE FAILED: ${BRANCH}"
-  err "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${TEST_RESULT}"
+  err "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT}"
 
   # Close PR if requested
   if [ "$CLOSE_ON_FAIL" = true ] && [ -n "$PR_NUMBER" ]; then
@@ -158,7 +165,7 @@ Closing: fast gate failed during integration triage.
 
 **tsc:** ${TSC_RESULT}
 **eslint:** ${LINT_RESULT}
-**vitest:** ${TEST_RESULT}
+**vitest:** ${UNIT_RESULT}
 
 The bot can retry from the issue if the root cause is addressed.
 COMMENT

@@ -19,7 +19,12 @@ The integration pipeline is packaged as scripts in `scripts/`:
 |---|---|
 | `integrate-discover.sh` | List all bot branches, group by issue, count attempts, score risk. Outputs JSON. |
 | `integrate-cleanup.sh` | Delete branches for over-attempted issues, comment on GitHub issues. Reads discover JSON. |
-| `integrate-gate.sh` | Fast gate a single branch: tsc + eslint + vitest. Stashes/restores local state. |
+| `integrate-gate.sh` | Fast gate a single branch: calls test-typecheck, test-lint, test-unit. Stashes/restores local state. |
+| `test-typecheck.sh` | TypeScript type checking (`tsc --noEmit`). |
+| `test-lint.sh` | ESLint static analysis on all source directories. |
+| `test-unit.sh` | Vitest unit tests (`src/**/*.test.ts`). No browser, no Playwright. |
+| `test-headless.sh` | Headless Playwright tests (Pixel 7, iPhone 14, Desktop Chrome). Excludes Appium. |
+| `run-appium-tests.sh` | Full Appium emulator acceptance with screen recording and archival. |
 | `run-emulator-tests.sh` | Acceptance gate: boots emulator, starts server, runs Playwright emulator tests. |
 | `server-ctl.sh` | Server lifecycle: start/stop/restart/ensure. Used post-merge. |
 
@@ -78,9 +83,11 @@ scripts/integrate-gate.sh <branch-name>
 The script:
 1. Stashes any local uncommitted changes
 2. Fetches and checks out the branch (detached HEAD)
-3. Runs `npx tsc --noEmit`, `npx eslint src/ public/`, `npm test`
+3. Calls `scripts/test-typecheck.sh`, `scripts/test-lint.sh`, `scripts/test-unit.sh`
 4. Reports pass/fail per gate
 5. Restores the original branch and pops stash
+
+Note: fast gate does NOT run browser tests. Headless Playwright is Step 4.
 
 Exit code 0 = all gates passed, 1 = gate failed, 2 = setup error.
 
@@ -110,7 +117,7 @@ Between merges, run headless Playwright to catch regressions quickly:
 
 ```bash
 scripts/server-ctl.sh ensure
-npx playwright test --config=playwright.config.js
+scripts/test-headless.sh
 ```
 
 This is a regression check, not final acceptance. The full emulator acceptance run
@@ -177,7 +184,7 @@ After each successful merge:
 ```bash
 git checkout main && git pull
 scripts/server-ctl.sh restart
-npx playwright test --config=playwright.config.js
+scripts/test-headless.sh
 ```
 Report: "Merged PR #N (<title>). Headless tests: X pass. Server restarted at <hash>."
 
