@@ -1,22 +1,8 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "MSG='Post-clear: review skills (.claude/skills/*/SKILL.md), agents (.claude/agents/*.md), prefer scripts/*.sh over raw bash.'; printf '%s\\n' \"$MSG\" >&2; echo \"$MSG After /clear, read .claude/skills/*/SKILL.md descriptions and .claude/agents/*.md to re-establish awareness of available automation. Prefer existing scripts (scripts/*.sh) over complex inline bash. Check git status for uncommitted changes. Check gh issue list -l bot for active delegations.\""
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "WebSearch",
       "WebFetch",
-
       "Bash(git *)",
       "Bash(gh *)",
       "Bash(npm *)",
@@ -30,14 +16,12 @@
       "Bash(python3 *)",
       "Bash(semgrep *)",
       "Bash(adb *)",
-
       "Bash(lsof *)",
       "Bash(ss *)",
       "Bash(kill *)",
       "Bash(pkill *)",
       "Bash(jobs)",
       "Bash(ps *)",
-
       "Bash(ls *)",
       "Bash(tree *)",
       "Bash(sort *)",
@@ -50,7 +34,6 @@
       "Bash(which *)",
       "Bash(date *)",
       "Bash(test *)",
-
       "Bash(mkdir *)",
       "Bash(cp *)",
       "Bash(mv *)",
@@ -61,6 +44,22 @@
       "Bash(export *)",
       "Bash(BASE_PATH=*)",
       "Bash(PORT=*)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MSG='Post-clear: review skills (.claude/skills/*/SKILL.md), agents (.claude/agents/*.md), prefer scripts/*.sh over raw bash.'; printf '%s\\n' \"$MSG\" >&2; echo \"$MSG After /clear, read .claude/skills/*/SKILL.md descriptions and .claude/agents/*.md to re-establish awareness of available automation. Prefer existing scripts (scripts/*.sh) over complex inline bash. Check git status for uncommitted changes. Check gh issue list -l bot for active delegations.\""
+          }
+        ]
+      }
     ]
   }
 }

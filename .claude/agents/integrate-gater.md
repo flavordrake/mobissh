@@ -17,6 +17,10 @@ Run this exact command (substitute the branch name from your prompt):
 scripts/integrate-gate.sh <branch-name>
 ```
 
+CRITICAL: Use the relative path `scripts/integrate-gate.sh` exactly as shown above.
+Do NOT use an absolute path (e.g. `/home/.../scripts/...`) — it will be denied by
+the permission allow-list which only matches `Bash(scripts/*)`.
+
 Wait for it to complete. Do NOT run any other commands. Do NOT investigate failures.
 Do NOT run npm test, npx playwright, or any other test command.
 
