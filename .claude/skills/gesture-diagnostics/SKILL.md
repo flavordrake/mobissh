@@ -15,9 +15,13 @@ Systematic methodology for diagnosing touch and gesture issues in PWAs running o
 
 ## Architecture Note
 
-ADB gesture testing is **retired**. Appium v2 + UiAutomator2 + WebDriverIO is operational with 5 baseline scroll tests passing. Run with `scripts/run-appium-tests.sh`. Key infrastructure:
+ADB gesture testing is **retired**. Appium v2 + UiAutomator2 + WebDriverIO is operational with 31 tests passing (~8min). **ALWAYS run emulator/Appium tests via `scripts/run-appium-tests.sh`** (never bare `npx playwright test --config=playwright.appium.config.js`) — the script handles screen recording, ANR dismissal, archival to `test-history/`, and ffprobe validation. Without it, test runs have no video evidence for review. Fast-gate tests (tsc, eslint, headless Playwright) are fine to run directly.
+
+Key infrastructure:
 - `tests/appium/fixtures.js` — session management, gesture helpers, SSH connection
 - `tests/appium/gesture-scroll-baseline.spec.js` — 5 direction-aware scroll regression tests (**FROZEN**)
+- `tests/appium/gesture-multi-feature.spec.js` — 5 multi-gesture interaction tests
+- `tests/appium/user-workflow.spec.js` — 8 end-to-end user workflow tests (all UI views + gestures)
 - `scripts/setup-appium.sh` — environment setup (run as normal user, NOT sudo)
 - Screen recording via `adb emu screenrecord start/stop` (webm, validated by ffprobe)
 - All scripts log to `/tmp/*.log` for post-run diagnosis

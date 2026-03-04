@@ -35,6 +35,9 @@ done
 RESULTS_DIR="test-results-appium"
 # Record to /tmp first — Playwright cleans RESULTS_DIR at startup, which would
 # delete a recording in progress. Move the finalized file in afterward.
+# Segmented: adb emu screenrecord caps at 180s, so we restart every 170s and
+# stitch segments with ffmpeg at the end.
+RECORDING_DIR="/tmp/mobissh-appium-segments"
 RECORDING_TMP="/tmp/mobissh-appium-recording.webm"
 
 log() { echo "> $*"; }
@@ -129,8 +132,13 @@ wait_for_port localhost "$APPIUM_PORT" "Appium" 20
 log "Phase 5: Running tests"
 mkdir -p "$RESULTS_DIR"
 
-rm -f "$RECORDING_TMP"
-adb emu screenrecord start "$RECORDING_TMP"
+# Per-test recording is handled by the Playwright fixtures (fixtures.js).
+# Each test gets its own .webm file in APPIUM_RECORDING_DIR. The fixtures
+# call `adb emu screenrecord start/stop` around each test, so every test
+# has isolated video evidence within the 180s emulator cap.
+rm -rf "$RECORDING_DIR" "$RECORDING_TMP"
+mkdir -p "$RECORDING_DIR"
+export APPIUM_RECORDING_DIR="$RECORDING_DIR"
 
 EXTRA_ARGS=()
 [[ -n "$SPEC" ]] && EXTRA_ARGS+=("tests/appium/${SPEC}.spec.js")
@@ -138,38 +146,43 @@ EXTRA_ARGS=()
 set +e
 BASE_URL="http://localhost:$MOBISSH_PORT" \
   APPIUM_PORT="$APPIUM_PORT" \
+  APPIUM_RECORDING_DIR="$RECORDING_DIR" \
   npx playwright test \
     --config=playwright.appium.config.js \
     "${EXTRA_ARGS[@]}"
 EXIT=$?
 set -e
 
-# Stop recording cleanly via emulator console command.
-# Unlike adb shell screenrecord (which requires SIGINT to write the moov atom),
-# the emulator console command finalizes the webm container automatically.
-adb emu screenrecord stop
+# Safety stop in case a test crashed before stopping its recording.
+if ! adb emu screenrecord stop 2>/dev/null; then
+  log "OK: recording is already stopped."
+fi
+sleep 1
 
-# Phase 6: Validate recording
+# Phase 6: Validate per-test recordings
 log "Phase 6: Validating artifacts"
-RECORDING_FILE="$RESULTS_DIR/recording.webm"
-mkdir -p "$RESULTS_DIR"
-if [[ -f "$RECORDING_TMP" ]]; then
-  mv "$RECORDING_TMP" "$RECORDING_FILE"
-  SIZE=$(du -h "$RECORDING_FILE" | cut -f1)
-  ok "Recording: $RECORDING_FILE ($SIZE)"
+mkdir -p "$RESULTS_DIR/recordings"
+RECORDING_COUNT=0
+RECORDING_ERRORS=0
+for seg in "$RECORDING_DIR"/*.webm; do
+  [[ -f "$seg" ]] || continue
+  RECORDING_COUNT=$((RECORDING_COUNT + 1))
+  BASENAME=$(basename "$seg")
+  cp "$seg" "$RESULTS_DIR/recordings/$BASENAME"
   if command -v ffprobe &>/dev/null; then
-    PROBE_OUTPUT=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$RECORDING_FILE" 2>&1)
+    PROBE_OUTPUT=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$seg" 2>&1)
     PROBE_EXIT=$?
-    if [[ $PROBE_EXIT -eq 0 && -n "$PROBE_OUTPUT" && "$PROBE_OUTPUT" != "N/A" ]]; then
-      ok "Recording validated: ${PROBE_OUTPUT}s, container intact"
-    else
-      log "WARNING: recording may be corrupted (ffprobe exit=$PROBE_EXIT output=$PROBE_OUTPUT)"
+    if [[ $PROBE_EXIT -ne 0 || -z "$PROBE_OUTPUT" || "$PROBE_OUTPUT" == "N/A" ]]; then
+      log "WARNING: $BASENAME may be corrupted (ffprobe exit=$PROBE_EXIT)"
+      RECORDING_ERRORS=$((RECORDING_ERRORS + 1))
     fi
-  else
-    log "WARNING: ffprobe not installed, cannot validate recording. Run scripts/setup-appium.sh"
   fi
+done
+if [[ $RECORDING_COUNT -gt 0 ]]; then
+  TOTAL_SIZE=$(du -sh "$RESULTS_DIR/recordings" | cut -f1)
+  ok "$RECORDING_COUNT recordings ($TOTAL_SIZE), $RECORDING_ERRORS errors"
 else
-  log "WARNING: recording not found at $RECORDING_TMP"
+  log "WARNING: no per-test recordings found in $RECORDING_DIR"
 fi
 
 # Phase 7: Archive to persistent git-committed history
@@ -181,9 +194,9 @@ HISTORY_DIR="test-history/appium/${TIMESTAMP}${SUITE_SUFFIX}"
 log "Phase 7: Archiving to $HISTORY_DIR"
 mkdir -p "$HISTORY_DIR"
 
-# Copy recording
-if [[ -f "$RECORDING_FILE" ]]; then
-  cp "$RECORDING_FILE" "$HISTORY_DIR/recording.webm"
+# Copy per-test recordings
+if [[ -d "$RESULTS_DIR/recordings" ]] && ls "$RESULTS_DIR/recordings"/*.webm &>/dev/null 2>&1; then
+  cp -r "$RESULTS_DIR/recordings" "$HISTORY_DIR/recordings"
 fi
 
 # Copy HTML report (self-contained: index.html + data/)
@@ -209,7 +222,7 @@ adb_try shell settings put system show_touches 0
 
 log "Tests finished (exit $EXIT)"
 log "HTML report: playwright-report-appium/"
-log "Recording: $RECORDING_FILE"
+log "Recordings: $RESULTS_DIR/recordings/ ($RECORDING_COUNT files)"
 log "History: $HISTORY_DIR"
 echo "$(date '+%Y-%m-%d %H:%M:%S') run-appium-tests.sh finished (exit $EXIT)"
 log "Log saved to: $RUN_LOG"

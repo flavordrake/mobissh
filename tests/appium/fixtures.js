@@ -16,7 +16,12 @@
 
 const { test: base, expect } = require('@playwright/test');
 const { remote } = require('webdriverio');
+const { execSync } = require('child_process');
+const path = require('path');
 const { ensureTestSshd, SSHD_HOST, SSHD_PORT, TEST_USER, TEST_PASS } = require('../emulator/sshd-fixture');
+
+/** Directory for per-test recordings. Set by run-appium-tests.sh via env var. */
+const RECORDING_DIR = process.env.APPIUM_RECORDING_DIR || '';
 
 const APPIUM_HOST = process.env.APPIUM_HOST || 'localhost';
 const APPIUM_PORT = Number(process.env.APPIUM_PORT || 4723);
@@ -476,7 +481,7 @@ async function setupRealSSHConnection(driver) {
     return btn && btn.offsetParent !== null;
   `, []);
   if (hostKeyVisible) {
-    await driver.executeScript("document.activeElement?.blur()", []);
+    await driver.executeScript('document.activeElement?.blur()', []);
     await driver.pause(500);
     await dismissKeyboardViaBack(driver);
     await driver.pause(300);
@@ -539,12 +544,44 @@ const test = base.extend({
   driver: async ({ _workerDriver }, use, testInfo) => {
     const driver = _workerDriver;
 
+    // Start per-test screen recording if APPIUM_RECORDING_DIR is set.
+    // Filename: sanitized test title (spaces → dashes, special chars removed).
+    let recordingFile = '';
+    if (RECORDING_DIR) {
+      const safeName = testInfo.title
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .substring(0, 80);
+      recordingFile = path.join(RECORDING_DIR, `${safeName}.webm`);
+      try {
+        execSync(`adb emu screenrecord start "${recordingFile}"`, { timeout: 5000 });
+      } catch { /* best effort — recording is optional */ }
+    }
+
     await driver.url(BASE_URL);
     await driver.pause(2000);
     await dismissNativeDialogs(driver);
     await switchToWebview(driver);
 
     await use(driver);
+
+    // Stop per-test recording before teardown.
+    if (recordingFile) {
+      try {
+        execSync('adb emu screenrecord stop', { timeout: 5000 });
+      } catch { /* best effort */ }
+      // Attach recording to Playwright report for easy review.
+      try {
+        const fs = require('fs');
+        if (fs.existsSync(recordingFile)) {
+          await testInfo.attach('screen-recording', {
+            path: recordingFile,
+            contentType: 'video/webm',
+          });
+        }
+      } catch { /* best effort */ }
+    }
 
     if (testInfo.status !== testInfo.expectedStatus) {
       try {

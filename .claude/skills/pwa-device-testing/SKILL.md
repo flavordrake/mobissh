@@ -21,11 +21,19 @@ This skill provides the correct setup, known pitfalls, and ready-to-use template
 # First time only:
 scripts/setup-avd.sh
 
-# Every session:
+# Every session (Appium tests — primary):
+scripts/run-appium-tests.sh                     # full suite (31 tests)
+scripts/run-appium-tests.sh --suite my-label    # tagged archive directory
+
+# Legacy (CDP emulator tests):
 npm run test:emulator
 ```
 
-`npm run test:emulator` (via `scripts/run-emulator-tests.sh`) handles everything: boots emulator if needed, enables Chrome debugging, sets up port forwarding, runs Playwright over CDP.
+**IMPORTANT:** ALWAYS run Appium/emulator tests via `scripts/run-appium-tests.sh`, never bare `npx playwright test --config=playwright.appium.config.js`. The script handles screen recording, ANR dialog dismissal, archival to `test-history/`, and ffprobe validation. Without it, test runs produce no video evidence for review.
+
+Fast-gate tests (tsc, eslint, headless `npx playwright test`) are fine to run directly — they don't touch the emulator and don't need recording.
+
+`npm run test:emulator` (via `scripts/run-emulator-tests.sh`) handles the legacy CDP path: boots emulator if needed, enables Chrome debugging, sets up port forwarding, runs Playwright over CDP.
 
 ## Architecture
 
