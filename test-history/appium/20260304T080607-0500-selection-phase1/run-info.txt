@@ -1,0 +1,5 @@
+timestamp: 20260304T080607-0500
+git_hash: 88a293a
+test_spec: all
+suite: selection-phase1
+exit_code: 1
