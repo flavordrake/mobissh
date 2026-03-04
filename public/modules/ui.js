@@ -157,15 +157,9 @@ export function initSessionMenu() {
         e.stopPropagation();
         _applyFontSize((parseInt(localStorage.getItem('fontSize') ?? '14') || 14) + 1);
     });
-    document.getElementById('sessionCopyBtn').addEventListener('click', () => {
-        const sel = appState.terminal?.getSelection();
-        if (sel) {
-            void navigator.clipboard.writeText(sel).then(() => { toast('Copied'); }).catch(() => { toast('Copy failed'); });
-        }
-        else {
-            toast('No text selected');
-        }
+    document.getElementById('sessionCopyBufferBtn').addEventListener('click', () => {
         closeMenu();
+        toast('Buffer copy coming soon');
     });
     document.getElementById('sessionResetBtn').addEventListener('click', () => {
         closeMenu();

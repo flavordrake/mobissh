@@ -160,11 +160,19 @@
     <div id="panel-terminal" class="panel active">
       <div id="terminal">
       </div>
+      <!-- Selection action chip — appears on long-press (#55) -->
+      <div id="selectionChip" class="selection-chip hidden" role="toolbar" aria-label="Selection actions">
+        <button id="selectionPasteBtn" class="selection-chip-btn">Paste</button>
+        <button id="selectionVisibleBtn" class="selection-chip-btn">Select Visible</button>
+        <button id="selectionAllBtn" class="selection-chip-btn">Select All</button>
+        <button id="selectionDismissBtn" class="selection-chip-btn selection-chip-dismiss" aria-label="Dismiss">✕</button>
+      </div>
       <!-- IME composition preview — shows word being composed before commit (#44) -->
       <div id="imePreview" class="hidden" aria-live="polite" aria-atomic="true"></div>
       <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
         <button id="sessionMenuBtn" title="Session menu" aria-label="Session menu">MobiSSH</button>
+        <button id="handleCopyBtn" class="handle-copy-btn hidden" title="Copy selection" aria-label="Copy selection">Copy</button>
         <span id="handleChevron" title="Toggle key bar" role="button" aria-label="Toggle key bar">▾</span>
         <!-- Session menu anchored inside the positioned parent so absolute positioning works -->
         <div id="sessionMenu" class="hidden" role="menu">
@@ -173,7 +181,7 @@
             <span   id="fontSizeLabel">14px</span>
             <button id="fontIncBtn"   class="font-adj-btn" title="Increase font size">A+</button>
           </div>
-          <button id="sessionCopyBtn"       class="session-menu-item" role="menuitem">Copy selection</button>
+          <button id="sessionCopyBufferBtn"  class="session-menu-item" role="menuitem">Copy from buffer…</button>
           <button id="sessionResetBtn"      class="session-menu-item" role="menuitem">Reset terminal</button>
           <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
           <div class="session-menu-item rec-row" role="group" aria-label="Recording">

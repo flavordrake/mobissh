@@ -336,7 +336,7 @@ test.describe('User workflow (Appium)', () => {
         fontDec: !!document.getElementById('fontDecBtn'),
         fontInc: !!document.getElementById('fontIncBtn'),
         fontLabel: !!document.getElementById('fontSizeLabel'),
-        copy: !!document.getElementById('sessionCopyBtn'),
+        copy: !!document.getElementById('sessionCopyBufferBtn'),
         reset: !!document.getElementById('sessionResetBtn'),
         clear: !!document.getElementById('sessionClearBtn'),
         recordStart: !!document.getElementById('sessionRecordStartBtn'),

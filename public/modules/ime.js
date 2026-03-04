@@ -4,13 +4,14 @@
  * Handles all keyboard/IME input routing from hidden textarea (#imeInput)
  * and direct-mode text input (#directInput) to the SSH stream.
  *
- * Also manages: selection overlay for mobile copy (#55), touch/swipe
- * gesture handlers (#32/#37/#16), and pinch-to-zoom (#17).
+ * Also manages: touch/swipe gesture handlers (#32/#37/#16) and
+ * pinch-to-zoom (#17). Selection is handled by selection.ts (#55).
  */
 import { KEY_MAP } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
-import { toast, focusIME, setCtrlActive, toggleComposeMode } from './ui.js';
+import { focusIME, setCtrlActive, toggleComposeMode } from './ui.js';
+import { isSelectionActive } from './selection.js';
 let _handleResize = () => { };
 let _applyFontSize = (_size) => { };
 // ── Password-prompt detection — suppress keyboard suggestions (#123) ─────────
@@ -149,10 +150,11 @@ export function initIMEInput() {
             ime.value = '';
         }
     });
-    // termEl used by selection overlay, gesture handlers, and pinch-to-zoom
+    // termEl used by gesture handlers and pinch-to-zoom
     const termEl = document.getElementById('terminal');
     // ── Tap + swipe gestures on terminal (#32/#37/#16) ────────────────────
-    termEl.addEventListener('click', focusIME);
+    termEl.addEventListener('click', () => { if (!isSelectionActive())
+        focusIME(); });
     let _touchStartY = null;
     let _touchStartX = null;
     let _lastTouchY = null;
@@ -183,6 +185,8 @@ export function initIMEInput() {
     }
     // nosemgrep: duplicate-event-listener -- scroll (1-finger) and pinch (2-finger) are separate gestures
     termEl.addEventListener('touchstart', (e) => {
+        if (isSelectionActive())
+            return;
         console.log('[scroll] touchstart y=', e.touches[0].clientY, 'touches=', e.touches.length);
         _touchStartY = _lastTouchY = e.touches[0].clientY;
         _touchStartX = _lastTouchX = e.touches[0].clientX;
@@ -197,6 +201,8 @@ export function initIMEInput() {
     }, { passive: true, capture: true });
     // nosemgrep: duplicate-event-listener
     termEl.addEventListener('touchmove', (e) => {
+        if (isSelectionActive())
+            return;
         if (_touchStartY === null || _touchStartX === null)
             return;
         const totalDy = _touchStartY - e.touches[0].clientY;
@@ -254,6 +260,8 @@ export function initIMEInput() {
     }, { passive: false, capture: true });
     // nosemgrep: duplicate-event-listener
     termEl.addEventListener('touchend', () => {
+        if (isSelectionActive())
+            return;
         const wasScroll = _isTouchScroll;
         const finalDx = (_lastTouchX ?? _touchStartX ?? 0) - (_touchStartX ?? 0);
         const finalDy = (_lastTouchY ?? _touchStartY ?? 0) - (_touchStartY ?? 0);
