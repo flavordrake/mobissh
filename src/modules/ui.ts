@@ -10,7 +10,7 @@ import { KEY_REPEAT, THEMES, THEME_ORDER } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput, disconnect, reconnect } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
-import { saveProfile, getKeys, connectFromProfile, revealConnectForm, newConnection } from './profiles.js';
+import { saveProfile, getKeys, connectFromProfile, newConnection } from './profiles.js';
 
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
 

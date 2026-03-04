@@ -107,7 +107,7 @@ export function newConnection() {
         form.reset();
     document.getElementById('port').value = '22';
     revealConnectForm();
-    document.getElementById('host')?.focus();
+    document.getElementById('host').focus();
 }
 export async function loadProfileIntoForm(idx) {
     const profile = getProfiles()[idx];

@@ -133,7 +133,7 @@ export function newConnection(): void {
   if (form) form.reset();
   (document.getElementById('port') as HTMLInputElement).value = '22';
   revealConnectForm();
-  (document.getElementById('host') as HTMLInputElement)?.focus();
+  (document.getElementById('host') as HTMLInputElement).focus();
 }
 
 export async function loadProfileIntoForm(idx: number): Promise<void> {
