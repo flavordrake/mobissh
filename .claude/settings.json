@@ -1,12 +1,12 @@
 {
   "hooks": {
-    "SessionEnd": [
+    "SessionStart": [
       {
         "matcher": "clear",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '\n--- Pre-clear checklist ---\n1. Commit uncommitted changes (git status)\n2. Push to origin if needed\n3. Review MEMORY.md for stale entries\n4. Check active bot delegations: gh issue list -l bot\n5. If next task is /integrate: bot branches ready?\n'"
+            "command": "printf 'Post-clear checklist\\n1. Commit uncommitted changes (git status)\\n2. Push to origin if needed\\n3. Review MEMORY.md for stale entries\\n4. Check active bot delegations: gh issue list -l bot\\n5. If next task is /integrate: bot branches ready?\\n\\nREQUIRED: Read .claude/skills/*/SKILL.md descriptions and .claude/agents/*.md before proceeding. Use existing scripts (scripts/*.sh) instead of raw bash commands for server management, testing, issue filing, and delegation.\\n'"
           }
         ]
       }

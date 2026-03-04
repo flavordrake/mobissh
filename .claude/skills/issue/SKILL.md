@@ -80,12 +80,19 @@ Build a concise issue body. No filler.
 
 ## Step 3: Check for recent test artifacts
 
-If `test-results/emulator/report.json` exists and was modified within 30 minutes
-(`stat -c %Y` vs `date +%s`), there was a recent test run. Include relevant evidence:
+Check for recent test artifacts in either test results directory. If the report JSON
+was modified within 30 minutes (`stat -c %Y` vs `date +%s`), include relevant evidence:
 
-1. **report.json**: parse for pass/fail summary, failed test names and error messages
-2. **test-results/emulator/frames/**: list frame filenames that relate to the issue
-3. **test-results/emulator/recording.mp4**: note existence and timestamp
+**Appium tests** (primary):
+1. **test-results-appium/results.json**: parse for pass/fail summary, failed test names
+2. **test-history/appium/**: archived recordings and results per run
+
+**Legacy CDP emulator tests**:
+1. **test-results/emulator/report.json**: pass/fail summary, failed test names and errors
+2. **test-results/emulator/frames/**: frame filenames that relate to the issue
+3. **test-results/emulator/recording.mp4**: existence and timestamp
+
+**Both paths**:
 4. **Per-test screenshots**: check `test-results/*-android-emulator/` for relevant PNGs
 
 If a recording exists but no frames have been extracted (no `frames/` directory or it's

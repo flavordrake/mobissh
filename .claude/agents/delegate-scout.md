@@ -14,17 +14,17 @@ deterministic discovery and classification scripts and return structured results
 
 Run these scripts in order, capturing output to /tmp:
 
-1. `scripts/delegate-discover.sh > /tmp/delegate-discovery.json 2>/tmp/delegate-discover.log`
+1. `scripts/delegate-discover.sh --out /tmp/delegate-data.json 2>/tmp/delegate-discover.log`
    Lists all open issues, bot branches, diff stats.
 
-2. `scripts/delegate-classify.sh /tmp/delegate-discovery.json > /tmp/delegate-classified.json 2>/tmp/delegate-classify.log`
+2. `scripts/delegate-classify.sh --data /tmp/delegate-data.json > /tmp/delegate-classified.json 2>/tmp/delegate-classify.log`
    Classifies each issue: delegate, already-attempted, decompose, human-only, blocked.
 
 3. For each `already-attempted` issue, run:
    `scripts/delegate-failure-analysis.sh <issue-number> > /tmp/delegate-failure-<N>.json 2>/tmp/delegate-failure-<N>.log`
    Analyzes what went wrong in the prior bot attempt.
 
-4. `scripts/delegate-fetch-bodies.sh /tmp/delegate-classified.json > /tmp/delegate-bodies.json 2>/tmp/delegate-fetch.log`
+4. `scripts/delegate-fetch-bodies.sh --data /tmp/delegate-classified.json > /tmp/delegate-bodies.json 2>/tmp/delegate-fetch.log`
    Fetches issue bodies for all classified issues.
 
 ## Output

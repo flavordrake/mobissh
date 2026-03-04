@@ -99,7 +99,7 @@ and skips stash/restore when isolated. This resolved git lock contention from pa
 
 **Tools:** Bash, Read, Grep, Glob (no Write, no Edit)
 **Background:** true
-**Model:** haiku
+**Model:** sonnet (upgraded from haiku — haiku went off-script and ran full Playwright)
 
 ## Agents NOT created
 

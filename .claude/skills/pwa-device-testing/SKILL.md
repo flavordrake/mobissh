@@ -334,7 +334,7 @@ Without exploratory testing, you'd guess "pinch zoom should work because I set `
 
 Integration tests on real devices go through distinct phases. Tune verbosity and strictness to match the current phase.
 
-**Phase 1: Bootstrapping (where MobiSSH is now)**
+**Phase 1: Bootstrapping**
 - Reporter: `['list', { printSteps: true }]` for maximum visibility
 - `actionTimeout: 10_000` for fast failure on wrong selectors
 - `retries: 0` so every failure is visible and investigated
@@ -352,6 +352,8 @@ Integration tests on real devices go through distinct phases. Tune verbosity and
 - `retries: 2` for infrastructure flakiness (emulator hiccups, CDP drops)
 - Loosen assertions that break on minor UI changes (check behavior not exact values)
 - Guard against false positives: if a test hasn't failed in 20 runs, verify it can still detect regressions
+
+MobiSSH is in **Phase 2** (31 Appium tests passing, `line` reporter active, worker-scoped sessions stable). Phase 1 guidance is retained for new test areas or other projects using this skill.
 
 Key principle: never skip Phase 1. The debugging cost of silent failures in integration tests is 10x higher than in unit tests.
 

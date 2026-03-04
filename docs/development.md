@@ -15,7 +15,7 @@ No bundler. ES modules served directly by the Node.js static file server.
 modes, settings, and basic gesture simulation.
 
 ```bash
-npm test                    # runs all headless tests
+scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh
 npx playwright test --grep "vault"  # run a subset
 ```
 
@@ -59,7 +59,7 @@ UiAutomator2 crashes from session churn.
 ## Pre-commit validation
 
 ```bash
-npx tsc --noEmit && npx eslint src/ public/ && npm test
+scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh
 ```
 
 This is the minimum gate. All bot PRs must pass this before merge.
@@ -96,7 +96,6 @@ Full label taxonomy: `.claude/process.md`.
 
 ### Delegation constraints
 
-- Expected diff < 150 lines per PR. Larger changes get decomposed.
 - Bot has no memory across attempts. Each `@claude` comment is its entire instruction set.
 - Delegation comments include code context from current main to prevent the bot from
   inventing its own patterns.
@@ -122,7 +121,7 @@ Three custom subagents handle mechanical background tasks:
 |---|---|---|
 | `issue-manager` | File issues, add comments, manage labels | haiku |
 | `delegate-scout` | Discover and classify open issues for /delegate | haiku |
-| `integrate-gater` | Run fast gates on bot branches (isolated via git worktree) | haiku |
+| `integrate-gater` | Run fast gates on bot branches (isolated via git worktree) | sonnet |
 
 Design rationale: `docs/agents.md`.
 
@@ -138,6 +137,7 @@ Key scripts in `scripts/`:
 | `integrate-gate.sh` | Fast gate: tsc + eslint + vitest on a branch |
 | `delegate-discover.sh` | Fetch open issues + bot branches for /delegate |
 | `delegate-classify.sh` | Classify issues into delegation categories |
+| `delegate-fetch-bodies.sh` | Fetch issue bodies for classified issues |
 | `gh-file-issue.sh` | Wrapper for `gh issue create` with stdin/body-file support |
 | `gh-ops.sh` | Wrapper for `gh` comment/label/close/search/version operations |
 | `setup-nginx.sh` | nginx reverse proxy configuration for subpath deployment |
