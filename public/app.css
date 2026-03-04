@@ -14,8 +14,9 @@
   --compose: #7c6ff7;
   --tab-height: 56px;
   --keybar-height: 34px;
+  --keybar-row-height: 34px;
   --keybar-handle-height: 16px;
-  /* key-btn-height: keybar minus 10px vertical clearance; keep in sync with --keybar-height */
+  /* key-btn-height: keybar row minus 10px vertical clearance; keep in sync with --keybar-row-height */
   --key-btn-height: 24px;
   /* Shared font stacks */
   --font-mono: ui-monospace, Menlo, 'Cascadia Code', Consolas, monospace;
@@ -330,21 +331,6 @@ html, body {
   touch-action: manipulation;
 }
 
-/* Right zone: key bar chevron */
-#handleChevron {
-  color: var(--text-dim);
-  font-size: 11px;
-  padding: 0 12px;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  touch-action: manipulation;
-  flex-shrink: 0;
-}
-
-#handleChevron:active { color: var(--accent); }
-
 /* Copy button in handle bar — appears when selection is active (#55) */
 .handle-copy-btn {
   background: var(--accent);
@@ -409,7 +395,7 @@ html, body {
 .selection-chip-dismiss { border-color: var(--danger); color: var(--danger); padding: 4px 8px; }
 .selection-chip-dismiss:active { background: var(--danger); color: #fff; }
 
-/* Key bar — two-row layout */
+/* Key bar — depth-based two-row layout */
 #key-bar {
   display: flex;
   flex-direction: column;
@@ -421,16 +407,39 @@ html, body {
   transition: height 0.2s ease;
 }
 
-#key-bar.hidden { height: 0; }
+#key-bar.depth-0 { height: 0; }
+#key-bar.depth-1 { height: calc(var(--keybar-row-height) + env(safe-area-inset-bottom)); }
+#key-bar.depth-2 { height: calc(2 * var(--keybar-row-height) + env(safe-area-inset-bottom)); }
 
-/* Single key row: scrollable keys + right-anchored compose toggle */
+/* Editing row (depth 1): scrollable editing keys + right-anchored compose toggle */
 #key-keys-row {
   display: flex;
   align-items: center;
-  height: var(--keybar-height);
+  height: var(--keybar-row-height);
   flex-shrink: 0;
   padding: 0 4px;
 }
+
+/* Navigation row (depth 2): scrollable nav keys */
+#key-nav-row {
+  display: flex;
+  align-items: center;
+  height: var(--keybar-row-height);
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+#key-scroll-nav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+}
+
+#key-scroll-nav::-webkit-scrollbar { display: none; }
 
 #key-scroll {
   display: flex;
@@ -1283,13 +1292,9 @@ hr {
   margin-bottom: 4px;
 }
 
-/* Key controls dock — left/right positioning of compose toggle and keybar chevron (#149).
+/* Key controls dock — left/right positioning of compose toggle (#149).
    Default: controls on the right (DOM order).
    html.key-dock-left: controls shift to the left side via flex order. */
-html.key-dock-left #handleChevron {
-  order: -1;
-}
-
 html.key-dock-left #composeModeBtn {
   order: -1;
   margin-left: 0;

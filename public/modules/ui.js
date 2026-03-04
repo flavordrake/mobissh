@@ -63,11 +63,13 @@ export function initRouting(hasProfiles) {
 // ── Module state ────────────────────────────────────────────────────────────
 let _keyboardVisible = () => false;
 let _ROOT_CSS = { tabHeight: '56px', keybarHeight: '34px' };
+let _keybarRowPx = 34;
 let _applyFontSize = (_size) => { };
 let _applyTheme = (_name, _opts) => { };
 export function initUI({ keyboardVisible, ROOT_CSS, applyFontSize, applyTheme }) {
     _keyboardVisible = keyboardVisible;
     _ROOT_CSS = ROOT_CSS;
+    _keybarRowPx = parseInt(ROOT_CSS.keybarHeight, 10);
     _applyFontSize = applyFontSize;
     _applyTheme = applyTheme;
 }
@@ -140,11 +142,11 @@ export function initSessionMenu() {
             return;
         _swipeTouchId = -1;
         const deltaY = _swipeStartY - touch.clientY;
-        if (deltaY > 30 && !appState.tabBarVisible) {
-            toggleTabBar();
+        if (deltaY > 30 && appState.keyBarDepth < 2) {
+            setKeyBarDepth((appState.keyBarDepth + 1));
         }
-        else if (deltaY < -30 && appState.tabBarVisible) {
-            toggleTabBar();
+        else if (deltaY < -30 && appState.keyBarDepth > 0) {
+            setKeyBarDepth((appState.keyBarDepth - 1));
         }
     }, { passive: true });
     backdrop.addEventListener('click', closeMenu);
@@ -459,30 +461,29 @@ function _initKeyRepeatCalibration() {
     window.addEventListener('keydown', handler);
 }
 export function initKeyBar() {
-    appState.keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
+    const stored = parseInt(localStorage.getItem('keyBarDepth') ?? '1', 10);
+    appState.keyBarDepth = (stored === 0 || stored === 2) ? stored : 1;
     appState.imeMode = localStorage.getItem('imeMode') === 'ime';
     _applyKeyBarVisibility();
     _applyComposeModeUI();
     _applyKeyControlsDock();
     _initKeyRepeatCalibration();
-    document.getElementById('handleChevron').addEventListener('click', toggleKeyBar);
     document.getElementById('composeModeBtn').addEventListener('click', () => {
         toggleComposeMode();
         focusIME();
     });
 }
-function toggleKeyBar() {
-    appState.keyBarVisible = !appState.keyBarVisible;
-    localStorage.setItem('keyBarVisible', String(appState.keyBarVisible));
+function setKeyBarDepth(d) {
+    appState.keyBarDepth = d;
+    localStorage.setItem('keyBarDepth', String(d));
     _applyKeyBarVisibility();
     // ResizeObserver on #terminal handles fit() + resize message after layout settles.
 }
 function _applyKeyBarVisibility() {
-    document.getElementById('key-bar')?.classList.toggle('hidden', !appState.keyBarVisible);
-    const chevron = document.getElementById('handleChevron');
-    if (chevron)
-        chevron.textContent = appState.keyBarVisible ? '▾' : '▴';
-    document.documentElement.style.setProperty('--keybar-height', appState.keyBarVisible ? _ROOT_CSS.keybarHeight : '0px');
+    const bar = document.getElementById('key-bar');
+    bar.classList.remove('depth-0', 'depth-1', 'depth-2');
+    bar.classList.add('depth-' + String(appState.keyBarDepth));
+    document.documentElement.style.setProperty('--keybar-height', String(_keybarRowPx * appState.keyBarDepth) + 'px');
 }
 function _applyKeyControlsDock() {
     const dock = localStorage.getItem('keyControlsDock') ?? 'right';

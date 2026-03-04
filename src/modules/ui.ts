@@ -79,12 +79,14 @@ export function initRouting(hasProfiles: boolean): void {
 
 let _keyboardVisible = (): boolean => false;
 let _ROOT_CSS: RootCSS = { tabHeight: '56px', keybarHeight: '34px' };
+let _keybarRowPx = 34;
 let _applyFontSize = (_size: number): void => {};
 let _applyTheme = (_name: string, _opts?: { persist?: boolean }): void => {};
 
 export function initUI({ keyboardVisible, ROOT_CSS, applyFontSize, applyTheme }: UIDeps): void {
   _keyboardVisible = keyboardVisible;
   _ROOT_CSS = ROOT_CSS;
+  _keybarRowPx = parseInt(ROOT_CSS.keybarHeight, 10);
   _applyFontSize = applyFontSize;
   _applyTheme = applyTheme;
 }
@@ -167,10 +169,10 @@ export function initSessionMenu(): void {
     if (!touch) return;
     _swipeTouchId = -1;
     const deltaY = _swipeStartY - touch.clientY;
-    if (deltaY > 30 && !appState.tabBarVisible) {
-      toggleTabBar();
-    } else if (deltaY < -30 && appState.tabBarVisible) {
-      toggleTabBar();
+    if (deltaY > 30 && appState.keyBarDepth < 2) {
+      setKeyBarDepth((appState.keyBarDepth + 1) as 0 | 1 | 2);
+    } else if (deltaY < -30 && appState.keyBarDepth > 0) {
+      setKeyBarDepth((appState.keyBarDepth - 1) as 0 | 1 | 2);
     }
   }, { passive: true });
 
@@ -525,7 +527,8 @@ function _initKeyRepeatCalibration(): void {
 }
 
 export function initKeyBar(): void {
-  appState.keyBarVisible = localStorage.getItem('keyBarVisible') !== 'false';
+  const stored = parseInt(localStorage.getItem('keyBarDepth') ?? '1', 10);
+  appState.keyBarDepth = (stored === 0 || stored === 2) ? stored : 1;
   appState.imeMode = localStorage.getItem('imeMode') === 'ime';
 
   _applyKeyBarVisibility();
@@ -533,29 +536,24 @@ export function initKeyBar(): void {
   _applyKeyControlsDock();
   _initKeyRepeatCalibration();
 
-  document.getElementById('handleChevron')!.addEventListener('click', toggleKeyBar);
-
   document.getElementById('composeModeBtn')!.addEventListener('click', () => {
     toggleComposeMode();
     focusIME();
   });
 }
 
-function toggleKeyBar(): void {
-  appState.keyBarVisible = !appState.keyBarVisible;
-  localStorage.setItem('keyBarVisible', String(appState.keyBarVisible));
+function setKeyBarDepth(d: 0 | 1 | 2): void {
+  appState.keyBarDepth = d;
+  localStorage.setItem('keyBarDepth', String(d));
   _applyKeyBarVisibility();
   // ResizeObserver on #terminal handles fit() + resize message after layout settles.
 }
 
 function _applyKeyBarVisibility(): void {
-  document.getElementById('key-bar')?.classList.toggle('hidden', !appState.keyBarVisible);
-  const chevron = document.getElementById('handleChevron');
-  if (chevron) chevron.textContent = appState.keyBarVisible ? '▾' : '▴';
-  document.documentElement.style.setProperty(
-    '--keybar-height',
-    appState.keyBarVisible ? _ROOT_CSS.keybarHeight : '0px'
-  );
+  const bar = document.getElementById('key-bar')!;
+  bar.classList.remove('depth-0', 'depth-1', 'depth-2');
+  bar.classList.add('depth-' + String(appState.keyBarDepth));
+  document.documentElement.style.setProperty('--keybar-height', String(_keybarRowPx * appState.keyBarDepth) + 'px');
 }
 
 function _applyKeyControlsDock(): void {

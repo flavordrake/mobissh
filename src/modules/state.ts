@@ -32,7 +32,7 @@ export const appState: AppState = {
   vaultIdleTimer: null,
 
   // UI visibility
-  keyBarVisible: true,
+  keyBarDepth: 1,
   imeMode: false,
   tabBarVisible: true,
   hasConnected: false,
