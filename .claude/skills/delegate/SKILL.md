@@ -235,7 +235,7 @@ Before posting, verify each comment against:
 - Every file in scope actually exists (you read it)
 - Context snippets are from current main, not stale
 - Acceptance criteria are testable without manual device testing
-- Expected diff < 150 lines (if not, decompose instead)
+- Scope is focused (one concern, clear file list)
 
 ## Phase 5: Decompose large issues
 
@@ -247,7 +247,6 @@ For issues classified as `decompose`:
 4. Break into 2-4 sub-issues, each:
    - Independently mergeable (no ordering dependency when possible)
    - Scoped to one module or one concern
-   - Expected diff < 150 lines
    - Has clear acceptance criteria
 5. Smallest/safest sub-issue first (proves the pattern)
 
@@ -328,9 +327,6 @@ These come from real project history. They are not suggestions — they are hard
 **Bot over-engineers by default.** Every delegation comment must include explicit scope
 boundaries. "Only touch X and Y" is mandatory. Without it, the bot adds abstractions,
 refactors adjacent code, and "improves" beyond scope.
-
-**150-line ceiling.** The bot has never delivered a PR > 200 lines that passed integration
-on the first attempt. Decompose before delegating anything larger.
 
 **Bot doesn't run Playwright.** Acceptance criteria must be verifiable with
 tsc + eslint + unit tests. Flag issues that need Playwright-only validation so
