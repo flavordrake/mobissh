@@ -25,13 +25,11 @@ export function navigateToPanel(panel, options) {
     document.querySelector(`[data-panel="${panel}"]`)?.classList.add('active');
     document.getElementById(`panel-${panel}`)?.classList.add('active');
     if (panel === 'terminal') {
-        if (appState.hasConnected) {
-            appState.tabBarVisible = false;
-            _applyTabBarVisibility();
-        }
         setTimeout(() => { appState.fitAddon?.fit(); focusIME(); }, 50);
     }
-    else {
+    // Tab bar stays visible when switching panels -- user needs to navigate
+    // between terminal and files. The handle bar toggle still hides/shows it.
+    if (!appState.tabBarVisible) {
         appState.tabBarVisible = true;
         _applyTabBarVisibility();
     }

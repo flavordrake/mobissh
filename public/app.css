@@ -437,7 +437,7 @@ html, body {
 }
 
 #key-bar.depth-0 { height: 0; }
-#key-bar.depth-1 { height: auto; }
+#key-bar.depth-1 { height: var(--keybar-row-height); }
 #key-bar.depth-2,
 #key-bar.depth-3 { height: calc(2 * var(--keybar-row-height) + env(safe-area-inset-bottom)); }
 
@@ -565,17 +565,14 @@ html, body {
   gap: 4px;
 }
 
-/* At depth-1, allow key row and scroll container to wrap across lines */
+/* At depth-1, single scrollable row -- no wrapping */
 #key-bar.depth-1 #key-keys-row {
-  height: auto;
-  align-items: flex-start;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  height: var(--keybar-row-height);
 }
 
 #key-bar.depth-1 #key-scroll {
-  flex-wrap: wrap;
-  overflow-x: visible;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 /* Modifier keys (Ctrl, Shift) — narrower than action keys to save horizontal space */

@@ -59,7 +59,9 @@ export function connect(profile: SSHProfile): void {
   _openWebSocket();
 }
 
-function _openWebSocket(): void {
+function _openWebSocket(options?: { silent?: boolean }): void {
+  const silent = options?.silent ?? false;
+
   if (appState.ws) {
     appState.ws.onclose = null;
     appState.ws.close();
@@ -71,7 +73,7 @@ function _openWebSocket(): void {
   const wsUrl = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
 
   _setStatus('connecting', `Connecting to ${baseUrl}…`);
-  _showConnectionStatus(`Connecting to ${baseUrl}…`);
+  if (!silent) _showConnectionStatus(`Connecting to ${baseUrl}…`);
 
   let openedThisAttempt = false;
 
@@ -105,7 +107,7 @@ function _openWebSocket(): void {
     if (appState.currentProfile.initialCommand) authMsg.initialCommand = appState.currentProfile.initialCommand;
     if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
     appState.ws?.send(JSON.stringify(authMsg));
-    _showConnectionStatus(`SSH → ${appState.currentProfile.username}@${appState.currentProfile.host}:${String(appState.currentProfile.port || 22)}…`);
+    if (!silent) _showConnectionStatus(`SSH → ${appState.currentProfile.username}@${appState.currentProfile.host}:${String(appState.currentProfile.port || 22)}…`);
   };
 
   appState.ws.onmessage = (event: MessageEvent) => {
@@ -123,14 +125,21 @@ function _openWebSocket(): void {
         if (appState.currentProfile) {
           _setStatus('connected', `${appState.currentProfile.username}@${appState.currentProfile.host}`);
         }
-        _showConnectionStatus('Connected');
-        _dismissConnectionStatus(1500);
+        if (silent) {
+          _dismissConnectionStatus();
+        } else {
+          _showConnectionStatus('Connected');
+          _dismissConnectionStatus(1500);
+        }
         // Sync terminal size to server
         appState.ws?.send(JSON.stringify({ type: 'resize', cols: appState.terminal?.cols ?? 80, rows: appState.terminal?.rows ?? 24 }));
-        // On every connect/reconnect: collapse nav chrome for continuous-feel (#36)
-        appState.hasConnected = true;
-        appState.tabBarVisible = false;
-        _applyTabBarVisibility();
+        // On first connect: collapse nav chrome and switch to terminal (#36).
+        // On reconnect: leave the tab bar as-is so user isn't interrupted.
+        if (!appState.hasConnected) {
+          appState.hasConnected = true;
+          appState.tabBarVisible = false;
+          _applyTabBarVisibility();
+        }
         _focusIME();
         break;
 
@@ -142,13 +151,13 @@ function _openWebSocket(): void {
         break;
 
       case 'error':
-        _showConnectionStatus(`Error: ${msg.message}`);
+        if (!silent) _showConnectionStatus(`Error: ${msg.message}`);
         break;
 
       case 'disconnected':
         appState.sshConnected = false;
         _setStatus('disconnected', 'Disconnected');
-        _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`);
+        if (!silent) _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`);
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
         scheduleReconnect();
         break;
@@ -205,20 +214,27 @@ function _openWebSocket(): void {
           _setStatus('disconnected', 'Auth failed — reload to reconnect');
           return; // stop the reconnect loop
         }
-        _showConnectionStatus('Connection lost.');
+        if (!silent) _showConnectionStatus('Connection lost.');
         scheduleReconnect();
       } else {
         _wsConsecFailures = 0;
         if (!event.wasClean) {
-          _showConnectionStatus('Connection lost.');
-          scheduleReconnect();
+          // If the page is visible, reconnect silently -- just toast,
+          // don't throw up the full overlay unless it fails (#204).
+          if (document.visibilityState === 'visible') {
+            _toast('Reconnecting…');
+            _openWebSocket({ silent: true });
+          } else {
+            _showConnectionStatus('Connection lost.');
+            scheduleReconnect();
+          }
         }
       }
     }
   };
 
   appState.ws.onerror = () => {
-    _showConnectionStatus('WebSocket error — check server URL in Settings.');
+    if (!silent) _showConnectionStatus('WebSocket error — check server URL in Settings.');
   };
 }
 
@@ -250,12 +266,18 @@ export function reconnect(): void {
   if (appState.currentProfile) _openWebSocket();
 }
 
-// Application-layer keepalive (#29): sends a ping every 25s so NAT/proxies don't
-// drop idle SSH sessions. The server ignores unknown message types gracefully.
+// Application-layer keepalive (#29, #204): sends a ping every 25s so NAT/proxies
+// don't drop idle SSH sessions. A dedicated Web Worker opens its own WS connection
+// and sends pings directly -- Worker threads are not frozen when Chrome backgrounds
+// the tab, unlike main-thread setInterval which gets throttled to ~60s.
+// The main thread also sends pings as a belt-and-suspenders fallback.
 const WS_PING_INTERVAL_MS = 25_000;
+let _keepAliveWorker: Worker | null = null;
 
 function startKeepAlive(): void {
   stopKeepAlive();
+
+  // Main-thread keepalive (throttled in background, but works when visible)
   appState.keepAliveTimer = setInterval(() => {
     if (appState.ws?.readyState === WebSocket.OPEN) {
       appState.ws.send(JSON.stringify({ type: 'ping' }));
@@ -263,9 +285,27 @@ function startKeepAlive(): void {
       stopKeepAlive();
     }
   }, WS_PING_INTERVAL_MS);
+
+  // Worker keepalive: opens a separate WS that pings even when tab is frozen
+  const wsUrl = appState.ws?.url;
+  if (!wsUrl) return;
+  try {
+    _keepAliveWorker = new Worker('ws-keepalive-worker.js');
+    _keepAliveWorker.onmessage = () => {
+      // Worker's WS disconnected -- not critical, main-thread ping is still running
+    };
+    _keepAliveWorker.postMessage({ command: 'start', url: wsUrl, interval: WS_PING_INTERVAL_MS });
+  } catch {
+    // Worker unavailable -- main-thread setInterval is already running
+  }
 }
 
 function stopKeepAlive(): void {
+  if (_keepAliveWorker) {
+    _keepAliveWorker.postMessage({ command: 'stop' });
+    _keepAliveWorker.terminate();
+    _keepAliveWorker = null;
+  }
   if (appState.keepAliveTimer) {
     clearInterval(appState.keepAliveTimer);
     appState.keepAliveTimer = null;
@@ -296,7 +336,9 @@ document.addEventListener('visibilitychange', () => {
     if (appState.sshConnected) void acquireWakeLock();
     if (appState.currentProfile && (!appState.ws || appState.ws.readyState !== WebSocket.OPEN)) {
       cancelReconnect();
-      _openWebSocket();
+      _dismissConnectionStatus();
+      _toast('Reconnecting…');
+      _openWebSocket({ silent: true });
     }
   } else {
     releaseWakeLock();

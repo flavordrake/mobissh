@@ -5,7 +5,7 @@
  * The WebSocket connection itself is always live (no caching).
  */
 
-const CACHE_NAME = 'mobissh-v19';
+const CACHE_NAME = 'mobissh-v20';
 
 // Files to cache for offline shell.
 // Relative paths so they resolve correctly when served at a subpath (e.g. /ssh/).
@@ -25,6 +25,7 @@ const SHELL_FILES = [
   './modules/terminal.js',
   './app.css',
   './recovery.js',
+  './ws-keepalive-worker.js',
   './manifest.json',
   './icon-192.svg',
   './icon-512.svg',
