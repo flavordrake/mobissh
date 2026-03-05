@@ -133,27 +133,47 @@ Areas examined and results:
 
 ## Setup
 
-Requires Node.js 18+.
+### Docker (recommended)
+
+The production deployment runs as a Docker container with built-in Tailscale networking.
 
 ```bash
 git clone https://github.com/flavordrake/mobissh.git
-cd mobissh/server && npm install
-npm start
+cd mobissh
+
+# Set your Tailscale auth key and hostname
+export TS_AUTHKEY="tskey-auth-..."
+export TS_HOSTNAME="mobissh"
+
+docker compose -f docker-compose.prod.yml up -d
+```
+
+The container joins your Tailscale network, serves HTTPS via `tailscale serve`, and restarts automatically. Access at `https://<TS_HOSTNAME>.<tailnet>/ssh/`.
+
+After code changes, rebuild and restart:
+```bash
+docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
+```
+
+### Local (development / testing)
+
+Requires Node.js 18+.
+
+```bash
+cd server && npm install && npm start
 # → Listening on http://0.0.0.0:8081
 ```
 
-Open `http://localhost:8081` in a browser, or the Codespace forwarded URL. The server has no dependencies outside `server/node_modules`. Frontend TypeScript is pre-compiled; the `public/` directory is served as static files.
+Open `http://localhost:8081` in a browser. The server has no dependencies outside `server/node_modules`. Frontend TypeScript is pre-compiled; the `public/` directory is served as static files.
 
-### Deployment options
+### Other deployment options
 
-**Direct (Tailscale Serve):** Zero-config HTTPS over your WireGuard mesh.
+**Direct (Tailscale Serve without Docker):**
 
 ```bash
 cd server && npm start                        # listens on 8081
 tailscale serve https / http://localhost:8081  # automatic TLS
 ```
-
-No `BASE_PATH` needed — MobiSSH serves at the root.
 
 **nginx reverse proxy (subpath):** Run MobiSSH at `/ssh/` alongside other services.
 
@@ -179,13 +199,13 @@ Three test layers, each serving a different purpose:
 
 | Layer | Runner | What it covers | How to run |
 |---|---|---|---|
-| Headless browser | Playwright | UI rendering, navigation, vault, forms, settings | `npm test` |
+| Headless browser | Playwright | UI rendering, navigation, vault, forms, settings | `scripts/test-headless.sh` |
 | Android emulator (Appium) | Playwright + Appium + UiAutomator2 | Touch gestures, real Chrome, PWA install | `scripts/run-appium-tests.sh` |
 | Manual device | Human | iOS, biometric, Bluetooth keyboard, real-world latency | On-device |
 
 Headless tests run in CI and locally. Appium tests require an Android emulator (`MobiSSH_Pixel7` AVD) and record per-test screen video to `test-history/appium/`.
 
-Pre-commit validation: `npx tsc --noEmit && npx eslint src/ public/ && npm test`.
+Fast gate (pre-commit): `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`.
 
 ### Bot delegation
 
@@ -197,4 +217,10 @@ Issues labeled `bot` are worked by the Claude Code GitHub integration. The cycle
 4. Failed attempts get `divergence` label; `/delegate` can re-delegate with corrections
 
 Process details are in `.claude/process.md`. The authoritative delegation and integration logic lives in `.claude/skills/delegate/SKILL.md` and `.claude/skills/integrate/SKILL.md`.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
