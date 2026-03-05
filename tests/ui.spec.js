@@ -178,7 +178,7 @@ test.describe('UI chrome (#110 Phase 8)', () => {
     expect(text).toContain('wss://');
   });
 
-  test('tab bar returns to terminal and auto-hides after connection', async ({ page, mockSshServer }) => {
+  test('tab bar stays visible when switching panels after connection', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
     // Show tab bar and switch to settings
@@ -193,8 +193,8 @@ test.describe('UI chrome (#110 Phase 8)', () => {
     // Terminal panel should be active
     await expect(page.locator('#panel-terminal')).toHaveClass(/active/);
 
-    // Tab bar should auto-hide (hasConnected is true)
-    await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
+    // Tab bar stays visible when switching panels (only first connect hides it)
+    await expect(page.locator('#tabBar')).not.toHaveClass(/hidden/);
   });
 
 });
