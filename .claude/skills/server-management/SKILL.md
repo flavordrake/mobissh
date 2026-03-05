@@ -1,109 +1,77 @@
 ---
 name: server-management
-description: This skill should be used when the user asks to "start the server", "restart the server", "check server status", "is the server running", "server health", "server version", or when the agent needs to ensure the dev server is running before testing. Use proactively before any manual or emulator testing, before asking the user to verify something in the browser, and before any curl/fetch against localhost. Also use when the user reports stale behavior or says "it's not showing my changes".
-version: 0.1.0
+description: This skill should be used when the user asks to "start the server", "restart the server", "check server status", "is the server running", "server health", "server version", "rebuild container", or when the agent needs to ensure the server is running before testing. Use proactively before any manual or emulator testing, before asking the user to verify something in the browser. Also use when the user reports stale behavior or says "it's not showing my changes".
+version: 0.2.0
 ---
 
 # Server Management
 
-MobiSSH caches the git hash at startup. A running server will serve stale code until restarted. This is the #1 cause of "my changes aren't showing" confusion.
+MobiSSH runs as a Docker container in production. Code changes require a container rebuild.
 
-## The Rule
+## Production: Docker container (`mobissh-prod`)
 
-Before ANY of these actions, run `scripts/server-ctl.sh ensure`:
-- Asking the user to test in their browser
-- Running emulator tests (`run-emulator-tests.sh` does this automatically)
-- Curling localhost to verify behavior
-- Checking production via the Tailscale endpoint
+The production server runs via `docker-compose.prod.yml` with built-in Tailscale.
+The container copies `public/` and `server/` at build time -- it does NOT hot-reload.
 
-`ensure` is idempotent. If the server is already healthy and at HEAD, it's a no-op. If it's stale or down, it restarts automatically.
+### Commands
 
-## Commands
+```bash
+# Rebuild and deploy (after code changes)
+docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
+
+# Check status
+docker ps --filter name=mobissh-prod
+
+# View logs
+docker logs mobissh-prod --tail 50
+
+# Verify code is current
+docker exec mobissh-prod grep '<marker>' /app/public/app.css
+
+# Shell into container
+docker exec -it mobissh-prod sh
+```
+
+### "My changes aren't showing"
+
+1. Did you run `npx tsc` to compile TypeScript? (`tsc --noEmit` only type-checks)
+2. Did you rebuild the container? (`docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`)
+3. Verify: `docker exec mobissh-prod grep '<your change>' /app/public/modules/<file>.js`
+
+### TypeScript workflow for container
+
+1. Edit `src/modules/*.ts`
+2. Run `npx tsc` (NOT `--noEmit`)
+3. Rebuild container: `docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`
+4. Verify: `docker exec mobissh-prod grep '<marker>' /app/public/modules/<file>.js`
+
+## Local server (headless tests only)
+
+`scripts/server-ctl.sh` manages a local Node.js process on port 8081 for headless Playwright tests.
+This is NOT used for user-facing testing.
 
 ```bash
 scripts/server-ctl.sh ensure    # start or restart until healthy at HEAD
 scripts/server-ctl.sh status    # health check + version gate
-scripts/server-ctl.sh start     # start if not running, restart if stale
+scripts/server-ctl.sh start     # start if not running
 scripts/server-ctl.sh stop      # stop server
 scripts/server-ctl.sh restart   # force restart
 ```
 
-Or via npm:
-```bash
-npm run server:ensure
-npm run server:status
-npm run server -- restart
-```
+`scripts/test-headless.sh` handles server lifecycle automatically via Playwright's `webServer` config.
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | 8081 | Server listen port |
-| `BASE_PATH` | (none) | URL prefix (e.g. `/ssh` for nginx proxy) |
-| `HEALTH_TIMEOUT` | 10 | Seconds to wait for health after start |
+| `TS_AUTHKEY` | (none) | Tailscale auth key for container |
+| `TS_HOSTNAME` | mobissh | Tailscale hostname |
+| `TS_SERVE` | 1 | Enable tailscale serve (skips auth in container) |
 
-## How It Works
+## Test sshd container
 
-1. **Health check**: `GET http://localhost:$PORT/` must return HTTP 200
-2. **Version gate**: Response must contain `<meta name="app-version" content="...:$GIT_HASH">` where `$GIT_HASH` matches `git rev-parse --short HEAD`
-3. **Auto-restart**: If healthy but stale, stops the old process and starts a new one
-4. **PID tracking**: Writes PID to `/tmp/mobissh-server-$PORT.pid`, falls back to `lsof` if pidfile is stale
-5. **Logging**: Server stdout/stderr goes to `/tmp/mobissh-server-$PORT.log`
-
-## Version Mismatch Scenarios
-
-The server captures `git rev-parse --short HEAD` at startup and injects it into every HTML response as `<meta name="app-version">`. This means:
-
-- **New commit but no restart**: Server serves old hash. `status` shows `STALE`. `ensure` restarts.
-- **Amended commit**: Hash changes even though "same" commit. `ensure` catches it.
-- **Detached HEAD / branch switch**: New hash. `ensure` catches it.
-- **Uncommitted changes**: Hash stays the same (it's HEAD, not working tree). The script doesn't detect uncommitted changes -- only committed code.
-
-## Integration with Test Runners
-
-`scripts/run-emulator-tests.sh` calls `server-ctl.sh ensure` as its first step. This guarantees emulator tests always run against the latest committed code.
-
-For headless Playwright tests, the `playwright.config.js` `webServer` option handles server lifecycle independently (Playwright starts/stops its own process per run). The two don't conflict because they use different ports.
-
-## Production Endpoint
-
-The production server runs behind nginx at `https://raserver.tailbe5094.ts.net/ssh/`. To verify it:
-
+A separate Docker Compose file (`docker-compose.test.yml`) runs an sshd container for testing:
 ```bash
-curl -sf https://raserver.tailbe5094.ts.net/ssh/ | grep -oP 'app-version.*?content="[^"]*"'
+docker compose -f docker-compose.test.yml up -d   # start test sshd on port 2222
 ```
-
-If production is stale, the server process needs restarting on the Tailscale host. `server-ctl.sh` only manages the local dev server.
-
-## TypeScript Compilation and Server Freshness
-
-The server reads files from `public/` on each request (`fs.readFile`). TypeScript source in `src/` must be compiled with `npx tsc` to produce output in `public/modules/`. The server does NOT watch for file changes.
-
-**Critical workflow for uncommitted TypeScript changes:**
-
-1. Edit `src/modules/*.ts`
-2. Run `npx tsc` (NOT `npx tsc --noEmit` -- that only type-checks without producing output)
-3. Run `scripts/server-ctl.sh restart` to guarantee the server re-reads files from disk
-4. Verify: `curl -s http://localhost:8081/modules/<file>.js | grep '<your change>'`
-
-**`ensure` does NOT detect uncommitted changes**: It only checks the git hash in the HTML meta tag vs `git rev-parse --short HEAD`. If you compile TypeScript without committing, the hash doesn't change, so `ensure` sees the server as "healthy at HEAD" even though the JS files on disk are newer. **Use `restart` (not `ensure`) after compiling uncommitted TypeScript changes.**
-
-## BASE_PATH Gotcha
-
-When `BASE_PATH=/ssh`, the server injects path info into HTML and manifests but does NOT strip the prefix from URLs. Static files are served at root:
-
-- `http://localhost:8081/modules/ime.js` -- correct (serves `public/modules/ime.js`)
-- `http://localhost:8081/ssh/modules/ime.js` -- 404 (looks for `public/ssh/modules/ime.js`)
-
-When curling to verify file content, always use the root path (no BASE_PATH prefix). The browser loads modules via relative paths from the HTML (`./modules/ime.js`), which resolve correctly to the root.
-
-## Troubleshooting
-
-**"Server failed to become healthy within 10s"**: Check `/tmp/mobissh-server-$PORT.log`. Common causes: port already in use by another process, missing `node_modules/` (run `cd server && npm install`), syntax error in server code.
-
-**PID exists but server not healthy**: The process started but is crashing or hanging. Check the log file. Kill it manually with `scripts/server-ctl.sh stop` and investigate.
-
-**Port conflict**: Another process holds the port. Find it with `lsof -ti tcp:8081` and decide whether to kill it or use a different port.
-
-**"My changes aren't showing" after TypeScript edit**: Did you run `npx tsc` (without `--noEmit`)? Did you run `scripts/server-ctl.sh restart`? Verify with `curl -s http://localhost:8081/modules/<file>.js | grep '<marker>'`. The most common cause is running `tsc --noEmit` (type-check only) instead of `tsc` (compile).

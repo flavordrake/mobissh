@@ -573,11 +573,14 @@ html, body {
 /* At depth-1, single scrollable row -- no wrapping */
 #key-bar.depth-1 #key-keys-row {
   height: var(--keybar-row-height);
+  overflow: hidden;
+  min-width: 0;
 }
 
 #key-bar.depth-1 #key-scroll {
   flex-wrap: nowrap;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   min-width: 0;
 }
 
@@ -1626,15 +1629,19 @@ hr {
 }
 
 .files-entry-size {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
   flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
 }
 
 .files-entry-date {
   font-size: 11px;
   color: var(--text-dim);
   flex-shrink: 0;
+  min-width: 48px;
+  text-align: right;
 }
 
 .files-loading,

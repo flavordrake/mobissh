@@ -18,7 +18,7 @@ Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-
   - `manifest.json`, `icon-*.svg` -- PWA metadata
 
 ## Key Decisions
-- Single port 8081 for both static files and WS bridge; nginx proxies HTTPS on Tailscale endpoint
+- Single port 8081 for both static files and WS bridge
 - `Cache-Control: no-store` on all static responses; SW is network-first (no stale cache)
 - WS URL: same-origin detection via `getDefaultWsUrl()` -- works in Codespaces (wss://) and local (ws://)
 - Credential vault: AES-GCM, 256-bit key stored in `PasswordCredential` (Chrome/Android biometric)
@@ -26,10 +26,12 @@ Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-
 - Profile upsert: match on host+port+username, update in place (no duplicates)
 - IME input: hidden `#imeInput` textarea captures swipe/voice/keyboard; `ctrlActive` sticky modifier
 
-## Deployment Context
+## Deployment
+- **Production**: Docker container (`docker-compose.prod.yml`) with built-in Tailscale (`tailscale serve`)
+  - Rebuild: `docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`
+  - Container copies `public/` and `server/` at build time -- must rebuild after code changes
+- **Local server** (`scripts/server-ctl.sh`): headless Playwright tests only, NOT for user testing
 - Personal use over Tailscale (WireGuard mesh) -- bridge auth and SSRF handled at network layer
-- Start server: `scripts/server-ctl.sh start` (never raw `node server/index.js`)
-- Production container: #158 (docker-compose.prod.yml on port 8082, nginx routes to it)
 
 ## Backlog -- GitHub Issues
 All backlog items are filed as issues in this repo. Use `gh issue list` for current state.
@@ -49,7 +51,7 @@ Detailed rules live in `.claude/rules/` (modular, some path-scoped):
 - `testing.md` -- frozen baseline policy, test gates, emulator rules (scoped to `tests/`)
 - `scripts.md` -- script conventions, timestamps (scoped to `scripts/`)
 - `code-style.md` -- CSS over inline, no separators, build policy
-- `server.md` -- server-ctl.sh, cache-control, deployment
+- `server.md` -- Docker container deployment, server-ctl.sh (headless tests only)
 - `typescript.md` -- strict mode, compilation, imports (scoped to `src/`)
 - `agents.md` -- delegation, integration, worktree isolation
 - `workflow.md` -- issue workflow, PR checklist, inferred constraints

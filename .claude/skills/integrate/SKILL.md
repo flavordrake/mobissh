@@ -116,7 +116,6 @@ Do NOT use the built-in `general-purpose` agent for this
 Between merges, run headless Playwright to catch regressions quickly:
 
 ```bash
-scripts/server-ctl.sh ensure
 scripts/test-headless.sh
 ```
 
@@ -127,12 +126,13 @@ happens once after all merges complete (Step 7).
 emulator or real-device validation is mandatory. Do NOT merge with headless-only results
 unless the full Appium run in Step 7 will cover it.
 
-### Production server awareness
-The user often tests on the live production server while integration happens locally.
+### Production container awareness
+The user tests on the production Docker container (`mobissh-prod`), not a local server.
+After all merges complete, rebuild and restart the container:
 ```bash
-scripts/server-ctl.sh status
+docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
 ```
-If stale, warn before merging -- the server will need a restart.
+If the container is stale, the user sees old behavior and files false bugs.
 
 ## Step 5: Merge or reject
 
@@ -201,10 +201,14 @@ scripts/gh-ops.sh labels <N> --rm bot --add divergence
 After each successful merge:
 ```bash
 git checkout main && git pull
-scripts/server-ctl.sh restart
 scripts/test-headless.sh
 ```
-Report: "Merged PR #N (<title>). Headless tests: X pass. Server restarted at <hash>."
+Report: "Merged PR #N (<title>). Headless tests: X pass."
+
+After ALL merges complete, rebuild the production container:
+```bash
+docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
+```
 
 This is a regression gate between merges. The full acceptance run is Step 7.
 
