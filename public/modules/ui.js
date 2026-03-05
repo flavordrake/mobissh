@@ -124,6 +124,10 @@ export function initSessionMenu() {
         backdrop.classList.toggle('hidden', wasHidden);
     });
     function closeMenu() { menu.classList.add('hidden'); backdrop.classList.add('hidden'); }
+    // Hamburger ≡ button — toggles tab bar as fallback for non-swipe users.
+    document.getElementById('handleMenuBtn').addEventListener('click', () => {
+        toggleTabBar();
+    });
     // Swipe up on handle → show tab bar; swipe down → hide tab bar (#149).
     // Replaces the hamburger ≡ button as primary gesture surface.
     const handle = document.getElementById('key-bar-handle');
@@ -142,7 +146,7 @@ export function initSessionMenu() {
             return;
         _swipeTouchId = -1;
         const deltaY = _swipeStartY - touch.clientY;
-        if (deltaY > 30 && appState.keyBarDepth < 2) {
+        if (deltaY > 30 && appState.keyBarDepth < 3) {
             setKeyBarDepth((appState.keyBarDepth + 1));
         }
         else if (deltaY < -30 && appState.keyBarDepth > 0) {
@@ -462,9 +466,13 @@ function _initKeyRepeatCalibration() {
 }
 export function initKeyBar() {
     const stored = parseInt(localStorage.getItem('keyBarDepth') ?? '1', 10);
-    appState.keyBarDepth = (stored === 0 || stored === 2) ? stored : 1;
+    appState.keyBarDepth = (stored >= 0 && stored <= 3) ? stored : 1;
     appState.imeMode = localStorage.getItem('imeMode') === 'ime';
     _applyKeyBarVisibility();
+    if (appState.keyBarDepth === 3) {
+        appState.tabBarVisible = true;
+        _applyTabBarVisibility();
+    }
     _applyComposeModeUI();
     _applyKeyControlsDock();
     _initKeyRepeatCalibration();
@@ -477,13 +485,21 @@ function setKeyBarDepth(d) {
     appState.keyBarDepth = d;
     localStorage.setItem('keyBarDepth', String(d));
     _applyKeyBarVisibility();
+    // Depth 3 shows tab bar; anything less hides it (when on terminal panel).
+    const showTab = d === 3;
+    if (appState.tabBarVisible !== showTab) {
+        appState.tabBarVisible = showTab;
+        _applyTabBarVisibility();
+    }
     // ResizeObserver on #terminal handles fit() + resize message after layout settles.
 }
 function _applyKeyBarVisibility() {
     const bar = document.getElementById('key-bar');
-    bar.classList.remove('depth-0', 'depth-1', 'depth-2');
+    bar.classList.remove('depth-0', 'depth-1', 'depth-2', 'depth-3');
     bar.classList.add('depth-' + String(appState.keyBarDepth));
-    document.documentElement.style.setProperty('--keybar-height', String(_keybarRowPx * appState.keyBarDepth) + 'px');
+    // Depth 3 = two key rows + tab bar; key bar height same as depth 2.
+    const keyRows = Math.min(appState.keyBarDepth, 2);
+    document.documentElement.style.setProperty('--keybar-height', String(_keybarRowPx * keyRows) + 'px');
 }
 function _applyKeyControlsDock() {
     const dock = localStorage.getItem('keyControlsDock') ?? 'right';

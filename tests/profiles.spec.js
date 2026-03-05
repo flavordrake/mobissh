@@ -8,10 +8,14 @@
 
 const { test, expect, setupConnected } = require('./fixtures.js');
 
-// After setupConnected the tab bar is auto-hidden (#36). Show it via session menu (#149).
+// After setupConnected the tab bar is auto-hidden (#36). Show it so we can navigate.
 async function showTabBar(page) {
-  await page.locator('#sessionMenuBtn').click();
-  await page.locator('#sessionNavBarBtn').click();
+  // Use evaluate because the hamburger button is only in the terminal panel,
+  // and the test may not be on that panel when it needs tab bar access.
+  await page.evaluate(() => {
+    document.getElementById('tabBar')?.classList.remove('hidden');
+    document.documentElement.style.setProperty('--tab-height', '56px');
+  });
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 

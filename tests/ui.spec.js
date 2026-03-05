@@ -34,23 +34,19 @@ test.describe('UI chrome (#110 Phase 8)', () => {
     await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
   });
 
-  test('key bar visibility toggles via chevron button', async ({ page, mockSshServer }) => {
+  test('hamburger button toggles tab bar visibility', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // Key bar should be visible by default
-    await expect(page.locator('#key-bar')).not.toHaveClass(/hidden/);
+    // After connection, tab bar is auto-hidden
+    await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
 
-    // Click chevron to hide
-    await page.locator('#handleChevron').click();
-    await expect(page.locator('#key-bar')).toHaveClass(/hidden/);
+    // Click hamburger to show tab bar
+    await page.locator('#handleMenuBtn').click();
+    await expect(page.locator('#tabBar')).not.toHaveClass(/hidden/);
 
-    // Persists to localStorage
-    const stored = await page.evaluate(() => localStorage.getItem('keyBarVisible'));
-    expect(stored).toBe('false');
-
-    // Click chevron to show again
-    await page.locator('#handleChevron').click();
-    await expect(page.locator('#key-bar')).not.toHaveClass(/hidden/);
+    // Click again to hide
+    await page.locator('#handleMenuBtn').click();
+    await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
   });
 
   test('compose/direct mode toggle switches and persists (#146)', async ({ page, mockSshServer }) => {

@@ -78,7 +78,7 @@ export interface AppState {
   vaultIdleTimer: ReturnType<typeof setTimeout> | null;
 
   // UI visibility
-  keyBarDepth: 0 | 1 | 2;
+  keyBarDepth: 0 | 1 | 2 | 3;
   imeMode: boolean;
   tabBarVisible: boolean;
   hasConnected: boolean;

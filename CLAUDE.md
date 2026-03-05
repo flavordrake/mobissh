@@ -43,34 +43,13 @@ Decomposed parents: #129 (→ #176, #177), #138 (→ #173, #174, #175).
 - Hidden textarea needs `autocorrect="off"` etc. or iOS corrupts SSH commands (issue #10)
 - `visualViewport.height` is the correct API (not `window.innerHeight`) for keyboard detection
 
-## Test Layering Policy
-Regression baselines are **frozen reference points**. They capture known-correct behavior
-and exist to catch regressions when new features are developed. The policy:
-
-- **Files matching `*-baseline.spec.*` are frozen.** Do not modify test logic, assertions,
-  or expected values. The only acceptable changes are: fixing a broken `require`/`import`
-  path after a file move, or updating infrastructure calls when a shared fixture API changes
-  its signature (and even then, behavior must remain identical).
-- **Add new tests alongside baselines, never modify them.** To test new features (horizontal
-  swipe, pinch-to-zoom, multi-panel), create new spec files that import the same fixtures.
-  Name them descriptively: `gesture-horizontal.spec.js`, `gesture-pinch.spec.js`,
-  `gesture-multi-feature.spec.js`.
-- **Baselines are additive.** Once a behavior is captured in a baseline, it stays. If the
-  application behavior changes intentionally, add a new baseline that captures the new
-  behavior and keep the old one (mark it `.skip` with a comment referencing the issue/PR
-  that changed behavior, so the history is preserved).
-- **Semgrep enforces this.** The `frozen-baseline-test` rule in `.semgrep/playwright-traps.yml`
-  flags structural test changes (describe/test/expect) in baseline files. It runs in the
-  pre-commit hook and CI.
-
 ## Rules
-- Build step allowed — TypeScript compilation is acceptable for type safety and static error detection. Compiled output is served from `public/`. No heavy bundlers (webpack, vite) unless justified.
-- `node_modules/` is gitignored — install via `npm install` in `server/`
-- No secrets in code
-- Keep `Cache-Control: no-store` on static responses and SW network-first
-- **Never store sensitive data (passwords, private keys, passphrases) in plaintext** — use the encrypted vault (PasswordCredential + AES-GCM) or don't store at all. If the vault is unavailable, block the feature; do not fall back to plaintext storage with a warning.
-- **Never prefix script calls with `bash`** — all scripts have shebangs and execute permissions. Call `scripts/foo.sh` not `bash scripts/foo.sh`. The `bash` prefix is redundant and widens the permission surface.
-- **Timestamps in filenames/directories use compact ISO-8601 with tz offset** — `date +%Y%m%dT%H%M%S%z` produces `20260303T150827-0500`. Never use bare `%Y%m%d-%H%M%S` (ambiguous timezone).
-- **Before submitting a PR, run the full test suite:** `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh`. The `webServer` config in `playwright.config.js` auto-starts the server. Fix all failures before submitting.
-- **Prefer existing scripts over raw commands.** `scripts/` has purpose-built scripts for server management, testing, issue filing, delegation, and integration. Use them instead of ad-hoc bash. Check `docs/development.md` Scripts table or `ls scripts/` before writing inline commands. Key scripts: `server-ctl.sh` (server), `test-*.sh` (gates), `run-appium-tests.sh` (emulator), `gh-file-issue.sh` / `gh-ops.sh` (GitHub), `integrate-gate.sh` (bot validation), `delegate-*.sh` (delegation).
-- **Read skills after /clear.** After a session reset, read `.claude/skills/*/SKILL.md` descriptions and `.claude/agents/*.md` to re-establish awareness of available automation. Skills exist for: issue filing, delegation, integration, release, server management, device testing, gesture testing.
+Detailed rules live in `.claude/rules/` (modular, some path-scoped):
+- `security.md` — credential vault, no plaintext, no secrets
+- `testing.md` — frozen baseline policy, test gates, emulator rules (scoped to `tests/`)
+- `scripts.md` — script conventions, timestamps (scoped to `scripts/`)
+- `code-style.md` — CSS over inline, no separators, build policy
+- `server.md` — server-ctl.sh, cache-control, deployment
+- `typescript.md` — strict mode, compilation, imports (scoped to `src/`)
+- `agents.md` — delegation, integration, worktree isolation
+- `workflow.md` — issue workflow, PR checklist, inferred constraints

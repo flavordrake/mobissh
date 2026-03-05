@@ -347,6 +347,20 @@ html, body {
 .handle-copy-btn.hidden { display: none; }
 .handle-copy-btn:active { opacity: 0.7; }
 
+/* Hamburger menu button — toggles tab bar */
+.handle-menu-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  cursor: pointer;
+  height: 100%;
+}
+.handle-menu-btn:active { color: var(--accent); }
+
 /* Paste button in handle bar — appears when clipboard has content (#55) */
 .handle-paste-btn {
   background: var(--bg-card);
@@ -409,7 +423,8 @@ html, body {
 
 #key-bar.depth-0 { height: 0; }
 #key-bar.depth-1 { height: calc(var(--keybar-row-height) + env(safe-area-inset-bottom)); }
-#key-bar.depth-2 { height: calc(2 * var(--keybar-row-height) + env(safe-area-inset-bottom)); }
+#key-bar.depth-2,
+#key-bar.depth-3 { height: calc(2 * var(--keybar-row-height) + env(safe-area-inset-bottom)); }
 
 /* Editing row (depth 1): scrollable editing keys + right-anchored compose toggle */
 #key-keys-row {
