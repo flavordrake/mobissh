@@ -11,7 +11,10 @@
 
 set -euo pipefail
 
-DATA="/tmp/delegate-classified.json"
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+DATA="${MOBISSH_TMPDIR}/delegate-classified.json"
 BUCKETS="delegate,already-attempted,decompose"
 
 while [[ $# -gt 0 ]]; do

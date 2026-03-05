@@ -14,7 +14,10 @@
 
 set -euo pipefail
 
-RUN_LOG="/tmp/run-appium-tests.log"
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+RUN_LOG="${MOBISSH_LOGDIR}/run-appium-tests.log"
 exec > >(tee -a "$RUN_LOG") 2>&1
 echo "$(date '+%Y-%m-%d %H:%M:%S') run-appium-tests.sh started"
 
@@ -37,8 +40,8 @@ RESULTS_DIR="test-results-appium"
 # delete a recording in progress. Move the finalized file in afterward.
 # Segmented: adb emu screenrecord caps at 180s, so we restart every 170s and
 # stitch segments with ffmpeg at the end.
-RECORDING_DIR="/tmp/mobissh-appium-segments"
-RECORDING_TMP="/tmp/mobissh-appium-recording.webm"
+RECORDING_DIR="${MOBISSH_TMPDIR}/mobissh-appium-segments"
+RECORDING_TMP="${MOBISSH_TMPDIR}/mobissh-appium-recording.webm"
 
 log() { echo "> $*"; }
 ok()  { echo "+ $*"; }

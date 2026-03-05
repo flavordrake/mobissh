@@ -22,7 +22,10 @@
 
 set -euo pipefail
 
-DATA="/tmp/delegate-data.json"
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+DATA="${MOBISSH_TMPDIR}/delegate-data.json"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --data) DATA="$2"; shift 2 ;;
@@ -35,7 +38,7 @@ if [ ! -f "$DATA" ]; then
   exit 1
 fi
 
-python3 << 'CLASSIFY'
+python3 - "$DATA" << 'CLASSIFY'
 import json, re, sys
 
 HUMAN_KEYWORDS = re.compile(

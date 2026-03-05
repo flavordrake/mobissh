@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+
 if [ "$(id -u)" -eq 0 ]; then
   echo "! Do not run this script as root or with sudo."
   echo "  It calls sudo internally for the few commands that need it."
@@ -13,7 +17,7 @@ if [ "$(id -u)" -eq 0 ]; then
   exit 1
 fi
 
-LOGFILE="/tmp/setup-appium.log"
+LOGFILE="${MOBISSH_LOGDIR}/setup-appium.log"
 # Ensure the log file is writable by the current user.
 # Previous sudo runs may have left it owned by root.
 if [ -f "$LOGFILE" ] && [ ! -w "$LOGFILE" ]; then

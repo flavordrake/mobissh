@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 
 # Get all bot branches

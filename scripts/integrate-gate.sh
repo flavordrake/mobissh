@@ -21,6 +21,10 @@
 
 set -euo pipefail
 
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+
 BRANCH="${1:-}"
 CLOSE_ON_FAIL=false
 PR_NUMBER=""

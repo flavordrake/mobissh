@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 
@@ -77,7 +81,7 @@ fi
 # Called once after Chrome starts, before Playwright tests run.
 dismiss_chrome_modals() {
   local dump_remote="/sdcard/mobissh_ui_dump.xml"
-  local dump_local="/tmp/mobissh_ui_dump.xml"
+  local dump_local="${MOBISSH_TMPDIR}/mobissh_ui_dump.xml"
   local dismiss_labels=("No thanks" "Skip" "Got it" "Dismiss" "Not now" "No Thanks")
 
   adb shell "uiautomator dump $dump_remote" 2>/dev/null || return 0

@@ -10,7 +10,10 @@
 
 set -euo pipefail
 
-SETUP_LOG="/tmp/setup-avd.log"
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+SETUP_LOG="${MOBISSH_LOGDIR}/setup-avd.log"
 exec > >(tee -a "$SETUP_LOG") 2>&1
 echo "$(date '+%Y-%m-%d %H:%M:%S') setup-avd.sh started"
 

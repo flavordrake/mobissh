@@ -22,8 +22,11 @@ PORT="${PORT:-8081}"
 BASE_PATH="${BASE_PATH:-}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-10}"
 SERVER_CMD="node server/index.js"
-LOGFILE="/tmp/mobissh-server-${PORT}.log"
-PIDFILE="/tmp/mobissh-server-${PORT}.pid"
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+LOGFILE="${MOBISSH_LOGDIR}/mobissh-server-${PORT}.log"
+PIDFILE="${MOBISSH_TMPDIR}/mobissh-server-${PORT}.pid"
 
 # cd to project root (parent of scripts/)
 cd "$(dirname "$0")/.."

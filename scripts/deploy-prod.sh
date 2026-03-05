@@ -11,7 +11,10 @@
 
 set -euo pipefail
 
-LOGFILE="/tmp/deploy-prod.log"
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+LOGFILE="${MOBISSH_LOGDIR}/deploy-prod.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
 TAG="${1:-latest}"

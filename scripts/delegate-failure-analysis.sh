@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+
 ISSUE_NUM="${1:-}"
 DATA_FILE=""
 shift || true

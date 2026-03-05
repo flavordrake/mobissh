@@ -13,7 +13,10 @@
 
 set -euo pipefail
 
-OUT="/tmp/delegate-data.json"
+MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
+OUT="${MOBISSH_TMPDIR}/delegate-data.json"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --out) OUT="$2"; shift 2 ;;
@@ -29,8 +32,8 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 log "Fetching open issues..."
 gh issue list --state open --limit 100 \
   --json number,title,body,labels,comments \
-  > /tmp/delegate-issues-raw.json
-ISSUE_COUNT=$(jq length /tmp/delegate-issues-raw.json)
+  > "${MOBISSH_TMPDIR}/delegate-issues-raw.json"
+ISSUE_COUNT=$(jq length "${MOBISSH_TMPDIR}/delegate-issues-raw.json")
 log "Found ${ISSUE_COUNT} open issues"
 
 # Step 2: Get all bot branches
@@ -40,9 +43,9 @@ BOT_BRANCHES=$(gh api "repos/${REPO}/branches" --paginate --jq '.[].name' \
 
 if [ -z "$BOT_BRANCHES" ]; then
   log "No bot branches found"
-  echo "$BOT_BRANCHES" > /tmp/delegate-branches.txt
+  echo "$BOT_BRANCHES" > "${MOBISSH_TMPDIR}/delegate-branches.txt"
 else
-  echo "$BOT_BRANCHES" > /tmp/delegate-branches.txt
+  echo "$BOT_BRANCHES" > "${MOBISSH_TMPDIR}/delegate-branches.txt"
   log "Found $(echo "$BOT_BRANCHES" | wc -l) bot branches"
 fi
 
@@ -75,7 +78,7 @@ log "Assembling output..."
 python3 -c "
 import json, sys
 
-with open('/tmp/delegate-issues-raw.json') as f:
+with open('${MOBISSH_TMPDIR}/delegate-issues-raw.json') as f:
     issues = json.load(f)
 
 # Parse branch data from env-provided JSON lines
