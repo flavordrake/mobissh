@@ -310,16 +310,28 @@ Before posting, verify each comment against:
 
 ## Phase 5: Decompose large issues
 
+Decomposition is the inverse of merging. Use it when an issue is too large or vague
+for a single bot pass. The `composite` label marks the parent; sub-issues get `bot`.
+
+**Decompose vs Merge — when to use which:**
+- **Decompose** when one issue is too big → break into 2-4 independently shippable sub-issues
+- **Merge** when multiple small issues overlap → combine into one delegation on a primary issue
+- Never both: if you're merging small issues AND the result is too big, reconsider scope
+
+### Analysis
+
 For issues classified as `decompose`:
 
 1. Read the full issue body
 2. Read relevant source files to understand current architecture
 3. Apply gap analysis findings from Phase 3
-4. Break into 2-4 sub-issues, each:
+4. Identify natural module boundaries — sub-issues should align with files/concerns,
+   not be arbitrary line-count splits
+5. Break into 2-4 sub-issues, each:
    - Independently mergeable (no ordering dependency when possible)
    - Scoped to one module or one concern
-   - Has clear acceptance criteria
-5. Smallest/safest sub-issue first (proves the pattern)
+   - Has clear acceptance criteria that don't depend on other sub-issues
+6. Smallest/safest sub-issue first (proves the pattern)
 
 ### Filing sub-issues
 
@@ -327,11 +339,32 @@ For each sub-issue, file via `gh issue create` with the full `@claude` delegatio
 comment embedded in the issue body (not as a separate comment). This ensures the bot
 picks up the task immediately.
 
-After filing all sub-issues, comment on the parent:
-```
-Decomposed into: #A, #B, #C. Each is independently delegatable.
-This parent issue tracks the overall feature.
-```
+Title format: `feat: <parent title> — <sub-concern>` (or `fix:`, `chore:` as appropriate).
+Copy the parent's type and domain labels to each sub-issue. Add `bot` label.
+
+### Updating the parent
+
+After filing all sub-issues:
+
+1. Apply `composite` label to the parent issue
+2. Comment on the parent listing all sub-issues:
+   ```
+   Decomposed into independently delegatable sub-issues:
+   - #A — <one-line description>
+   - #B — <one-line description>
+   - #C — <one-line description>
+
+   Each sub-issue ships independently. This parent tracks overall completion.
+   ```
+3. Do NOT close the parent — it stays open as the tracking issue
+4. Do NOT apply `bot` to the parent — only sub-issues get delegated
+
+### Ordering constraints
+
+If sub-issues have dependencies (A must merge before B):
+- Apply `blocked` label to B with a comment: "Blocked by #A — needs A's changes on main first"
+- Only delegate A immediately; B gets delegated after A merges
+- Note the ordering in the parent's decomposition comment
 
 ## Phase 6: Present and confirm
 
@@ -371,11 +404,17 @@ Run approved actions as Task agents where possible:
   scripts/gh-ops.sh labels N --add spike
   scripts/gh-ops.sh labels N --add conflict --add blocked
   ```
-- Create sub-issues: write body to `/tmp/sub-issue-N.md`, then:
-  ```bash
-  scripts/gh-file-issue.sh --title "..." --label bot --body-file /tmp/sub-issue-N.md
-  ```
-- Comment on parent issue linking sub-issues, apply `composite` label
+- Decompose (create sub-issues + update parent):
+  1. For each sub-issue, write body to `/tmp/sub-issue-N.md`, then:
+     ```bash
+     scripts/gh-file-issue.sh --title "feat: <parent> — <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-N.md
+     ```
+  2. Apply `composite` to parent, comment linking sub-issues:
+     ```bash
+     scripts/gh-ops.sh labels PARENT --add composite
+     scripts/gh-ops.sh comment PARENT --body-file /tmp/decompose-comment.md
+     ```
+  3. Do NOT close or apply `bot` to the parent
 - Clean up branches: `scripts/integrate-cleanup.sh --issue <N>`
 - Close superseded issues:
   ```bash
@@ -393,12 +432,16 @@ Run approved actions as Task agents where possible:
 Report:
 ```
 Delegated: #X, #Y, #Z (labels: bot +device +spike as applicable)
-Merged: #A, #B, #C → #P (combined delegation on #P)
-Decomposed: #D → #D1, #D2, #D3 (parent labeled composite)
+Merged: #A, #B, #C → #P (combined delegation on #P, secondaries closed)
+Decomposed: #D → #D1, #D2, #D3 (parent labeled composite, sub-issues labeled bot)
+  #D1 — <description> (delegated)
+  #D2 — <description> (delegated)
+  #D3 — <description> (blocked by #D2)
 Cleaned up: N branches for issues #P, #Q
 Closed: #C1 (superseded by #C2)
 Skipped (human-only): #H1, #H2
 Skipped (blocked): #B1 (labeled blocked, comment added)
+Skipped (icebox): #I1
 ```
 
 ## Encoded Lessons
