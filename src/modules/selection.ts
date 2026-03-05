@@ -18,6 +18,7 @@
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { toast, focusIME } from './ui.js';
+import { getKeyboardVisible } from './terminal.js';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ let _anchorCol = 0;
 let _anchorRow = 0;
 /** Tracks selection granularity: 'unit' = URL/path, 'word' = single word. */
 let _selectionLevel: 'unit' | 'word' = 'unit';
+/** Whether the keyboard was visible when the current selection started. */
+let _keyboardWasVisible = false;
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_THRESHOLD = 10; // px
@@ -187,7 +190,7 @@ export function initSelection(): void {
       appState.terminal?.clearSelection();
       copyBtn.classList.add('hidden');
       pasteBtn.classList.add('hidden');
-      setTimeout(focusIME, 50);
+      if (_keyboardWasVisible) setTimeout(focusIME, 50);
     }
   });
 
@@ -201,10 +204,9 @@ export function initSelection(): void {
 
   function _onLongPress(): void {
     _selectionActive = true;
+    _keyboardWasVisible = getKeyboardVisible();
     try { navigator.vibrate(30); } catch { /* vibrate not available */ }
     _showPasteIfClipboard();
-    // Keep keyboard visible — dismissing it loses cursor position and forces
-    // the user to long-press again after the layout reflow.
     chip.classList.remove('hidden');
     // Push history entry so Android back gesture dismisses the chip
     history.pushState({ selectionChip: true }, '');
@@ -226,7 +228,9 @@ export function initSelection(): void {
     if (history.state != null && (history.state as Record<string, unknown>).selectionChip === true) {
       history.back();
     }
-    setTimeout(focusIME, 50);
+    // Only restore keyboard focus if it was visible when selection started.
+    // If the user had dismissed the keyboard before long-pressing, don't re-show it.
+    if (_keyboardWasVisible) setTimeout(focusIME, 50);
   }
 
   // ── Phase 2: Direct terminal.select() for drag-to-select ───────────────
