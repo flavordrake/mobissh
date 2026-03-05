@@ -687,10 +687,12 @@ function _renderFilesList(path, entries) {
     const rows = sorted.map((e) => {
         const fullPath = path === '/' ? `/${e.name}` : `${path}/${e.name}`;
         const sizeStr = e.isDir ? '' : _formatSize(e.size);
+        const dateStr = _formatDate(e.mtime);
         return `<div class="files-entry" data-dir="${String(e.isDir)}" data-path="${escHtml(fullPath)}">
       <span class="files-entry-icon">${e.isDir ? 'D' : 'F'}</span>
       <span class="files-entry-name">${escHtml(e.name)}</span>
       ${sizeStr ? `<span class="files-entry-size">${escHtml(sizeStr)}</span>` : ''}
+      ${dateStr ? `<span class="files-entry-date">${escHtml(dateStr)}</span>` : ''}
     </div>`;
     }).join('');
     _renderFilesPanel(path, `<div class="files-list">${rows}</div>`);
@@ -711,6 +713,17 @@ function _formatSize(bytes) {
     if (bytes < 1024 * 1024)
         return `${String(Math.round(bytes / 1024))}K`;
     return `${String(Math.round(bytes / (1024 * 1024)))}M`;
+}
+function _formatDate(mtime) {
+    const ts = Number(mtime);
+    const d = isNaN(ts) ? new Date(mtime) : new Date(ts * 1000);
+    if (isNaN(d.getTime()))
+        return '';
+    const now = new Date();
+    if (d.getFullYear() === now.getFullYear()) {
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    return d.toISOString().slice(0, 10);
 }
 export function initFilesPanel() {
     setSftpHandler((msg) => {

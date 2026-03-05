@@ -1631,6 +1631,12 @@ hr {
   flex-shrink: 0;
 }
 
+.files-entry-date {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
 .files-loading,
 .files-empty,
 .files-error {
