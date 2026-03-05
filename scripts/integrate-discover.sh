@@ -22,6 +22,9 @@ MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
 MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
 mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 
+# Clean up stale worktrees left by agent processes
+git worktree prune 2>/dev/null || true
+
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 
 # Get all bot branches

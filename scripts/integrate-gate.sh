@@ -86,6 +86,8 @@ cleanup() {
       git stash pop 2>/dev/null || true
     fi
   fi
+  # Clean up stale worktrees left by agent processes
+  git worktree prune 2>/dev/null || true
 }
 trap cleanup EXIT
 
