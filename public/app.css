@@ -851,6 +851,36 @@ hr {
   margin-top: 8px;
 }
 
+#connectAdvanced {
+  margin-top: 4px;
+}
+
+#connectAdvanced summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.9em;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.compact-form-advanced {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.compact-form-advanced label {
+  margin: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.compact-form-advanced input {
+  margin: 0;
+}
+
 /* Advanced section */
 .advanced-section {
   border: 1px solid var(--border);
