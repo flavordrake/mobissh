@@ -348,19 +348,28 @@ html, body {
 .handle-copy-btn.hidden { display: none; }
 .handle-copy-btn:active { opacity: 0.7; }
 
-/* Hamburger menu button — toggles tab bar */
-.handle-menu-btn {
+/* Shared base for icon-only handle bar buttons */
+.handle-btn {
   background: none;
   border: none;
   color: var(--text-dim);
-  font-size: 18px;
   padding: 0 8px;
   flex-shrink: 0;
   touch-action: manipulation;
   cursor: pointer;
   height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
+/* Hamburger menu button — toggles tab bar */
+.handle-menu-btn { font-size: 18px; }
 .handle-menu-btn:active { color: var(--accent); }
+
+/* Compose/IME toggle in handle bar — always visible, compact icon */
+.handle-compose-btn.compose-active { color: var(--accent); }
+.handle-compose-btn:active { opacity: 0.7; }
 
 /* Paste button in handle bar — appears when clipboard has content (#55) */
 .handle-paste-btn {
@@ -1308,14 +1317,6 @@ hr {
   margin-bottom: 4px;
 }
 
-/* Key controls dock — left/right positioning of compose toggle (#149).
-   Default: controls on the right (DOM order).
-   html.key-dock-left: controls shift to the left side via flex order. */
-html.key-dock-left #composeModeBtn {
-  order: -1;
-  margin-left: 0;
-  margin-right: 4px;
-}
 
 /* Debug overlay */
 .debug-overlay {
