@@ -578,6 +578,7 @@ html, body {
 #key-bar.depth-1 #key-scroll {
   flex-wrap: nowrap;
   overflow-x: auto;
+  min-width: 0;
 }
 
 /* Modifier keys (Ctrl, Shift) — narrower than action keys to save horizontal space */

@@ -449,6 +449,10 @@ export function initTerminalActions(): void {
     keyDownM:  '\x1b[B',
     keyLeftM:  '\x1b[D',
     keyRightM: '\x1b[C',
+    keyHomeM:  '\x1b[H',
+    keyEndM:   '\x1b[F',
+    keyPgUpM:  '\x1b[5~',
+    keyPgDnM:  '\x1b[6~',
   };
 
   for (const [id, seq] of Object.entries(keys)) {
