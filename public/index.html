@@ -205,7 +205,12 @@
         <!-- Depth 1 row: editing keys + compose toggle (always visible when depth >= 1) -->
         <div id="key-keys-row">
           <div id="key-scroll">
-            <!-- Nav key subset shown inline at depth-1 (merged single-row); hidden at depth-2 -->
+            <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctl</button>
+            <button id="keyTab"   class="key-btn" title="Tab">↹</button>
+            <button id="keySlash" class="key-btn" title="/">/</button>
+            <button id="keyPipe"  class="key-btn" title="|">|</button>
+            <button id="keyDash"  class="key-btn" title="-">-</button>
+            <!-- Nav key subset shown inline at depth-1; hidden at depth-2 -->
             <div class="key-nav-subset">
               <button id="keyEscM"   class="key-btn" title="Escape">Esc</button>
               <button id="keyUpM"    class="key-btn" title="Up">▲</button>
@@ -213,11 +218,6 @@
               <button id="keyLeftM"  class="key-btn" title="Left">◀</button>
               <button id="keyRightM" class="key-btn" title="Right">▶</button>
             </div>
-            <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctl</button>
-            <button id="keyTab"   class="key-btn" title="Tab">↹</button>
-            <button id="keySlash" class="key-btn" title="/">/</button>
-            <button id="keyPipe"  class="key-btn" title="|">|</button>
-            <button id="keyDash"  class="key-btn" title="-">-</button>
           </div>
         </div>
         <!-- Depth 2 row: navigation keys (visible only when depth = 2) -->
