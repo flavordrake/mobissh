@@ -1,5 +1,5 @@
 /**
- * tests/emulator/<name>.spec.js — Template
+ * tests/emulator/<name>.spec.js -- Template
  *
  * Emulator test template for real Chrome on Android via CDP.
  * Screen recording is handled externally by run-emulator-tests.sh.
@@ -32,7 +32,7 @@ test.describe('<Feature name> (Android emulator)', () => {
     await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
 
     // Switch panels, fill forms, etc.
-    // Use semantic selectors — elements may not have IDs:
+    // Use semantic selectors -- elements may not have IDs:
     //   GOOD: page.locator('#connectForm button[type="submit"]')
     //   BAD:  page.locator('#connectBtn')
     await page.locator('[data-panel="connect"]').click();
@@ -45,7 +45,7 @@ test.describe('<Feature name> (Android emulator)', () => {
 
   // For tests that need pre-created state (vault, profiles, etc.),
   // inject it via page.evaluate on the already-loaded page.
-  // Do NOT navigate again — the fixture already loaded the page.
+  // Do NOT navigate again -- the fixture already loaded the page.
   test('test requiring existing vault', async ({ emulatorPage: page }, testInfo) => {
     await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
 

@@ -5,12 +5,12 @@ description: Use when debugging touch/gesture issues on Android emulator, when a
 
 # Gesture Testing
 
-Guide for developing and debugging touch gesture features in MobiSSH. The frozen baseline test suite is the ground truth — when a new feature breaks a baseline, the feature has a regression.
+Guide for developing and debugging touch gesture features in MobiSSH. The frozen baseline test suite is the ground truth -- when a new feature breaks a baseline, the feature has a regression.
 
 ## Resources (same directory)
 
-- **[case-studies.md](case-studies.md)** — historical bugs with root causes and fixes
-- **[instrumentation-cookbook.md](instrumentation-cookbook.md)** — code recipes for touch tracing, viewport polling, handler registry
+- **[case-studies.md](case-studies.md)** -- historical bugs with root causes and fixes
+- **[instrumentation-cookbook.md](instrumentation-cookbook.md)** -- code recipes for touch tracing, viewport polling, handler registry
 
 ## Baseline Test Suite
 
@@ -20,7 +20,7 @@ Guide for developing and debugging touch gesture features in MobiSSH. The frozen
 | `gesture-multi-feature.spec.js` | 5 | Scroll + horizontal swipe + pinch interaction | Active |
 | `user-workflow.spec.js` | 8 | End-to-end user workflows including gestures | Active |
 
-**Frozen baselines must not be modified.** New features get new spec files. If a baseline fails after a code change, the change has a regression — fix the code, not the test. Semgrep and pre-commit hooks enforce this.
+**Frozen baselines must not be modified.** New features get new spec files. If a baseline fails after a code change, the change has a regression -- fix the code, not the test. Semgrep and pre-commit hooks enforce this.
 
 **Always run via `scripts/run-appium-tests.sh`.** Never bare `npx playwright test --config=playwright.appium.config.js`. The script handles recording, ANR dismissal, archival, and validation.
 
@@ -36,7 +36,7 @@ grep -n 'addEventListener.*touch\|addEventListener.*pointer' src/modules/*.ts
 
 Build a table: Element | Event | Options | preventDefault? | stopPropagation? | Feature.
 
-Include xterm.js library handlers — they register on `document` and are invisible to `src/` searches.
+Include xterm.js library handlers -- they register on `document` and are invisible to `src/` searches.
 
 ### 2. Feature gate
 
@@ -123,7 +123,7 @@ If the bug involves gesture conflicts:
 
 Single-finger: `appiumSwipe(driver, startX, startY, endX, endY)` from fixtures.js.
 
-Multi-finger (pinch): `performPinch(driver, ...)` — W3C Actions with two named pointers, switch to NATIVE_APP context before performing.
+Multi-finger (pinch): `performPinch(driver, ...)` -- W3C Actions with two named pointers, switch to NATIVE_APP context before performing.
 
 Long-press: `mobile: longClickGesture` UiAutomator2 command, or W3C Actions with extended pointerDown duration.
 
@@ -139,9 +139,9 @@ Long-press: `mobile: longClickGesture` UiAutomator2 command, or W3C Actions with
 Settings > Danger Zone > Debug Overlay = ON
 
 Console log patterns from gesture handlers:
-- `[scroll] touchstart` — handler received event
-- `[scroll] gesture claimed` — threshold crossed, preventDefault active
-- `[scroll] delta=` — direction and magnitude
-- `[scroll] SGR btn=` — mouse wheel button sent to tmux
+- `[scroll] touchstart` -- handler received event
+- `[scroll] gesture claimed` -- threshold crossed, preventDefault active
+- `[scroll] delta=` -- direction and magnitude
+- `[scroll] SGR btn=` -- mouse wheel button sent to tmux
 
 Missing entries = event consumed by another handler first.

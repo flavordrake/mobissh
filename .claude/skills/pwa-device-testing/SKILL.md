@@ -21,7 +21,7 @@ This skill provides the correct setup, known pitfalls, and ready-to-use template
 # First time only:
 scripts/setup-avd.sh
 
-# Every session (Appium tests — primary):
+# Every session (Appium tests -- primary):
 scripts/run-appium-tests.sh                     # full suite (31 tests)
 scripts/run-appium-tests.sh --suite my-label    # tagged archive directory
 
@@ -31,7 +31,7 @@ npm run test:emulator
 
 **IMPORTANT:** ALWAYS run Appium/emulator tests via `scripts/run-appium-tests.sh`, never bare `npx playwright test --config=playwright.appium.config.js`. The script handles screen recording, ANR dialog dismissal, archival to `test-history/`, and ffprobe validation. Without it, test runs produce no video evidence for review.
 
-Fast-gate tests (tsc, eslint, headless `npx playwright test`) are fine to run directly — they don't touch the emulator and don't need recording.
+Fast-gate tests (tsc, eslint, headless `npx playwright test`) are fine to run directly -- they don't touch the emulator and don't need recording.
 
 `npm run test:emulator` (via `scripts/run-emulator-tests.sh`) handles the legacy CDP path: boots emulator if needed, enables Chrome debugging, sets up port forwarding, runs Playwright over CDP.
 
@@ -59,13 +59,13 @@ If a test can't click a button, a real user can't either. The test is surfacing 
 
 ### Never use `force: true` to work around click interception
 
-When Playwright reports `<div class="vault-dialog">…</div> intercepts pointer events`, the correct response is to fix the CSS/layout so the button is actually clickable, NOT to bypass Playwright's actionability checks with `{ force: true }`. Using `force: true`:
+When Playwright reports `<div class="vault-dialog">...</div> intercepts pointer events`, the correct response is to fix the CSS/layout so the button is actually clickable, NOT to bypass Playwright's actionability checks with `{ force: true }`. Using `force: true`:
 - Hides real interaction bugs from the test suite
 - Creates a test that passes while the actual user flow is broken
 - Masks layout overflow on mobile viewports
 
 Common causes of click interception on mobile:
-- `align-items: center` on `position: fixed; inset: 0` overlays — when the dialog content is taller than the viewport, content overflows and sibling elements intercept clicks. Fix: `align-items: flex-start` + `overflow-y: auto` on the overlay, `margin: auto 0` on the dialog for vertical centering that still allows scrolling.
+- `align-items: center` on `position: fixed; inset: 0` overlays -- when the dialog content is taller than the viewport, content overflows and sibling elements intercept clicks. Fix: `align-items: flex-start` + `overflow-y: auto` on the overlay, `margin: auto 0` on the dialog for vertical centering that still allows scrolling.
 - Chrome-native UI (password save bar, username suggestion) appearing as a layer between your app dialog and the click target. Fix: suppress Chrome autofill on test fields with `autocomplete="off"`, pre-grant notifications, use `--disable-fre` flag.
 - Keyboard pushing elements up so labels overlap buttons. Fix: ensure sufficient spacing, or scroll the button into view first.
 
@@ -195,7 +195,7 @@ adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check' > /d
 try {
   const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
   await nagBtn.first().click({ timeout: 2000 });
-} catch { /* no nag modal — normal after first run */ }
+} catch { /* no nag modal -- normal after first run */ }
 ```
 
 ### KVM group membership requires session reload
@@ -235,9 +235,9 @@ The `sshd-fixture.js` helper starts the container automatically and exposes cred
 Gesture helpers use CDP `Input.dispatchTouchEvent` which goes through Chrome's real input pipeline and fires DOM touch events faithfully. An in-page touch visualizer draws green dots/trails at finger positions so gestures are visible in screen recordings (Android's `pointer_location` overlay doesn't register CDP touches).
 
 Helpers in `tests/emulator/fixtures.js`:
-- `swipe(page, selector, startX, startY, endX, endY, steps)` — single-finger swipe via CDP
-- `pinch(page, selector, startDist, endDist, steps)` — two-finger pinch via CDP
-- `sendCommand(page, cmd)` — type into IME input char-by-char
+- `swipe(page, selector, startX, startY, endX, endY, steps)` -- single-finger swipe via CDP
+- `pinch(page, selector, startDist, endDist, steps)` -- two-finger pinch via CDP
+- `sendCommand(page, cmd)` -- type into IME input char-by-char
 
 The touch visualizer is injected automatically by `swipe()` and `pinch()`. Green dots show current finger positions, small trail dots persist for 2s to show the gesture path.
 
@@ -312,7 +312,7 @@ scripts/extract-test-frames.sh --test "explore"
 
 ### Why this matters
 
-The AI cannot predict how Chrome on Android will behave with a specific gesture on a specific layout. The emulator is a real device running real Chrome — it has its own opinions about what pinch zoom does, how `visualViewport` reports changes, when the address bar hides, etc.
+The AI cannot predict how Chrome on Android will behave with a specific gesture on a specific layout. The emulator is a real device running real Chrome -- it has its own opinions about what pinch zoom does, how `visualViewport` reports changes, when the address bar hides, etc.
 
 By scripting the interaction first and observing the result, you:
 - Discover behaviors you didn't anticipate (Chrome ignoring `user-scalable=no`, keyboard pushing dialogs off-screen)
@@ -362,20 +362,20 @@ Key principle: never skip Phase 1. The debugging cost of silent failures in inte
 Everything needed to add Android emulator testing to a new project is in the skill assets. Copy, adapt the marked variables, and run.
 
 **Setup (one-time):**
-- `scripts/setup-avd.sh` — Installs Android SDK, creates AVD, tunes config. Adapt `AVD_NAME`, `SYSTEM_IMAGE`, `DEVICE_PROFILE`.
+- `scripts/setup-avd.sh` -- Installs Android SDK, creates AVD, tunes config. Adapt `AVD_NAME`, `SYSTEM_IMAGE`, `DEVICE_PROFILE`.
 
 **Test infrastructure:**
-- `assets/run-emulator-tests-template.sh` — Full test runner: boots emulator, sets up CDP, starts screen recording, runs Playwright, collects baseline screenshots + video. Adapt `APP_PORT`, `APP_SERVER_CMD`, `AVD_NAME`.
-- `assets/emulator-config-template.js` — Playwright config for CDP connection. Adapt `SERVER_PORT`, `SERVER_CMD`.
-- `assets/emulator-fixtures-template.js` — Worker-scoped CDP browser, per-test tab with localStorage isolation + reload pattern.
-- `assets/emulator-test-template.js` — Single test file with screenshot helpers and common patterns (vault setup, form interaction).
+- `assets/run-emulator-tests-template.sh` -- Full test runner: boots emulator, sets up CDP, starts screen recording, runs Playwright, collects baseline screenshots + video. Adapt `APP_PORT`, `APP_SERVER_CMD`, `AVD_NAME`.
+- `assets/emulator-config-template.js` -- Playwright config for CDP connection. Adapt `SERVER_PORT`, `SERVER_CMD`.
+- `assets/emulator-fixtures-template.js` -- Worker-scoped CDP browser, per-test tab with localStorage isolation + reload pattern.
+- `assets/emulator-test-template.js` -- Single test file with screenshot helpers and common patterns (vault setup, form interaction).
 
 **Baseline results:**
 The test runner collects results into `test-results/emulator/` (tracked by git):
-- `screenshots/` — per-test PNG screenshots with descriptive names
-- `recording.mp4` — full screen recording of the test run
-- `report.json` — Playwright JSON reporter output with per-test timing
-- `frames/` — extracted video frames at test-critical moments (see below)
+- `screenshots/` -- per-test PNG screenshots with descriptive names
+- `recording.mp4` -- full screen recording of the test run
+- `report.json` -- Playwright JSON reporter output with per-test timing
+- `frames/` -- extracted video frames at test-critical moments (see below)
 
 Add to `.gitignore`:
 ```
@@ -387,7 +387,7 @@ test-results/
 
 ## Post-Run Video Frame Extraction
 
-Playwright's failure screenshots only show the DOM state at timeout — after the problem has already manifested. The screen recording captures everything, but a 3-minute video is useless for debugging without timestamps.
+Playwright's failure screenshots only show the DOM state at timeout -- after the problem has already manifested. The screen recording captures everything, but a 3-minute video is useless for debugging without timestamps.
 
 `scripts/extract-test-frames.sh` bridges this gap: it reads the JSON test report, correlates each test's wall-clock timing with the video timeline, and extracts PNG frames at critical moments via ffmpeg. This gives the AI (or a human) a visual timeline of what was actually on screen when each test ran.
 
@@ -465,7 +465,7 @@ python3 scripts/generate-workflow-report.py --open   # opens in browser
 scripts/run-emulator-tests.sh
 ```
 
-**Output:** `test-results/emulator/workflow-report.html` — a single ~4MB HTML file with all images embedded (no external dependencies, viewable offline).
+**Output:** `test-results/emulator/workflow-report.html` -- a single ~4MB HTML file with all images embedded (no external dependencies, viewable offline).
 
 This is the primary artifact for human review of exploratory workflow tests. Present it to the user after every emulator test run. The report answers: "What did the user see at each step of this workflow?"
 

@@ -44,7 +44,7 @@ A Google Password Manager dialog covered the entire Chrome screen, silently inte
 
 **Root cause of ADB gesture testing retirement.** Each ADB infrastructure fix exposed the next failure mode. The final blocker was native dialogs that no web-only tool can handle.
 
-**Lesson:** Mobile testing must interact with the full device UI. This is what Appium solves — it can switch to NATIVE_APP context, detect dialogs, and dismiss them.
+**Lesson:** Mobile testing must interact with the full device UI. This is what Appium solves -- it can switch to NATIVE_APP context, detect dialogs, and dismiss them.
 
 ## Guessing before observing (process failure)
 

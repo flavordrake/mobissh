@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/setup-avd.sh — Set up Android emulator for MobiSSH testing
+# scripts/setup-avd.sh -- Set up Android emulator for MobiSSH testing
 #
 # Installs SDK cmdline-tools, platform-tools, emulator, and creates
 # a Pixel 7 AVD with Google Play (for real Chrome + WebAuthn testing).

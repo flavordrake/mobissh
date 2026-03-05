@@ -44,11 +44,11 @@ scripts/integrate-discover.sh > /tmp/integrate-candidates.json
 ```
 
 This outputs a JSON array with each entry scored by risk:
-- `reject` — >2 attempts (know-when-to-quit rule)
-- `low` — single file, <50 lines
-- `medium` — multi-file within one module, or <100 lines across <=3 files
-- `high` — core code, >200 lines, server changes, vault/crypto
-- `skip` — branch has no commits ahead of main
+- `reject` -- >2 attempts (know-when-to-quit rule)
+- `low` -- single file, <50 lines
+- `medium` -- multi-file within one module, or <100 lines across <=3 files
+- `high` -- core code, >200 lines, server changes, vault/crypto
+- `skip` -- branch has no commits ahead of main
 
 Present the triage table to the user: issue number, title, attempt count, risk, diff size.
 Ask the user how to proceed (evaluate candidates, clean up first, etc.).
@@ -68,9 +68,9 @@ scripts/gh-ops.sh labels N --rm bot --add divergence
 ```
 
 Options:
-- `--dry-run` — preview without acting
-- `--issue N` — clean up a specific issue's branches
-- `--all` — delete all bot branches (nuclear option)
+- `--dry-run` -- preview without acting
+- `--issue N` -- clean up a specific issue's branches
+- `--all` -- delete all bot branches (nuclear option)
 
 ## Step 3: Fast gate
 
@@ -132,7 +132,7 @@ The user often tests on the live production server while integration happens loc
 ```bash
 scripts/server-ctl.sh status
 ```
-If stale, warn before merging — the server will need a restart.
+If stale, warn before merging -- the server will need a restart.
 
 ## Step 5: Merge or reject
 
@@ -173,10 +173,10 @@ This is NOT a rejection. The feature is correct; the test harness is outdated. A
 1. Merge the feature PR to main (or have the bot merge from main in a test-fixup pass)
 2. Use `/delegate` to post a **test-fixup** `@claude` comment on the same issue
    (see the test-fixup template in the delegate skill)
-3. Keep `bot` label — do NOT swap to `divergence`
+3. Keep `bot` label -- do NOT swap to `divergence`
 4. The test-fixup pass verifies with full gate including `scripts/test-headless.sh`
 
-Key distinction: **outdated ≠ flaky**. Tests that fail because the UX intentionally
+Key distinction: **outdated != flaky**. Tests that fail because the UX intentionally
 changed need their assertions updated. Tests that fail intermittently need investigation.
 
 ### Reject criteria (ANY one is sufficient)
@@ -208,17 +208,17 @@ Report: "Merged PR #N (<title>). Headless tests: X pass. Server restarted at <ha
 
 This is a regression gate between merges. The full acceptance run is Step 7.
 
-## Step 7: Final acceptance — Appium emulator run with recording
+## Step 7: Final acceptance -- Appium emulator run with recording
 
 After ALL merges are complete, run the full Appium test suite on the emulator.
 This produces a screen recording for human review of new features.
 
 ```bash
 if [[ ! -e /dev/kvm ]]; then
-  echo "KVM not available — emulator cannot run on this machine"
+  echo "KVM not available -- emulator cannot run on this machine"
   EMULATOR=false
 elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
-  echo "Android SDK not installed — running setup..."
+  echo "Android SDK not installed -- running setup..."
   scripts/setup-avd.sh
   EMULATOR=true
 else
@@ -248,7 +248,7 @@ validation and skip this step. Do NOT silently omit it.
 
 When processing multiple PRs:
 - Integrate in risk order (low first)
-- Run headless Playwright between each merge (Step 6) — do not batch merges without validation
+- Run headless Playwright between each merge (Step 6) -- do not batch merges without validation
 - Stop on first systemic failure (main broken after merge)
 - If main breaks: revert the last merge, report which PR caused it
 - After all merges: run `scripts/run-appium-tests.sh` (Step 7) for final acceptance with recording
@@ -269,7 +269,7 @@ These rules come from real project history. They are not suggestions.
   means the user sees old behavior and files false bugs.
 
 - **No force hacks**: if a Playwright test needs `force: true` or `timeout: 30000` to pass,
-  the fix is wrong — the underlying layout or timing issue needs to be addressed.
+  the fix is wrong -- the underlying layout or timing issue needs to be addressed.
 
 - **Selection overlay precedent**: PR went through 6 commits, never worked on real Android,
   got feature-flagged off. Bot fixes that keep failing acceptance tests should be branched
@@ -277,19 +277,19 @@ These rules come from real project history. They are not suggestions.
 
 - **No inline styles**: prefer CSS classes. This is a project rule (CLAUDE.md).
 
-- **Outdated ≠ flaky**: When a UX change causes headless test failures, those tests need
-  their assertions updated — they aren't broken or intermittent. Use the test-fixup pass
+- **Outdated != flaky**: When a UX change causes headless test failures, those tests need
+  their assertions updated -- they aren't broken or intermittent. Use the test-fixup pass
   (approve-with-test-fixup) to delegate this to the bot rather than rejecting the feature.
   The bot can run `scripts/test-headless.sh` and fix mismatched selectors/assertions.
 
-- **Two-pass delegation works**: Feature pass (fast gate) → human UX review → test-fixup
+- **Two-pass delegation works**: Feature pass (fast gate) -> human UX review -> test-fixup
   pass (full gate including headless). This prevents the bot from guessing UX decisions
   while still automating the mechanical test updates.
 
 ## Edge Cases
 
-- No bot branches at all — report "No bot PRs to integrate"
-- Bot PR conflicts with main — close with comment, the bot will need to rebase
-- User has uncommitted local changes — `integrate-gate.sh` auto-stashes and restores
-- Emulator boot takes too long — 120s timeout in `run-emulator-tests.sh`
-- SSH key not loaded for git fetch — scripts use `gh api` which authenticates via `gh` token
+- No bot branches at all -- report "No bot PRs to integrate"
+- Bot PR conflicts with main -- close with comment, the bot will need to rebase
+- User has uncommitted local changes -- `integrate-gate.sh` auto-stashes and restores
+- Emulator boot takes too long -- 120s timeout in `run-emulator-tests.sh`
+- SSH key not loaded for git fetch -- scripts use `gh api` which authenticates via `gh` token

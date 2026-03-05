@@ -33,7 +33,7 @@ with GitHub issues and PRs.
 | `divergence` | `e99695` | `/integrate` | Bot attempted but failed; needs re-scoping or human intervention |
 
 Lifecycle: `/delegate` applies `bot` when posting `@claude` comment. `/integrate` swaps
-`bot` → `divergence` on failure. `/delegate` swaps `divergence` → `bot` on re-delegation
+`bot` -> `divergence` on failure. `/delegate` swaps `divergence` -> `bot` on re-delegation
 with new direction.
 
 ### Shape (properties of the work, zero or more)
@@ -94,28 +94,28 @@ face additional scrutiny.
 
 ```
 open issue
-  → /delegate classifies as bot-ready
-  → /delegate posts @claude comment, applies `bot` label
-  → bot creates branch claude/issue-{N}-{date}-{time}
-  → /integrate discovers branch, runs fast gate
-  → fast gate pass → human reviews UX/approach
-    → UX approved, headless tests need updating → test-fixup pass (see below)
-    → UX approved, tests pass → merge, close issue
-    → UX rejected → reject with feedback
-  → fast gate fail → /integrate applies `divergence`, removes `bot`
-  → /delegate analyzes failure, re-delegates with corrections → `divergence` → `bot`
+  -> /delegate classifies as bot-ready
+  -> /delegate posts @claude comment, applies `bot` label
+  -> bot creates branch claude/issue-{N}-{date}-{time}
+  -> /integrate discovers branch, runs fast gate
+  -> fast gate pass -> human reviews UX/approach
+    -> UX approved, headless tests need updating -> test-fixup pass (see below)
+    -> UX approved, tests pass -> merge, close issue
+    -> UX rejected -> reject with feedback
+  -> fast gate fail -> /integrate applies `divergence`, removes `bot`
+  -> /delegate analyzes failure, re-delegates with corrections -> `divergence` -> `bot`
 ```
 
 ### Two-pass delegation (test-fixup pass)
 
 When a bot PR passes the fast gate but headless tests fail because the UX changed
-(not flaky tests — outdated assertions that don't match the new behavior):
+(not flaky tests -- outdated assertions that don't match the new behavior):
 
 1. `/integrate` reviews the feature, approves the UX approach
 2. We merge the feature to main (or the bot merges from main)
 3. `/delegate` posts a **test-fixup** `@claude` comment on the same issue:
    - Objective: merge from main, run headless tests, fix failures to match new UX
-   - Scope: test files only — no application code changes
+   - Scope: test files only -- no application code changes
    - Verify: `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh`
 4. Bot creates a new branch, fixes test assertions, runs full gate including headless
 5. `/integrate` validates the test-fixup branch (headless must pass)
@@ -124,7 +124,7 @@ This is NOT a re-delegation (no `divergence` label swap). The feature was approv
 only the test harness needs updating. The test-fixup pass counts as a separate attempt
 only if it fails.
 
-Key distinction: **outdated ≠ flaky**. Tests that fail because the UX intentionally
+Key distinction: **outdated != flaky**. Tests that fail because the UX intentionally
 changed need updating. Tests that fail intermittently need investigation.
 
 ### Attempt limits (know-when-to-quit)
@@ -140,12 +140,12 @@ changed need updating. Tests that fail intermittently need investigation.
 
 Every `@claude` comment must include:
 
-1. **Objective** — one sentence, what to achieve
-2. **Files in scope** — explicit list of files to touch (verified to exist)
-3. **Acceptance criteria** — numbered, independently verifiable
-4. **Context** — code snippets from current main branch, API signatures, patterns to follow
-5. **Do NOT** — hard constraints (no inline styles, no new abstractions, no changes outside scope)
-6. **Verify** — exact command sequence: `npx tsc --noEmit && npx eslint src/ public/ && npm test`
+1. **Objective** -- one sentence, what to achieve
+2. **Files in scope** -- explicit list of files to touch (verified to exist)
+3. **Acceptance criteria** -- numbered, independently verifiable
+4. **Context** -- code snippets from current main branch, API signatures, patterns to follow
+5. **Do NOT** -- hard constraints (no inline styles, no new abstractions, no changes outside scope)
+6. **Verify** -- exact command sequence: `npx tsc --noEmit && npx eslint src/ public/ && npm test`
 
 The bot's entire instruction set is this comment. It has no other context, no memory of
 prior attempts, and no access to conversation history.

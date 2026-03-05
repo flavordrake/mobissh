@@ -100,7 +100,7 @@ and skips stash/restore when isolated. This resolved git lock contention from pa
 
 **Tools:** Bash, Read, Grep, Glob (no Write, no Edit)
 **Background:** true
-**Model:** sonnet (upgraded from haiku — haiku went off-script and ran full Playwright)
+**Model:** sonnet (upgraded from haiku -- haiku went off-script and ran full Playwright)
 
 ## Agents NOT created
 
@@ -145,9 +145,9 @@ a blank permission slate and auto-denies everything in background mode.
 
 ## Related
 
-- `.claude/skills/issue/SKILL.md` — updated to invoke issue-manager agent
-- `.claude/skills/delegate/SKILL.md` — updated to invoke delegate-scout for Phases 1-3
-- `.claude/skills/integrate/SKILL.md` — updated to invoke integrate-gater for Step 3
-- `scripts/gh-file-issue.sh` — stdin + --body-file wrapper for gh issue create
-- `scripts/gh-ops.sh` — comment, labels, close, search, version wrapper
-- `.claude/settings.json` — parent permission allow-list that agents inherit
+- `.claude/skills/issue/SKILL.md` -- updated to invoke issue-manager agent
+- `.claude/skills/delegate/SKILL.md` -- updated to invoke delegate-scout for Phases 1-3
+- `.claude/skills/integrate/SKILL.md` -- updated to invoke integrate-gater for Step 3
+- `scripts/gh-file-issue.sh` -- stdin + --body-file wrapper for gh issue create
+- `scripts/gh-ops.sh` -- comment, labels, close, search, version wrapper
+- `.claude/settings.json` -- parent permission allow-list that agents inherit

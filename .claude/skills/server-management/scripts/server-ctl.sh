@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/server-ctl.sh — MobiSSH server lifecycle management
+# scripts/server-ctl.sh -- MobiSSH server lifecycle management
 #
 # Manages the dev server with health checks, version gating, and
 # automatic restart when serving stale code.
@@ -12,9 +12,9 @@
 #   bash scripts/server-ctl.sh ensure      # start or restart until healthy at HEAD
 #
 # Environment:
-#   PORT          — server port (default: 8081)
-#   BASE_PATH     — URL base path (default: none)
-#   HEALTH_TIMEOUT — seconds to wait for health (default: 10)
+#   PORT          -- server port (default: 8081)
+#   BASE_PATH     -- URL base path (default: none)
+#   HEALTH_TIMEOUT -- seconds to wait for health (default: 10)
 
 set -euo pipefail
 

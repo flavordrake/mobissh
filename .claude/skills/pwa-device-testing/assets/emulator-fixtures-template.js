@@ -1,5 +1,5 @@
 /**
- * tests/emulator/fixtures.js — Template
+ * tests/emulator/fixtures.js -- Template
  *
  * Playwright fixtures for Android emulator testing over CDP.
  * Provides a worker-scoped CDP connection and per-test tab isolation.
@@ -46,7 +46,7 @@ async function screenshot(page, testInfo, name) {
 
 const test = base.extend({
   /**
-   * cdpBrowser — worker-scoped (one CDP connection per test file)
+   * cdpBrowser -- worker-scoped (one CDP connection per test file)
    *
    * MUST be worker-scoped. Per-test connect/disconnect destabilises the
    * DevTools socket after ~4-5 cycles and causes "Target closed" errors.
@@ -62,7 +62,7 @@ const test = base.extend({
   }, { scope: 'worker' }],
 
   /**
-   * emulatorPage — test-scoped (fresh tab per test)
+   * emulatorPage -- test-scoped (fresh tab per test)
    *
    * Uses the single default context (Android Chrome limitation).
    * Clears localStorage before yielding so tests don't leak state.
@@ -77,9 +77,9 @@ const test = base.extend({
     try {
       const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("No, thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
       await nagBtn.first().click({ timeout: 2000 });
-    } catch { /* no nag modal — normal after first run */ }
+    } catch { /* no nag modal -- normal after first run */ }
 
-    // Clear localStorage then reload — the app reads localStorage on init
+    // Clear localStorage then reload -- the app reads localStorage on init
     // (panel state, vault, profiles), so clearing alone isn't enough if the
     // app already initialized with stale state from a previous test.
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });

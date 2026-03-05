@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/run-emulator-tests.sh — Template
+# scripts/run-emulator-tests.sh -- Template
 #
 # Full setup/run/teardown for Android emulator Playwright tests.
 # Handles: app server, emulator boot, ADB forwarding, Chrome CDP,
@@ -89,13 +89,13 @@ fi
 # Phase 3: ADB forwarding + Chrome CDP
 log "Phase 3: ADB forwarding and Chrome CDP"
 
-# Reverse: emulator localhost:APP_PORT → host localhost:APP_PORT
+# Reverse: emulator localhost:APP_PORT -> host localhost:APP_PORT
 adb reverse tcp:"$APP_PORT" tcp:"$APP_PORT" 2>/dev/null || true
-# Forward: host localhost:CDP_PORT → emulator Chrome DevTools socket
+# Forward: host localhost:CDP_PORT -> emulator Chrome DevTools socket
 adb forward tcp:"$CDP_PORT" localabstract:chrome_devtools_remote 2>/dev/null || true
 ok "Port forwarding configured (app :$APP_PORT, CDP :$CDP_PORT)"
 
-# Play Store Chrome is a release build — set-debug-app makes it expose the
+# Play Store Chrome is a release build -- set-debug-app makes it expose the
 # DevTools Unix socket that Playwright connects to over CDP.
 adb shell am set-debug-app --persistent com.android.chrome 2>/dev/null || true
 

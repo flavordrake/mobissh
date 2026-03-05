@@ -56,7 +56,7 @@ Add **Shape** labels when applicable:
 | Issue needs emulator/device validation | `device` |
 | Issue is too large for one bot pass | `composite` |
 
-Do NOT apply delegation labels (`bot`, `divergence`) — those are managed by `/delegate`
+Do NOT apply delegation labels (`bot`, `divergence`) -- those are managed by `/delegate`
 and `/integrate` respectively.
 
 ## Step 2: Gather context
@@ -76,7 +76,7 @@ Build a concise issue body. No filler.
   scripts/gh-ops.sh version
   ```
   This outputs `Code: abc1234 | Server: 0.1.0:def5678` (or `server not running`).
-  If they differ, flag it as `(STALE — server hasn't been restarted)`.
+  If they differ, flag it as `(STALE -- server hasn't been restarted)`.
 
 ## Step 3: Check for recent test artifacts
 
@@ -113,7 +113,7 @@ Reference relevant files, test commands, or prior issues.>
 
 Do NOT add `@claude` for research issues (`spike`), things needing real-device validation
 (`device`), or vague requests that need scoping. The `/delegate` skill handles enriching
-issues with full delegation context and applying the `bot` label — this step is just a
+issues with full delegation context and applying the `bot` label -- this step is just a
 lightweight hint for obviously bot-ready issues.
 
 ## Step 5: Duplicate check and file
@@ -137,7 +137,7 @@ Filed while working on <context> (<branch>).
 
 ## Version
 <output from `scripts/gh-ops.sh version`>
-<If mismatched: "(STALE — server hasn't been restarted)">
+<If mismatched: "(STALE -- server hasn't been restarted)">
 
 ## Test Evidence
 <Only if recent artifacts exist (Step 3). Otherwise omit this section entirely.>
@@ -158,7 +158,7 @@ scripts/gh-file-issue.sh --title "<prefix>: <title>" --label "<type>" --label "<
 ```
 
 **Important:** Use the Write tool to create `/tmp/issue-body.md`, then call the script.
-Do NOT use heredocs or `$(cat <<EOF)` in the bash command — that's what causes
+Do NOT use heredocs or `$(cat <<EOF)` in the bash command -- that's what causes
 per-command approval prompts. One Write + one `scripts/gh-file-issue.sh` call.
 
 Only include `--label` flags for labels that apply. Type is always one. Domain and shape
@@ -172,6 +172,6 @@ If filing failed, report the error. Do not retry silently.
 
 ## Edge Cases
 
-- Bare prefix with no description (e.g. just `bug:`) — ask for at least a one-phrase description
-- `gh` not authenticated — report error immediately
-- Only use labels defined in `.claude/process.md` — all are pre-created on the repo
+- Bare prefix with no description (e.g. just `bug:`) -- ask for at least a one-phrase description
+- `gh` not authenticated -- report error immediately
+- Only use labels defined in `.claude/process.md` -- all are pre-created on the repo

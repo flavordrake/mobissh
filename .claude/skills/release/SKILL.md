@@ -33,9 +33,9 @@ git log $(git describe --tags --abbrev=0)..HEAD --oneline
 ```
 
 Version bump rules (semver):
-- **Patch** (0.2.x → 0.2.1): Only bug fixes, no new features, no breaking changes
-- **Minor** (0.2.0 → 0.3.0): New features, new test infrastructure, refactors, new skills. No breaking API/protocol changes.
-- **Major** (0.x → 1.0): Breaking changes to WS protocol, vault format, or deployment model
+- **Patch** (0.2.x -> 0.2.1): Only bug fixes, no new features, no breaking changes
+- **Minor** (0.2.0 -> 0.3.0): New features, new test infrastructure, refactors, new skills. No breaking API/protocol changes.
+- **Major** (0.x -> 1.0): Breaking changes to WS protocol, vault format, or deployment model
 
 For MobiSSH's current maturity (pre-1.0), minor bumps are the norm. 85 commits with features = minor.
 
@@ -53,7 +53,7 @@ Group commits since last tag by category. Parse commit prefixes:
 | `security:` | Security |
 | `Merge pull request` | Skip (noise) |
 
-Format as a concise changelog section. Include issue numbers where present. Don't list every commit — group related work (e.g., "TypeScript migration Phases 0-5" not 10 separate phase commits).
+Format as a concise changelog section. Include issue numbers where present. Don't list every commit -- group related work (e.g., "TypeScript migration Phases 0-5" not 10 separate phase commits).
 
 ## Step 3: Validate
 
@@ -80,7 +80,7 @@ Do NOT tag if any validation fails. Fix first, commit, then re-run.
 Update all touchpoints:
 
 1. **`server/package.json`**: Update `"version"` field
-2. **`public/sw.js`**: Increment `CACHE_NAME` suffix (e.g., `mobissh-v16` → `mobissh-v17`)
+2. **`public/sw.js`**: Increment `CACHE_NAME` suffix (e.g., `mobissh-v16` -> `mobissh-v17`)
 
 The SW cache suffix is a monotonically increasing integer, not tied to semver. Just increment by 1 from whatever the current value is.
 
@@ -177,7 +177,7 @@ Check that the version meta tag matches the new release.
 
 ## SW Cache Name History
 
-Track cache name bumps here for reference. The number is not semver — it's a monotonic counter for cache invalidation.
+Track cache name bumps here for reference. The number is not semver -- it's a monotonic counter for cache invalidation.
 
 | Version | SW Cache | Notes |
 |---------|----------|-------|

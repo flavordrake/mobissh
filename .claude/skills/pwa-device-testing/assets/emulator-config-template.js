@@ -1,5 +1,5 @@
 /**
- * playwright.emulator.config.js — Template
+ * playwright.emulator.config.js -- Template
  *
  * Playwright config for testing against real Chrome on an Android emulator.
  * Connects via CDP (Chrome DevTools Protocol) over ADB-forwarded port.
@@ -28,7 +28,7 @@ module.exports = defineConfig({
   testDir: './tests/emulator',
   timeout: 60_000,
   retries: 0,
-  workers: 1, // REQUIRED: single Chrome instance via CDP — parallel workers destabilise pages
+  workers: 1, // REQUIRED: single Chrome instance via CDP -- parallel workers destabilise pages
 
   reporter: [
     // Phase 1 (bootstrapping): use list with printSteps for maximum visibility
@@ -46,7 +46,7 @@ module.exports = defineConfig({
     env: { PORT: String(SERVER_PORT) },
   },
 
-  // No browser launch — tests connect over CDP via emulatorPage fixture
+  // No browser launch -- tests connect over CDP via emulatorPage fixture
   projects: [
     {
       name: 'android-emulator',

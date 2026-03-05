@@ -58,7 +58,7 @@ The server captures `git rev-parse --short HEAD` at startup and injects it into 
 - **New commit but no restart**: Server serves old hash. `status` shows `STALE`. `ensure` restarts.
 - **Amended commit**: Hash changes even though "same" commit. `ensure` catches it.
 - **Detached HEAD / branch switch**: New hash. `ensure` catches it.
-- **Uncommitted changes**: Hash stays the same (it's HEAD, not working tree). The script doesn't detect uncommitted changes — only committed code.
+- **Uncommitted changes**: Hash stays the same (it's HEAD, not working tree). The script doesn't detect uncommitted changes -- only committed code.
 
 ## Integration with Test Runners
 
@@ -83,7 +83,7 @@ The server reads files from `public/` on each request (`fs.readFile`). TypeScrip
 **Critical workflow for uncommitted TypeScript changes:**
 
 1. Edit `src/modules/*.ts`
-2. Run `npx tsc` (NOT `npx tsc --noEmit` — that only type-checks without producing output)
+2. Run `npx tsc` (NOT `npx tsc --noEmit` -- that only type-checks without producing output)
 3. Run `scripts/server-ctl.sh restart` to guarantee the server re-reads files from disk
 4. Verify: `curl -s http://localhost:8081/modules/<file>.js | grep '<your change>'`
 
@@ -93,8 +93,8 @@ The server reads files from `public/` on each request (`fs.readFile`). TypeScrip
 
 When `BASE_PATH=/ssh`, the server injects path info into HTML and manifests but does NOT strip the prefix from URLs. Static files are served at root:
 
-- `http://localhost:8081/modules/ime.js` — correct (serves `public/modules/ime.js`)
-- `http://localhost:8081/ssh/modules/ime.js` — 404 (looks for `public/ssh/modules/ime.js`)
+- `http://localhost:8081/modules/ime.js` -- correct (serves `public/modules/ime.js`)
+- `http://localhost:8081/ssh/modules/ime.js` -- 404 (looks for `public/ssh/modules/ime.js`)
 
 When curling to verify file content, always use the root path (no BASE_PATH prefix). The browser loads modules via relative paths from the HTML (`./modules/ime.js`), which resolve correctly to the root.
 

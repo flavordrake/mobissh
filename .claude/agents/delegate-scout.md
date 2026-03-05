@@ -41,4 +41,4 @@ The main conversation handles all decisions and user-facing actions.
 ## Error handling
 
 If a script fails, report the exit code and stderr content. Do not retry.
-Partial results are useful — return whatever completed successfully.
+Partial results are useful -- return whatever completed successfully.
