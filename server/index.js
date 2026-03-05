@@ -276,6 +276,13 @@ const wss = new WebSocket.Server({
   server,
   maxPayload: MAX_MESSAGE_SIZE,
   verifyClient({ req }, callback) {
+    // Skip WS token auth when behind tailscale serve -- it strips query params
+    // from WebSocket upgrade requests (tailscale/tailscale#18651).
+    // Tailscale provides network-level auth; token is redundant.
+    if (process.env.TS_SERVE === '1') {
+      callback(true);
+      return;
+    }
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
     if (!validateWsToken(token)) {
@@ -287,15 +294,27 @@ const wss = new WebSocket.Server({
 });
 
 // WebSocket-level ping/pong to keep idle connections alive through proxies/NAT.
-// Any client that doesn't pong within one interval is terminated.
+// Allow 2 missed pongs (~50s grace) before terminating (#204). Mobile browsers
+// in background may not respond within a single 25s interval.
 // Only started when the server is actually running (not when imported for tests).
 if (require.main === module) {
+  const WS_MAX_MISSED_PONGS = 3;
   const wsPingInterval = setInterval(() => {
     wss.clients.forEach((client) => {
       if (client.readyState !== WebSocket.OPEN) return;
       if (client._pongPending) {
-        client.terminate();
-        return;
+        client._missedPongs = (client._missedPongs || 0) + 1;
+        console.log(`[keepalive] Client missed pong #${client._missedPongs}/${WS_MAX_MISSED_PONGS}`);
+        if (client._missedPongs >= WS_MAX_MISSED_PONGS) {
+          console.log(`[keepalive] Terminating client after ${WS_MAX_MISSED_PONGS} missed pongs`);
+          client.terminate();
+          return;
+        }
+      } else {
+        if (client._missedPongs > 0) {
+          console.log(`[keepalive] Client recovered after ${client._missedPongs} missed pong(s)`);
+        }
+        client._missedPongs = 0;
       }
       client._pongPending = true;
       client.ping();
@@ -341,7 +360,7 @@ function isPrivateHost(host) {
 }
 
 wss.on('connection', (ws, req) => {
-  ws.on('pong', () => { ws._pongPending = false; });
+  ws.on('pong', () => { ws._pongPending = false; ws._missedPongs = 0; });
 
   const clientIP = getIP(req);
   const now = Date.now();
