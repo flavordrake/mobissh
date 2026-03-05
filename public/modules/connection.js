@@ -12,6 +12,16 @@ export function sendSftpLs(path, requestId) {
         return;
     appState.ws.send(JSON.stringify({ type: 'sftp_ls', path, requestId }));
 }
+export function sendSftpDownload(path, requestId) {
+    if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN)
+        return;
+    appState.ws.send(JSON.stringify({ type: 'sftp_download', path, requestId }));
+}
+export function sendSftpUpload(path, data, requestId) {
+    if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN)
+        return;
+    appState.ws.send(JSON.stringify({ type: 'sftp_upload', path, data, requestId }));
+}
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState } from './state.js';
 import { stopAndDownloadRecording } from './recording.js';
@@ -137,6 +147,8 @@ function _openWebSocket() {
                 break;
             case 'sftp_ls_result':
             case 'sftp_error':
+            case 'sftp_download_result':
+            case 'sftp_upload_result':
                 _sftpHandler?.(msg);
                 break;
             case 'hostkey': { // SSH host key verification (#5)

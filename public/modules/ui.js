@@ -6,7 +6,7 @@
  */
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState } from './state.js';
-import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler } from './connection.js';
+import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, getKeys, connectFromProfile, newConnection } from './profiles.js';
 const VALID_PANELS = new Set(['terminal', 'connect', 'files', 'keys', 'settings']);
@@ -524,11 +524,89 @@ function _applyComposeModeUI() {
     btn.classList.toggle('compose-active', appState.imeMode);
     document.getElementById('key-bar')?.classList.toggle('compose-active', appState.imeMode);
 }
-// ── Files panel (#174) ───────────────────────────────────────────────────────
+// ── Files panel (#174, #175) ─────────────────────────────────────────────────
 let _filesPath = '/';
 const _filesCache = new Map();
-// Maps requestId -> path so SFTP responses can be matched to their requests
+// Maps requestId -> path so SFTP ls responses can be matched to their requests
 const _filesPending = new Map();
+// Maps requestId -> filename for pending downloads
+const _downloadPending = new Map();
+// Maps requestId -> remotePath for pending uploads
+const _uploadPending = new Map();
+let _uploadQueue = [];
+let _uploadActive = false;
+let _uploadCompleted = 0;
+let _uploadTotal = 0;
+let _transferStatus = '';
+function _setTransferStatus(text) {
+    _transferStatus = text;
+    const el = document.querySelector('.files-transfer-status');
+    if (el) {
+        el.textContent = text;
+        el.classList.toggle('hidden', !text);
+    }
+}
+function _triggerBlobDownload(filename, base64Data) {
+    const binary = atob(base64Data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++)
+        bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+}
+function _readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = reader.result;
+            resolve(result.split(',')[1] ?? '');
+        };
+        reader.onerror = () => { reject(new Error(reader.error?.message ?? 'FileReader error')); };
+        reader.readAsDataURL(file);
+    });
+}
+function _processNextUpload() {
+    const item = _uploadQueue.shift();
+    if (!item) {
+        _uploadActive = false;
+        _setTransferStatus('');
+        _filesCache.delete(_filesPath);
+        _filesNavigateTo(_filesPath);
+        return;
+    }
+    _uploadCompleted++;
+    _setTransferStatus(`Uploading ${String(_uploadCompleted)}/${String(_uploadTotal)}...`);
+    const reqId = `up-${String(Date.now())}`;
+    _uploadPending.set(reqId, item.remotePath);
+    sendSftpUpload(item.remotePath, item.data, reqId);
+}
+async function _startUpload(files) {
+    if (_uploadActive)
+        return;
+    _uploadActive = true;
+    _uploadQueue = [];
+    _uploadCompleted = 0;
+    _uploadTotal = files.length;
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const remotePath = _filesPath === '/' ? `/${file.name}` : `${_filesPath}/${file.name}`;
+        try {
+            const data = await _readFileAsBase64(file);
+            _uploadQueue.push({ remotePath, data });
+        }
+        catch {
+            toast(`Failed to read ${file.name}`);
+        }
+    }
+    _processNextUpload();
+}
 function _renderFilesPanel(path, bodyHtml) {
     const panel = document.getElementById('panel-files');
     if (!panel)
@@ -540,8 +618,14 @@ function _renderFilesPanel(path, bodyHtml) {
         return `<span class="files-crumb-sep">/</span><button class="files-crumb" data-path="${escHtml(segPath)}">${escHtml(seg)}</button>`;
     }).join('');
     const breadcrumbHtml = rootCrumb + partCrumbs;
+    const statusHidden = _transferStatus ? '' : ' hidden';
     panel.innerHTML = `
     <div class="files-breadcrumb">${breadcrumbHtml}</div>
+    <div class="files-toolbar">
+      <button class="files-upload-btn">Upload</button>
+      <input type="file" class="files-upload-input" multiple />
+      <span class="files-transfer-status${statusHidden}">${escHtml(_transferStatus)}</span>
+    </div>
     <div class="files-body">${bodyHtml}</div>
   `;
     panel.querySelectorAll('.files-crumb').forEach((btn) => {
@@ -557,6 +641,27 @@ function _renderFilesPanel(path, bodyHtml) {
             if (dest)
                 _filesNavigateTo(dest);
         });
+    });
+    panel.querySelectorAll('.files-entry[data-dir="false"]').forEach((row) => {
+        row.addEventListener('click', () => {
+            const filePath = row.dataset.path;
+            if (!filePath)
+                return;
+            const filename = filePath.split('/').pop() ?? filePath;
+            _setTransferStatus('Downloading...');
+            const reqId = `dl-${String(Date.now())}`;
+            _downloadPending.set(reqId, filename);
+            sendSftpDownload(filePath, reqId);
+        });
+    });
+    const uploadBtn = panel.querySelector('.files-upload-btn');
+    const fileInput = panel.querySelector('.files-upload-input');
+    uploadBtn?.addEventListener('click', () => { fileInput?.click(); });
+    fileInput?.addEventListener('change', () => {
+        if (fileInput.files?.length) {
+            void _startUpload(fileInput.files);
+            fileInput.value = '';
+        }
     });
 }
 function _filesNavigateTo(path) {
@@ -611,19 +716,43 @@ function _formatSize(bytes) {
 }
 export function initFilesPanel() {
     setSftpHandler((msg) => {
-        const path = _filesPending.get(msg.requestId);
-        _filesPending.delete(msg.requestId);
         if (msg.type === 'sftp_ls_result') {
+            const path = _filesPending.get(msg.requestId);
+            _filesPending.delete(msg.requestId);
             if (path)
                 _filesCache.set(path, msg.entries);
-            // Only re-render if this result is for the currently visible path
             if (path === _filesPath)
                 _renderFilesList(path, msg.entries);
         }
+        else if (msg.type === 'sftp_download_result') {
+            const filename = _downloadPending.get(msg.requestId);
+            _downloadPending.delete(msg.requestId);
+            _setTransferStatus('');
+            if (filename)
+                _triggerBlobDownload(filename, msg.data);
+        }
+        else if (msg.type === 'sftp_upload_result') {
+            _uploadPending.delete(msg.requestId);
+            _processNextUpload();
+        }
         else {
-            // Only show error for the active path, not background pre-cache failures
-            if (path === _filesPath) {
-                _renderFilesPanel(_filesPath, `<div class="files-error">${escHtml(msg.message)}</div>`);
+            // sftp_error — could be for ls, download, or upload
+            if (_filesPending.has(msg.requestId)) {
+                const path = _filesPending.get(msg.requestId);
+                _filesPending.delete(msg.requestId);
+                if (path === _filesPath) {
+                    _renderFilesPanel(_filesPath, `<div class="files-error">${escHtml(msg.message)}</div>`);
+                }
+            }
+            else if (_downloadPending.has(msg.requestId)) {
+                _downloadPending.delete(msg.requestId);
+                _setTransferStatus('');
+                toast(`Download failed: ${msg.message}`);
+            }
+            else if (_uploadPending.has(msg.requestId)) {
+                _uploadPending.delete(msg.requestId);
+                toast(`Upload failed: ${msg.message}`);
+                _processNextUpload();
             }
         }
     });

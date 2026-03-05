@@ -1641,6 +1641,44 @@ hr {
   color: var(--danger);
 }
 
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.files-upload-btn {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.files-upload-btn:active {
+  opacity: 0.8;
+}
+
+.files-upload-input {
+  display: none;
+}
+
+.files-transfer-status {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.files-transfer-status.hidden {
+  display: none;
+}
+
 #panel-files {
   display: none;
   flex-direction: column;

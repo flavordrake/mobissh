@@ -8,12 +8,20 @@
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 
-type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' }>;
+type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' }>;
 let _sftpHandler: ((msg: SftpMsg) => void) | null = null;
 export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler = fn; }
 export function sendSftpLs(path: string, requestId: string): void {
   if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
   appState.ws.send(JSON.stringify({ type: 'sftp_ls', path, requestId }));
+}
+export function sendSftpDownload(path: string, requestId: string): void {
+  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
+  appState.ws.send(JSON.stringify({ type: 'sftp_download', path, requestId }));
+}
+export function sendSftpUpload(path: string, data: string, requestId: string): void {
+  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
+  appState.ws.send(JSON.stringify({ type: 'sftp_upload', path, data, requestId }));
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState } from './state.js';
@@ -147,6 +155,8 @@ function _openWebSocket(): void {
 
       case 'sftp_ls_result':
       case 'sftp_error':
+      case 'sftp_download_result':
+      case 'sftp_upload_result':
         _sftpHandler?.(msg);
         break;
 

@@ -149,6 +149,8 @@ export type ServerMessage =
   | { type: 'disconnected'; reason?: string }
   | { type: 'hostkey'; host: string; port: number; keyType: string; fingerprint: string }
   | { type: 'sftp_ls_result'; requestId: string; entries: SftpEntry[] }
+  | { type: 'sftp_download_result'; requestId: string; data: string }
+  | { type: 'sftp_upload_result'; requestId: string; ok: boolean }
   | { type: 'sftp_error'; requestId: string; message: string };
 
 export interface ConnectMessage {
