@@ -188,6 +188,7 @@ html, body {
   -webkit-user-select: none;
   position: relative; /* anchor for #sessionMenu */
 }
+#key-bar-handle:active { background: rgba(255,255,255,0.05); }
 
 /* Center zone: current session identity */
 #sessionMenuBtn {
