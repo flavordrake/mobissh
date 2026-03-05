@@ -1082,6 +1082,8 @@ hr {
   padding: 20px;
   width: 100%;
   max-width: 440px;
+  max-height: calc(var(--viewport-height, 100svh) - 32px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1141,6 +1143,7 @@ hr {
   display: flex;
   gap: 10px;
   margin-top: 4px;
+  flex-shrink: 0;
 }
 
 .hostkey-btn {
@@ -1199,6 +1202,8 @@ hr {
   padding: 20px;
   width: 100%;
   max-width: 400px;
+  max-height: calc(var(--viewport-height, 100svh) - 32px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1289,6 +1294,7 @@ hr {
   display: flex;
   gap: 10px;
   margin-top: 8px;
+  flex-shrink: 0;
 }
 
 .vault-btn {
@@ -1477,6 +1483,8 @@ hr {
   border-radius: 8px;
   padding: 10px 14px;
   max-width: 440px;
+  max-height: calc(var(--viewport-height, 100svh) - 32px);
+  overflow-y: auto;
   width: 100%;
   display: flex;
   flex-direction: column;
