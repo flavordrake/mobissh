@@ -445,6 +445,28 @@
           <span class="toggle-slider toggle-slider-accent"></span>
         </label>
       </div>
+      <div class="setting-row">
+        <div class="setting-row-info">
+          <span class="setting-row-label">Background only</span>
+          <p class="hint">Only notify when MobiSSH is not in the foreground.</p>
+        </div>
+        <label class="toggle" aria-label="Background only notifications">
+          <input type="checkbox" id="notifBackgroundOnly" />
+          <span class="toggle-slider toggle-slider-accent"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row-info">
+          <span class="setting-row-label">Cooldown</span>
+          <p class="hint">Suppress repeated notifications within this period.</p>
+        </div>
+        <select id="notifCooldown">
+          <option value="5000">5s</option>
+          <option value="15000">15s</option>
+          <option value="30000">30s</option>
+          <option value="60000">60s</option>
+        </select>
+      </div>
 
       <hr />
 

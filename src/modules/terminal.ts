@@ -24,15 +24,22 @@ const FONT_FAMILIES: Record<string, string> = {
   firacode: '"Fira Code", monospace',
 };
 
+let _lastNotifTime = 0;
+
 function shouldNotify(): boolean {
-  return localStorage.getItem('termNotifications') === 'true'
-    && Notification.permission === 'granted'
-    && document.visibilityState === 'hidden';
+  if (localStorage.getItem('termNotifications') !== 'true') return false;
+  if (Notification.permission !== 'granted') return false;
+  const backgroundOnly = localStorage.getItem('notifBackgroundOnly') !== 'false';
+  if (backgroundOnly && document.visibilityState !== 'hidden') return false;
+  const cooldownMs = parseInt(localStorage.getItem('notifCooldown') ?? '15000') || 15000;
+  if (Date.now() - _lastNotifTime < cooldownMs) return false;
+  return true;
 }
 
 function fireNotification(title: string, body: string): void {
   try {
     new Notification(title, { body });
+    _lastNotifTime = Date.now();
   } catch { /* permission may have been revoked */ }
 }
 
@@ -59,7 +66,14 @@ export function initTerminal(): void {
   appState.fitAddon.fit();
 
   appState.terminal.onBell(() => {
-    if (shouldNotify()) fireNotification('MobiSSH', 'Terminal bell');
+    if (!shouldNotify()) return;
+    const buffer = appState.terminal!.buffer.active;
+    let body = 'Terminal bell';
+    for (let i = buffer.cursorY; i >= 0; i--) {
+      const line = buffer.getLine(i)?.translateToString(true).trim();
+      if (line) { body = line; break; }
+    }
+    fireNotification('MobiSSH', body);
   });
 
   appState.terminal.parser.registerOscHandler(9, (data: string) => {
