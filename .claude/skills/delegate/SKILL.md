@@ -478,9 +478,12 @@ its own (usually wrong).
 delegated as a coordinated sequence, not three independent tasks. The third bot PR
 will conflict with the first two otherwise.
 
-**Research gaps block delegation.** If an issue requires understanding that doesn't
-exist yet (e.g., "how does iOS Safari handle X?"), the agent must research first and
-embed the findings in the delegation comment. Don't delegate research to the bot.
+**Bot can and should research.** Issues labeled `spike` that need research (API behavior,
+protocol details, browser compatibility) are delegatable as research tasks. The bot
+compiles findings into a `docs/` markdown file with source references. The delegation
+comment should specify exact research questions and require the bot to distinguish
+facts from speculation. Only flag as human-only if research requires real-device testing,
+proprietary access, or judgment calls the bot can't make.
 
 ## Edge Cases
 
