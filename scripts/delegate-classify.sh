@@ -14,7 +14,11 @@
 #   decompose         — too large or vague for one pass
 #   human-only        — device testing, research, UX judgment
 #   blocked           — depends on unresolved issue
+#   icebox            — labeled icebox, skip entirely
 #   close             — superseded or stale
+#
+# Test-fixup branches (only touch tests/) are part of the two-pass workflow
+# and don't count as failed feature attempts for know-when-to-quit rules.
 
 set -euo pipefail
 
@@ -82,16 +86,41 @@ for issue in issues:
     signals = []
     bucket = None
 
+    # Rule 0: Icebox label → skip entirely
+    labels = [l.get('name', '') if isinstance(l, dict) else str(l) for l in issue.get('labels', [])]
+    if 'icebox' in labels:
+        bucket = 'icebox'
+        signals.append('labeled icebox')
+
     # Rule 1: Has bot branches → already-attempted (needs failure analysis)
+    # Test-fixup branches (only touch tests/) are a normal part of the two-pass
+    # workflow and don't count as failed feature attempts.
     if attempts > 0:
-        bucket = 'already-attempted'
-        signals.append(f'{attempts} bot attempt(s)')
+        latest_files = latest.get('filenames', [])
+        latest_is_test_fixup = bool(latest_files) and all(
+            f.startswith('tests/') for f in latest_files
+        )
+        feature_attempts = sum(
+            1 for b in branches
+            if not (b.get('filenames') and all(
+                f.startswith('tests/') for f in b['filenames']
+            ))
+        )
+        if latest_is_test_fixup:
+            signals.append(f'{attempts} branch(es), latest is test-fixup pass')
+            if feature_attempts > 0:
+                bucket = 'already-attempted'
+                signals.append(f'{feature_attempts} feature attempt(s) before test-fixup')
+            # else: all branches are test-fixup, don't block as already-attempted
+        else:
+            bucket = 'already-attempted'
+            signals.append(f'{attempts} bot attempt(s)')
         if total_lines > 200:
             signals.append(f'latest diff {total_lines} lines (over budget)')
         if files > 5:
             signals.append(f'latest touched {files} files')
-        if attempts >= 3:
-            signals.append('3+ attempts: know-when-to-quit threshold')
+        if feature_attempts >= 3:
+            signals.append('3+ feature attempts: know-when-to-quit threshold')
 
     # Rule 2: No body → needs human scoping
     if not issue.get('has_body'):
@@ -168,7 +197,7 @@ for issue in issues:
     groups.setdefault(bucket, []).append(issue)
 
 # Print summary to stderr
-for bucket in ['delegate', 'already-attempted', 'decompose', 'human-only', 'blocked', 'close']:
+for bucket in ['delegate', 'already-attempted', 'decompose', 'human-only', 'blocked', 'icebox', 'close']:
     items = groups.get(bucket, [])
     if items:
         print(f'\n{bucket.upper()} ({len(items)}):', file=sys.stderr)

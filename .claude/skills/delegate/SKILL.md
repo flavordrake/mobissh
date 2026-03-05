@@ -53,6 +53,7 @@ This produces `/tmp/delegate-classified.json` with every open issue classified i
 - **decompose** — too large or vague for one bot pass
 - **human-only** — device testing, research, UX judgment, iOS-specific
 - **blocked** — depends on unresolved issue
+- **icebox** — labeled `icebox`, skip entirely (not ready for work)
 - **close** — superseded or stale
 
 Read the classified JSON and the summary printed to stderr. This is the starting point
@@ -144,10 +145,39 @@ If the gap requires research the agent cannot resolve:
 - Document what was learned and what questions remain
 - Suggest a research spike (small, time-boxed investigation)
 
+### Merge related issues
+
+The inverse of decomposition. When multiple small issues describe facets of the same
+feature area (same files, same UI region, same concern), merge them into a single
+delegation rather than delegating individually. Individual delegation of tightly
+coupled issues produces conflicting PRs or redundant changes.
+
+**When to merge:**
+- 2+ issues touch the same files (detected by conflict analysis)
+- Issues describe different aspects of one UI component (e.g., key bar reflow + key bar
+  polish + key bar accessibility are all "key bar UX")
+- Combined scope stays within bot capability (merged diff < 200 lines, <= 5 files)
+- No issue in the group requires human-only validation that blocks the others
+
+**How to merge:**
+1. Pick the broadest issue as the **primary** (or create a new umbrella issue)
+2. Close the others with `Merged into #N for combined delegation`
+3. Build a single `@claude` comment that addresses all merged concerns
+4. Acceptance criteria = union of all individual issue criteria
+5. The delegation comment must reference all merged issue numbers so the bot
+   closes them all on merge
+
+**When NOT to merge:**
+- Issues are independently valuable and can ship separately
+- Combined scope exceeds bot capability (> 200 lines or > 5 files)
+- Issues are in different feature areas that happen to touch one shared file
+- One issue is human-only but others are bot-ready
+
 ### Synthesize into delegation plan
 
 The output of gap analysis is:
 - Which issues to delegate individually (independent, clear scope)
+- Which issues to **merge** into a single delegation (same feature area, would conflict)
 - Which issues to delegate as an ordered sequence (A before B)
 - Which issues to decompose (and the specific sub-issues)
 - Which issues need a new umbrella issue that captures the real gap
@@ -316,6 +346,7 @@ The **Labels** column shows which labels will be applied/removed per `.claude/pr
 
 For already-attempted issues: include failure analysis summary.
 For decompose issues: list proposed sub-issues.
+For merge groups: list the issues being merged and which is the primary.
 For clusters: explain the gap and the delegation strategy.
 
 **Wait for user approval.** The user may approve all, approve selectively, re-classify,
@@ -350,11 +381,20 @@ Run approved actions as Task agents where possible:
   ```bash
   scripts/gh-ops.sh close N --comment "Superseded by #M"
   ```
+- Merge related issues into one delegation:
+  1. Pick or create the primary issue
+  2. Close secondary issues:
+     ```bash
+     scripts/gh-ops.sh close N --comment "Merged into #P for combined delegation"
+     ```
+  3. Post combined `@claude` comment on primary with all merged criteria
+  4. Apply `bot` label to primary
 
 Report:
 ```
 Delegated: #X, #Y, #Z (labels: bot +device +spike as applicable)
-Decomposed: #A → #A1, #A2, #A3 (parent labeled composite)
+Merged: #A, #B, #C → #P (combined delegation on #P)
+Decomposed: #D → #D1, #D2, #D3 (parent labeled composite)
 Cleaned up: N branches for issues #P, #Q
 Closed: #C1 (superseded by #C2)
 Skipped (human-only): #H1, #H2

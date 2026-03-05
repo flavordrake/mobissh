@@ -103,8 +103,13 @@ async function setupConnected(page, mockSshServer) {
   await page.locator('#remote_a').fill('testuser');
   await page.locator('#remote_c').fill('testpass');
 
-  // Submit — calls saveProfile() then connect()
+  // Submit — saves profile (no longer connects)
   await page.locator('#connectForm button[type="submit"]').click();
+
+  // Connect via the profile's Connect button (wait for vault encrypt + profile render)
+  const connectBtn = page.locator('[data-action="connect"]').first();
+  await connectBtn.waitFor({ state: 'visible', timeout: 5000 });
+  await connectBtn.click();
 
   // Wait until the app sends a `resize` message — this is the first message sent
   // after the app receives `{type: "connected"}` from the mock server.
@@ -114,8 +119,8 @@ async function setupConnected(page, mockSshServer) {
     });
   }, null, { timeout: 10_000 });
 
-  // The app calls switchToTerminal() on form submit, then on receiving `connected`
-  // it calls focusIME() automatically and hides the tab bar (#36).
+  // connectFromProfile() navigates to terminal on success, then on receiving
+  // `connected` it calls focusIME() automatically and hides the tab bar (#36).
   // Wait for the terminal panel to be active, then ensure IME textarea is focused.
   await page.waitForSelector('#panel-terminal.active', { timeout: 5000 });
   await page.locator('#imeInput').focus().catch(() => {});
