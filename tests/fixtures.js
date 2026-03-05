@@ -29,6 +29,14 @@ const DIRECT_INPUT_ID  = 'directInput';
 /** Expected `type` attribute of the direct-mode input. */
 const DIRECT_INPUT_TYPE = 'password';
 
+/** Open the Advanced section in the connect form (port, name, command are inside <details>). */
+async function openConnectAdvanced(page) {
+  const details = page.locator('#connectAdvanced');
+  if (await details.count() > 0 && !(await details.getAttribute('open'))) {
+    await details.locator('summary').click();
+  }
+}
+
 /** Return the active IME input element ID based on current mode. */
 function activeInputSelector(page) {
   return page.evaluate((ids) =>
@@ -237,7 +245,7 @@ async function setupConnected(page, mockSshServer) {
   // Navigate to Connect tab and fill the form
   await page.locator('[data-panel="connect"]').click();
   await page.locator('#host').fill('mock-host');
-  await page.locator('#port').fill('22');
+  // Port defaults to 22 and is inside a collapsed <details> — skip filling it
   await page.locator('#remote_a').fill('testuser');
   await page.locator('#remote_c').fill('testpass');
 
@@ -267,6 +275,6 @@ async function setupConnected(page, mockSshServer) {
 }
 
 module.exports = {
-  test, expect, setupConnected, ensureTestVault,
+  test, expect, setupConnected, ensureTestVault, openConnectAdvanced,
   COMPOSE_INPUT_ID, DIRECT_INPUT_ID, DIRECT_INPUT_TYPE, activeInputSelector,
 };

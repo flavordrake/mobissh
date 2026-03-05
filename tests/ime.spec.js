@@ -99,7 +99,6 @@ async function setupConnected(page, mockSshServer) {
   // Navigate to Connect tab and fill the form
   await page.locator('[data-panel="connect"]').click();
   await page.locator('#host').fill('mock-host');
-  await page.locator('#port').fill('22');
   await page.locator('#remote_a').fill('testuser');
   await page.locator('#remote_c').fill('testpass');
 

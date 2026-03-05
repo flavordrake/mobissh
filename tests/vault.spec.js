@@ -35,7 +35,6 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('vault-test-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('vaultuser');
     await page.locator('#remote_c').fill('supersecretpassword');
     await page.locator('#connectForm button[type="submit"]').click();
@@ -70,7 +69,6 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('flag-test-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('flaguser');
     await page.locator('#remote_c').fill('mypassword');
     await page.locator('#connectForm button[type="submit"]').click();
@@ -91,7 +89,6 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('roundtrip-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('rounduser');
     await page.locator('#remote_c').fill('roundtrip-secret');
     await page.locator('#connectForm button[type="submit"]').click();
@@ -118,7 +115,6 @@ test.describe('Credential vault (#14)', () => {
     await page.locator('[data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('delete-test-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('deleteuser');
     await page.locator('#remote_c').fill('deleteme');
     await page.locator('#connectForm button[type="submit"]').click();
@@ -157,7 +153,6 @@ test.describe('Credential vault (#14)', () => {
 
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('no-vault-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('novaultuser');
     await page.locator('#remote_c').fill('should-not-persist');
 
@@ -185,7 +180,6 @@ test.describe('Credential vault (#14)', () => {
 
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('setup-test-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('setupuser');
     await page.locator('#remote_c').fill('setupsecret');
 

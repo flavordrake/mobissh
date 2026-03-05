@@ -8,7 +8,7 @@
  * Run on: Pixel 7, iPhone 14, Desktop Chrome (see playwright.config.js)
  */
 
-const { test, expect, COMPOSE_INPUT_ID } = require('./fixtures.js');
+const { test, expect, COMPOSE_INPUT_ID, openConnectAdvanced } = require('./fixtures.js');
 
 test.describe('Initial page load', () => {
   test.beforeEach(async ({ page }) => {
@@ -184,12 +184,15 @@ test.describe('Connect form', () => {
 
   test('form has required fields', async ({ page }) => {
     await expect(page.locator('#host')).toBeVisible();
-    await expect(page.locator('#port')).toBeVisible();
     await expect(page.locator('#remote_a')).toBeVisible();
     await expect(page.locator('#authType')).toBeVisible();
+    // Port is inside collapsed Advanced section
+    await openConnectAdvanced(page);
+    await expect(page.locator('#port')).toBeVisible();
   });
 
   test('port field defaults to 22', async ({ page }) => {
+    await openConnectAdvanced(page);
     await expect(page.locator('#port')).toHaveValue('22');
   });
 
@@ -245,9 +248,9 @@ test.describe('Connect form', () => {
       await createVault('test', false);
     });
 
+    await openConnectAdvanced(page);
     await page.locator('#profileName').fill('Test Server');
     await page.locator('#host').fill('192.168.1.100');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('admin');
     await page.locator('#remote_c').fill('secret');
 

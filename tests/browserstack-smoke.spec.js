@@ -13,7 +13,7 @@
  * Devices are declared in browserstack.yml (Samsung S23, Pixel 6, iPhone 15).
  */
 
-const { test, expect } = require('./fixtures.js');
+const { test, expect, openConnectAdvanced } = require('./fixtures.js');
 
 test('smoke: page loads, title is MobiSSH, connect form and tab bar render', async ({ page }) => {
   await page.goto('./');
@@ -37,8 +37,9 @@ test('smoke: page loads, title is MobiSSH, connect form and tab bar render', asy
   const connectPanel = page.locator('#panel-connect');
   await expect(connectPanel).toHaveClass(/active/);
   await expect(page.locator('#host')).toBeVisible();
-  await expect(page.locator('#port')).toBeVisible();
   await expect(page.locator('#remote_a')).toBeVisible();
+  await openConnectAdvanced(page);
+  await expect(page.locator('#port')).toBeVisible();
 
   // 4. Screenshot (saved by BrowserStack Automate and available in the dashboard)
   await page.screenshot({ path: 'test-results/screenshots/browserstack-smoke.png' });

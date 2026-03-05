@@ -6,7 +6,7 @@
  * profile deletion, and form population on load.
  */
 
-const { test, expect, setupConnected } = require('./fixtures.js');
+const { test, expect, setupConnected, openConnectAdvanced } = require('./fixtures.js');
 
 // After setupConnected the tab bar is auto-hidden (#36). Show it so we can navigate.
 async function showTabBar(page) {
@@ -25,6 +25,7 @@ async function revealConnectForm(page) {
   if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
     await btn.click();
   }
+  await openConnectAdvanced(page);
 }
 
 // Inject mock PasswordCredential so vault operations work in headless Chromium
@@ -68,7 +69,6 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await revealConnectForm(page);
     await page.locator('#profileName').fill('Original');
     await page.locator('#host').fill('upsert-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('upsertuser');
     await page.locator('#remote_c').fill('pass1');
     await page.locator('#connectForm button[type="submit"]').click();
@@ -80,7 +80,6 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await revealConnectForm(page);
     await page.locator('#profileName').fill('Updated');
     await page.locator('#host').fill('upsert-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('upsertuser');
     await page.locator('#remote_c').fill('pass2');
     await page.locator('#connectForm button[type="submit"]').click();
@@ -104,7 +103,6 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await revealConnectForm(page);
     await page.locator('#profileName').fill('<img src=x onerror=alert(1)>');
     await page.locator('#host').fill('xss-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('xssuser');
     await page.locator('#remote_c').fill('xsspass');
     await page.locator('#connectForm button[type="submit"]').click();
@@ -153,7 +151,8 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await profileItem.click();
     await page.waitForTimeout(500);
 
-    // Verify form fields populated
+    // Verify form fields populated (advanced fields are inside collapsed <details>)
+    await openConnectAdvanced(page);
     expect(await page.locator('#profileName').inputValue()).toBe('LoadTest');
     expect(await page.locator('#host').inputValue()).toBe('load-host');
     expect(await page.locator('#port').inputValue()).toBe('2222');
@@ -170,7 +169,6 @@ test.describe('Profile & key storage (#110 Phase 5)', () => {
     await revealConnectForm(page);
     await page.locator('#profileName').fill('ToDelete');
     await page.locator('#host').fill('delete-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('deluser');
     await page.locator('#remote_c').fill('delpass');
     await page.locator('#connectForm button[type="submit"]').click();
