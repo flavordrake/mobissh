@@ -226,7 +226,11 @@ html, body {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Cap height to available space above the handle bar so menu scrolls when
+     the on-screen keyboard consumes viewport height (issue #183). */
+  max-height: calc(var(--viewport-height, 100svh) - var(--keybar-handle-height) - var(--keybar-height) - env(safe-area-inset-top));
   animation: sessionMenuSlideUp 0.15s ease-out;
 }
 

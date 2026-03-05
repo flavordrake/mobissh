@@ -106,6 +106,39 @@ test.describe('UI chrome (#110 Phase 8)', () => {
     await expect(page.locator('#sessionMenu')).toHaveClass(/hidden/);
   });
 
+  test('session menu is scrollable when viewport is small (#183)', async ({ page, mockSshServer }) => {
+    // Simulate keyboard-open by setting a short viewport height and injecting
+    // --viewport-height so the max-height calc fires with a small value.
+    await page.setViewportSize({ width: 390, height: 300 });
+    await setupConnected(page, mockSshServer);
+
+    // Inject a small --viewport-height (e.g. 200px — less than the menu content
+    // height) so the max-height constraint kicks in, mimicking keyboard open.
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--viewport-height', '200px');
+    });
+
+    // Open the session menu
+    await page.locator('#sessionMenuBtn').click();
+    await page.waitForTimeout(100);
+    await expect(page.locator('#sessionMenu')).not.toHaveClass(/hidden/);
+
+    const menu = page.locator('#sessionMenu');
+    const overflowY = await menu.evaluate((el) => getComputedStyle(el).overflowY);
+    expect(overflowY).toBe('auto');
+
+    // The rendered height must be ≤ max-height (menu must not overflow the
+    // available space above the handle bar).
+    const { menuHeight, maxHeight } = await menu.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        menuHeight: el.getBoundingClientRect().height,
+        maxHeight: parseFloat(cs.maxHeight),
+      };
+    });
+    expect(menuHeight).toBeLessThanOrEqual(maxHeight + 1); // +1 for sub-pixel rounding
+  });
+
   test('connect form auth type switch toggles password/key fields', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
