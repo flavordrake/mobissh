@@ -19,6 +19,8 @@
  *     { type: 'sftp_download', path: string, requestId: string }
  *     { type: 'sftp_upload', path: string, data: string, requestId: string }
  *     { type: 'sftp_stat', path: string, requestId: string }
+ *     { type: 'sftp_rename', oldPath: string, newPath: string, requestId: string }
+ *     { type: 'sftp_delete', path: string, requestId: string }
  *
  *   Server → Client:
  *     { type: 'connected' }
@@ -30,6 +32,8 @@
  *     { type: 'sftp_download_result', requestId, data: string }  (base64)
  *     { type: 'sftp_upload_result', requestId, ok: boolean, error?: string }
  *     { type: 'sftp_stat_result', requestId, stat: {isDir, size, mtime} }
+ *     { type: 'sftp_rename_result', requestId, ok: true }
+ *     { type: 'sftp_delete_result', requestId, ok: true }
  *     { type: 'sftp_error', requestId, message: string }
  */
 
@@ -160,6 +164,30 @@ function handleSftpMessage(msg, sftp, send) {
       sftp.stat(filePath, (err, stats) => {
         if (err) { sftpErr(err.message); return; }
         send({ type: 'sftp_stat_result', requestId, stat: { isDir: stats.isDirectory(), size: stats.size, mtime: stats.mtime } });
+      });
+      break;
+
+    case 'sftp_rename':
+      sftp.rename(msg.oldPath, msg.newPath, (err) => {
+        if (err) { sftpErr(err.message); return; }
+        send({ type: 'sftp_rename_result', requestId, ok: true });
+      });
+      break;
+
+    case 'sftp_delete':
+      sftp.stat(filePath, (err, stats) => {
+        if (err) { sftpErr(err.message); return; }
+        if (stats.isDirectory()) {
+          sftp.rmdir(filePath, (e) => {
+            if (e) { sftpErr(e.message); return; }
+            send({ type: 'sftp_delete_result', requestId, ok: true });
+          });
+        } else {
+          sftp.unlink(filePath, (e) => {
+            if (e) { sftpErr(e.message); return; }
+            send({ type: 'sftp_delete_result', requestId, ok: true });
+          });
+        }
       });
       break;
 
@@ -583,6 +611,8 @@ wss.on('connection', (ws, req) => {
       case 'sftp_download':
       case 'sftp_upload':
       case 'sftp_stat':
+      case 'sftp_rename':
+      case 'sftp_delete':
         getSftp((err, sftp) => {
           if (err) { send({ type: 'sftp_error', requestId: msg.requestId, message: err.message }); return; }
           handleSftpMessage(msg, sftp, send);
