@@ -711,6 +711,37 @@ input[type="range"] {
   line-height: 1.5;
 }
 
+#themePreview {
+  height: 80px;
+  width: 100%;
+  border-radius: 6px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow: hidden;
+  background: var(--preview-bg, #000);
+  color: var(--preview-fg, #e0e0e0);
+  margin-bottom: 4px;
+}
+
+#themePreview .tp-prompt { color: var(--preview-cursor, #00ff88); }
+#themePreview .tp-path { color: var(--preview-cursor, #00ff88); }
+#themePreview .tp-dim { opacity: 0.6; }
+#themePreview .tp-accent { color: var(--preview-cursor, #00ff88); }
+#themePreview .tp-cursor {
+  display: inline-block;
+  width: 8px;
+  background: var(--preview-cursor, #00ff88);
+  animation: tpCursorBlink 1s step-end infinite;
+}
+
+@keyframes tpCursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 .warn {
   color: #ffaa00;
 }

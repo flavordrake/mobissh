@@ -6,7 +6,8 @@
  */
 
 import type { SettingsDeps } from './types.js';
-import { getDefaultWsUrl } from './constants.js';
+import { getDefaultWsUrl, THEMES } from './constants.js';
+import type { ThemeName } from './types.js';
 
 let _toast = (_msg: string): void => {};
 let _applyFontSize = (_size: number): void => {};
@@ -145,9 +146,22 @@ export function initSettingsPanel(): void {
   });
 
   const themeSelect = document.getElementById('termThemeSelect') as HTMLSelectElement;
+  const themePreview = document.getElementById('themePreview');
   themeSelect.value = localStorage.getItem('termTheme') ?? 'dark';
+
+  function updateThemePreview(name: string): void {
+    if (!themePreview) return;
+    const t = (name in THEMES) ? THEMES[name as ThemeName].theme : undefined;
+    if (!t) return;
+    themePreview.style.setProperty('--preview-bg', t.background);
+    themePreview.style.setProperty('--preview-fg', t.foreground);
+    themePreview.style.setProperty('--preview-cursor', t.cursor);
+  }
+
+  updateThemePreview(themeSelect.value);
   themeSelect.addEventListener('change', () => {
     _applyTheme(themeSelect.value, { persist: true });
+    updateThemePreview(themeSelect.value);
   });
 
   const fontSelect = document.getElementById('termFontSelect') as HTMLSelectElement;
