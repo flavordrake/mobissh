@@ -46,7 +46,7 @@ sed '/^}$/i \
     location /ssh {\
         rewrite ^/ssh(/.*)$ $1 break;\
         rewrite ^/ssh$ / break;\
-        proxy_pass http://127.0.0.1:8081;\
+        proxy_pass http://127.0.0.1:8082;\
         proxy_http_version 1.1;\
         proxy_set_header Host $host;\
         proxy_set_header X-Real-IP $remote_addr;\

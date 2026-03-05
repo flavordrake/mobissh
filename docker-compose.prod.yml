@@ -1,0 +1,11 @@
+services:
+  mobissh:
+    build: .
+    image: mobissh:${TAG:-latest}
+    container_name: mobissh-prod
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8082"
+    environment:
+      PORT: "8082"
+      NODE_ENV: production
