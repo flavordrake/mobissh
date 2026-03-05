@@ -4,7 +4,7 @@
  * Handles WS URL persistence, danger zone toggles, font/theme selectors,
  * clear data, and service worker registration.
  */
-import { getDefaultWsUrl } from './constants.js';
+import { getDefaultWsUrl, THEMES } from './constants.js';
 let _toast = (_msg) => { };
 let _applyFontSize = (_size) => { };
 let _applyTheme = (_name, _opts) => { };
@@ -101,6 +101,27 @@ export function initSettingsPanel() {
             localStorage.setItem('naturalHorizontalScroll', natHEl.checked ? 'true' : 'false');
         });
     }
+    const termNotifEl = document.getElementById('termNotifications');
+    if (termNotifEl) {
+        termNotifEl.checked = localStorage.getItem('termNotifications') === 'true';
+        termNotifEl.addEventListener('change', () => {
+            if (termNotifEl.checked) {
+                void Notification.requestPermission().then((perm) => {
+                    if (perm === 'granted') {
+                        localStorage.setItem('termNotifications', 'true');
+                    }
+                    else {
+                        termNotifEl.checked = false;
+                        localStorage.setItem('termNotifications', 'false');
+                        _toast('Notification permission denied — toggle reverted.');
+                    }
+                });
+            }
+            else {
+                localStorage.setItem('termNotifications', 'false');
+            }
+        });
+    }
     const dockEl = document.getElementById('keyControlsDockLeft');
     if (dockEl) {
         dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';
@@ -114,9 +135,22 @@ export function initSettingsPanel() {
         _applyFontSize(parseInt(e.target.value));
     });
     const themeSelect = document.getElementById('termThemeSelect');
+    const themePreview = document.getElementById('themePreview');
     themeSelect.value = localStorage.getItem('termTheme') ?? 'dark';
+    function updateThemePreview(name) {
+        if (!themePreview)
+            return;
+        const t = (name in THEMES) ? THEMES[name].theme : undefined;
+        if (!t)
+            return;
+        themePreview.style.setProperty('--preview-bg', t.background);
+        themePreview.style.setProperty('--preview-fg', t.foreground);
+        themePreview.style.setProperty('--preview-cursor', t.cursor);
+    }
+    updateThemePreview(themeSelect.value);
     themeSelect.addEventListener('change', () => {
         _applyTheme(themeSelect.value, { persist: true });
+        updateThemePreview(themeSelect.value);
     });
     const fontSelect = document.getElementById('termFontSelect');
     fontSelect.value = localStorage.getItem('termFont') ?? 'monospace';

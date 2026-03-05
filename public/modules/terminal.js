@@ -17,6 +17,17 @@ const FONT_FAMILIES = {
     jetbrains: '"JetBrains Mono", monospace',
     firacode: '"Fira Code", monospace',
 };
+function shouldNotify() {
+    return localStorage.getItem('termNotifications') === 'true'
+        && Notification.permission === 'granted'
+        && document.visibilityState === 'hidden';
+}
+function fireNotification(title, body) {
+    try {
+        new Notification(title, { body });
+    }
+    catch { /* permission may have been revoked */ }
+}
 export function initTerminal() {
     const fontSize = parseInt(localStorage.getItem('fontSize') ?? '14') || 14;
     const savedTheme = localStorage.getItem('termTheme') ?? 'dark';
@@ -35,6 +46,22 @@ export function initTerminal() {
     appState.terminal.loadAddon(appState.fitAddon);
     appState.terminal.open(document.getElementById('terminal'));
     appState.fitAddon.fit();
+    appState.terminal.onBell(() => {
+        if (shouldNotify())
+            fireNotification('MobiSSH', 'Terminal bell');
+    });
+    appState.terminal.parser.registerOscHandler(9, (data) => {
+        if (shouldNotify())
+            fireNotification('MobiSSH', data);
+        return true;
+    });
+    appState.terminal.parser.registerOscHandler(777, (data) => {
+        const parts = data.split(';');
+        if (parts[0] === 'notify' && shouldNotify()) {
+            fireNotification(parts[1] ?? 'MobiSSH', parts[2] ?? '');
+        }
+        return true;
+    });
     // Re-measure character cells after web fonts finish loading (#71)
     void document.fonts.ready.then(() => {
         if (!appState.terminal || !fontFamily)

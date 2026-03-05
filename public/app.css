@@ -727,10 +727,10 @@ input[type="range"] {
 }
 
 #themePreview {
-  height: 80px;
+  height: 120px;
   width: 100%;
   border-radius: 6px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   box-sizing: border-box;
   font-family: monospace;
   font-size: 12px;
