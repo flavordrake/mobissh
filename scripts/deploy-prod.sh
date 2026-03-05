@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # scripts/deploy-prod.sh
 #
-# Build and deploy the MobiSSH production container.
+# Build and deploy the MobiSSH production container with Tailscale.
 #
 # Usage:
-#   scripts/deploy-prod.sh           # build from HEAD, tag as latest
-#   scripts/deploy-prod.sh v0.5.0   # build from HEAD, tag as v0.5.0
+#   echo "tskey-auth-..." | scripts/deploy-prod.sh
+#   scripts/deploy-prod.sh tskey-auth-...
+#   scripts/deploy-prod.sh                      # skip auth (reuse persisted state)
 #
-# Requires: Docker with compose plugin
+# Options:
+#   --tag <tag>       Image tag (default: latest)
+#   --hostname <name> Tailscale hostname (default: mobissh)
+#
+# The auth key is read from: first arg, then stdin (if piped), then skipped.
+# Skipping auth works if the container has previously authenticated and
+# state is persisted in the tailscale-state volume.
 
 set -euo pipefail
 
@@ -17,13 +24,43 @@ mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 LOGFILE="${MOBISSH_LOGDIR}/deploy-prod.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
-TAG="${1:-latest}"
-export TAG
+TAG="latest"
+TS_HOSTNAME="mobissh"
+TS_AUTHKEY=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag) TAG="$2"; shift 2 ;;
+    --hostname) TS_HOSTNAME="$2"; shift 2 ;;
+    tskey-*) TS_AUTHKEY="$1"; shift ;;
+    *) echo "Unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Read from stdin if piped and no key provided yet
+if [[ -z "$TS_AUTHKEY" ]] && [[ ! -t 0 ]]; then
+  read -r TS_AUTHKEY
+fi
+
+if [[ -z "$TS_AUTHKEY" ]]; then
+  echo "No auth key provided -- reusing persisted Tailscale state"
+fi
 
 cd "$(dirname "$0")/.."
 
-echo "Building and deploying mobissh:${TAG} on port 8082"
+export TAG TS_HOSTNAME TS_AUTHKEY
+
+echo "Building mobissh:${TAG} (hostname: ${TS_HOSTNAME})"
 docker compose -f docker-compose.prod.yml up -d --build
 
-CONTAINER_ID=$(docker inspect --format '{{.Id}}' mobissh-prod)
-echo "Running: ${CONTAINER_ID}"
+echo "Waiting for container to start..."
+sleep 3
+
+if docker ps --filter name=mobissh-prod --format '{{.Status}}' | grep -q "Up"; then
+  echo "Container running"
+  docker logs --tail 10 mobissh-prod
+else
+  echo "Container failed to start" >&2
+  docker logs mobissh-prod
+  exit 1
+fi

@@ -4,8 +4,19 @@ services:
     image: mobissh:${TAG:-latest}
     container_name: mobissh-prod
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8082:8082"
     environment:
-      PORT: "8082"
+      PORT: "8081"
       NODE_ENV: production
+      TS_AUTHKEY: "${TS_AUTHKEY:-}"
+      TS_HOSTNAME: "${TS_HOSTNAME:-mobissh}"
+      TS_SERVE: "1"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+volumes:
+  tailscale-state:
