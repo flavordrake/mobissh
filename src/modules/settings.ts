@@ -110,6 +110,26 @@ export function initSettingsPanel(): void {
     });
   }
 
+  const termNotifEl = document.getElementById('termNotifications') as HTMLInputElement | null;
+  if (termNotifEl) {
+    termNotifEl.checked = localStorage.getItem('termNotifications') === 'true';
+    termNotifEl.addEventListener('change', () => {
+      if (termNotifEl.checked) {
+        void Notification.requestPermission().then((perm) => {
+          if (perm === 'granted') {
+            localStorage.setItem('termNotifications', 'true');
+          } else {
+            termNotifEl.checked = false;
+            localStorage.setItem('termNotifications', 'false');
+            _toast('Notification permission denied — toggle reverted.');
+          }
+        });
+      } else {
+        localStorage.setItem('termNotifications', 'false');
+      }
+    });
+  }
+
   const dockEl = document.getElementById('keyControlsDockLeft') as HTMLInputElement | null;
   if (dockEl) {
     dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';

@@ -24,6 +24,18 @@ const FONT_FAMILIES: Record<string, string> = {
   firacode: '"Fira Code", monospace',
 };
 
+function shouldNotify(): boolean {
+  return localStorage.getItem('termNotifications') === 'true'
+    && Notification.permission === 'granted'
+    && document.visibilityState === 'hidden';
+}
+
+function fireNotification(title: string, body: string): void {
+  try {
+    new Notification(title, { body });
+  } catch { /* permission may have been revoked */ }
+}
+
 export function initTerminal(): void {
   const fontSize = parseInt(localStorage.getItem('fontSize') ?? '14') || 14;
   const savedTheme = localStorage.getItem('termTheme') ?? 'dark';
@@ -45,6 +57,23 @@ export function initTerminal(): void {
   appState.terminal.loadAddon(appState.fitAddon);
   appState.terminal.open(document.getElementById('terminal')!);
   appState.fitAddon.fit();
+
+  appState.terminal.onBell(() => {
+    if (shouldNotify()) fireNotification('MobiSSH', 'Terminal bell');
+  });
+
+  appState.terminal.parser.registerOscHandler(9, (data: string) => {
+    if (shouldNotify()) fireNotification('MobiSSH', data);
+    return true;
+  });
+
+  appState.terminal.parser.registerOscHandler(777, (data: string) => {
+    const parts = data.split(';');
+    if (parts[0] === 'notify' && shouldNotify()) {
+      fireNotification(parts[1] ?? 'MobiSSH', parts[2] ?? '');
+    }
+    return true;
+  });
 
   // Re-measure character cells after web fonts finish loading (#71)
   void document.fonts.ready.then(() => {
