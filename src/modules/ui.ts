@@ -5,18 +5,18 @@
  * toast utility, IME focus, Ctrl modifier, and Compose mode management.
  */
 
-import type { UIDeps, ConnectionStatus, RootCSS, ThemeName } from './types.js';
-import { KEY_REPEAT, THEMES, THEME_ORDER } from './constants.js';
+import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
+import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState } from './state.js';
-import { sendSSHInput, disconnect, reconnect } from './connection.js';
+import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, getKeys, connectFromProfile, newConnection } from './profiles.js';
 
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
 
-type PanelName = 'terminal' | 'connect' | 'keys' | 'settings';
+type PanelName = 'terminal' | 'connect' | 'files' | 'keys' | 'settings';
 
-const VALID_PANELS: ReadonlySet<string> = new Set<PanelName>(['terminal', 'connect', 'keys', 'settings']);
+const VALID_PANELS: ReadonlySet<string> = new Set<PanelName>(['terminal', 'connect', 'files', 'keys', 'settings']);
 
 function _isValidPanel(hash: string): hash is PanelName {
   return VALID_PANELS.has(hash);
@@ -596,4 +596,123 @@ function _applyComposeModeUI(): void {
   if (!btn) return;
   btn.classList.toggle('compose-active', appState.imeMode);
   document.getElementById('key-bar')?.classList.toggle('compose-active', appState.imeMode);
+}
+
+// ── Files panel (#174) ───────────────────────────────────────────────────────
+
+let _filesPath = '/';
+const _filesCache = new Map<string, SftpEntry[]>();
+// Maps requestId -> path so SFTP responses can be matched to their requests
+const _filesPending = new Map<string, string>();
+
+function _renderFilesPanel(path: string, bodyHtml: string): void {
+  const panel = document.getElementById('panel-files');
+  if (!panel) return;
+
+  const parts = path === '/' ? [] : path.split('/').slice(1);
+  const rootCrumb = '<button class="files-crumb" data-path="/">/</button>';
+  const partCrumbs = parts.map((seg, i) => {
+    const segPath = '/' + parts.slice(0, i + 1).join('/');
+    return `<span class="files-crumb-sep">/</span><button class="files-crumb" data-path="${escHtml(segPath)}">${escHtml(seg)}</button>`;
+  }).join('');
+  const breadcrumbHtml = rootCrumb + partCrumbs;
+
+  panel.innerHTML = `
+    <div class="files-breadcrumb">${breadcrumbHtml}</div>
+    <div class="files-body">${bodyHtml}</div>
+  `;
+
+  panel.querySelectorAll<HTMLElement>('.files-crumb').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const dest = btn.dataset.path;
+      if (dest) _filesNavigateTo(dest);
+    });
+  });
+
+  panel.querySelectorAll<HTMLElement>('.files-entry[data-dir="true"]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const dest = row.dataset.path;
+      if (dest) _filesNavigateTo(dest);
+    });
+  });
+}
+
+function _filesNavigateTo(path: string): void {
+  _filesPath = path;
+  const cached = _filesCache.get(path);
+  if (cached) {
+    _renderFilesList(path, cached);
+    return;
+  }
+  _renderFilesPanel(path, '<div class="files-loading">Loading...</div>');
+  const reqId = `ls-${String(Date.now())}`;
+  _filesPending.set(reqId, path);
+  sendSftpLs(path, reqId);
+}
+
+function _renderFilesList(path: string, entries: SftpEntry[]): void {
+  if (entries.length === 0) {
+    _renderFilesPanel(path, '<div class="files-empty">Directory is empty</div>');
+    return;
+  }
+
+  const sorted = [...entries].sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const rows = sorted.map((e) => {
+    const fullPath = path === '/' ? `/${e.name}` : `${path}/${e.name}`;
+    const sizeStr = e.isDir ? '' : _formatSize(e.size);
+    return `<div class="files-entry" data-dir="${String(e.isDir)}" data-path="${escHtml(fullPath)}">
+      <span class="files-entry-icon">${e.isDir ? 'D' : 'F'}</span>
+      <span class="files-entry-name">${escHtml(e.name)}</span>
+      ${sizeStr ? `<span class="files-entry-size">${escHtml(sizeStr)}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  _renderFilesPanel(path, `<div class="files-list">${rows}</div>`);
+
+  // Pre-cache visible subdirectories (up to 5)
+  const dirs = sorted.filter((e) => e.isDir).slice(0, 5);
+  for (const dir of dirs) {
+    const dirPath = path === '/' ? `/${dir.name}` : `${path}/${dir.name}`;
+    if (!_filesCache.has(dirPath)) {
+      const preReqId = `pre-${String(Date.now())}-${dir.name}`;
+      _filesPending.set(preReqId, dirPath);
+      sendSftpLs(dirPath, preReqId);
+    }
+  }
+}
+
+function _formatSize(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)}B`;
+  if (bytes < 1024 * 1024) return `${String(Math.round(bytes / 1024))}K`;
+  return `${String(Math.round(bytes / (1024 * 1024)))}M`;
+}
+
+export function initFilesPanel(): void {
+  setSftpHandler((msg) => {
+    const path = _filesPending.get(msg.requestId);
+    _filesPending.delete(msg.requestId);
+
+    if (msg.type === 'sftp_ls_result') {
+      if (path) _filesCache.set(path, msg.entries);
+      // Only re-render if this result is for the currently visible path
+      if (path === _filesPath) _renderFilesList(path, msg.entries);
+    } else {
+      // Only show error for the active path, not background pre-cache failures
+      if (path === _filesPath) {
+        _renderFilesPanel(_filesPath, `<div class="files-error">${escHtml(msg.message)}</div>`);
+      }
+    }
+  });
+
+  // Render initial loading state when the Files tab is first activated
+  const filesTab = document.querySelector<HTMLElement>('[data-panel="files"]');
+  filesTab?.addEventListener('click', () => {
+    if (!document.getElementById('panel-files')?.querySelector('.files-body')) {
+      _filesNavigateTo(_filesPath);
+    }
+  });
 }

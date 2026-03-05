@@ -135,12 +135,21 @@ export interface IMEDeps {
 
 // ── SSH bridge protocol messages ────────────────────────────────────────────
 
+export interface SftpEntry {
+  name: string;
+  isDir: boolean;
+  size: number;
+  mtime: string;
+}
+
 export type ServerMessage =
   | { type: 'connected' }
   | { type: 'output'; data: string }
   | { type: 'error'; message: string }
   | { type: 'disconnected'; reason?: string }
-  | { type: 'hostkey'; host: string; port: number; keyType: string; fingerprint: string };
+  | { type: 'hostkey'; host: string; port: number; keyType: string; fingerprint: string }
+  | { type: 'sftp_ls_result'; requestId: string; entries: SftpEntry[] }
+  | { type: 'sftp_error'; requestId: string; message: string };
 
 export interface ConnectMessage {
   type: 'connect';
