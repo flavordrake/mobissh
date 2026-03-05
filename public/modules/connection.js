@@ -5,6 +5,13 @@
  * exponential backoff, keepalive pings, screen wake lock, host key
  * verification, and visibility-based reconnection.
  */
+let _sftpHandler = null;
+export function setSftpHandler(fn) { _sftpHandler = fn; }
+export function sendSftpLs(path, requestId) {
+    if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN)
+        return;
+    appState.ws.send(JSON.stringify({ type: 'sftp_ls', path, requestId }));
+}
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState } from './state.js';
 import { stopAndDownloadRecording } from './recording.js';
@@ -127,6 +134,10 @@ function _openWebSocket() {
                 _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`);
                 stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
                 scheduleReconnect();
+                break;
+            case 'sftp_ls_result':
+            case 'sftp_error':
+                _sftpHandler?.(msg);
                 break;
             case 'hostkey': { // SSH host key verification (#5)
                 const hostKey = `${msg.host}:${String(msg.port)}`;

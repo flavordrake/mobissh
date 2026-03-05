@@ -122,6 +122,20 @@ export function initSettingsPanel() {
             }
         });
     }
+    const notifBgOnlyEl = document.getElementById('notifBackgroundOnly');
+    if (notifBgOnlyEl) {
+        notifBgOnlyEl.checked = localStorage.getItem('notifBackgroundOnly') !== 'false';
+        notifBgOnlyEl.addEventListener('change', () => {
+            localStorage.setItem('notifBackgroundOnly', notifBgOnlyEl.checked ? 'true' : 'false');
+        });
+    }
+    const notifCooldownEl = document.getElementById('notifCooldown');
+    if (notifCooldownEl) {
+        notifCooldownEl.value = localStorage.getItem('notifCooldown') ?? '15000';
+        notifCooldownEl.addEventListener('change', () => {
+            localStorage.setItem('notifCooldown', notifCooldownEl.value);
+        });
+    }
     const dockEl = document.getElementById('keyControlsDockLeft');
     if (dockEl) {
         dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';
