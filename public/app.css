@@ -1389,19 +1389,31 @@ html.key-dock-left #composeModeBtn {
   max-width: 440px;
   width: 100%;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.conn-status-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: calc(var(--viewport-height, 65vh) * 0.65);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 .conn-status-message {
   font-size: 13px;
   color: var(--text);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.conn-status-message:not(:last-child) {
+  color: var(--text-dim);
 }
 
 .conn-status-cancel {

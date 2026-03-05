@@ -83,8 +83,10 @@ export function initKeyboardAwareness() {
             return;
         const h = Math.round(vv.height);
         keyboardVisible = h < window.outerHeight * 0.75;
-        if (vv.scale === 1)
+        if (vv.scale === 1) {
             app.style.height = `${String(h)}px`;
+            document.documentElement.style.setProperty('--viewport-height', `${String(h)}px`);
+        }
         appState.fitAddon?.fit();
         appState.terminal?.scrollToBottom();
         if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {

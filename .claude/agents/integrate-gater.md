@@ -4,7 +4,7 @@ description: Runs fast-gate validation (tsc + eslint + vitest) on a bot branch. 
 tools: Bash, Read
 model: sonnet
 background: true
-permissionMode: default
+permissionMode: bypassPermissions
 ---
 
 You are a validation agent. You run ONE command and report the result.

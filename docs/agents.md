@@ -39,10 +39,11 @@ Filesystem-based custom agents defined in `.claude/agents/`. Per the
 call script) and should not block the main conversation. The /issue skill was designed
 for background execution but failed with the built-in general-purpose agent.
 
-**Decision: permissionMode `default` vs `bypassPermissions`**
-Chose `default`. It inherits the parent's allow-list which already covers
-`Bash(scripts/*)`, `Bash(gh *)`, Write, Read, etc. `bypassPermissions` would skip all
-checks including ones we want (like preventing writes outside /tmp and the project).
+**Decision: permissionMode `bypassPermissions`**
+Originally chose `default` (inherits parent's allow-list), but background agents with
+`default` still get prompted for permissions and auto-denied since there's no UI.
+Switched to `bypassPermissions`. Risk is mitigated by the `tools` field restricting
+each agent to only the tools it needs.
 
 **Decision: model `haiku` vs `inherit`**
 Chose `haiku`. Issue filing is template-driven: parse trigger, gather version, compose

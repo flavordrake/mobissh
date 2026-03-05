@@ -310,29 +310,66 @@ export function sendSSHInput(data: string): void {
 let _currentOverlay: HTMLDivElement | null = null;
 
 function _showConnectionStatus(message: string, options?: { cancelable?: boolean }): void {
-  _currentOverlay?.remove();
+  const cancelable = options?.cancelable ?? false;
+
+  // Reuse existing overlay — append message to scrollable log
+  if (_currentOverlay) {
+    const log = _currentOverlay.querySelector('.conn-status-log');
+    if (log) {
+      const line = document.createElement('div');
+      line.className = 'conn-status-message';
+      line.textContent = message;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+    }
+    // Update cancel button visibility
+    const existingCancel = _currentOverlay.querySelector('.conn-status-cancel');
+    if (cancelable && !existingCancel) {
+      const btn = document.createElement('button');
+      btn.className = 'conn-status-cancel';
+      btn.textContent = 'Cancel';
+      btn.addEventListener('click', () => {
+        cancelReconnect();
+        _setStatus('disconnected', 'Reconnect cancelled');
+        _currentOverlay?.remove();
+        _currentOverlay = null;
+      });
+      _currentOverlay.querySelector('.conn-status-dialog')!.appendChild(btn);
+    } else if (!cancelable && existingCancel) {
+      existingCancel.remove();
+    }
+    return;
+  }
 
   const overlay = document.createElement('div');
   overlay.id = 'connectionStatusOverlay';
   overlay.className = 'conn-status-overlay';
-  const cancelable = options?.cancelable ?? false;
 
-  overlay.innerHTML = `
-    <div class="conn-status-dialog">
-      <div class="conn-status-message">${escHtml(message)}</div>
-      ${cancelable ? '<button class="conn-status-cancel">Cancel</button>' : ''}
-    </div>
-  `;
+  const dialog = document.createElement('div');
+  dialog.className = 'conn-status-dialog';
+
+  const log = document.createElement('div');
+  log.className = 'conn-status-log';
+  const line = document.createElement('div');
+  line.className = 'conn-status-message';
+  line.textContent = message;
+  log.appendChild(line);
+  dialog.appendChild(log);
 
   if (cancelable) {
-    overlay.querySelector('.conn-status-cancel')!.addEventListener('click', () => {
+    const btn = document.createElement('button');
+    btn.className = 'conn-status-cancel';
+    btn.textContent = 'Cancel';
+    btn.addEventListener('click', () => {
       cancelReconnect();
       _setStatus('disconnected', 'Reconnect cancelled');
       overlay.remove();
       _currentOverlay = null;
     });
+    dialog.appendChild(btn);
   }
 
+  overlay.appendChild(dialog);
   document.body.appendChild(overlay);
   _currentOverlay = overlay;
 }

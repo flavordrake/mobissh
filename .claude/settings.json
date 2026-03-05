@@ -46,7 +46,8 @@
       "Bash(PORT=*)"
     ],
     "additionalDirectories": [
-      "/tmp"
+      "/tmp",
+      "/home/ra/code/mobissh/.claude"
     ]
   },
   "hooks": {

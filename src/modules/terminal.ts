@@ -102,7 +102,10 @@ export function initKeyboardAwareness(): void {
 
     keyboardVisible = h < window.outerHeight * 0.75;
 
-    if (vv.scale === 1) app!.style.height = `${String(h)}px`;
+    if (vv.scale === 1) {
+      app!.style.height = `${String(h)}px`;
+      document.documentElement.style.setProperty('--viewport-height', `${String(h)}px`);
+    }
 
     appState.fitAddon?.fit();
     appState.terminal?.scrollToBottom();

@@ -4,7 +4,7 @@
  * Terminal init, font size, theme, and resize tests (#110 Phase 10).
  */
 
-const { test, expect } = require('./fixtures.js');
+const { test, expect, setupConnected } = require('./fixtures.js');
 
 test.describe('Terminal (#110 Phase 10)', () => {
   test('xterm.js terminal is created and visible on load', async ({ page }) => {
@@ -61,40 +61,7 @@ test.describe('Terminal (#110 Phase 10)', () => {
 
   test('theme cycle via session menu changes theme without persisting', async ({ page, mockSshServer }) => {
     // Connect so session menu works
-    await page.addInitScript(() => {
-      window.__mockWsSpy = [];
-      const OrigWS = window.WebSocket;
-      window.WebSocket = class extends OrigWS {
-        send(data) { window.__mockWsSpy.push(data); super.send(data); }
-      };
-    });
-    await page.addInitScript(() => { localStorage.clear(); });
-    await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
-
-    // Pre-create a test vault so saveProfile() doesn't show the setup modal
-    await page.evaluate(async () => {
-      const { createVault } = await import('./modules/vault.js');
-      await createVault('test', false);
-    });
-
-    await page.evaluate((port) => {
-      localStorage.setItem('wsUrl', `ws://localhost:${port}`);
-    }, mockSshServer.port);
-
-    await page.locator('[data-panel="connect"]').click();
-    await page.locator('#host').fill('mock-host');
-    await page.locator('#remote_a').fill('testuser');
-    await page.locator('#remote_c').fill('testpass');
-    await page.locator('#connectForm button[type="submit"]').click();
-
-    await page.waitForFunction(() => {
-      return (window.__mockWsSpy || []).some((s) => {
-        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
-      });
-    }, null, { timeout: 10_000 });
-
-    await page.waitForSelector('#panel-terminal.active', { timeout: 5000 });
+    await setupConnected(page, mockSshServer);
 
     // Open session menu and click theme button
     await page.locator('#sessionMenuBtn').click();
