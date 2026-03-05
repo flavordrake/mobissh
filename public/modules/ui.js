@@ -391,6 +391,12 @@ export function initTerminalActions() {
         keyEnd: '\x1b[F',
         keyPgUp: '\x1b[5~',
         keyPgDn: '\x1b[6~',
+        // Merged depth-1 row nav keys (same sequences, different element IDs)
+        keyEscM: '\x1b',
+        keyUpM: '\x1b[A',
+        keyDownM: '\x1b[B',
+        keyLeftM: '\x1b[D',
+        keyRightM: '\x1b[C',
     };
     for (const [id, seq] of Object.entries(keys)) {
         const el = document.getElementById(id);

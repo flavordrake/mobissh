@@ -431,19 +431,25 @@ export function initTerminalActions(): void {
   });
 
   const keys: Record<string, string> = {
-    keyEsc:   '\x1b',
-    keyTab:   '\t',
-    keySlash: '/',
-    keyPipe:  '|',
-    keyDash:  '-',
-    keyUp:    '\x1b[A',
-    keyDown:  '\x1b[B',
-    keyLeft:  '\x1b[D',
-    keyRight: '\x1b[C',
-    keyHome:  '\x1b[H',
-    keyEnd:   '\x1b[F',
-    keyPgUp:  '\x1b[5~',
-    keyPgDn:  '\x1b[6~',
+    keyEsc:    '\x1b',
+    keyTab:    '\t',
+    keySlash:  '/',
+    keyPipe:   '|',
+    keyDash:   '-',
+    keyUp:     '\x1b[A',
+    keyDown:   '\x1b[B',
+    keyLeft:   '\x1b[D',
+    keyRight:  '\x1b[C',
+    keyHome:   '\x1b[H',
+    keyEnd:    '\x1b[F',
+    keyPgUp:   '\x1b[5~',
+    keyPgDn:   '\x1b[6~',
+    // Merged depth-1 row nav keys (same sequences, different element IDs)
+    keyEscM:   '\x1b',
+    keyUpM:    '\x1b[A',
+    keyDownM:  '\x1b[B',
+    keyLeftM:  '\x1b[D',
+    keyRightM: '\x1b[C',
   };
 
   for (const [id, seq] of Object.entries(keys)) {
