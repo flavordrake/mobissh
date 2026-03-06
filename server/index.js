@@ -15,12 +15,14 @@
  *     { type: 'resize', cols: number, rows: number }
  *     { type: 'disconnect' }
  *     { type: 'hostkey_response', accepted: boolean }
+ *     // [SFTP_TYPES] -- keep in sync with handleSftpMessage and WS router
  *     { type: 'sftp_ls', path: string, requestId: string }
  *     { type: 'sftp_download', path: string, requestId: string }
  *     { type: 'sftp_upload', path: string, data: string, requestId: string }
  *     { type: 'sftp_stat', path: string, requestId: string }
  *     { type: 'sftp_rename', oldPath: string, newPath: string, requestId: string }
  *     { type: 'sftp_delete', path: string, requestId: string }
+ *     { type: 'sftp_realpath', requestId: string }
  *
  *   Server → Client:
  *     { type: 'connected' }
@@ -28,12 +30,14 @@
  *     { type: 'error', message: string }
  *     { type: 'disconnected', reason: string }
  *     { type: 'hostkey', host, port, keyType, fingerprint }
+ *     // [SFTP_RESULTS] -- keep in sync with client types.ts ServerMessage
  *     { type: 'sftp_ls_result', requestId, entries: [{name, isDir, isSymlink, size, mtime, atime, permissions, uid, gid}] }
  *     { type: 'sftp_download_result', requestId, data: string }  (base64)
  *     { type: 'sftp_upload_result', requestId, ok: boolean, error?: string }
  *     { type: 'sftp_stat_result', requestId, stat: {isDir, size, mtime} }
  *     { type: 'sftp_rename_result', requestId, ok: true }
  *     { type: 'sftp_delete_result', requestId, ok: true }
+ *     { type: 'sftp_realpath_result', requestId, path: string }
  *     { type: 'sftp_error', requestId, message: string }
  */
 
@@ -125,6 +129,7 @@ function handleSftpMessage(msg, sftp, send) {
   const { requestId, path: filePath } = msg;
   const sftpErr = (message) => send({ type: 'sftp_error', requestId, message });
 
+  // [SFTP_HANDLER] -- add new sftp_* cases here AND in the WS router below
   switch (msg.type) {
     case 'sftp_ls':
       sftp.readdir(filePath, (err, list) => {
@@ -619,6 +624,7 @@ wss.on('connection', (ws, req) => {
           // If rejected, ssh2 emits an error event which calls cleanup naturally
         }
         break;
+      // [SFTP_ROUTER] -- every type in SFTP_HANDLER must be listed here
       case 'sftp_ls':
       case 'sftp_download':
       case 'sftp_upload':

@@ -160,6 +160,7 @@ export interface SftpEntry {
   isSymlink?: boolean;
 }
 
+// [SERVER_MESSAGE] -- keep in sync with server/index.js SFTP_RESULTS and connection.ts SftpMsg
 export type ServerMessage =
   | { type: 'connected' }
   | { type: 'output'; data: string }
