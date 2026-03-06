@@ -8,7 +8,7 @@
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 
-type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_rename_result' | 'sftp_delete_result' }>;
+type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
 let _sftpHandler: ((msg: SftpMsg) => void) | null = null;
 export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler = fn; }
 export function sendSftpLs(path: string, requestId: string): void {
@@ -30,6 +30,10 @@ export function sendSftpRename(oldPath: string, newPath: string, requestId: stri
 export function sendSftpDelete(path: string, requestId: string): void {
   if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
   appState.ws.send(JSON.stringify({ type: 'sftp_delete', path, requestId }));
+}
+export function sendSftpRealpath(requestId: string): void {
+  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
+  appState.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState } from './state.js';
@@ -176,6 +180,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
       case 'sftp_upload_result':
       case 'sftp_rename_result':
       case 'sftp_delete_result':
+      case 'sftp_realpath_result':
         _sftpHandler?.(msg);
         break;
 

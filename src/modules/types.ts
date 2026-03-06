@@ -171,6 +171,7 @@ export type ServerMessage =
   | { type: 'sftp_upload_result'; requestId: string; ok: boolean }
   | { type: 'sftp_rename_result'; requestId: string; ok: boolean }
   | { type: 'sftp_delete_result'; requestId: string; ok: boolean }
+  | { type: 'sftp_realpath_result'; requestId: string; path: string }
   | { type: 'sftp_error'; requestId: string; message: string };
 
 export interface ConnectMessage {

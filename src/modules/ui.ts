@@ -8,7 +8,7 @@
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState } from './state.js';
-import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete } from './connection.js';
+import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, getKeys, connectFromProfile, newConnection } from './profiles.js';
 
@@ -604,6 +604,7 @@ function _applyComposeModeUI(): void {
 // ── Files panel (#174, #175) ─────────────────────────────────────────────────
 
 let _filesPath = '/';
+let _filesRealpathReqId: string | null = null; // pending sftp_realpath request
 const _filesCache = new Map<string, SftpEntry[]>();
 // Maps requestId -> path so SFTP ls responses can be matched to their requests
 const _filesPending = new Map<string, string>();
@@ -1041,6 +1042,11 @@ export function initFilesPanel(): void {
         _filesCache.delete(dir);
         if (dir === _filesPath) _filesNavigateTo(dir);
       }
+    } else if (msg.type === 'sftp_realpath_result') {
+      if (msg.requestId === _filesRealpathReqId) {
+        _filesRealpathReqId = null;
+        _filesNavigateTo(msg.path || '/');
+      }
     } else {
       // sftp_error — could be for ls, download, upload, rename, or delete
       if (_filesPending.has(msg.requestId)) {
@@ -1063,15 +1069,20 @@ export function initFilesPanel(): void {
       } else if (_deletePending.has(msg.requestId)) {
         _deletePending.delete(msg.requestId);
         toast(`Delete failed: ${msg.message}`);
+      } else if (msg.requestId === _filesRealpathReqId) {
+        _filesRealpathReqId = null;
+        _filesNavigateTo('/');
       }
     }
   });
 
-  // Render initial loading state when the Files tab is first activated
+  // On first Files tab activation, resolve home dir via sftp_realpath then navigate
   const filesTab = document.querySelector<HTMLElement>('[data-panel="files"]');
   filesTab?.addEventListener('click', () => {
     if (!document.getElementById('panel-files')?.querySelector('.files-body')) {
-      _filesNavigateTo(_filesPath);
+      _filesRealpathReqId = `rp-${String(Date.now())}`;
+      sendSftpRealpath(_filesRealpathReqId);
+      _renderFilesPanel(_filesPath, '<div class="files-loading">Loading...</div>');
     }
   });
 }

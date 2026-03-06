@@ -179,6 +179,13 @@ function handleSftpMessage(msg, sftp, send) {
       });
       break;
 
+    case 'sftp_realpath':
+      sftp.realpath('.', (err, absPath) => {
+        if (err) { sftpErr(err.message); return; }
+        send({ type: 'sftp_realpath_result', requestId, path: absPath });
+      });
+      break;
+
     case 'sftp_delete':
       sftp.stat(filePath, (err, stats) => {
         if (err) { sftpErr(err.message); return; }
