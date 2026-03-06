@@ -95,6 +95,18 @@ export function initSettingsPanel(): void {
     });
   }
 
+  // Debug: show/hide IME textarea for compose/correction debugging
+  const debugIMEEl = document.getElementById('debugIME') as HTMLInputElement | null;
+  if (debugIMEEl) {
+    const imeOn = localStorage.getItem('debugIME') === 'true';
+    debugIMEEl.checked = imeOn;
+    if (imeOn) document.body.classList.add('debug-ime');
+    debugIMEEl.addEventListener('change', () => {
+      localStorage.setItem('debugIME', debugIMEEl.checked ? 'true' : 'false');
+      document.body.classList.toggle('debug-ime', debugIMEEl.checked);
+    });
+  }
+
   const natVEl = document.getElementById('naturalVerticalScroll') as HTMLInputElement | null;
   if (natVEl) {
     natVEl.checked = localStorage.getItem('naturalVerticalScroll') !== 'false';

@@ -62,6 +62,33 @@ html, body {
   z-index: -1;
 }
 
+/* Debug: make IME textarea visible when it has content.
+   The .ime-visible class is toggled by JS when text is present. */
+body.debug-ime #imeInput.ime-visible {
+  opacity: 1;
+  width: 90%;
+  min-height: 44px;
+  max-height: calc(var(--viewport-height, 100svh) / 3);
+  height: auto;
+  top: 4px;
+  bottom: auto;
+  left: 5%;
+  background: var(--bg-card);
+  color: var(--text);
+  caret-color: var(--accent);
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px 8px;
+  pointer-events: auto;
+  z-index: 9999;
+  font-size: 16px;
+  overflow-y: auto;
+}
+
+body.debug-ime #imePreview {
+  display: none !important;
+}
+
 #app {
   display: flex;
   flex-direction: column;

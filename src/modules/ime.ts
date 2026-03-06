@@ -62,75 +62,203 @@ export function initIMEInput(): void {
     }
   }
 
+  // ── Textarea diffing state (handles post-composition corrections) ──────
+  // Track what we've sent to SSH so we can diff against the textarea value
+  // when the IME replaces text after compositionend (e.g., swipe correction).
+  // See docs/ime-compose-research.md for the full rationale.
+  let _lastSentValue = '';
+  let _replacementHandled = false;
+  let _clearTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Reset the textarea and diff tracking state. */
+  function _clearIME(): void {
+    if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
+    ime.value = '';
+    _lastSentValue = '';
+    ime.classList.remove('ime-visible');
+    ime.style.height = '';
+  }
+
+  /** Show the debug overlay and auto-size to content. */
+  function _showIMEOverlay(): void {
+    ime.classList.add('ime-visible');
+    // Auto-grow: reset height then set to scrollHeight, capped by CSS max-height
+    if (document.body.classList.contains('debug-ime')) {
+      ime.style.height = 'auto';
+      ime.style.height = `${String(ime.scrollHeight)}px`;
+    }
+  }
+
+  /** Schedule a deferred clear — gives the IME time to fire correction events
+   *  after compositionend, then clears so the textarea doesn't accumulate. */
+  function _scheduleClear(): void {
+    if (_clearTimer) clearTimeout(_clearTimer);
+    _clearTimer = setTimeout(_clearIME, 1500);
+  }
+
+  /** Send text to SSH with Ctrl modifier handling. */
+  function _sendIMEText(text: string): void {
+    if (text === '\n') {
+      sendSSHInput('\r');
+      ime.setAttribute('autocomplete', 'off');
+      _clearIME();
+      if (appState.imeMode) toggleComposeMode();
+      return;
+    }
+    if (appState.ctrlActive) {
+      const code = text[0]!.toLowerCase().charCodeAt(0) - 96;
+      sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
+      setCtrlActive(false);
+    } else {
+      sendSSHInput(text);
+    }
+  }
+
+  /** Diff old vs new value: send backspaces to erase changed region + replacement text. */
+  function _sendDiff(oldVal: string, newVal: string): void {
+    if (oldVal === newVal) return;
+    // Find longest common prefix
+    let prefix = 0;
+    while (prefix < oldVal.length && prefix < newVal.length && oldVal[prefix] === newVal[prefix]) prefix++;
+    // Find longest common suffix (not overlapping prefix)
+    let suffix = 0;
+    while (suffix < oldVal.length - prefix && suffix < newVal.length - prefix &&
+           oldVal[oldVal.length - 1 - suffix] === newVal[newVal.length - 1 - suffix]) suffix++;
+    const deletions = oldVal.length - prefix - suffix;
+    const insertion = newVal.slice(prefix, newVal.length - suffix);
+    if (deletions > 0) sendSSHInput('\x7f'.repeat(deletions));
+    if (insertion) sendSSHInput(insertion);
+  }
+
+  // ── beforeinput: intercept IME corrections before they hit the textarea ──
+  ime.addEventListener('beforeinput', (e: InputEvent) => {
+    _replacementHandled = false;
+
+    // insertReplacementText: Gboard/iOS correction after swipe-type (#231)
+    if (e.inputType === 'insertReplacementText' && e.data) {
+      const ranges = e.getTargetRanges();
+      if (ranges.length > 0) {
+        const r = ranges[0]!;
+        // For a textarea, startOffset/endOffset map to selectionStart/selectionEnd
+        const deleteCount = r.endOffset - r.startOffset;
+        if (deleteCount > 0) sendSSHInput('\x7f'.repeat(deleteCount));
+        sendSSHInput(e.data);
+        e.preventDefault();
+        // Update tracking: replace the range in lastSentValue
+        _lastSentValue = _lastSentValue.slice(0, r.startOffset) + e.data +
+                         _lastSentValue.slice(r.endOffset);
+        _replacementHandled = true;
+        return;
+      }
+      // If ranges empty (some Chrome versions), fall through to textarea diff in input handler
+    }
+
+    // deleteWordBackward: Gboard-specific correction sequence (#231)
+    if (e.inputType === 'deleteWordBackward' && !appState.isComposing) {
+      const start = ime.selectionStart;
+      const before = ime.value.slice(0, start);
+      // Find word boundary
+      const match = before.match(/\S+\s*$/);
+      const deleteCount = match ? match[0].length : before.length;
+      if (deleteCount > 0) {
+        sendSSHInput('\x7f'.repeat(deleteCount));
+        _lastSentValue = _lastSentValue.slice(0, start - deleteCount) + _lastSentValue.slice(start);
+        _replacementHandled = true;
+      }
+      // Don't preventDefault — let the browser update the textarea so
+      // the subsequent insertText has correct content to diff against
+    }
+  });
+
   // ── input event ─────────────────────────────────────────────────────────
   ime.addEventListener('input', () => {
     if (appState.isComposing) {
       _imePreviewShow(ime.value || null);
       return;
     }
-    const text = ime.value;
-    ime.value = '';
-    if (!text) return;
-    if (text === '\n') {
-      sendSSHInput('\r');
-      ime.setAttribute('autocomplete', 'off'); // reset password-mode suppression
-      if (appState.imeMode) toggleComposeMode();
+
+    // If beforeinput already handled this (insertReplacementText with ranges), skip
+    if (_replacementHandled) {
+      _replacementHandled = false;
       return;
     }
-    if (appState.ctrlActive) {
-      const code = text[0]!.toLowerCase().charCodeAt(0) - 96;
-      sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
-      setCtrlActive(false);
+
+    const newVal = ime.value;
+    if (!newVal) { _clearIME(); return; }
+    _showIMEOverlay();
+
+    // If we have a previous value to diff against, use textarea diffing
+    // to detect corrections the beforeinput handler couldn't catch
+    if (_lastSentValue) {
+      _sendDiff(_lastSentValue, newVal);
+      _lastSentValue = newVal;
     } else {
-      sendSSHInput(text);
+      // Fresh input (no prior value to diff against)
+      _sendIMEText(newVal);
+      _lastSentValue = newVal;
+    }
+
+    // Clear on word acceptance (space = user moved on, no more corrections expected)
+    if (newVal.endsWith(' ')) {
+      _clearIME();
+      return;
+    }
+
+    // In non-compose mode, clear the textarea after sending
+    if (!appState.imeMode) {
+      _clearIME();
     }
   });
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
   ime.addEventListener('compositionstart', () => {
     appState.isComposing = true;
+    // Cancel any pending clear — new composition needs the textarea
+    if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
+    _showIMEOverlay();
   });
 
   ime.addEventListener('compositionupdate', (e: CompositionEvent) => {
     if (e.data) _imePreviewShow(e.data);
+    _showIMEOverlay();
   });
 
   ime.addEventListener('compositionend', (e: CompositionEvent) => {
     appState.isComposing = false;
     _imePreviewShow(null);
     const text = ime.value || e.data;
-    ime.value = '';
-    if (!text) return;
-    if (text === '\n') {
-      sendSSHInput('\r');
-      ime.setAttribute('autocomplete', 'off'); // reset password-mode suppression
-      if (appState.imeMode) toggleComposeMode();
-      return;
-    }
-    if (appState.ctrlActive) {
-      const code = text[0]!.toLowerCase().charCodeAt(0) - 96;
-      sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : text);
-      setCtrlActive(false);
+    if (!text) { _clearIME(); return; }
+    _sendIMEText(text);
+    _lastSentValue = text;
+
+    // In non-compose mode, clear immediately.
+    // In compose mode, keep value briefly for correction diffing, then clear.
+    if (!appState.imeMode) {
+      _clearIME();
     } else {
-      sendSSHInput(text);
+      _scheduleClear();
     }
   });
 
   ime.addEventListener('compositioncancel' as keyof HTMLElementEventMap, () => {
     appState.isComposing = false;
     _imePreviewShow(null);
-    ime.value = '';
+    _clearIME();
   });
 
   // ── keydown: special keys not captured by 'input' ─────────────────────
   ime.addEventListener('keydown', (e) => {
     // Reset password-mode suggestion suppression when user submits with Enter (#123)
-    if (e.key === 'Enter') ime.setAttribute('autocomplete', 'off');
+    if (e.key === 'Enter') {
+      ime.setAttribute('autocomplete', 'off');
+      _clearIME();
+    }
 
     if (e.ctrlKey && !e.altKey && e.key.length === 1) {
       const code = e.key.toLowerCase().charCodeAt(0) - 96;
       if (code >= 1 && code <= 26) {
         sendSSHInput(String.fromCharCode(code));
+        _clearIME();
         e.preventDefault();
         return;
       }
@@ -138,7 +266,14 @@ export function initIMEInput(): void {
 
     const mapped = KEY_MAP[e.key];
     if (mapped) {
+      // In compose mode, let navigation keys work natively in the textarea
+      const isNav = e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
+      if (appState.imeMode && isNav) {
+        // Don't send to SSH, don't clear — let textarea handle cursor movement
+        return;
+      }
       sendSSHInput(mapped);
+      _clearIME();
       e.preventDefault();
       return;
     }
@@ -152,7 +287,7 @@ export function initIMEInput(): void {
         sendSSHInput(e.key);
       }
       e.preventDefault();
-      ime.value = '';
+      _clearIME();
     }
   });
 
