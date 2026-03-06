@@ -226,6 +226,7 @@ html, body {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   overflow-x: hidden;
   overflow-y: auto;
   /* Cap height to available space above the handle bar so menu scrolls when
@@ -619,6 +620,7 @@ html, body {
   padding: 16px;
   gap: 12px;
   overscroll-behavior: contain;
+  background: var(--bg-panel);
 }
 
 h2 {
@@ -1088,6 +1090,7 @@ hr {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   padding: 20px;
   width: 100%;
   max-width: 440px;
@@ -1208,6 +1211,7 @@ hr {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   padding: 20px;
   width: 100%;
   max-width: 400px;
@@ -1490,6 +1494,7 @@ hr {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   padding: 10px 14px;
   max-width: 440px;
   max-height: calc(var(--viewport-height, 100svh) - 32px);
@@ -1724,6 +1729,7 @@ hr {
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
   border-radius: 12px 12px 0 0;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
   padding: 16px;
   max-height: 70vh;
   overflow-y: auto;
@@ -1817,6 +1823,7 @@ hr {
   display: none;
   flex-direction: column;
   overflow: hidden;
+  background: var(--bg-panel);
 }
 
 #panel-files.active {
