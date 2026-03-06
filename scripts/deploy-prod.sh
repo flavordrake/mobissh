@@ -48,10 +48,12 @@ fi
 
 cd "$(dirname "$0")/.."
 
-export TAG TS_HOSTNAME TS_AUTHKEY
+GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+export TAG TS_HOSTNAME TS_AUTHKEY GIT_HASH
 
-echo "Building mobissh:${TAG} (hostname: ${TS_HOSTNAME})"
-docker compose -f docker-compose.prod.yml up -d --build
+echo "Building mobissh:${TAG} (hostname: ${TS_HOSTNAME}, hash: ${GIT_HASH})"
+docker compose -f docker-compose.prod.yml build --build-arg "GIT_HASH=${GIT_HASH}"
+docker compose -f docker-compose.prod.yml up -d
 
 echo "Waiting for container to start..."
 sleep 3

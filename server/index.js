@@ -88,7 +88,10 @@ function validateWsToken(token) {
 
 const APP_VERSION = require('./package.json').version || '0.0.0';
 let GIT_HASH = 'unknown';
-try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(); } catch (_) {}
+try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(); } catch (_) {
+  // In Docker: no git, read baked hash from build
+  try { GIT_HASH = fs.readFileSync(path.join(__dirname, '..', '.git-hash'), 'utf8').trim(); } catch (_2) {}
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

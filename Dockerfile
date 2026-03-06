@@ -23,6 +23,10 @@ COPY public/ ./public/
 COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm install --no-save typescript @xterm/xterm && npx tsc && rm -rf node_modules src
+
+# Bake git hash so server can report version without git installed
+ARG GIT_HASH=unknown
+RUN echo "$GIT_HASH" > /app/.git-hash
 COPY docker/prod/entrypoint.sh ./entrypoint.sh
 
 ENV PORT=8081 \
