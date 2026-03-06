@@ -1598,6 +1598,7 @@ hr {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   touch-action: manipulation;
+  user-select: none;
 }
 
 .files-entry[data-dir="true"] {
@@ -1704,6 +1705,74 @@ hr {
 
 .ctx-menu-item:active {
   background: var(--bg-hover);
+}
+
+/* Files panel details sheet */
+.files-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.files-detail-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 201;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  padding: 16px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.files-detail-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.files-detail-table td {
+  padding: 6px 0;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  word-break: break-all;
+}
+
+.files-detail-table tr:last-child td {
+  border-bottom: none;
+}
+
+.files-detail-table td:first-child {
+  color: var(--text-dim);
+  width: 36%;
+  padding-right: 8px;
+  word-break: normal;
+}
+
+.files-detail-close {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  padding: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
 }
 
 .files-toolbar {

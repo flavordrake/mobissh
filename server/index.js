@@ -28,7 +28,7 @@
  *     { type: 'error', message: string }
  *     { type: 'disconnected', reason: string }
  *     { type: 'hostkey', host, port, keyType, fingerprint }
- *     { type: 'sftp_ls_result', requestId, entries: [{name, isDir, size, mtime}] }
+ *     { type: 'sftp_ls_result', requestId, entries: [{name, isDir, isSymlink, size, mtime, atime, permissions, uid, gid}] }
  *     { type: 'sftp_download_result', requestId, data: string }  (base64)
  *     { type: 'sftp_upload_result', requestId, ok: boolean, error?: string }
  *     { type: 'sftp_stat_result', requestId, stat: {isDir, size, mtime} }
@@ -132,8 +132,13 @@ function handleSftpMessage(msg, sftp, send) {
         const entries = list.map(f => ({
           name: f.filename,
           isDir: f.attrs.isDirectory(),
+          isSymlink: f.attrs.isSymbolicLink(),
           size: f.attrs.size,
           mtime: f.attrs.mtime,
+          atime: f.attrs.atime,
+          permissions: f.attrs.mode,
+          uid: f.attrs.uid,
+          gid: f.attrs.gid,
         }));
         send({ type: 'sftp_ls_result', requestId, entries });
       });

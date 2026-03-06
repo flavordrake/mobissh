@@ -153,6 +153,11 @@ export interface SftpEntry {
   isDir: boolean;
   size: number;
   mtime: string;
+  atime?: string;
+  permissions?: number;
+  uid?: number;
+  gid?: number;
+  isSymlink?: boolean;
 }
 
 export type ServerMessage =

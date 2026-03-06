@@ -766,6 +766,67 @@ function _formatDate(mtime) {
     }
     return d.toISOString().slice(0, 10);
 }
+function _formatDateFull(ts) {
+    const n = Number(ts);
+    const d = isNaN(n) ? new Date(ts) : new Date(n * 1000);
+    if (isNaN(d.getTime()))
+        return ts;
+    return d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function _formatPermissions(mode) {
+    const perms = mode & 0o7777;
+    const octal = perms.toString(8).padStart(4, '0');
+    const bits = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx'];
+    const rwx = [bits[(mode >> 6) & 7] ?? '---', bits[(mode >> 3) & 7] ?? '---', bits[mode & 7] ?? '---'].join('');
+    const fmt = (mode & 0o170000) === 0o040000 ? 'd' : (mode & 0o170000) === 0o120000 ? 'l' : '-';
+    return `${fmt}${rwx} (${octal})`;
+}
+function _showDetailsPanel(entry, path) {
+    const overlay = document.createElement('div');
+    overlay.className = 'files-detail-overlay';
+    const sheet = document.createElement('div');
+    sheet.className = 'files-detail-sheet';
+    let typeLabel = entry.isDir ? 'Directory' : 'File';
+    if (entry.isSymlink)
+        typeLabel = 'Symlink';
+    const rows = [
+        ['Name', entry.name],
+        ['Path', path],
+        ['Type', typeLabel],
+    ];
+    if (!entry.isDir)
+        rows.push(['Size', `${_formatSize(entry.size)} (${String(entry.size)} bytes)`]);
+    if (entry.permissions !== undefined)
+        rows.push(['Permissions', _formatPermissions(entry.permissions)]);
+    if (entry.uid !== undefined)
+        rows.push(['Owner', `UID ${String(entry.uid)}`]);
+    if (entry.gid !== undefined)
+        rows.push(['Group', `GID ${String(entry.gid)}`]);
+    rows.push(['Modified', entry.mtime ? _formatDateFull(entry.mtime) : '—']);
+    if (entry.atime)
+        rows.push(['Accessed', _formatDateFull(entry.atime)]);
+    const tableRows = rows.map(([label, val]) => `<tr><td>${escHtml(label)}</td><td>${escHtml(val)}</td></tr>`).join('');
+    sheet.innerHTML = `
+    <div class="files-detail-title">${escHtml(entry.name)}</div>
+    <table class="files-detail-table"><tbody>${tableRows}</tbody></table>
+    <button class="files-detail-close">Close</button>
+  `;
+    document.body.appendChild(overlay);
+    document.body.appendChild(sheet);
+    history.pushState({ detailSheet: true }, '');
+    let dismissed = false;
+    function dismiss() {
+        if (dismissed)
+            return;
+        dismissed = true;
+        overlay.remove();
+        sheet.remove();
+        window.removeEventListener('popstate', dismiss);
+    }
+    overlay.addEventListener('click', dismiss);
+    sheet.querySelector('.files-detail-close').addEventListener('click', dismiss);
+    window.addEventListener('popstate', dismiss);
+}
 function _dismissContextMenu() {
     _ctxMenuDismiss?.();
     _ctxMenuDismiss = null;
@@ -850,10 +911,7 @@ function _showContextMenu(touchX, touchY, path, isDir) {
                 const entries = _filesCache.get(_filesPath) ?? [];
                 const entry = entries.find(e => e.name === name);
                 if (entry) {
-                    const kind = entry.isDir ? 'Directory' : 'File';
-                    const sz = entry.isDir ? '' : ` · ${_formatSize(entry.size)}`;
-                    const mt = entry.mtime ? ` · ${_formatDate(entry.mtime)}` : '';
-                    toast(`${name} · ${kind}${sz}${mt}`);
+                    _showDetailsPanel(entry, path);
                 }
                 else {
                     toast(path);
