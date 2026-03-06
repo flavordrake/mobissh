@@ -58,15 +58,20 @@ async function _downloadCastFile(): Promise<void> {
   appState.recordingStartTime = null;
 
   const file = new File([blob], filename, { type: 'text/plain' });
+  let shareSucceeded = false;
   if ((navigator as Partial<Navigator>).canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: filename });
+      shareSucceeded = true;
     } catch (err) {
-      if (err instanceof Error && err.name !== 'AbortError') {
-        _toast('Download failed — try again');
+      if (err instanceof Error && err.name === 'AbortError') {
+        return; // User cancelled — don't fall through to download
       }
+      // share() threw for another reason (e.g. no handler for .cast files);
+      // fall through to <a download> below
     }
-  } else {
+  }
+  if (!shareSucceeded) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
