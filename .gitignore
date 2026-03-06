@@ -10,5 +10,7 @@ test-results-appium/
 # Baseline results ARE tracked (overwritten each run)
 !tests/emulator/baseline/
 *.js.map
+# Compiled TypeScript output (built by tsc, not checked in)
+public/modules/*.js
 test-data/
 .claude/worktrees/

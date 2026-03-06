@@ -15,4 +15,7 @@ cd "$(dirname "$0")/.."
 LOGFILE=/tmp/test-headless.log
 exec > >(tee "$LOGFILE") 2>&1
 
+# Compile TypeScript (src/ -> public/modules/) before running browser tests
+npx tsc
+
 npx playwright test --config=playwright.config.js

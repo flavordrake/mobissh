@@ -18,6 +18,12 @@ RUN cd server && npm ci --omit=dev
 # Copy application sources
 COPY server/ ./server/
 COPY public/ ./public/
+
+# Compile TypeScript (src/ -> public/modules/, overwrites any stale compiled JS)
+COPY package*.json ./
+COPY tsconfig.json ./
+COPY src/ ./src/
+RUN npm ci && npx tsc && rm -rf node_modules src
 COPY docker/prod/entrypoint.sh ./entrypoint.sh
 
 ENV PORT=8081 \

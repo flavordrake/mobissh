@@ -123,6 +123,12 @@ cmd_start() {
     fi
   fi
 
+  # Compile TypeScript if source is newer than compiled output
+  if [[ -d "src/modules" ]] && command -v npx &>/dev/null; then
+    log "Compiling TypeScript..."
+    npx tsc 2>&1 || { err "TypeScript compilation failed"; return 1; }
+  fi
+
   log "Starting server on port ${PORT}..."
   local env_args="PORT=${PORT}"
   [[ -n "$BASE_PATH" ]] && env_args="${env_args} BASE_PATH=${BASE_PATH}"
