@@ -49,9 +49,22 @@ export interface TerminalTheme {
   selectionBackground: string;
 }
 
+export interface AppColors {
+  bgDeep: string;
+  bgPanel: string;
+  bgCard: string;
+  bgInput: string;
+  text: string;
+  textDim: string;
+  border: string;
+  accent: string;
+  accentDim: string;
+}
+
 export interface ThemeEntry {
   label: string;
   theme: TerminalTheme;
+  app: AppColors;
 }
 
 // ── Application state ───────────────────────────────────────────────────────

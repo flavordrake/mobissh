@@ -64,6 +64,7 @@ export function initTerminal(): void {
   appState.terminal.loadAddon(appState.fitAddon);
   appState.terminal.open(document.getElementById('terminal')!);
   appState.fitAddon.fit();
+  applyTheme(appState.activeThemeName);
 
   appState.terminal.onBell(() => {
     if (!shouldNotify()) return;
@@ -187,6 +188,16 @@ export function applyTheme(name: string, { persist = false } = {}): void {
   appState.activeThemeName = name as ThemeName;
   if (appState.terminal) appState.terminal.options.theme = t.theme;
   if (persist) localStorage.setItem('termTheme', name);
+  const { style } = document.documentElement;
+  style.setProperty('--bg-deep', t.app.bgDeep);
+  style.setProperty('--bg-panel', t.app.bgPanel);
+  style.setProperty('--bg-card', t.app.bgCard);
+  style.setProperty('--bg-input', t.app.bgInput);
+  style.setProperty('--text', t.app.text);
+  style.setProperty('--text-dim', t.app.textDim);
+  style.setProperty('--border', t.app.border);
+  style.setProperty('--accent', t.app.accent);
+  style.setProperty('--accent-dim', t.app.accentDim);
   const menuBtn = document.getElementById('sessionThemeBtn');
   if (menuBtn) menuBtn.textContent = `Theme: ${t.label} ▸`;
   const sel = document.getElementById('termThemeSelect') as HTMLSelectElement | null;
