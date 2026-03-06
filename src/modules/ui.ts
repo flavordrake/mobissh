@@ -8,7 +8,7 @@
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState } from './state.js';
-import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload } from './connection.js';
+import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, getKeys, connectFromProfile, newConnection } from './profiles.js';
 
@@ -611,6 +611,14 @@ const _filesPending = new Map<string, string>();
 const _downloadPending = new Map<string, string>();
 // Maps requestId -> remotePath for pending uploads
 const _uploadPending = new Map<string, string>();
+// Maps requestId -> parent dir for pending renames/deletes
+const _renamePending = new Map<string, string>();
+const _deletePending = new Map<string, string>();
+// Long-press state
+let _pressTimer: ReturnType<typeof setTimeout> | null = null;
+let _longPressFired = false;
+// Context menu dismiss handle (allows external callers to fully tear down)
+let _ctxMenuDismiss: (() => void) | null = null;
 let _uploadQueue: Array<{remotePath: string; data: string}> = [];
 let _uploadActive = false;
 let _uploadCompleted = 0;
@@ -689,6 +697,7 @@ async function _startUpload(files: FileList): Promise<void> {
 }
 
 function _renderFilesPanel(path: string, bodyHtml: string): void {
+  _dismissContextMenu();
   const panel = document.getElementById('panel-files');
   if (!panel) return;
 
@@ -718,8 +727,27 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
     });
   });
 
+  panel.querySelectorAll<HTMLElement>('.files-entry').forEach((row) => {
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+    row.addEventListener('touchstart', (e) => {
+      _pressTimer = setTimeout(() => {
+        _pressTimer = null;
+        _longPressFired = true;
+        const touch = e.touches[0];
+        const x = touch ? touch.clientX : 0;
+        const y = touch ? touch.clientY : 0;
+        _showContextMenu(x, y, row.dataset.path ?? '', row.dataset.dir === 'true');
+      }, 500);
+    });
+    const cancelPress = (): void => { if (_pressTimer) { clearTimeout(_pressTimer); _pressTimer = null; } };
+    row.addEventListener('touchend', cancelPress);
+    row.addEventListener('touchmove', cancelPress);
+    row.addEventListener('touchcancel', () => { cancelPress(); _longPressFired = false; });
+  });
+
   panel.querySelectorAll<HTMLElement>('.files-entry[data-dir="true"]').forEach((row) => {
     row.addEventListener('click', () => {
+      if (_longPressFired) { _longPressFired = false; return; }
       const dest = row.dataset.path;
       if (dest) _filesNavigateTo(dest);
     });
@@ -727,6 +755,7 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
 
   panel.querySelectorAll<HTMLElement>('.files-entry[data-dir="false"]').forEach((row) => {
     row.addEventListener('click', () => {
+      if (_longPressFired) { _longPressFired = false; return; }
       const filePath = row.dataset.path;
       if (!filePath) return;
       const filename = filePath.split('/').pop() ?? filePath;
@@ -815,6 +844,111 @@ function _formatDate(mtime: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+function _dismissContextMenu(): void {
+  _ctxMenuDismiss?.();
+  _ctxMenuDismiss = null;
+}
+
+function _showContextMenu(touchX: number, touchY: number, path: string, isDir: boolean): void {
+  _dismissContextMenu();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'filesCtxOverlay';
+  overlay.className = 'ctx-overlay';
+
+  const menu = document.createElement('div');
+  menu.id = 'filesCtxMenu';
+  menu.className = 'ctx-menu';
+
+  const actions = isDir
+    ? ['rename', 'delete', 'details', 'copy-path']
+    : ['download', 'rename', 'delete', 'details', 'copy-path'];
+  const labels: Record<string, string> = {
+    download: 'Download', rename: 'Rename', delete: 'Delete',
+    details: 'Details', 'copy-path': 'Copy Path',
+  };
+  menu.innerHTML = actions.map(a => `<button class="ctx-menu-item" data-action="${a}">${labels[a]!}</button>`).join('');
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const menuH = actions.length * 44;
+  const left = Math.max(8, Math.min(touchX, vw - 168));
+  const top = Math.max(8, Math.min(touchY, vh - menuH - 8));
+  menu.style.setProperty('--ctx-x', `${String(left)}px`);
+  menu.style.setProperty('--ctx-y', `${String(top)}px`);
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(menu);
+  history.pushState({ ctxMenu: true }, '');
+
+  let dismissed = false;
+  function dismiss(): void {
+    if (dismissed) return;
+    dismissed = true;
+    overlay.remove();
+    menu.remove();
+    window.removeEventListener('popstate', dismiss);
+    _ctxMenuDismiss = null;
+  }
+
+  _ctxMenuDismiss = dismiss;
+  overlay.addEventListener('click', dismiss);
+  window.addEventListener('popstate', dismiss);
+
+  menu.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action ?? '';
+    dismiss();
+    switch (action) {
+      case 'download': {
+        const filename = path.split('/').pop() ?? path;
+        _setTransferStatus('Downloading...');
+        const reqId = `dl-${String(Date.now())}`;
+        _downloadPending.set(reqId, filename);
+        sendSftpDownload(path, reqId);
+        break;
+      }
+      case 'rename': {
+        const current = path.split('/').pop() ?? path;
+        const newName = prompt(`Rename "${current}" to:`, current);
+        if (!newName || newName === current) return;
+        const dir = path.slice(0, path.lastIndexOf('/')) || '/';
+        const newPath = dir === '/' ? `/${newName}` : `${dir}/${newName}`;
+        const reqId = `ren-${String(Date.now())}`;
+        _renamePending.set(reqId, dir);
+        sendSftpRename(path, newPath, reqId);
+        break;
+      }
+      case 'delete': {
+        const name = path.split('/').pop() ?? path;
+        if (!confirm(`Delete "${name}"?`)) return;
+        const reqId = `del-${String(Date.now())}`;
+        _deletePending.set(reqId, _filesPath);
+        sendSftpDelete(path, reqId);
+        break;
+      }
+      case 'details': {
+        const name = path.split('/').pop() ?? path;
+        const entries = _filesCache.get(_filesPath) ?? [];
+        const entry = entries.find(e => e.name === name);
+        if (entry) {
+          const kind = entry.isDir ? 'Directory' : 'File';
+          const sz = entry.isDir ? '' : ` · ${_formatSize(entry.size)}`;
+          const mt = entry.mtime ? ` · ${_formatDate(entry.mtime)}` : '';
+          toast(`${name} · ${kind}${sz}${mt}`);
+        } else {
+          toast(path);
+        }
+        break;
+      }
+      case 'copy-path':
+        void navigator.clipboard.writeText(path).then(() => { toast('Path copied'); });
+        break;
+    }
+  });
+}
+
 export function initFilesPanel(): void {
   setSftpHandler((msg) => {
     if (msg.type === 'sftp_ls_result') {
@@ -830,8 +964,22 @@ export function initFilesPanel(): void {
     } else if (msg.type === 'sftp_upload_result') {
       _uploadPending.delete(msg.requestId);
       _processNextUpload();
+    } else if (msg.type === 'sftp_rename_result') {
+      const dir = _renamePending.get(msg.requestId);
+      _renamePending.delete(msg.requestId);
+      if (msg.ok && dir !== undefined) {
+        _filesCache.delete(dir);
+        if (dir === _filesPath) _filesNavigateTo(dir);
+      }
+    } else if (msg.type === 'sftp_delete_result') {
+      const dir = _deletePending.get(msg.requestId);
+      _deletePending.delete(msg.requestId);
+      if (msg.ok && dir !== undefined) {
+        _filesCache.delete(dir);
+        if (dir === _filesPath) _filesNavigateTo(dir);
+      }
     } else {
-      // sftp_error — could be for ls, download, or upload
+      // sftp_error — could be for ls, download, upload, rename, or delete
       if (_filesPending.has(msg.requestId)) {
         const path = _filesPending.get(msg.requestId);
         _filesPending.delete(msg.requestId);
@@ -846,6 +994,12 @@ export function initFilesPanel(): void {
         _uploadPending.delete(msg.requestId);
         toast(`Upload failed: ${msg.message}`);
         _processNextUpload();
+      } else if (_renamePending.has(msg.requestId)) {
+        _renamePending.delete(msg.requestId);
+        toast(`Rename failed: ${msg.message}`);
+      } else if (_deletePending.has(msg.requestId)) {
+        _deletePending.delete(msg.requestId);
+        toast(`Delete failed: ${msg.message}`);
       }
     }
   });
