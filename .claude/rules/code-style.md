@@ -4,4 +4,5 @@
 - Don't use multiline text separators in logs, scripts, summaries, and reports (no `====`, no `----`). It's noise and wastes tokens.
 - Use `tree` to discover file structure before creating any test or new component.
 - `node_modules/` is gitignored. Install via `npm install` in `server/`.
-- Build step is TypeScript compilation only. No heavy bundlers (webpack, vite) unless justified. Compiled output served from `public/`.
+- Build step is TypeScript compilation only. No heavy bundlers (webpack, vite) unless justified.
+- **Compiled JS (`public/modules/*.js`) is gitignored.** Do NOT commit compiled output. It is built automatically by Docker (`Dockerfile`), `scripts/server-ctl.sh`, and `scripts/test-headless.sh`. Run `npx tsc` locally if needed for development.
