@@ -13,14 +13,17 @@
 #   close   ISSUE [--body-file FILE]      Close with comment from file
 #   search  QUERY                         Search open issues, JSON output
 #   version                               Print code hash + server meta
+#   pr-create --head BRANCH --title T --body-file F [--label L ...]  Create PR
+#   pr-merge  PR_NUM [--squash|--merge|--rebase]  Merge and delete branch
+#   pr-close  PR_NUM [--comment "TEXT"]   Close PR with optional comment
 #
 # All progress goes to stderr, actionable output to stdout.
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash scripts/gh-ops.sh <command> [args]" >&2
-  echo "Commands: comment, labels, close, search, version" >&2
+  echo "Usage: scripts/gh-ops.sh <command> [args]" >&2
+  echo "Commands: comment, labels, close, search, version, pr-create, pr-merge, pr-close" >&2
   exit 1
 }
 
@@ -109,6 +112,69 @@ case "$CMD" in
     SERVER_META=$(curl -sf --max-time 3 "http://localhost:${PORT}/" 2>/dev/null \
       | grep -oP 'app-version"\s*content="\K[^"]+' || echo "server not running")
     echo "Code: ${CODE_HASH} | Server: ${SERVER_META}"
+    ;;
+
+  pr-create)
+    HEAD=""
+    TITLE=""
+    BODY=""
+    BODY_FILE=""
+    PR_LABELS=()
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --head) HEAD="$2"; shift 2 ;;
+        --title) TITLE="$2"; shift 2 ;;
+        --body) BODY="$2"; shift 2 ;;
+        --body-file) BODY_FILE="$2"; shift 2 ;;
+        --label) PR_LABELS+=("$2"); shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    [ -n "$HEAD" ] || { echo "Error: --head required" >&2; exit 1; }
+    [ -n "$TITLE" ] || { echo "Error: --title required" >&2; exit 1; }
+    if [ -n "$BODY_FILE" ]; then
+      BODY=$(cat "$BODY_FILE")
+    elif [ -z "$BODY" ]; then
+      BODY="Bot PR for ${HEAD}"
+    fi
+    ARGS=(--head "$HEAD" --title "$TITLE" --body "$BODY")
+    for l in "${PR_LABELS[@]+"${PR_LABELS[@]}"}"; do
+      ARGS+=(--label "$l")
+    done
+    echo "Creating PR: ${TITLE}" >&2
+    gh pr create "${ARGS[@]}"
+    ;;
+
+  pr-merge)
+    [ $# -ge 1 ] || { echo "Error: pr-merge requires PR number" >&2; exit 1; }
+    PR_NUM="$1"; shift
+    STRATEGY="--squash"
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --squash|--merge|--rebase) STRATEGY="$1"; shift ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    echo "Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
+    gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch
+    ;;
+
+  pr-close)
+    [ $# -ge 1 ] || { echo "Error: pr-close requires PR number" >&2; exit 1; }
+    PR_NUM="$1"; shift
+    BODY=""
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --comment|--body) BODY="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    echo "Closing PR #${PR_NUM}" >&2
+    if [ -n "$BODY" ]; then
+      gh pr close "$PR_NUM" --comment "$BODY"
+    else
+      gh pr close "$PR_NUM"
+    fi
     ;;
 
   *)

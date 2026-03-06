@@ -144,7 +144,7 @@ If the container is stale, the user sees old behavior and files false bugs.
   styles (prefer CSS), no `--no-verify` bypasses
 
 ```bash
-gh pr merge <N> --squash --delete-branch
+scripts/gh-ops.sh pr-merge <N>
 ```
 
 After merge, update labels and close the issue per `.claude/process.md`:
@@ -155,8 +155,8 @@ scripts/gh-ops.sh close <issue-N> --comment "Fixed in PR #<pr-N>"
 
 For orphaned branches (no PR), create a PR first, then merge:
 ```bash
-gh pr create --head <branch> --title "<issue title>" --body "Bot fix for #<N>" --label bot
-gh pr merge <PR-N> --squash --delete-branch
+scripts/gh-ops.sh pr-create --head <branch> --title "<issue title>" --body "Bot fix for #<N>" --label bot
+scripts/gh-ops.sh pr-merge <PR-N>
 scripts/gh-ops.sh labels <issue-N> --rm bot
 scripts/gh-ops.sh close <issue-N> --comment "Fixed in PR #<PR-N>"
 ```
@@ -186,7 +186,7 @@ changed need their assertions updated. Tests that fail intermittently need inves
 - Introduces security anti-pattern
 
 ```bash
-gh pr close <N> --comment "Closing: <clear reason with specific failure details>"
+scripts/gh-ops.sh pr-close <N> --comment "Closing: <clear reason with specific failure details>"
 scripts/gh-ops.sh labels <issue-N> --rm bot --add divergence
 ```
 
