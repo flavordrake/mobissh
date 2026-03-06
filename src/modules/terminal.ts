@@ -62,6 +62,7 @@ export function initTerminal(): void {
 
   appState.fitAddon = new FitAddon.FitAddon();
   appState.terminal.loadAddon(appState.fitAddon);
+  appState.terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
   appState.terminal.open(document.getElementById('terminal')!);
   appState.fitAddon.fit();
   applyTheme(appState.activeThemeName);

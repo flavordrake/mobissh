@@ -22,6 +22,16 @@ export function sendSftpUpload(path, data, requestId) {
         return;
     appState.ws.send(JSON.stringify({ type: 'sftp_upload', path, data, requestId }));
 }
+export function sendSftpRename(oldPath, newPath, requestId) {
+    if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN)
+        return;
+    appState.ws.send(JSON.stringify({ type: 'sftp_rename', oldPath, newPath, requestId }));
+}
+export function sendSftpDelete(path, requestId) {
+    if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN)
+        return;
+    appState.ws.send(JSON.stringify({ type: 'sftp_delete', path, requestId }));
+}
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState } from './state.js';
 import { stopAndDownloadRecording } from './recording.js';
@@ -162,6 +172,8 @@ function _openWebSocket(options) {
             case 'sftp_error':
             case 'sftp_download_result':
             case 'sftp_upload_result':
+            case 'sftp_rename_result':
+            case 'sftp_delete_result':
                 _sftpHandler?.(msg);
                 break;
             case 'hostkey': { // SSH host key verification (#5)

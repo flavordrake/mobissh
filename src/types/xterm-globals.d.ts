@@ -27,6 +27,18 @@ declare global {
     }
   }
 
+  namespace ClipboardAddon {
+    interface IClipboardProvider {
+      readText(selection: string): string | Promise<string>;
+      writeText(selection: string, data: string): void | Promise<void>;
+    }
+    class ClipboardAddon {
+      constructor(base64?: unknown, provider?: IClipboardProvider);
+      activate(terminal: Terminal): void;
+      dispose(): void;
+    }
+  }
+
   // ── PasswordCredential (Chrome/Android) ─────────────────────────────────
 
   interface PasswordCredentialData {
