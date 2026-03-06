@@ -625,6 +625,7 @@ wss.on('connection', (ws, req) => {
       case 'sftp_stat':
       case 'sftp_rename':
       case 'sftp_delete':
+      case 'sftp_realpath':
         getSftp((err, sftp) => {
           if (err) { send({ type: 'sftp_error', requestId: msg.requestId, message: err.message }); return; }
           handleSftpMessage(msg, sftp, send);
