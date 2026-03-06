@@ -171,6 +171,7 @@ export type ServerMessage =
   | { type: 'sftp_download_result'; requestId: string; data: string }
   | { type: 'sftp_upload_result'; requestId: string; ok: boolean }
   | { type: 'sftp_rename_result'; requestId: string; ok: boolean }
+  | { type: 'sftp_stat_result'; requestId: string; stat: { isDir: boolean; size: number; mtime: number } }
   | { type: 'sftp_delete_result'; requestId: string; ok: boolean }
   | { type: 'sftp_realpath_result'; requestId: string; path: string }
   | { type: 'sftp_error'; requestId: string; message: string };

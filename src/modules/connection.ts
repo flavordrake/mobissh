@@ -9,7 +9,7 @@
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 
 // [SFTP_MSG] -- keep in sync with types.ts SERVER_MESSAGE sftp types and WS router below
-type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
+type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
 let _sftpHandler: ((msg: SftpMsg) => void) | null = null;
 export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler = fn; }
 export function sendSftpLs(path: string, requestId: string): void {
@@ -180,6 +180,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
       case 'sftp_error':
       case 'sftp_download_result':
       case 'sftp_upload_result':
+      case 'sftp_stat_result':
       case 'sftp_rename_result':
       case 'sftp_delete_result':
       case 'sftp_realpath_result':

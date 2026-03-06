@@ -1047,7 +1047,7 @@ export function initFilesPanel(): void {
         _filesRealpathReqId = null;
         _filesNavigateTo(msg.path || '/');
       }
-    } else {
+    } else if (msg.type === 'sftp_error') {
       // sftp_error — could be for ls, download, upload, rename, or delete
       if (_filesPending.has(msg.requestId)) {
         const path = _filesPending.get(msg.requestId);
