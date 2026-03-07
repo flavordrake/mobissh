@@ -402,18 +402,16 @@ PR creation, and issue comments. See `.claude/skills/develop/SKILL.md` for detai
 
 ### Label and housekeeping operations
 
-These still run directly (not through develop agents):
+Use `gh-ops.sh` subcommands instead of raw `gh` chains:
 
-- Apply labels via `gh issue edit`:
+- Delegate setup (label + audit comment + prune):
   ```bash
-  # New delegation
-  gh issue edit N --add-label bot
-  # Re-delegation (swap divergence -> bot)
-  gh issue edit N --remove-label divergence --add-label bot
-  # Shape labels
-  gh issue edit N --add-label device
-  gh issue edit N --add-label spike
-  gh issue edit N --add-label conflict --add-label blocked
+  scripts/gh-ops.sh delegate N
+  scripts/gh-ops.sh delegate N --label device --label spike
+  ```
+- Additional label shaping:
+  ```bash
+  scripts/gh-ops.sh labels N --add conflict --add blocked
   ```
 - Decompose (create sub-issues + update parent):
   1. For each sub-issue:

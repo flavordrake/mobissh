@@ -144,21 +144,16 @@ If the container is stale, the user sees old behavior and files false bugs.
   styles (prefer CSS), no `--no-verify` bypasses
 
 ```bash
-scripts/gh-ops.sh pr-merge <N>
+scripts/gh-ops.sh integrate <PR-N> <issue-N>
 ```
 
-After merge, update labels and close the issue per `.claude/process.md`:
-```bash
-scripts/gh-ops.sh labels <issue-N> --rm bot
-scripts/gh-ops.sh close <issue-N> --comment "Fixed in PR #<pr-N>"
-```
+This single command: merges the PR (with worktree cleanup), closes the issue,
+removes the `bot` label, pulls main, and prunes stale refs. No compound `&&` chains.
 
-For orphaned branches (no PR), create a PR first, then merge:
+For orphaned branches (no PR), create a PR first, then integrate:
 ```bash
 scripts/gh-ops.sh pr-create --head <branch> --title "<issue title>" --body "Bot fix for #<N>" --label bot
-scripts/gh-ops.sh pr-merge <PR-N>
-scripts/gh-ops.sh labels <issue-N> --rm bot
-scripts/gh-ops.sh close <issue-N> --comment "Fixed in PR #<PR-N>"
+scripts/gh-ops.sh integrate <PR-N> <issue-N>
 ```
 
 ### Approve-with-test-fixup (UX approved, tests outdated)
