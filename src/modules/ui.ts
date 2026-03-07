@@ -318,6 +318,21 @@ export function initConnectForm(): void {
   _initPasswordFieldCloaking(document.getElementById('remote_c') as HTMLInputElement);
   _initPasswordFieldCloaking(document.getElementById('remote_pp') as HTMLInputElement);
 
+  // Auto-populate profile name from hostname (#16)
+  const hostInput = document.getElementById('host') as HTMLInputElement;
+  const nameInput = document.getElementById('profileName') as HTMLInputElement;
+  let nameManuallySet = false;
+
+  nameInput.addEventListener('input', () => { nameManuallySet = true; });
+  nameInput.addEventListener('focus', () => {
+    if (!nameInput.value) nameManuallySet = false;
+  });
+  hostInput.addEventListener('input', () => {
+    if (!nameManuallySet) {
+      nameInput.value = hostInput.value.trim();
+    }
+  });
+
   form.addEventListener('submit', (e) => {
     e.preventDefault();
 
