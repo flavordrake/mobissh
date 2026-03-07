@@ -99,6 +99,25 @@ cd server && npm install && npm start
 # Listening on http://0.0.0.0:8081
 ```
 
+### Termux (Android)
+
+Run MobiSSH directly on your phone with [Termux](https://termux.dev):
+
+```bash
+pkg install nodejs-lts git
+git clone https://github.com/flavordrake/mobissh.git
+cd mobissh/server && npm install && npm start
+```
+
+Open `http://localhost:8081` in your device browser. To keep the server running when the screen is off:
+
+```bash
+termux-wake-lock
+npm start
+```
+
+Use `termux-open http://localhost:8081` to launch the browser from Termux. To connect to other machines on your network, use their Tailscale IP as the SSH host.
+
 ### Other options
 
 **Tailscale Serve (no Docker):** `cd server && npm start` then `tailscale serve https / http://localhost:8081`
