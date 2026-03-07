@@ -387,55 +387,74 @@ add context, or skip issues.
 
 ## Phase 7: Execute
 
-Run approved actions as Task agents where possible:
+### Execution mode: Local develop agents
 
-- Post `@claude` comments: write body to `/tmp/delegate-comment-N.md`, then:
-  ```bash
-  scripts/gh-ops.sh comment N --body-file /tmp/delegate-comment-N.md
-  ```
-- Apply labels via `scripts/gh-ops.sh`:
+Delegation now spawns local develop agents (`.claude/agents/develop.md`) instead of
+posting `@claude` comments for the remote GitHub bot. This eliminates the GitHub Actions
+dependency and provides faster, more reliable execution.
+
+For each approved issue, use the `/develop` skill:
+- Single issue: `/develop N`
+- Batch: `/develop 3,9,16` (max 2 parallel agents)
+
+The develop agent handles: branch creation, implementation, rebase from main, test gate,
+PR creation, and issue comments. See `.claude/skills/develop/SKILL.md` for details.
+
+### Label and housekeeping operations
+
+These still run directly (not through develop agents):
+
+- Apply labels via `gh issue edit`:
   ```bash
   # New delegation
-  scripts/gh-ops.sh labels N --add bot
+  gh issue edit N --add-label bot
   # Re-delegation (swap divergence -> bot)
-  scripts/gh-ops.sh labels N --rm divergence --add bot
+  gh issue edit N --remove-label divergence --add-label bot
   # Shape labels
-  scripts/gh-ops.sh labels N --add device
-  scripts/gh-ops.sh labels N --add spike
-  scripts/gh-ops.sh labels N --add conflict --add blocked
+  gh issue edit N --add-label device
+  gh issue edit N --add-label spike
+  gh issue edit N --add-label conflict --add-label blocked
   ```
 - Decompose (create sub-issues + update parent):
-  1. For each sub-issue, write body to `/tmp/sub-issue-N.md`, then:
+  1. For each sub-issue:
      ```bash
-     scripts/gh-file-issue.sh --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-N.md
+     gh issue create --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-N.md
      ```
   2. Apply `composite` to parent, comment linking sub-issues:
      ```bash
-     scripts/gh-ops.sh labels PARENT --add composite
-     scripts/gh-ops.sh comment PARENT --body-file /tmp/decompose-comment.md
+     gh issue edit PARENT --add-label composite
+     gh issue comment PARENT --body-file /tmp/decompose-comment.md
      ```
   3. Do NOT close or apply `bot` to the parent
 - Clean up branches: `scripts/integrate-cleanup.sh --issue <N>`
 - Close superseded issues:
   ```bash
-  scripts/gh-ops.sh close N --comment "Superseded by #M"
+  gh issue close N --comment "Superseded by #M"
   ```
 - Merge related issues into one delegation:
   1. Pick or create the primary issue
   2. Close secondary issues:
      ```bash
-     scripts/gh-ops.sh close N --comment "Merged into #P for combined delegation"
+     gh issue close N --comment "Merged into #P for combined delegation"
      ```
-  3. Post combined `@claude` comment on primary with all merged criteria
+  3. Spawn develop agent on primary with all merged criteria
   4. Apply `bot` label to primary
+
+### Audit trail
+
+Post a delegation comment on each issue before spawning the agent:
+```bash
+gh issue comment N --body "Delegated to local develop agent. Branch: bot/issue-N"
+```
+This preserves the audit trail that `@claude` comments previously provided.
 
 Report:
 ```
-Delegated: #X, #Y, #Z (labels: bot +device +spike as applicable)
+Developed: #X, #Y, #Z (local agents, labels: bot +device +spike as applicable)
 Merged: #A, #B, #C -> #P (combined delegation on #P, secondaries closed)
 Decomposed: #D -> #D1, #D2, #D3 (parent labeled composite, sub-issues labeled bot)
-  #D1 -- <description> (delegated)
-  #D2 -- <description> (delegated)
+  #D1 -- <description> (developed)
+  #D2 -- <description> (developed)
   #D3 -- <description> (blocked by #D2)
 Cleaned up: N branches for issues #P, #Q
 Closed: #C1 (superseded by #C2)
