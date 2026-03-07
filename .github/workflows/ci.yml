@@ -46,13 +46,13 @@ jobs:
       - name: Build TypeScript
         run: npx tsc
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
       - name: Start test SSH server
         run: |
           docker compose -f docker-compose.test.yml up -d test-sshd
           sleep 3
       - name: Run headless Playwright tests
-        run: npx playwright test --config=playwright.config.js
+        run: npx playwright test --config=playwright.config.js --grep-invert="Production endpoint"
       - name: Stop test SSH server
         if: always()
         run: docker compose -f docker-compose.test.yml down

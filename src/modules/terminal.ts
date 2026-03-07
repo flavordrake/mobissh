@@ -190,6 +190,7 @@ export function applyTheme(name: string, { persist = false } = {}): void {
   if (appState.terminal) appState.terminal.options.theme = t.theme;
   if (persist) localStorage.setItem('termTheme', name);
   const { style } = document.documentElement;
+  style.setProperty('--terminal-bg', t.theme.background);
   style.setProperty('--bg-deep', t.app.bgDeep);
   style.setProperty('--bg-panel', t.app.bgPanel);
   style.setProperty('--bg-card', t.app.bgCard);

@@ -15,7 +15,7 @@
   --tab-height: 56px;
   --keybar-height: 34px;
   --keybar-row-height: 34px;
-  --keybar-handle-height: 16px;
+  --keybar-handle-height: 22px;
   /* key-btn-height: keybar row minus 10px vertical clearance; keep in sync with --keybar-row-height */
   --key-btn-height: 24px;
   /* Shared font stacks */
@@ -169,7 +169,7 @@ body.debug-ime #imePreview {
 
 #terminal {
   flex: 1;
-  background: #000;
+  background: var(--terminal-bg, #000);
   padding: 4px;
   overflow: hidden;
   overscroll-behavior: none; /* prevent iOS rubber-band scroll (#12) */
@@ -392,7 +392,8 @@ body.debug-ime #imePreview {
 .handle-paste-btn {
   border-radius: 8px;
   padding: 0 8px;
-  height: 100%;
+  height: calc(100% - 6px);
+  margin: 3px 0;
   display: flex;
   align-items: center;
   font-size: 11px;

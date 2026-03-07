@@ -55,7 +55,9 @@ export function initSettingsPanel(): void {
     if (url.startsWith('ws://')) {
       if (dangerAllowWsEl.checked) {
         localStorage.setItem('wsUrl', url);
-        _toast('Saved — warning: ws:// may be blocked by browsers on HTTPS');
+        updateHostMismatchWarning(url);
+        if (wsWarn) wsWarn.classList.remove('hidden');
+        _toast('Saved — warning: ws:// is unencrypted.');
       } else {
         _toast('ws:// is not allowed — use wss:// (or enable in Danger Zone)');
       }
@@ -67,13 +69,8 @@ export function initSettingsPanel(): void {
     }
     localStorage.setItem('wsUrl', url);
     updateHostMismatchWarning(url);
-    if (url.startsWith('ws://')) {
-      if (wsWarn) wsWarn.classList.remove('hidden');
-      _toast('Settings saved — warning: ws:// is unencrypted.');
-    } else {
-      if (wsWarn) wsWarn.classList.add('hidden');
-      _toast('Settings saved.');
-    }
+    if (wsWarn) wsWarn.classList.add('hidden');
+    _toast('Settings saved.');
   });
 
   const allowPrivateEl = document.getElementById('allowPrivateHosts') as HTMLInputElement | null;
