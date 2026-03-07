@@ -11,4 +11,6 @@
 - Verify commands in delegation: `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh` (never `npm test`).
 - Bot branches use pattern `bot/issue-{N}`. Develop agents create and push these.
 - Bot branches get deleted during integration. Run `git remote prune origin` to clean stale tracking refs.
+- **Worktree cleanup after agents:** Agent worktrees in `.claude/worktrees/` persist when the agent makes changes. Run `git worktree prune` and remove stale directories before merge steps. `gh-ops.sh pr-merge` handles this automatically.
+- **CWD drift:** After agent tool calls, CWD may be inside a worktree. Always use absolute paths or explicit `cd /home/dev/workspace/mobissh` before running scripts.
 - Develop agent failure summaries are appended to `memory/bot-attempts.md`. Review before retrying.

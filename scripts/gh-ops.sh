@@ -156,6 +156,19 @@ case "$CMD" in
       esac
     done
     echo "Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
+    # Prune stale worktrees first — agent worktrees hold branch refs and cause
+    # --delete-branch to fail on local cleanup (exit 1 even though remote merge
+    # and remote branch delete succeed).
+    git worktree prune 2>/dev/null
+    BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName' 2>/dev/null || true)
+    if [ -n "$BRANCH" ]; then
+      # Remove any worktree directory still referencing this branch
+      git worktree list --porcelain | awk -v b="$BRANCH" '/^worktree /{p=$2} /^branch /{if($2=="refs/heads/"b) print p}' | while read -r wt; do
+        rm -rf "$wt"
+      done
+      git worktree prune 2>/dev/null
+      git branch -D "$BRANCH" 2>/dev/null || true
+    fi
     gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch
     ;;
 

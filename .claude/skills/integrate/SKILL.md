@@ -297,3 +297,7 @@ These rules come from real project history. They are not suggestions.
 - User has uncommitted local changes -- `integrate-gate.sh` auto-stashes and restores
 - Emulator boot takes too long -- 120s timeout in `run-emulator-tests.sh`
 - SSH key not loaded for git fetch -- scripts use `gh api` which authenticates via `gh` token
+- Stale worktrees block branch deletion -- `gh-ops.sh pr-merge` now prunes worktrees and
+  removes local branches before merging. Always run `git worktree prune` before merge steps.
+- CWD drift into worktree -- after agent tools run, CWD may be inside `.claude/worktrees/`.
+  Always use absolute paths or explicit `cd` to the main repo before running scripts.
