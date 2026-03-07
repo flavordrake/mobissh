@@ -38,6 +38,37 @@ let _keyboardWasVisible = false;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_THRESHOLD = 10; // px
 
+/**
+ * Read clipboard content, supporting images via navigator.clipboard.read().
+ * Prefers text/plain; converts images to base64 for piping on remote.
+ * Falls back to readText() if clipboard.read() is not available.
+ */
+async function readClipboard(): Promise<string> {
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      if (item.types.includes('text/plain')) {
+        const blob = await item.getType('text/plain');
+        return await blob.text();
+      }
+      for (const type of item.types) {
+        if (type.startsWith('image/')) {
+          const blob = await item.getType(type);
+          const buf = await blob.arrayBuffer();
+          const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+          toast('Pasted image as base64');
+          return b64;
+        }
+      }
+    }
+  } catch {
+    // clipboard.read() not permitted or unavailable — fall back to readText
+    const text = await navigator.clipboard.readText();
+    return text;
+  }
+  return '';
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /** True while the selection action chip is visible or a selection exists. */
@@ -120,7 +151,7 @@ export function initSelection(): void {
 
   document.getElementById('selectionPasteBtn')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    void navigator.clipboard.readText().then((text) => {
+    void readClipboard().then((text) => {
       if (text) sendSSHInput(text);
       else toast('Clipboard empty');
     }).catch(() => { toast('Paste failed'); });
@@ -165,7 +196,7 @@ export function initSelection(): void {
 
   pasteBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    void navigator.clipboard.readText().then((text) => {
+    void readClipboard().then((text) => {
       if (text) sendSSHInput(text);
       else toast('Clipboard empty');
     }).catch(() => { toast('Paste failed'); });
