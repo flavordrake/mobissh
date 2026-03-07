@@ -28,7 +28,7 @@ Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-
 
 ## Deployment
 - **Production**: Docker container (`docker-compose.prod.yml`) with built-in Tailscale (`tailscale serve`)
-  - Rebuild: `docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`
+  - Rebuild: `scripts/container-ctl.sh restart`
   - Container copies `public/` and `server/` at build time -- must rebuild after code changes
 - **Local server** (`scripts/server-ctl.sh`): headless Playwright tests only, NOT for user testing
 - Personal use over Tailscale (WireGuard mesh) -- bridge auth and SSRF handled at network layer
