@@ -33,6 +33,20 @@ usage() {
 
 CMD="$1"; shift
 
+# Clean worktrees and local branch for a PR before merge
+_cleanup_pr_worktree() {
+  local pr_num="$1"
+  local branch
+  branch=$(gh pr view "$pr_num" --json headRefName --jq '.headRefName' 2>/dev/null || true)
+  if [ -n "$branch" ]; then
+    git worktree list --porcelain | awk -v b="$branch" '/^worktree /{p=$2} /^branch /{if($2=="refs/heads/"b) print p}' | while read -r wt; do
+      rm -rf "$wt"
+    done
+    git worktree prune 2>/dev/null
+    git branch -D "$branch" 2>/dev/null || true
+  fi
+}
+
 case "$CMD" in
   comment)
     [ $# -ge 1 ] || { echo "Error: comment requires ISSUE number" >&2; exit 1; }
@@ -158,19 +172,7 @@ case "$CMD" in
       esac
     done
     echo "Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
-    # Prune stale worktrees first — agent worktrees hold branch refs and cause
-    # --delete-branch to fail on local cleanup (exit 1 even though remote merge
-    # and remote branch delete succeed).
-    git worktree prune 2>/dev/null
-    BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName' 2>/dev/null || true)
-    if [ -n "$BRANCH" ]; then
-      # Remove any worktree directory still referencing this branch
-      git worktree list --porcelain | awk -v b="$BRANCH" '/^worktree /{p=$2} /^branch /{if($2=="refs/heads/"b) print p}' | while read -r wt; do
-        rm -rf "$wt"
-      done
-      git worktree prune 2>/dev/null
-      git branch -D "$BRANCH" 2>/dev/null || true
-    fi
+    _cleanup_pr_worktree "$PR_NUM"
     gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch
     ;;
 
@@ -205,17 +207,9 @@ case "$CMD" in
       esac
     done
 
-    # Step 1: Merge PR (includes worktree cleanup)
+    # Step 1: Merge PR (reuses pr-merge worktree cleanup)
     echo "==> Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
-    git worktree prune 2>/dev/null
-    BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName' 2>/dev/null || true)
-    if [ -n "$BRANCH" ]; then
-      git worktree list --porcelain | awk -v b="$BRANCH" '/^worktree /{p=$2} /^branch /{if($2=="refs/heads/"b) print p}' | while read -r wt; do
-        rm -rf "$wt"
-      done
-      git worktree prune 2>/dev/null
-      git branch -D "$BRANCH" 2>/dev/null || true
-    fi
+    _cleanup_pr_worktree "$PR_NUM"
     gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch
 
     # Step 2: Close issue
@@ -228,7 +222,7 @@ case "$CMD" in
     # Step 4: Pull main and prune
     echo "==> Pulling main" >&2
     git checkout main 2>/dev/null || true
-    git pull --ff-only 2>/dev/null || true
+    if ! git pull --ff-only 2>/dev/null; then echo "warning: ff-only pull failed, local main may be stale" >&2; fi
     git remote prune origin 2>/dev/null || true
 
     echo "+ Integrated: PR #${PR_NUM} -> issue #${ISSUE_NUM} closed" >&2
