@@ -180,11 +180,11 @@ body.debug-ime #imePreview {
   user-select: none; /* prevent Chrome double-tap text selection on terminal */
 }
 
-/* Suppress xterm.js accessibility tree's user-select: text which lets the OS
-   detect selected text, triggering native paste/URL-open context menus (#55). */
+/* Block pointer/touch events on the xterm.js a11y overlay to prevent native
+   paste/URL-open context menus (#55), while preserving screen reader access.
+   The a11y tree is invisible — it needs no pointer interaction. */
 #terminal .xterm-accessibility-tree {
-  -webkit-user-select: none;
-  user-select: none;
+  pointer-events: none;
 }
 
 /* IME composition preview strip — visible while composing, hidden otherwise */
