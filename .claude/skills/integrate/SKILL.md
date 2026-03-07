@@ -9,7 +9,7 @@ description: Use when the user says "integrate", "review bot PRs", "merge bot fi
 > and conventions that this skill must follow.
 
 Review, validate, and merge PRs created by the Claude bot from `@claude` issue tasks.
-Bot PRs follow the branch pattern `claude/issue-{N}-{DATE}-{TIME}`.
+Bot PRs follow the branch pattern `claude/issue-{N}-{DATE}-{TIME}` or `bot/issue-{N}` (local develop agents).
 
 ## Scripts
 

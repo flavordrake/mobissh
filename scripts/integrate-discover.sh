@@ -28,7 +28,7 @@ git worktree prune 2>/dev/null || true
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 
 # Get all bot branches
-BRANCHES=$(gh api "repos/${REPO}/branches" --paginate --jq '.[].name' | grep '^claude/issue-' || true)
+BRANCHES=$(gh api "repos/${REPO}/branches" --paginate --jq '.[].name' | grep -E '^(claude|bot)/issue-' || true)
 
 if [ -z "$BRANCHES" ]; then
   echo "[]"

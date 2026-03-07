@@ -79,7 +79,7 @@ Removing \`@claude\` assignment — re-add after re-scoping."
 # Handle --issue mode (no JSON input needed)
 if [ -n "$SPECIFIC_ISSUE" ]; then
   branches=$(gh api "repos/${REPO}/branches" --paginate --jq '.[].name' \
-    | grep "^claude/issue-${SPECIFIC_ISSUE}-" || true)
+    | grep -E "^(claude|bot)/issue-${SPECIFIC_ISSUE}(-|$)" || true)
   if [ -z "$branches" ]; then
     log "No bot branches found for issue #${SPECIFIC_ISSUE}"
     exit 0
