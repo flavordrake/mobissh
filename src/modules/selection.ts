@@ -210,9 +210,32 @@ export function initSelection(): void {
   // Show paste button when long-press activates selection (clipboard likely has content)
   // and when selection is dismissed (user may want to paste after copying).
   function _showPasteIfClipboard(): void {
-    void navigator.clipboard.readText()
-      .then((text) => { pasteBtn.classList.toggle('hidden', !text); })
-      .catch(() => { pasteBtn.classList.add('hidden'); });
+    // Try clipboard.read() first to detect images; fall back to readText()
+    void (async () => {
+      try {
+        const items = await navigator.clipboard.read();
+        let hasContent = false;
+        let hasImage = false;
+        for (const item of items) {
+          if (item.types.includes('text/plain')) { hasContent = true; break; }
+          for (const type of item.types) {
+            if (type.startsWith('image/')) { hasContent = true; hasImage = true; break; }
+          }
+          if (hasContent) break;
+        }
+        pasteBtn.classList.toggle('hidden', !hasContent);
+        pasteBtn.textContent = hasImage ? 'Paste (image)' : 'Paste';
+      } catch {
+        // clipboard.read() not available — fall back to readText
+        try {
+          const text = await navigator.clipboard.readText();
+          pasteBtn.classList.toggle('hidden', !text);
+          pasteBtn.textContent = 'Paste';
+        } catch {
+          pasteBtn.classList.add('hidden');
+        }
+      }
+    })();
   }
 
   // ── Back gesture / hardware back → dismiss chip ───────────────────────────
