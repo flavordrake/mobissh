@@ -157,6 +157,20 @@ export function initSettingsPanel(): void {
     });
   }
 
+  const testNotifBtn = document.getElementById('testNotifBtn');
+  if (testNotifBtn) {
+    testNotifBtn.addEventListener('click', () => {
+      void Notification.requestPermission().then((perm) => {
+        if (perm === 'granted') {
+          new Notification('MobiSSH', { body: 'Test notification' });
+          _toast('Notification sent.');
+        } else {
+          _toast('Notification permission denied.');
+        }
+      });
+    });
+  }
+
   const dockEl = document.getElementById('keyControlsDockLeft') as HTMLInputElement | null;
   if (dockEl) {
     dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';
