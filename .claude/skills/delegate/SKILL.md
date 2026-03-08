@@ -321,26 +321,41 @@ for a single bot pass. The `composite` label marks the parent; sub-issues get `b
 - **Merge** when multiple small issues overlap -> combine into one delegation on a primary issue
 - Never both: if you're merging small issues AND the result is too big, reconsider scope
 
-### Analysis
+### Proactive decomposition during delegation
 
-For issues classified as `decompose`:
+When Phase 1 classification tags issues as `decompose`, **immediately spawn background
+`/decompose N` agents** (one per decompose issue, max 2 parallel) during gap analysis.
+By the time the triage table is presented in Phase 6, the decomposition analysis is
+complete — sub-issue proposals, file lists, test impact, and dependency ordering are
+all ready for the user to approve or adjust.
 
-1. Read the full issue body
-2. Read relevant source files to understand current architecture
-3. Apply gap analysis findings from Phase 3
-4. Identify natural module boundaries -- sub-issues should align with files/concerns,
-   not be arbitrary line-count splits
-5. Break into 2-4 sub-issues, each:
-   - Independently mergeable (no ordering dependency when possible)
-   - Scoped to one module or one concern
-   - Has clear acceptance criteria that don't depend on other sub-issues
-6. Smallest/safest sub-issue first (proves the pattern)
+This is the right time because:
+- Decompose-classified issues are what blocks delegation — analyzing them unblocks the pipeline
+- Even if the user reclassifies, the analysis is stored and reusable — never wasted
+- Running in background during Phase 2-4 hides the latency entirely
 
-### Filing sub-issues
+### Invoking `/decompose`
 
-For each sub-issue, file via `gh issue create` with the full `@claude` delegation
-comment embedded in the issue body (not as a separate comment). This ensures the bot
-picks up the task immediately.
+Use the `/decompose` skill (`.claude/skills/decompose/SKILL.md`) which handles:
+
+1. Reading the full issue body and relevant source files
+2. Mapping changes to module boundaries
+3. Analyzing test impact per sub-issue (new tests, assertion updates, mock updates)
+4. Determining dependency ordering (independent, sequential, parallel-safe)
+5. Producing a structured proposal with file lists, acceptance criteria, and risks
+
+The skill returns a proposal. Embed it in the triage table presentation (Phase 6)
+so the user sees decomposition details alongside other classifications.
+
+### Filing sub-issues (after user approval)
+
+For each approved sub-issue from the decomposition:
+
+1. Write body to `/tmp/sub-issue-{parent}_{letter}.md` with full `@claude` delegation
+   instructions embedded
+2. File: `gh issue create --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-{parent}_{letter}.md`
+3. For blocked sub-issues: `scripts/gh-ops.sh labels N --add blocked` and
+   `scripts/gh-ops.sh comment N --body "Blocked by #A -- needs A's changes on main first"`
 
 Title format: `feat: <parent title> -- <sub-concern>` (or `fix:`, `chore:` as appropriate).
 Copy the parent's type and domain labels to each sub-issue. Add `bot` label.
@@ -349,8 +364,8 @@ Copy the parent's type and domain labels to each sub-issue. Add `bot` label.
 
 After filing all sub-issues:
 
-1. Apply `composite` label to the parent issue
-2. Comment on the parent listing all sub-issues:
+1. `scripts/gh-ops.sh labels PARENT --add composite`
+2. `scripts/gh-ops.sh comment PARENT --body "Decomposed into..."`
    ```
    Decomposed into independently delegatable sub-issues:
    - #A -- <one-line description>
@@ -361,13 +376,6 @@ After filing all sub-issues:
    ```
 3. Do NOT close the parent -- it stays open as the tracking issue
 4. Do NOT apply `bot` to the parent -- only sub-issues get delegated
-
-### Ordering constraints
-
-If sub-issues have dependencies (A must merge before B):
-- Apply `blocked` label to B with a comment: "Blocked by #A -- needs A's changes on main first"
-- Only delegate A immediately; B gets delegated after A merges
-- Note the ordering in the parent's decomposition comment
 
 ## Phase 6: Present and confirm
 
@@ -405,7 +413,24 @@ PR creation, and issue comments. See `.claude/skills/develop/SKILL.md` for detai
 
 ### Label and housekeeping operations
 
-Use `gh-ops.sh` subcommands instead of raw `gh` chains:
+Use `gh-ops.sh` subcommands for ALL GitHub operations. **Never use raw `gh` commands.**
+
+Available subcommands:
+```bash
+scripts/gh-ops.sh comment N --body "text"        # comment on issue
+scripts/gh-ops.sh comment N --body-file /tmp/f.md # comment from file
+scripts/gh-ops.sh labels N --add X --rm Y         # add/remove labels
+scripts/gh-ops.sh close N                         # close issue
+scripts/gh-ops.sh search "query"                  # search issues
+scripts/gh-ops.sh version                         # code + server version
+scripts/gh-ops.sh delegate N [--label L]          # label + audit comment + prune
+scripts/gh-ops.sh integrate PR ISSUE              # merge PR, close issue, pull main
+scripts/gh-ops.sh pr-create --head B --title T --body B --label L  # create PR
+scripts/gh-ops.sh pr-close N --comment "reason"   # close PR with comment
+scripts/gh-ops.sh fetch-issues                    # fetch all open issues
+```
+
+Common operations:
 
 - Delegate setup (label + audit comment + prune):
   ```bash
@@ -423,20 +448,22 @@ Use `gh-ops.sh` subcommands instead of raw `gh` chains:
      ```
   2. Apply `composite` to parent, comment linking sub-issues:
      ```bash
-     gh issue edit PARENT --add-label composite
-     gh issue comment PARENT --body-file /tmp/decompose-comment.md
+     scripts/gh-ops.sh labels PARENT --add composite
+     scripts/gh-ops.sh comment PARENT --body-file /tmp/decompose-comment.md
      ```
   3. Do NOT close or apply `bot` to the parent
 - Clean up branches: `scripts/integrate-cleanup.sh --issue <N>`
 - Close superseded issues:
   ```bash
-  gh issue close N --comment "Superseded by #M"
+  scripts/gh-ops.sh close N
+  scripts/gh-ops.sh comment N --body "Superseded by #M"
   ```
 - Merge related issues into one delegation:
   1. Pick or create the primary issue
   2. Close secondary issues:
      ```bash
-     gh issue close N --comment "Merged into #P for combined delegation"
+     scripts/gh-ops.sh close N
+     scripts/gh-ops.sh comment N --body "Merged into #P for combined delegation"
      ```
   3. Spawn develop agent on primary with all merged criteria
   4. Apply `bot` label to primary
