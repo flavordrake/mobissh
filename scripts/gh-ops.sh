@@ -18,6 +18,7 @@
 #   pr-close  PR_NUM [--comment "TEXT"]   Close PR with optional comment
 #   integrate PR_NUM ISSUE_NUM [--merge|--squash|--rebase]  Merge PR, close issue, pull main
 #   delegate  ISSUE_NUM [--label L ...]   Label bot, audit comment, prune stale refs
+#   fetch-issues N1,N2,N3 [--out FILE]   Fetch issue bodies to file (default: $MOBISSH_TMPDIR/fetched-issues.md)
 #
 # All progress goes to stderr, actionable output to stdout.
 
@@ -25,7 +26,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: scripts/gh-ops.sh <command> [args]" >&2
-  echo "Commands: comment, labels, close, search, version, pr-create, pr-merge, pr-close, integrate, delegate" >&2
+  echo "Commands: comment, labels, close, search, version, pr-create, pr-merge, pr-close, integrate, delegate, fetch-issues" >&2
   exit 1
 }
 
@@ -256,6 +257,31 @@ case "$CMD" in
     git remote prune origin 2>/dev/null || true
 
     echo "+ Delegated: issue #${ISSUE_NUM} (bot label applied)" >&2
+    ;;
+
+  fetch-issues)
+    # Fetch issue titles and bodies to a single readable file
+    [ $# -ge 1 ] || { echo "Error: fetch-issues requires comma-separated issue numbers" >&2; exit 1; }
+    ISSUE_NUMS="$1"; shift
+    MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
+    mkdir -p "$MOBISSH_TMPDIR"
+    OUT="${MOBISSH_TMPDIR}/fetched-issues.md"
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --out) OUT="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    : > "$OUT"
+    IFS=',' read -ra NUMS <<< "$ISSUE_NUMS"
+    for n in "${NUMS[@]}"; do
+      n="${n// /}"
+      echo "Fetching #${n}" >&2
+      echo "## Issue #${n}" >> "$OUT"
+      gh issue view "$n" --json title,body,labels --jq '"**\(.title)**\n\nLabels: \([.labels[].name] | join(", "))\n\n\(.body // "(no body)")"' >> "$OUT"
+      echo -e "\n---\n" >> "$OUT"
+    done
+    echo "Wrote ${#NUMS[@]} issues to ${OUT}" >&2
     ;;
 
   *)

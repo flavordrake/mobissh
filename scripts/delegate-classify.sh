@@ -4,9 +4,10 @@
 # Reads delegate-discover.sh output and classifies each issue into buckets.
 # Non-deterministic judgment (research, decomposition design) is left to the agent.
 #
-# Usage: bash scripts/delegate-classify.sh [--data FILE]
-# Default input: /tmp/delegate-data.json
-# Output: JSON to stdout with classification added to each entry
+# Usage: scripts/delegate-classify.sh [--data FILE] [--out FILE]
+# Default input: $MOBISSH_TMPDIR/delegate-data.json
+# Default output: $MOBISSH_TMPDIR/delegate-classified.json
+# Summary printed to stderr
 #
 # Buckets:
 #   delegate          — clear scope, bot-ready
@@ -26,9 +27,11 @@ MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
 MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
 mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 DATA="${MOBISSH_TMPDIR}/delegate-data.json"
+OUT="${MOBISSH_TMPDIR}/delegate-classified.json"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --data) DATA="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -38,7 +41,7 @@ if [ ! -f "$DATA" ]; then
   exit 1
 fi
 
-python3 - "$DATA" << 'CLASSIFY'
+python3 - "$DATA" "$OUT" << 'CLASSIFY'
 import json, re, sys
 
 HUMAN_KEYWORDS = re.compile(
@@ -67,7 +70,9 @@ LARGE_FEATURE_KEYWORDS = re.compile(
     re.IGNORECASE
 )
 
-with open(sys.argv[1] if len(sys.argv) > 1 else '/tmp/delegate-data.json') as f:
+data_path = sys.argv[1] if len(sys.argv) > 1 else '/tmp/mobissh/delegate-data.json'
+out_path = sys.argv[2] if len(sys.argv) > 2 else '/tmp/mobissh/delegate-classified.json'
+with open(data_path) as f:
     issues = json.load(f)
 
 open_numbers = {i['number'] for i in issues}
@@ -208,6 +213,8 @@ for bucket in ['delegate', 'already-attempted', 'decompose', 'human-only', 'bloc
             sigs = '; '.join(i['classification_signals'])
             print(f'  #{i["number"]:>3} {i["title"][:60]:60} [{sigs}]', file=sys.stderr)
 
-# Write full classified JSON to stdout
-json.dump(issues, sys.stdout, indent=2)
+# Write full classified JSON to output file
+with open(out_path, 'w') as f:
+    json.dump(issues, f, indent=2)
+print(f'Wrote {len(issues)} issues to {out_path}', file=sys.stderr)
 CLASSIFY
