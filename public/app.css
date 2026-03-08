@@ -384,22 +384,8 @@ body.debug-ime #imePreview {
 .handle-menu-btn:active { color: var(--accent); }
 
 /* Compose/IME toggle in handle bar — always visible, compact icon */
-.handle-compose-btn { position: relative; }
 .handle-compose-btn.compose-active { color: var(--accent); }
 .handle-compose-btn:active { opacity: 0.7; }
-
-/* Bell indicator — small dot on compose button, shown on BEL / OSC 9 / OSC 777 */
-.bell-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  pointer-events: none;
-}
-.bell-indicator.hidden { display: none; }
 
 /* Copy and paste buttons in handle bar — shared layout (#55, #197) */
 .handle-copy-btn,

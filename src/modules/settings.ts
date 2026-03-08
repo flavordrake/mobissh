@@ -8,7 +8,7 @@
 import type { SettingsDeps } from './types.js';
 import { getDefaultWsUrl, THEMES } from './constants.js';
 import type { ThemeName } from './types.js';
-import { showBellIndicator } from './terminal.js';
+
 
 let _toast = (_msg: string): void => {};
 let _applyFontSize = (_size: number): void => {};
@@ -199,10 +199,6 @@ export function initSettingsPanel(): void {
   document.getElementById('resetAppBtn')!.addEventListener('click', () => {
     if (!confirm('Clear all stored keys, profiles, settings, and caches, then reload?')) return;
     void clearCacheAndReload();
-  });
-
-  document.getElementById('testBellBtn')?.addEventListener('click', () => {
-    showBellIndicator();
   });
 
   const versionEl = document.getElementById('versionInfo');

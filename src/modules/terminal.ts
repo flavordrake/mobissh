@@ -43,16 +43,6 @@ function fireNotification(title: string, body: string): void {
   } catch { /* permission may have been revoked */ }
 }
 
-let _bellTimer: ReturnType<typeof setTimeout> | null = null;
-
-export function showBellIndicator(): void {
-  const el = document.getElementById('bellIndicator');
-  if (!el) return;
-  el.classList.remove('hidden');
-  if (_bellTimer !== null) clearTimeout(_bellTimer);
-  _bellTimer = setTimeout(() => { el.classList.add('hidden'); _bellTimer = null; }, 5000);
-}
-
 export function initTerminal(): void {
   const fontSize = parseInt(localStorage.getItem('fontSize') ?? '14') || 14;
   const savedTheme = localStorage.getItem('termTheme') ?? 'dark';
@@ -78,7 +68,6 @@ export function initTerminal(): void {
   applyTheme(appState.activeThemeName);
 
   appState.terminal.onBell(() => {
-    showBellIndicator();
     if (!shouldNotify()) return;
     const buffer = appState.terminal!.buffer.active;
     let body = 'Terminal bell';
@@ -90,25 +79,16 @@ export function initTerminal(): void {
   });
 
   appState.terminal.parser.registerOscHandler(9, (data: string) => {
-    showBellIndicator();
     if (shouldNotify()) fireNotification('MobiSSH', data);
     return true;
   });
 
   appState.terminal.parser.registerOscHandler(777, (data: string) => {
     const parts = data.split(';');
-    showBellIndicator();
     if (parts[0] === 'notify' && shouldNotify()) {
       fireNotification(parts[1] ?? 'MobiSSH', parts[2] ?? '');
     }
     return true;
-  });
-
-  // Dismiss bell indicator on tap
-  document.getElementById('bellIndicator')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    (e.target as HTMLElement).classList.add('hidden');
-    if (_bellTimer !== null) { clearTimeout(_bellTimer); _bellTimer = null; }
   });
 
   // Re-measure character cells after web fonts finish loading (#71)
