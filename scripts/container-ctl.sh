@@ -156,20 +156,38 @@ cmd_ensure() {
   cmd_start
 }
 
+cmd_push() {
+  if ! is_running; then
+    err "Container ${CONTAINER} not running. Use 'restart' for a full rebuild."
+    return 1
+  fi
+
+  log "Compiling TypeScript..."
+  npx tsc 2>&1
+
+  log "Pushing public/ and server/ into ${CONTAINER}..."
+  docker cp public/. "${CONTAINER}:/app/public/"
+  docker cp server/. "${CONTAINER}:/app/server/"
+
+  ok "Files pushed. Refresh the browser (no container restart needed)."
+}
+
 case "${1:-}" in
   start)   cmd_start ;;
   stop)    cmd_stop ;;
   restart) cmd_restart ;;
   status)  cmd_status ;;
   ensure)  cmd_ensure ;;
+  push)    cmd_push ;;
   *)
-    echo "Usage: scripts/container-ctl.sh {start|stop|restart|status|ensure}"
+    echo "Usage: scripts/container-ctl.sh {start|stop|restart|status|ensure|push}"
     echo ""
     echo "  start    Build + start (rebuild if stale)"
     echo "  stop     Stop container"
     echo "  restart  Force rebuild + restart"
     echo "  status   Health + version check"
     echo "  ensure   Idempotent: rebuild only if code is stale"
+    echo "  push     Hot-push: compile TS + copy files into running container (fast)"
     exit 1
     ;;
 esac

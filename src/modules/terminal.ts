@@ -70,10 +70,12 @@ function shouldNotify(): boolean {
 }
 
 function fireNotification(title: string, body: string): void {
-  try {
-    new Notification(title, { body });
+  if (!('serviceWorker' in navigator)) return;
+  void navigator.serviceWorker.ready.then((reg) => {
+    return reg.showNotification(title, { body });
+  }).then(() => {
     _lastNotifTime = Date.now();
-  } catch { /* permission may have been revoked */ }
+  }).catch(() => { /* permission may have been revoked */ });
 }
 
 export function initTerminal(): void {

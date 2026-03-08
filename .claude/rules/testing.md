@@ -33,6 +33,16 @@ Never use `npm test` (maps to full Playwright including Appium).
 3. Code change third
 4. Re-test fourth
 
+## Test maintenance requirements
+- **Every behavior change or new feature MUST include corresponding test updates.**
+  - New functionality: add headless Playwright tests covering the new behavior.
+  - Changed behavior: update existing test assertions to match. Do NOT leave stale tests that pass by accident (e.g., mocking the old API while code uses a new one).
+  - Removed functionality: remove or `.skip` tests that are no longer relevant.
+- **Major UX changes require emulator/Appium tests** in addition to headless tests.
+  - Touch, gesture, keyboard, layout, viewport, notification, and PWA features need device-level validation.
+- **Mock at the right level.** If code uses `ServiceWorkerRegistration.showNotification()`, mock the SW registration — not `new Notification()`. Mismatched mocks create false passes.
+- Develop agents that skip test updates are producing incomplete work. The fast gate (tsc + lint + unit) catching zero failures does not mean the change is tested.
+
 ## Test patterns
 - Vault tests: `cleanPage` for no-vault state, `emulatorPage` for pre-created vault.
 - New Appium test files: copy baseline structure (beforeEach, helpers, tmux setup via dockerExec), extend with new assertions.

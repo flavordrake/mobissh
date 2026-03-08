@@ -61,6 +61,23 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Notification click: focus or open the app when tapping a notification
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      // Focus existing window if available
+      for (const client of clients) {
+        if (client.url.includes(self.registration.scope) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // Otherwise open a new window
+      return self.clients.openWindow(self.registration.scope);
+    })
+  );
+});
+
 // Fetch: network-first — always try network, cache is offline fallback only.
 // This ensures updated app.js/app.css are always served fresh.
 self.addEventListener('fetch', (event) => {

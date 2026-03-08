@@ -106,6 +106,20 @@ export function toast(msg: string): void {
   toastTimer = setTimeout(() => { el.classList.remove('show'); }, 2500);
 }
 
+// ── Error dialog ────────────────────────────────────────────────────────────
+
+export function showErrorDialog(message: string): void {
+  const overlay = document.getElementById('errorDialogOverlay');
+  const text = document.getElementById('errorDialogText');
+  const dismiss = document.getElementById('errorDialogDismiss');
+  if (!overlay || !text) return;
+  text.textContent = message;
+  overlay.classList.remove('hidden');
+  dismiss?.addEventListener('click', () => {
+    overlay.classList.add('hidden');
+  }, { once: true });
+}
+
 // ── Status indicator ─────────────────────────────────────────────────────────
 
 export function setStatus(state: ConnectionStatus, text: string): void {

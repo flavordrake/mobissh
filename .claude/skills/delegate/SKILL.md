@@ -240,7 +240,9 @@ scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
 
 **Acceptance criteria:**
 1. <verifiable criterion>
-2. All existing tests pass (`scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`)
+2. Headless Playwright tests added/updated for any behavior change or new feature
+3. Test mocks match the actual APIs used (e.g., mock SW registration if code uses it)
+4. All existing tests pass (`scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`)
 
 **Context:**
 <code snippets from actual files on main>
@@ -249,6 +251,7 @@ scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
 **Do NOT:**
 - <constraint from project rules>
 - <constraint from failure analysis>
+- Leave stale test mocks that don't match the actual code path
 
 **Prerequisites:**
 1. `git fetch origin main && git merge origin/main` -- ensure your branch is up to date

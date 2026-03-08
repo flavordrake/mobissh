@@ -8,6 +8,7 @@
 import type { SettingsDeps } from './types.js';
 import { getDefaultWsUrl, THEMES } from './constants.js';
 import type { ThemeName } from './types.js';
+import { showErrorDialog } from './ui.js';
 
 
 let _toast = (_msg: string): void => {};
@@ -162,38 +163,42 @@ export function initSettingsPanel(): void {
     testNotifBtn.addEventListener('click', () => {
       console.log('[settings] Test notification button clicked');
       if (!('Notification' in window)) {
-        console.warn('[settings] Notification API not available');
-        _toast('Notifications not supported in this browser.');
+        showErrorDialog('Notifications not supported in this browser.\n\nThe Notification API is not available.');
+        return;
+      }
+      if (!('serviceWorker' in navigator)) {
+        showErrorDialog('Service Worker not supported in this browser.\n\nPWA notifications require Service Worker support.');
         return;
       }
       console.log('[settings] Current permission:', Notification.permission);
-      if (Notification.permission === 'granted') {
-        try {
-          const n = new Notification('MobiSSH', { body: 'Test notification' });
-          console.log('[settings] Notification created:', n);
+
+      const sendNotification = (): void => {
+        void navigator.serviceWorker.ready.then((reg) => {
+          console.log('[settings] SW registration ready, showing notification');
+          return reg.showNotification('MobiSSH', { body: 'Test notification' });
+        }).then(() => {
+          console.log('[settings] Notification shown via SW');
           _toast('Notification sent.');
-        } catch (err) {
-          console.error('[settings] Notification constructor failed:', err);
-          _toast(`Notification failed: ${String(err)}`);
-        }
+        }).catch((err: unknown) => {
+          console.error('[settings] SW showNotification failed:', err);
+          showErrorDialog(`Notification failed:\n\n${String(err)}`);
+        });
+      };
+
+      if (Notification.permission === 'granted') {
+        sendNotification();
         return;
       }
       void Notification.requestPermission().then((perm) => {
         console.log('[settings] Permission result:', perm);
         if (perm === 'granted') {
-          try {
-            new Notification('MobiSSH', { body: 'Test notification' });
-            _toast('Notification sent.');
-          } catch (err) {
-            console.error('[settings] Notification failed after grant:', err);
-            _toast(`Notification failed: ${String(err)}`);
-          }
+          sendNotification();
         } else {
-          _toast(`Notification permission: ${perm}`);
+          showErrorDialog(`Notification permission: ${perm}\n\nThe browser denied notification permission. Check your browser or OS notification settings for this site.`);
         }
       }).catch((err: unknown) => {
         console.error('[settings] requestPermission failed:', err);
-        _toast(`Permission request failed: ${String(err)}`);
+        showErrorDialog(`Permission request failed:\n\n${String(err)}`);
       });
     });
   }

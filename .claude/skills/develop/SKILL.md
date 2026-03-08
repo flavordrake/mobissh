@@ -62,6 +62,11 @@ Issue #{N}: {title}
 - Do NOT add inline styles
 - Do NOT over-engineer — minimal changes only
 - Follow existing code patterns
+- MUST add/update headless Playwright tests for any behavior change or new feature
+- MUST update existing test mocks to match the actual API being used (e.g., if code uses
+  ServiceWorkerRegistration.showNotification, mock that — not new Notification())
+- MUST remove or .skip tests that are no longer relevant after changes
+- Major UX changes also require emulator/Appium test updates
 
 ## Verify
 npx tsc --noEmit && npx eslint src/ public/ server/ tests/ && npx vitest run
