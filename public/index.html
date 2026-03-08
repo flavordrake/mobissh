@@ -146,6 +146,23 @@
     </div>
   </div>
 
+  <!-- Key passphrase prompt — shown at connect time for encrypted keys (#54) -->
+  <div id="keyPassphraseOverlay" class="vault-overlay hidden" role="dialog" aria-label="Key passphrase">
+    <div class="vault-dialog">
+      <h3 class="vault-title">Key passphrase</h3>
+      <p class="vault-desc">This key is passphrase-protected. Enter the passphrase to unlock it.</p>
+      <label for="keyPassphraseInput" class="vault-label">Passphrase</label>
+      <input type="password" id="keyPassphraseInput"
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
+      <p id="keyPassphraseError" class="vault-error hidden"></p>
+      <div class="vault-buttons">
+        <button id="keyPassphraseCancel" class="vault-btn vault-btn-cancel">Cancel</button>
+        <button id="keyPassphraseOk" class="vault-btn vault-btn-create">Unlock</button>
+      </div>
+    </div>
+  </div>
+
   <div id="menuBackdrop" class="hidden"></div>
   <div id="app">
     <!-- Tab bar -->

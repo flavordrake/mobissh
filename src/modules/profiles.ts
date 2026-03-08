@@ -266,7 +266,7 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
     return false;
   }
 
-  connect(sshProfile);
+  await connect(sshProfile);
   return true;
 }
 
