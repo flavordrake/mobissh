@@ -20,6 +20,7 @@ export interface SSHProfile {
   initialCommand?: string;
   vaultId?: string;
   hasVaultCreds?: boolean;
+  keyVaultId?: string;
 }
 
 export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight';

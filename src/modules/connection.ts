@@ -7,6 +7,7 @@
  */
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
+import { vaultLoad } from './vault.js';
 
 // [SFTP_MSG] -- keep in sync with types.ts SERVER_MESSAGE sftp types and WS router below
 type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
@@ -52,6 +53,70 @@ export function initConnection({ toast, setStatus, focusIME, applyTabBarVisibili
   _applyTabBarVisibility = applyTabBarVisibility;
 }
 
+// In-memory passphrase cache keyed by keyVaultId. Cleared on page unload.
+const _keyPassphraseCache = new Map<string, string>();
+
+window.addEventListener('beforeunload', () => {
+  _keyPassphraseCache.clear();
+});
+
+/** Exported for testing only. */
+export function _getPassphraseCache(): Map<string, string> {
+  return _keyPassphraseCache;
+}
+
+/** Returns true if the PEM key data appears to be passphrase-encrypted. */
+function _isKeyEncrypted(keyData: string): boolean {
+  return keyData.includes('ENCRYPTED');
+}
+
+/** Show the passphrase prompt dialog and return the entered passphrase, or null on cancel. */
+function _promptPassphrase(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('keyPassphraseOverlay');
+    const input = document.getElementById('keyPassphraseInput') as HTMLInputElement | null;
+    const okBtn = document.getElementById('keyPassphraseOk');
+    const cancelBtn = document.getElementById('keyPassphraseCancel');
+    const errorEl = document.getElementById('keyPassphraseError');
+
+    if (!overlay || !input || !okBtn || !cancelBtn) {
+      resolve(null);
+      return;
+    }
+
+    input.value = '';
+    errorEl?.classList.add('hidden');
+    overlay.classList.remove('hidden');
+    input.focus();
+
+    function cleanup(): void {
+      overlay!.classList.add('hidden');
+      okBtn!.removeEventListener('click', onOk);
+      cancelBtn!.removeEventListener('click', onCancel);
+      input!.removeEventListener('keydown', onKeydown);
+    }
+
+    function onOk(): void {
+      cleanup();
+      resolve(input!.value);
+    }
+
+    function onCancel(): void {
+      cleanup();
+      resolve(null);
+    }
+
+    function onKeydown(e: KeyboardEvent): void {
+      if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+      if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+    }
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKeydown);
+  });
+}
+
 // ── WebSocket / SSH connection ────────────────────────────────────────────────
 
 // Max consecutive pre-open WS close events before halting the reconnect loop.
@@ -64,7 +129,35 @@ function _getWsToken(): string {
   return document.querySelector<HTMLMetaElement>('meta[name="ws-token"]')?.content ?? '';
 }
 
-export function connect(profile: SSHProfile): void {
+export async function connect(profile: SSHProfile): Promise<void> {
+  // If the profile references a stored key, load the key data from vault
+  if (profile.authType === 'key' && profile.keyVaultId && !profile.privateKey) {
+    const keyCreds = await vaultLoad(profile.keyVaultId);
+    if (keyCreds?.data) {
+      profile.privateKey = keyCreds.data as string;
+    } else {
+      _toast('Could not load stored key from vault.');
+      return;
+    }
+  }
+
+  // If the key is encrypted and no passphrase is set, check cache or prompt
+  if (profile.authType === 'key' && profile.privateKey && _isKeyEncrypted(profile.privateKey) && !profile.passphrase) {
+    const cacheKey = profile.keyVaultId ?? '';
+    const cached = cacheKey ? _keyPassphraseCache.get(cacheKey) : undefined;
+    if (cached !== undefined) {
+      profile.passphrase = cached;
+    } else {
+      const passphrase = await _promptPassphrase();
+      if (passphrase === null) {
+        _toast('Connection cancelled.');
+        return;
+      }
+      profile.passphrase = passphrase;
+      if (cacheKey) _keyPassphraseCache.set(cacheKey, passphrase);
+    }
+  }
+
   appState.currentProfile = profile;
   appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
   _wsConsecFailures = 0;
