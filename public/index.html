@@ -307,18 +307,24 @@
           </div>
 
           <div id="keyGroup" class="compact-form-span hidden">
-            <label for="privateKey">Private key</label>
-            <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
-            <label for="remote_pp">Passphrase (if encrypted)</label>
-            <input type="text" id="remote_pp"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-              spellcheck="false"
-              data-lpignore="true"
-              data-1p-ignore="true"
-              data-form-type="other" />
-            <button type="button" id="useStoredKeyBtn" class="secondary-btn">Use stored key…</button>
+            <label for="selectedKeyId">SSH Key</label>
+            <select id="selectedKeyId" class="key-dropdown">
+              <option value="">Select a stored key...</option>
+              <option value="manual">Paste key manually...</option>
+            </select>
+            <div id="manualKeyGroup" class="hidden">
+              <label for="privateKey">Private key</label>
+              <textarea id="privateKey" rows="4" placeholder="Paste PEM private key here..." spellcheck="false"></textarea>
+              <label for="remote_pp">Passphrase (if encrypted)</label>
+              <input type="text" id="remote_pp"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other" />
+            </div>
           </div>
 
           <details id="connectAdvanced" class="compact-form-span">

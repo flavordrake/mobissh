@@ -10,7 +10,7 @@ import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
-import { saveProfile, getKeys, connectFromProfile, newConnection } from './profiles.js';
+import { saveProfile, connectFromProfile, newConnection } from './profiles.js';
 
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
 
@@ -330,7 +330,16 @@ export function initConnectForm(): void {
 
   // Cloak password fields: type="text" at rest, type="password" only while focused (#150)
   _initPasswordFieldCloaking(document.getElementById('remote_c') as HTMLInputElement);
-  _initPasswordFieldCloaking(document.getElementById('remote_pp') as HTMLInputElement);
+  const remotePp = document.getElementById('remote_pp') as HTMLInputElement | null;
+  if (remotePp) _initPasswordFieldCloaking(remotePp);
+
+  // Key dropdown: show/hide manual key entry based on selection
+  const keyDropdown = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
+  const manualKeyGroup = document.getElementById('manualKeyGroup');
+  keyDropdown?.addEventListener('change', () => {
+    const showManual = keyDropdown.value === 'manual';
+    manualKeyGroup?.classList.toggle('hidden', !showManual);
+  });
 
   // Auto-populate profile name from hostname (#16)
   const hostInput = document.getElementById('host') as HTMLInputElement;
@@ -350,6 +359,9 @@ export function initConnectForm(): void {
   form.addEventListener('submit', (e) => {
     e.preventDefault();
 
+    const privateKeyEl = document.getElementById('privateKey') as HTMLTextAreaElement | null;
+    const remotePpEl = document.getElementById('remote_pp') as HTMLInputElement | null;
+
     const profile = {
       name: (document.getElementById('profileName') as HTMLInputElement).value.trim() || 'Server',
       host: (document.getElementById('host') as HTMLInputElement).value.trim(),
@@ -357,13 +369,13 @@ export function initConnectForm(): void {
       username: (document.getElementById('remote_a') as HTMLInputElement).value.trim(),
       authType: authType.value as 'password' | 'key',
       password: (document.getElementById('remote_c') as HTMLInputElement).value,
-      privateKey: (document.getElementById('privateKey') as HTMLTextAreaElement).value.trim(),
-      passphrase: (document.getElementById('remote_pp') as HTMLInputElement).value,
+      privateKey: privateKeyEl?.value.trim() ?? '',
+      passphrase: remotePpEl?.value ?? '',
       initialCommand: (document.getElementById('initialCommand') as HTMLInputElement).value.trim(),
     };
 
     (document.getElementById('remote_c') as HTMLInputElement).value = '';
-    (document.getElementById('remote_pp') as HTMLInputElement).value = '';
+    if (remotePpEl) remotePpEl.value = '';
 
     void saveProfile(profile).then(() => {
       // Hide form after save, show profile list
@@ -372,15 +384,6 @@ export function initConnectForm(): void {
       const newBtn = document.getElementById('newConnBtn');
       if (newBtn) newBtn.classList.remove('hidden');
     });
-  });
-
-  document.getElementById('useStoredKeyBtn')!.addEventListener('click', () => {
-    const keys = getKeys();
-    if (!keys.length) { toast('No stored keys. Add one in the Keys tab.'); return; }
-    const key = keys[0];
-    if (!key) return;
-    (document.getElementById('privateKey') as HTMLTextAreaElement).value = key.vaultId;
-    toast(`Using key: ${key.name}`);
   });
 
   document.getElementById('newConnBtn')!.addEventListener('click', () => {
