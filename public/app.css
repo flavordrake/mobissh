@@ -387,6 +387,28 @@ body.debug-ime #imePreview {
 .handle-compose-btn.compose-active { color: var(--accent); }
 .handle-compose-btn:active { opacity: 0.7; }
 
+/* Bell notification indicator in handle bar (#33) */
+.handle-bell-btn {
+  position: relative;
+  padding: 4px 6px;
+}
+
+.bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  background: var(--accent);
+  color: var(--bg-deep);
+  font-size: 10px;
+  font-weight: bold;
+  min-width: 14px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 7px;
+  text-align: center;
+  padding: 0 3px;
+}
+
 /* Copy and paste buttons in handle bar — shared layout (#55, #197) */
 .handle-copy-btn,
 .handle-paste-btn {
