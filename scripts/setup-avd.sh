@@ -5,7 +5,9 @@
 # a Pixel 7 AVD with Google Play (for real Chrome + WebAuthn testing).
 #
 # Prerequisites: android-studio snap, KVM enabled
-# Usage: ./scripts/setup-avd.sh
+# Usage: ./scripts/setup-avd.sh [--name AVD_NAME] [--port PORT]
+#   --name NAME   AVD name (default: MobiSSH_Pixel7)
+#   --port PORT   Emulator console port (default: 5554)
 # Log: /tmp/setup-avd.log
 
 set -euo pipefail
@@ -21,8 +23,18 @@ ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 JAVA_HOME="/snap/android-studio/current/jbr"
 AVD_NAME="MobiSSH_Pixel7"
+EMU_PORT="5554"
 SYSTEM_IMAGE="system-images;android-35;google_apis_playstore;x86_64"
 DEVICE_PROFILE="pixel_7"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name) AVD_NAME="$2"; shift 2 ;;
+    --port) EMU_PORT="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
 
 export ANDROID_HOME JAVA_HOME
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
@@ -97,42 +109,43 @@ if [[ -f "$AVD_INI" ]]; then
 fi
 
 # 6. Write helper scripts
-LAUNCH_SCRIPT="$ANDROID_HOME/launch-mobissh-avd.sh"
-cat > "$LAUNCH_SCRIPT" <<'LAUNCH'
+LAUNCH_SCRIPT="$ANDROID_HOME/launch-${AVD_NAME}.sh"
+cat > "$LAUNCH_SCRIPT" <<LAUNCH
 #!/usr/bin/env bash
 # Launch the MobiSSH test emulator and set up port forwarding.
-# Usage: bash ~/Android/Sdk/launch-mobissh-avd.sh
+# Usage: bash $LAUNCH_SCRIPT
 
 set -euo pipefail
 
-ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
-export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+ANDROID_HOME="\${ANDROID_HOME:-\$HOME/Android/Sdk}"
+export PATH="\$ANDROID_HOME/platform-tools:\$ANDROID_HOME/emulator:\$PATH"
 
-AVD_NAME="MobiSSH_Pixel7"
-MOBISSH_PORT="${MOBISSH_PORT:-8080}"
+AVD_NAME="${AVD_NAME}"
+EMU_PORT="${EMU_PORT}"
+MOBISSH_PORT="\${MOBISSH_PORT:-8080}"
 
-echo "> Starting emulator ($AVD_NAME)..."
-emulator -avd "$AVD_NAME" -no-snapshot-save -gpu auto -no-audio -no-qt &
-EMU_PID=$!
+echo "> Starting emulator (\$AVD_NAME) on port \$EMU_PORT..."
+emulator -avd "\$AVD_NAME" -port "\$EMU_PORT" -no-snapshot-save -gpu auto -no-audio -no-qt &
+EMU_PID=\$!
 
 echo "> Waiting for device to boot..."
-adb wait-for-device
-adb shell 'while [[ "$(getprop sys.boot_completed)" != "1" ]]; do sleep 1; done'
+adb -s emulator-\$EMU_PORT wait-for-device
+adb -s emulator-\$EMU_PORT shell 'while [[ "\$(getprop sys.boot_completed)" != "1" ]]; do sleep 1; done'
 echo "> Device booted."
 
 # Port-forward so emulator's localhost:8080 -> host's localhost:8080
-adb reverse tcp:$MOBISSH_PORT tcp:$MOBISSH_PORT
-echo "> Port forwarded: emulator localhost:$MOBISSH_PORT -> host localhost:$MOBISSH_PORT"
-echo "> Open Chrome on emulator and navigate to http://localhost:$MOBISSH_PORT"
+adb -s emulator-\$EMU_PORT reverse tcp:\$MOBISSH_PORT tcp:\$MOBISSH_PORT
+echo "> Port forwarded: emulator localhost:\$MOBISSH_PORT -> host localhost:\$MOBISSH_PORT"
+echo "> Open Chrome on emulator and navigate to http://localhost:\$MOBISSH_PORT"
 echo ""
 echo "Useful commands:"
-echo "  adb emu finger touch 1     # simulate fingerprint (for WebAuthn biometric)"
-echo "  adb shell input text 'url' # type text"
-echo "  adb logcat -s chromium     # Chrome logs"
-echo "  kill $EMU_PID              # stop emulator"
+echo "  adb -s emulator-\$EMU_PORT emu finger touch 1     # simulate fingerprint"
+echo "  adb -s emulator-\$EMU_PORT shell input text 'url' # type text"
+echo "  adb -s emulator-\$EMU_PORT logcat -s chromium     # Chrome logs"
+echo "  kill \$EMU_PID              # stop emulator"
 echo ""
 
-wait $EMU_PID
+wait \$EMU_PID
 LAUNCH
 chmod +x "$LAUNCH_SCRIPT"
 
@@ -157,6 +170,6 @@ echo "  bash $LAUNCH_SCRIPT"
 echo ""
 echo "Or manually:"
 echo "  source ~/.bashrc"
-echo "  emulator -avd $AVD_NAME &"
-echo "  adb reverse tcp:8080 tcp:8080"
+echo "  emulator -avd $AVD_NAME -port $EMU_PORT &"
+echo "  adb -s emulator-$EMU_PORT reverse tcp:8080 tcp:8080"
 echo "  # Then open http://localhost:8080 in Chrome on emulator"

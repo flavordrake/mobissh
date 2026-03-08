@@ -10,6 +10,7 @@
 #   scripts/run-appium-tests.sh gesture-scroll-baseline    # specific test file
 #   scripts/run-appium-tests.sh --suite baseline-pre       # all tests, suite-tagged archive
 #   scripts/run-appium-tests.sh integrate-117 --suite integrate-117-before
+#   scripts/run-appium-tests.sh --avd MyAVD --port 5556 --appium-port 4725
 # Log: /tmp/run-appium-tests.log
 
 set -euo pipefail
@@ -27,14 +28,23 @@ export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 AVD_NAME="MobiSSH_Pixel7"
 MOBISSH_PORT="${MOBISSH_PORT:-8081}"
 APPIUM_PORT="${APPIUM_PORT:-4723}"
+EMU_PORT=""
 SPEC=""
 SUITE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --avd) AVD_NAME="$2"; shift 2 ;;
+    --port) EMU_PORT="$2"; shift 2 ;;
+    --appium-port) APPIUM_PORT="$2"; shift 2 ;;
     --suite) SUITE="$2"; shift 2 ;;
     *) SPEC="$1"; shift ;;
   esac
 done
+# Derive ADB serial from emulator port (if specified)
+ADB_SERIAL=""
+if [[ -n "$EMU_PORT" ]]; then
+  ADB_SERIAL="emulator-$EMU_PORT"
+fi
 RESULTS_DIR="test-results-appium"
 # Record to /tmp first — Playwright cleans RESULTS_DIR at startup, which would
 # delete a recording in progress. Move the finalized file in afterward.
@@ -47,11 +57,21 @@ log() { echo "> $*"; }
 ok()  { echo "+ $*"; }
 err() { echo "! $*" >&2; exit 1; }
 
+# Build ADB command with optional serial targeting.
+# When ADB_SERIAL is set, all adb commands target that specific emulator.
+adb_cmd() {
+  if [[ -n "$ADB_SERIAL" ]]; then
+    adb -s "$ADB_SERIAL" "$@"
+  else
+    adb "$@"
+  fi
+}
+
 # Run an ADB command, log failures but don't abort the script.
 # ADB setup commands are best-effort — the emulator may not have Chrome yet,
 # permissions may already be granted, etc.
 adb_try() {
-  if ! adb "$@" 2>&1; then
+  if ! adb_cmd "$@" 2>&1; then
     log "adb $1 $2 ... failed (non-fatal)"
   fi
 }
@@ -79,13 +99,17 @@ log "Phase 2: Android emulator"
 command -v emulator &>/dev/null || err "emulator not found. Run scripts/setup-avd.sh"
 command -v adb &>/dev/null || err "adb not found. Run scripts/setup-avd.sh"
 
-if ! adb devices 2>/dev/null | grep -q 'emulator\|device$'; then
+if ! adb_cmd devices 2>/dev/null | grep -q 'emulator\|device$'; then
+  EMU_PORT_ARGS=""
+  if [[ -n "$EMU_PORT" ]]; then
+    EMU_PORT_ARGS="-port $EMU_PORT"
+  fi
   log "Booting emulator ($AVD_NAME)..."
-  sg kvm -c "emulator -avd \"$AVD_NAME\" -no-snapshot-save -gpu auto -no-audio -no-qt" &
+  sg kvm -c "emulator -avd \"$AVD_NAME\" $EMU_PORT_ARGS -no-snapshot-save -gpu auto -no-audio -no-qt" &
   EMU_PID=$!
-  adb wait-for-device
+  adb_cmd wait-for-device
   for i in $(seq 1 120); do
-    if adb shell getprop sys.boot_completed 2>/dev/null | grep -q '^1$'; then break; fi
+    if adb_cmd shell getprop sys.boot_completed 2>/dev/null | grep -q '^1$'; then break; fi
     if (( i == 120 )); then err "Emulator failed to boot within 120s"; fi
     sleep 1
   done
@@ -101,9 +125,9 @@ adb_try reverse tcp:"$MOBISSH_PORT" tcp:"$MOBISSH_PORT"
 # Dismiss any lingering ANR (Application Not Responding) dialogs.
 # System UI crashes are common on emulators; the dialog blocks the screen
 # and corrupts recordings even if JS-based tests pass underneath.
-if adb shell uiautomator dump /sdcard/window_dump.xml 2>/dev/null &&
-   adb shell cat /sdcard/window_dump.xml 2>/dev/null | grep -q 'aerr_wait'; then
-  adb shell input tap 540 1367   # "Wait" button coordinates (standard ANR dialog)
+if adb_cmd shell uiautomator dump /sdcard/window_dump.xml 2>/dev/null &&
+   adb_cmd shell cat /sdcard/window_dump.xml 2>/dev/null | grep -q 'aerr_wait'; then
+  adb_cmd shell input tap 540 1367   # "Wait" button coordinates (standard ANR dialog)
   log "Dismissed ANR dialog"
   sleep 1
 fi
@@ -149,6 +173,7 @@ EXTRA_ARGS=()
 set +e
 BASE_URL="http://localhost:$MOBISSH_PORT" \
   APPIUM_PORT="$APPIUM_PORT" \
+  ADB_SERIAL="${ADB_SERIAL}" \
   APPIUM_RECORDING_DIR="$RECORDING_DIR" \
   npx playwright test \
     --config=playwright.appium.config.js \
@@ -157,7 +182,7 @@ EXIT=$?
 set -e
 
 # Safety stop in case a test crashed before stopping its recording.
-if ! adb emu screenrecord stop 2>/dev/null; then
+if ! adb_cmd emu screenrecord stop 2>/dev/null; then
   log "OK: recording is already stopped."
 fi
 sleep 1
