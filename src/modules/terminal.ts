@@ -3,7 +3,7 @@
  */
 
 import type { ThemeName, RootCSS } from './types.js';
-import { THEMES, ANSI, FONT_SIZE } from './constants.js';
+import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
 import { appState } from './state.js';
 
 interface NotifEntry {
@@ -20,6 +20,8 @@ export function getNotifications(): readonly NotifEntry[] {
 export function clearNotifications(): void {
   _notifications.length = 0;
   _updateBellBadge();
+  const drawer = document.getElementById('notifDrawer');
+  if (drawer) drawer.classList.add('hidden');
 }
 
 function _addNotification(message: string): void {
@@ -124,6 +126,22 @@ export function initTerminal(): void {
     return true;
   });
 
+  // Notification drawer toggle (#34)
+  const bellBtn = document.getElementById('bellIndicatorBtn');
+  if (bellBtn) {
+    bellBtn.addEventListener('click', () => {
+      _toggleNotifDrawer();
+    });
+  }
+
+  const clearAllBtn = document.getElementById('notifClearAllBtn');
+  if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', () => {
+      clearNotifications();
+      _toggleNotifDrawer(false);
+    });
+  }
+
   // Re-measure character cells after web fonts finish loading (#71)
   void document.fonts.ready.then(() => {
     if (!appState.terminal || !fontFamily) return;
@@ -137,6 +155,49 @@ export function initTerminal(): void {
   appState.terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
   appState.terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
   appState.terminal.writeln('');
+}
+
+function _toggleNotifDrawer(show?: boolean): void {
+  const drawer = document.getElementById('notifDrawer');
+  if (!drawer) return;
+  const isHidden = drawer.classList.contains('hidden');
+  const shouldShow = show ?? isHidden;
+  drawer.classList.toggle('hidden', !shouldShow);
+  if (shouldShow) _renderNotifDrawer();
+}
+
+function _renderNotifDrawer(): void {
+  const list = document.getElementById('notifDrawerList');
+  if (!list) return;
+  list.innerHTML = '';
+  const entries = getNotifications();
+  if (entries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'notif-drawer-empty';
+    empty.textContent = 'No notifications';
+    list.appendChild(empty);
+    return;
+  }
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    const div = document.createElement('div');
+    div.className = 'notif-entry';
+    const timeStr = new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    div.innerHTML = `<div class="notif-entry-body"><div class="notif-entry-time">${timeStr}</div>${escHtml(entry.message)}</div>`;
+    const dismissBtn = document.createElement('button');
+    dismissBtn.className = 'notif-dismiss-btn';
+    dismissBtn.textContent = '\u00d7';
+    dismissBtn.title = 'Dismiss';
+    const idx = i;
+    dismissBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _notifications.splice(idx, 1);
+      _updateBellBadge();
+      _renderNotifDrawer();
+    });
+    div.appendChild(dismissBtn);
+    list.appendChild(div);
+  }
 }
 
 export function handleResize(): void {
