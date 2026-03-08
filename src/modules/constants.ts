@@ -137,9 +137,109 @@ export const THEMES: Record<ThemeName, ThemeEntry> = {
       accentDim: '#cccc00',
     },
   },
+  dracula: {
+    label: 'Dracula',
+    theme: {
+      background: '#282a36',
+      foreground: '#f8f8f2',
+      cursor: '#f8f8f2',
+      selectionBackground: '#44475a',
+    },
+    app: {
+      bgDeep: '#1e1f29',
+      bgPanel: '#282a36',
+      bgCard: '#343746',
+      bgInput: '#44475a',
+      text: '#f8f8f2',
+      textDim: '#6272a4',
+      border: '#44475a',
+      accent: '#bd93f9',
+      accentDim: '#9b6fd9',
+    },
+  },
+  nord: {
+    label: 'Nord',
+    theme: {
+      background: '#2e3440',
+      foreground: '#d8dee9',
+      cursor: '#d8dee9',
+      selectionBackground: '#434c5e',
+    },
+    app: {
+      bgDeep: '#242933',
+      bgPanel: '#2e3440',
+      bgCard: '#3b4252',
+      bgInput: '#434c5e',
+      text: '#d8dee9',
+      textDim: '#7b88a1',
+      border: '#3b4252',
+      accent: '#88c0d0',
+      accentDim: '#6ba8b8',
+    },
+  },
+  gruvboxDark: {
+    label: 'Gruvbox Dark',
+    theme: {
+      background: '#282828',
+      foreground: '#ebdbb2',
+      cursor: '#ebdbb2',
+      selectionBackground: '#504945',
+    },
+    app: {
+      bgDeep: '#1d2021',
+      bgPanel: '#282828',
+      bgCard: '#3c3836',
+      bgInput: '#504945',
+      text: '#ebdbb2',
+      textDim: '#928374',
+      border: '#3c3836',
+      accent: '#fabd2f',
+      accentDim: '#d79921',
+    },
+  },
+  monokai: {
+    label: 'Monokai',
+    theme: {
+      background: '#272822',
+      foreground: '#f8f8f2',
+      cursor: '#f8f8f2',
+      selectionBackground: '#49483e',
+    },
+    app: {
+      bgDeep: '#1e1f1a',
+      bgPanel: '#272822',
+      bgCard: '#3e3d32',
+      bgInput: '#49483e',
+      text: '#f8f8f2',
+      textDim: '#75715e',
+      border: '#3e3d32',
+      accent: '#a6e22e',
+      accentDim: '#86c219',
+    },
+  },
+  tokyoNight: {
+    label: 'Tokyo Night',
+    theme: {
+      background: '#1a1b26',
+      foreground: '#a9b1d6',
+      cursor: '#c0caf5',
+      selectionBackground: '#33467c',
+    },
+    app: {
+      bgDeep: '#13141e',
+      bgPanel: '#1a1b26',
+      bgCard: '#24283b',
+      bgInput: '#33467c',
+      text: '#a9b1d6',
+      textDim: '#565f89',
+      border: '#24283b',
+      accent: '#7aa2f7',
+      accentDim: '#5d87d9',
+    },
+  },
 };
 
-export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast'];
+export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast', 'dracula', 'nord', 'gruvboxDark', 'monokai', 'tokyoNight'];
 
 // ANSI escape sequences for terminal colouring
 export const ANSI = {

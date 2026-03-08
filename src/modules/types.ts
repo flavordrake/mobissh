@@ -22,7 +22,7 @@ export interface SSHProfile {
   hasVaultCreds?: boolean;
 }
 
-export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast';
+export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight';
 
 export type VaultMethod = 'master-pw' | 'master-pw+bio' | null;
 
