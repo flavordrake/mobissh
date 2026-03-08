@@ -388,11 +388,13 @@ body.debug-ime #imePreview {
 .handle-compose-btn:active { opacity: 0.7; }
 
 /* Bell notification indicator in handle bar (#33) */
+.handle-bell-btn.hidden { display: none; }
 .handle-bell-btn {
   position: relative;
   padding: 4px 6px;
 }
 
+.bell-badge.hidden { display: none; }
 .bell-badge {
   position: absolute;
   top: -2px;

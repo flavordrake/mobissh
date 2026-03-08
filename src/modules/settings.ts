@@ -160,13 +160,40 @@ export function initSettingsPanel(): void {
   const testNotifBtn = document.getElementById('testNotifBtn');
   if (testNotifBtn) {
     testNotifBtn.addEventListener('click', () => {
-      void Notification.requestPermission().then((perm) => {
-        if (perm === 'granted') {
-          new Notification('MobiSSH', { body: 'Test notification' });
+      console.log('[settings] Test notification button clicked');
+      if (!('Notification' in window)) {
+        console.warn('[settings] Notification API not available');
+        _toast('Notifications not supported in this browser.');
+        return;
+      }
+      console.log('[settings] Current permission:', Notification.permission);
+      if (Notification.permission === 'granted') {
+        try {
+          const n = new Notification('MobiSSH', { body: 'Test notification' });
+          console.log('[settings] Notification created:', n);
           _toast('Notification sent.');
-        } else {
-          _toast('Notification permission denied.');
+        } catch (err) {
+          console.error('[settings] Notification constructor failed:', err);
+          _toast(`Notification failed: ${String(err)}`);
         }
+        return;
+      }
+      void Notification.requestPermission().then((perm) => {
+        console.log('[settings] Permission result:', perm);
+        if (perm === 'granted') {
+          try {
+            new Notification('MobiSSH', { body: 'Test notification' });
+            _toast('Notification sent.');
+          } catch (err) {
+            console.error('[settings] Notification failed after grant:', err);
+            _toast(`Notification failed: ${String(err)}`);
+          }
+        } else {
+          _toast(`Notification permission: ${perm}`);
+        }
+      }).catch((err: unknown) => {
+        console.error('[settings] requestPermission failed:', err);
+        _toast(`Permission request failed: ${String(err)}`);
       });
     });
   }
