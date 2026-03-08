@@ -297,6 +297,17 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
           const hooks = settings.hooks || {};
           hookActive = !!(hooks.PermissionRequest || hooks.Notification);
         } catch (_) {}
+      } else if (installed && a.id === 'codex') {
+        try {
+          const content = fs.readFileSync(a.configPath, 'utf8');
+          hookActive = /^notify\s*=/m.test(content);
+        } catch (_) {}
+      } else if (installed && a.id === 'gemini') {
+        try {
+          const settings = JSON.parse(fs.readFileSync(a.configPath, 'utf8'));
+          const hooks = settings.hooks || [];
+          hookActive = hooks.some(h => h.type === 'BeforeTool' && h.toolName === 'ask_user');
+        } catch (_) {}
       }
       return { name: a.name, id: a.id, installed, hookActive };
     });
@@ -311,30 +322,56 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
     req.on('end', () => {
       try {
         const { agent } = JSON.parse(body);
-        if (agent !== 'claude') {
+        const homeDir = process.env.HOME || os.homedir();
+        const hooksDir = path.join(homeDir, '.claude', 'hooks');
+        const scriptPath = path.join(hooksDir, 'notify-bell.sh');
+
+        // Ensure shared hook script exists
+        fs.mkdirSync(hooksDir, { recursive: true });
+        fs.writeFileSync(scriptPath, NOTIFY_BELL_SCRIPT, { mode: 0o755 });
+
+        if (agent === 'claude') {
+          const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+          let settings = {};
+          try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (_) {}
+          if (!settings.hooks) settings.hooks = {};
+
+          const hookEntry = [{ matcher: '', command: scriptPath }];
+          settings.hooks.PermissionRequest = hookEntry;
+          settings.hooks.Notification = hookEntry;
+
+          fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        } else if (agent === 'codex') {
+          const configPath = path.join(homeDir, '.codex', 'config.toml');
+          fs.mkdirSync(path.join(homeDir, '.codex'), { recursive: true });
+          let content = '';
+          try { content = fs.readFileSync(configPath, 'utf8'); } catch (_) {}
+          if (!/^notify\s*=/m.test(content)) {
+            const line = `notify = ["bash", "-c", "${scriptPath}"]\n`;
+            content = content.length > 0 && !content.endsWith('\n') ? content + '\n' + line : content + line;
+            fs.writeFileSync(configPath, content);
+          }
+        } else if (agent === 'gemini') {
+          const configPath = path.join(homeDir, '.gemini', 'settings.json');
+          fs.mkdirSync(path.join(homeDir, '.gemini'), { recursive: true });
+          let settings = {};
+          try { settings = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (_) {}
+          if (!Array.isArray(settings.hooks)) settings.hooks = [];
+          const exists = settings.hooks.some(h => h.type === 'BeforeTool' && h.toolName === 'ask_user');
+          if (!exists) {
+            settings.hooks.push({
+              type: 'BeforeTool',
+              toolName: 'ask_user',
+              command: ['bash', '-c', scriptPath],
+            });
+          }
+          fs.writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
+        } else {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Unsupported agent' }));
           return;
         }
-        const homeDir = process.env.HOME || os.homedir();
-        const hooksDir = path.join(homeDir, '.claude', 'hooks');
-        const scriptPath = path.join(hooksDir, 'notify-bell.sh');
-        const settingsPath = path.join(homeDir, '.claude', 'settings.json');
 
-        // Create hooks dir and write script
-        fs.mkdirSync(hooksDir, { recursive: true });
-        fs.writeFileSync(scriptPath, NOTIFY_BELL_SCRIPT, { mode: 0o755 });
-
-        // Read or create settings.json
-        let settings = {};
-        try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (_) {}
-        if (!settings.hooks) settings.hooks = {};
-
-        const hookEntry = [{ matcher: '', command: scriptPath }];
-        settings.hooks.PermissionRequest = hookEntry;
-        settings.hooks.Notification = hookEntry;
-
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {
@@ -351,23 +388,41 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
     req.on('end', () => {
       try {
         const { agent } = JSON.parse(body);
-        if (agent !== 'claude') {
+        const homeDir = process.env.HOME || os.homedir();
+
+        if (agent === 'claude') {
+          const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+          let settings = {};
+          try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (_) {}
+          if (settings.hooks) {
+            delete settings.hooks.PermissionRequest;
+            delete settings.hooks.Notification;
+            if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+          }
+          fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        } else if (agent === 'codex') {
+          const configPath = path.join(homeDir, '.codex', 'config.toml');
+          try {
+            let content = fs.readFileSync(configPath, 'utf8');
+            content = content.replace(/^notify\s*=\s*\[.*\]\s*\n?/m, '');
+            fs.writeFileSync(configPath, content);
+          } catch (_) {}
+        } else if (agent === 'gemini') {
+          const configPath = path.join(homeDir, '.gemini', 'settings.json');
+          try {
+            const settings = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            if (Array.isArray(settings.hooks)) {
+              settings.hooks = settings.hooks.filter(h => !(h.type === 'BeforeTool' && h.toolName === 'ask_user'));
+              if (settings.hooks.length === 0) delete settings.hooks;
+            }
+            fs.writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
+          } catch (_) {}
+        } else {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Unsupported agent' }));
           return;
         }
-        const homeDir = process.env.HOME || os.homedir();
-        const settingsPath = path.join(homeDir, '.claude', 'settings.json');
 
-        let settings = {};
-        try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (_) {}
-        if (settings.hooks) {
-          delete settings.hooks.PermissionRequest;
-          delete settings.hooks.Notification;
-          if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
-        }
-
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {

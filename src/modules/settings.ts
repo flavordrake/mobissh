@@ -309,6 +309,30 @@ async function initAgentHooks(): Promise<void> {
             _toast('Hook update failed: network error');
           });
         });
+      } else if (agent.id === 'codex' || agent.id === 'gemini') {
+        toggle.disabled = false;
+        toggle.checked = agent.hookActive;
+        const agentLabel = agent.name;
+        toggle.addEventListener('change', () => {
+          const endpoint = toggle.checked ? '/api/install-hook' : '/api/uninstall-hook';
+          void fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agent: agent.id }),
+          }).then(async (r) => {
+            if (r.ok) {
+              status.textContent = toggle.checked ? 'Hook active' : 'Installed';
+              _toast(toggle.checked ? `${agentLabel} hook installed.` : `${agentLabel} hook removed.`);
+            } else {
+              toggle.checked = !toggle.checked;
+              const err = await r.json() as { error?: string };
+              _toast(`Hook update failed: ${err.error ?? 'unknown error'}`);
+            }
+          }).catch(() => {
+            toggle.checked = !toggle.checked;
+            _toast('Hook update failed: network error');
+          });
+        });
       } else {
         // Other agents: show installed but hook not yet supported
         toggle.disabled = true;
