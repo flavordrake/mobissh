@@ -6,6 +6,37 @@ import type { ThemeName, RootCSS } from './types.js';
 import { THEMES, ANSI, FONT_SIZE } from './constants.js';
 import { appState } from './state.js';
 
+interface NotifEntry {
+  time: number;
+  message: string;
+}
+
+const _notifications: NotifEntry[] = [];
+
+export function getNotifications(): readonly NotifEntry[] {
+  return _notifications;
+}
+
+export function clearNotifications(): void {
+  _notifications.length = 0;
+  _updateBellBadge();
+}
+
+function _addNotification(message: string): void {
+  _notifications.push({ time: Date.now(), message });
+  _updateBellBadge();
+}
+
+function _updateBellBadge(): void {
+  const btn = document.getElementById('bellIndicatorBtn');
+  const badge = btn?.querySelector('.bell-badge');
+  if (!btn || !badge) return;
+  const count = _notifications.length;
+  btn.classList.toggle('hidden', count === 0);
+  badge.classList.toggle('hidden', count === 0);
+  badge.textContent = String(count);
+}
+
 // ── CSS layout constants (read from :root once; JS never hardcodes px values) ─
 
 export const ROOT_CSS: RootCSS = (() => {
@@ -68,25 +99,27 @@ export function initTerminal(): void {
   applyTheme(appState.activeThemeName);
 
   appState.terminal.onBell(() => {
-    if (!shouldNotify()) return;
     const buffer = appState.terminal!.buffer.active;
     let body = 'Terminal bell';
     for (let i = buffer.cursorY; i >= 0; i--) {
       const line = buffer.getLine(i)?.translateToString(true).trim();
       if (line) { body = line; break; }
     }
-    fireNotification('MobiSSH', body);
+    _addNotification(body);
+    if (shouldNotify()) fireNotification('MobiSSH', body);
   });
 
   appState.terminal.parser.registerOscHandler(9, (data: string) => {
+    _addNotification(data);
     if (shouldNotify()) fireNotification('MobiSSH', data);
     return true;
   });
 
   appState.terminal.parser.registerOscHandler(777, (data: string) => {
     const parts = data.split(';');
-    if (parts[0] === 'notify' && shouldNotify()) {
-      fireNotification(parts[1] ?? 'MobiSSH', parts[2] ?? '');
+    if (parts[0] === 'notify') {
+      _addNotification(parts[2] ?? '');
+      if (shouldNotify()) fireNotification(parts[1] ?? 'MobiSSH', parts[2] ?? '');
     }
     return true;
   });
