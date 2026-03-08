@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/integrate-discover.sh:*)",
+      "Bash(sudo npx:*)",
+      "Bash(do:*)",
+      "Bash(git:*)",
+      "Bash(do gh:*)",
+      "Bash(do echo:*)",
+      "Bash(bash:*)",
+      "Bash(/usr/bin/env bash:*)",
+      "Bash(gh pr:*)",
+      "Bash(/home/dev/workspace/mobissh/scripts/container-ctl.sh restart:*)",
+      "Bash(tmux:*)",
+      "Bash(printf \\\\033]9;local-test\\\\007:*)",
+      "Bash(~/.claude/hooks/notify-bell.sh:*)",
+      "Bash(who:*)",
+      "Bash(scripts/gh-ops.sh comment:*)",
+      "Bash(/tmp/sub-issue-47c.md:*)"
+    ]
+  }
+}

@@ -203,6 +203,9 @@ export function initSettingsPanel(): void {
     });
   }
 
+  // Agent hooks — detect installed agents and wire toggle handlers
+  void initAgentHooks();
+
   const dockEl = document.getElementById('keyControlsDockLeft') as HTMLInputElement | null;
   if (dockEl) {
     dockEl.checked = localStorage.getItem('keyControlsDock') === 'left';
@@ -252,6 +255,68 @@ export function initSettingsPanel(): void {
   if (versionEl && versionMeta?.content) {
     const [version, hash] = versionMeta.content.split(':');
     versionEl.textContent = `MobiSSH v${version ?? '?'} \u00b7 ${hash ?? '?'}`;
+  }
+}
+
+interface AgentInfo {
+  name: string;
+  id: string;
+  installed: boolean;
+  hookActive: boolean;
+}
+
+async function initAgentHooks(): Promise<void> {
+  try {
+    const resp = await fetch('/api/detect-agents');
+    if (!resp.ok) return;
+    const data = await resp.json() as { agents: AgentInfo[] };
+    for (const agent of data.agents) {
+      const row = document.querySelector<HTMLElement>(`.agent-hook-row[data-agent="${agent.id}"]`);
+      const status = document.querySelector(`[data-agent-status="${agent.id}"]`);
+      const toggle = document.getElementById(`agentHook${agent.id.charAt(0).toUpperCase() + agent.id.slice(1)}`) as HTMLInputElement | null;
+      if (!row || !status || !toggle) continue;
+
+      if (!agent.installed) {
+        row.setAttribute('data-agent-state', 'not-installed');
+        status.textContent = 'Not installed';
+        toggle.disabled = true;
+        continue;
+      }
+
+      row.setAttribute('data-agent-state', 'installed');
+      status.textContent = agent.hookActive ? 'Hook active' : 'Installed';
+
+      if (agent.id === 'claude') {
+        toggle.disabled = false;
+        toggle.checked = agent.hookActive;
+        toggle.addEventListener('change', () => {
+          const endpoint = toggle.checked ? '/api/install-hook' : '/api/uninstall-hook';
+          void fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agent: 'claude' }),
+          }).then(async (r) => {
+            if (r.ok) {
+              status.textContent = toggle.checked ? 'Hook active' : 'Installed';
+              _toast(toggle.checked ? 'Claude Code hook installed.' : 'Claude Code hook removed.');
+            } else {
+              toggle.checked = !toggle.checked;
+              const err = await r.json() as { error?: string };
+              _toast(`Hook update failed: ${err.error ?? 'unknown error'}`);
+            }
+          }).catch(() => {
+            toggle.checked = !toggle.checked;
+            _toast('Hook update failed: network error');
+          });
+        });
+      } else {
+        // Other agents: show installed but hook not yet supported
+        toggle.disabled = true;
+        status.textContent = 'Installed (hooks coming soon)';
+      }
+    }
+  } catch {
+    // API not available — leave rows in "Checking…" state
   }
 }
 
