@@ -44,7 +44,7 @@ function fireNotification(title: string, body: string): void {
 }
 
 export function initTerminal(): void {
-  const fontSize = parseInt(localStorage.getItem('fontSize') ?? '14') || 14;
+  const fontSize = parseFloat(localStorage.getItem('fontSize') ?? '14') || 14;
   const savedTheme = localStorage.getItem('termTheme') ?? 'dark';
   appState.activeThemeName = ((savedTheme as ThemeName) in THEMES ? savedTheme : 'dark') as ThemeName;
 
@@ -172,8 +172,9 @@ export function applyFontSize(size: number): void {
   const labelEl = document.getElementById('fontSizeValue');
   const menuLabel = document.getElementById('fontSizeLabel');
   if (rangeEl) rangeEl.value = String(size);
-  if (labelEl) labelEl.textContent = `${String(size)}px`;
-  if (menuLabel) menuLabel.textContent = `${String(size)}px`;
+  const sizeStr = Number.isInteger(size) ? String(size) : size.toFixed(1);
+  if (labelEl) labelEl.textContent = `${sizeStr}px`;
+  if (menuLabel) menuLabel.textContent = `${sizeStr}px`;
   if (appState.terminal) {
     appState.terminal.options.fontSize = size;
     appState.fitAddon?.fit();

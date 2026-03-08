@@ -168,7 +168,7 @@ export function initSettingsPanel(): void {
   }
 
   document.getElementById('fontSize')!.addEventListener('input', (e) => {
-    _applyFontSize(parseInt((e.target as HTMLInputElement).value));
+    _applyFontSize(parseFloat((e.target as HTMLInputElement).value));
   });
 
   const themeSelect = document.getElementById('termThemeSelect') as HTMLSelectElement;
