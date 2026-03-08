@@ -8,7 +8,7 @@ import { initDebugOverlay } from './modules/debug.js';
 import { initRecording } from './modules/recording.js';
 import { initVault } from './modules/vault.js';
 import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
-import { initProfiles, getProfiles, loadProfiles, loadProfileIntoForm, deleteProfile, loadKeys, importKey, useKey, deleteKey, } from './modules/profiles.js';
+import { initProfiles, getProfiles, loadProfiles, loadProfileIntoForm, deleteProfile, loadKeys, importKey, useKey, deleteKey, renameKey, populateKeyDropdown, } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
 import { initIME, initIMEInput } from './modules/ime.js';
@@ -38,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
         initSettingsPanel();
         loadProfiles();
         loadKeys();
+        populateKeyDropdown();
         registerServiceWorker();
         initVaultUI({ toast });
         await initVault();
@@ -79,9 +80,15 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
                 return;
             const idx = parseInt(btn.dataset.idx ?? '0');
             if (btn.dataset.action === 'use')
-                void useKey(idx);
+                useKey(idx);
             else if (btn.dataset.action === 'delete')
                 deleteKey(idx);
+            else if (btn.dataset.action === 'rename') {
+                const currentName = btn.closest('.key-item')?.querySelector('.key-name')?.textContent ?? '';
+                const newName = prompt('Rename key to:', currentName);
+                if (newName !== null)
+                    renameKey(idx, newName);
+            }
         });
         // Import key button
         document.getElementById('importKeyBtn').addEventListener('click', () => {

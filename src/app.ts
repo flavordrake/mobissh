@@ -12,7 +12,7 @@ import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
 import {
   initProfiles, getProfiles, loadProfiles,
   loadProfileIntoForm, deleteProfile,
-  loadKeys, importKey, useKey, deleteKey,
+  loadKeys, importKey, useKey, deleteKey, renameKey, populateKeyDropdown,
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
@@ -61,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initSettingsPanel();
     loadProfiles();
     loadKeys();
+    populateKeyDropdown();
     registerServiceWorker();
     initVaultUI({ toast });
     await initVault();
@@ -99,8 +100,13 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
       const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
       if (!btn) return;
       const idx = parseInt(btn.dataset.idx ?? '0');
-      if (btn.dataset.action === 'use') void useKey(idx);
+      if (btn.dataset.action === 'use') useKey(idx);
       else if (btn.dataset.action === 'delete') deleteKey(idx);
+      else if (btn.dataset.action === 'rename') {
+        const currentName = btn.closest('.key-item')?.querySelector('.key-name')?.textContent ?? '';
+        const newName = prompt('Rename key to:', currentName);
+        if (newName !== null) renameKey(idx, newName);
+      }
     });
 
     // Import key button

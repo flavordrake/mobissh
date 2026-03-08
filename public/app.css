@@ -980,6 +980,23 @@ hr {
   color: var(--text-dim);
 }
 
+.key-dropdown {
+  width: 100%;
+  padding: 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+#manualKeyGroup {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .item-actions {
   display: flex;
   gap: 8px;

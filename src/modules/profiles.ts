@@ -34,6 +34,7 @@ interface StoredProfile {
   initialCommand: string;
   vaultId: string;
   hasVaultCreds?: boolean;
+  keyVaultId?: string;
 }
 
 export function getProfiles(): StoredProfile[] {
@@ -57,6 +58,10 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
     ? (profiles[existingIdx]?.vaultId ?? _generateId())
     : _generateId();
 
+  // Check if the form selected a stored key by its vaultId
+  const selectedKeyId = (document.getElementById('selectedKeyId') as HTMLSelectElement | null)?.value || '';
+  const usingStoredKey = profile.authType === 'key' && selectedKeyId !== '' && selectedKeyId !== 'manual';
+
   const saved: StoredProfile = {
     name: profile.name,
     host: profile.host,
@@ -67,10 +72,15 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
     vaultId,
   };
 
+  if (usingStoredKey) {
+    saved.keyVaultId = selectedKeyId;
+  }
+
   const creds: Record<string, string> = {};
   if (profile.password) creds.password = profile.password;
-  if (profile.privateKey) creds.privateKey = profile.privateKey;
-  if (profile.passphrase) creds.passphrase = profile.passphrase;
+  // Only store inline key if not using a stored key reference
+  if (profile.privateKey && !usingStoredKey) creds.privateKey = profile.privateKey;
+  if (profile.passphrase && !usingStoredKey) creds.passphrase = profile.passphrase;
 
   const hasVault = await ensureVaultKeyWithUI();
   if (hasVault && Object.keys(creds).length) {
@@ -132,6 +142,9 @@ export function newConnection(): void {
   const form = document.getElementById('connectForm') as HTMLFormElement | null;
   if (form) form.reset();
   (document.getElementById('port') as HTMLInputElement).value = '22';
+  const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
+  if (keySelect) keySelect.value = '';
+  document.getElementById('manualKeyGroup')?.classList.add('hidden');
   revealConnectForm();
   (document.getElementById('host') as HTMLInputElement).focus();
 }
@@ -150,9 +163,24 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
   authTypeEl.dispatchEvent(new Event('change'));
 
   (document.getElementById('remote_c') as HTMLInputElement).value = '';
-  (document.getElementById('privateKey') as HTMLTextAreaElement).value = '';
-  (document.getElementById('remote_pp') as HTMLInputElement).value = '';
+  const privateKeyEl = document.getElementById('privateKey') as HTMLTextAreaElement | null;
+  const remotePpEl = document.getElementById('remote_pp') as HTMLInputElement | null;
+  if (privateKeyEl) privateKeyEl.value = '';
+  if (remotePpEl) remotePpEl.value = '';
   (document.getElementById('initialCommand') as HTMLInputElement).value = profile.initialCommand || '';
+
+  // Select the stored key in the dropdown if profile references one
+  const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
+  const manualKeyGroup = document.getElementById('manualKeyGroup');
+  if (keySelect) {
+    if (profile.keyVaultId) {
+      keySelect.value = profile.keyVaultId;
+      manualKeyGroup?.classList.add('hidden');
+    } else {
+      keySelect.value = '';
+      manualKeyGroup?.classList.add('hidden');
+    }
+  }
 
   if (profile.vaultId && profile.hasVaultCreds) {
     if (!appState.vaultKey) {
@@ -166,8 +194,6 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
     const creds = await vaultLoad(profile.vaultId);
     if (creds) {
       if (creds.password) (document.getElementById('remote_c') as HTMLInputElement).value = creds.password as string;
-      if (creds.privateKey) (document.getElementById('privateKey') as HTMLTextAreaElement).value = creds.privateKey as string;
-      if (creds.passphrase) (document.getElementById('remote_pp') as HTMLInputElement).value = creds.passphrase as string;
       _toast('Credentials unlocked');
     } else {
       _toast('Vault locked — enter credentials manually');
@@ -212,7 +238,29 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
       _navigateToConnect();
       return false;
     }
-  } else if (!profile.hasVaultCreds) {
+  }
+
+  // Load key from stored key reference if profile uses one
+  if (profile.keyVaultId && !sshProfile.privateKey) {
+    if (!appState.vaultKey) {
+      const unlocked = await ensureVaultKeyWithUI();
+      if (!unlocked) {
+        _toast('Vault locked — enter key manually');
+        _navigateToConnect();
+        return false;
+      }
+    }
+    const keyCreds = await vaultLoad(profile.keyVaultId);
+    if (keyCreds?.data) {
+      sshProfile.privateKey = keyCreds.data as string;
+    } else {
+      _toast('Could not load stored key from vault.');
+      _navigateToConnect();
+      return false;
+    }
+  }
+
+  if (!profile.hasVaultCreds && !profile.keyVaultId) {
     _toast('Enter credentials — not saved on this browser.');
     void loadProfileIntoForm(idx);
     return false;
@@ -229,6 +277,21 @@ export function deleteProfile(idx: number): void {
   profiles.splice(idx, 1);
   localStorage.setItem('sshProfiles', JSON.stringify(profiles));
   loadProfiles();
+}
+
+/** Populate the key dropdown in the connect form with current stored keys. */
+export function populateKeyDropdown(): void {
+  const select = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
+  if (!select) return;
+  const currentValue = select.value;
+  const keys = getKeys();
+  select.innerHTML = '<option value="">Select a stored key...</option>'
+    + keys.map(k => `<option value="${escHtml(k.vaultId)}">${escHtml(k.name)}</option>`).join('')
+    + '<option value="manual">Paste key manually...</option>';
+  // Restore previous selection if still valid
+  if (currentValue && Array.from(select.options).some(o => o.value === currentValue)) {
+    select.value = currentValue;
+  }
 }
 
 // Key storage
@@ -258,6 +321,7 @@ export function loadKeys(): void {
       <span class="key-name">${escHtml(k.name)}</span>
       <span class="key-created">Added ${new Date(k.created).toLocaleDateString()}</span>
       <div class="item-actions">
+        <button class="item-btn" data-action="rename" data-idx="${String(i)}">Rename</button>
         <button class="item-btn" data-action="use" data-idx="${String(i)}">Use in form</button>
         <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
       </div>
@@ -279,23 +343,33 @@ export async function importKey(name: string, data: string): Promise<boolean> {
   keys.push({ name, vaultId, created: new Date().toISOString() });
   localStorage.setItem('sshKeys', JSON.stringify(keys));
   loadKeys();
+  populateKeyDropdown();
   _toast(`Key "${name}" saved.`);
   return true;
 }
 
-export async function useKey(idx: number): Promise<void> {
+export function useKey(idx: number): void {
   const key = getKeys()[idx];
   if (!key) return;
-  if (!appState.vaultKey) {
-    const unlocked = await ensureVaultKeyWithUI();
-    if (!unlocked) { _toast('Vault locked — enter key manually.'); return; }
-  }
-  const creds = key.vaultId ? await vaultLoad(key.vaultId) : null;
-  if (!creds) { _toast('Could not load key from vault.'); return; }
   (document.getElementById('authType') as HTMLSelectElement).value = 'key';
   (document.getElementById('authType') as HTMLSelectElement).dispatchEvent(new Event('change'));
-  (document.getElementById('privateKey') as HTMLTextAreaElement).value = creds.data as string;
-  _toast(`Key "${key.name}" loaded into form.`);
+  const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
+  if (keySelect) {
+    keySelect.value = key.vaultId;
+  }
+  _toast(`Key "${key.name}" selected in form.`);
+}
+
+export function renameKey(idx: number, newName: string): void {
+  if (!newName.trim()) { _toast('Key name cannot be empty.'); return; }
+  const keys = getKeys();
+  const key = keys[idx];
+  if (!key) return;
+  key.name = newName.trim();
+  localStorage.setItem('sshKeys', JSON.stringify(keys));
+  loadKeys();
+  populateKeyDropdown();
+  _toast(`Key renamed to "${key.name}".`);
 }
 
 export function deleteKey(idx: number): void {
@@ -305,4 +379,5 @@ export function deleteKey(idx: number): void {
   keys.splice(idx, 1);
   localStorage.setItem('sshKeys', JSON.stringify(keys));
   loadKeys();
+  populateKeyDropdown();
 }
