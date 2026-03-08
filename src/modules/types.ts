@@ -67,9 +67,29 @@ export interface ThemeEntry {
   app: AppColors;
 }
 
+// ── Session state (per-connection) ──────────────────────────────────────────
+
+export interface SessionState {
+  id: string;
+  profile: SSHProfile | null;
+  terminal: Terminal | null;
+  fitAddon: FitAddon.FitAddon | null;
+  ws: WebSocket | null;
+  wsConnected: boolean;
+  sshConnected: boolean;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  reconnectDelay: number;
+  keepAliveTimer: ReturnType<typeof setInterval> | null;
+  keepAliveWorker: Worker | null;
+  activeThemeName: ThemeName;
+}
+
 // ── Application state ───────────────────────────────────────────────────────
 
 export interface AppState {
+  // Multi-session infrastructure
+  sessions: Map<string, SessionState>;
+  activeSessionId: string | null;
   // Core terminal and connection
   terminal: Terminal | null;
   fitAddon: FitAddon.FitAddon | null;
