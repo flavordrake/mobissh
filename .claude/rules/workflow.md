@@ -7,7 +7,7 @@
 
 ## Issue workflow
 - `bug: <description>` in user messages = file a GitHub issue, do NOT fix immediately.
-- Bot tasks: add a comment with `@claude` in the body so the Claude Code GitHub integration picks up the work.
+- Bot tasks: use `/develop N` to spawn local develop agents, or `/delegate` to classify and dispatch in bulk.
 - Process documentation in `.claude/process.md` defines label taxonomy, workflow states, delegation lifecycle.
 - `bot` <> `divergence` lifecycle: delegate applies bot, integrate swaps to divergence on failure, delegate swaps back on re-delegation.
 - `blocked` label always requires an explanatory comment. `conflict` is transient (resolve within one cycle).

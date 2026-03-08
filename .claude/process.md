@@ -65,7 +65,7 @@ Never apply `blocked` without a comment explaining:
 2. Which issue, PR, or external factor is the blocker
 3. What condition resolves the block
 
-Use `gh issue edit N --add-label blocked` paired with a comment. When the blocker
+Use `scripts/gh-ops.sh labels N --add blocked` paired with a comment. When the blocker
 resolves, remove the label and comment that it's unblocked.
 
 ### `conflict` is transient
@@ -167,9 +167,9 @@ has a PR record.
 
 ### Issue closing
 
-- `/integrate` closes issues when their bot PR merges: `gh issue close N --comment "Fixed in PR #M"`
-- `/release` closes issues referenced in release commits: `gh issue close N --comment "Fixed in v{VERSION}"`
-- `/delegate` may close superseded issues: `gh issue close N --comment "Superseded by #M"`
+- `/integrate` closes issues when their bot PR merges: `scripts/gh-ops.sh integrate PR N`
+- `/release` closes issues referenced in release commits: `scripts/gh-ops.sh close N` + comment
+- `/delegate` may close superseded issues: `scripts/gh-ops.sh close N` + `scripts/gh-ops.sh comment N --body "Superseded by #M"`
 - Manual close always requires an explanation comment
 
 ### Version labels

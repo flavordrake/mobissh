@@ -38,21 +38,10 @@ chore: non-functional change (#N)
 - One commit per implementation cycle is fine (squash on merge)
 
 ## PR Creation
+Write body to temp file, then create via gh-ops.sh:
 ```bash
-gh pr create --base main --head bot/issue-{N} \
-  --title "Issue title" \
-  --body "$(cat <<'EOF'
-## Summary
-- What changed and why
-
-## Test results
-- tsc: PASS
-- eslint: PASS
-- vitest: PASS
-
-Closes #N
-EOF
-)"
+# Write PR body to /tmp/pr-body-{N}.md, then:
+scripts/gh-ops.sh pr-create --head bot/issue-{N} --title "Issue title" --body-file /tmp/pr-body-{N}.md --label bot
 ```
 - `Closes #N` auto-closes the issue on merge
 - Always include test results in PR body

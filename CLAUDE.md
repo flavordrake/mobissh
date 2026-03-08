@@ -8,7 +8,7 @@ installed on Android/iOS home screens and used over Tailscale (WireGuard mesh).
 Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-v0.1`.
 
 ## Architecture
-- **`server/index.js`** -- single Node.js process: HTTP static file server + WebSocket SSH bridge on port 8080
+- **`server/index.js`** -- single Node.js process: HTTP static file server + WebSocket SSH bridge on port 8081
 - **`public/`** -- PWA frontend (ES modules, TypeScript eligible)
   - `app.js` -- main application entry point (imports from `modules/`)
   - `modules/constants.js` -- pure constants and configuration
@@ -22,7 +22,7 @@ Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-
 - `Cache-Control: no-store` on all static responses; SW is network-first (no stale cache)
 - WS URL: same-origin detection via `getDefaultWsUrl()` -- works in Codespaces (wss://) and local (ws://)
 - Credential vault: AES-GCM, 256-bit key stored in `PasswordCredential` (Chrome/Android biometric)
-  - iOS: `PasswordCredential` not supported -- needs WebAuthn path (issue #14)
+  - iOS: `PasswordCredential` not supported -- needs WebAuthn path (#2)
 - Profile upsert: match on host+port+username, update in place (no duplicates)
 - IME input: hidden `#imeInput` textarea captures swipe/voice/keyboard; `ctrlActive` sticky modifier
 
@@ -35,14 +35,14 @@ Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-
 
 ## Backlog -- GitHub Issues
 All backlog items are filed as issues in this repo. Use `gh issue list` for current state.
-Key active delegations (bot label): #21, #70, #158, #171, #172, #173, #176.
-Decomposed parents: #129 (-> #176, #177), #138 (-> #173, #174, #175).
+Use `/delegate` to scan, classify, and dispatch bot-ready issues.
+Use `/integrate` to review, gate, and merge bot PRs.
 
 ## iOS Compatibility Summary (researched Feb 2026)
 - WSS, SubtleCrypto/AES-GCM, xterm.js canvas, visualViewport: all work iOS 13+
-- `PasswordCredential`: NOT supported on iOS Safari -> WebAuthn needed (issue #14)
+- `PasswordCredential`: NOT supported on iOS Safari -> WebAuthn needed (#2)
 - Practical minimum for full feature parity: iOS 16
-- Hidden textarea needs `autocorrect="off"` etc. or iOS corrupts SSH commands (issue #10)
+- Hidden textarea needs `autocorrect="off"` etc. or iOS corrupts SSH commands
 - `visualViewport.height` is the correct API (not `window.innerHeight`) for keyboard detection
 
 ## Rules

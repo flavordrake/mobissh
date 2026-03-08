@@ -30,7 +30,7 @@ The script takes ~30 seconds. It runs tsc, eslint, and vitest internally.
 
 After the script finishes, report:
 - Branch name
-- Issue number (from branch name pattern `claude/issue-{N}-{DATE}-{TIME}`)
+- Issue number (from branch name pattern `bot/issue-{N}` or legacy `claude/issue-{N}-{DATE}-{TIME}`)
 - Exit code (0 = pass, 1 = fail, 2 = setup error)
 - The summary line from the output (starts with `+ FAST GATE PASSED` or `! FAST GATE FAILED`)
 - If failed: the `tsc: X | eslint: X | vitest: X` line

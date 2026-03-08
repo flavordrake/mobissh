@@ -353,7 +353,7 @@ For each approved sub-issue from the decomposition:
 
 1. Write body to `/tmp/sub-issue-{parent}_{letter}.md` with full `@claude` delegation
    instructions embedded
-2. File: `gh issue create --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-{parent}_{letter}.md`
+2. File: `scripts/gh-file-issue.sh --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-{parent}_{letter}.md`
 3. For blocked sub-issues: `scripts/gh-ops.sh labels N --add blocked` and
    `scripts/gh-ops.sh comment N --body "Blocked by #A -- needs A's changes on main first"`
 
@@ -444,7 +444,7 @@ Common operations:
 - Decompose (create sub-issues + update parent):
   1. For each sub-issue:
      ```bash
-     gh issue create --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-N.md
+     scripts/gh-file-issue.sh --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-N.md
      ```
   2. Apply `composite` to parent, comment linking sub-issues:
      ```bash
@@ -472,7 +472,7 @@ Common operations:
 
 Post a delegation comment on each issue before spawning the agent:
 ```bash
-gh issue comment N --body "Delegated to local develop agent. Branch: bot/issue-N"
+scripts/gh-ops.sh comment N --body "Delegated to local develop agent. Branch: bot/issue-N"
 ```
 This preserves the audit trail that `@claude` comments previously provided.
 

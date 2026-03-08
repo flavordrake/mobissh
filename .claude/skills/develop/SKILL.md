@@ -69,7 +69,7 @@ Issue #{N}: {title}
 - Major UX changes also require emulator/Appium test updates
 
 ## Verify
-npx tsc --noEmit && npx eslint src/ public/ server/ tests/ && npx vitest run
+scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
 ```
 
 ## Spawning agents
@@ -148,7 +148,7 @@ After all agents complete:
 - PASS: apply `bot` label (if not already present)
 - FAIL: apply `divergence` label, remove `bot` if present
   ```bash
-  gh issue edit {N} --add-label divergence --remove-label bot
+  scripts/gh-ops.sh labels {N} --add divergence --rm bot
   ```
 
 ## Edge cases

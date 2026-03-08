@@ -92,7 +92,7 @@ For each approved sub-issue:
 
 1. Write body to `/tmp/sub-issue-{parent}_{letter}.md` (include full `@claude` delegation
    instructions with file scope, acceptance criteria, context snippets, and test requirements)
-2. File via: `gh issue create --title "feat: {parent title} — {sub-concern}" --label bot --label {type} --body-file /tmp/sub-issue-{parent}_{letter}.md`
+2. File via: `scripts/gh-file-issue.sh --title "feat: {parent title} — {sub-concern}" --label bot --label {type} --body-file /tmp/sub-issue-{parent}_{letter}.md`
 3. For blocked sub-issues: add `blocked` label and comment via `scripts/gh-ops.sh`
 4. Update parent: `scripts/gh-ops.sh labels PARENT --add composite` and
    `scripts/gh-ops.sh comment PARENT --body "Decomposed into..."`
