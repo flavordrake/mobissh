@@ -111,7 +111,9 @@ if ! git fetch origin "$BRANCH" 2>/dev/null; then
     exit 2
   fi
 else
-  if ! git checkout "origin/${BRANCH}" --detach 2>/dev/null; then
+  # Use FETCH_HEAD — in worktrees, `git fetch origin <branch>` writes to
+  # FETCH_HEAD but doesn't create origin/<branch> tracking ref.
+  if ! git checkout FETCH_HEAD --detach 2>/dev/null; then
     err "Failed to checkout origin/${BRANCH}"
     exit 2
   fi
