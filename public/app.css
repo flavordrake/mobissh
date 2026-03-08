@@ -39,6 +39,9 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Generic hidden class — one rule to hide any element via .hidden toggle */
+.hidden { display: none !important; }
+
 /* Hidden IME inputs — invisible but reachable by Android IME.
    #imeInput    = textarea, normal keyboard (IME/swipe mode)
    #directInput = password input, suppresses Gboard predictions (direct mode) */
@@ -201,7 +204,6 @@ body.debug-ime #imePreview {
   min-height: 24px;
 }
 
-#imePreview.hidden { display: none; }
 
 /* Key bar handle — ≡ | session identity | ▾ */
 #key-bar-handle {
@@ -262,7 +264,6 @@ body.debug-ime #imePreview {
   animation: sessionMenuSlideUp 0.15s ease-out;
 }
 
-#sessionMenu.hidden { display: none; }
 
 /* Transparent backdrop — covers viewport when session menu is open so outside
    clicks (including on the xterm.js canvas) dismiss the menu. */
@@ -271,7 +272,6 @@ body.debug-ime #imePreview {
   inset: 0;
   z-index: 199;
 }
-#menuBackdrop.hidden { display: none; }
 
 .session-menu-item {
   width: 100%;
@@ -308,9 +308,7 @@ body.debug-ime #imePreview {
   touch-action: manipulation;
 }
 .rec-btn:active, .ctrl-btn:active { opacity: 0.7; }
-.rec-btn.hidden { display: none; }
 .rec-btn.rec-stop { color: var(--danger); border-color: var(--danger); }
-.rec-indicator.hidden { display: none; }
 .rec-indicator {
   display: flex;
   align-items: center;
@@ -388,13 +386,11 @@ body.debug-ime #imePreview {
 .handle-compose-btn:active { opacity: 0.7; }
 
 /* Bell notification indicator in handle bar (#33) */
-.handle-bell-btn.hidden { display: none; }
 .handle-bell-btn {
   position: relative;
   padding: 4px 6px;
 }
 
-.bell-badge.hidden { display: none; }
 .bell-badge {
   position: absolute;
   top: -2px;
@@ -425,7 +421,6 @@ body.debug-ime #imePreview {
   z-index: 50;
   box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
 }
-#notifDrawer.hidden { display: none; }
 
 .notif-drawer-header {
   display: flex;
@@ -510,8 +505,6 @@ body.debug-ime #imePreview {
   flex-shrink: 0;
   touch-action: manipulation;
 }
-.handle-copy-btn.hidden,
-.handle-paste-btn.hidden { display: none; }
 .handle-copy-btn:active,
 .handle-paste-btn:active { opacity: 0.7; }
 
@@ -544,7 +537,6 @@ body.debug-ime #imePreview {
   border-radius: 20px;
   box-shadow: 0 2px 12px rgba(0,0,0,0.5);
 }
-.selection-chip.hidden { display: none; }
 
 .selection-chip-btn {
   background: none;
@@ -1017,10 +1009,6 @@ hr {
   display: none;
 }
 
-#passwordGroup.hidden,
-#keyGroup.hidden {
-  display: none;
-}
 
 #newConnBtn {
   margin-top: 12px;
@@ -1332,7 +1320,6 @@ hr {
   padding: 16px;
 }
 
-.vault-overlay.hidden { display: none; }
 
 .error-dialog-text {
   background: var(--bg-input);
@@ -1403,7 +1390,6 @@ hr {
   margin: 0;
 }
 
-.vault-error.hidden { display: none; }
 
 /* Password strength meter */
 .vault-strength {
@@ -1431,7 +1417,6 @@ hr {
   margin: 8px 0 4px;
 }
 
-.vault-bio-option.hidden { display: none; }
 
 .vault-bio-toggle {
   width: 100%;
@@ -1502,7 +1487,6 @@ hr {
   margin-bottom: 12px;
 }
 
-.vault-unlock-bar.hidden { display: none; }
 
 .vault-unlock-bar input[type="password"] {
   flex: 1;
@@ -1533,7 +1517,6 @@ hr {
   margin: 0;
 }
 
-.vault-unlock-error.hidden { display: none; }
 
 /* Vault settings section */
 .vault-settings {
@@ -1557,7 +1540,6 @@ hr {
   gap: 6px;
 }
 
-.vault-actions .hidden { display: none; }
 
 /* Settings row — toggle item layout (used outside danger zone) */
 .setting-row {
@@ -1594,7 +1576,6 @@ hr {
   border-bottom: 1px solid var(--accent);
 }
 
-.debug-overlay.hidden { display: none; }
 
 .debug-overlay-header {
   display: flex;
@@ -1971,9 +1952,6 @@ hr {
   color: var(--text-dim);
 }
 
-.files-transfer-status.hidden {
-  display: none;
-}
 
 #panel-files {
   display: none;
