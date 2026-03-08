@@ -183,6 +183,13 @@
         <button id="handleCopyBtn" class="handle-copy-btn hidden" title="Copy selection" aria-label="Copy selection">Copy</button>
         <button id="composeModeBtn" class="handle-btn handle-compose-btn" title="Compose mode: swipe typing, voice, autocorrect"><svg viewBox="0 0 12 20" width="9" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 1.5l2 2L4 10l-2.5.5.5-2.5Z"/><line x1="1" y1="14" x2="11" y2="14"/><line x1="1" y1="18" x2="11" y2="18"/></svg></button>
         <!-- Session menu anchored inside the positioned parent so absolute positioning works -->
+        <div id="notifDrawer" class="hidden" role="dialog" aria-label="Notifications">
+          <div class="notif-drawer-header">
+            <span>Notifications</span>
+            <button id="notifClearAllBtn" class="notif-clear-btn">Clear all</button>
+          </div>
+          <div id="notifDrawerList" class="notif-drawer-list"></div>
+        </div>
         <div id="sessionMenu" class="hidden" role="menu">
           <div class="session-menu-item font-size-row" role="menuitem">
             <button id="fontDecBtn"   class="font-adj-btn" title="Decrease font size">A−</button>
