@@ -123,6 +123,12 @@ fi
 # After checkout the working directory is the bot branch, which may not have
 # the latest tier scripts. The gate must be self-contained.
 
+# Install server dependencies (node_modules is gitignored, missing in worktrees)
+if [ -f server/package.json ] && [ ! -d server/node_modules ]; then
+  log "Installing server dependencies..."
+  npm --prefix server install --ignore-scripts 2>&1
+fi
+
 # Gate 1: TypeScript
 log "Gate 1/3: TypeScript typecheck..."
 if npx tsc --noEmit 2>&1; then
