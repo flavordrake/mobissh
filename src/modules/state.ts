@@ -7,10 +7,14 @@
  * without relying on shared global scope.
  */
 
-import type { AppState } from './types.js';
+import type { AppState, SessionState } from './types.js';
 import { RECONNECT } from './constants.js';
 
 export const appState: AppState = {
+  // Multi-session infrastructure
+  sessions: new Map<string, SessionState>(),
+  activeSessionId: null,
+
   // Core terminal and connection
   terminal: null,
   fitAddon: null,
@@ -43,3 +47,27 @@ export const appState: AppState = {
   recordingStartTime: null,
   recordingEvents: [],
 };
+
+export function currentSession(): SessionState | undefined {
+  if (!appState.activeSessionId) return undefined;
+  return appState.sessions.get(appState.activeSessionId);
+}
+
+export function createSession(id: string): SessionState {
+  const session: SessionState = {
+    id,
+    profile: null,
+    terminal: null,
+    fitAddon: null,
+    ws: null,
+    wsConnected: false,
+    sshConnected: false,
+    reconnectTimer: null,
+    reconnectDelay: RECONNECT.INITIAL_DELAY_MS,
+    keepAliveTimer: null,
+    keepAliveWorker: null,
+    activeThemeName: appState.activeThemeName,
+  };
+  appState.sessions.set(id, session);
+  return session;
+}

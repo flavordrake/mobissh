@@ -37,7 +37,7 @@ export function sendSftpRealpath(requestId: string): void {
   appState.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
-import { appState } from './state.js';
+import { appState, createSession } from './state.js';
 import { stopAndDownloadRecording } from './recording.js';
 
 let _toast = (_msg: string): void => {};
@@ -69,6 +69,15 @@ export function connect(profile: SSHProfile): void {
   appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
   _wsConsecFailures = 0;
   cancelReconnect();
+
+  // Create a SessionState entry for multi-session infrastructure (#59)
+  const sessionId = `${profile.host}:${String(profile.port || 22)}:${profile.username}:${String(Date.now())}`;
+  const session = createSession(sessionId);
+  session.profile = profile;
+  session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+  session.activeThemeName = appState.activeThemeName;
+  appState.activeSessionId = sessionId;
+
   _openWebSocket();
 }
 
