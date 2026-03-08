@@ -86,6 +86,8 @@ function validateWsToken(token) {
   return timingSafeEqual(expectedBuf, macBuf);
 }
 
+const os = require('os');
+
 const APP_VERSION = require('./package.json').version || '0.0.0';
 let GIT_HASH = 'unknown';
 try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(); } catch (_) {
@@ -216,6 +218,41 @@ function handleSftpMessage(msg, sftp, send) {
   }
 }
 
+// ─── Agent hook script content ────────────────────────────────────────────────
+
+const NOTIFY_BELL_SCRIPT = `#!/bin/bash
+LOCKFILE="/tmp/.claude-notify-lock"
+COOLDOWN=2
+if [[ -f "$LOCKFILE" ]]; then
+  LAST=$(stat -c %Y "$LOCKFILE" 2>/dev/null || echo 0)
+  NOW=$(date +%s)
+  if (( NOW - LAST < COOLDOWN )); then exit 0; fi
+fi
+touch "$LOCKFILE"
+INPUT=$(cat)
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
+HOOK_EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty')
+if [[ -n "$TOOL_NAME" ]]; then
+  DESCRIPTION=$(echo "$INPUT" | jq -r '.tool_input.description // .tool_input.command // .tool_input.file_path // empty' | head -c 80)
+  MSG="Approve: \${TOOL_NAME} — \${DESCRIPTION}"
+else
+  MSG="Claude waiting: \${HOOK_EVENT}"
+fi
+emit() {
+  if [[ -n "$TMUX" ]]; then
+    printf '%s\\n\\a' "$MSG" > "$1" 2>/dev/null
+  else
+    printf '\\033]9;%s\\007' "$MSG" > "$1" 2>/dev/null
+  fi
+}
+if [[ -w /dev/tty ]]; then emit /dev/tty
+elif [[ -e /proc/$PPID/fd/1 ]]; then
+  TTY=$(readlink /proc/$PPID/fd/1 2>/dev/null)
+  [[ -n "$TTY" && -w "$TTY" ]] && emit "$TTY"
+fi
+exit 0
+`;
+
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
@@ -240,7 +277,107 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
     return;
   }
 
+  // ─── Agent hooks API ────────────────────────────────────────────────────────
   const urlPath = req.url.split('?')[0];
+
+  if (urlPath === '/api/detect-agents') {
+    const homeDir = process.env.HOME || os.homedir();
+    const agents = [
+      { name: 'Claude Code', id: 'claude', configPath: path.join(homeDir, '.claude', 'settings.json') },
+      { name: 'Codex', id: 'codex', configPath: path.join(homeDir, '.codex', 'config.toml') },
+      { name: 'Gemini', id: 'gemini', configPath: path.join(homeDir, '.gemini', 'settings.json') },
+      { name: 'OpenCode', id: 'opencode', configPath: path.join(homeDir, '.config', 'opencode', 'opencode.json') },
+    ];
+    const results = agents.map(a => {
+      const installed = fs.existsSync(a.configPath);
+      let hookActive = false;
+      if (installed && a.id === 'claude') {
+        try {
+          const settings = JSON.parse(fs.readFileSync(a.configPath, 'utf8'));
+          const hooks = settings.hooks || {};
+          hookActive = !!(hooks.PermissionRequest || hooks.Notification);
+        } catch (_) {}
+      }
+      return { name: a.name, id: a.id, installed, hookActive };
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ agents: results }));
+    return;
+  }
+
+  if (urlPath === '/api/install-hook' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { agent } = JSON.parse(body);
+        if (agent !== 'claude') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unsupported agent' }));
+          return;
+        }
+        const homeDir = process.env.HOME || os.homedir();
+        const hooksDir = path.join(homeDir, '.claude', 'hooks');
+        const scriptPath = path.join(hooksDir, 'notify-bell.sh');
+        const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+
+        // Create hooks dir and write script
+        fs.mkdirSync(hooksDir, { recursive: true });
+        fs.writeFileSync(scriptPath, NOTIFY_BELL_SCRIPT, { mode: 0o755 });
+
+        // Read or create settings.json
+        let settings = {};
+        try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (_) {}
+        if (!settings.hooks) settings.hooks = {};
+
+        const hookEntry = [{ matcher: '', command: scriptPath }];
+        settings.hooks.PermissionRequest = hookEntry;
+        settings.hooks.Notification = hookEntry;
+
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (urlPath === '/api/uninstall-hook' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { agent } = JSON.parse(body);
+        if (agent !== 'claude') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unsupported agent' }));
+          return;
+        }
+        const homeDir = process.env.HOME || os.homedir();
+        const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+
+        let settings = {};
+        try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (_) {}
+        if (settings.hooks) {
+          delete settings.hooks.PermissionRequest;
+          delete settings.hooks.Notification;
+          if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+        }
+
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
   const rel = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
   const filePath = path.join(PUBLIC_DIR, rel === '/' || rel === '' ? 'index.html' : rel);
 
