@@ -229,32 +229,16 @@ if [[ -f "$LOCKFILE" ]]; then
   if (( NOW - LAST < COOLDOWN )); then exit 0; fi
 fi
 touch "$LOCKFILE"
-INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
-HOOK_EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty')
-if [[ -n "$TOOL_NAME" ]]; then
-  DESCRIPTION=$(echo "$INPUT" | jq -r '.tool_input.description // .tool_input.command // .tool_input.file_path // empty' | head -c 80)
-  MSG="Approve: \${TOOL_NAME} — \${DESCRIPTION}"
-else
-  MSG="Claude waiting: \${HOOK_EVENT}"
-fi
-emit() {
-  if [[ -n "$TMUX" ]]; then
-    printf '%s\\n\\a' "$MSG" > "$1" 2>/dev/null
-  else
-    printf '\\033]9;%s\\007' "$MSG" > "$1" 2>/dev/null
+cat > /dev/null
+PID=$$
+while [[ $PID -gt 1 ]]; do
+  PID=$(awk '{print $4}' /proc/$PID/stat 2>/dev/null) || break
+  TTY=$(readlink /proc/$PID/fd/0 2>/dev/null)
+  if [[ "$TTY" == /dev/pts/* && -w "$TTY" ]]; then
+    printf '\\a' > "$TTY" 2>/dev/null
+    exit 0
   fi
-}
-SENT=false
-if printf '' > /dev/tty 2>/dev/null; then emit /dev/tty; SENT=true; fi
-if [[ "$SENT" == false ]]; then
-  PID=$$
-  while [[ $PID -gt 1 ]]; do
-    PID=$(awk '{print $4}' /proc/$PID/stat 2>/dev/null) || break
-    TTY=$(readlink /proc/$PID/fd/0 2>/dev/null)
-    if [[ "$TTY" == /dev/pts/* && -w "$TTY" ]]; then emit "$TTY"; break; fi
-  done
-fi
+done
 exit 0
 `;
 
