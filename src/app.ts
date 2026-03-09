@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initTerminalResizeObserver();
     initFilesPanel();
     initRecording({ toast });
-    initProfiles({ toast, navigateToConnect: () => { navigateToPanel('connect'); } });
+    initProfiles({ toast, navigateToConnect: () => { navigateToPanel('connect'); }, applyTheme });
     initSettings({ toast, applyFontSize, applyTheme });
     initConnection({ toast, setStatus, focusIME, applyTabBarVisibility: _applyTabBarVisibility });
     initSessionMenu();
