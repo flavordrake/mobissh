@@ -219,6 +219,70 @@ test.describe('IME composition → SSH input routing', () => {
   });
 });
 
+test.describe('Issue #74 — compose preview Clear and Send buttons', () => {
+  test('Clear button hides the preview without sending', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Start composition to show preview
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'hello' }));
+    });
+
+    const preview = page.locator('#imePreview');
+    await expect(preview).not.toHaveClass(/hidden/);
+
+    // Click Clear button
+    await page.locator('#imeClearBtn').click();
+
+    // Preview should be hidden and no input sent
+    await expect(preview).toHaveClass(/hidden/);
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+  });
+
+  test('Send button sends \\r and hides the preview', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Start composition to show preview
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'hello' }));
+    });
+
+    const preview = page.locator('#imePreview');
+    await expect(preview).not.toHaveClass(/hidden/);
+
+    // Click Send button
+    await page.locator('#imeCommitBtn').click();
+
+    // Preview should be hidden and \r sent to SSH
+    await expect(preview).toHaveClass(/hidden/);
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === '\r')).toBe(true);
+  });
+
+  test('preview text is shown in the text span, not overwriting buttons', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'typed' }));
+    });
+
+    // Text should appear in the span, not replace the entire container
+    await expect(page.locator('#imePreviewText')).toHaveText('typed');
+    // Buttons should still be present
+    await expect(page.locator('#imeClearBtn')).toBeVisible();
+    await expect(page.locator('#imeCommitBtn')).toBeVisible();
+  });
+});
+
 test.describe('Issue #85 — compositioncancel resets IME state', () => {
   test('compositioncancel clears isComposing so subsequent input is not dropped', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
