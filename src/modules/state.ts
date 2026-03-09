@@ -9,6 +9,7 @@
 
 import type { AppState, SessionState } from './types.js';
 import { RECONNECT } from './constants.js';
+import { DEFAULT_KEY_BAR_CONFIG } from './keybar-config.js';
 
 export const appState: AppState = {
   // Multi-session infrastructure
@@ -46,6 +47,9 @@ export const appState: AppState = {
   recording: false,
   recordingStartTime: null,
   recordingEvents: [],
+
+  // Key bar configuration (#80)
+  keyBarConfig: DEFAULT_KEY_BAR_CONFIG,
 };
 
 export function currentSession(): SessionState | undefined {
