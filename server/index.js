@@ -308,6 +308,9 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
           const hooks = settings.hooks || [];
           hookActive = hooks.some(h => h.type === 'BeforeTool' && h.toolName === 'ask_user');
         } catch (_) {}
+      } else if (installed && a.id === 'opencode') {
+        const pluginPath = path.join(homeDir, '.config', 'opencode', 'plugins', 'mobissh-notify.js');
+        hookActive = fs.existsSync(pluginPath);
       }
       return { name: a.name, id: a.id, installed, hookActive };
     });
@@ -366,6 +369,27 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
             });
           }
           fs.writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
+        } else if (agent === 'opencode') {
+          const pluginsDir = path.join(homeDir, '.config', 'opencode', 'plugins');
+          fs.mkdirSync(pluginsDir, { recursive: true });
+          const pluginPath = path.join(pluginsDir, 'mobissh-notify.js');
+          const pluginContent = `export default function plugin() {
+  return {
+    tool: {
+      execute: {
+        before: async ({ tool }) => {
+          if (tool.name === 'question') {
+            const { execFile } = await import('child_process');
+            const scriptPath = ${JSON.stringify(scriptPath)};
+            execFile(scriptPath, { env: process.env }, () => {});
+          }
+        },
+      },
+    },
+  };
+}
+`;
+          fs.writeFileSync(pluginPath, pluginContent);
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Unsupported agent' }));
@@ -417,6 +441,9 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
             }
             fs.writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
           } catch (_) {}
+        } else if (agent === 'opencode') {
+          const pluginPath = path.join(homeDir, '.config', 'opencode', 'plugins', 'mobissh-notify.js');
+          try { fs.unlinkSync(pluginPath); } catch (_) {}
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Unsupported agent' }));
