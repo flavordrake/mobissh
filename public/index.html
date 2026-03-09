@@ -623,6 +623,17 @@
           </label>
         </div>
 
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Remote clipboard access</span>
+            <p class="hint">Allows the remote server to read/write your clipboard via OSC 52. Only enable for trusted servers. Requires page reload.</p>
+          </div>
+          <label class="toggle" aria-label="Allow remote clipboard access">
+            <input type="checkbox" id="enableRemoteClipboard" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
         <button id="resetAppBtn" class="danger-btn">Reset app (clears all data &amp; cache)</button>
       </div>
 
