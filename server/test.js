@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { Readable, Writable } = require('stream');
 
-const { rewriteManifest, handleSftpMessage } = require('./index.js');
+const { rewriteManifest, handleSftpMessage, isPrivateIp } = require('./index.js');
 
 test('rewriteManifest: sets id="mobissh"', () => {
   const input = Buffer.from(JSON.stringify({ name: 'MobiSSH', start_url: '/' }));
@@ -156,4 +156,106 @@ test('handleSftpMessage: sftp_stat error returns sftp_error', () => {
   assert.equal(results[0].type, 'sftp_error');
   assert.equal(results[0].requestId, '8');
   assert.equal(results[0].message, 'Not found');
+});
+
+// ─── isPrivateIp tests (issue #84) ────────────────────────────────────────────
+
+test('isPrivateIp: 127.0.0.1 is private (loopback)', () => {
+  assert.equal(isPrivateIp('127.0.0.1'), true);
+});
+
+test('isPrivateIp: 127.255.255.255 is private (loopback /8)', () => {
+  assert.equal(isPrivateIp('127.255.255.255'), true);
+});
+
+test('isPrivateIp: 0.0.0.0 is private (unspecified)', () => {
+  assert.equal(isPrivateIp('0.0.0.0'), true);
+});
+
+test('isPrivateIp: 10.0.0.1 is private (RFC-1918 10/8)', () => {
+  assert.equal(isPrivateIp('10.0.0.1'), true);
+});
+
+test('isPrivateIp: 10.255.255.255 is private (RFC-1918 10/8 boundary)', () => {
+  assert.equal(isPrivateIp('10.255.255.255'), true);
+});
+
+test('isPrivateIp: 172.16.0.1 is private (RFC-1918 172.16/12)', () => {
+  assert.equal(isPrivateIp('172.16.0.1'), true);
+});
+
+test('isPrivateIp: 172.31.255.255 is private (RFC-1918 172.16/12 boundary)', () => {
+  assert.equal(isPrivateIp('172.31.255.255'), true);
+});
+
+test('isPrivateIp: 172.15.255.255 is NOT private (just outside 172.16/12)', () => {
+  assert.equal(isPrivateIp('172.15.255.255'), false);
+});
+
+test('isPrivateIp: 172.32.0.0 is NOT private (just outside 172.16/12)', () => {
+  assert.equal(isPrivateIp('172.32.0.0'), false);
+});
+
+test('isPrivateIp: 192.168.1.1 is private (RFC-1918 192.168/16)', () => {
+  assert.equal(isPrivateIp('192.168.1.1'), true);
+});
+
+test('isPrivateIp: 169.254.1.1 is private (link-local)', () => {
+  assert.equal(isPrivateIp('169.254.1.1'), true);
+});
+
+test('isPrivateIp: 100.64.0.1 is private (CGNAT)', () => {
+  assert.equal(isPrivateIp('100.64.0.1'), true);
+});
+
+test('isPrivateIp: 100.127.255.255 is private (CGNAT boundary)', () => {
+  assert.equal(isPrivateIp('100.127.255.255'), true);
+});
+
+test('isPrivateIp: 100.128.0.0 is NOT private (just outside CGNAT)', () => {
+  assert.equal(isPrivateIp('100.128.0.0'), false);
+});
+
+test('isPrivateIp: 8.8.8.8 is NOT private (public IP)', () => {
+  assert.equal(isPrivateIp('8.8.8.8'), false);
+});
+
+test('isPrivateIp: 1.1.1.1 is NOT private (public IP)', () => {
+  assert.equal(isPrivateIp('1.1.1.1'), false);
+});
+
+test('isPrivateIp: ::1 is private (IPv6 loopback)', () => {
+  assert.equal(isPrivateIp('::1'), true);
+});
+
+test('isPrivateIp: :: is private (IPv6 unspecified)', () => {
+  assert.equal(isPrivateIp('::'), true);
+});
+
+test('isPrivateIp: fc00::1 is private (IPv6 ULA)', () => {
+  assert.equal(isPrivateIp('fc00::1'), true);
+});
+
+test('isPrivateIp: fd12:3456::1 is private (IPv6 ULA fd)', () => {
+  assert.equal(isPrivateIp('fd12:3456::1'), true);
+});
+
+test('isPrivateIp: fe80::1 is private (IPv6 link-local)', () => {
+  assert.equal(isPrivateIp('fe80::1'), true);
+});
+
+test('isPrivateIp: 2001:db8::1 is NOT private (public IPv6)', () => {
+  assert.equal(isPrivateIp('2001:db8::1'), false);
+});
+
+test('isPrivateIp: ::ffff:127.0.0.1 is private (IPv4-mapped loopback)', () => {
+  assert.equal(isPrivateIp('::ffff:127.0.0.1'), true);
+});
+
+test('isPrivateIp: ::ffff:10.0.0.1 is private (IPv4-mapped RFC-1918)', () => {
+  assert.equal(isPrivateIp('::ffff:10.0.0.1'), true);
+});
+
+test('isPrivateIp: ::ffff:8.8.8.8 is NOT private (IPv4-mapped public)', () => {
+  assert.equal(isPrivateIp('::ffff:8.8.8.8'), false);
 });

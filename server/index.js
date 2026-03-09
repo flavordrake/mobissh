@@ -44,6 +44,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns');
 const { createHash, createHmac, randomBytes, timingSafeEqual } = require('crypto');
 const { execSync } = require('child_process');
 const WebSocket = require('ws');
@@ -405,24 +406,63 @@ if (require.main === module) {
   });
 }
 
-// ─── SSRF prevention (issue #6) ───────────────────────────────────────────────
-// Blocks RFC-1918 private, loopback, and link-local addresses by default.
+// ─── SSRF prevention (issue #6, #84) ─────────────────────────────────────────
+// Blocks RFC-1918 private, loopback, link-local, and other reserved addresses.
 // Clients may send allowPrivate:true to override (controlled by the danger zone
 // setting in the frontend — only for users who explicitly opt in).
+//
+// isPrivateIp(ip) performs numeric CIDR matching on a resolved IP address.
+// connect() resolves the hostname via dns.lookup() before calling sshClient.connect(),
+// preventing DNS rebinding attacks where a public hostname resolves to a private IP.
 
-function isPrivateHost(host) {
-  const h = host.trim().toLowerCase();
-  // Loopback / unspecified
-  if (h === 'localhost' || h === '::1' || h === '0.0.0.0') return true;
-  if (h.startsWith('127.')) return true;           // 127.0.0.0/8
-  // RFC-1918 ranges
-  if (h.startsWith('10.')) return true;            // 10.0.0.0/8
-  if (h.startsWith('192.168.')) return true;       // 192.168.0.0/16
-  // 172.16.0.0/12 = 172.16.x – 172.31.x
-  const m = h.match(/^172\.(\d+)\./);
-  if (m && parseInt(m[1]) >= 16 && parseInt(m[1]) <= 31) return true;
-  // IPv6 link-local and ULA
-  if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
+/**
+ * Returns true if the given resolved IP address falls within any private,
+ * loopback, link-local, CGNAT, ULA, or unspecified range.
+ *
+ * Covers:
+ *   IPv4: 0.0.0.0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.168/16
+ *   IPv6: ::, ::1, fc00::/7 (ULA), fe80::/10 (link-local)
+ *   IPv4-mapped IPv6: ::ffff:x.x.x.x — unwrapped and re-checked as IPv4
+ */
+function isPrivateIp(ip) {
+  const s = ip.trim().toLowerCase();
+
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x or ::ffff:aabb:ccdd
+  const mapped = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPrivateIp(mapped[1]);
+
+  // IPv6 checks
+  if (s === '::' || s === '::1') return true;
+  // ULA fc00::/7 — first byte 0xfc or 0xfd (binary prefix 1111 110x)
+  if (s.startsWith('fc') || s.startsWith('fd')) return true;
+  // Link-local fe80::/10 — first 10 bits are 1111 1110 10
+  if (s.startsWith('fe80:') || s.startsWith('fe8') || s.startsWith('fe9') ||
+      s.startsWith('fea') || s.startsWith('feb')) return true;
+
+  // IPv4: parse to 32-bit integer for CIDR comparisons
+  const parts = s.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!parts) return false; // unknown format — don't block
+  const a = parseInt(parts[1]);
+  const b = parseInt(parts[2]);
+  const c = parseInt(parts[3]);
+  const d = parseInt(parts[4]);
+  if (a > 255 || b > 255 || c > 255 || d > 255) return false;
+  const n = (a << 24 >>> 0) + (b << 16) + (c << 8) + d;
+
+  // Helper: check if n falls in prefix/bits
+  function inCidr(base, bits) {
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+    return (n & mask) === (base & mask);
+  }
+
+  if (inCidr(0x00000000, 8))   return true; // 0.0.0.0/8      unspecified
+  if (inCidr(0x0a000000, 8))   return true; // 10.0.0.0/8     RFC-1918
+  if (inCidr(0x64400000, 10))  return true; // 100.64.0.0/10  CGNAT
+  if (inCidr(0x7f000000, 8))   return true; // 127.0.0.0/8    loopback
+  if (inCidr(0xa9fe0000, 16))  return true; // 169.254.0.0/16 link-local
+  if (inCidr(0xac100000, 12))  return true; // 172.16.0.0/12  RFC-1918
+  if (inCidr(0xc0a80000, 16))  return true; // 192.168.0.0/16 RFC-1918
+
   return false;
 }
 
@@ -521,12 +561,25 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    if (isPrivateHost(cfg.host) && !cfg.allowPrivate) {
-      send({ type: 'error', message: 'Connections to private/loopback addresses are blocked. Enable "Allow private addresses" in Settings → Danger Zone to override.' });
-      connecting = false;
-      return;
-    }
+    // Resolve hostname to IP first, then check against private ranges.
+    // This prevents DNS rebinding: a public-looking hostname resolving to a
+    // private IP would bypass a hostname-only string check.
+    dns.lookup(cfg.host, (dnsErr, address) => {
+      if (dnsErr) {
+        send({ type: 'error', message: `DNS resolution failed: ${dnsErr.message}` });
+        connecting = false;
+        return;
+      }
+      if (isPrivateIp(address) && !cfg.allowPrivate) {
+        send({ type: 'error', message: 'Connections to private/loopback addresses are blocked. Enable "Allow private addresses" in Settings → Danger Zone to override.' });
+        connecting = false;
+        return;
+      }
+      connectAfterDns(cfg, address);
+    });
+  }
 
+  function connectAfterDns(cfg, resolvedIp) {
     sshClient = new Client();
 
     sshClient.on('ready', () => {
@@ -576,7 +629,7 @@ wss.on('connection', (ws, req) => {
     sshClient.on('close', () => { sshCleanup('SSH connection closed'); });
 
     const sshConfig = {
-      host: cfg.host,
+      host: resolvedIp,
       port: parseInt(cfg.port) || 22,
       username: cfg.username,
       readyTimeout: 15000,
@@ -692,4 +745,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { rewriteManifest, server, handleSftpMessage, isOriginAllowed };
+module.exports = { rewriteManifest, server, handleSftpMessage, isOriginAllowed, isPrivateIp };
