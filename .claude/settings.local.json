@@ -16,7 +16,10 @@
       "Bash(~/.claude/hooks/notify-bell.sh:*)",
       "Bash(who:*)",
       "Bash(scripts/gh-ops.sh comment:*)",
-      "Bash(/tmp/sub-issue-47c.md:*)"
+      "Bash(/tmp/sub-issue-47c.md:*)",
+      "Bash(/home/dev/.claude/hooks/notify-bell.sh:*)",
+      "Bash(tty)",
+      "Read(//dev/**)"
     ]
   }
 }

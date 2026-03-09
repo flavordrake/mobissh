@@ -245,10 +245,15 @@ emit() {
     printf '\\033]9;%s\\007' "$MSG" > "$1" 2>/dev/null
   fi
 }
-if [[ -w /dev/tty ]]; then emit /dev/tty
-elif [[ -e /proc/$PPID/fd/1 ]]; then
-  TTY=$(readlink /proc/$PPID/fd/1 2>/dev/null)
-  [[ -n "$TTY" && -w "$TTY" ]] && emit "$TTY"
+SENT=false
+if printf '' > /dev/tty 2>/dev/null; then emit /dev/tty; SENT=true; fi
+if [[ "$SENT" == false ]]; then
+  PID=$$
+  while [[ $PID -gt 1 ]]; do
+    PID=$(awk '{print $4}' /proc/$PID/stat 2>/dev/null) || break
+    TTY=$(readlink /proc/$PID/fd/0 2>/dev/null)
+    if [[ "$TTY" == /dev/pts/* && -w "$TTY" ]]; then emit "$TTY"; break; fi
+  done
 fi
 exit 0
 `;
@@ -295,7 +300,7 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
         try {
           const settings = JSON.parse(fs.readFileSync(a.configPath, 'utf8'));
           const hooks = settings.hooks || {};
-          hookActive = !!(hooks.PermissionRequest || hooks.Notification);
+          hookActive = !!(hooks.PermissionRequest || hooks.Notification || hooks.Stop);
         } catch (_) {}
       } else if (installed && a.id === 'codex') {
         try {
@@ -342,6 +347,7 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
           const hookEntry = [{ matcher: '', command: scriptPath }];
           settings.hooks.PermissionRequest = hookEntry;
           settings.hooks.Notification = hookEntry;
+          settings.hooks.Stop = hookEntry;
 
           fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
         } else if (agent === 'codex') {
@@ -421,6 +427,7 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
           if (settings.hooks) {
             delete settings.hooks.PermissionRequest;
             delete settings.hooks.Notification;
+            delete settings.hooks.Stop;
             if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
           }
           fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
