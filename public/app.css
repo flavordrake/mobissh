@@ -1685,16 +1685,6 @@ hr {
 }
 
 
-/* Agent hook rows — installed/not-installed states */
-.agent-hook-row[data-agent-state="not-installed"] .toggle {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-.agent-hook-status {
-  transition: color 0.15s ease-out;
-}
-
 /* Debug overlay */
 .debug-overlay {
   position: fixed;

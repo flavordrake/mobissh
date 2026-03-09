@@ -555,51 +555,6 @@
         <button id="testNotifBtn" class="secondary-btn">Test notification</button>
       </div>
 
-      <h3>Coding Agent Hooks</h3>
-      <p class="hint">Get notified when coding CLI agents need input. Hooks emit terminal bell/OSC 9 sequences that trigger ServiceWorker notifications.</p>
-      <div id="agentHooksList">
-        <div class="setting-row agent-hook-row" data-agent="claude">
-          <div class="setting-row-info">
-            <span class="setting-row-label">Claude Code</span>
-            <p class="hint agent-hook-status" data-agent-status="claude">Checking…</p>
-          </div>
-          <label class="toggle" aria-label="Claude Code hook">
-            <input type="checkbox" id="agentHookClaude" disabled />
-            <span class="toggle-slider toggle-slider-accent"></span>
-          </label>
-        </div>
-        <div class="setting-row agent-hook-row" data-agent="codex">
-          <div class="setting-row-info">
-            <span class="setting-row-label">Codex</span>
-            <p class="hint agent-hook-status" data-agent-status="codex">Checking…</p>
-          </div>
-          <label class="toggle" aria-label="Codex hook">
-            <input type="checkbox" id="agentHookCodex" disabled />
-            <span class="toggle-slider toggle-slider-accent"></span>
-          </label>
-        </div>
-        <div class="setting-row agent-hook-row" data-agent="gemini">
-          <div class="setting-row-info">
-            <span class="setting-row-label">Gemini</span>
-            <p class="hint agent-hook-status" data-agent-status="gemini">Checking…</p>
-          </div>
-          <label class="toggle" aria-label="Gemini hook">
-            <input type="checkbox" id="agentHookGemini" disabled />
-            <span class="toggle-slider toggle-slider-accent"></span>
-          </label>
-        </div>
-        <div class="setting-row agent-hook-row" data-agent="opencode">
-          <div class="setting-row-info">
-            <span class="setting-row-label">OpenCode</span>
-            <p class="hint agent-hook-status" data-agent-status="opencode">Checking…</p>
-          </div>
-          <label class="toggle" aria-label="OpenCode hook">
-            <input type="checkbox" id="agentHookOpencode" disabled />
-            <span class="toggle-slider toggle-slider-accent"></span>
-          </label>
-        </div>
-      </div>
-
       <hr />
 
       <div class="vault-settings">

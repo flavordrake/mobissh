@@ -22,7 +22,8 @@
       "Read(//dev/**)",
       "Read(//proc/223638/fd/**)",
       "Bash(readlink /proc/$$fd/0)",
-      "Bash(du:*)"
+      "Bash(du:*)",
+      "Bash(gh issue:*)"
     ]
   }
 }
