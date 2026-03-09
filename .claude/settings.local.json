@@ -19,7 +19,10 @@
       "Bash(/tmp/sub-issue-47c.md:*)",
       "Bash(/home/dev/.claude/hooks/notify-bell.sh:*)",
       "Bash(tty)",
-      "Read(//dev/**)"
+      "Read(//dev/**)",
+      "Read(//proc/223638/fd/**)",
+      "Bash(readlink /proc/$$fd/0)",
+      "Bash(du:*)"
     ]
   }
 }
