@@ -66,7 +66,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   // Clean agent config dirs between tests
-  for (const dir of ['.claude', '.codex', '.gemini']) {
+  for (const dir of ['.claude', '.codex', '.gemini', path.join('.config', 'opencode')]) {
     const p = path.join(tmpHome, dir);
     if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
   }
@@ -103,6 +103,27 @@ describe('agent hooks API', () => {
       const gemini = (json.agents as Array<{ id: string; installed: boolean; hookActive: boolean }>).find(a => a.id === 'gemini')!;
       expect(gemini.installed).toBe(true);
       expect(gemini.hookActive).toBe(true);
+    });
+
+    it('detects opencode as installed with hook active when plugin file exists', async () => {
+      const opencodeDir = path.join(tmpHome, '.config', 'opencode');
+      fs.mkdirSync(path.join(opencodeDir, 'plugins'), { recursive: true });
+      fs.writeFileSync(path.join(opencodeDir, 'opencode.json'), '{}');
+      fs.writeFileSync(path.join(opencodeDir, 'plugins', 'mobissh-notify.js'), 'export default function plugin() {}');
+      const { json } = await get('/api/detect-agents');
+      const opencode = (json.agents as Array<{ id: string; installed: boolean; hookActive: boolean }>).find(a => a.id === 'opencode')!;
+      expect(opencode.installed).toBe(true);
+      expect(opencode.hookActive).toBe(true);
+    });
+
+    it('detects opencode as installed but hook inactive when plugin file missing', async () => {
+      const opencodeDir = path.join(tmpHome, '.config', 'opencode');
+      fs.mkdirSync(opencodeDir, { recursive: true });
+      fs.writeFileSync(path.join(opencodeDir, 'opencode.json'), '{}');
+      const { json } = await get('/api/detect-agents');
+      const opencode = (json.agents as Array<{ id: string; installed: boolean; hookActive: boolean }>).find(a => a.id === 'opencode')!;
+      expect(opencode.installed).toBe(true);
+      expect(opencode.hookActive).toBe(false);
     });
   });
 
@@ -147,6 +168,32 @@ describe('agent hooks API', () => {
       await post('/api/install-hook', { agent: 'gemini' });
       const settings = JSON.parse(fs.readFileSync(path.join(tmpHome, '.gemini', 'settings.json'), 'utf8'));
       expect(settings.hooks).toHaveLength(1);
+    });
+
+    it('installs opencode plugin file', async () => {
+      const opencodeDir = path.join(tmpHome, '.config', 'opencode');
+      fs.mkdirSync(opencodeDir, { recursive: true });
+      fs.writeFileSync(path.join(opencodeDir, 'opencode.json'), '{}');
+      const { status, json } = await post('/api/install-hook', { agent: 'opencode' });
+      expect(status).toBe(200);
+      expect(json.ok).toBe(true);
+      const pluginPath = path.join(opencodeDir, 'plugins', 'mobissh-notify.js');
+      expect(fs.existsSync(pluginPath)).toBe(true);
+      const content = fs.readFileSync(pluginPath, 'utf8');
+      expect(content).toContain('notify-bell.sh');
+      expect(content).toContain('question');
+    });
+
+    it('opencode install is idempotent', async () => {
+      const opencodeDir = path.join(tmpHome, '.config', 'opencode');
+      fs.mkdirSync(opencodeDir, { recursive: true });
+      fs.writeFileSync(path.join(opencodeDir, 'opencode.json'), '{}');
+      await post('/api/install-hook', { agent: 'opencode' });
+      const { status, json } = await post('/api/install-hook', { agent: 'opencode' });
+      expect(status).toBe(200);
+      expect(json.ok).toBe(true);
+      const pluginPath = path.join(opencodeDir, 'plugins', 'mobissh-notify.js');
+      expect(fs.existsSync(pluginPath)).toBe(true);
     });
 
     it('rejects unsupported agent', async () => {
@@ -202,6 +249,23 @@ describe('agent hooks API', () => {
       await post('/api/uninstall-hook', { agent: 'gemini' });
       const settings = JSON.parse(fs.readFileSync(path.join(tmpHome, '.gemini', 'settings.json'), 'utf8'));
       expect(settings.hooks).toBeUndefined();
+    });
+
+    it('removes opencode plugin file', async () => {
+      const pluginsDir = path.join(tmpHome, '.config', 'opencode', 'plugins');
+      fs.mkdirSync(pluginsDir, { recursive: true });
+      const pluginPath = path.join(pluginsDir, 'mobissh-notify.js');
+      fs.writeFileSync(pluginPath, 'export default function plugin() {}');
+      const { status, json } = await post('/api/uninstall-hook', { agent: 'opencode' });
+      expect(status).toBe(200);
+      expect(json.ok).toBe(true);
+      expect(fs.existsSync(pluginPath)).toBe(false);
+    });
+
+    it('opencode uninstall is a no-op when plugin file does not exist', async () => {
+      const { status, json } = await post('/api/uninstall-hook', { agent: 'opencode' });
+      expect(status).toBe(200);
+      expect(json.ok).toBe(true);
     });
   });
 });

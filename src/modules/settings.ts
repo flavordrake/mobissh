@@ -309,7 +309,7 @@ async function initAgentHooks(): Promise<void> {
             _toast('Hook update failed: network error');
           });
         });
-      } else if (agent.id === 'codex' || agent.id === 'gemini') {
+      } else if (agent.id === 'codex' || agent.id === 'gemini' || agent.id === 'opencode') {
         toggle.disabled = false;
         toggle.checked = agent.hookActive;
         const agentLabel = agent.name;
