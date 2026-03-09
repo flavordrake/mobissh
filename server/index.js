@@ -48,6 +48,7 @@ const { createHash, createHmac, randomBytes, timingSafeEqual } = require('crypto
 const { execSync } = require('child_process');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
+const { isOriginAllowed } = require('./origin');
 
 const PORT = process.env.PORT || 8081;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -56,6 +57,16 @@ const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, '');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
+
+// ─── CSWSH prevention (issue #83) ─────────────────────────────────────────────
+// WS_ORIGIN_ALLOWLIST: comma-separated list of additional allowed origins.
+// Example: WS_ORIGIN_ALLOWLIST=https://myapp.tailnet.ts.net,https://localhost:8081
+
+// Parse WS_ORIGIN_ALLOWLIST once at startup.
+const WS_ORIGIN_ALLOWLIST = (process.env.WS_ORIGIN_ALLOWLIST || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
 // ─── WS upgrade authentication (issue #93) ────────────────────────────────────
 // Per-boot secret — never stored, never logged, never leaves this process.
@@ -323,6 +334,15 @@ const wss = new WebSocket.Server({
   server,
   maxPayload: MAX_MESSAGE_SIZE,
   verifyClient({ req }, callback) {
+    // Origin check runs regardless of TS_SERVE mode (#83).
+    const origin = req.headers['origin'];
+    const host = req.headers['host'];
+    if (!isOriginAllowed(origin, host, WS_ORIGIN_ALLOWLIST)) {
+      console.warn(`[ssh-bridge] Rejected WS upgrade: Origin "${origin}" does not match Host "${host}"`);
+      callback(false, 401, 'Forbidden origin');
+      return;
+    }
+
     // Skip WS token auth when behind tailscale serve -- it strips query params
     // from WebSocket upgrade requests (tailscale/tailscale#18651).
     // Tailscale provides network-level auth; token is redundant.
@@ -672,4 +692,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { rewriteManifest, server, handleSftpMessage };
+module.exports = { rewriteManifest, server, handleSftpMessage, isOriginAllowed };
