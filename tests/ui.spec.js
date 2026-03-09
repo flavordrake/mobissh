@@ -198,3 +198,124 @@ test.describe('UI chrome (#110 Phase 8)', () => {
   });
 
 });
+
+test.describe('Session list (#60)', () => {
+
+  test('session list is hidden when only one session exists', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Open session menu
+    await page.locator('#sessionMenuBtn').click();
+    await page.waitForTimeout(100);
+
+    // Session list should be hidden (only 1 session)
+    await expect(page.locator('#sessionList')).toHaveClass(/hidden/);
+  });
+
+  test('session list shows when multiple sessions are injected', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Inject a second session via the ES module system available in the browser
+    await page.evaluate(async () => {
+      const { appState } = await import('./modules/state.js');
+      const { renderSessionList } = await import('./modules/ui.js');
+      const s2 = {
+        id: 'test-session-2',
+        profile: { username: 'alice', host: 'remote.example.com', port: 22, authType: 'password', name: 'test' },
+        terminal: null, fitAddon: null, ws: null,
+        wsConnected: false, sshConnected: false,
+        reconnectTimer: null, reconnectDelay: 2000,
+        keepAliveTimer: null, keepAliveWorker: null,
+        activeThemeName: 'dark',
+      };
+      appState.sessions.set('test-session-2', s2);
+      renderSessionList();
+    });
+
+    await page.waitForTimeout(100);
+
+    // Session list should now be visible (2 sessions)
+    await expect(page.locator('#sessionList')).not.toHaveClass(/hidden/);
+
+    // Should show both sessions as items
+    await expect(page.locator('.session-item')).toHaveCount(2);
+
+    // Should show the + New session button
+    await expect(page.locator('#sessionListNewBtn')).toBeVisible();
+  });
+
+  test('+ New session navigates to connect tab', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Inject a second session to make the list visible
+    await page.evaluate(async () => {
+      const { appState } = await import('./modules/state.js');
+      const { renderSessionList } = await import('./modules/ui.js');
+      appState.sessions.set('test-session-2', {
+        id: 'test-session-2',
+        profile: { username: 'bob', host: 'other.host', port: 22, authType: 'password', name: 'other' },
+        terminal: null, fitAddon: null, ws: null,
+        wsConnected: false, sshConnected: false,
+        reconnectTimer: null, reconnectDelay: 2000,
+        keepAliveTimer: null, keepAliveWorker: null,
+        activeThemeName: 'dark',
+      });
+      renderSessionList();
+    });
+
+    // Open session menu and click + New session
+    await page.locator('#sessionMenuBtn').click();
+    await page.waitForTimeout(100);
+    await page.locator('#sessionListNewBtn').click();
+    await page.waitForTimeout(200);
+
+    // Should navigate to Connect panel
+    await expect(page.locator('#panel-connect')).toHaveClass(/active/);
+  });
+
+  test('session list hides again when second session is removed', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Add and then remove a second session
+    await page.evaluate(async () => {
+      const { appState } = await import('./modules/state.js');
+      const { renderSessionList } = await import('./modules/ui.js');
+      appState.sessions.set('test-session-2', {
+        id: 'test-session-2',
+        profile: { username: 'carol', host: 'host2.local', port: 22, authType: 'password', name: 'test2' },
+        terminal: null, fitAddon: null, ws: null,
+        wsConnected: false, sshConnected: false,
+        reconnectTimer: null, reconnectDelay: 2000,
+        keepAliveTimer: null, keepAliveWorker: null,
+        activeThemeName: 'dark',
+      });
+      renderSessionList();
+    });
+
+    // Verify list is visible with 2 sessions
+    await expect(page.locator('#sessionList')).not.toHaveClass(/hidden/);
+
+    // Remove the second session
+    await page.evaluate(async () => {
+      const { appState } = await import('./modules/state.js');
+      const { renderSessionList } = await import('./modules/ui.js');
+      appState.sessions.delete('test-session-2');
+      renderSessionList();
+    });
+
+    await page.waitForTimeout(100);
+
+    // List should be hidden again
+    await expect(page.locator('#sessionList')).toHaveClass(/hidden/);
+  });
+
+  test('sessionMenuBtn shows user@host label when connected', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // After connection, session menu button should show user@host
+    const btnText = await page.locator('#sessionMenuBtn').textContent();
+    expect(btnText).toContain('testuser');
+    expect(btnText).toContain('mock-host');
+  });
+
+});
