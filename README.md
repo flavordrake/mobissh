@@ -1,12 +1,12 @@
 # MobiSSH
 
-Mobile command and control for coding agents over SSH. Swipe-type prompts, dictate instructions, upload screenshots, paste docs into context, manage tokens and URLs -- all from your phone, with the full power of a real terminal underneath.
+Mobile command and control for coding agents over SSH. Swipe-type prompts, dictate instructions, manage tokens and URLs -- all from your phone, with the full power of a real terminal underneath.
 
 > **Standard SSH, mobile-native UX.** The bridge is a thin WebSocket proxy that forwards bytes between your browser and the SSH server. No command interception, no proprietary protocol. Your agents (Claude Code, OpenCode, Gemini CLI, Codex) run in their normal SSH environment.
 
 ## The workflow
 
-You're on your phone. You have an idea, a bug report, a screenshot of broken UI. You want to tell your coding agent what to do, review its output, iterate -- without opening a laptop.
+You're on your phone. You have an idea, a bug report, a task for your coding agent. You want to tell it what to do, review its output, iterate -- without opening a laptop.
 
 **Compose mode** is the core of this. Tap the compose button, and MobiSSH switches from raw terminal input to a native mobile text field. Swipe-type a multi-sentence prompt. Dictate a paragraph with voice input. Edit, review, then send. The agent receives clean text, not the garbled output of autocorrect fighting a terminal emulator.
 
@@ -16,39 +16,19 @@ You're on your phone. You have an idea, a bug report, a screenshot of broken UI.
 
 **Drive coding agents.** Launch `claude`, `opencode`, `gemini`, or `codex` over SSH. Compose long prompts with swipe or voice. Review diffs in the terminal. Approve or reject changes. The full agent TUI renders correctly -- xterm.js is the same engine as VS Code's terminal.
 
-**Upload context.** Take a screenshot of a bug, a photo of a whiteboard, a screen recording. Upload it through the Files panel via SFTP directly to the remote machine where your agent can read it. No email-to-self, no cloud drive sync, no waiting.
+**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Upload screenshots or logs directly to where your agent can read them.
 
-**Manage credentials.** Copy a GitHub token from your password manager, paste it into the terminal. Copy a URL from your browser, paste it into a prompt. MobiSSH's paste button detects clipboard content and sends it to the active session. Vault-encrypted credential storage means your SSH passwords and keys are biometric-locked, not plaintext.
+**Manage credentials.** Copy a GitHub token from your password manager, paste it into the terminal. Copy a URL from your browser, paste it into a prompt. Vault-encrypted credential storage means your SSH passwords are biometric-locked, not plaintext.
 
-**Multiplex sessions.** Swipe horizontally to switch tmux windows. Swipe vertically to scroll output. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. All designed for one-handed phone use.
+**Navigate the terminal.** Swipe vertically to scroll output. Swipe horizontally to switch tmux windows. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. All designed for one-handed phone use.
+
+**Get notified.** Set up coding agent hooks so MobiSSH alerts you when your agent needs input. See [INTEGRATION.md](INTEGRATION.md).
 
 ## Security
 
-MobiSSH is designed for personal use over Tailscale (WireGuard mesh). The bridge runs on your private network -- not exposed to the internet.
+See [SECURITY.md](SECURITY.md) for the full security model, threat assessment, and audit history.
 
-### Credential vault
-
-Passwords, private keys, and passphrases are AES-GCM encrypted with a 256-bit key:
-
-- **Chrome/Android:** `PasswordCredential` -- biometric / screen lock gated
-- **Safari/iOS 18+:** WebAuthn PRF -- Face ID / Touch ID gated
-- **No vault available:** credentials are not persisted at all. No plaintext fallback, ever.
-
-### Transport and access control
-
-- WebSocket upgrade requires HMAC token (per-boot secret, timing-safe, expiring)
-- Only `wss://` accepted. `Cache-Control: no-store` on all responses. Network-first service worker.
-- SSRF prevention blocks RFC-1918 and loopback addresses
-- SSH host key TOFU with mismatch warnings
-- CSP restricts all script/style/connect sources. xterm.js vendored locally for `script-src 'self'`
-
-### Transparency
-
-The bridge forwards raw bytes. No command parser, no action log, no telemetry. Your SSH session is captured by the same standard audit tools (`sshd` logs, `auditd`, shell history) as any direct connection.
-
-### Security review (v0.4.0)
-
-Automated review of 37 commits covering WS auth, input modes, routing, credential handling. No high-confidence vulnerabilities found. Details: HMAC-SHA256 WS auth sound, SSRF blocking intact, AES-GCM vault unchanged, `escHtml()` used consistently, no path traversal vectors, no injection surface in IME handling.
+Summary: MobiSSH is designed for personal use over Tailscale (WireGuard mesh). Credentials are AES-GCM encrypted with biometric unlock (Chrome/Android). No plaintext fallback, ever. The bridge forwards raw bytes with no telemetry.
 
 ## Architecture
 
@@ -136,14 +116,14 @@ Use `termux-open http://localhost:8081` to launch the browser from Termux. To co
 
 | Layer | What it covers | Command |
 |---|---|---|
-| Type check + lint + unit | Fast pre-commit gate | `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh` |
+| Type check + lint + unit | Fast pre-commit gate | `scripts/test-fast-gate.sh` |
 | Headless browser | UI rendering, navigation, vault, forms | `scripts/test-headless.sh` |
 | Android emulator (Appium) | Touch gestures, real Chrome, screen recording | `scripts/run-appium-tests.sh` |
 | Manual device | iOS, biometric, Bluetooth keyboard | On-device |
 
 ### Bot delegation
 
-Issues labeled `bot` are worked by the Claude Code GitHub integration. `/delegate` classifies and assigns; `/integrate` gates and merges. Process details in `.claude/process.md`.
+Issues labeled `bot` are worked by local develop agents. `/delegate` classifies and assigns; `/integrate` gates and merges. Process details in `.claude/process.md`.
 
 ## License
 
