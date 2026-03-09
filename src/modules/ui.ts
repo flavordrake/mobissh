@@ -776,7 +776,7 @@ let _pressTimer: ReturnType<typeof setTimeout> | null = null;
 let _longPressFired = false;
 // Context menu dismiss handle (allows external callers to fully tear down)
 let _ctxMenuDismiss: (() => void) | null = null;
-let _uploadQueue: Array<{remotePath: string; data: string}> = [];
+let _uploadQueue: Array<{remotePath: string; data: string; fileName: string; fileSize: number}> = [];
 let _uploadActive = false;
 let _uploadCompleted = 0;
 let _uploadTotal = 0;
@@ -838,7 +838,13 @@ function _processNextUpload(): void {
     return;
   }
   _uploadCompleted++;
-  _setTransferStatus(`Uploading ${String(_uploadCompleted)}/${String(_uploadTotal)}...`);
+  const name = item.remotePath.split('/').pop() ?? item.remotePath;
+  const bytes = Math.floor(item.data.length * 3 / 4);
+  const sizeStr = bytes < 1024 ? `${String(bytes)} B`
+    : bytes < 1_048_576 ? `${String(Math.round(bytes / 1024))} KB`
+    : `${(bytes / 1_048_576).toFixed(1)} MB`;
+  const countStr = _uploadTotal > 1 ? ` (${String(_uploadCompleted)}/${String(_uploadTotal)})` : '';
+  _setTransferStatus(`Uploading ${name} — ${sizeStr}${countStr}`);
   const reqId = `up-${String(Date.now())}`;
   _uploadPending.set(reqId, item.remotePath);
   sendSftpUpload(item.remotePath, item.data, reqId);
@@ -863,7 +869,7 @@ async function _startUpload(files: FileList): Promise<void> {
     const remotePath = _filesPath === '/' ? `/${file.name}` : `${_filesPath}/${file.name}`;
     try {
       const data = await _readFileAsBase64(file);
-      _uploadQueue.push({ remotePath, data });
+      _uploadQueue.push({ remotePath, data, fileName: file.name, fileSize: file.size });
     } catch {
       toast(`Failed to read ${file.name}`);
     }
