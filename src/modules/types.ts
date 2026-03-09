@@ -6,6 +6,8 @@
  * runtime cost — TypeScript erases type-only imports during compilation.
  */
 
+import type { KeyBarConfig } from './keybar-config.js';
+
 // ── Domain types ────────────────────────────────────────────────────────────
 
 export interface SSHProfile {
@@ -123,6 +125,9 @@ export interface AppState {
   recording: boolean;
   recordingStartTime: number | null;
   recordingEvents: [number, string, string][];
+
+  // Key bar configuration (#80)
+  keyBarConfig: KeyBarConfig;
 }
 
 // ── CSS layout constants ────────────────────────────────────────────────────
