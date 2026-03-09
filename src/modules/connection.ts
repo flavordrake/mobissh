@@ -176,6 +176,7 @@ export async function connect(profile: SSHProfile): Promise<void> {
 
 function _openWebSocket(options?: { silent?: boolean }): void {
   const silent = options?.silent ?? false;
+  const sessionId = appState.activeSessionId ?? '';
 
   if (appState.ws) {
     appState.ws.onclose = null;
@@ -205,7 +206,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     openedThisAttempt = true;
     _wsConsecFailures = 0;
     appState._wsConnected = true;
-    startKeepAlive();
+    startKeepAlive(sessionId);
     if (!appState.currentProfile) return;
     const authMsg: ConnectMessage = {
       type: 'connect',
@@ -322,7 +323,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
   appState.ws.onclose = (event) => {
     appState._wsConnected = false;
     appState.sshConnected = false;
-    stopKeepAlive();
+    stopKeepAlive(sessionId);
     if (appState.currentProfile) {
       _setStatus('disconnected', 'Disconnected');
       if (!openedThisAttempt) {
@@ -392,17 +393,23 @@ export function reconnect(): void {
 // the tab, unlike main-thread setInterval which gets throttled to ~60s.
 // The main thread also sends pings as a belt-and-suspenders fallback.
 const WS_PING_INTERVAL_MS = 25_000;
-let _keepAliveWorker: Worker | null = null;
 
-function startKeepAlive(): void {
-  stopKeepAlive();
+/** Exported for testing only. */
+export function _startKeepAlive(sessionId: string): void { startKeepAlive(sessionId); }
+/** Exported for testing only. */
+export function _stopKeepAlive(sessionId: string): void { stopKeepAlive(sessionId); }
+
+function startKeepAlive(sessionId: string): void {
+  stopKeepAlive(sessionId);
+  const session = appState.sessions.get(sessionId);
+  if (!session) return;
 
   // Main-thread keepalive (throttled in background, but works when visible)
-  appState.keepAliveTimer = setInterval(() => {
+  session.keepAliveTimer = setInterval(() => {
     if (appState.ws?.readyState === WebSocket.OPEN) {
       appState.ws.send(JSON.stringify({ type: 'ping' }));
     } else {
-      stopKeepAlive();
+      stopKeepAlive(sessionId);
     }
   }, WS_PING_INTERVAL_MS);
 
@@ -410,25 +417,27 @@ function startKeepAlive(): void {
   const wsUrl = appState.ws?.url;
   if (!wsUrl) return;
   try {
-    _keepAliveWorker = new Worker('ws-keepalive-worker.js');
-    _keepAliveWorker.onmessage = () => {
+    session.keepAliveWorker = new Worker('ws-keepalive-worker.js');
+    session.keepAliveWorker.onmessage = () => {
       // Worker's WS disconnected -- not critical, main-thread ping is still running
     };
-    _keepAliveWorker.postMessage({ command: 'start', url: wsUrl, interval: WS_PING_INTERVAL_MS });
+    session.keepAliveWorker.postMessage({ command: 'start', url: wsUrl, interval: WS_PING_INTERVAL_MS });
   } catch {
     // Worker unavailable -- main-thread setInterval is already running
   }
 }
 
-function stopKeepAlive(): void {
-  if (_keepAliveWorker) {
-    _keepAliveWorker.postMessage({ command: 'stop' });
-    _keepAliveWorker.terminate();
-    _keepAliveWorker = null;
+function stopKeepAlive(sessionId: string): void {
+  const session = appState.sessions.get(sessionId);
+  if (!session) return;
+  if (session.keepAliveWorker) {
+    session.keepAliveWorker.postMessage({ command: 'stop' });
+    session.keepAliveWorker.terminate();
+    session.keepAliveWorker = null;
   }
-  if (appState.keepAliveTimer) {
-    clearInterval(appState.keepAliveTimer);
-    appState.keepAliveTimer = null;
+  if (session.keepAliveTimer) {
+    clearInterval(session.keepAliveTimer);
+    session.keepAliveTimer = null;
   }
 }
 
@@ -468,7 +477,7 @@ document.addEventListener('visibilitychange', () => {
 export function disconnect(): void {
   stopAndDownloadRecording(); // auto-save any active recording (#54)
   cancelReconnect();
-  stopKeepAlive();
+  if (appState.activeSessionId) stopKeepAlive(appState.activeSessionId);
   releaseWakeLock();
   appState.currentProfile = null;
   appState.sshConnected = false;
