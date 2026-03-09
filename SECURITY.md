@@ -29,24 +29,28 @@ The bridge forwards raw bytes. No command parser, no action log, no telemetry. Y
 
 **Out of scope:** network-level attacks (delegated to Tailscale/WireGuard), compromised SSH target servers, physical device compromise.
 
-## Security review (v0.4.0)
+## Security review (latest)
 
-Automated review of 37 commits covering WS auth, input modes, routing, credential handling. No high-confidence vulnerabilities found.
+### Claude security review
 
-**Findings:**
-- HMAC-SHA256 WS auth: timing-safe comparison, per-boot secret rotation, token expiry -- sound
-- SSRF blocking: RFC-1918 and loopback address filtering intact
-- AES-GCM vault: 256-bit key derivation, no plaintext fallback path -- sound
-- XSS prevention: `escHtml()` used consistently on all user-supplied content rendered to DOM
-- Path traversal: static file server normalizes paths and validates against PUBLIC_DIR -- no vectors found
-- IME injection: compose mode textarea content is sent as raw bytes to SSH, not interpreted as HTML -- no injection surface
-- CSP: `script-src 'self'`, `style-src 'self'`, `connect-src 'self' wss:` -- restrictive and correct
+  No high-confidence security vulnerabilities found.
 
-## Known limitations
+  Review scope: Full codebase scan of server/index.js
+  (HTTP/WS/SSH/SFTP server), src/modules/*.ts (frontend), and
+  public/sw.js (service worker).
 
-- `PasswordCredential` API is Chrome/Android only. Safari, Firefox, and iOS do not support it. Credential persistence on these platforms requires the WebAuthn PRF path (#2).
-- The HMAC WS auth token is transmitted in the WebSocket URL query string. Over WSS (TLS) this is encrypted in transit, but may appear in server access logs. Tailscale's encrypted tunnel provides the primary transport security layer.
-- Service worker caches the app shell for offline use. `Cache-Control: no-store` and network-first strategy prevent serving stale authenticated content, but the offline shell itself is cached.
+  Positive security controls observed:
+  - HMAC-SHA256 WebSocket auth with timingSafeEqual()
+  comparison
+  - AES-GCM vault with PBKDF2 key derivation (600k iterations)
+  - escHtml() used consistently on user-supplied content in
+  double-quoted attributes
+  - SFTP paths passed to ssh2 library without shell
+  interpretation
+  - Cache-Control: no-store on all responses
+  - CSS.escape() for dynamic selectors
+  - No plaintext credential fallback path
+
 
 ## Reporting vulnerabilities
 
