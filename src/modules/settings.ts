@@ -86,6 +86,17 @@ export function initSettingsPanel(): void {
     });
   }
 
+  const remoteClipEl = document.getElementById('enableRemoteClipboard') as HTMLInputElement | null;
+  if (remoteClipEl) {
+    remoteClipEl.checked = localStorage.getItem('enableRemoteClipboard') === 'true';
+    remoteClipEl.addEventListener('change', () => {
+      localStorage.setItem('enableRemoteClipboard', String(remoteClipEl.checked));
+      _toast(remoteClipEl.checked
+        ? '⚠ Remote clipboard enabled. Reload to apply.'
+        : 'Remote clipboard disabled. Reload to apply.');
+    });
+  }
+
   const pinchEl = document.getElementById('enablePinchZoom') as HTMLInputElement | null;
   if (pinchEl) {
     pinchEl.checked = localStorage.getItem('enablePinchZoom') !== 'false';
