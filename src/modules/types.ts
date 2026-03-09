@@ -21,6 +21,7 @@ export interface SSHProfile {
   vaultId?: string;
   hasVaultCreds?: boolean;
   keyVaultId?: string;
+  theme?: ThemeName;
 }
 
 export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight';
@@ -140,6 +141,7 @@ export interface RecordingDeps {
 export interface ProfilesDeps {
   toast: (msg: string) => void;
   navigateToConnect: () => void;
+  applyTheme: (name: string, opts?: { persist?: boolean }) => void;
 }
 
 export interface SettingsDeps {

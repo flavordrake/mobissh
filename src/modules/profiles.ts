@@ -6,7 +6,7 @@
  * in the vault (never plaintext).
  */
 
-import type { ProfilesDeps, SSHProfile } from './types.js';
+import type { ProfilesDeps, SSHProfile, ThemeName } from './types.js';
 import { appState } from './state.js';
 import { escHtml } from './constants.js';
 import { vaultStore, vaultLoad, vaultDelete } from './vault.js';
@@ -17,10 +17,12 @@ export { escHtml };
 
 let _toast = (_msg: string): void => {};
 let _navigateToConnect = (): void => {};
+let _applyTheme = (_name: string, _opts?: { persist?: boolean }): void => {};
 
-export function initProfiles({ toast, navigateToConnect }: ProfilesDeps): void {
+export function initProfiles({ toast, navigateToConnect, applyTheme }: ProfilesDeps): void {
   _toast = toast;
   _navigateToConnect = navigateToConnect;
+  _applyTheme = applyTheme;
 }
 
 // Profile storage
@@ -35,6 +37,7 @@ interface StoredProfile {
   vaultId: string;
   hasVaultCreds?: boolean;
   keyVaultId?: string;
+  theme?: string;
 }
 
 export function getProfiles(): StoredProfile[] {
@@ -62,6 +65,10 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
   const selectedKeyId = (document.getElementById('selectedKeyId') as HTMLSelectElement | null)?.value || '';
   const usingStoredKey = profile.authType === 'key' && selectedKeyId !== '' && selectedKeyId !== 'manual';
 
+  // Read per-profile theme from form (may also be set on profile if passed directly)
+  const profileThemeEl = document.getElementById('profileTheme') as HTMLSelectElement | null;
+  const profileTheme = profile.theme ?? (profileThemeEl?.value || undefined);
+
   const saved: StoredProfile = {
     name: profile.name,
     host: profile.host,
@@ -70,6 +77,7 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
     authType: profile.authType,
     initialCommand: profile.initialCommand ?? '',
     vaultId,
+    ...(profileTheme ? { theme: profileTheme } : {}),
   };
 
   if (usingStoredKey) {
@@ -169,6 +177,9 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
   if (remotePpEl) remotePpEl.value = '';
   (document.getElementById('initialCommand') as HTMLInputElement).value = profile.initialCommand || '';
 
+  const profileThemeEl = document.getElementById('profileTheme') as HTMLSelectElement | null;
+  if (profileThemeEl) profileThemeEl.value = profile.theme ?? '';
+
   // Select the stored key in the dropdown if profile references one
   const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
   const manualKeyGroup = document.getElementById('manualKeyGroup');
@@ -217,6 +228,7 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
     username: profile.username,
     authType: profile.authType as 'password' | 'key',
     initialCommand: profile.initialCommand,
+    ...(profile.theme ? { theme: profile.theme as ThemeName } : {}),
   };
 
   if (profile.vaultId && profile.hasVaultCreds) {
@@ -267,6 +279,9 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
   }
 
   await connect(sshProfile);
+  if (sshProfile.theme) {
+    _applyTheme(sshProfile.theme, { persist: false });
+  }
   return true;
 }
 

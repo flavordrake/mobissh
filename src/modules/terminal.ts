@@ -297,6 +297,8 @@ export function applyTheme(name: string, { persist = false } = {}): void {
   style.setProperty('--border', t.app.border);
   style.setProperty('--accent', t.app.accent);
   style.setProperty('--accent-dim', t.app.accentDim);
+  const termContainer = document.getElementById('terminal');
+  if (termContainer) termContainer.dataset['theme'] = name;
   const menuBtn = document.getElementById('sessionThemeBtn');
   if (menuBtn) menuBtn.textContent = `Theme: ${t.label} ▸`;
   const sel = document.getElementById('termThemeSelect') as HTMLSelectElement | null;

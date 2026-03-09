@@ -183,6 +183,20 @@ body.debug-ime #imePreview {
   user-select: none; /* prevent Chrome double-tap text selection on terminal */
 }
 
+/* Per-session terminal theme scoping (#61).
+   When a profile has a theme set, applyTheme() writes data-theme on #terminal.
+   These rules override --terminal-bg so the terminal background matches the theme. */
+#terminal[data-theme="dark"]          { --terminal-bg: #000000; }
+#terminal[data-theme="light"]         { --terminal-bg: #ffffff; }
+#terminal[data-theme="solarizedDark"] { --terminal-bg: #002b36; }
+#terminal[data-theme="solarizedLight"]{ --terminal-bg: #fdf6e3; }
+#terminal[data-theme="highContrast"]  { --terminal-bg: #000000; }
+#terminal[data-theme="dracula"]       { --terminal-bg: #282a36; }
+#terminal[data-theme="nord"]          { --terminal-bg: #2e3440; }
+#terminal[data-theme="gruvboxDark"]   { --terminal-bg: #282828; }
+#terminal[data-theme="monokai"]       { --terminal-bg: #272822; }
+#terminal[data-theme="tokyoNight"]    { --terminal-bg: #1a1b26; }
+
 /* Block pointer/touch events on the xterm.js a11y overlay to prevent native
    paste/URL-open context menus (#55), while preserving screen reader access.
    The a11y tree is invisible — it needs no pointer interaction. */
