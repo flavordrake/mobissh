@@ -11,6 +11,6 @@
 - Verify commands in delegation: `scripts/test-fast-gate.sh` (never `npm test` or compound `&&` chains).
 - Bot branches use pattern `bot/issue-{N}`. Develop agents create and push these.
 - Bot branches get deleted during integration. Run `git remote prune origin` to clean stale tracking refs.
-- **Worktree cleanup after agents:** Agent worktrees in `.claude/worktrees/` persist when the agent makes changes. Run `git worktree prune` and remove stale directories before merge steps. `gh-ops.sh pr-merge` handles this automatically.
+- **Worktree cleanup:** Run `scripts/worktree-cleanup.sh` after agent work completes. It prunes git metadata, removes orphaned directories in `.claude/worktrees/`, and prunes stale remote refs. Already wired into `integrate-gate.sh`, `integrate-discover.sh`, and `gh-ops.sh` — but call it explicitly after develop agent batches too.
 - **CWD drift:** After agent tool calls, CWD may be inside a worktree. Always use absolute paths or explicit `cd /home/dev/workspace/mobissh` before running scripts.
 - Develop agent failure summaries are appended to `memory/bot-attempts.md`. Review before retrying.

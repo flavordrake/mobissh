@@ -43,8 +43,10 @@ _cleanup_pr_worktree() {
     git worktree list --porcelain | awk -v b="$branch" '/^worktree /{p=$2} /^branch /{if($2=="refs/heads/"b) print p}' | while read -r wt; do
       rm -rf "$wt"
     done
-    git worktree prune 2>/dev/null
+    git worktree prune 2>/dev/null || true
     git branch -D "$branch" 2>/dev/null || true
+    # Full orphan cleanup (removes directories git doesn't track)
+    scripts/worktree-cleanup.sh --quiet 2>/dev/null || true
   fi
 }
 
