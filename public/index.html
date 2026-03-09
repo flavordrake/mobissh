@@ -201,7 +201,11 @@
         <button id="selectionDismissBtn" class="selection-chip-btn selection-chip-dismiss" aria-label="Dismiss">✕</button>
       </div>
       <!-- IME composition preview — shows word being composed before commit (#44) -->
-      <div id="imePreview" class="hidden" aria-live="polite" aria-atomic="true"></div>
+      <div id="imePreview" class="hidden" aria-live="polite" aria-atomic="true">
+        <span id="imePreviewText" class="ime-preview-text"></span>
+        <button id="imeClearBtn" class="ime-preview-btn" aria-label="Clear compose">Clear</button>
+        <button id="imeCommitBtn" class="ime-preview-btn ime-preview-commit" aria-label="Send compose">Send</button>
+      </div>
       <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
         <button id="handleMenuBtn" class="handle-btn handle-menu-btn" title="Show tabs" aria-label="Show tabs">≡</button>

@@ -55,11 +55,31 @@ export function initIMEInput(): void {
     const el = document.getElementById('imePreview');
     if (!el) return;
     if (text) {
-      el.textContent = text;
+      const textEl = document.getElementById('imePreviewText');
+      if (textEl) textEl.textContent = text;
       el.classList.remove('hidden');
     } else {
       el.classList.add('hidden');
     }
+  }
+
+  // ── Preview action buttons: Clear and Send (#74) ───────────────────────
+  const clearBtn = document.getElementById('imeClearBtn');
+  const commitBtn = document.getElementById('imeCommitBtn');
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      _clearIME();
+      _imePreviewShow(null);
+    });
+  }
+
+  if (commitBtn) {
+    commitBtn.addEventListener('click', () => {
+      sendSSHInput('\r');
+      _clearIME();
+      _imePreviewShow(null);
+    });
   }
 
   // ── Textarea diffing state (handles post-composition corrections) ──────
