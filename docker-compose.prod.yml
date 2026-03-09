@@ -10,8 +10,10 @@ services:
       TS_AUTHKEY: "${TS_AUTHKEY:-}"
       TS_HOSTNAME: "${TS_HOSTNAME:-mobissh}"
       TS_SERVE: "1"
+      AGENT_HOME: "/host-home"
     volumes:
       - tailscale-state:/var/lib/tailscale
+      - ${HOME}:/host-home:rw
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
