@@ -130,6 +130,130 @@ export function setStatus(state: ConnectionStatus, text: string): void {
   }
 }
 
+// ── Session list (#60) ───────────────────────────────────────────────────────
+
+export function renderSessionList(): void {
+  const container = document.getElementById('sessionList');
+  if (!container) return;
+
+  const sessions = Array.from(appState.sessions.values());
+
+  // Hide the list when only 1 session exists
+  if (sessions.length <= 1) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+
+  const items = sessions.map((s) => {
+    const label = s.profile
+      ? escHtml(`${s.profile.username}@${s.profile.host}`)
+      : escHtml(s.id);
+    const isActive = s.id === appState.activeSessionId;
+    const activeClass = isActive ? ' active' : '';
+    return `<div class="session-item${activeClass}" data-session-id="${escHtml(s.id)}" role="menuitem">
+      <span class="session-item-dot" aria-hidden="true"></span>
+      <span class="session-item-label">${label}</span>
+      <button class="session-item-close" data-close-id="${escHtml(s.id)}" aria-label="Close session">✕</button>
+    </div>`;
+  }).join('');
+
+  container.innerHTML = items + '<button class="session-list-new" id="sessionListNewBtn" role="menuitem">+ New session</button>';
+
+  container.querySelectorAll<HTMLElement>('.session-item').forEach((item) => {
+    item.addEventListener('click', (e) => {
+      // Don't switch if the close button was clicked
+      const target = e.target as HTMLElement;
+      if (target.closest('.session-item-close')) return;
+      const id = item.dataset.sessionId;
+      if (id) switchSession(id);
+    });
+  });
+
+  container.querySelectorAll<HTMLElement>('.session-item-close').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.closeId;
+      if (id) closeSession(id);
+    });
+  });
+
+  document.getElementById('sessionListNewBtn')?.addEventListener('click', () => {
+    document.getElementById('sessionMenu')?.classList.add('hidden');
+    document.getElementById('menuBackdrop')?.classList.add('hidden');
+    navigateToPanel('connect');
+  });
+}
+
+export function switchSession(id: string): void {
+  const session = appState.sessions.get(id);
+  if (!session) return;
+
+  appState.activeSessionId = id;
+
+  // Hide all terminal containers, show the active one
+  document.querySelectorAll<HTMLElement>('[data-session-id]').forEach((el) => {
+    el.classList.toggle('hidden', el.dataset.sessionId !== id);
+  });
+
+  // Fit the newly visible terminal
+  session.fitAddon?.fit();
+
+  // Update session menu button text
+  const btn = document.getElementById('sessionMenuBtn');
+  if (btn && session.profile) {
+    btn.textContent = `${session.profile.username}@${session.profile.host}`;
+  }
+
+  // Close the menu
+  document.getElementById('sessionMenu')?.classList.add('hidden');
+  document.getElementById('menuBackdrop')?.classList.add('hidden');
+
+  // Re-render session list to update active indicator
+  renderSessionList();
+}
+
+export function closeSession(id: string): void {
+  const session = appState.sessions.get(id);
+  if (!session) return;
+
+  if (session.sshConnected) {
+    if (!confirm('Disconnect and close this session?')) return;
+    // Disconnect: close the WebSocket
+    try { session.ws?.close(); } catch { /* ignore */ }
+  }
+
+  // Clean up timers
+  if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+  if (session.keepAliveTimer) clearInterval(session.keepAliveTimer);
+  session.keepAliveWorker?.terminate();
+
+  // Remove terminal DOM container
+  const termContainer = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(id)}"]`);
+  termContainer?.remove();
+
+  appState.sessions.delete(id);
+
+  // If we just closed the active session, switch to another
+  if (appState.activeSessionId === id) {
+    const remaining = Array.from(appState.sessions.keys());
+    if (remaining.length > 0) {
+      switchSession(remaining[0]!);
+    } else {
+      appState.activeSessionId = null;
+      const btn = document.getElementById('sessionMenuBtn');
+      if (btn) {
+        btn.textContent = 'MobiSSH';
+        btn.classList.remove('connected');
+      }
+    }
+  }
+
+  renderSessionList();
+}
+
 // ── Focus IME ────────────────────────────────────────────────────────────────
 
 export function focusIME(): void {
