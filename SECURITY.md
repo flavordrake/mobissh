@@ -30,25 +30,36 @@ The bridge forwards raw bytes. No command parser, no action log, no telemetry. Y
 
 **Out of scope:** network-level attacks (delegated to Tailscale/WireGuard), compromised SSH target servers, physical device compromise.
 
-## Security review (latest)
+## External security assessments
 
-### Claude security review
+Two independent static reviews were conducted in March 2026. Full reports are in [`assessments/`](assessments/):
 
-  No high-confidence security vulnerabilities found.
+- [Codex review](assessments/CODEX-REVIEW.md) -- 5 findings (2 High, 2 Medium, 1 Low)
+- [Gemini review](assessments/GEMINI-REVIEW.md) -- 4 findings (1 Medium, 3 Low)
 
-  Review scope: Full codebase scan of server/index.js
-  (HTTP/WS/SSH/SFTP server), src/modules/*.ts (frontend), and
-  public/sw.js (service worker).
+Both reviews independently flagged CSWSH and SSRF as the top actionable issues. Both praised the vault implementation.
 
-  Positive security controls observed:
-  - HMAC-SHA256 WS token: anti-automation measure with timingSafeEqual() comparison (not session auth)
-  - AES-GCM vault with PBKDF2 key derivation (600k iterations)
-  - SSRF blocking: post-DNS IP range validation covers RFC-1918, loopback, link-local, CGNAT, and IPv4-mapped IPv6
-  - escHtml() used consistently on user-supplied content in double-quoted attributes
-  - SFTP paths passed to ssh2 library without shell interpretation
-  - Cache-Control: no-store on all responses
-  - CSS.escape() for dynamic selectors
-  - No plaintext credential fallback path
+### Actions taken
+
+| Finding | Severity | Action | Status |
+|---------|----------|--------|--------|
+| CSWSH: no Origin check when `TS_SERVE=1` | High/Medium | Added Origin header validation in `verifyClient` (`server/origin.js`) | Fixed (#83) |
+| SSRF: string-prefix bypass via DNS rebinding | Medium/Low | Replaced with post-DNS `isPrivateIp()` using numeric CIDR matching | Fixed (#84) |
+| Clipboard: OSC 52 addon loaded unconditionally | Medium | Disabled by default; opt-in toggle in Settings > Danger Zone | Fixed (#85) |
+| WS token described as auth boundary | High | Revised docs to clarify it's anti-automation, not session auth | Fixed |
+| SFTP downloads buffered in memory | Low | Accepted risk; streaming would limit full-featured SFTP functionality | Won't fix |
+| Root container execution | Low | Required for embedded Tailscale daemon; standard for this architecture | Accepted |
+| Insecure transport (non-VPN) | Low | Already mitigated: UI warning + Tailscale default deployment | No change needed |
+
+### Positive findings (both reviews)
+
+- AES-GCM vault with PBKDF2 (600k iterations), no plaintext fallback
+- HMAC-SHA256 WS token with timingSafeEqual() comparison
+- escHtml() used consistently on user-supplied DOM content
+- Restrictive CSP: `script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`
+- Small dependency footprint (ssh2, ws, xterm.js) -- all current
+- SFTP paths passed to ssh2 without shell interpretation
+- Cache-Control: no-store on all responses
 
 ## Known limitations
 
