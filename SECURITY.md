@@ -13,9 +13,10 @@ iOS credential persistence requires a WebAuthn PRF implementation (tracked in is
 
 ## Transport and access control
 
-- WebSocket upgrade requires HMAC token (per-boot secret, timing-safe, expiring)
+- WebSocket upgrade includes an HMAC token (per-boot secret, timing-safe, expiring). This is an anti-automation measure, not session authentication -- any client that can reach the HTTP endpoint can obtain a token. Real access control is provided by the network layer (Tailscale).
+- Origin header validation prevents cross-site WebSocket hijacking (CSWSH) from malicious webpages.
 - `Cache-Control: no-store` on all responses. Network-first service worker.
-- SSRF prevention blocks RFC-1918 and loopback addresses
+- SSRF prevention blocks private/reserved IP ranges (post-DNS resolution)
 - SSH host key TOFU with mismatch warnings
 - CSP restricts all script/style/connect sources. xterm.js vendored locally for `script-src 'self'`
 
@@ -40,17 +41,20 @@ The bridge forwards raw bytes. No command parser, no action log, no telemetry. Y
   public/sw.js (service worker).
 
   Positive security controls observed:
-  - HMAC-SHA256 WebSocket auth with timingSafeEqual()
-  comparison
+  - HMAC-SHA256 WS token: anti-automation measure with timingSafeEqual() comparison (not session auth)
   - AES-GCM vault with PBKDF2 key derivation (600k iterations)
-  - escHtml() used consistently on user-supplied content in
-  double-quoted attributes
-  - SFTP paths passed to ssh2 library without shell
-  interpretation
+  - SSRF blocking: post-DNS IP range validation covers RFC-1918, loopback, link-local, CGNAT, and IPv4-mapped IPv6
+  - escHtml() used consistently on user-supplied content in double-quoted attributes
+  - SFTP paths passed to ssh2 library without shell interpretation
   - Cache-Control: no-store on all responses
   - CSS.escape() for dynamic selectors
   - No plaintext credential fallback path
 
+## Known limitations
+
+- `PasswordCredential` API is Chrome/Android only. Safari, Firefox, and iOS do not support it. Credential persistence on these platforms requires the WebAuthn PRF path (#2).
+- The HMAC WS token is transmitted in the WebSocket URL query string. Over WSS (TLS) this is encrypted in transit, but may appear in server access logs. The token is an anti-automation measure; Tailscale's encrypted tunnel provides the real access control layer.
+- Service worker caches the app shell for offline use. `Cache-Control: no-store` and network-first strategy prevent serving stale authenticated content, but the offline shell itself is cached.
 
 ## Reporting vulnerabilities
 
