@@ -66,8 +66,44 @@ export function _getPassphraseCache(): Map<string, string> {
 }
 
 /** Returns true if the PEM key data appears to be passphrase-encrypted. */
-function _isKeyEncrypted(keyData: string): boolean {
-  return keyData.includes('ENCRYPTED');
+export function _isKeyEncrypted(keyData: string): boolean {
+  // Old-format PEM keys (RSA/DSA/EC) contain "ENCRYPTED" in the header
+  if (keyData.includes('ENCRYPTED')) return true;
+
+  // New-format OpenSSH keys: parse binary header to check cipher field
+  if (keyData.includes('-----BEGIN OPENSSH PRIVATE KEY-----')) {
+    try {
+      const b64 = keyData
+        .replace(/-----BEGIN OPENSSH PRIVATE KEY-----/, '')
+        .replace(/-----END OPENSSH PRIVATE KEY-----/, '')
+        .replace(/\s+/g, '');
+      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+
+      // AUTH_MAGIC = "openssh-key-v1\0" (15 bytes)
+      const magic = 'openssh-key-v1\0';
+      if (bin.length < magic.length + 4) return true; // too short, assume encrypted
+
+      for (let i = 0; i < magic.length; i++) {
+        if (bin[i] !== magic.charCodeAt(i)) return true; // bad magic, assume encrypted
+      }
+
+      // Read ciphername length (4-byte big-endian) then ciphername string
+      const offset = magic.length;
+      const b0 = bin[offset] ?? 0;
+      const b1 = bin[offset + 1] ?? 0;
+      const b2 = bin[offset + 2] ?? 0;
+      const b3 = bin[offset + 3] ?? 0;
+      const cipherLen = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+      if (cipherLen <= 0 || offset + 4 + cipherLen > bin.length) return true; // invalid, assume encrypted
+
+      const cipherName = new TextDecoder().decode(bin.slice(offset + 4, offset + 4 + cipherLen));
+      return cipherName !== 'none';
+    } catch {
+      return true; // parsing failed, assume encrypted (safe default)
+    }
+  }
+
+  return false;
 }
 
 /** Show the passphrase prompt dialog and return the entered passphrase, or null on cancel. */

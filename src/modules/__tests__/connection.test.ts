@@ -65,7 +65,7 @@ vi.stubGlobal('window', {
   },
 });
 
-const { _getPassphraseCache } = await import('../connection.js');
+const { _getPassphraseCache, _isKeyEncrypted } = await import('../connection.js');
 
 describe('Key passphrase cache (#54)', () => {
   beforeEach(() => {
@@ -99,5 +99,54 @@ describe('Key passphrase cache (#54)', () => {
     cache.set('key-2', 'pass-2');
     expect(cache.get('key-1')).toBe('pass-1');
     expect(cache.get('key-2')).toBe('pass-2');
+  });
+});
+
+describe('_isKeyEncrypted (#97)', () => {
+  it('detects old-format PEM encrypted key (contains ENCRYPTED)', () => {
+    const key = [
+      '-----BEGIN RSA PRIVATE KEY-----',
+      'Proc-Type: 4,ENCRYPTED',
+      'DEK-Info: AES-128-CBC,AABBCCDD',
+      'dGVzdGRhdGE=',
+      '-----END RSA PRIVATE KEY-----',
+    ].join('\n');
+    expect(_isKeyEncrypted(key)).toBe(true);
+  });
+
+  it('returns false for old-format unencrypted PEM key', () => {
+    const key = [
+      '-----BEGIN RSA PRIVATE KEY-----',
+      'dGVzdGRhdGE=',
+      '-----END RSA PRIVATE KEY-----',
+    ].join('\n');
+    expect(_isKeyEncrypted(key)).toBe(false);
+  });
+
+  it('detects new-format OpenSSH encrypted key (aes256-ctr cipher)', () => {
+    const key = [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0',
+      '-----END OPENSSH PRIVATE KEY-----',
+    ].join('\n');
+    expect(_isKeyEncrypted(key)).toBe(true);
+  });
+
+  it('returns false for new-format OpenSSH unencrypted key (none cipher)', () => {
+    const key = [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ==',
+      '-----END OPENSSH PRIVATE KEY-----',
+    ].join('\n');
+    expect(_isKeyEncrypted(key)).toBe(false);
+  });
+
+  it('defaults to encrypted when OpenSSH key has invalid/truncated data', () => {
+    const key = [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'AAAA',
+      '-----END OPENSSH PRIVATE KEY-----',
+    ].join('\n');
+    expect(_isKeyEncrypted(key)).toBe(true);
   });
 });
