@@ -43,6 +43,7 @@ function get(urlPath: string): Promise<{ status: number; json: Record<string, un
 beforeAll(async () => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-hooks-test-'));
   process.env.HOME = tmpHome;
+  process.env.AGENT_HOME = tmpHome;
 
   // Clear require cache so server re-reads HOME
   const serverPath = path.resolve(__dirname, '../../../server/index.js');
@@ -62,6 +63,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((resolve) => { server.close(() => { resolve(); }); });
   fs.rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.AGENT_HOME;
 });
 
 beforeEach(() => {

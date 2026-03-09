@@ -270,7 +270,7 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
   const urlPath = req.url.split('?')[0];
 
   if (urlPath === '/api/detect-agents') {
-    const homeDir = process.env.HOME || os.homedir();
+    const homeDir = process.env.AGENT_HOME || process.env.HOME || os.homedir();
     const agents = [
       { name: 'Claude Code', id: 'claude', configPath: path.join(homeDir, '.claude', 'settings.json') },
       { name: 'Codex', id: 'codex', configPath: path.join(homeDir, '.codex', 'config.toml') },
@@ -314,7 +314,7 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
     req.on('end', () => {
       try {
         const { agent } = JSON.parse(body);
-        const homeDir = process.env.HOME || os.homedir();
+        const homeDir = process.env.AGENT_HOME || process.env.HOME || os.homedir();
         const hooksDir = path.join(homeDir, '.claude', 'hooks');
         const scriptPath = path.join(hooksDir, 'notify-bell.sh');
 
@@ -402,7 +402,7 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
     req.on('end', () => {
       try {
         const { agent } = JSON.parse(body);
-        const homeDir = process.env.HOME || os.homedir();
+        const homeDir = process.env.AGENT_HOME || process.env.HOME || os.homedir();
 
         if (agent === 'claude') {
           const settingsPath = path.join(homeDir, '.claude', 'settings.json');
