@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { Readable, Writable } = require('stream');
 
-const { rewriteManifest, handleSftpMessage, isPrivateIp } = require('./index.js');
+const { rewriteManifest, handleSftpMessage, isPrivateIp, isCgnatIp } = require('./index.js');
 
 test('rewriteManifest: sets id="mobissh"', () => {
   const input = Buffer.from(JSON.stringify({ name: 'MobiSSH', start_url: '/' }));
@@ -258,4 +258,75 @@ test('isPrivateIp: ::ffff:10.0.0.1 is private (IPv4-mapped RFC-1918)', () => {
 
 test('isPrivateIp: ::ffff:8.8.8.8 is NOT private (IPv4-mapped public)', () => {
   assert.equal(isPrivateIp('::ffff:8.8.8.8'), false);
+});
+
+// ─── isCgnatIp tests (issue #91) ──────────────────────────────────────────────
+
+test('isCgnatIp: 100.64.0.1 is CGNAT', () => {
+  assert.equal(isCgnatIp('100.64.0.1'), true);
+});
+
+test('isCgnatIp: 100.127.255.255 is CGNAT (boundary)', () => {
+  assert.equal(isCgnatIp('100.127.255.255'), true);
+});
+
+test('isCgnatIp: 100.63.255.255 is NOT CGNAT (just below range)', () => {
+  assert.equal(isCgnatIp('100.63.255.255'), false);
+});
+
+test('isCgnatIp: 100.128.0.0 is NOT CGNAT (just above range)', () => {
+  assert.equal(isCgnatIp('100.128.0.0'), false);
+});
+
+test('isCgnatIp: 10.0.0.1 is NOT CGNAT', () => {
+  assert.equal(isCgnatIp('10.0.0.1'), false);
+});
+
+test('isCgnatIp: 192.168.1.1 is NOT CGNAT', () => {
+  assert.equal(isCgnatIp('192.168.1.1'), false);
+});
+
+// ─── TS_SERVE CGNAT exemption tests (issue #91) ───────────────────────────────
+// These tests verify the connect()-level logic by directly testing the
+// isPrivateIp + isCgnatIp combination that the connect() function uses.
+
+test('CGNAT allowed when TS_SERVE=1: 100.64.x.x is still private via isPrivateIp', () => {
+  // isPrivateIp still classifies CGNAT as private — the exemption lives in connect()
+  assert.equal(isPrivateIp('100.64.100.5'), true);
+});
+
+test('CGNAT exemption logic: TS_SERVE=1 allows 100.64.x.x', () => {
+  // Simulate the connect() guard: blocked = isPrivateIp && !(tsMode && isCgnat)
+  const ip = '100.64.100.5';
+  const tsMode = true;
+  const blocked = isPrivateIp(ip) && !(tsMode && isCgnatIp(ip));
+  assert.equal(blocked, false);
+});
+
+test('CGNAT exemption logic: no TS_SERVE blocks 100.64.x.x', () => {
+  const ip = '100.64.100.5';
+  const tsMode = false;
+  const blocked = isPrivateIp(ip) && !(tsMode && isCgnatIp(ip));
+  assert.equal(blocked, true);
+});
+
+test('CGNAT exemption logic: TS_SERVE=1 still blocks 192.168.x.x', () => {
+  const ip = '192.168.1.1';
+  const tsMode = true;
+  const blocked = isPrivateIp(ip) && !(tsMode && isCgnatIp(ip));
+  assert.equal(blocked, true);
+});
+
+test('CGNAT exemption logic: TS_SERVE=1 still blocks 127.0.0.1', () => {
+  const ip = '127.0.0.1';
+  const tsMode = true;
+  const blocked = isPrivateIp(ip) && !(tsMode && isCgnatIp(ip));
+  assert.equal(blocked, true);
+});
+
+test('CGNAT exemption logic: TS_SERVE=1 still blocks 10.0.0.1', () => {
+  const ip = '10.0.0.1';
+  const tsMode = true;
+  const blocked = isPrivateIp(ip) && !(tsMode && isCgnatIp(ip));
+  assert.equal(blocked, true);
 });

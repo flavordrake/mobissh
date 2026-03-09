@@ -416,6 +416,22 @@ if (require.main === module) {
 // preventing DNS rebinding attacks where a public hostname resolves to a private IP.
 
 /**
+ * Returns true if the given resolved IPv4 address falls within the CGNAT range
+ * 100.64.0.0/10 (used by Tailscale).
+ */
+function isCgnatIp(ip) {
+  const s = ip.trim().toLowerCase();
+  const parts = s.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!parts) return false;
+  const a = parseInt(parts[1]);
+  const b = parseInt(parts[2]);
+  if (a > 255 || b > 255) return false;
+  const n = (a << 24 >>> 0) + (b << 16);
+  const mask = (~0 << (32 - 10)) >>> 0;
+  return (n & mask) === (0x64400000 & mask);
+}
+
+/**
  * Returns true if the given resolved IP address falls within any private,
  * loopback, link-local, CGNAT, ULA, or unspecified range.
  *
@@ -570,7 +586,12 @@ wss.on('connection', (ws, req) => {
         connecting = false;
         return;
       }
-      if (isPrivateIp(address) && !cfg.allowPrivate) {
+      // In Tailscale mode (TS_SERVE=1), exempt CGNAT (100.64.0.0/10) since
+      // Tailscale node addresses live in that range — this is the primary
+      // deployment target. All other private ranges remain blocked (#91).
+      const isTailscaleMode = process.env.TS_SERVE === '1';
+      const blockedPrivate = isPrivateIp(address) && !(isTailscaleMode && isCgnatIp(address));
+      if (blockedPrivate && !cfg.allowPrivate) {
         send({ type: 'error', message: 'Connections to private/loopback addresses are blocked. Enable "Allow private addresses" in Settings → Danger Zone to override.' });
         connecting = false;
         return;
@@ -745,4 +766,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { rewriteManifest, server, handleSftpMessage, isOriginAllowed, isPrivateIp };
+module.exports = { rewriteManifest, server, handleSftpMessage, isOriginAllowed, isPrivateIp, isCgnatIp };
