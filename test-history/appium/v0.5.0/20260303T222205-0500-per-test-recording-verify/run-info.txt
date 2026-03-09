@@ -1,5 +1,0 @@
-timestamp: 20260303T222205-0500
-git_hash: 9427fb6
-test_spec: all
-suite: per-test-recording-verify
-exit_code: 0

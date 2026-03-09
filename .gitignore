@@ -14,3 +14,4 @@ test-results-appium/
 public/modules/*.js
 test-data/
 .claude/worktrees/
+test-history/

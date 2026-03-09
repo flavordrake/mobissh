@@ -1,5 +1,0 @@
-timestamp: 20260304T095741-0500
-git_hash: 1055ed8
-test_spec: all
-suite: selection-phase2
-exit_code: 0

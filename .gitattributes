@@ -1,5 +1,0 @@
-# Video recordings from test runs — stored in Git LFS
-test-history/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
-test-history/**/*.webm filter=lfs diff=lfs merge=lfs -text
-# HTML reports with embedded screenshots — treat as binary
-test-history/**/report/data/*.png binary -diff

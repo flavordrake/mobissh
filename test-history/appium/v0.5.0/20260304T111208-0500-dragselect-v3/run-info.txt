@@ -1,5 +1,0 @@
-timestamp: 20260304T111208-0500
-git_hash: 314fdae
-test_spec: selection-dragselect-explore
-suite: dragselect-v3
-exit_code: 1
