@@ -8,6 +8,7 @@
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 import { vaultLoad } from './vault.js';
+import { showErrorDialog } from './ui.js';
 
 // [SFTP_MSG] -- keep in sync with types.ts SERVER_MESSAGE sftp types and WS router below
 type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
@@ -267,7 +268,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
 
       case 'error':
-        if (!silent) _showConnectionStatus(`Error: ${msg.message}`);
+        showErrorDialog(`Connection error:\n\n${msg.message}`);
         break;
 
       case 'disconnected':
@@ -331,7 +332,8 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         _wsConsecFailures++;
         if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
           _wsConsecFailures = 0;
-          _showConnectionStatus('Connection rejected repeatedly. Your session token may have expired — reload the page to get a fresh one.');
+          _dismissConnectionStatus();
+          showErrorDialog('Connection rejected repeatedly.\n\nYour session token may have expired — reload the page to get a fresh one.');
           _setStatus('disconnected', 'Auth failed — reload to reconnect');
           return; // stop the reconnect loop
         }
@@ -355,7 +357,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
   };
 
   appState.ws.onerror = () => {
-    if (!silent) _showConnectionStatus('WebSocket error — check server URL in Settings.');
+    if (!silent) showErrorDialog('WebSocket error — check server URL in Settings.');
   };
 }
 
