@@ -8,7 +8,7 @@
 - `integrate-gate.sh` takes branch name as first arg, not issue number.
 - Permission allow-list uses `Bash(scripts/*)` not `Bash(bash *)`.
 - Always commit infra changes (skills, agents, CLAUDE.md) BEFORE delegating. Worktrees and bot branches clone from HEAD, not working directory.
-- Verify commands in delegation: `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh` (never `npm test`).
+- Verify commands in delegation: `scripts/test-fast-gate.sh` (never `npm test` or compound `&&` chains).
 - Bot branches use pattern `bot/issue-{N}`. Develop agents create and push these.
 - Bot branches get deleted during integration. Run `git remote prune origin` to clean stale tracking refs.
 - **Worktree cleanup after agents:** Agent worktrees in `.claude/worktrees/` persist when the agent makes changes. Run `git worktree prune` and remove stale directories before merge steps. `gh-ops.sh pr-merge` handles this automatically.

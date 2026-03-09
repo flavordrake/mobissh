@@ -15,7 +15,8 @@
 ## PR checklist
 Before submitting a PR, run the full test suite:
 ```
-scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh
+scripts/test-fast-gate.sh
+scripts/test-headless.sh
 ```
 
 ## Know when to quit

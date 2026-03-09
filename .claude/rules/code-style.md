@@ -6,8 +6,9 @@
 - `node_modules/` is gitignored. Install via `npm install` in `server/`.
 - Build step is TypeScript compilation only. No heavy bundlers (webpack, vite) unless justified.
 - **Compiled JS (`public/modules/*.js`) is gitignored.** Do NOT commit compiled output. It is built automatically by Docker (`Dockerfile`), `scripts/server-ctl.sh`, and `scripts/test-headless.sh`. Run `npx tsc` locally if needed for development.
-- **No compound `&&` chains with `gh`/`git`.** Use `scripts/gh-ops.sh` subcommands instead. Chained commands cause false positive failures (e.g., local branch delete fails but remote merge succeeded, exit 1 blocks downstream steps).
+- **No compound `&&` chains.** Use wrapper scripts, not `&&`-chained raw commands. Chained commands cause false positive failures (e.g., local branch delete fails but remote merge succeeded, exit 1 blocks downstream steps).
   - Merge + close: `scripts/gh-ops.sh integrate <PR> <issue>`
   - Delegate setup: `scripts/gh-ops.sh delegate <issue> [--label L]`
   - Labels: `scripts/gh-ops.sh labels <issue> --add X --rm Y`
   - Server: `scripts/container-ctl.sh ensure` (not raw docker compose chains)
+  - Fast gate: `scripts/test-fast-gate.sh` (not `test-typecheck.sh && test-lint.sh && test-unit.sh`)
