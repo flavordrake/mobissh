@@ -157,4 +157,159 @@ test.describe('Files panel', () => {
     expect(unknownMsgErrors).toHaveLength(0);
   });
 
+  test('shows progress indicator during upload and clears it on success', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await showTabBar(page);
+
+    // Navigate to Files tab
+    await page.locator('[data-panel="files"]').click();
+    await expect(page.locator('#panel-files')).toHaveClass(/active/);
+
+    // Drive realpath + ls to get to a directory listing
+    await page.waitForFunction(
+      () => (window.__mockWsSpy || []).some((s) => {
+        try { return JSON.parse(s).type === 'sftp_realpath'; } catch (_) { return false; }
+      }),
+      null,
+      { timeout: 5000 },
+    );
+    const realpathMsg = mockSshServer.messages.find((m) => m.type === 'sftp_realpath');
+    mockSshServer.sendToPage({ type: 'sftp_realpath_result', requestId: realpathMsg.requestId, path: '/home/testuser' });
+
+    await page.waitForFunction(
+      () => (window.__mockWsSpy || []).some((s) => {
+        try { return JSON.parse(s).type === 'sftp_ls'; } catch (_) { return false; }
+      }),
+      null,
+      { timeout: 5000 },
+    );
+    const lsMsg = mockSshServer.messages.find((m) => m.type === 'sftp_ls');
+    mockSshServer.sendToPage({
+      type: 'sftp_ls_result',
+      requestId: lsMsg.requestId,
+      entries: [
+        { name: 'readme.md', isDir: false, isSymlink: false, size: 512, mtime: '1700000000', atime: '1700000000', permissions: 0o100644, uid: 1000, gid: 1000 },
+      ],
+    });
+    await page.waitForSelector('.files-entry', { timeout: 5000 });
+
+    // Trigger a file upload by dispatching a change event on the hidden file input with a fake File
+    await page.evaluate(() => {
+      const input = document.querySelector('.files-upload-input');
+      const file = new File(['hello'], 'test.txt', { type: 'text/plain' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      Object.defineProperty(input, 'files', { value: dt.files, configurable: true });
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // Progress indicator should appear with uploading status
+    await expect(page.locator('.files-transfer-status')).not.toHaveClass(/hidden/, { timeout: 3000 });
+    const statusText = await page.locator('.files-transfer-status').textContent();
+    expect(statusText).toMatch(/Uploading/i);
+
+    // Wait for the sftp_upload message to arrive at the mock server
+    await page.waitForFunction(
+      () => (window.__mockWsSpy || []).some((s) => {
+        try { return JSON.parse(s).type === 'sftp_upload'; } catch (_) { return false; }
+      }),
+      null,
+      { timeout: 5000 },
+    );
+
+    // Respond with success
+    const uploadMsg = mockSshServer.messages.find((m) => m.type === 'sftp_upload');
+    expect(uploadMsg).toBeTruthy();
+    mockSshServer.sendToPage({ type: 'sftp_upload_result', requestId: uploadMsg.requestId, ok: true });
+
+    // After success, a new ls is triggered; respond to it so the panel re-renders
+    await page.waitForFunction(
+      () => (window.__mockWsSpy || []).filter((s) => {
+        try { return JSON.parse(s).type === 'sftp_ls'; } catch (_) { return false; }
+      }).length >= 2,
+      null,
+      { timeout: 5000 },
+    );
+    const lsMsgs = mockSshServer.messages.filter((m) => m.type === 'sftp_ls');
+    const refreshLs = lsMsgs[lsMsgs.length - 1];
+    mockSshServer.sendToPage({
+      type: 'sftp_ls_result',
+      requestId: refreshLs.requestId,
+      entries: [
+        { name: 'readme.md', isDir: false, isSymlink: false, size: 512, mtime: '1700000000', atime: '1700000000', permissions: 0o100644, uid: 1000, gid: 1000 },
+        { name: 'test.txt', isDir: false, isSymlink: false, size: 5, mtime: '1700000001', atime: '1700000001', permissions: 0o100644, uid: 1000, gid: 1000 },
+      ],
+    });
+    await page.waitForSelector('.files-entry', { timeout: 5000 });
+
+    // Transfer status should be hidden after success
+    await expect(page.locator('.files-transfer-status')).toHaveClass(/hidden/, { timeout: 3000 });
+  });
+
+  test('shows error toast and clears status when upload result has ok=false', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await showTabBar(page);
+
+    await page.locator('[data-panel="files"]').click();
+    await expect(page.locator('#panel-files')).toHaveClass(/active/);
+
+    await page.waitForFunction(
+      () => (window.__mockWsSpy || []).some((s) => {
+        try { return JSON.parse(s).type === 'sftp_realpath'; } catch (_) { return false; }
+      }),
+      null,
+      { timeout: 5000 },
+    );
+    const realpathMsg = mockSshServer.messages.find((m) => m.type === 'sftp_realpath');
+    mockSshServer.sendToPage({ type: 'sftp_realpath_result', requestId: realpathMsg.requestId, path: '/home/testuser' });
+
+    await page.waitForFunction(
+      () => (window.__mockWsSpy || []).some((s) => {
+        try { return JSON.parse(s).type === 'sftp_ls'; } catch (_) { return false; }
+      }),
+      null,
+      { timeout: 5000 },
+    );
+    const lsMsg = mockSshServer.messages.find((m) => m.type === 'sftp_ls');
+    mockSshServer.sendToPage({
+      type: 'sftp_ls_result',
+      requestId: lsMsg.requestId,
+      entries: [
+        { name: 'readme.md', isDir: false, isSymlink: false, size: 512, mtime: '1700000000', atime: '1700000000', permissions: 0o100644, uid: 1000, gid: 1000 },
+      ],
+    });
+    await page.waitForSelector('.files-entry', { timeout: 5000 });
+
+    // Trigger upload
+    await page.evaluate(() => {
+      const input = document.querySelector('.files-upload-input');
+      const file = new File(['hello'], 'test.txt', { type: 'text/plain' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      Object.defineProperty(input, 'files', { value: dt.files, configurable: true });
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // Wait for sftp_upload to be sent
+    await page.waitForFunction(
+      () => (window.__mockWsSpy || []).some((s) => {
+        try { return JSON.parse(s).type === 'sftp_upload'; } catch (_) { return false; }
+      }),
+      null,
+      { timeout: 5000 },
+    );
+
+    // Respond with failure
+    const uploadMsg = mockSshServer.messages.find((m) => m.type === 'sftp_upload');
+    mockSshServer.sendToPage({ type: 'sftp_upload_result', requestId: uploadMsg.requestId, ok: false });
+
+    // Toast should show an error message
+    await expect(page.locator('#toast')).toHaveClass(/show/, { timeout: 3000 });
+    const toastText = await page.locator('#toast').textContent();
+    expect(toastText).toMatch(/upload failed/i);
+
+    // Transfer status should be hidden after failure
+    await expect(page.locator('.files-transfer-status')).toHaveClass(/hidden/, { timeout: 3000 });
+  });
+
 });

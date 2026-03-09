@@ -781,6 +781,8 @@ let _uploadActive = false;
 let _uploadCompleted = 0;
 let _uploadTotal = 0;
 let _transferStatus = '';
+let _uploadTimeoutId: ReturnType<typeof setTimeout> | null = null;
+const UPLOAD_TIMEOUT_MS = 60_000;
 
 function _setTransferStatus(text: string): void {
   _transferStatus = text;
@@ -818,7 +820,15 @@ function _readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+function _cancelUploadTimeout(): void {
+  if (_uploadTimeoutId !== null) {
+    clearTimeout(_uploadTimeoutId);
+    _uploadTimeoutId = null;
+  }
+}
+
 function _processNextUpload(): void {
+  _cancelUploadTimeout();
   const item = _uploadQueue.shift();
   if (!item) {
     _uploadActive = false;
@@ -832,6 +842,14 @@ function _processNextUpload(): void {
   const reqId = `up-${String(Date.now())}`;
   _uploadPending.set(reqId, item.remotePath);
   sendSftpUpload(item.remotePath, item.data, reqId);
+  _uploadTimeoutId = setTimeout(() => {
+    _uploadTimeoutId = null;
+    _uploadPending.delete(reqId);
+    _uploadQueue = [];
+    _uploadActive = false;
+    _setTransferStatus('');
+    toast('Upload timed out');
+  }, UPLOAD_TIMEOUT_MS);
 }
 
 async function _startUpload(files: FileList): Promise<void> {
@@ -1182,8 +1200,16 @@ export function initFilesPanel(): void {
       _setTransferStatus('');
       if (filename) _triggerBlobDownload(filename, msg.data);
     } else if (msg.type === 'sftp_upload_result') {
+      _cancelUploadTimeout();
       _uploadPending.delete(msg.requestId);
-      _processNextUpload();
+      if (!msg.ok) {
+        _uploadQueue = [];
+        _uploadActive = false;
+        _setTransferStatus('');
+        toast('Upload failed');
+      } else {
+        _processNextUpload();
+      }
     } else if (msg.type === 'sftp_rename_result') {
       const dir = _renamePending.get(msg.requestId);
       _renamePending.delete(msg.requestId);
