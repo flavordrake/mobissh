@@ -680,3 +680,127 @@ test.describe('IME state machine — compose + preview (#106)', () => {
     expect(val).toBe('');
   });
 });
+
+// ── IME cursor-based auto-positioning (#106) ──────────────────────────────────
+
+test.describe('IME auto-positioning based on cursor (#106)', () => {
+  /**
+   * Stub appState.terminal with a fake buffer so _effectiveDock() can read
+   * cursorY and rows without a real xterm instance.
+   */
+  async function stubTerminalCursor(page, cursorY, rows) {
+    await page.evaluate(({ cy, r }) => {
+      // Access appState via the module (already loaded by the app)
+      // We mock it by patching the object in place using a dynamic import
+      return import('./modules/state.js').then(({ appState: state }) => {
+        if (!state.terminal) {
+          // Create a minimal stub if no real terminal
+          state.terminal = {
+            buffer: { active: { cursorY: cy } },
+            rows: r,
+          };
+        } else {
+          // Override cursor position on the real terminal buffer proxy
+          Object.defineProperty(state.terminal.buffer.active, 'cursorY', {
+            get: () => cy, configurable: true,
+          });
+          Object.defineProperty(state.terminal, 'rows', {
+            get: () => r, configurable: true,
+          });
+        }
+      });
+    }, { cy: cursorY, r: rows });
+  }
+
+  test('cursor in top half → IME preview positioned at bottom', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Place cursor in top half (row 3 of 24 rows)
+    await stubTerminalCursor(page, 3, 24);
+
+    await swipeCompose(page, 'hello');
+    await page.waitForTimeout(100);
+
+    // IME should be visible and positioned at bottom (bottom style set, top = 'auto')
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+    const imeStyle = await page.locator('#imeInput').evaluate((el) => ({
+      bottom: el.style.bottom,
+      top: el.style.top,
+    }));
+    expect(imeStyle.top).toBe('auto');
+    expect(imeStyle.bottom).not.toBe('');
+    expect(imeStyle.bottom).not.toBe('auto');
+  });
+
+  test('cursor in bottom half → IME preview positioned at top', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Place cursor in bottom half (row 20 of 24 rows)
+    await stubTerminalCursor(page, 20, 24);
+
+    await swipeCompose(page, 'world');
+    await page.waitForTimeout(100);
+
+    // IME should be visible and positioned at top (top style set, bottom = 'auto')
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+    const imeStyle = await page.locator('#imeInput').evaluate((el) => ({
+      bottom: el.style.bottom,
+      top: el.style.top,
+    }));
+    expect(imeStyle.bottom).toBe('auto');
+    expect(imeStyle.top).not.toBe('');
+    expect(imeStyle.top).not.toBe('auto');
+  });
+
+  test('no terminal → defaults to stored _dockPosition (top)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Remove terminal from appState to simulate disconnected state
+    await page.evaluate(() => {
+      return import('./modules/state.js').then(({ appState: state }) => {
+        state.terminal = null;
+      });
+    });
+
+    await swipeCompose(page, 'fallback');
+    await page.waitForTimeout(100);
+
+    // IME should be visible; default dock is 'top' (localStorage not set)
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+    const imeStyle = await page.locator('#imeInput').evaluate((el) => ({
+      bottom: el.style.bottom,
+      top: el.style.top,
+    }));
+    // Default _dockPosition is 'top'
+    expect(imeStyle.bottom).toBe('auto');
+    expect(imeStyle.top).not.toBe('auto');
+  });
+
+  test('manual dock toggle overrides auto-positioning within same composition', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Cursor in top half → auto would pick bottom
+    await stubTerminalCursor(page, 3, 24);
+    await swipeCompose(page, 'test');
+    await page.waitForTimeout(100);
+
+    // Verify auto picked bottom
+    const before = await page.locator('#imeInput').evaluate((el) => el.style.top);
+    expect(before).toBe('auto');
+
+    // User clicks dock toggle — should flip to top
+    await page.locator('#imeDockToggle').click();
+    await page.waitForTimeout(100);
+
+    const after = await page.locator('#imeInput').evaluate((el) => ({
+      bottom: el.style.bottom,
+      top: el.style.top,
+    }));
+    expect(after.bottom).toBe('auto');
+    expect(after.top).not.toBe('auto');
+  });
+});
