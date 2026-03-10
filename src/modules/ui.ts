@@ -322,10 +322,14 @@ export function initSessionMenu(): void {
   const themeBtn = document.getElementById('sessionThemeBtn');
   if (themeBtn) themeBtn.textContent = `Theme: ${initialTheme.label} ▸`;
 
-  // Prevent focus theft only when the keyboard is already visible (#51).
-  menuBtn.addEventListener('mousedown', (e) => {
-    if (_keyboardVisible()) e.preventDefault();
-  });
+  // Prevent focus theft from any session-bar button when keyboard is visible (#115).
+  // Container-level handler covers menuBtn, compose, preview, bell, hamburger.
+  const handleBar = document.getElementById('key-bar-handle');
+  if (handleBar) {
+    handleBar.addEventListener('mousedown', (e) => {
+      if (_keyboardVisible()) e.preventDefault();
+    });
+  }
 
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
