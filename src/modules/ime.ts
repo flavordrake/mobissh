@@ -220,7 +220,9 @@ export function initIMEInput(): void {
   let _lastSentValue = '';
   let _replacementHandled = false;
   let _clearTimer: ReturnType<typeof setTimeout> | null = null;
-  let _justTransitionedToIdle = false;
+  /** Timestamp of most recent transition to idle — used to reject late browser
+   *  re-insertion events that fire within a short window after compositionend. */
+  let _idleTransitionTime = 0;
 
   /** Transition the IME state machine. All state changes go through here. */
   function _transition(to: IMEState): void {
@@ -231,14 +233,13 @@ export function initIMEInput(): void {
 
     // Cancel pending clear on any transition
     if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
-    // Clear stale-input guard when leaving idle (new composition starting)
-    if (from === 'idle') _justTransitionedToIdle = false;
+    // No flag to clear — time-based guard handles stale input rejection
 
     switch (to) {
       case 'idle':
         ime.value = '';
         _lastSentValue = '';
-        _justTransitionedToIdle = true;
+        _idleTransitionTime = Date.now();
         ime.classList.remove('ime-visible', 'ime-editing');
         if (imeActions) imeActions.classList.remove('ime-editing');
         ime.style.height = '';
@@ -421,8 +422,9 @@ export function initIMEInput(): void {
   // ── input event ─────────────────────────────────────────────────────────
   ime.addEventListener('input', () => {
     // Browser can re-insert composed text after compositionend + _transition('idle').
-    // Flag stays true until next compositionstart — catches ALL late input events.
-    if (_justTransitionedToIdle) {
+    // Reject input events within 150ms of idle transition — covers all late re-insertion
+    // without permanently blocking input (which caused first/every-other word loss).
+    if (Date.now() - _idleTransitionTime < 150) {
       if (ime.value) { ime.value = ''; }
       return;
     }
@@ -471,10 +473,8 @@ export function initIMEInput(): void {
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
   ime.addEventListener('compositionstart', () => {
-    // New composition: if starting from idle, clear any stale browser-reinserted text
-    if (_imeState === 'idle') {
-      ime.value = '';
-    }
+    // New composition: clear any stale text that browser might have re-inserted
+    if (_imeState === 'idle') ime.value = '';
     _transition('composing');
     _showIMEOverlay();
   });
