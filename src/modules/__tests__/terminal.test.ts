@@ -178,31 +178,42 @@ describe('noise filtering (#94)', () => {
   });
 });
 
-describe('bell badge always added regardless of notify settings (#120)', () => {
+describe('background-only filtering (#94)', () => {
   beforeEach(() => {
     clearNotifications();
     storage.clear();
     vi.setSystemTime(Date.now());
   });
 
-  it('adds to list when backgroundOnly=true and page is visible', () => {
-    // _addNotification no longer gates on shouldNotify — bell badge always shows
-    _addNotification('foreground bell');
+  it('allows notifications when backgroundOnly=true and page is hidden', () => {
+    enableNotifications(true);
+    _addNotification('from background');
     expect(getNotifications().length).toBe(1);
   });
 
-  it('adds to list when termNotifications is disabled', () => {
+  it('blocks notifications when backgroundOnly=true and page is visible', () => {
+    enableNotifications(false);
+    storage.set('notifBackgroundOnly', 'true');
+    _addNotification('should be blocked');
+    expect(getNotifications().length).toBe(0);
+  });
+
+  it('blocks notifications when termNotifications is disabled', () => {
+    enableNotifications(false);
     storage.set('termNotifications', 'false');
-    _addNotification('notifs off but badge shows');
-    expect(getNotifications().length).toBe(1);
+    _addNotification('should be blocked');
+    expect(getNotifications().length).toBe(0);
   });
 
-  it('adds to list when Notification.permission is not granted', () => {
-    _addNotification('no permission but badge shows');
-    expect(getNotifications().length).toBe(1);
+  it('blocks notifications when Notification.permission is not granted', () => {
+    enableNotifications(false);
+    vi.stubGlobal('Notification', { permission: 'denied' });
+    _addNotification('no permission');
+    expect(getNotifications().length).toBe(0);
   });
 
-  it('adds to list when backgroundOnly=false and page is visible', () => {
+  it('allows notifications when backgroundOnly=false and page is visible', () => {
+    enableNotifications(false);
     _addNotification('foreground message');
     expect(getNotifications().length).toBe(1);
   });
