@@ -323,3 +323,106 @@ test.describe('Session list (#60)', () => {
   });
 
 });
+
+test.describe('Long-press tooltip hints (#111)', () => {
+
+  test('toolbar buttons have data-tooltip attributes', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+    // Verify data-tooltip on key toolbar buttons
+    await expect(page.locator('#handleMenuBtn')).toHaveAttribute('data-tooltip', 'Show tabs');
+    await expect(page.locator('#sessionMenuBtn')).toHaveAttribute('data-tooltip', 'Session menu');
+    await expect(page.locator('#composeModeBtn')).toHaveAttribute('data-tooltip', 'Compose mode');
+    await expect(page.locator('#previewModeBtn')).toHaveAttribute('data-tooltip', 'Preview mode');
+  });
+
+  test('long-press shows tooltip after 500ms', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+    const btn = page.locator('#composeModeBtn');
+
+    // Simulate a touchstart and hold for 600ms via evaluate
+    await btn.evaluate((el) => {
+      const touch = new Touch({ identifier: 1, target: el, clientX: 0, clientY: 0 });
+      el.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], changedTouches: [touch], bubbles: true }));
+    });
+
+    // Tooltip should not be visible immediately
+    await expect(page.locator('.toolbar-tooltip')).toHaveClass(/hidden/);
+
+    // Wait for the 500ms timer to fire
+    await page.waitForTimeout(600);
+
+    // Tooltip should now be visible with correct text
+    await expect(page.locator('.toolbar-tooltip')).not.toHaveClass(/hidden/);
+    await expect(page.locator('.toolbar-tooltip')).toHaveText('Compose mode');
+
+    // Simulate touchend to clean up
+    await btn.evaluate((el) => {
+      const touch = new Touch({ identifier: 1, target: el, clientX: 0, clientY: 0 });
+      el.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch], bubbles: true }));
+    });
+  });
+
+  test('short tap does not show tooltip', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+    const btn = page.locator('#composeModeBtn');
+
+    // Simulate touchstart then touchend quickly (< 500ms)
+    await btn.evaluate((el) => {
+      const touch = new Touch({ identifier: 1, target: el, clientX: 0, clientY: 0 });
+      el.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], changedTouches: [touch], bubbles: true }));
+    });
+    await page.waitForTimeout(100);
+    await btn.evaluate((el) => {
+      const touch = new Touch({ identifier: 1, target: el, clientX: 0, clientY: 0 });
+      el.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch], bubbles: true }));
+    });
+
+    // Wait past 500ms threshold — tooltip should still be hidden
+    await page.waitForTimeout(500);
+    const tooltip = page.locator('.toolbar-tooltip');
+    // Either hidden class or not yet created
+    const count = await tooltip.count();
+    if (count > 0) {
+      await expect(tooltip).toHaveClass(/hidden/);
+    }
+  });
+
+  test('touchmove cancels pending tooltip', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+    const btn = page.locator('#composeModeBtn');
+
+    // Start touch hold
+    await btn.evaluate((el) => {
+      const touch = new Touch({ identifier: 1, target: el, clientX: 0, clientY: 0 });
+      el.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], changedTouches: [touch], bubbles: true }));
+    });
+    await page.waitForTimeout(100);
+
+    // Move finger — should cancel tooltip
+    await btn.evaluate((el) => {
+      const touch = new Touch({ identifier: 1, target: el, clientX: 20, clientY: 20 });
+      el.dispatchEvent(new TouchEvent('touchmove', { touches: [touch], changedTouches: [touch], bubbles: true }));
+    });
+
+    // Wait past 500ms — tooltip should not appear
+    await page.waitForTimeout(500);
+    const tooltip = page.locator('.toolbar-tooltip');
+    const count = await tooltip.count();
+    if (count > 0) {
+      await expect(tooltip).toHaveClass(/hidden/);
+    }
+  });
+
+});
