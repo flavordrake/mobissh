@@ -579,12 +579,10 @@ export function initIMEInput(): void {
 
     const mapped = KEY_MAP[e.key];
     if (mapped) {
-      // In compose mode, let navigation keys work natively in the textarea
+      // In editing/previewing state, let editing keys work natively in the textarea
       const isNav = e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
-      if (appState.imeMode && isNav) {
-        // Don't send to SSH, don't clear — let textarea handle cursor movement
-        return;
-      }
+      if (appState.imeMode && isNav) return;
+      if (_isHolding() && e.key === 'Backspace') return;
       sendSSHInput(mapped);
       _transition('idle');
       e.preventDefault();
