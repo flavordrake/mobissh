@@ -331,11 +331,6 @@ export function initSessionMenu(): void {
     _applyFontSize((parseInt(localStorage.getItem('fontSize') ?? '14') || 14) + 1);
   });
 
-  document.getElementById('sessionCopyBufferBtn')!.addEventListener('click', () => {
-    closeMenu();
-    toast('Buffer copy coming soon');
-  });
-
   document.getElementById('sessionResetBtn')!.addEventListener('click', () => {
     closeMenu();
     if (!appState.sshConnected) return;
