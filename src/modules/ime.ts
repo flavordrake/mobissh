@@ -117,7 +117,24 @@ export function initIMEInput(): void {
   const commitBtn = document.getElementById('imeCommitBtn');
   const dockToggle = document.getElementById('imeDockToggle');
 
-  let _dockPosition = localStorage.getItem('imeDockPosition') === 'bottom' ? 'bottom' : 'top';
+  let _dockPosition: 'top' | 'bottom' = localStorage.getItem('imeDockPosition') === 'bottom' ? 'bottom' : 'top';
+  let _manualDock = false;
+
+  /**
+   * Compute effective dock position: if the user explicitly toggled, use that.
+   * Otherwise, auto-select based on terminal cursor position — place the preview
+   * opposite the cursor so it doesn't obscure the active line.
+   * Falls back to _dockPosition (persisted) when terminal is unavailable.
+   */
+  function _effectiveDock(): 'top' | 'bottom' {
+    if (_manualDock) return _dockPosition;
+    const term = appState.terminal;
+    if (!term) return _dockPosition;
+    const cursorY = term.buffer.active.cursorY;
+    const rows = term.rows;
+    // Cursor in top half → show preview at bottom; cursor in bottom half → show at top
+    return cursorY < rows / 2 ? 'bottom' : 'top';
+  }
 
   /** Position the textarea + action bar using visualViewport to avoid the keyboard. */
   function _positionIME(): void {
@@ -125,8 +142,9 @@ export function initIMEInput(): void {
     const viewH = vv ? vv.height : window.innerHeight;
     const viewTop = vv ? vv.offsetTop : 0;
     const actionH = 36; // matches CSS .ime-action-btn height
+    const dock = _effectiveDock();
 
-    if (_dockPosition === 'top') {
+    if (dock === 'top') {
       // Top: just below viewport top
       const top = viewTop + 4;
       ime.style.top = `${String(top)}px`;
@@ -211,7 +229,10 @@ export function initIMEInput(): void {
   });
 
   _onAction(dockToggle, () => {
-    _dockPosition = _dockPosition === 'top' ? 'bottom' : 'top';
+    // Determine what auto-positioning would choose, then flip from that
+    const auto = _effectiveDock();
+    _dockPosition = auto === 'top' ? 'bottom' : 'top';
+    _manualDock = true;
     localStorage.setItem('imeDockPosition', _dockPosition);
     _positionIME();
     focusIME();
@@ -246,6 +267,7 @@ export function initIMEInput(): void {
         ime.style.height = '';
         _hideActions();
         appState.isComposing = false;
+        _manualDock = false;
         break;
 
       case 'composing':
