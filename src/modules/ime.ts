@@ -482,12 +482,6 @@ export function initIMEInput(): void {
       _lastSentValue = newVal;
     }
 
-    // Clear on word acceptance (space = user moved on, no more corrections expected)
-    if (newVal.endsWith(' ')) {
-      _transition('idle');
-      return;
-    }
-
     // Clear the textarea after sending unless preview is on (text should accumulate)
     if (!appState.imeMode || !_previewMode) {
       _transition('idle');
