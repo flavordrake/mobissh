@@ -371,7 +371,9 @@ export function initSessionMenu(): void {
     }
   }, { passive: true });
 
+  backdrop.addEventListener('mousedown', (e) => { if (_keyboardVisible()) e.preventDefault(); });
   backdrop.addEventListener('click', closeMenu);
+  menu.addEventListener('mousedown', (e) => { if (_keyboardVisible()) e.preventDefault(); });
 
   // Font size +/− — menu stays open so user can tap repeatedly (#46)
   document.getElementById('fontDecBtn')!.addEventListener('click', (e) => {
