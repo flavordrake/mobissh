@@ -178,39 +178,31 @@ describe('noise filtering (#94)', () => {
   });
 });
 
-describe('background-only filtering (#94)', () => {
+describe('bell badge always added regardless of notify settings (#120)', () => {
   beforeEach(() => {
     clearNotifications();
     storage.clear();
     vi.setSystemTime(Date.now());
   });
 
-  it('blocks notifications when backgroundOnly=true and page is visible', () => {
-    // backgroundOnly=true means document must be hidden to notify
-    enableNotifications(true);
-    // document.visibilityState is 'hidden' from enableNotifications(true)
-    // so this should go through
-    _addNotification('from background');
+  it('adds to list when backgroundOnly=true and page is visible', () => {
+    // _addNotification no longer gates on shouldNotify — bell badge always shows
+    _addNotification('foreground bell');
     expect(getNotifications().length).toBe(1);
   });
 
-  it('blocks notifications when termNotifications is disabled', () => {
-    enableNotifications(false);
+  it('adds to list when termNotifications is disabled', () => {
     storage.set('termNotifications', 'false');
-    _addNotification('should be blocked');
-    expect(getNotifications().length).toBe(0);
+    _addNotification('notifs off but badge shows');
+    expect(getNotifications().length).toBe(1);
   });
 
-  it('blocks notifications when Notification.permission is not granted', () => {
-    enableNotifications(false);
-    vi.stubGlobal('Notification', { permission: 'denied' });
-    _addNotification('no permission');
-    expect(getNotifications().length).toBe(0);
+  it('adds to list when Notification.permission is not granted', () => {
+    _addNotification('no permission but badge shows');
+    expect(getNotifications().length).toBe(1);
   });
 
-  it('allows notifications when backgroundOnly=false and page is visible', () => {
-    enableNotifications(false);
-    // document.visibilityState is 'visible' from enableNotifications(false)
+  it('adds to list when backgroundOnly=false and page is visible', () => {
     _addNotification('foreground message');
     expect(getNotifications().length).toBe(1);
   });

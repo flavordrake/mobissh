@@ -55,7 +55,6 @@ export function clearNotifications(): void {
 }
 
 export function _addNotification(message: string): void {
-  if (!shouldNotify()) return;
   if (message.length < 3) return;
   if (_notifications.length >= NOTIF_MAX) _notifications.shift();
   _notifications.push({ time: Date.now(), message });
