@@ -204,46 +204,53 @@ body.debug-ime #imePreview {
   pointer-events: none;
 }
 
-/* IME composition preview — floats over terminal, positioned opposite cursor (#106) */
+/* IME composition preview — floating pill with action buttons (#44, #106) */
 #imePreview {
   position: fixed;
-  left: 8px;
-  right: 8px;
+  left: 12px;
+  right: 12px;
   z-index: 100;
   background: var(--bg-card);
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 13px;
-  padding: 3px 8px;
+  font-size: 14px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 24px;
+  min-height: 28px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.4);
 }
-#imePreview.ime-preview-top { top: 8%; }
-#imePreview.ime-preview-bottom { bottom: 33%; }
+#imePreview.ime-preview-top { top: 10%; }
+#imePreview.ime-preview-bottom { bottom: 30%; }
 .ime-preview-text {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ime-preview-btn {
+.ime-preview-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin: -6px -10px -6px 0;
+  align-self: stretch;
+}
+.ime-preview-action {
   background: none;
-  border: 1px solid var(--accent);
+  border: none;
+  border-left: 1px solid var(--accent);
   color: var(--accent);
-  padding: 2px 10px;
-  border-radius: 10px;
-  font-size: 11px;
+  padding: 0 10px;
+  font-size: 15px;
   font-family: var(--font-ui);
   touch-action: manipulation;
-  white-space: nowrap;
-  flex-shrink: 0;
+  line-height: 1;
 }
-.ime-preview-btn:active { background: var(--accent); color: #000; }
-.ime-preview-commit { border-color: var(--accent); font-weight: 600; }
+.ime-preview-action:active { background: var(--accent); color: #000; }
+.ime-action-commit { font-weight: 700; }
 
 
 /* Key bar handle — ≡ | session identity | ▾ */

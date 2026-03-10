@@ -58,15 +58,6 @@ export function initIMEInput(): void {
       const textEl = document.getElementById('imePreviewText');
       if (textEl) textEl.textContent = text;
       el.classList.remove('hidden');
-      // Position opposite to terminal cursor so the input point stays visible (#106)
-      const term = appState.terminal;
-      if (term) {
-        const cursorRow = term.buffer.active.cursorY;
-        const totalRows = term.rows;
-        const cursorInTopHalf = cursorRow < totalRows / 2;
-        el.classList.toggle('ime-preview-bottom', cursorInTopHalf);
-        el.classList.toggle('ime-preview-top', !cursorInTopHalf);
-      }
     } else {
       el.classList.add('hidden');
     }
@@ -89,6 +80,24 @@ export function initIMEInput(): void {
       _clearIME();
       _imePreviewShow(null);
     });
+  }
+
+  // ── Dock toggle: swap preview between top and bottom (#106) ─────────────
+  const dockToggle = document.getElementById('imeDockToggle');
+  const previewEl = document.getElementById('imePreview');
+  if (dockToggle && previewEl) {
+    dockToggle.addEventListener('click', () => {
+      const isBottom = previewEl.classList.contains('ime-preview-bottom');
+      previewEl.classList.toggle('ime-preview-bottom', !isBottom);
+      previewEl.classList.toggle('ime-preview-top', isBottom);
+      localStorage.setItem('imeDockPosition', isBottom ? 'top' : 'bottom');
+    });
+    // Restore saved position
+    const saved = localStorage.getItem('imeDockPosition');
+    if (saved === 'top') {
+      previewEl.classList.remove('ime-preview-bottom');
+      previewEl.classList.add('ime-preview-top');
+    }
   }
 
   // ── Textarea diffing state (handles post-composition corrections) ──────
