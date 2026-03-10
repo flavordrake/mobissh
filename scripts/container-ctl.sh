@@ -84,6 +84,17 @@ cmd_stop() {
 cmd_build() {
   local hash
   hash=$(head_hash)
+
+  # Auto-bump SW cache name so clients pick up new code
+  local sw_file="public/sw.js"
+  if [[ -f "$sw_file" ]]; then
+    local current_ver
+    current_ver=$(grep -oP "mobissh-v\K[0-9]+" "$sw_file" || echo "0")
+    local new_ver=$(( current_ver + 1 ))
+    sed -i "s/mobissh-v${current_ver}/mobissh-v${new_ver}/" "$sw_file"
+    log "SW cache bumped: v${current_ver} → v${new_ver}"
+  fi
+
   log "Building ${CONTAINER} at ${hash}..."
   GIT_HASH="$hash" docker compose -f "$COMPOSE_FILE" build --build-arg "GIT_HASH=${hash}" 2>&1
   ok "Image built."

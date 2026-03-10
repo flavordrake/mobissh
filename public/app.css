@@ -65,22 +65,19 @@ html, body {
   z-index: -1;
 }
 
-/* Debug: make IME textarea visible when it has content.
-   The .ime-visible class is toggled by JS when text is present. */
-body.debug-ime #imeInput.ime-visible {
+/* IME textarea: visible when it has content. Position set by JS via inline style. */
+#imeInput.ime-visible {
   opacity: 1;
   width: 90%;
-  min-height: 44px;
+  left: 5%;
+  min-height: 36px;
   max-height: calc(var(--viewport-height, 100svh) / 3);
   height: auto;
-  top: 4px;
-  bottom: auto;
-  left: 5%;
   background: var(--bg-card);
   color: var(--text);
   caret-color: var(--accent);
-  border: 2px solid var(--accent);
-  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px 10px 0 0;
   padding: 6px 8px;
   pointer-events: auto;
   z-index: 9999;
@@ -88,8 +85,52 @@ body.debug-ime #imeInput.ime-visible {
   overflow-y: auto;
 }
 
-/* debug-ime: makes the hidden IME textarea visible for debugging.
-   The floating #imePreview pill coexists — no need to hide it. */
+/* IME editing state — user tapped in to manually edit (active, highlighted) */
+#imeInput.ime-editing {
+  border-width: 3px;
+  border-color: var(--accent);
+  box-shadow: 0 0 8px rgba(0, 255, 160, 0.4);
+}
+.ime-actions.ime-editing .ime-commit {
+  background: var(--accent);
+  color: #000;
+}
+
+/* Preview mode toggle button (handle bar) */
+.handle-preview-btn.preview-active {
+  color: var(--accent);
+  background: rgba(0, 255, 136, 0.15);
+}
+.handle-preview-btn:active { opacity: 0.7; }
+
+/* IME action buttons — horizontal row below the textarea (#106) */
+.ime-actions {
+  position: fixed;
+  z-index: 9999;
+  left: 5%;
+  width: 90%;
+  display: flex;
+  flex-direction: row;
+}
+.ime-action-btn {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-top: none;
+  color: var(--accent);
+  height: 36px;
+  padding: 0;
+  font-size: 14px;
+  font-family: var(--font-ui);
+  touch-action: manipulation;
+  line-height: 36px;
+  text-align: center;
+  cursor: pointer;
+}
+.ime-action-btn:first-child { border-radius: 0 0 0 10px; }
+.ime-action-btn:last-child { border-radius: 0 0 10px 0; }
+.ime-action-btn:active { background: var(--accent); color: #000; }
+.ime-commit { font-weight: 700; }
 
 #app {
   display: flex;
@@ -203,55 +244,7 @@ body.debug-ime #imeInput.ime-visible {
   pointer-events: none;
 }
 
-/* IME composition preview — floating pill with action buttons (#44, #106) */
-#imePreview {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  z-index: 100;
-  background: var(--bg-card);
-  border: 1px solid var(--accent);
-  border-radius: 10px;
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  padding: 6px 10px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  box-shadow: 0 2px 12px rgba(0,0,0,.4);
-}
-#imePreview.ime-preview-top { top: 6%; }
-#imePreview.ime-preview-bottom { bottom: 30%; }
-.ime-preview-text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ime-preview-actions {
-  display: flex;
-  gap: 0;
-  flex-shrink: 0;
-  margin: -6px -10px -6px 0;
-  align-self: stretch;
-}
-.ime-preview-action {
-  background: none;
-  border: none;
-  border-left: 1px solid var(--accent);
-  color: var(--accent);
-  min-width: 44px;
-  padding: 0;
-  font-size: 16px;
-  font-family: var(--font-ui);
-  touch-action: manipulation;
-  line-height: 1;
-  text-align: center;
-}
-.ime-preview-action:active { background: var(--accent); color: #000; }
-.ime-action-commit { font-weight: 700; }
+/* (Old #imePreview pill removed — actions are now on #imeContainer, #106) */
 
 
 /* Key bar handle — ≡ | session identity | ▾ */

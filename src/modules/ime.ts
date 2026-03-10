@@ -4,6 +4,14 @@
  * Handles all keyboard/IME input routing from hidden textarea (#imeInput)
  * and direct-mode text input (#directInput) to the SSH stream.
  *
+ * State machine for IME input (#106):
+ *   idle → composing → previewing → editing
+ *
+ *   idle:       textarea hidden, no text, input sent immediately to SSH
+ *   composing:  IME composition in progress (isComposing=true), text accumulating
+ *   previewing: composition ended, text visible with action buttons, not yet sent
+ *   editing:    user tapped into textarea to manually edit before committing
+ *
  * Also manages: touch/swipe gesture handlers (#32/#37/#16) and
  * pinch-to-zoom (#17). Selection is handled by selection.ts (#55).
  */
@@ -12,11 +20,46 @@ import type { IMEDeps } from './types.js';
 import { KEY_MAP } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
-import { focusIME, setCtrlActive, toggleComposeMode } from './ui.js';
+import { focusIME, setCtrlActive } from './ui.js';
 import { isSelectionActive } from './selection.js';
 
 let _handleResize = (): void => {};
 let _applyFontSize = (_size: number): void => {};
+
+// ── IME state machine (#106) ────────────────────────────────────────────────
+type IMEState = 'idle' | 'composing' | 'previewing' | 'editing';
+let _imeState: IMEState = 'idle';
+
+/** Whether "preview mode" is enabled — accumulate compositions for review. */
+let _previewMode = localStorage.getItem('imePreviewMode') === 'true';
+
+export function isPreviewMode(): boolean { return _previewMode; }
+/** Callback set by initIMEInput to clear preview state (commits text). */
+let _clearPreviewCallback: (() => void) | null = null;
+
+export function togglePreviewMode(): void {
+  _previewMode = !_previewMode;
+  localStorage.setItem('imePreviewMode', _previewMode ? 'true' : 'false');
+  const btn = document.getElementById('previewModeBtn');
+  if (btn) btn.classList.toggle('preview-active', _previewMode);
+  // Toggle textarea visibility — nothing else. No commit, no discard, no state change.
+  // Only show if we're actually in a holding state (previewing/editing) with content.
+  const hasContent = _imeState === 'previewing' || _imeState === 'editing';
+  const ime = document.getElementById('imeInput') as HTMLTextAreaElement | null;
+  if (ime) ime.classList.toggle('ime-visible', _previewMode && hasContent);
+  const actions = document.getElementById('imeActions');
+  if (actions && !_previewMode) actions.classList.add('hidden');
+  if (actions && _previewMode && hasContent) actions.classList.remove('hidden');
+  console.log('[ime] preview mode:', _previewMode ? 'ON' : 'OFF');
+}
+
+/** Clear any active preview — called when compose mode is toggled off. */
+export function clearIMEPreview(): void {
+  if (_clearPreviewCallback) _clearPreviewCallback();
+}
+
+/** Query the current IME state (for tests and debugging). */
+export function getIMEState(): IMEState { return _imeState; }
 
 // ── Password-prompt detection — suppress keyboard suggestions (#123) ─────────
 // Matches common password/passphrase/PIN prompts at the end of a terminal line.
@@ -50,76 +93,203 @@ export function initIMEInput(): void {
     _checkPasswordPrompt(ime);
   });
 
-  // ── IME composition preview helper (#44) ──────────────────────────────
-  function _imePreviewShow(text: string | null): void {
-    const el = document.getElementById('imePreview');
-    if (!el) return;
-    if (text) {
-      const textEl = document.getElementById('imePreviewText');
-      if (textEl) textEl.textContent = text;
-      el.classList.remove('hidden');
-    } else {
-      el.classList.add('hidden');
+  // When user taps inside the visible textarea to edit, transition to editing state.
+  ime.addEventListener('touchstart', () => {
+    if (_imeState === 'previewing' && ime.value) {
+      _transition('editing');
     }
+  });
+
+  // ── Preview mode toggle (#106) — wired here to avoid circular import ──
+  const previewBtn = document.getElementById('previewModeBtn');
+  if (previewBtn) {
+    previewBtn.classList.toggle('preview-active', _previewMode);
+    previewBtn.addEventListener('click', () => {
+      togglePreviewMode();
+      focusIME();
+    });
   }
 
-  // ── Preview action buttons: Clear and Send (#74) ───────────────────────
+  // ── IME action buttons (#106) ────────────────────────────────────────
+  const imeActions = document.getElementById('imeActions');
   const clearBtn = document.getElementById('imeClearBtn');
   const commitBtn = document.getElementById('imeCommitBtn');
-
-  if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
-      _clearIME();
-      _imePreviewShow(null);
-    });
-  }
-
-  if (commitBtn) {
-    commitBtn.addEventListener('click', () => {
-      sendSSHInput('\r');
-      _clearIME();
-      _imePreviewShow(null);
-    });
-  }
-
-  // ── Dock toggle: swap preview between top and bottom (#106) ─────────────
   const dockToggle = document.getElementById('imeDockToggle');
-  const previewEl = document.getElementById('imePreview');
-  if (dockToggle && previewEl) {
-    dockToggle.addEventListener('click', () => {
-      const isBottom = previewEl.classList.contains('ime-preview-bottom');
-      previewEl.classList.toggle('ime-preview-bottom', !isBottom);
-      previewEl.classList.toggle('ime-preview-top', isBottom);
-      localStorage.setItem('imeDockPosition', isBottom ? 'top' : 'bottom');
-    });
-    // Restore saved position
-    const saved = localStorage.getItem('imeDockPosition');
-    if (saved === 'top') {
-      previewEl.classList.remove('ime-preview-bottom');
-      previewEl.classList.add('ime-preview-top');
+
+  let _dockPosition = localStorage.getItem('imeDockPosition') === 'bottom' ? 'bottom' : 'top';
+
+  /** Position the textarea + action bar using visualViewport to avoid the keyboard. */
+  function _positionIME(): void {
+    const vv = window.visualViewport;
+    const viewH = vv ? vv.height : window.innerHeight;
+    const viewTop = vv ? vv.offsetTop : 0;
+    const actionH = 36; // matches CSS .ime-action-btn height
+
+    if (_dockPosition === 'top') {
+      // Top: just below viewport top
+      const top = viewTop + 4;
+      ime.style.top = `${String(top)}px`;
+      ime.style.bottom = 'auto';
+      if (imeActions) {
+        imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
+        imeActions.style.bottom = 'auto';
+      }
+    } else {
+      // Bottom: above the keyboard
+      const bottom = window.innerHeight - (viewTop + viewH) + 8;
+      ime.style.bottom = `${String(bottom + actionH)}px`;
+      ime.style.top = 'auto';
+      if (imeActions) {
+        imeActions.style.bottom = `${String(bottom)}px`;
+        imeActions.style.top = 'auto';
+      }
     }
   }
 
+  // Re-position when viewport changes (keyboard open/close)
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      if (ime.classList.contains('ime-visible')) _positionIME();
+    });
+    window.visualViewport.addEventListener('scroll', () => {
+      if (ime.classList.contains('ime-visible')) _positionIME();
+    });
+  }
+
+  /** Show the action button bar and position everything. */
+  function _showActions(): void {
+    if (imeActions) imeActions.classList.remove('hidden');
+    _positionIME();
+  }
+  /** Hide the action button bar. */
+  function _hideActions(): void {
+    if (imeActions) imeActions.classList.add('hidden');
+  }
+
+  // Prevent buttons from stealing focus (desktop: mousedown preventDefault).
+  // On mobile: use touchend handlers directly since touchstart preventDefault
+  // swallows the click event on Android.
+  if (imeActions) {
+    imeActions.addEventListener('mousedown', (e) => { e.preventDefault(); });
+  }
+
+  /** Wire an action button for both touch and click. */
+  function _onAction(btn: HTMLElement | null, handler: () => void): void {
+    if (!btn) return;
+    let touchHandled = false;
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault(); // prevent click from also firing
+      touchHandled = true;
+      handler();
+    });
+    btn.addEventListener('click', () => {
+      if (touchHandled) { touchHandled = false; return; }
+      handler();
+    });
+  }
+
+  _onAction(clearBtn, () => {
+    // Erase what was already sent to SSH (if anything)
+    if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
+    _transition('idle');
+    focusIME();
+  });
+
+  _onAction(commitBtn, () => {
+    const text = ime.value;
+    if (_imeState === 'editing') {
+      // Editing: user rewrote text locally — send full text as-is
+      if (text) sendSSHInput(text);
+    } else {
+      // Previewing/composing: erase any partial sends, send final text
+      if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
+      if (text) sendSSHInput(text);
+    }
+    _transition('idle');
+    focusIME();
+  });
+
+  _onAction(dockToggle, () => {
+    _dockPosition = _dockPosition === 'top' ? 'bottom' : 'top';
+    localStorage.setItem('imeDockPosition', _dockPosition);
+    _positionIME();
+    focusIME();
+  });
+
   // ── Textarea diffing state (handles post-composition corrections) ──────
-  // Track what we've sent to SSH so we can diff against the textarea value
-  // when the IME replaces text after compositionend (e.g., swipe correction).
-  // See docs/ime-compose-research.md for the full rationale.
   let _lastSentValue = '';
   let _replacementHandled = false;
   let _clearTimer: ReturnType<typeof setTimeout> | null = null;
+  let _justTransitionedToIdle = false;
 
-  /** Reset the textarea and diff tracking state. */
-  function _clearIME(): void {
+  /** Transition the IME state machine. All state changes go through here. */
+  function _transition(to: IMEState): void {
+    const from = _imeState;
+    // Always run idle cleanup even if already idle (commit after auto-clear)
+    if (from === to && to !== 'idle') return;
+    _imeState = to;
+
+    // Cancel pending clear on any transition
     if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
-    ime.value = '';
-    _lastSentValue = '';
-    ime.classList.remove('ime-visible');
-    ime.style.height = '';
+    // Clear stale-input guard when leaving idle (new composition starting)
+    if (from === 'idle') _justTransitionedToIdle = false;
+
+    switch (to) {
+      case 'idle':
+        ime.value = '';
+        _lastSentValue = '';
+        _justTransitionedToIdle = true;
+        ime.classList.remove('ime-visible', 'ime-editing');
+        if (imeActions) imeActions.classList.remove('ime-editing');
+        ime.style.height = '';
+        _hideActions();
+        appState.isComposing = false;
+        break;
+
+      case 'composing':
+        appState.isComposing = true;
+        ime.classList.add('ime-visible');
+        ime.classList.remove('ime-editing');
+        if (imeActions) imeActions.classList.remove('ime-editing');
+        _showActions();
+        _positionIME();
+        break;
+
+      case 'previewing':
+        appState.isComposing = false;
+        ime.classList.add('ime-visible');
+        ime.classList.remove('ime-editing');
+        if (imeActions) imeActions.classList.remove('ime-editing');
+        _showActions();
+        _positionIME();
+        break;
+
+      case 'editing':
+        appState.isComposing = false;
+        ime.classList.add('ime-visible', 'ime-editing');
+        if (imeActions) imeActions.classList.add('ime-editing');
+        _showActions();
+        _positionIME();
+        break;
+    }
   }
 
-  /** Show the debug overlay and auto-size to content. */
+  /** Whether input should be held (not sent to SSH). */
+  function _isHolding(): boolean {
+    return _imeState === 'previewing' || _imeState === 'editing';
+  }
+
+  /** Whether the IME should stick indefinitely (no auto-clear). */
+  function _isSticky(): boolean {
+    return _imeState === 'editing';
+  }
+
+  /** Show the overlay and auto-size the textarea (only if preview mode is on). */
   function _showIMEOverlay(): void {
+    if (!_previewMode) return;
     ime.classList.add('ime-visible');
+    if (_imeState !== 'idle') _showActions();
+    _positionIME();
     // Auto-grow: reset height then set to scrollHeight, capped by CSS max-height
     if (document.body.classList.contains('debug-ime')) {
       ime.style.height = 'auto';
@@ -128,19 +298,57 @@ export function initIMEInput(): void {
   }
 
   /** Schedule a deferred clear — gives the IME time to fire correction events
-   *  after compositionend, then clears so the textarea doesn't accumulate. */
+   *  after compositionend. Skipped only when editing (user tapped in).
+   *  Previewing gets a longer timeout (5s) to allow review before auto-commit. */
   function _scheduleClear(): void {
     if (_clearTimer) clearTimeout(_clearTimer);
-    _clearTimer = setTimeout(_clearIME, 1500);
+    if (_isSticky()) return;
+    const delay = _imeState === 'previewing' ? 5000 : 1500;
+    _clearTimer = setTimeout(() => {
+      // Don't auto-commit if user entered editing or a new composition started
+      if (_imeState === 'composing' || _imeState === 'editing') return;
+
+      if (_imeState === 'previewing') {
+        const text = ime.value;
+        if (text) {
+          // Send completed words (up to last space), keep trailing partial
+          const lastSpace = text.lastIndexOf(' ');
+          if (lastSpace >= 0) {
+            const committed = text.slice(0, lastSpace + 1);
+            const remainder = text.slice(lastSpace + 1);
+            sendSSHInput(committed);
+            ime.value = remainder;
+            if (remainder) {
+              // Still have a partial word — stay in previewing, reset timer
+              _lastSentValue = '';
+              _scheduleClear();
+              return;
+            }
+          } else {
+            // Single word, no spaces — send it all
+            sendSSHInput(text);
+          }
+        }
+      }
+      _transition('idle');
+    }, delay);
   }
+
+  // Register callback so toggleComposeMode() can commit+clear active preview
+  _clearPreviewCallback = () => {
+    if (appState.isComposing) appState.isComposing = false;
+    const text = ime.value;
+    if (text) sendSSHInput(text);
+    _transition('idle');
+  };
+
 
   /** Send text to SSH with Ctrl modifier handling. */
   function _sendIMEText(text: string): void {
     if (text === '\n') {
       sendSSHInput('\r');
       ime.setAttribute('autocomplete', 'off');
-      _clearIME();
-      if (appState.imeMode) toggleComposeMode();
+      _transition('idle');
       return;
     }
     if (appState.ctrlActive) {
@@ -171,6 +379,8 @@ export function initIMEInput(): void {
   // ── beforeinput: intercept IME corrections before they hit the textarea ──
   ime.addEventListener('beforeinput', (e: InputEvent) => {
     _replacementHandled = false;
+    // When holding (previewing/editing), let the textarea update freely
+    if (_isHolding()) return;
 
     // insertReplacementText: Gboard/iOS correction after swipe-type (#231)
     if (e.inputType === 'insertReplacementText' && e.data) {
@@ -210,13 +420,20 @@ export function initIMEInput(): void {
 
   // ── input event ─────────────────────────────────────────────────────────
   ime.addEventListener('input', () => {
-    if (appState.isComposing) {
-      _imePreviewShow(ime.value || null);
+    // Browser can re-insert composed text after compositionend + _transition('idle').
+    // Flag stays true until next compositionstart — catches ALL late input events.
+    if (_justTransitionedToIdle) {
+      if (ime.value) { ime.value = ''; }
       return;
     }
-    // Show preview for non-composition input in compose mode too
-    if (appState.imeMode && ime.value) {
-      _imePreviewShow(ime.value);
+    // When holding, just keep the overlay — don't send to SSH
+    if (_isHolding()) {
+      _showIMEOverlay();
+      return;
+    }
+    if (appState.isComposing) {
+      _showIMEOverlay();
+      return;
     }
 
     // If beforeinput already handled this (insertReplacementText with ranges), skip
@@ -226,7 +443,7 @@ export function initIMEInput(): void {
     }
 
     const newVal = ime.value;
-    if (!newVal) { _clearIME(); return; }
+    if (!newVal) { _transition('idle'); return; }
     _showIMEOverlay();
 
     // If we have a previous value to diff against, use textarea diffing
@@ -242,65 +459,82 @@ export function initIMEInput(): void {
 
     // Clear on word acceptance (space = user moved on, no more corrections expected)
     if (newVal.endsWith(' ')) {
-      _clearIME();
+      _transition('idle');
       return;
     }
 
-    // In non-compose mode, clear the textarea after sending
-    if (!appState.imeMode) {
-      _clearIME();
+    // Clear the textarea after sending unless preview is on (text should accumulate)
+    if (!appState.imeMode || !_previewMode) {
+      _transition('idle');
     }
   });
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
   ime.addEventListener('compositionstart', () => {
-    appState.isComposing = true;
-    // Cancel any pending clear — new composition needs the textarea
-    if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
+    // New composition: if starting from idle, clear any stale browser-reinserted text
+    if (_imeState === 'idle') {
+      ime.value = '';
+    }
+    _transition('composing');
     _showIMEOverlay();
   });
 
-  ime.addEventListener('compositionupdate', (e: CompositionEvent) => {
-    if (e.data) _imePreviewShow(e.data);
+  ime.addEventListener('compositionupdate', () => {
     _showIMEOverlay();
   });
 
   ime.addEventListener('compositionend', (e: CompositionEvent) => {
-    appState.isComposing = false;
-    _imePreviewShow(null);
+    // If already holding (editing/previewing), stay — accumulate text
+    if (_isHolding()) {
+      appState.isComposing = false;
+      _showIMEOverlay();
+      return;
+    }
+
     const text = ime.value || e.data;
-    if (!text) { _clearIME(); return; }
+    if (!text) { _transition('idle'); return; }
+
+    // Compose + preview: hold text for review (nothing sent until commit)
+    if (appState.imeMode && _previewMode) {
+      _transition('previewing');
+      _lastSentValue = '';
+      _scheduleClear();
+      return;
+    }
+
+    // No preview: send immediately and clear
+    appState.isComposing = false;
     _sendIMEText(text);
     _lastSentValue = text;
-
-    // In non-compose mode, clear immediately.
-    // In compose mode, keep value briefly for correction diffing, then clear.
-    if (!appState.imeMode) {
-      _clearIME();
-    } else {
-      _scheduleClear();
-    }
+    _transition('idle');
   });
 
   ime.addEventListener('compositioncancel' as keyof HTMLElementEventMap, () => {
-    appState.isComposing = false;
-    _imePreviewShow(null);
-    _clearIME();
+    _transition('idle');
   });
 
   // ── keydown: special keys not captured by 'input' ─────────────────────
   ime.addEventListener('keydown', (e) => {
-    // Reset password-mode suggestion suppression when user submits with Enter (#123)
+    // Enter: commit held text and send \r
     if (e.key === 'Enter') {
       ime.setAttribute('autocomplete', 'off');
-      _clearIME();
+      const text = ime.value;
+      if (_isHolding() && text) {
+        e.preventDefault();
+        sendSSHInput(text);
+        sendSSHInput('\r');
+        _transition('idle');
+        focusIME();
+        return;
+      }
+      _transition('idle');
     }
 
     if (e.ctrlKey && !e.altKey && e.key.length === 1) {
       const code = e.key.toLowerCase().charCodeAt(0) - 96;
       if (code >= 1 && code <= 26) {
         sendSSHInput(String.fromCharCode(code));
-        _clearIME();
+        _transition('idle');
         e.preventDefault();
         return;
       }
@@ -315,7 +549,7 @@ export function initIMEInput(): void {
         return;
       }
       sendSSHInput(mapped);
-      _clearIME();
+      _transition('idle');
       e.preventDefault();
       return;
     }
@@ -329,7 +563,7 @@ export function initIMEInput(): void {
         sendSSHInput(e.key);
       }
       e.preventDefault();
-      _clearIME();
+      _transition('idle');
     }
   });
 

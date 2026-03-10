@@ -23,6 +23,7 @@
  *   - Real IME candidate disambiguation
  */
 
+const path = require('path');
 const { test, expect } = require('./fixtures.js');
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -196,77 +197,78 @@ test.describe('IME composition → SSH input routing', () => {
     expect(msgs.some((m) => m.data === '\x1a')).toBe(true); // ^Z
   });
 
-  test('IME preview shows composition text, hides on commit', async ({ page, mockSshServer }) => {
+  test('IME action buttons show on composition, hide on commit', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    const preview = page.locator('#imePreview');
+    const actions = page.locator('#imeActions');
 
-    // Fire compositionstart + compositionupdate — preview should appear
+    // Fire compositionstart + compositionupdate — action bar should appear
     await page.evaluate(() => {
       const el = document.getElementById('imeInput');
       el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
       el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'hello' }));
     });
-    await expect(preview).not.toHaveClass(/hidden/);
-    await expect(page.locator('#imePreviewText')).toHaveText('hello');
+    await expect(actions).not.toHaveClass(/hidden/);
 
-    // Fire compositionend — preview should hide
+    // Fire compositionend — action bar should hide (non-compose mode)
     await page.evaluate(() => {
       const el = document.getElementById('imeInput');
       el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'hello' }));
     });
-    await expect(preview).toHaveClass(/hidden/);
+    await expect(actions).toHaveClass(/hidden/);
   });
 });
 
-test.describe('Issue #74 — compose preview Clear and Send buttons', () => {
-  test('Clear button hides the preview without sending', async ({ page, mockSshServer }) => {
+test.describe('Issue #74 — compose action buttons Clear and Send', () => {
+  test('Clear button hides actions and clears textarea without sending', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
-    // Start composition to show preview
+    // Start composition to show action bar
     await page.evaluate(() => {
       const el = document.getElementById('imeInput');
       el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
       el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'hello' }));
     });
 
-    const preview = page.locator('#imePreview');
-    await expect(preview).not.toHaveClass(/hidden/);
+    const actions = page.locator('#imeActions');
+    await expect(actions).not.toHaveClass(/hidden/);
 
     // Click Clear button
     await page.locator('#imeClearBtn').click();
 
-    // Preview should be hidden and no input sent
-    await expect(preview).toHaveClass(/hidden/);
+    // Actions should be hidden and no input sent
+    await expect(actions).toHaveClass(/hidden/);
     const msgs = await getInputMessages(page);
     expect(msgs).toHaveLength(0);
   });
 
-  test('Send button sends \\r and hides the preview', async ({ page, mockSshServer }) => {
+  test('Send button commits textarea text and hides actions', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
-    // Start composition to show preview
+    // Start composition to show action bar, set textarea value
     await page.evaluate(() => {
       const el = document.getElementById('imeInput');
       el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
       el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'hello' }));
+      el.value = 'hello';
     });
 
-    const preview = page.locator('#imePreview');
-    await expect(preview).not.toHaveClass(/hidden/);
+    const actions = page.locator('#imeActions');
+    await expect(actions).not.toHaveClass(/hidden/);
 
-    // Click Send button
+    // Click Send button — commits text without adding \r
     await page.locator('#imeCommitBtn').click();
 
-    // Preview should be hidden and \r sent to SSH
-    await expect(preview).toHaveClass(/hidden/);
+    // Actions should be hidden and text sent to SSH (no \r)
+    await expect(actions).toHaveClass(/hidden/);
     const msgs = await getInputMessages(page);
-    expect(msgs.some((m) => m.data === '\r')).toBe(true);
+    expect(msgs.some((m) => m.data === 'hello')).toBe(true);
+    expect(msgs.every((m) => m.data !== '\r')).toBe(true);
   });
 
-  test('preview text is shown in the text span, not overwriting buttons', async ({ page, mockSshServer }) => {
+  test('action buttons remain visible alongside textarea during composition', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
     await page.evaluate(() => {
@@ -275,9 +277,7 @@ test.describe('Issue #74 — compose preview Clear and Send buttons', () => {
       el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'typed' }));
     });
 
-    // Text should appear in the span, not replace the entire container
-    await expect(page.locator('#imePreviewText')).toHaveText('typed');
-    // Buttons should still be present
+    // Buttons should be visible
     await expect(page.locator('#imeClearBtn')).toBeVisible();
     await expect(page.locator('#imeCommitBtn')).toBeVisible();
   });
@@ -385,5 +385,297 @@ test.describe('Key bar buttons → SSH input', () => {
   test('screenshot: terminal in connected state with key bar', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.screenshot({ path: 'test-results/screenshots/terminal-connected.png' });
+  });
+});
+
+// ── IME state machine — compose + preview mode (#106) ─────────────────────
+
+/** Enable compose mode + preview mode, return to terminal with IME focused. */
+async function enableComposePreview(page) {
+  // Enable compose mode
+  await page.evaluate(() => {
+    const btn = document.getElementById('composeModeBtn');
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(100);
+  // Enable preview mode (eye toggle — only visible when compose is on)
+  await page.evaluate(() => {
+    const btn = document.getElementById('previewModeBtn');
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(100);
+}
+
+/** Simulate a GBoard swipe composition on #imeInput. */
+async function swipeCompose(page, text) {
+  await page.evaluate((t) => {
+    const el = document.getElementById('imeInput');
+    el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    for (let i = 1; i <= t.length; i++) {
+      el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: t.slice(0, i) }));
+    }
+    el.value = (el.value ? el.value + ' ' : '') + t;
+    el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: t }));
+  }, text);
+  await page.waitForTimeout(100);
+}
+
+const SM_DIR = path.join(__dirname, '..', 'test-results', 'screenshots', 'state-machine');
+
+test.describe('IME state machine — compose + preview (#106)', () => {
+
+  test('preview mode holds text — nothing sent until commit', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.screenshot({ path: path.join(SM_DIR, '01-compose-preview-enabled.png') });
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'hello');
+    await page.screenshot({ path: path.join(SM_DIR, '02-previewing-hello.png') });
+
+    // Text should be in textarea but NOT sent to SSH
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('hello');
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+
+    // Action buttons should be visible
+    const actions = page.locator('#imeActions');
+    await expect(actions).not.toHaveClass(/hidden/);
+  });
+
+  test('commit button sends held text without Enter', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'world');
+    await page.screenshot({ path: path.join(SM_DIR, '03-before-commit.png') });
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '04-after-commit.png') });
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data.includes('world'))).toBe(true);
+    expect(msgs.every((m) => m.data !== '\r')).toBe(true);
+    await expect(page.locator('#imeActions')).toHaveClass(/hidden/);
+  });
+
+  test('Enter key in preview sends text + \\r', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'command');
+    await page.screenshot({ path: path.join(SM_DIR, '05-before-enter.png') });
+    await page.locator('#imeInput').press('Enter');
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '06-after-enter.png') });
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data.includes('command'))).toBe(true);
+    expect(msgs.some((m) => m.data === '\r')).toBe(true);
+  });
+
+  test('clear button discards text without sending', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'discard');
+    await page.screenshot({ path: path.join(SM_DIR, '07-before-clear.png') });
+    await page.locator('#imeClearBtn').click();
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '08-after-clear.png') });
+
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+    await expect(page.locator('#imeActions')).toHaveClass(/hidden/);
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toBe('');
+  });
+
+  test('multiple swipe words accumulate in preview', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'hello');
+    await page.screenshot({ path: path.join(SM_DIR, '09-first-word.png') });
+    await swipeCompose(page, 'world');
+    await page.screenshot({ path: path.join(SM_DIR, '10-second-word.png') });
+
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('hello');
+    expect(imeVal).toContain('world');
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+  });
+
+  test('eye toggle only controls visibility — text preserved, no commit', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'peek-a-boo');
+    await page.screenshot({ path: path.join(SM_DIR, '11-before-eye-off.png') });
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+
+    // Toggle eye off — hides textarea, does NOT commit or discard
+    await page.evaluate(() => {
+      const btn = document.getElementById('previewModeBtn');
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '12-after-eye-off.png') });
+
+    // Nothing sent to SSH
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+    // Textarea hidden
+    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
+    await expect(page.locator('#imeActions')).toHaveClass(/hidden/);
+    // Text still in textarea (preserved, just hidden)
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('peek-a-boo');
+
+    // Toggle eye back on — textarea reappears with same text
+    await page.evaluate(() => {
+      const btn = document.getElementById('previewModeBtn');
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '12b-after-eye-on.png') });
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+    const imeVal2 = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal2).toContain('peek-a-boo');
+  });
+
+  test('toggling compose off commits held preview and hides eye', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'bye');
+    await page.screenshot({ path: path.join(SM_DIR, '13-before-compose-off.png') });
+
+    await page.evaluate(() => {
+      const btn = document.getElementById('composeModeBtn');
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '14-after-compose-off.png') });
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data.includes('bye'))).toBe(true);
+    await expect(page.locator('#previewModeBtn')).toHaveClass(/hidden/);
+  });
+
+  test('editing state: tap into textarea prevents auto-clear', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    await swipeCompose(page, 'edit-me');
+    await page.screenshot({ path: path.join(SM_DIR, '15-previewing-before-tap.png') });
+
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+    await page.locator('#imeInput').dispatchEvent('touchstart', { bubbles: true });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '16-editing-after-tap.png') });
+
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-editing/);
+
+    // Wait beyond the 5s auto-clear timeout
+    await page.waitForTimeout(6000);
+    await page.screenshot({ path: path.join(SM_DIR, '17-editing-after-6s.png') });
+
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('edit-me');
+  });
+
+  test('without preview: compose sends immediately, textarea stays hidden', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.evaluate(() => {
+      const btn = document.getElementById('composeModeBtn');
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '18-compose-no-preview.png') });
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'immediate');
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '19-after-immediate-send.png') });
+
+    // Text was sent to SSH
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data.includes('immediate'))).toBe(true);
+    // Textarea must NOT be visible after send (no lingering overlay)
+    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
+    // Action buttons must be hidden
+    await expect(page.locator('#imeActions')).toHaveClass(/hidden/);
+  });
+
+  test('eye button hidden when compose is off', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.screenshot({ path: path.join(SM_DIR, '20-compose-off-eye-hidden.png') });
+    await expect(page.locator('#previewModeBtn')).toHaveClass(/hidden/);
+  });
+
+  test('no stale text after commit — subsequent compose starts clean', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Compose and commit first word
+    await swipeCompose(page, 'first');
+    await page.screenshot({ path: path.join(SM_DIR, '21-first-word-preview.png') });
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '22-after-first-commit.png') });
+
+    // Textarea must be empty and hidden after commit
+    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
+    const val1 = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(val1).toBe('');
+
+    // Compose second word — should start clean, no "first" lingering
+    await swipeCompose(page, 'second');
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '23-second-word-clean.png') });
+
+    const val2 = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(val2).not.toContain('first');
+    expect(val2).toContain('second');
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+  });
+
+  test('compose without preview: text not re-shown when eye toggled on', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    // Compose ON, preview OFF
+    await page.evaluate(() => {
+      const btn = document.getElementById('composeModeBtn');
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Swipe a word — sends immediately, no preview
+    await swipeCompose(page, 'gone');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: path.join(SM_DIR, '24-after-no-preview-send.png') });
+
+    // Now toggle eye ON — textarea must NOT show stale "gone" text
+    await page.evaluate(() => {
+      const btn = document.getElementById('previewModeBtn');
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(SM_DIR, '25-eye-on-no-stale.png') });
+
+    // Textarea should be empty and hidden (no stale text from previous send)
+    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
+    const val = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(val).toBe('');
   });
 });

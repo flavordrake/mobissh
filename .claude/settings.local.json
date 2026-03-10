@@ -23,7 +23,11 @@
       "Read(//proc/223638/fd/**)",
       "Bash(readlink /proc/$$fd/0)",
       "Bash(du:*)",
-      "Bash(gh issue:*)"
+      "Bash(gh issue:*)",
+      "Bash(pgrep:*)",
+      "Bash(python3:*)",
+      "Bash(cp:*)",
+      "Bash(identify:*)"
     ]
   }
 }

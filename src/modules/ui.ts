@@ -11,6 +11,7 @@ import { appState } from './state.js';
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, connectFromProfile, newConnection } from './profiles.js';
+import { clearIMEPreview } from './ime.js';
 
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
 
@@ -714,6 +715,7 @@ export function initKeyBar(): void {
     toggleComposeMode();
     focusIME();
   });
+
 }
 
 function setKeyBarDepth(d: 0 | 1 | 2 | 3): void {
@@ -747,6 +749,8 @@ export function toggleComposeMode(): void {
   appState.imeMode = !appState.imeMode;
   localStorage.setItem('imeMode', appState.imeMode ? 'ime' : 'direct');
   _applyComposeModeUI();
+  // When leaving compose, clear any active preview
+  if (!appState.imeMode) clearIMEPreview();
   focusIME();
 }
 
@@ -755,6 +759,9 @@ function _applyComposeModeUI(): void {
   if (!btn) return;
   btn.classList.toggle('compose-active', appState.imeMode);
   document.getElementById('key-bar')?.classList.toggle('compose-active', appState.imeMode);
+  // Eye toggle only relevant in compose mode
+  const previewBtn = document.getElementById('previewModeBtn');
+  if (previewBtn) previewBtn.classList.toggle('hidden', !appState.imeMode);
 }
 
 // ── Files panel (#174, #175) ─────────────────────────────────────────────────

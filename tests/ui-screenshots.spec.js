@@ -3,121 +3,93 @@
  *
  * Visual screenshot tests for UI features (#106).
  * Captures screenshots of key UI states for visual verification.
- * These are NOT pixel-diff assertions — they save PNGs to test-results/screenshots/
- * for human review. Run after any UI change to catch layout/positioning issues
- * that functional tests miss.
+ * These are NOT pixel-diff assertions — they save PNGs to tools/screenshots/ui/
+ * for human review.
  */
 
 const path = require('path');
 const { test, expect, setupConnected } = require('./fixtures.js');
 
-const SCREENSHOT_DIR = path.join(__dirname, '..', 'test-results', 'screenshots', 'ui');
+const SCREENSHOT_DIR = path.join(__dirname, '..', 'tools', 'screenshots', 'ui');
 
-// ── IME Preview (#106) ──────────────────────────────────────────────────────
+/** Enable debug-ime so textarea is visible, enable compose mode, trigger composition. */
+async function setupIMEComposition(page, mockSshServer, text) {
+  await setupConnected(page, mockSshServer);
+  await page.waitForTimeout(2000);
 
-test.describe('IME preview visual states (#106)', () => {
+  // Enable debug-ime so textarea becomes visible
+  await page.evaluate(() => document.body.classList.add('debug-ime'));
 
-  test('ime preview appears on composition — bottom dock (default)', async ({ page, mockSshServer }) => {
-    await setupConnected(page, mockSshServer);
-    // Wait for connection overlay to auto-dismiss
-    await page.waitForTimeout(2000);
+  // Enable compose mode
+  await page.evaluate(() => {
+    const btn = document.getElementById('composeModeBtn');
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(200);
 
-    // Trigger IME composition to show the preview
-    await page.evaluate(() => {
-      const ime = document.getElementById('imeInput');
-      ime.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-      ime.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'hello world' }));
-      ime.value = 'hello world';
-      ime.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'hello world', inputType: 'insertCompositionText' }));
-    });
-    await page.waitForTimeout(200);
+  // Simulate GBoard composition
+  await page.evaluate((t) => {
+    const ime = document.getElementById('imeInput');
+    ime.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    for (let i = 1; i <= t.length; i++) {
+      ime.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: t.slice(0, i) }));
+    }
+    ime.value = t;
+    ime.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: t }));
+    ime.dispatchEvent(new InputEvent('input', { bubbles: true, data: t, inputType: 'insertCompositionText' }));
+  }, text);
+  await page.waitForTimeout(300);
+}
 
-    // Verify preview is visible
-    const preview = page.locator('#imePreview');
-    await expect(preview).not.toHaveClass(/hidden/);
+// ── IME Action Buttons (#106) ─────────────────────────────────────────────
 
-    // Verify buttons exist
+test.describe('IME action buttons visual states (#106)', () => {
+
+  test('action buttons appear on composition — bottom dock (default)', async ({ page, mockSshServer }) => {
+    await setupIMEComposition(page, mockSshServer, 'hello world');
+
+    const actions = page.locator('#imeActions');
+    await expect(actions).not.toHaveClass(/hidden/);
     await expect(page.locator('#imeClearBtn')).toBeVisible();
     await expect(page.locator('#imeCommitBtn')).toBeVisible();
     await expect(page.locator('#imeDockToggle')).toBeVisible();
 
-    // Verify preview text
-    await expect(page.locator('#imePreviewText')).toHaveText('hello world');
-
-    // Verify default bottom dock
-    await expect(preview).toHaveClass(/ime-preview-bottom/);
-
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-preview-bottom-dock.png') });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-actions-bottom-dock.png') });
   });
 
-  test('ime preview dock toggle switches to top', async ({ page, mockSshServer }) => {
-    await setupConnected(page, mockSshServer);
-    await page.waitForTimeout(2000);
-
-    // Trigger composition
-    await page.evaluate(() => {
-      const ime = document.getElementById('imeInput');
-      ime.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-      ime.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'testing' }));
-      ime.value = 'testing';
-      ime.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'testing', inputType: 'insertCompositionText' }));
-    });
-    await page.waitForTimeout(200);
-
-    const preview = page.locator('#imePreview');
+  test('dock toggle switches to top', async ({ page, mockSshServer }) => {
+    await setupIMEComposition(page, mockSshServer, 'testing');
 
     // Toggle to top
     await page.click('#imeDockToggle');
-    await expect(preview).toHaveClass(/ime-preview-top/);
-    await expect(preview).not.toHaveClass(/ime-preview-bottom/);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-preview-top-dock.png') });
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-actions-top-dock.png') });
 
     // Toggle back to bottom
     await page.click('#imeDockToggle');
-    await expect(preview).toHaveClass(/ime-preview-bottom/);
-    await expect(preview).not.toHaveClass(/ime-preview-top/);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-preview-bottom-toggled.png') });
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-actions-bottom-toggled.png') });
   });
 
-  test('ime preview dock position persists in localStorage', async ({ page, mockSshServer }) => {
-    await setupConnected(page, mockSshServer);
-
-    // Trigger composition and toggle to top
-    await page.evaluate(() => {
-      const ime = document.getElementById('imeInput');
-      ime.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-      ime.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'persist' }));
-      ime.value = 'persist';
-      ime.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'persist', inputType: 'insertCompositionText' }));
-    });
-    await page.waitForTimeout(200);
+  test('dock position persists in localStorage', async ({ page, mockSshServer }) => {
+    await setupIMEComposition(page, mockSshServer, 'persist');
 
     await page.click('#imeDockToggle');
-
     const saved = await page.evaluate(() => localStorage.getItem('imeDockPosition'));
     expect(saved).toBe('top');
   });
 
-  test('ime preview clear button hides preview', async ({ page, mockSshServer }) => {
-    await setupConnected(page, mockSshServer);
+  test('clear button hides actions', async ({ page, mockSshServer }) => {
+    await setupIMEComposition(page, mockSshServer, 'clear me');
 
-    await page.evaluate(() => {
-      const ime = document.getElementById('imeInput');
-      ime.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-      ime.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'clear me' }));
-      ime.value = 'clear me';
-      ime.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'clear me', inputType: 'insertCompositionText' }));
-    });
-    await page.waitForTimeout(200);
-
-    const preview = page.locator('#imePreview');
-    await expect(preview).not.toHaveClass(/hidden/);
+    const actions = page.locator('#imeActions');
+    await expect(actions).not.toHaveClass(/hidden/);
 
     await page.click('#imeClearBtn');
     await page.waitForTimeout(200);
 
-    await expect(preview).toHaveClass(/hidden/);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-preview-after-clear.png') });
+    await expect(actions).toHaveClass(/hidden/);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'ime-actions-after-clear.png') });
   });
 });
 
@@ -128,9 +100,7 @@ test.describe('Connection status dialog visual states (#105)', () => {
   test('connection status overlay has cancel button when disconnected', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // Trigger disconnect from page side to force WS close → overlay appears
     await page.evaluate(async () => {
-      // Forcefully close WS to simulate unclean disconnect
       const ws = (await import('./modules/state.js')).appState.ws;
       if (ws) ws.close();
     });
@@ -141,7 +111,6 @@ test.describe('Connection status dialog visual states (#105)', () => {
 
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'connection-dialog-after-drop.png') });
 
-    // If overlay appeared, cancel button must be present
     const visible = await overlay.isVisible().catch(() => false);
     if (visible) {
       await expect(cancelBtn).toBeVisible();
