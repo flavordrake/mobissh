@@ -668,6 +668,24 @@ html, body {
 .selection-chip-dismiss { border-color: var(--danger); color: var(--danger); padding: 4px 8px; }
 .selection-chip-dismiss:active { background: var(--danger); color: #fff; }
 
+/* Long-press tooltip (#111) */
+.toolbar-tooltip {
+  position: fixed;
+  left: var(--tooltip-left, 50%);
+  top: var(--tooltip-top, 0);
+  z-index: 200;
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+
 /* Key bar — depth-based two-row layout */
 #key-bar {
   display: flex;

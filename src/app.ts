@@ -23,7 +23,7 @@ import {
   _applyTabBarVisibility, initSessionMenu, initTabBar,
   initConnectForm, initTerminalActions, initKeyBar,
   initTerminalResizeObserver, initRouting, navigateToPanel,
-  initFilesPanel,
+  initFilesPanel, initLongPressTooltips,
 } from './modules/ui.js';
 import {
   ROOT_CSS, initTerminal, handleResize, initKeyboardAwareness,
@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initKeyBar();
     initTerminalResizeObserver();
     initFilesPanel();
+    initLongPressTooltips();
     initRecording({ toast });
     initProfiles({ toast, navigateToConnect: () => { navigateToPanel('connect'); }, applyTheme });
     initSettings({ toast, applyFontSize, applyTheme });

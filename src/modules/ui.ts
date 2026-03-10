@@ -91,6 +91,54 @@ export function initUI({ keyboardVisible, ROOT_CSS, applyFontSize, applyTheme }:
   _applyTheme = applyTheme;
 }
 
+// ── Long-press tooltip (#111) ────────────────────────────────────────────────
+
+let _tooltipEl: HTMLDivElement | null = null;
+let _tooltipTimer: ReturnType<typeof setTimeout> | null = null;
+
+function _getTooltipEl(): HTMLDivElement {
+  if (!_tooltipEl) {
+    _tooltipEl = document.createElement('div');
+    _tooltipEl.className = 'toolbar-tooltip hidden';
+    document.body.appendChild(_tooltipEl);
+  }
+  return _tooltipEl;
+}
+
+function _hideTooltip(): void {
+  if (_tooltipTimer) { clearTimeout(_tooltipTimer); _tooltipTimer = null; }
+  _getTooltipEl().classList.add('hidden');
+}
+
+export function initLongPressTooltips(): void {
+  document.addEventListener('touchstart', (e: TouchEvent) => {
+    const target = (e.target as Element).closest<HTMLElement>('[data-tooltip]');
+    if (!target) return;
+    const text = target.dataset['tooltip'];
+    if (!text) return;
+
+    if (_tooltipTimer) clearTimeout(_tooltipTimer);
+    _tooltipTimer = setTimeout(() => {
+      _tooltipTimer = null;
+      const rect = target.getBoundingClientRect();
+      const el = _getTooltipEl();
+      el.textContent = text;
+      el.classList.remove('hidden');
+      // Position: centered horizontally over button, above it
+      // CSS custom properties drive the position (no inline styles)
+      const tipW = el.offsetWidth || 80;
+      const left = Math.max(8, Math.min(rect.left + rect.width / 2 - tipW / 2, window.innerWidth - tipW - 8));
+      const top = Math.max(8, rect.top - el.offsetHeight - 8);
+      el.style.setProperty('--tooltip-left', `${String(left)}px`);
+      el.style.setProperty('--tooltip-top', `${String(top)}px`);
+    }, 500);
+  }, { passive: true });
+
+  document.addEventListener('touchend', _hideTooltip, { passive: true });
+  document.addEventListener('touchmove', _hideTooltip, { passive: true });
+  document.addEventListener('touchcancel', _hideTooltip, { passive: true });
+}
+
 // ── Toast ────────────────────────────────────────────────────────────────────
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
