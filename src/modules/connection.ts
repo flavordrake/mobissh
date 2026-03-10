@@ -410,7 +410,7 @@ export function scheduleReconnect(): void {
       appState.reconnectDelay * RECONNECT.BACKOFF_FACTOR,
       RECONNECT.MAX_DELAY_MS
     );
-    _openWebSocket();
+    _openWebSocket({ silent: true });
   }, appState.reconnectDelay);
 }
 
@@ -504,6 +504,8 @@ document.addEventListener('visibilitychange', () => {
     if (appState.currentProfile && (!appState.ws || appState.ws.readyState !== WebSocket.OPEN)) {
       cancelReconnect();
       _dismissConnectionStatus();
+      // Dismiss any error dialog left by failed reconnect attempts while hidden
+      document.getElementById('errorDialogOverlay')?.classList.add('hidden');
       _toast('Reconnecting…');
       _openWebSocket({ silent: true });
     }
