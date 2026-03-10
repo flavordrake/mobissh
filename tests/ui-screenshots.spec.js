@@ -19,6 +19,8 @@ test.describe('IME preview visual states (#106)', () => {
 
   test('ime preview appears on composition — bottom dock (default)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
+    // Wait for connection overlay to auto-dismiss
+    await page.waitForTimeout(2000);
 
     // Trigger IME composition to show the preview
     await page.evaluate(() => {
@@ -50,6 +52,7 @@ test.describe('IME preview visual states (#106)', () => {
 
   test('ime preview dock toggle switches to top', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
+    await page.waitForTimeout(2000);
 
     // Trigger composition
     await page.evaluate(() => {
