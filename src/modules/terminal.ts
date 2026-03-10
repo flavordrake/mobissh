@@ -12,8 +12,17 @@ interface NotifEntry {
 }
 
 const _notifications: NotifEntry[] = [];
+const NOTIF_MAX = 50;
+const NOTIF_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
 
 export function getNotifications(): readonly NotifEntry[] {
+  const cutoff = Date.now() - NOTIF_EXPIRY_MS;
+  let removed = false;
+  while (_notifications.length > 0 && _notifications[0]!.time < cutoff) {
+    _notifications.shift();
+    removed = true;
+  }
+  if (removed) _updateBellBadge();
   return _notifications;
 }
 
@@ -24,7 +33,10 @@ export function clearNotifications(): void {
   if (drawer) drawer.classList.add('hidden');
 }
 
-function _addNotification(message: string): void {
+export function _addNotification(message: string): void {
+  if (!shouldNotify()) return;
+  if (message.length < 3) return;
+  if (_notifications.length >= NOTIF_MAX) _notifications.shift();
   _notifications.push({ time: Date.now(), message });
   _updateBellBadge();
 }
