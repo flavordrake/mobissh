@@ -96,7 +96,7 @@ function shouldNotify(): boolean {
   if (localStorage.getItem('termNotifications') !== 'true') return false;
   if (Notification.permission !== 'granted') return false;
   const backgroundOnly = localStorage.getItem('notifBackgroundOnly') !== 'false';
-  if (backgroundOnly && document.visibilityState !== 'hidden') return false;
+  if (backgroundOnly && (document.hasFocus() || document.visibilityState === 'visible')) return false;
   const cooldownMs = parseInt(localStorage.getItem('notifCooldown') ?? '15000') || 15000;
   if (Date.now() - _lastNotifTime < cooldownMs) return false;
   return true;

@@ -64,6 +64,7 @@ function enableNotifications(backgroundOnly = false): void {
       querySelector: () => null,
       addEventListener: vi.fn(),
       visibilityState: backgroundOnly ? 'hidden' : 'visible',
+      hasFocus: () => !backgroundOnly,
       documentElement: { style: { setProperty: vi.fn() }, dataset: {} },
       createElement: vi.fn(() => ({
         className: '', textContent: '', innerHTML: '',
