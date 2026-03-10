@@ -58,6 +58,15 @@ export function initIMEInput(): void {
       const textEl = document.getElementById('imePreviewText');
       if (textEl) textEl.textContent = text;
       el.classList.remove('hidden');
+      // Position opposite to terminal cursor so the input point stays visible (#106)
+      const term = appState.terminal;
+      if (term) {
+        const cursorRow = term.buffer.active.cursorY;
+        const totalRows = term.rows;
+        const cursorInTopHalf = cursorRow < totalRows / 2;
+        el.classList.toggle('ime-preview-bottom', cursorInTopHalf);
+        el.classList.toggle('ime-preview-top', !cursorInTopHalf);
+      }
     } else {
       el.classList.add('hidden');
     }

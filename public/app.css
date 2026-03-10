@@ -204,20 +204,26 @@ body.debug-ime #imePreview {
   pointer-events: none;
 }
 
-/* IME composition preview strip — visible while composing, hidden otherwise */
+/* IME composition preview — floats over terminal, positioned opposite cursor (#106) */
 #imePreview {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  z-index: 100;
   background: var(--bg-card);
-  border-top: 1px solid var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 13px;
   padding: 3px 8px;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
   min-height: 24px;
 }
+#imePreview.ime-preview-top { top: 8%; }
+#imePreview.ime-preview-bottom { bottom: 33%; }
 .ime-preview-text {
   flex: 1;
   overflow: hidden;

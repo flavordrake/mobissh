@@ -403,7 +403,7 @@ export function scheduleReconnect(): void {
   const delaySec = Math.round(appState.reconnectDelay / 1000);
   _toast(`Reconnecting in ${String(delaySec)}s…`);
   _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
-  _showConnectionStatus(`Reconnecting in ${String(delaySec)}s…`, { cancelable: true });
+  _showConnectionStatus(`Reconnecting in ${String(delaySec)}s…`);
 
   appState.reconnectTimer = setTimeout(() => {
     appState.reconnectDelay = Math.min(
@@ -543,9 +543,7 @@ export function sendSSHInput(data: string): void {
 
 let _currentOverlay: HTMLDivElement | null = null;
 
-function _showConnectionStatus(message: string, options?: { cancelable?: boolean }): void {
-  const cancelable = options?.cancelable ?? false;
-
+function _showConnectionStatus(message: string): void {
   // Reuse existing overlay — append message to scrollable log
   if (_currentOverlay) {
     const log = _currentOverlay.querySelector('.conn-status-log');
@@ -555,22 +553,6 @@ function _showConnectionStatus(message: string, options?: { cancelable?: boolean
       line.textContent = message;
       log.appendChild(line);
       log.scrollTop = log.scrollHeight;
-    }
-    // Update cancel button visibility
-    const existingCancel = _currentOverlay.querySelector('.conn-status-cancel');
-    if (cancelable && !existingCancel) {
-      const btn = document.createElement('button');
-      btn.className = 'conn-status-cancel';
-      btn.textContent = 'Cancel';
-      btn.addEventListener('click', () => {
-        cancelReconnect();
-        _setStatus('disconnected', 'Reconnect cancelled');
-        _currentOverlay?.remove();
-        _currentOverlay = null;
-      });
-      _currentOverlay.querySelector('.conn-status-dialog')!.appendChild(btn);
-    } else if (!cancelable && existingCancel) {
-      existingCancel.remove();
     }
     return;
   }
@@ -590,18 +572,15 @@ function _showConnectionStatus(message: string, options?: { cancelable?: boolean
   log.appendChild(line);
   dialog.appendChild(log);
 
-  if (cancelable) {
-    const btn = document.createElement('button');
-    btn.className = 'conn-status-cancel';
-    btn.textContent = 'Cancel';
-    btn.addEventListener('click', () => {
-      cancelReconnect();
-      _setStatus('disconnected', 'Reconnect cancelled');
-      overlay.remove();
-      _currentOverlay = null;
-    });
-    dialog.appendChild(btn);
-  }
+  // Cancel button is always present — calls disconnect() for full cleanup (#105)
+  const btn = document.createElement('button');
+  btn.className = 'conn-status-cancel';
+  btn.textContent = 'Cancel';
+  btn.addEventListener('click', () => {
+    disconnect();
+    _dismissConnectionStatus();
+  });
+  dialog.appendChild(btn);
 
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
