@@ -471,6 +471,16 @@ export function initIMEInput(): void {
     if (!newVal) { _transition('idle'); return; }
     _showIMEOverlay();
 
+    // Hold for preview: don't send, transition to previewing with auto-clear.
+    // GBoard swipe may fire input events without composition events, so this
+    // path must mirror the compositionend preview-hold logic.
+    if (appState.imeMode && _previewMode) {
+      _transition('previewing');
+      _lastSentValue = '';
+      _scheduleClear();
+      return;
+    }
+
     // If we have a previous value to diff against, use textarea diffing
     // to detect corrections the beforeinput handler couldn't catch
     if (_lastSentValue) {
@@ -482,10 +492,8 @@ export function initIMEInput(): void {
       _lastSentValue = newVal;
     }
 
-    // Clear the textarea after sending unless preview is on (text should accumulate)
-    if (!appState.imeMode || !_previewMode) {
-      _transition('idle');
-    }
+    // No preview: clear after sending
+    _transition('idle');
   });
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
