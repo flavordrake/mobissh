@@ -198,4 +198,30 @@ test.describe('Connection lifecycle (#110 Phase 7)', () => {
     expect(response).toBeTruthy();
   });
 
+  test('server error message shows dismissable error dialog (#92)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Simulate a non-recoverable server error (e.g., SSRF block)
+    mockSshServer.sendToPage({
+      type: 'error',
+      message: 'Connections to private/loopback addresses are blocked.',
+    });
+
+    // The error dialog should appear (not the connection status overlay)
+    const errorDialog = page.locator('#errorDialogOverlay');
+    await expect(errorDialog).toBeVisible({ timeout: 3000 });
+
+    // The error text should include the server message
+    const errorText = await page.locator('#errorDialogText').textContent();
+    expect(errorText).toContain('Connections to private/loopback addresses are blocked.');
+
+    // A Dismiss button must be present and visible
+    const dismissBtn = page.locator('#errorDialogDismiss');
+    await expect(dismissBtn).toBeVisible();
+
+    // Clicking Dismiss should close the dialog
+    await dismissBtn.click();
+    await expect(errorDialog).not.toBeVisible();
+  });
+
 });
