@@ -214,6 +214,10 @@ export function initIMEInput(): void {
       _imePreviewShow(ime.value || null);
       return;
     }
+    // Show preview for non-composition input in compose mode too
+    if (appState.imeMode && ime.value) {
+      _imePreviewShow(ime.value);
+    }
 
     // If beforeinput already handled this (insertReplacementText with ranges), skip
     if (_replacementHandled) {

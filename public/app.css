@@ -88,9 +88,8 @@ body.debug-ime #imeInput.ime-visible {
   overflow-y: auto;
 }
 
-body.debug-ime #imePreview {
-  display: none !important;
-}
+/* debug-ime: makes the hidden IME textarea visible for debugging.
+   The floating #imePreview pill coexists — no need to hide it. */
 
 #app {
   display: flex;
