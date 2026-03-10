@@ -15,6 +15,27 @@ const _notifications: NotifEntry[] = [];
 const NOTIF_MAX = 50;
 const NOTIF_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
 
+export function _sanitizeNotifText(raw: string): string {
+  let s = raw;
+  // Strip ANSI escape sequences: CSI (\x1b[...), OSC (\x1b]...), and other \x1b sequences
+  /* eslint-disable no-control-regex */
+  s = s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
+  s = s.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
+  s = s.replace(/\x1b[@-Z\\-_]/g, '');
+  // Remove control characters: U+0000-U+001F (except space 0x20), U+007F, U+0080-U+009F
+  s = s.replace(/[\x00-\x1f\x7f\x80-\x9f]/g, '');
+  /* eslint-enable no-control-regex */
+  // Remove Unicode replacement / block characters
+  s = s.replace(/[▯\uFFFD]/g, '');
+  // Collapse whitespace runs to single space and trim
+  s = s.replace(/\s+/g, ' ').trim();
+  // Truncate to 120 chars with ellipsis
+  if (s.length > 120) s = s.slice(0, 117) + '...';
+  // Fall back to default if result is empty or too short
+  if (s.length < 3) return 'Terminal bell';
+  return s;
+}
+
 export function getNotifications(): readonly NotifEntry[] {
   const cutoff = Date.now() - NOTIF_EXPIRY_MS;
   let removed = false;
@@ -121,23 +142,25 @@ export function initTerminal(): void {
     let body = 'Terminal bell';
     for (let i = buffer.cursorY; i >= 0; i--) {
       const line = buffer.getLine(i)?.translateToString(true).trim();
-      if (line) { body = line; break; }
+      if (line) { body = _sanitizeNotifText(line); break; }
     }
     _addNotification(body);
     if (shouldNotify()) fireNotification('MobiSSH', body);
   });
 
   appState.terminal.parser.registerOscHandler(9, (data: string) => {
-    _addNotification(data);
-    if (shouldNotify()) fireNotification('MobiSSH', data);
+    const body = _sanitizeNotifText(data);
+    _addNotification(body);
+    if (shouldNotify()) fireNotification('MobiSSH', body);
     return true;
   });
 
   appState.terminal.parser.registerOscHandler(777, (data: string) => {
     const parts = data.split(';');
     if (parts[0] === 'notify') {
-      _addNotification(parts[2] ?? '');
-      if (shouldNotify()) fireNotification(parts[1] ?? 'MobiSSH', parts[2] ?? '');
+      const body = _sanitizeNotifText(parts[2] ?? '');
+      _addNotification(body);
+      if (shouldNotify()) fireNotification(parts[1] ?? 'MobiSSH', body);
     }
     return true;
   });

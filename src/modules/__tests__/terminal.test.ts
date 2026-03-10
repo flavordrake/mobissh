@@ -49,7 +49,7 @@ vi.stubGlobal('window', {
 
 vi.useFakeTimers();
 
-const { getNotifications, clearNotifications, _addNotification } = await import('../terminal.js');
+const { getNotifications, clearNotifications, _addNotification, _sanitizeNotifText } = await import('../terminal.js');
 
 // Helper: configure shouldNotify() to allow notifications
 function enableNotifications(backgroundOnly = false): void {
@@ -213,5 +213,74 @@ describe('background-only filtering (#94)', () => {
     // document.visibilityState is 'visible' from enableNotifications(false)
     _addNotification('foreground message');
     expect(getNotifications().length).toBe(1);
+  });
+});
+
+describe('_sanitizeNotifText (#109)', () => {
+  it('strips CSI ANSI escape sequences', () => {
+    expect(_sanitizeNotifText('\x1b[1;32mhello\x1b[0m')).toBe('hello');
+  });
+
+  it('strips OSC escape sequences', () => {
+    expect(_sanitizeNotifText('\x1b]0;title\x07hello')).toBe('hello');
+  });
+
+  it('strips OSC sequences with ST terminator', () => {
+    expect(_sanitizeNotifText('\x1b]0;title\x1b\\hello')).toBe('hello');
+  });
+
+  it('removes control characters (non-printable ASCII)', () => {
+    expect(_sanitizeNotifText('hello\x01\x02\x1fworld')).toBe('helloworld');
+  });
+
+  it('removes DEL (U+007F) character', () => {
+    expect(_sanitizeNotifText('hel\x7flo')).toBe('hello');
+  });
+
+  it('removes C1 control characters (U+0080-U+009F)', () => {
+    expect(_sanitizeNotifText('hel\x80\x9flo')).toBe('hello');
+  });
+
+  it('removes Unicode block/replacement characters (▯ and \uFFFD)', () => {
+    expect(_sanitizeNotifText('▯▯ accept edits on (shift+tab)')).toBe('accept edits on (shift+tab)');
+    expect(_sanitizeNotifText('\uFFFD data \uFFFD')).toBe('data');
+  });
+
+  it('collapses multiple spaces to a single space', () => {
+    expect(_sanitizeNotifText('hello   world')).toBe('hello world');
+  });
+
+  it('truncates text longer than 120 characters with ellipsis', () => {
+    const long = 'a'.repeat(130);
+    const result = _sanitizeNotifText(long);
+    expect(result.length).toBe(120);
+    expect(result.endsWith('...')).toBe(true);
+  });
+
+  it('returns Terminal bell for empty string', () => {
+    expect(_sanitizeNotifText('')).toBe('Terminal bell');
+  });
+
+  it('returns Terminal bell for string shorter than 3 chars after sanitization', () => {
+    expect(_sanitizeNotifText('ab')).toBe('Terminal bell');
+    expect(_sanitizeNotifText('a')).toBe('Terminal bell');
+  });
+
+  it('returns Terminal bell for string that is all control chars', () => {
+    expect(_sanitizeNotifText('\x1b[1m\x1b[0m\x01\x02')).toBe('Terminal bell');
+  });
+
+  it('returns Terminal bell for string that is only replacement chars', () => {
+    expect(_sanitizeNotifText('▯▯▯')).toBe('Terminal bell');
+  });
+
+  it('preserves clean text unchanged (up to 120 chars)', () => {
+    expect(_sanitizeNotifText('Build complete: all tests passed')).toBe('Build complete: all tests passed');
+  });
+
+  it('handles mixed content: ANSI + replacement chars + real text', () => {
+    const raw = '\x1b[32m▯▯ accept edits on (shift+tab to cycle) · e...\x1b[0m';
+    const result = _sanitizeNotifText(raw);
+    expect(result).toBe('accept edits on (shift+tab to cycle) · e...');
   });
 });
