@@ -476,7 +476,10 @@ export function initIMEInput(): void {
   ime.addEventListener('compositionstart', () => {
     // New composition: clear any stale text that browser might have re-inserted
     if (_imeState === 'idle') ime.value = '';
-    _transition('composing');
+    // Preserve editing state — user tapped in to edit, new composition should
+    // stay sticky (no auto-clear). Only transition to composing from non-editing.
+    if (_imeState !== 'editing') _transition('composing');
+    else appState.isComposing = true;
     _showIMEOverlay();
   });
 
