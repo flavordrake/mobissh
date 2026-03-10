@@ -210,12 +210,12 @@ test.describe('IME composition → SSH input routing', () => {
     });
     await expect(actions).not.toHaveClass(/hidden/);
 
-    // Fire compositionend — action bar should hide (non-compose mode)
+    // Fire compositionend — action bar hides after deferred idle (1.5s)
     await page.evaluate(() => {
       const el = document.getElementById('imeInput');
       el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'hello' }));
     });
-    await expect(actions).toHaveClass(/hidden/);
+    await expect(actions).toHaveClass(/hidden/, { timeout: 3000 });
   });
 });
 
@@ -605,13 +605,14 @@ test.describe('IME state machine — compose + preview (#106)', () => {
 
     await swipeCompose(page, 'immediate');
     await page.waitForTimeout(100);
-    await page.screenshot({ path: path.join(SM_DIR, '19-after-immediate-send.png') });
 
-    // Text was sent to SSH
+    // Text was sent to SSH immediately
     const msgs = await getInputMessages(page);
     expect(msgs.some((m) => m.data.includes('immediate'))).toBe(true);
-    // Textarea must NOT be visible after send (no lingering overlay)
-    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
+    // Textarea stays alive briefly (1.5s deferred idle for voice continuity)
+    // then hides after the deferred idle fires
+    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/, { timeout: 3000 });
+    await page.screenshot({ path: path.join(SM_DIR, '19-after-immediate-send.png') });
     // Action buttons must be hidden
     await expect(page.locator('#imeActions')).toHaveClass(/hidden/);
   });

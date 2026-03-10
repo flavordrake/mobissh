@@ -94,8 +94,9 @@ export function initIMEInput(): void {
   });
 
   // When user taps inside the visible textarea to edit, transition to editing state.
+  // This cancels any pending auto-clear timer and makes the textarea sticky.
   ime.addEventListener('touchstart', () => {
-    if (_imeState === 'previewing' && ime.value) {
+    if ((_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
       _transition('editing');
     }
   });
@@ -502,11 +503,20 @@ export function initIMEInput(): void {
       return;
     }
 
-    // No preview: send immediately and clear
+    // No preview: send immediately, but keep textarea alive briefly
+    // so voice dictation sessions can continue across composition cycles.
     appState.isComposing = false;
     _sendIMEText(text);
-    _lastSentValue = text;
-    _transition('idle');
+    _lastSentValue = '';
+    ime.value = '';
+    // Move to previewing (allows tap-to-edit and deferred idle timer)
+    _imeState = 'previewing';
+    // Deferred idle: if no new compositionstart within 1.5s, hide textarea
+    if (_clearTimer) clearTimeout(_clearTimer);
+    _clearTimer = setTimeout(() => {
+      if (_imeState === 'composing') return; // new composition started
+      _transition('idle');
+    }, 1500);
   });
 
   ime.addEventListener('compositioncancel' as keyof HTMLElementEventMap, () => {
