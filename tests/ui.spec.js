@@ -234,6 +234,10 @@ test.describe('Session list (#60)', () => {
 
     await page.waitForTimeout(100);
 
+    // Open session menu to see session list
+    await page.locator('#sessionMenuBtn').click();
+    await page.waitForTimeout(100);
+
     // Session list should now be visible (2 sessions)
     await expect(page.locator('#sessionList')).not.toHaveClass(/hidden/);
 

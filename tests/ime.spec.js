@@ -208,7 +208,7 @@ test.describe('IME composition → SSH input routing', () => {
       el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'hello' }));
     });
     await expect(preview).not.toHaveClass(/hidden/);
-    await expect(preview).toHaveText('hello');
+    await expect(page.locator('#imePreviewText')).toHaveText('hello');
 
     // Fire compositionend — preview should hide
     await page.evaluate(() => {

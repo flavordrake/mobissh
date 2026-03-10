@@ -225,9 +225,11 @@ test.describe('Connect form', () => {
     await pw.blur();
     await expect(pw).toHaveAttribute('type', 'text');
 
-    // Same for passphrase
+    // Same for passphrase (inside manualKeyGroup, shown when "Paste key manually" is selected)
     await page.locator('#authType').selectOption('key');
+    await page.locator('#selectedKeyId').selectOption('manual');
     const pp = page.locator('#remote_pp');
+    await expect(pp).toBeVisible();
     await expect(pp).toHaveAttribute('type', 'text');
     await pp.focus();
     await expect(pp).toHaveAttribute('type', 'password');
@@ -297,16 +299,19 @@ test.describe('Settings panel', () => {
 
   test('font size range exists with correct bounds', async ({ page }) => {
     const slider = page.locator('#fontSize');
-    await expect(slider).toHaveAttribute('min', '10');
-    await expect(slider).toHaveAttribute('max', '24');
+    await expect(slider).toHaveAttribute('min', '8');
+    await expect(slider).toHaveAttribute('max', '32');
   });
 
-  test('theme selector has all five themes', async ({ page }) => {
+  test('theme selector has all ten themes', async ({ page }) => {
     const opts = page.locator('#termThemeSelect option');
-    await expect(opts).toHaveCount(5);
+    await expect(opts).toHaveCount(10);
     const values = await opts.evaluateAll((els) => els.map((el) => el.value));
     expect(values).toEqual(
-      expect.arrayContaining(['dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast'])
+      expect.arrayContaining([
+        'dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast',
+        'dracula', 'nord', 'gruvboxDark', 'monokai', 'tokyoNight',
+      ])
     );
   });
 

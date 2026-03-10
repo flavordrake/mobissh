@@ -16,7 +16,7 @@ async function enableNotifications(page) {
     // Enable in localStorage
     localStorage.setItem('termNotifications', 'true');
     localStorage.setItem('notifBackgroundOnly', 'false');
-    localStorage.setItem('notifCooldown', '0');
+    localStorage.setItem('notifCooldown', '1');
 
     // Mock Notification API (permission checks only — constructor not used in PWA)
     window.__notifications = [];
@@ -170,6 +170,7 @@ test.describe('Bell badge UI (#33)', () => {
 
   test('bell icon hidden initially, shows with count after bell', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
+    await enableNotifications(page);
 
     // Bell icon should be hidden initially
     const bellBtn = page.locator('#bellIndicatorBtn');
@@ -190,6 +191,7 @@ test.describe('Bell badge UI (#33)', () => {
 
   test('badge increments on multiple bells', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
+    await enableNotifications(page);
 
     mockSshServer.sendToPage({ type: 'output', data: '\x07' });
     await page.waitForTimeout(200);
@@ -204,6 +206,7 @@ test.describe('Bell badge UI (#33)', () => {
 
   test('OSC 9 increments badge', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
+    await enableNotifications(page);
 
     mockSshServer.sendToPage({ type: 'output', data: '\x1b]9;First\x07' });
     await page.waitForTimeout(200);
@@ -218,6 +221,7 @@ test.describe('Bell badge UI (#33)', () => {
 
   test('clear all resets badge and hides icon', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
+    await enableNotifications(page);
 
     // Fire bells to get a badge
     mockSshServer.sendToPage({ type: 'output', data: '\x07' });
