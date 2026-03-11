@@ -1,6 +1,6 @@
 ---
 name: develop
-description: Use when the user says "develop", "work on issue", "implement issue", "fix issue N", or explicitly "/develop N". Spawns a local develop agent in a worktree to implement one or more GitHub issues. Supports batch mode ("/develop 3,9,16") with max 2 parallel agents.
+description: Use when the user says "develop", "work on issue", "implement issue", "fix issue N", or explicitly "/develop N". Spawns a local develop agent in a worktree to implement one or more GitHub issues. Supports batch mode ("/develop 3,9,16") with max 2 parallel agents. Without arguments, auto-proposes bot-labeled issues ranked by risk and relevance.
 ---
 
 # Local Development Agent
@@ -12,7 +12,32 @@ Claude bot (GitHub Actions) with faster, more reliable local execution.
 
 - `/develop 16` → single issue
 - `/develop 3,9,16` → batch (max 2 parallel, rest queued)
-- `/develop` (no args) → error, require issue number(s)
+- `/develop` (no args) → **auto-propose mode** (see below)
+
+## Auto-propose mode
+
+When called without arguments, propose issues to develop based on risk and relevance:
+
+```bash
+scripts/develop-propose.sh --max 5
+```
+
+This fetches open `bot`-labeled issues, scores them by:
+- **Risk**: low (single file, small scope) scores higher than high (server, vault, multi-module)
+- **Theme**: matches against recent git log to surface issues related to current work
+- **Freshness**: no prior bot attempts scores higher
+- **Blockers**: `blocked` and `device` labels reduce score
+
+Present the ranked proposals as a table:
+
+```
+| # | Title | Risk | Score | Reason |
+|---|-------|------|-------|--------|
+```
+
+Then ask the user which to develop (single pick or comma-separated batch).
+If the user just says "go" or "yes", develop the top-scored issue.
+If the user says "all" or "batch", develop the top 2 in parallel.
 
 ## Pre-flight checks
 
