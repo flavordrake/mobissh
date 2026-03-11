@@ -5,7 +5,7 @@
 - Use `tree` to discover file structure before creating any test or new component.
 - `node_modules/` is gitignored. Install via `npm install` in `server/`.
 - Build step is TypeScript compilation only. No heavy bundlers (webpack, vite) unless justified.
-- **Compiled JS (`public/modules/*.js`) is gitignored.** Do NOT commit compiled output. It is built automatically by Docker (`Dockerfile`), `scripts/server-ctl.sh`, and `scripts/test-headless.sh`. Run `npx tsc` locally if needed for development.
+- **Compiled JS (`public/app.js`, `public/modules/*.js`) is gitignored.** Do NOT commit compiled output. It is built automatically by Docker (`Dockerfile`), `scripts/server-ctl.sh`, and `scripts/test-headless.sh`. Run `npx tsc` locally if needed for development.
 - **No compound `&&` chains.** Use wrapper scripts, not `&&`-chained raw commands. Chained commands cause false positive failures (e.g., local branch delete fails but remote merge succeeded, exit 1 blocks downstream steps).
   - Merge + close: `scripts/gh-ops.sh integrate <PR> <issue>`
   - Delegate setup: `scripts/gh-ops.sh delegate <issue> [--label L]`
