@@ -11,6 +11,7 @@ test-results-appium/
 !tests/emulator/baseline/
 *.js.map
 # Compiled TypeScript output (built by tsc, not checked in)
+public/app.js
 public/modules/*.js
 test-data/
 .claude/worktrees/
