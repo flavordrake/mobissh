@@ -10,6 +10,8 @@
       "Bash(node *)",
       "Bash(./scripts/*)",
       "Bash(scripts/*)",
+      "Bash(//home/dev/workspace/mobissh/scripts/*)",
+      "Bash(//home/dev/workspace/mobissh/.claude/worktrees/*/scripts/*)",
       "Bash(nohup *)",
       "Bash(curl *)",
       "Bash(docker *)",

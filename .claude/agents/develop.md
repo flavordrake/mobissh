@@ -42,6 +42,10 @@ Your prompt will contain:
 
 ## Setup
 
+**CRITICAL: Always use relative paths for scripts.** When running in a worktree,
+`scripts/test-typecheck.sh` (relative) works but `/home/.../scripts/test-typecheck.sh`
+(absolute) will be denied by permission patterns. Use `scripts/*` paths, never absolute.
+
 1. Record the start time: `date +%s`
 2. Read reference docs:
    ```

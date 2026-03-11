@@ -134,6 +134,20 @@ Custom agent (.claude/agents/*.md)
 Built-in general-purpose agent does NOT follow this inheritance path. It runs with
 a blank permission slate and auto-denies everything in background mode.
 
+### Worktree path matching caveat
+
+`Bash(scripts/*)` matches **relative to CWD**. When an agent runs with
+`isolation: "worktree"`, its CWD is `.claude/worktrees/agent-{id}/`. If the LLM
+uses an absolute path (e.g., `/home/dev/workspace/mobissh/scripts/foo.sh`), the
+relative pattern does NOT match — even with `permissionMode: bypassPermissions`.
+
+**Fix:** Add absolute path patterns to `.claude/settings.json`:
+```json
+"Bash(//home/dev/workspace/mobissh/scripts/*)",
+"Bash(//home/dev/workspace/mobissh/.claude/worktrees/*/scripts/*)"
+```
+And instruct agents to prefer relative paths in their system prompts.
+
 ## File locations
 
 ```
