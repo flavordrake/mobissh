@@ -35,9 +35,10 @@ Present the ranked proposals as a table:
 |---|-------|------|-------|--------|
 ```
 
-Then ask the user which to develop (single pick or comma-separated batch).
-If the user just says "go" or "yes", develop the top-scored issue.
-If the user says "all" or "batch", develop the top 2 in parallel.
+Start developing the top-scored issue immediately. No approval step — the user
+invoked `/develop` because they want work done, not a menu. If the top issue is
+blocked, skip to the next unblocked one. For batch, develop the top 2 unblocked
+in parallel.
 
 ## Pre-flight checks
 
