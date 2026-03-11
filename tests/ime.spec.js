@@ -32,18 +32,28 @@ const { test, expect } = require('./fixtures.js');
 async function imeCompose(page, text) {
   await page.evaluate((t) => {
     const el = document.getElementById('imeInput');
+    el.focus();
     el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
     for (let i = 1; i <= t.length; i++) {
+      const partial = t.slice(0, i);
+      el.value = partial;
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, inputType: 'insertCompositionText', data: partial,
+      }));
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true, inputType: 'insertCompositionText', data: partial,
+      }));
       el.dispatchEvent(new CompositionEvent('compositionupdate', {
-        bubbles: true, data: t.slice(0, i),
+        bubbles: true, data: partial,
       }));
     }
     el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: t }));
-    el.value = t;
-    el.dispatchEvent(new InputEvent('input', {
-      bubbles: true, data: t, inputType: 'insertCompositionText',
+    el.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true, inputType: 'insertCompositionText', data: t,
     }));
-    el.value = '';
+    el.dispatchEvent(new InputEvent('input', {
+      bubbles: true, inputType: 'insertCompositionText', data: t,
+    }));
   }, text);
 }
 
