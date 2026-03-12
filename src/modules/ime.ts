@@ -810,21 +810,18 @@ export function initIMEInput(): void {
 
   // Intercept text BEFORE it modifies the field value — characters never
   // appear in the input, so Chrome autocomplete sees nothing to suggest.
-  // Only preventDefault() when we handle the event; unrecognised inputTypes
-  // fall through to the keydown handler (which has KEY_MAP['Enter'] = '\r').
+  // Always preventDefault() — we never want the browser to modify this field.
   let _sentByBeforeInput = false;
   directEl.addEventListener('beforeinput', (e) => {
+    e.preventDefault();
     _sentByBeforeInput = false;
     if (e.inputType === 'insertText' && e.data) {
-      e.preventDefault();
       _sendDirectText(e.data);
       _sentByBeforeInput = true;
     } else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
-      e.preventDefault();
       sendSSHInput('\r');
       _sentByBeforeInput = true;
     } else if (e.inputType === 'deleteContentBackward') {
-      e.preventDefault();
       sendSSHInput('\x7f');
       _sentByBeforeInput = true;
     }
@@ -853,6 +850,12 @@ export function initIMEInput(): void {
       sendSSHInput(mapped);
       e.preventDefault();
       return;
+    }
+    // Mobile soft keyboards often fire keydown with key='Unidentified'.
+    // Fall back to keyCode for Enter (13) and Backspace (8).
+    if (e.key === 'Unidentified') {
+      if (e.keyCode === 13) { sendSSHInput('\r'); e.preventDefault(); return; }
+      if (e.keyCode === 8) { sendSSHInput('\x7f'); e.preventDefault(); return; }
     }
     if (!appState.imeMode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       if (appState.ctrlActive) {

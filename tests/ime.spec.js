@@ -864,24 +864,38 @@ test.describe('Issue #129 — direct mode Enter sends \\r', () => {
     expect(msgs.some((m) => m.data === '\r')).toBe(true);
   });
 
-  test('unrecognised beforeinput does not block subsequent keydown Enter', async ({ page, mockSshServer }) => {
+  test('keydown with key=Unidentified keyCode=13 sends \\r (mobile fallback)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await enableDirectMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
-    // Fire a beforeinput with an inputType we don't handle, then keydown Enter
-    // This simulates some mobile keyboards that fire 'insertText' with null data
-    // or unknown inputType before keydown.
+    // Simulate mobile soft keyboard Enter: key='Unidentified', keyCode=13
     await page.evaluate(() => {
       const el = document.getElementById('directInput');
-      el.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true, cancelable: true, inputType: 'insertUnknownType', data: null,
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true, cancelable: true, key: 'Unidentified', keyCode: 13,
       }));
     });
-    await page.locator('#directInput').press('Enter');
     await page.waitForTimeout(100);
 
     const msgs = await getInputMessages(page);
     expect(msgs.some((m) => m.data === '\r')).toBe(true);
+  });
+
+  test('characters still pass through after Enter in direct mode', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableDirectMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Type a character, press Enter, type another character
+    await page.locator('#directInput').press('a');
+    await page.locator('#directInput').press('Enter');
+    await page.locator('#directInput').press('b');
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === 'a')).toBe(true);
+    expect(msgs.some((m) => m.data === '\r')).toBe(true);
+    expect(msgs.some((m) => m.data === 'b')).toBe(true);
   });
 });
