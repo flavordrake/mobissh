@@ -833,6 +833,14 @@ test.describe('Issue #129 — direct mode Enter sends \\r', () => {
     await page.waitForTimeout(50);
   }
 
+  test('directInput has enterkeyhint="send" for Gboard compatibility (#129)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableDirectMode(page);
+
+    const hint = await page.locator('#directInput').getAttribute('enterkeyhint');
+    expect(hint).toBe('send');
+  });
+
   test('Enter key in direct mode sends \\r via keydown KEY_MAP', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await enableDirectMode(page);
