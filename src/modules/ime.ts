@@ -810,17 +810,21 @@ export function initIMEInput(): void {
 
   // Intercept text BEFORE it modifies the field value — characters never
   // appear in the input, so Chrome autocomplete sees nothing to suggest.
+  // Only preventDefault() when we handle the event; unrecognised inputTypes
+  // fall through to the keydown handler (which has KEY_MAP['Enter'] = '\r').
   let _sentByBeforeInput = false;
   directEl.addEventListener('beforeinput', (e) => {
-    e.preventDefault();
     _sentByBeforeInput = false;
     if (e.inputType === 'insertText' && e.data) {
+      e.preventDefault();
       _sendDirectText(e.data);
       _sentByBeforeInput = true;
     } else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+      e.preventDefault();
       sendSSHInput('\r');
       _sentByBeforeInput = true;
     } else if (e.inputType === 'deleteContentBackward') {
+      e.preventDefault();
       sendSSHInput('\x7f');
       _sentByBeforeInput = true;
     }
