@@ -814,3 +814,74 @@ test.describe('IME auto-positioning based on cursor (#106)', () => {
     expect(after.top).not.toBe('auto');
   });
 });
+
+// ── Issue #129 — direct mode Enter key (#129) ─────────────────────────────────
+
+test.describe('Issue #129 — direct mode Enter sends \\r', () => {
+  /**
+   * Switch from compose mode (default after connect) to direct mode by
+   * clicking the compose toggle, then focus #directInput.
+   */
+  async function enableDirectMode(page) {
+    await page.evaluate(() => {
+      const btn = document.getElementById('composeModeBtn');
+      // composeModeBtn is active when imeMode (compose) is on — click to turn it off
+      if (btn && btn.classList.contains('active')) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.locator('#directInput').focus().catch(() => {});
+    await page.waitForTimeout(50);
+  }
+
+  test('Enter key in direct mode sends \\r via keydown KEY_MAP', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableDirectMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Press Enter — Playwright fires a real keydown with e.key === 'Enter'
+    await page.locator('#directInput').press('Enter');
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === '\r')).toBe(true);
+  });
+
+  test('insertLineBreak beforeinput in direct mode sends \\r', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableDirectMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Simulate Gboard-style insertLineBreak on the directInput field
+    await page.evaluate(() => {
+      const el = document.getElementById('directInput');
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, cancelable: true, inputType: 'insertLineBreak',
+      }));
+    });
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === '\r')).toBe(true);
+  });
+
+  test('unrecognised beforeinput does not block subsequent keydown Enter', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableDirectMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Fire a beforeinput with an inputType we don't handle, then keydown Enter
+    // This simulates some mobile keyboards that fire 'insertText' with null data
+    // or unknown inputType before keydown.
+    await page.evaluate(() => {
+      const el = document.getElementById('directInput');
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, cancelable: true, inputType: 'insertUnknownType', data: null,
+      }));
+    });
+    await page.locator('#directInput').press('Enter');
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === '\r')).toBe(true);
+  });
+});
