@@ -24,6 +24,9 @@
 
 set -euo pipefail
 
+# Load repo guard for safe worktree operations
+source "$(dirname "$0")/lib/repo-guard.sh"
+
 usage() {
   echo "Usage: scripts/gh-ops.sh <command> [args]" >&2
   echo "Commands: comment, labels, close, search, version, pr-create, pr-merge, pr-close, integrate, delegate, fetch-issues" >&2
@@ -41,11 +44,15 @@ _cleanup_pr_worktree() {
   branch=$(gh pr view "$pr_num" --json headRefName --jq '.headRefName' 2>/dev/null || true)
   if [ -n "$branch" ]; then
     git worktree list --porcelain | awk -v b="$branch" '/^worktree /{p=$2} /^branch /{if($2=="refs/heads/"b) print p}' | while read -r wt; do
-      rm -rf "$wt"
+      # SAFETY: never rm -rf the main repo
+      if is_main_repo "$wt"; then
+        echo "BLOCKED: refusing to delete main repo at $wt" >&2
+      else
+        safe_rm_worktree "$wt" || true
+      fi
     done
     git worktree prune 2>/dev/null || true
     git branch -D "$branch" 2>/dev/null || true
-    # Full orphan cleanup (removes directories git doesn't track)
     scripts/worktree-cleanup.sh --quiet 2>/dev/null || true
   fi
 }
@@ -210,6 +217,24 @@ case "$CMD" in
       esac
     done
 
+    # Step 0: Ensure PR branch is up-to-date with main before merging
+    echo "==> Checking PR #${PR_NUM} is up-to-date with main" >&2
+    PR_BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName' 2>/dev/null || true)
+    if [ -n "$PR_BRANCH" ]; then
+      if ! git fetch origin main "$PR_BRANCH" 2>/dev/null; then
+        echo "warning: could not fetch remote refs — skipping staleness check" >&2
+      else
+        BEHIND=$(git rev-list --count "origin/${PR_BRANCH}..origin/main" 2>/dev/null || echo "0")
+        if [ "$BEHIND" -gt 0 ]; then
+          echo "warning: branch ${PR_BRANCH} is ${BEHIND} commit(s) behind main" >&2
+          echo "warning: run: git fetch origin main && git checkout ${PR_BRANCH} && git merge origin/main --no-edit && git push" >&2
+          echo "warning: proceeding with merge — GitHub will auto-merge if no conflicts" >&2
+        else
+          echo "==> Branch is up-to-date with main" >&2
+        fi
+      fi
+    fi
+
     # Step 1: Merge PR (reuses pr-merge worktree cleanup)
     echo "==> Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
     _cleanup_pr_worktree "$PR_NUM"
@@ -222,7 +247,9 @@ case "$CMD" in
     # Step 3: Remove bot label
     gh issue edit "$ISSUE_NUM" --remove-label bot 2>/dev/null || true
 
-    # Step 4: Pull main and prune
+    # Step 4: Pull main and prune (guard CWD first)
+    guard_cwd
+    ensure_repo_root
     echo "==> Pulling main" >&2
     git checkout main 2>/dev/null || true
     if ! git pull --ff-only 2>/dev/null; then echo "warning: ff-only pull failed, local main may be stale" >&2; fi

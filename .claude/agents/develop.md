@@ -145,9 +145,20 @@ Check against these criteria:
 
 ## Commit and PR
 
+Use `scripts/bot-branch.sh commit` to merge from main, stage, commit, and push in one step:
 ```bash
 git add -A
-git commit -m "fix: <concise description> (#N)"
+scripts/bot-branch.sh commit {N} "fix: <concise description> (#N)"
+```
+
+If `bot-branch.sh commit` is unavailable (e.g. in a worktree with limited staging needs), fall back to raw git — but always merge from main first:
+```bash
+git fetch origin main
+git merge origin/main --no-edit
+git add -A
+git commit -m "fix: <concise description> (#N)
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 git push -u origin bot/issue-{N}
 ```
 
@@ -177,7 +188,6 @@ Closes #{N}
 EOF
 
 scripts/gh-ops.sh pr-create --head bot/issue-{N} --title "<issue title>" --body-file /tmp/pr-body-{N}.md --label bot
-```
 ```
 
 Post a comment on the issue:
