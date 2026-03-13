@@ -60,8 +60,8 @@ find_pid() {
     fi
     rm -f "$PIDFILE"
   fi
-  # Fall back to lsof
-  lsof -ti "tcp:${PORT}" -sTCP:LISTEN 2>/dev/null || true
+  # Fall back to ss (lsof not available in container)
+  ss -tlnp "sport = :${PORT}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true
 }
 
 # Check if the server is responding
@@ -102,7 +102,7 @@ cmd_stop() {
   # Wait for port to free
   local tries=0
   while (( tries < 10 )); do
-    if ! lsof -ti "tcp:${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    if [[ -z "$(ss -tlnp "sport = :${PORT}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true)" ]]; then
       break
     fi
     sleep 0.5
