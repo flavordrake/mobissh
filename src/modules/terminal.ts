@@ -72,15 +72,19 @@ function _updateBellBadge(): void {
   badge.textContent = String(count);
 }
 
-// ── CSS layout constants (read from :root once; JS never hardcodes px values) ─
+// ── CSS layout constants (read from :root on first access; JS never hardcodes px values) ─
 
-export const ROOT_CSS: RootCSS = (() => {
-  const s = getComputedStyle(document.documentElement);
-  return {
-    tabHeight: s.getPropertyValue('--tab-height').trim(),
-    keybarHeight: s.getPropertyValue('--keybar-height').trim(),
-  };
-})();
+let _rootCSS: RootCSS | null = null;
+export function getRootCSS(): RootCSS {
+  if (!_rootCSS) {
+    const s = getComputedStyle(document.documentElement);
+    _rootCSS = {
+      tabHeight: s.getPropertyValue('--tab-height').trim(),
+      keybarHeight: s.getPropertyValue('--keybar-height').trim(),
+    };
+  }
+  return _rootCSS;
+}
 
 // ── Terminal ─────────────────────────────────────────────────────────────────
 
