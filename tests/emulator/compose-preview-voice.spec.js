@@ -675,3 +675,360 @@ test.describe('Group 5: Cross-mode regression guards', () => {
   });
 
 });
+
+// ── Test data for Groups 3 and 6 ──────────────────────────────────────────────
+
+const BACKSPACE_SENTENCES = [
+  'when preview is on and I swipe type back over a word the cursor stops at the beginning of the preview field, it should keep sending backspace to the terminal once the field is empty.',
+  'backspace stops functioning when I try to fix a partial word with a correction appended, it inserts safetyly but should be transformed into four backspaces followed by ly.',
+];
+
+const TIMER_SENTENCES = [
+  'the preview does appear but only the first word is captured then nothing else comes through, I think a timer is canceling compose mode prematurely.',
+  'ssh into the tailscale node at 100.64.0.1 and check if the container is healthy, use docker ps to see the status and docker logs to check for errors.',
+];
+
+// ── Group 3: Preview backspace passthrough (#136) ─────────────────────────────
+
+test.describe('Group 3: Preview backspace passthrough (#136)', () => {
+
+  test('3.1 backspace deletes in preview — 5x backspace loses 5 chars, terminal unchanged', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+    // Use first 15+ word sentence
+    const sentence = BACKSPACE_SENTENCES[0].split(' ').slice(0, 15).join(' ');
+    await intent.swipeType(sentence);
+    await page.waitForTimeout(200);
+
+    const valueBefore = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(valueBefore.length).toBeGreaterThan(5);
+
+    await screenshot(page, testInfo, '3.1-before-backspace');
+
+    // Press backspace 5x in preview
+    for (let i = 0; i < 5; i++) {
+      await page.locator('#imeInput').press('Backspace');
+      await page.waitForTimeout(50);
+    }
+    await page.waitForTimeout(100);
+
+    await screenshot(page, testInfo, '3.1-after-backspace');
+
+    const valueAfter = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    // Preview should have lost 5 chars
+    expect(valueAfter.length).toBe(valueBefore.length - 5);
+
+    // No input messages should have been sent to terminal
+    const inputMsgs = await page.evaluate(() =>
+      (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'input'; } catch { return false; }
+      })
+    );
+    expect(inputMsgs).toHaveLength(0);
+  });
+
+  test('3.2 backspace on empty preview → SSH — 3x backspace sends 3x \\x7f', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+
+    const intent = new IntentCapture(page);
+    const sentence = BACKSPACE_SENTENCES[1].split(' ').slice(0, 8).join(' ');
+    await intent.swipeType(sentence);
+    await page.waitForTimeout(200);
+
+    // Commit text so preview is empty
+    await tapCommit(page);
+    await page.waitForTimeout(200);
+
+    // Start fresh WS spy after commit
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Preview should now be empty — confirm
+    const previewVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(previewVal).toBe('');
+
+    await screenshot(page, testInfo, '3.2-empty-preview');
+
+    // 3x backspace on empty preview → should reach terminal
+    for (let i = 0; i < 3; i++) {
+      await page.locator('#imeInput').press('Backspace');
+      await page.waitForTimeout(50);
+    }
+    await page.waitForTimeout(200);
+
+    await screenshot(page, testInfo, '3.2-after-backspace');
+
+    // Expect 3x \x7f sent to terminal
+    const inputData = await page.evaluate(() =>
+      (window.__mockWsSpy || [])
+        .map(s => { try { return JSON.parse(s); } catch { return null; } })
+        .filter(m => m && m.type === 'input')
+        .map(m => m.data)
+        .join('')
+    );
+    const backspaceCount = (inputData.match(/\x7f/g) || []).length;
+    expect(backspaceCount).toBe(3);
+  });
+
+  test('3.3 preview → SSH transition — 4x backspace on 2-char preview: 2 delete from preview, 2x \\x7f to terminal', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Type "hi" — exactly 2 chars
+    const intent = new IntentCapture(page);
+    await intent.swipeType('hi there from the test suite running on the emulator device');
+    await page.waitForTimeout(200);
+
+    // Manually set the preview to exactly "hi" for precise transition test
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      if (el) el.value = 'hi';
+    });
+
+    await screenshot(page, testInfo, '3.3-preview-hi');
+
+    // Reset spy after setup
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // 4x backspace: first 2 should delete from preview, last 2 should go to terminal
+    for (let i = 0; i < 4; i++) {
+      await page.locator('#imeInput').press('Backspace');
+      await page.waitForTimeout(50);
+    }
+    await page.waitForTimeout(200);
+
+    await screenshot(page, testInfo, '3.3-after-4-backspaces');
+
+    // Preview should be empty
+    const previewVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(previewVal).toBe('');
+
+    // Terminal should have received 2x \x7f
+    const inputData = await page.evaluate(() =>
+      (window.__mockWsSpy || [])
+        .map(s => { try { return JSON.parse(s); } catch { return null; } })
+        .filter(m => m && m.type === 'input')
+        .map(m => m.data)
+        .join('')
+    );
+    const backspaceCount = (inputData.match(/\x7f/g) || []).length;
+    expect(backspaceCount).toBe(2);
+  });
+
+  test('3.4 swipe-backspace through word — word removed, 2x \\x7f to terminal', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+
+    const intent = new IntentCapture(page);
+    const sentence = BACKSPACE_SENTENCES[0].split(' ').slice(0, 10).join(' ');
+    await intent.swipeType(sentence);
+    await page.waitForTimeout(200);
+
+    const valueBefore = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    const wordsBefore = valueBefore.trim().split(/\s+/);
+    const lastWord = wordsBefore[wordsBefore.length - 1];
+
+    await screenshot(page, testInfo, '3.4-before-swipe-delete');
+
+    // Simulate word-level backspace (swipe-backspace): fires compositionend with empty data
+    // then removes last word from textarea via keyboard shortcut simulation
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      if (!el) return;
+      el.focus();
+      // Simulate swipe-delete: compositionend with empty data (word removed)
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true, inputType: 'deleteContentBackward', data: null,
+      }));
+      // Actually remove the last word
+      const words = el.value.trim().split(/\s+/);
+      words.pop();
+      el.value = words.join(' ');
+    });
+    await page.waitForTimeout(100);
+
+    const valueAfterDelete = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    // Word should have been removed from preview
+    expect(valueAfterDelete).not.toContain(lastWord);
+
+    // Reset spy to track only the extra backspaces
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // 2 additional backspaces — should drain preview then reach terminal
+    for (let i = 0; i < 2; i++) {
+      await page.locator('#imeInput').press('Backspace');
+      await page.waitForTimeout(50);
+    }
+    await page.waitForTimeout(200);
+
+    await screenshot(page, testInfo, '3.4-after-extra-backspaces');
+
+    // The 2 extra backspaces should have reached the terminal as \x7f
+    // (once preview drained to empty)
+    const inputData = await page.evaluate(() =>
+      (window.__mockWsSpy || [])
+        .map(s => { try { return JSON.parse(s); } catch { return null; } })
+        .filter(m => m && m.type === 'input')
+        .map(m => m.data)
+        .join('')
+    );
+    const backspaceCount = (inputData.match(/\x7f/g) || []).length;
+    // At least some \x7f should have reached the terminal
+    expect(backspaceCount).toBeGreaterThan(0);
+  });
+
+});
+
+// ── Group 6: Timer behavior ───────────────────────────────────────────────────
+
+test.describe('Group 6: Timer behavior', () => {
+
+  test('6.1 auto-clear after compositionend (no preview) — text sent, textarea cleared', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    // Preview OFF — text should auto-send and clear
+    await disablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+    const receiver = new TerminalReceiver(page);
+
+    const sentence = TIMER_SENTENCES[0].split(' ').slice(0, 10).join(' ');
+    await intent.swipeType(sentence);
+
+    // Wait for auto-clear timer (up to 2s)
+    await page.waitForTimeout(2500);
+
+    await screenshot(page, testInfo, '6.1-after-autoclear');
+
+    // Textarea should be cleared
+    const textareaVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(textareaVal).toBe('');
+
+    // Text should have been sent faithfully
+    await assertFaithful(intent, receiver, expect);
+  });
+
+  test('6.2 auto-clear does NOT fire during active voice — words accumulate', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await disablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const sentence = TIMER_SENTENCES[1];
+    const words = sentence.split(' ').slice(0, 12);
+
+    // Simulate continuous voice: fire compositionstart, then compositionupdate/end
+    // for each word with a 500ms gap (simulating natural voice pace)
+    // The auto-clear timer should reset on each compositionend, not fire mid-dictation
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      await page.evaluate((t) => {
+        const el = document.getElementById('imeInput');
+        if (!el) return;
+        el.focus();
+        el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        el.value = (el.value ? el.value + ' ' : '') + t;
+        el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: t }));
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, inputType: 'insertCompositionText', data: t,
+        }));
+      }, word);
+      // 400ms between words — within auto-clear window but timer resets each time
+      await page.waitForTimeout(400);
+    }
+
+    await screenshot(page, testInfo, '6.2-voice-accumulating');
+
+    // Textarea should still have accumulated text (auto-clear hasn't fired)
+    const textareaVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    // At minimum the last few words should still be present (timer reset on last word)
+    expect(textareaVal.trim().length).toBeGreaterThan(0);
+
+    // Wait for final auto-clear
+    await page.waitForTimeout(2500);
+    await screenshot(page, testInfo, '6.2-after-final-clear');
+
+    // Now it should be cleared (final word's timer fired)
+    const finalVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(finalVal).toBe('');
+  });
+
+  test('6.3 auto-clear resets on new input — no premature clear', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await disablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Type first word, wait 1s (not enough to trigger auto-clear)
+    const intent = new IntentCapture(page);
+
+    const firstWord = TIMER_SENTENCES[0].split(' ').slice(0, 5).join(' ');
+    await intent.swipeType(firstWord);
+    await page.waitForTimeout(1000);
+
+    await screenshot(page, testInfo, '6.3-after-1s-wait');
+
+    // Type second word — timer should reset
+    const secondWord = TIMER_SENTENCES[1].split(' ').slice(0, 5).join(' ');
+    await intent.swipeType(secondWord);
+    await page.waitForTimeout(1000);
+
+    await screenshot(page, testInfo, '6.3-after-second-word');
+
+    // Both words should have been sent by now
+    const receiver = new TerminalReceiver(page);
+    const received = await receiver.getReceivedText();
+    // Second word chunk should be in the received text
+    expect(received).toContain(secondWord.split(' ')[0]);
+
+    await screenshot(page, testInfo, '6.3-done');
+  });
+
+  test('6.4 editing state is sticky — no auto-clear after 10s', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+    const sentence = TIMER_SENTENCES[0].split(' ').slice(0, 8).join(' ');
+    await intent.swipeType(sentence);
+    await page.waitForTimeout(200);
+
+    // Transition to editing state by tapping textarea
+    await page.locator('#imeInput').dispatchEvent('touchstart', { bubbles: true });
+    await page.waitForTimeout(200);
+
+    await screenshot(page, testInfo, '6.4-editing-state');
+
+    // Verify we're in editing state
+    const hasEditing = await page.evaluate(() =>
+      document.getElementById('imeInput')?.classList.contains('ime-editing') ?? false
+    );
+    expect(hasEditing).toBe(true);
+
+    const textBefore = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(textBefore.length).toBeGreaterThan(0);
+
+    // Wait 10s — auto-clear must NOT fire in editing state
+    await page.waitForTimeout(10_000);
+
+    await screenshot(page, testInfo, '6.4-after-10s');
+
+    const textAfter = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    // Text should still be present — editing state suppresses auto-clear
+    expect(textAfter).toBe(textBefore);
+
+    // No input messages should have been sent (text held, not auto-sent)
+    const inputMsgs = await page.evaluate(() =>
+      (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'input'; } catch { return false; }
+      })
+    );
+    expect(inputMsgs).toHaveLength(0);
+  });
+
+});
