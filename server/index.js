@@ -50,6 +50,7 @@ const { execSync } = require('child_process');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
 const { isOriginAllowed } = require('./origin');
+const { rewriteManifest } = require('./manifest');
 
 const PORT = process.env.PORT || 8081;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -115,22 +116,6 @@ const MIME = {
   '.png':  'image/png',
   '.ico':  'image/x-icon',
 };
-
-/**
- * Rewrite manifest.json fields so the PWA installs correctly under any
- * reverse-proxy subpath (#83).
- *
- * - id: stable "mobissh" identity prevents collision with other apps
- * - start_url / scope: "./" is relative to the manifest URL, so Chrome
- *   resolves them to the correct subpath regardless of where the app is hosted
- */
-function rewriteManifest(buf) {
-  const manifest = JSON.parse(buf.toString());
-  manifest.id = 'mobissh';
-  manifest.start_url = './#connect';
-  manifest.scope = './';
-  return Buffer.from(JSON.stringify(manifest));
-}
 
 // ─── SFTP message handler (exported for unit tests) ──────────────────────────
 
@@ -289,10 +274,16 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
       );
       data = Buffer.from(html);
     }
-    // Rewrite manifest.json when serving under a subpath so the PWA installs
-    // at the correct path and has a stable identity (#83).
-    if (path.basename(filePath) === 'manifest.json' && BASE_PATH) {
-      try { data = rewriteManifest(data); } catch (_) {}
+    // Rewrite manifest.json: always apply stable identity + subpath rewrites (#83).
+    // Also accept ?name= query param to customise name/short_name for multi-install (#131).
+    if (path.basename(filePath) === 'manifest.json') {
+      try {
+        const manifestUrl = new URL(req.url, 'http://localhost');
+        const customName = manifestUrl.searchParams.get('name') || '';
+        if (BASE_PATH || customName) {
+          data = rewriteManifest(data, customName);
+        }
+      } catch (_) {}
     }
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
