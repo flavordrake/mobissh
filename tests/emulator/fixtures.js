@@ -799,7 +799,7 @@ async function assertFaithful(intent, receiver, expect) {
     for (let i = 0; i < maxLen; i++) {
       if (intended[i] !== receivedText[i]) { firstDiff = i; break; }
     }
-    diff.push(`[assertFaithful] intent != terminal`);
+    diff.push('[assertFaithful] intent != terminal');
     diff.push(`  intended  (${intended.length}): ${intended.slice(0, 80)}...`);
     diff.push(`  received  (${receivedText.length}): ${receivedText.slice(0, 80)}...`);
     if (firstDiff >= 0) {

@@ -18,8 +18,8 @@
 const {
   test, expect, screenshot,
   IntentCapture, TerminalReceiver, assertFaithful,
-  getIMEState, enablePreviewMode, disablePreviewMode, enableComposeMode,
-  tapCommit, tapClear,
+  enablePreviewMode, disablePreviewMode, enableComposeMode,
+  tapCommit,
 } = require('./fixtures');
 
 // ── Test data ─────────────────────────────────────────────────────────────────
