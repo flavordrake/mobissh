@@ -8,7 +8,7 @@
 
 const { test, expect } = require('./fixtures.js');
 
-test.describe('Settings panel (#110 Phase 6)', () => {
+test.describe('Settings panel (#110 Phase 6)', { tag: '@headless-adequate' }, () => {
 
   test('saving a wss:// URL persists to localStorage', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });

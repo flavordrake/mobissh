@@ -6,7 +6,7 @@
 
 const { test, expect, setupConnected } = require('./fixtures.js');
 
-test.describe('Terminal (#110 Phase 10)', () => {
+test.describe('Terminal (#110 Phase 10)', { tag: '@device-critical' }, () => {
   test('xterm.js terminal is created and visible on load', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');

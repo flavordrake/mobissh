@@ -8,7 +8,7 @@
 const { test, expect } = require('./fixtures.js');
 const { setupConnected } = require('./fixtures.js');
 
-test.describe('Hash routing (#137)', () => {
+test.describe('Hash routing (#137)', { tag: '@headless-adequate' }, () => {
 
   test('tab click updates location.hash', async ({ page }) => {
     await page.goto('./');

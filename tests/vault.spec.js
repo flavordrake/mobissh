@@ -25,7 +25,7 @@ async function revealConnectForm(page) {
   }
 }
 
-test.describe('Credential vault (#14)', () => {
+test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
 
   test('saving a profile stores encrypted credentials in sshVault (not plaintext)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);

@@ -10,7 +10,7 @@
 
 const { test, expect, COMPOSE_INPUT_ID, openConnectAdvanced } = require('./fixtures.js');
 
-test.describe('Initial page load', () => {
+test.describe('Initial page load', { tag: '@device-critical' }, () => {
   test.beforeEach(async ({ page }) => {
     // Collect JS errors — any uncaught exception will surface in the
     // 'no JS errors on page load' test below.
@@ -141,7 +141,7 @@ test.describe('Initial page load', () => {
   });
 });
 
-test.describe('Tab navigation', () => {
+test.describe('Tab navigation', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
@@ -174,7 +174,7 @@ test.describe('Tab navigation', () => {
   });
 });
 
-test.describe('Connect form', () => {
+test.describe('Connect form', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
@@ -274,7 +274,7 @@ test.describe('Connect form', () => {
   });
 });
 
-test.describe('Settings panel', () => {
+test.describe('Settings panel', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
@@ -325,7 +325,7 @@ test.describe('Settings panel', () => {
 
 // ─── Issue #87 — tab bar text selection prevention ──────────────────────────
 
-test.describe('Issue #87 — tab buttons prevent text selection on long-press', () => {
+test.describe('Issue #87 — tab buttons prevent text selection on long-press', { tag: '@device-critical' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('./');
     await page.waitForSelector('.xterm-screen', { timeout: 5000 });
@@ -349,7 +349,7 @@ test.describe('Issue #87 — tab buttons prevent text selection on long-press', 
 
 // ─── Issue #89 — key bar key repeat ─────────────────────────────────────────
 
-test.describe('Issue #89 — key bar buttons use pointer events for repeat', () => {
+test.describe('Issue #89 — key bar buttons use pointer events for repeat', { tag: '@device-critical' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('./');
     await page.waitForSelector('.xterm-screen', { timeout: 5000 });
@@ -378,7 +378,7 @@ test.describe('Issue #89 — key bar buttons use pointer events for repeat', () 
 
 // ─── Issue #71 regressions ──────────────────────────────────────────────────
 
-test.describe('Issue #71 — no redundant status indicator', () => {
+test.describe('Issue #71 — no redundant status indicator', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('./');
     await page.waitForSelector('.xterm-screen', { timeout: 5000 });

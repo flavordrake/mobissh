@@ -9,7 +9,7 @@ const { test, expect } = require('@playwright/test');
 
 const PROD_URL = 'https://mobissh.tailbe5094.ts.net/';
 
-test.describe('Production endpoint', () => {
+test.describe('Production endpoint', { tag: '@headless-adequate' }, () => {
 
   test('serves HTML over HTTPS', async ({ page }) => {
     const response = await page.goto(PROD_URL, { waitUntil: 'networkidle' });

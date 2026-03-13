@@ -14,7 +14,7 @@ async function openSessionMenu(page) {
   await page.waitForSelector('#sessionMenu:not(.hidden)', { timeout: 2000 });
 }
 
-test.describe('Session recording (#54)', () => {
+test.describe('Session recording (#54)', { tag: '@headless-adequate' }, () => {
 
   test('start recording toggles hidden class on buttons', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);

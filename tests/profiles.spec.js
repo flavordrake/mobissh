@@ -57,7 +57,7 @@ async function injectMockVault(page) {
   });
 }
 
-test.describe('Profile & key storage (#110 Phase 5)', () => {
+test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate' }, () => {
 
   test('profile upsert updates in place on same host+port+username', async ({ page, mockSshServer }) => {
     await injectMockVault(page);

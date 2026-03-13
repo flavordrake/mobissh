@@ -8,7 +8,7 @@
 
 const { test, expect, setupConnected } = require('./fixtures.js');
 
-test.describe('Connection lifecycle (#110 Phase 7)', () => {
+test.describe('Connection lifecycle (#110 Phase 7)', { tag: '@headless-adequate' }, () => {
 
   test('connect message includes host, port, username, and password', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);

@@ -15,7 +15,7 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
-test.describe('UI chrome (#110 Phase 8)', () => {
+test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
 
   test('session menu "Toggle nav bar" shows and hides the tab bar (#149)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
@@ -199,7 +199,7 @@ test.describe('UI chrome (#110 Phase 8)', () => {
 
 });
 
-test.describe('Session list (#60)', () => {
+test.describe('Session list (#60)', { tag: '@headless-adequate' }, () => {
 
   test('session list is hidden when only one session exists', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
@@ -324,7 +324,7 @@ test.describe('Session list (#60)', () => {
 
 });
 
-test.describe('Long-press tooltip hints (#111)', () => {
+test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, () => {
 
   test('toolbar buttons have data-tooltip attributes', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
