@@ -26,11 +26,35 @@ Graduated from `poc/android-ssh` in `flavordrake/threadeval` @ tag `android-ssh-
 - Profile upsert: match on host+port+username, update in place (no duplicates)
 - IME input: hidden `#imeInput` textarea captures swipe/voice/keyboard; `ctrlActive` sticky modifier
 
-## Deployment
+## Container Environment
+Claude Code runs inside a Docker container (`fd-dev`). All other containers are **siblings**,
+not children -- they share the Docker daemon via socket mount, not nested Docker.
+
+### Shared network: `mobissh`
+All MobiSSH containers join a named Docker network `mobissh` (bridge driver).
+Containers reach each other via Docker DNS names, NOT `localhost` port mapping.
+`docker-proxy` is not available in this environment -- port forwarding does not work.
+
+| Container | DNS name | Purpose |
+|-----------|----------|---------|
+| `fd-dev` | `fd-dev` | Dev environment (this container) |
+| `mobissh-prod` | `mobissh-prod` / `mobissh` | Production server (Tailscale + Node.js) |
+| `mobissh-test-sshd-1` | `test-sshd` | Test SSH target (Alpine + OpenSSH) |
+
+- Network is created idempotently by scripts (`docker network create mobissh`)
+- Both `docker-compose.prod.yml` and `docker-compose.test.yml` use `external: true`
+- Scripts auto-join this container to the network (`docker network connect mobissh $(hostname)`)
+- SSH to test-sshd: `test-sshd:22` (not `localhost:2222`)
+- MobiSSH server URL from tests: `http://mobissh-prod:8081` or `http://localhost:8081` (via local server-ctl)
+
+### Deployment
 - **Production**: Docker container (`docker-compose.prod.yml`) with built-in Tailscale (`tailscale serve`)
   - Rebuild: `scripts/container-ctl.sh restart`
   - Container copies `public/` and `server/` at build time -- must rebuild after code changes
 - **Local server** (`scripts/server-ctl.sh`): headless Playwright tests only, NOT for user testing
+- **Test SSH** (`docker-compose.test.yml`): Alpine sshd for integration tests
+  - Credentials: `testuser`/`testpass`, ed25519 key in `docker/test-sshd/`
+  - `tests/emulator/sshd-fixture.js` handles lifecycle, network join, and key permissions
 - Personal use over Tailscale (WireGuard mesh) -- bridge auth and SSRF handled at network layer
 
 ## Backlog -- GitHub Issues

@@ -21,9 +21,21 @@ It includes Tailscale and serves via `tailscale serve` — no separate nginx nee
 This is used only by `scripts/test-headless.sh` and CI — NOT for user-facing testing.
 Never raw `kill`, `lsof -t`, or `node server/index.js`.
 
+## Docker networking
+
+This dev environment runs inside a sibling Docker container (`fd-dev`). All containers
+share the Docker daemon — they are siblings, not nested. There is no `docker-proxy` binary,
+so **port mapping (`-p`) does not work**. Containers must communicate via Docker DNS on a
+shared bridge network named `mobissh`.
+
+- Never use `localhost:PORT` to reach sibling containers. Use Docker DNS names (`test-sshd`, `mobissh-prod`).
+- Scripts auto-create the network and join this container: `docker network create mobissh` + `docker network connect`.
+- Both compose files use `networks: mobissh: external: true`.
+
 ## Key rules
 
 - Before asking the user to test anything: `scripts/container-ctl.sh ensure`.
 - `server-ctl.sh` is for headless Playwright tests only, not production.
 - Git hash is baked at build time. Stale container = stale code. Use `container-ctl.sh status` to check.
 - `Cache-Control: no-store` on all static responses and service worker network-first.
+- Never use `localhost` to reach Docker containers. Use Docker DNS (`test-sshd:22`, not `localhost:2222`).
