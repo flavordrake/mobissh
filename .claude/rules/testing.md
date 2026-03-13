@@ -17,7 +17,8 @@ paths:
 
 ## Test gates (run before PR)
 ```
-scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh
+scripts/test-fast-gate.sh     # typecheck + lint + unit
+scripts/test-headless.sh      # headless Playwright E2E
 ```
 Never use `npm test` (maps to full Playwright including Appium).
 

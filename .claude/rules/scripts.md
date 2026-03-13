@@ -13,6 +13,10 @@ paths:
   - `gh-file-issue.sh` / `gh-ops.sh` -- GitHub operations
   - `integrate-gate.sh` -- bot PR validation
   - `delegate-*.sh` -- delegation
+  - `bot-branch.sh` -- bot branch lifecycle (create, commit, push, PR)
+  - `rescue-worktree.sh` -- extract stalled agent work safely
+  - `lib/repo-guard.sh` -- sourced by other scripts for CWD drift protection and safe worktree ops
+- **Never use raw `rm -rf` on worktree paths or raw `git checkout` after agent operations.** Use the intent-driven scripts above.
 - **Timestamps in filenames use compact ISO-8601 with tz offset:** `date +%Y%m%dT%H%M%S%z` -> `20260303T150827-0500`. Never use bare `%Y%m%d-%H%M%S`.
 - **Temp and log directories:** Every script defines these two variables near the top (after `set -euo pipefail`) and creates the directories before use:
   ```bash

@@ -224,7 +224,7 @@ The CSS toggle hides the checkbox with `opacity:0; width:0; height:0`, so Playwr
 For features that need a live SSH connection (gestures, terminal buffer, command execution), use the Docker test-sshd container instead of WebSocket mocks:
 
 ```bash
-docker compose -f docker-compose.test.yml up -d test-sshd
+docker compose -f docker-compose.test.yml up -d test-sshd   # simple test container, no lifecycle script
 ssh -p 2222 testuser@localhost  # password: testpass
 ```
 

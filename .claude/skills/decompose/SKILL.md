@@ -23,7 +23,7 @@ operations and user approval.
 
 1. Fetch the full issue body:
    ```bash
-   gh issue view N --json title,body,labels
+   scripts/gh-ops.sh fetch-issues N
    ```
 2. Read all files mentioned in the issue body (or inferred from the description)
 3. Identify the current architecture of the affected area

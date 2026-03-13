@@ -11,6 +11,15 @@
 - Verify commands in delegation: `scripts/test-fast-gate.sh` (never `npm test` or compound `&&` chains).
 - Bot branches use pattern `bot/issue-{N}`. Develop agents create and push these.
 - Bot branches get deleted during integration. Run `git remote prune origin` to clean stale tracking refs.
-- **Worktree cleanup:** Run `scripts/worktree-cleanup.sh` after agent work completes. It prunes git metadata, removes orphaned directories in `.claude/worktrees/`, and prunes stale remote refs. Already wired into `integrate-gate.sh`, `integrate-discover.sh`, and `gh-ops.sh` — but call it explicitly after develop agent batches too.
-- **CWD drift:** After agent tool calls, CWD may be inside a worktree. Always use absolute paths or explicit `cd /home/dev/workspace/mobissh` before running scripts.
 - Develop agent failure summaries are appended to `memory/bot-attempts.md`. Review before retrying.
+
+## Repo safety (critical)
+
+- **Never use raw `rm -rf` on worktree paths.** Use `scripts/worktree-cleanup.sh` or `safe_rm_worktree` from `scripts/lib/repo-guard.sh`.
+- **Never use raw `git checkout`, `git branch -D`, or `git worktree remove` after agent operations.** Use intent-driven scripts instead:
+  - `scripts/bot-branch.sh {create|commit|pr|ship} ISSUE_NUM` — branch lifecycle
+  - `scripts/rescue-worktree.sh ISSUE_NUM` — extract stalled agent work
+  - `scripts/worktree-cleanup.sh` — safe orphan removal
+  - `scripts/gh-ops.sh integrate PR ISSUE` — merge + cleanup (has guards built in)
+- **CWD drift:** All workflow scripts source `scripts/lib/repo-guard.sh` which detects and fixes CWD drift automatically. If you must run raw git commands, run `cd /home/dev/workspace/mobissh` first.
+- **Worktree cleanup is safe:** `worktree-cleanup.sh` and `gh-ops.sh` both use `safe_rm_worktree()` which refuses to delete the main repo or anything outside `.claude/worktrees/`.

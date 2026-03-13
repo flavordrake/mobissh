@@ -21,6 +21,9 @@
 
 set -euo pipefail
 
+source "$(dirname "$0")/lib/repo-guard.sh"
+guard_cwd
+
 MOBISSH_TMPDIR="${MOBISSH_TMPDIR:-/tmp/mobissh}"
 MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
 mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"

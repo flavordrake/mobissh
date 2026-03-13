@@ -11,6 +11,14 @@ description: Use when the user says "integrate", "review bot PRs", "merge bot fi
 Review, validate, and merge PRs created by the Claude bot from `@claude` issue tasks.
 Bot PRs follow the branch pattern `claude/issue-{N}-{DATE}-{TIME}` or `bot/issue-{N}` (local develop agents).
 
+## North Star
+
+**Compile non-determinism into deterministic, declarative, reproducible scripts.**
+Every step in the integration pipeline runs through a script. No ad-hoc bash chains.
+`scripts/gh-ops.sh integrate PR ISSUE` replaces `gh pr merge && gh issue close && git pull`.
+`scripts/container-ctl.sh ensure` replaces `docker compose build && docker compose up -d`.
+If you're composing commands with `&&`, you've already lost — script it.
+
 ## Scripts
 
 The integration pipeline is packaged as scripts in `scripts/`:
@@ -130,7 +138,7 @@ unless the full Appium run in Step 7 will cover it.
 The user tests on the production Docker container (`mobissh-prod`), not a local server.
 After all merges complete, rebuild and restart the container:
 ```bash
-docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
+scripts/container-ctl.sh restart
 ```
 If the container is stale, the user sees old behavior and files false bugs.
 
@@ -195,14 +203,15 @@ scripts/gh-ops.sh labels <N> --rm bot --add divergence
 
 After each successful merge:
 ```bash
-git checkout main && git pull
+git checkout main
+git pull
 scripts/test-headless.sh
 ```
 Report: "Merged PR #N (<title>). Headless tests: X pass."
 
 After ALL merges complete, rebuild the production container:
 ```bash
-docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
+scripts/container-ctl.sh restart
 ```
 
 This is a regression gate between merges. The full acceptance run is Step 7.

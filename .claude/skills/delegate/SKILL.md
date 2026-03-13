@@ -15,6 +15,17 @@ decompose if needed, and re-delegate with tighter constraints.
 This is the **upstream** complement to `/integrate` (which handles the downstream: gate,
 validate, merge). The cycle is: delegate -> bot works -> integrate -> learn -> re-delegate.
 
+## North Stars
+
+- **Compile non-determinism into deterministic scripts.** Every GitHub operation uses
+  `scripts/gh-ops.sh`, every test gate uses `scripts/test-fast-gate.sh`, every server
+  rebuild uses `scripts/container-ctl.sh`. No raw `gh`, no compound `&&` chains.
+- **Faithful input representation.** For IME/input issues, tests must verify intent ==
+  received using `IntentCapture`/`TerminalReceiver`/`assertFaithful` from `tests/emulator/fixtures.js`.
+- **Approval noise = risk.** Scripts are approved once by pattern (`Bash(scripts/*)`).
+  Composed bash commands require per-invocation approval. Speed-reading approvals is how
+  the main repo got deleted.
+
 ## Execution Model
 
 Run **foreground**. The user approves every delegation before it posts.
@@ -223,7 +234,7 @@ its own patterns. Read the actual source files to produce this -- do not guess.
 
 **Verify** -- Exact command sequence:
 ```
-scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
+scripts/test-fast-gate.sh
 ```
 
 ### Template
@@ -242,7 +253,7 @@ scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
 1. <verifiable criterion>
 2. Headless Playwright tests added/updated for any behavior change or new feature
 3. Test mocks match the actual APIs used (e.g., mock SW registration if code uses it)
-4. All existing tests pass (`scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`)
+4. All existing tests pass (`scripts/test-fast-gate.sh`)
 
 **Context:**
 <code snippets from actual files on main>
@@ -258,7 +269,7 @@ scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
 
 **Verify:**
 1. Run `/simplify` to review your changes for reuse, quality, and efficiency. Fix any issues found.
-2. Run `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`
+2. Run `scripts/test-fast-gate.sh`
 ```
 
 ### Test-fixup template
@@ -298,8 +309,8 @@ issue -- the feature code is already on main, only test code needs updating.
 1. `git fetch origin main && git merge origin/main` -- get the merged feature code
 
 **Verify:**
-1. Run `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh`
-2. Run `scripts/test-headless.sh` -- ALL 510 tests must pass (7 skipped is OK)
+1. Run `scripts/test-fast-gate.sh`
+2. Run `scripts/test-headless.sh` -- ALL tests must pass
 ```
 
 ### Quality gate

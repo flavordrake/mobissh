@@ -12,7 +12,8 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+source "$(dirname "$0")/lib/repo-guard.sh"
+ensure_repo_root
 
 QUIET=false
 [[ "${1:-}" == "--quiet" ]] && QUIET=true
@@ -41,8 +42,10 @@ if [ -d "$WORKTREE_DIR" ]; then
 
     if echo "$VALID_WORKTREES" | grep -qF "$ABSDIR"; then
       log "keeping active worktree: $dir"
+    elif is_main_repo "$dir"; then
+      log "BLOCKED: refusing to delete main repo at $dir"
     else
-      rm -rf "$dir"
+      safe_rm_worktree "$dir"
       log "removed orphan: $dir"
       CLEANED=$((CLEANED + 1))
     fi

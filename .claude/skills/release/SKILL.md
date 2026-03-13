@@ -60,11 +60,8 @@ Format as a concise changelog section. Include issue numbers where present. Don'
 Run the full CI gate before tagging. ALL must pass:
 
 ```bash
-npx tsc --noEmit                    # TypeScript typecheck
-npx eslint src/ public/ server/ tests/  # ESLint
-semgrep --config .semgrep/rules.yml --config p/typescript --config p/javascript src/ --no-git-ignore --error --severity WARNING  # Semgrep
-npx vitest run                      # Unit tests
-npx playwright test                 # Headless E2E
+scripts/test-fast-gate.sh           # TypeScript + ESLint + Vitest
+scripts/test-headless.sh            # Headless Playwright E2E
 ```
 
 If an emulator is available (`adb devices | grep emulator`), also run:
@@ -137,6 +134,8 @@ scripts/gh-ops.sh labels N --add "v{VERSION}"
 If there's no label for this version yet, create one:
 
 ```bash
+scripts/gh-ops.sh labels 0 --add "v{VERSION}"   # create label via gh-ops
+# If label doesn't exist yet, create it manually (no gh-ops subcommand for label creation):
 gh label create "v{VERSION}" --description "Released in v{VERSION}" --color "0E8A16"
 ```
 
@@ -144,7 +143,8 @@ Don't close issues that are only partially addressed. If a commit references an 
 
 ## Step 7: GitHub Release
 
-Create a GitHub release with the changelog:
+Create a GitHub release with the changelog. Note: `gh release create` has no `gh-ops.sh`
+wrapper yet — this is an acceptable exception for a rare, manual operation:
 
 ```bash
 gh release create "v{VERSION}" --title "v{VERSION}" --notes "{CHANGELOG}"
@@ -166,11 +166,11 @@ git push origin main --follow-tags
 
 ## Step 9: Post-Release Verification
 
-After push, verify the production server if accessible:
+After push, rebuild the production container and verify:
 
 ```bash
-scripts/server-ctl.sh ensure
-scripts/server-ctl.sh status
+scripts/container-ctl.sh restart
+scripts/container-ctl.sh status
 ```
 
 Check that the version meta tag matches the new release.

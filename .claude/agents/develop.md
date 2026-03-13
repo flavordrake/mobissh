@@ -95,7 +95,8 @@ If TIMEOUT, skip to the Failure section.
 
 **3. Merge from main**
 ```bash
-git fetch origin main && git merge origin/main --no-edit
+git fetch origin main
+git merge origin/main --no-edit
 ```
 If conflicts: resolve them. If unresolvable, report in failure summary.
 Merge from main EVERY cycle to minimize drift. See `git-integration.md`.
@@ -145,15 +146,27 @@ Check against these criteria:
 
 ## Commit and PR
 
+Use `scripts/bot-branch.sh commit` to merge from main, stage, commit, and push in one step:
 ```bash
 git add -A
-git commit -m "fix: <concise description> (#N)"
+scripts/bot-branch.sh commit {N} "fix: <concise description> (#N)"
+```
+
+If `bot-branch.sh commit` is unavailable (e.g. in a worktree with limited staging needs), fall back to raw git — but always merge from main first:
+```bash
+git fetch origin main
+git merge origin/main --no-edit
+git add -A
+git commit -m "fix: <concise description> (#N)
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 git push -u origin bot/issue-{N}
 ```
 
-Create the PR (write body to temp file first, then use gh-ops.sh):
-```bash
-cat > /tmp/pr-body-{N}.md <<'EOF'
+Create the PR (write body to temp file first with the Write tool, then use gh-ops.sh):
+
+Write `/tmp/pr-body-{N}.md` with:
+```
 ## Summary
 <1-3 bullet points of what changed>
 
@@ -174,10 +187,11 @@ Closes #{N}
 
 ## Cycles used
 {cycle_count}/3
-EOF
-
-scripts/gh-ops.sh pr-create --head bot/issue-{N} --title "<issue title>" --body-file /tmp/pr-body-{N}.md --label bot
 ```
+
+Then create the PR:
+```bash
+scripts/gh-ops.sh pr-create --head bot/issue-{N} --title "<issue title>" --body-file /tmp/pr-body-{N}.md --label bot
 ```
 
 Post a comment on the issue:

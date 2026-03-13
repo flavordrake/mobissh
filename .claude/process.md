@@ -116,7 +116,7 @@ When a bot PR passes the fast gate but headless tests fail because the UX change
 3. `/delegate` posts a **test-fixup** `@claude` comment on the same issue:
    - Objective: merge from main, run headless tests, fix failures to match new UX
    - Scope: test files only -- no application code changes
-   - Verify: `scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh`
+   - Verify: `scripts/test-fast-gate.sh && scripts/test-headless.sh`
 4. Bot creates a new branch, fixes test assertions, runs full gate including headless
 5. `/integrate` validates the test-fixup branch (headless must pass)
 

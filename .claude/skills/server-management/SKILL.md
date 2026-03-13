@@ -17,10 +17,13 @@ The container copies `public/` and `server/` at build time -- it does NOT hot-re
 
 ```bash
 # Rebuild and deploy (after code changes)
-docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d
+scripts/container-ctl.sh restart
 
-# Check status
-docker ps --filter name=mobissh-prod
+# Check status (health + code-currency check)
+scripts/container-ctl.sh status
+
+# Ensure current (idempotent: rebuilds only if stale)
+scripts/container-ctl.sh ensure
 
 # View logs
 docker logs mobissh-prod --tail 50
@@ -35,14 +38,14 @@ docker exec -it mobissh-prod sh
 ### "My changes aren't showing"
 
 1. Did you run `npx tsc` to compile TypeScript? (`tsc --noEmit` only type-checks)
-2. Did you rebuild the container? (`docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`)
+2. Did you rebuild the container? (`scripts/container-ctl.sh restart`)
 3. Verify: `docker exec mobissh-prod grep '<your change>' /app/public/modules/<file>.js`
 
 ### TypeScript workflow for container
 
 1. Edit `src/modules/*.ts`
 2. Run `npx tsc` (NOT `--noEmit`)
-3. Rebuild container: `docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`
+3. Rebuild container: `scripts/container-ctl.sh restart`
 4. Verify: `docker exec mobissh-prod grep '<marker>' /app/public/modules/<file>.js`
 
 ## Local server (headless tests only)
@@ -73,5 +76,7 @@ scripts/server-ctl.sh restart   # force restart
 
 A separate Docker Compose file (`docker-compose.test.yml`) runs an sshd container for testing:
 ```bash
-docker compose -f docker-compose.test.yml up -d   # start test sshd on port 2222
+docker compose -f docker-compose.test.yml up -d test-sshd   # start test sshd on port 2222
 ```
+
+Note: test sshd is a simple container with no lifecycle script — raw `docker compose` is acceptable here.

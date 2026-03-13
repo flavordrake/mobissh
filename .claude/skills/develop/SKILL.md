@@ -46,12 +46,12 @@ For each issue number:
 
 1. Verify issue exists and is open:
    ```bash
-   gh issue view {N} --json state,title,body,labels
+   scripts/gh-ops.sh fetch-issues {N}
    ```
 
 2. Check for existing open PR on `bot/issue-{N}`:
    ```bash
-   gh pr list --head bot/issue-{N} --json number,state
+   scripts/gh-ops.sh search "head:bot/issue-{N}"
    ```
    If an open PR exists, ask the user: resume (force-push) or skip?
 
@@ -60,6 +60,17 @@ For each issue number:
 4. Read the delegate skill's conventions: files in scope should be identified from the
    issue body. If the issue body lacks scope, read the relevant source files to determine
    likely targets. Keep scope narrow.
+
+## North Star: Faithful Input Representation
+
+> "User's intended text is faithfully represented to the terminal as entered, in all cases."
+
+For IME/input-related issues, the test infrastructure in `tests/emulator/fixtures.js` provides:
+- `IntentCapture` — records what the user intended (swipe, voice, keyboard)
+- `TerminalReceiver` — records what the terminal actually received
+- `assertFaithful(intent, receiver, expected)` — the North Star assertion
+
+Tests must verify **faithfulness** (intent == received), not just mechanics.
 
 ## Composing the agent prompt
 
@@ -95,7 +106,7 @@ Issue #{N}: {title}
 - Major UX changes also require emulator/Appium test updates
 
 ## Verify
-scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh
+scripts/test-fast-gate.sh
 ```
 
 ## Spawning agents
