@@ -49,8 +49,11 @@ PORT=$MOBISSH_PORT bash scripts/server-ctl.sh ensure
 
 # 1b. Docker test-sshd — for real SSH integration tests
 log "Ensuring Docker test-sshd..."
+docker network create mobissh 2>/dev/null || true
 docker compose -f docker-compose.test.yml up -d test-sshd 2>&1 | grep -v '^$' || true
-wait_for_port localhost 2222 "test-sshd" 20
+# Join shared network so we can reach test-sshd via DNS
+docker network connect mobissh "$(hostname)" 2>/dev/null || true
+wait_for_port test-sshd 22 "test-sshd" 20
 
 # Phase 2: Emulator
 log "Phase 2: Android emulator"

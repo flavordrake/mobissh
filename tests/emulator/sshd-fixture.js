@@ -6,24 +6,47 @@
  */
 
 const { execSync } = require('child_process');
-const net = require('net');
+const path = require('path');
+const fs = require('fs');
 
-const SSHD_PORT = Number(process.env.SSHD_PORT || 2222);
-const SSHD_HOST = process.env.SSHD_HOST || 'localhost';
+// Sibling Docker containers use Docker DNS (test-sshd:22).
+// Env vars override for non-Docker environments.
+const SSHD_PORT = Number(process.env.SSHD_PORT || 22);
+const SSHD_HOST = process.env.SSHD_HOST || 'test-sshd';
+const NETWORK_NAME = 'mobissh';
 
 const TEST_USER = 'testuser';
 const TEST_PASS = 'testpass';
 
+// Private key path — copied with safe permissions for SSH client
+const _KEY_SRC = path.resolve(__dirname, '../../docker/test-sshd/testuser_id_ed25519');
+const TEST_KEY_PATH = '/tmp/mobissh-test-sshd-key';
+
 /**
- * Start the test-sshd Docker container (idempotent) and wait for port readiness.
+ * Start the test-sshd Docker container (idempotent), join the shared network,
+ * and wait for SSH readiness via Docker DNS.
  */
 function ensureTestSshd() {
+  // Ensure shared Docker network exists, then start container
+  try { execSync(`docker network create ${NETWORK_NAME}`, { timeout: 10_000 }); } catch { /* exists */ }
   execSync(
     'docker compose -f docker-compose.test.yml up -d test-sshd',
     { cwd: process.cwd(), encoding: 'utf8', timeout: 60_000 }
   );
 
-  // Wait for SSH to accept connections
+  // Join this container to the shared network (idempotent)
+  try {
+    const hostname = execSync('hostname', { encoding: 'utf8' }).trim();
+    execSync(`docker network connect ${NETWORK_NAME} ${hostname}`, {
+      encoding: 'utf8', timeout: 10_000
+    });
+  } catch { /* already connected */ }
+
+  // Copy private key with safe permissions
+  fs.copyFileSync(_KEY_SRC, TEST_KEY_PATH);
+  fs.chmodSync(TEST_KEY_PATH, 0o600);
+
+  // Wait for SSH to accept connections via Docker DNS
   for (let i = 0; i < 30; i++) {
     if (_portOpen(SSHD_HOST, SSHD_PORT)) return;
     execSync('sleep 0.5');
@@ -33,15 +56,6 @@ function ensureTestSshd() {
 
 function _portOpen(host, port) {
   try {
-    const sock = new net.Socket();
-    sock.setTimeout(1000);
-    const result = new Promise((resolve) => {
-      sock.on('connect', () => { sock.destroy(); resolve(true); });
-      sock.on('error', () => { sock.destroy(); resolve(false); });
-      sock.on('timeout', () => { sock.destroy(); resolve(false); });
-      sock.connect(port, host);
-    });
-    // execSync context — use a synchronous TCP check instead
     execSync(`bash -c 'echo > /dev/tcp/${host}/${port}'`, { timeout: 1000 });
     return true;
   } catch {
@@ -49,4 +63,4 @@ function _portOpen(host, port) {
   }
 }
 
-module.exports = { ensureTestSshd, SSHD_HOST, SSHD_PORT, TEST_USER, TEST_PASS };
+module.exports = { ensureTestSshd, SSHD_HOST, SSHD_PORT, TEST_USER, TEST_PASS, TEST_KEY_PATH };

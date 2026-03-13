@@ -91,8 +91,12 @@ wait_for_port() {
 # Phase 1: Infrastructure
 log "Phase 1: Infrastructure"
 PORT=$MOBISSH_PORT scripts/server-ctl.sh ensure
+# Ensure shared Docker network exists (external: true in compose requires pre-creation)
+docker network create mobissh 2>/dev/null || true
 docker compose -f docker-compose.test.yml up -d test-sshd 2>&1
-wait_for_port localhost 2222 "test-sshd" 20
+# Join shared network so we can reach test-sshd via DNS
+docker network connect mobissh "$(hostname)" 2>/dev/null || true
+wait_for_port test-sshd 22 "test-sshd" 20
 
 # Phase 2: Emulator
 log "Phase 2: Android emulator"

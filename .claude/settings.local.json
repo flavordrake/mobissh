@@ -18,7 +18,18 @@
       "Bash(identify:*)",
       "Bash(who:*)",
       "Bash(tty)",
-      "Read(//dev/**)"
+      "Read(//dev/**)",
+      "Bash(npx eslint:*)",
+      "Bash(npx tsc:*)",
+      "Bash(git add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker port:*)",
+      "Bash(docker network:*)",
+      "Bash(docker inspect:*)",
+      "Bash(docker info:*)"
     ]
   }
 }

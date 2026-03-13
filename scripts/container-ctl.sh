@@ -102,6 +102,8 @@ cmd_build() {
 
 cmd_up() {
   log "Starting ${CONTAINER}..."
+  # Ensure shared Docker network exists (external: true in compose requires pre-creation)
+  docker network create mobissh 2>/dev/null || true
   docker compose -f "$COMPOSE_FILE" up -d 2>&1
 
   if wait_healthy; then

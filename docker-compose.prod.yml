@@ -4,6 +4,8 @@ services:
     image: mobissh:${TAG:-latest}
     container_name: mobissh-prod
     restart: unless-stopped
+    networks:
+      - mobissh
     environment:
       PORT: "8081"
       NODE_ENV: production
@@ -17,6 +19,11 @@ services:
       - SYS_MODULE
     devices:
       - /dev/net/tun:/dev/net/tun
+
+networks:
+  mobissh:
+    name: mobissh
+    external: true
 
 volumes:
   tailscale-state:

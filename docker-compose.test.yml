@@ -4,9 +4,18 @@ services:
       context: ./docker/test-sshd
     ports:
       - "2222:22"
+    networks:
+      - mobissh
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s
       timeout: 2s
       retries: 5
     restart: "no"
+
+networks:
+  mobissh:
+    # Shared with docker-compose.prod.yml — all MobiSSH containers on one network.
+    # Created by whichever compose file starts first; external allows either to use it.
+    name: mobissh
+    external: true
