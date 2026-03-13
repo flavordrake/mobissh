@@ -854,7 +854,9 @@ export function initIMEInput(): void {
     // Mobile soft keyboards often fire keydown with key='Unidentified'.
     // Fall back to keyCode for Enter (13) and Backspace (8).
     if (e.key === 'Unidentified') {
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- keyCode is the only signal mobile soft keyboards provide for Unidentified keys
       if (e.keyCode === 13) { sendSSHInput('\r'); e.preventDefault(); return; }
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
       if (e.keyCode === 8) { sendSSHInput('\x7f'); e.preventDefault(); return; }
     }
     if (!appState.imeMode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
