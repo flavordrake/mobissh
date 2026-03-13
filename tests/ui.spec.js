@@ -425,4 +425,74 @@ test.describe('Long-press tooltip hints (#111)', () => {
     }
   });
 
+  test('touchstart on tooltip button calls preventDefault when keyboard is visible (#124)', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+    // Inject a keyboardVisible override that returns true, simulating an open keyboard
+    await page.evaluate(async () => {
+      const { initUI } = await import('./modules/ui.js');
+      initUI({
+        keyboardVisible: () => true,
+        ROOT_CSS: { tabHeight: '56px', keybarHeight: '34px' },
+        applyFontSize: () => {},
+        applyTheme: () => {},
+      });
+    });
+
+    const btn = page.locator('#composeModeBtn');
+
+    // Spy on preventDefault by patching the prototype before dispatching the event
+    const preventDefaultCalled = await btn.evaluate((el) => {
+      let called = false;
+      const orig = TouchEvent.prototype.preventDefault;
+      TouchEvent.prototype.preventDefault = function() { called = true; orig.call(this); };
+      try {
+        const touch = new Touch({ identifier: 1, target: el, clientX: 0, clientY: 0 });
+        el.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], changedTouches: [touch], bubbles: true, cancelable: true }));
+      } finally {
+        TouchEvent.prototype.preventDefault = orig;
+      }
+      return called;
+    });
+
+    expect(preventDefaultCalled).toBe(true);
+  });
+
+  test('touchstart on tooltip button does not call preventDefault when keyboard is hidden (#124)', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('./');
+    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+
+    // Default: keyboardVisible returns false (no keyboard open)
+    await page.evaluate(async () => {
+      const { initUI } = await import('./modules/ui.js');
+      initUI({
+        keyboardVisible: () => false,
+        ROOT_CSS: { tabHeight: '56px', keybarHeight: '34px' },
+        applyFontSize: () => {},
+        applyTheme: () => {},
+      });
+    });
+
+    const btn = page.locator('#composeModeBtn');
+
+    // Spy on preventDefault — should NOT be called when keyboard is hidden
+    const preventDefaultCalled = await btn.evaluate((el) => {
+      let called = false;
+      const orig = TouchEvent.prototype.preventDefault;
+      TouchEvent.prototype.preventDefault = function() { called = true; orig.call(this); };
+      try {
+        const touch = new Touch({ identifier: 1, target: el, clientX: 0, clientY: 0 });
+        el.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], changedTouches: [touch], bubbles: true, cancelable: true }));
+      } finally {
+        TouchEvent.prototype.preventDefault = orig;
+      }
+      return called;
+    });
+
+    expect(preventDefaultCalled).toBe(false);
+  });
+
 });
