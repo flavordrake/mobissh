@@ -694,6 +694,41 @@ class IntentCapture {
   }
 
   /**
+   * Simulate voice input for a full sentence.
+   * Fires a compositionstart, then word-by-word compositionupdate events accumulating
+   * the partial phrase, then compositionend with the full text.
+   * Mirrors real Gboard voice dictation: each word arrives as an incremental update.
+   * Accumulates into this.intended.
+   */
+  async voiceInput(text) {
+    this.intended += (this.intended ? ' ' : '') + text;
+    const words = text.split(' ');
+    await this.page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      if (!el) return;
+      el.focus();
+      el.dispatchEvent(new CompositionEvent('compositionstart', { data: '', bubbles: true }));
+    });
+    for (let i = 0; i < words.length; i++) {
+      const partial = words.slice(0, i + 1).join(' ');
+      await this.page.evaluate((p) => {
+        const el = document.getElementById('imeInput');
+        if (!el) return;
+        el.value = p;
+        el.dispatchEvent(new CompositionEvent('compositionupdate', { data: p, bubbles: true }));
+        el.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertCompositionText', data: p, bubbles: true }));
+        el.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', data: p, bubbles: true }));
+      }, partial);
+      await new Promise(r => setTimeout(r, 300));
+    }
+    await this.page.evaluate((t) => {
+      const el = document.getElementById('imeInput');
+      if (!el) return;
+      el.dispatchEvent(new CompositionEvent('compositionend', { data: t, bubbles: true }));
+    }, text);
+  }
+
+  /**
    * Simulate Gboard swipe input for a full sentence.
    * Fires composition events word-by-word as Gboard delivers swipe completions.
    * Accumulates into this.intended.

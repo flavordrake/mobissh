@@ -300,6 +300,172 @@ test.describe('Group 1: State machine transitions', () => {
 
 });
 
+// ── Group 2: Voice input lifecycle ────────────────────────────────────────────
+
+const VOICE_SENTENCES = [
+  'voice typing often disables for some reason after the first word, then if I keep talking and hit the check box to commit nothing happens but if I type space or enter it does.',
+  'the preview does appear but only the first word is captured then nothing else comes through, I think a timer is canceling compose mode prematurely.',
+  'I want to capture all of these individually then turn them into aggressive test cases, something is off in our preview composer and key interaction behaviors.',
+];
+
+test.describe('Group 2: Voice input lifecycle', () => {
+
+  test('2.1 voice, preview off: full phrase reaches terminal', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await disablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+    const receiver = new TerminalReceiver(page);
+
+    await intent.voiceInput(VOICE_SENTENCES[0]);
+    await page.waitForTimeout(300);
+    await screenshot(page, testInfo, '2.1-after-voice');
+
+    await assertFaithful(intent, receiver, expect);
+  });
+
+  test('2.2 voice, preview off initially: starts voice → preview overlay appears, text accumulates', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await disablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+
+    // Use a shorter sentence to isolate the preview-auto-enable behavior
+    const sentence = VOICE_SENTENCES[1].split(' ').slice(0, 8).join(' ');
+    await intent.voiceInput(sentence);
+    await page.waitForTimeout(300);
+    await screenshot(page, testInfo, '2.2-after-voice');
+
+    // Voice input: text should have accumulated in the textarea
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(imeVal.length).toBeGreaterThan(0);
+
+    // Preview overlay (imeActions) should be visible
+    const actionsHidden = await page.evaluate(() =>
+      document.getElementById('imeActions')?.classList.contains('hidden') ?? true
+    );
+    expect(actionsHidden).toBe(false);
+  });
+
+  test('2.3 voice multi-word: all words captured in textarea', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+
+    // 15+ word sentence
+    const sentence = VOICE_SENTENCES[2];
+    expect(sentence.split(' ').length).toBeGreaterThanOrEqual(15);
+    await intent.voiceInput(sentence);
+    await page.waitForTimeout(300);
+    await screenshot(page, testInfo, '2.3-after-voice');
+
+    // All words must be in the textarea
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    const words = sentence.split(' ');
+    for (const word of words) {
+      expect(imeVal, `Expected word "${word}" to be present in textarea`).toContain(word);
+    }
+  });
+
+  test('2.4 voice → commit sends accumulated text', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+    const receiver = new TerminalReceiver(page);
+
+    await intent.voiceInput(VOICE_SENTENCES[0]);
+    await page.waitForTimeout(300);
+    await screenshot(page, testInfo, '2.4-before-commit');
+
+    await tapCommit(page);
+    await page.waitForTimeout(200);
+    await screenshot(page, testInfo, '2.4-after-commit');
+
+    await assertFaithful(intent, receiver, expect);
+  });
+
+  test('2.5 voice → space sends text faithfully', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+    const receiver = new TerminalReceiver(page);
+
+    const sentence = VOICE_SENTENCES[1].split(' ').slice(0, 8).join(' ');
+    await intent.voiceInput(sentence);
+    await page.waitForTimeout(300);
+    await screenshot(page, testInfo, '2.5-before-space');
+
+    // Type space to trigger send
+    await page.locator('#imeInput').press(' ');
+    await page.waitForTimeout(200);
+    await screenshot(page, testInfo, '2.5-after-space');
+
+    // Verify the voiced text was sent (with or without trailing space)
+    const received = await receiver.getReceivedText();
+    const receivedTrimmed = received.replace(/\s+$/, '');
+    const intendedTrimmed = intent.intended.replace(/\s+$/, '');
+    expect(receivedTrimmed, `Expected terminal to receive "${intendedTrimmed}" but got "${receivedTrimmed}"`).toBe(intendedTrimmed);
+  });
+
+  test('2.6 voice stops → commit still works after 2s delay', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+    const receiver = new TerminalReceiver(page);
+
+    const sentence = VOICE_SENTENCES[2].split(' ').slice(0, 10).join(' ');
+    await intent.voiceInput(sentence);
+
+    // Wait 2s to simulate voice stopping before commit
+    await page.waitForTimeout(2000);
+    await screenshot(page, testInfo, '2.6-after-2s-wait');
+
+    await tapCommit(page);
+    await page.waitForTimeout(200);
+    await screenshot(page, testInfo, '2.6-after-commit');
+
+    await assertFaithful(intent, receiver, expect);
+  });
+
+  test('2.7 no timers fire during active voice: text accumulates continuously for 5s', async ({ page, mockSshServer }, testInfo) => {
+    await setupWithCompose(page, mockSshServer);
+    await enablePreviewMode(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    const intent = new IntentCapture(page);
+
+    // Start compositionstart manually then let it run for ~5s via voiceInput
+    // VOICE_SENTENCES[0] has many words; voiceInput fires one word every 300ms
+    // With ~30 words that is ~9s, so we use a 15-word slice for ~5s
+    const sentence = VOICE_SENTENCES[0].split(' ').slice(0, 15).join(' ');
+    await intent.voiceInput(sentence);
+    await screenshot(page, testInfo, '2.7-after-5s-voice');
+
+    // Verify: text must still be in textarea (no auto-clear, no state reset)
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(imeVal.length, 'Textarea must retain text after long voice input').toBeGreaterThan(0);
+
+    // Verify: no input messages were sent while composition was active (preview held them)
+    const inputMsgs = await page.evaluate(() =>
+      (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'input'; } catch { return false; }
+      })
+    );
+    expect(inputMsgs, 'No input should be sent to terminal during active voice composition').toHaveLength(0);
+  });
+
+});
+
 // ── Group 5: Cross-mode regression guards ─────────────────────────────────────
 
 test.describe('Group 5: Cross-mode regression guards', () => {
