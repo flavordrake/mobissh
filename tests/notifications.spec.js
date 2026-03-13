@@ -55,7 +55,7 @@ function clearNotifications(page) {
   return page.evaluate(() => { window.__notifications = []; });
 }
 
-test.describe('Terminal notifications (#200)', () => {
+test.describe('Terminal notifications (#200)', { tag: '@headless-adequate' }, () => {
 
   test('bell character triggers notification with terminal context', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
@@ -166,7 +166,7 @@ test.describe('Terminal notifications (#200)', () => {
   });
 });
 
-test.describe('Bell badge UI (#33)', () => {
+test.describe('Bell badge UI (#33)', { tag: '@headless-adequate' }, () => {
 
   test('bell icon hidden initially, shows with count after bell', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
@@ -243,7 +243,7 @@ test.describe('Bell badge UI (#33)', () => {
   });
 });
 
-test.describe('Test notification button (#32)', () => {
+test.describe('Test notification button (#32)', { tag: '@headless-adequate' }, () => {
 
   test('test notification button uses ServiceWorker.showNotification', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);

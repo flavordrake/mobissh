@@ -49,7 +49,7 @@ self.addEventListener('fetch', () => {});
 
 // ── 1. beforeinstallprompt ────────────────────────────────────────────────────
 
-test.describe('Issue #97 — 1. beforeinstallprompt', () => {
+test.describe('Issue #97 — 1. beforeinstallprompt', { tag: '@device-critical' }, () => {
   test(
     'beforeinstallprompt fires when manifest + SW meet Chrome install criteria',
     async ({ browser, browserName }) => {
@@ -92,7 +92,7 @@ test.describe('Issue #97 — 1. beforeinstallprompt', () => {
 
 // ── 2. SW v3→v4 upgrade ───────────────────────────────────────────────────────
 
-test.describe('Issue #97 — 2. SW v3→v4 upgrade', () => {
+test.describe('Issue #97 — 2. SW v3→v4 upgrade', { tag: '@device-critical' }, () => {
   test(
     'activating v4 SW purges mobissh-v3 cache and caches recovery.js',
     async ({ browser, browserName }) => {
@@ -172,7 +172,7 @@ test.describe('Issue #97 — 2. SW v3→v4 upgrade', () => {
 
 // ── 3. ?reset=1 clears caches ─────────────────────────────────────────────────
 
-test.describe('Issue #97 — 3. ?reset=1 cache clear', () => {
+test.describe('Issue #97 — 3. ?reset=1 cache clear', { tag: '@device-critical' }, () => {
   test(
     '?reset=1 clears caches and redirects to base URL (recovery.js fallback path)',
     async ({ page }) => {
@@ -253,7 +253,7 @@ test.describe('Issue #97 — 3. ?reset=1 cache clear', () => {
 
 // ── 4. Recovery overlay ───────────────────────────────────────────────────────
 
-test.describe('Issue #97 — 4. Recovery overlay', () => {
+test.describe('Issue #97 — 4. Recovery overlay', { tag: '@device-critical' }, () => {
   test(
     'recovery overlay becomes visible after 8s boot timeout when app.js fails',
     { timeout: 15_000 },
@@ -280,7 +280,7 @@ test.describe('Issue #97 — 4. Recovery overlay', () => {
 
 // ── 5. Manifest fields ────────────────────────────────────────────────────────
 
-test.describe('Issue #97 — 5. Manifest fields', () => {
+test.describe('Issue #97 — 5. Manifest fields', { tag: '@device-critical' }, () => {
   test(
     'manifest.json is served with correct PWA identity fields',
     async ({ request }) => {

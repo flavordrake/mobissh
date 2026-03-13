@@ -139,7 +139,7 @@ async function setupConnected(page, mockSshServer) {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-test.describe('IME composition → SSH input routing', () => {
+test.describe('IME composition → SSH input routing', { tag: '@device-critical' }, () => {
   test('compositionend text is forwarded to SSH stream', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
@@ -229,7 +229,7 @@ test.describe('IME composition → SSH input routing', () => {
   });
 });
 
-test.describe('Issue #74 — compose action buttons Clear and Send', () => {
+test.describe('Issue #74 — compose action buttons Clear and Send', { tag: '@device-critical' }, () => {
   test('Clear button hides actions and clears textarea without sending', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -293,7 +293,7 @@ test.describe('Issue #74 — compose action buttons Clear and Send', () => {
   });
 });
 
-test.describe('Issue #85 — compositioncancel resets IME state', () => {
+test.describe('Issue #85 — compositioncancel resets IME state', { tag: '@device-critical' }, () => {
   test('compositioncancel clears isComposing so subsequent input is not dropped', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -335,7 +335,7 @@ test.describe('Issue #85 — compositioncancel resets IME state', () => {
   });
 });
 
-test.describe('Key bar buttons → SSH input', () => {
+test.describe('Key bar buttons → SSH input', { tag: '@headless-adequate' }, () => {
   test('Esc button sends \\x1b', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -432,7 +432,7 @@ async function swipeCompose(page, text) {
 
 const SM_DIR = path.join(__dirname, '..', 'test-results', 'screenshots', 'state-machine');
 
-test.describe('IME state machine — compose + preview (#106)', () => {
+test.describe('IME state machine — compose + preview (#106)', { tag: '@device-critical' }, () => {
 
   test('preview mode holds text — nothing sent until commit', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
@@ -693,7 +693,7 @@ test.describe('IME state machine — compose + preview (#106)', () => {
 
 // ── IME cursor-based auto-positioning (#106) ──────────────────────────────────
 
-test.describe('IME auto-positioning based on cursor (#106)', () => {
+test.describe('IME auto-positioning based on cursor (#106)', { tag: '@device-critical' }, () => {
   /**
    * Stub appState.terminal with a fake buffer so _effectiveDock() can read
    * cursorY and rows without a real xterm instance.
@@ -817,7 +817,7 @@ test.describe('IME auto-positioning based on cursor (#106)', () => {
 
 // ── Issue #129 — direct mode Enter key (#129) ─────────────────────────────────
 
-test.describe('Issue #129 — direct mode Enter sends \\r', () => {
+test.describe('Issue #129 — direct mode Enter sends \\r', { tag: '@device-critical' }, () => {
   /**
    * Switch from compose mode (default after connect) to direct mode by
    * clicking the compose toggle, then focus #directInput.

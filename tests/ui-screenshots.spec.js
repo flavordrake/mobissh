@@ -43,7 +43,7 @@ async function setupIMEComposition(page, mockSshServer, text) {
 
 // ── IME Action Buttons (#106) ─────────────────────────────────────────────
 
-test.describe('IME action buttons visual states (#106)', () => {
+test.describe('IME action buttons visual states (#106)', { tag: '@device-critical' }, () => {
 
   test('action buttons appear on composition — bottom dock (default)', async ({ page, mockSshServer }) => {
     await setupIMEComposition(page, mockSshServer, 'hello world');
@@ -95,7 +95,7 @@ test.describe('IME action buttons visual states (#106)', () => {
 
 // ── Connection status dialog (#105) ─────────────────────────────────────────
 
-test.describe('Connection status dialog visual states (#105)', () => {
+test.describe('Connection status dialog visual states (#105)', { tag: '@device-critical' }, () => {
 
   test('connection status overlay has cancel button when disconnected', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
@@ -121,7 +121,7 @@ test.describe('Connection status dialog visual states (#105)', () => {
 
 // ── Cold start + tab layouts ────────────────────────────────────────────────
 
-test.describe('Layout screenshots', () => {
+test.describe('Layout screenshots', { tag: '@device-critical' }, () => {
 
   test('cold start — terminal tab', async ({ page }) => {
     await page.goto('./');

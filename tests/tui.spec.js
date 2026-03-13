@@ -50,7 +50,7 @@ async function pressKey(page, keyInit) {
 
 // ── Rendering: ANSI sequences ─────────────────────────────────────────────────
 
-test.describe('TUI rendering — ANSI sequences pass through without errors', () => {
+test.describe('TUI rendering — ANSI sequences pass through without errors', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page, mockSshServer }) => {
     page._jsErrors = [];
     page.on('pageerror', (err) => page._jsErrors.push(err.message));
@@ -121,7 +121,7 @@ test.describe('TUI rendering — ANSI sequences pass through without errors', ()
 
 // ── Rendering: box-drawing characters ────────────────────────────────────────
 
-test.describe('TUI rendering — box-drawing characters', () => {
+test.describe('TUI rendering — box-drawing characters', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page, mockSshServer }) => {
     page._jsErrors = [];
     page.on('pageerror', (err) => page._jsErrors.push(err.message));
@@ -180,7 +180,7 @@ test.describe('TUI rendering — box-drawing characters', () => {
 
 // ── Alternate screen buffer (smcup / rmcup) ───────────────────────────────────
 
-test.describe('TUI rendering — alternate screen buffer (smcup/rmcup)', () => {
+test.describe('TUI rendering — alternate screen buffer (smcup/rmcup)', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page, mockSshServer }) => {
     page._jsErrors = [];
     page.on('pageerror', (err) => page._jsErrors.push(err.message));
@@ -245,7 +245,7 @@ test.describe('TUI rendering — alternate screen buffer (smcup/rmcup)', () => {
 
 // ── Terminal dimensions ───────────────────────────────────────────────────────
 
-test.describe('Terminal dimensions for TUI apps', () => {
+test.describe('Terminal dimensions for TUI apps', { tag: '@headless-adequate' }, () => {
   test('resize message sent after connect has non-zero cols and rows', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     const resizes = await getResizeMessages(page);
@@ -287,7 +287,7 @@ test.describe('Terminal dimensions for TUI apps', () => {
 // VT sequences sourced from xterm terminfo / KEY_MAP in app.js:
 //   F1–F4 use SS3 (ESC O);  F5–F12 use CSI Ps ~ (tilde format, skips 16).
 
-test.describe('TUI input — function keys F1–F12', () => {
+test.describe('TUI input — function keys F1–F12', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -323,7 +323,7 @@ test.describe('TUI input — function keys F1–F12', () => {
 // Navigation keys used by TUI text editors (vim, nano) and pagers (less, man).
 // ArrowLeft/Right complete the set (Up/Down already in ime.spec.js key bar tests).
 
-test.describe('TUI input — navigation keys via keydown', () => {
+test.describe('TUI input — navigation keys via keydown', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -368,7 +368,7 @@ test.describe('TUI input — navigation keys via keydown', () => {
 // sticky-modifier path.  These tests cover the hardware keyboard path
 // (ctrlKey: true in KeyboardEvent).
 
-test.describe('TUI input — Ctrl combos via hardware keyboard', () => {
+test.describe('TUI input — Ctrl combos via hardware keyboard', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -403,7 +403,7 @@ test.describe('TUI input — Ctrl combos via hardware keyboard', () => {
 // TUI apps require but that aren't easily typed on an on-screen keyboard.
 // Tests cover the buttons added for issue #53 that weren't in ime.spec.js.
 
-test.describe('Key bar navigation buttons for TUI apps', () => {
+test.describe('Key bar navigation buttons for TUI apps', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });

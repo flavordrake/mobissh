@@ -25,7 +25,7 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
-test.describe('Panel navigation smoke', () => {
+test.describe('Panel navigation smoke', { tag: '@headless-adequate' }, () => {
 
   test('all tabs render their panel without console errors (no connection)', async ({ page }) => {
     const consoleErrors = [];
@@ -66,7 +66,7 @@ test.describe('Panel navigation smoke', () => {
 
 });
 
-test.describe('Files panel', () => {
+test.describe('Files panel', { tag: '@headless-adequate' }, () => {
 
   test('shows loading state without errors when not connected', async ({ page }) => {
     const consoleErrors = [];
