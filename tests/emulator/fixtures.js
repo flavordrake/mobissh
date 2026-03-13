@@ -676,6 +676,205 @@ async function pinch(page, selector, startDist, endDist, steps = 10) {
   await clearTouchDots(page);
 }
 
+// ── Intent-based testing infrastructure ─────────────────────────────────────
+
+/**
+ * IntentCapture — abstract user intent input.
+ *
+ * Records what the user *intended* to type, independent of how Gboard delivers
+ * it. swipeType() fires a synthetic IME composition sequence (compositionstart,
+ * compositionupdate word-by-word, compositionend + beforeinput/input) that
+ * mirrors the pattern used in tests/ime.spec.js.
+ */
+class IntentCapture {
+  constructor(page) {
+    this.page = page;
+    /** The full sentence the user intended. */
+    this.intended = '';
+  }
+
+  /**
+   * Simulate Gboard swipe input for a full sentence.
+   * Fires composition events word-by-word as Gboard delivers swipe completions.
+   * Accumulates into this.intended.
+   */
+  async swipeType(sentence) {
+    this.intended += (this.intended ? ' ' : '') + sentence;
+    const words = sentence.split(/\s+/).filter(Boolean);
+
+    for (let w = 0; w < words.length; w++) {
+      const word = words[w];
+      await this.page.evaluate((t) => {
+        const el = document.getElementById('imeInput');
+        if (!el) return;
+        el.focus();
+        // compositionstart
+        el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        // compositionupdate: character by character
+        for (let i = 1; i <= t.length; i++) {
+          const partial = t.slice(0, i);
+          el.dispatchEvent(new CompositionEvent('compositionupdate', {
+            bubbles: true, data: partial,
+          }));
+        }
+        // Update textarea value (Gboard sets it on compositionend)
+        el.value = (el.value ? el.value + ' ' : '') + t;
+        // compositionend
+        el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: t }));
+        // beforeinput + input (browser fires these after compositionend)
+        el.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true, inputType: 'insertCompositionText', data: t,
+        }));
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, inputType: 'insertCompositionText', data: t,
+        }));
+      }, word);
+      // Small delay between words, as Gboard delivers them
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+}
+
+/**
+ * TerminalReceiver — monitor what the terminal actually received.
+ *
+ * Wraps the WS spy to track cumulative terminal state. getReceivedText()
+ * collapses backspace/delete sequences so corrections don't skew comparison.
+ */
+class TerminalReceiver {
+  constructor(page) {
+    this.page = page;
+  }
+
+  /**
+   * Return the net text the terminal received after applying backspaces.
+   * Each \x7f deletes one character from the accumulated result.
+   */
+  async getReceivedText() {
+    return this.page.evaluate(() => {
+      const spy = window.__mockWsSpy || [];
+      const inputMsgs = spy
+        .map(s => { try { return JSON.parse(s); } catch { return null; } })
+        .filter(m => m && m.type === 'input')
+        .map(m => m.data);
+
+      // Collapse: apply backspaces to produce net result
+      let result = '';
+      for (const chunk of inputMsgs) {
+        for (const ch of chunk) {
+          if (ch === '\x7f') {
+            result = result.slice(0, -1);
+          } else {
+            result += ch;
+          }
+        }
+      }
+      return result;
+    });
+  }
+
+  /** Reset the spy so subsequent assertions are clean. */
+  async reset() {
+    await this.page.evaluate(() => { window.__mockWsSpy = []; });
+  }
+}
+
+/**
+ * assertFaithful — the North Star assertion.
+ *
+ * Asserts that terminal received === user intended. On failure, reports a diff
+ * showing exactly where intent diverges from terminal output.
+ */
+async function assertFaithful(intent, receiver, expect) {
+  const received = await receiver.getReceivedText();
+  const intended = intent.intended;
+
+  // Strip trailing \r from received for comparison (Enter adds \r after text)
+  const receivedText = received.endsWith('\r') ? received.slice(0, -1) : received;
+
+  if (receivedText !== intended) {
+    const diff = [];
+    const maxLen = Math.max(intended.length, receivedText.length);
+    let firstDiff = -1;
+    for (let i = 0; i < maxLen; i++) {
+      if (intended[i] !== receivedText[i]) { firstDiff = i; break; }
+    }
+    diff.push(`[assertFaithful] intent != terminal`);
+    diff.push(`  intended  (${intended.length}): ${intended.slice(0, 80)}...`);
+    diff.push(`  received  (${receivedText.length}): ${receivedText.slice(0, 80)}...`);
+    if (firstDiff >= 0) {
+      diff.push(`  first diff at position ${firstDiff}`);
+      diff.push(`  intended[${firstDiff}]:  ${JSON.stringify(intended.slice(Math.max(0,firstDiff-5), firstDiff+10))}`);
+      diff.push(`  received[${firstDiff}]:  ${JSON.stringify(receivedText.slice(Math.max(0,firstDiff-5), firstDiff+10))}`);
+    }
+    expect(receivedText, diff.join('\n')).toBe(intended);
+  }
+}
+
+// ── State machine introspection helpers ──────────────────────────────────────
+
+/** Get current IME state machine state and relevant UI state. */
+async function getIMEState(page) {
+  return page.evaluate(() => {
+    // Access via module export (app already loaded it)
+    const state = typeof window.__imeStateForTests === 'function'
+      ? window.__imeStateForTests()
+      : null;
+    const imeInput = document.getElementById('imeInput');
+    const previewBtn = document.getElementById('previewModeBtn');
+    return {
+      state,
+      previewMode: previewBtn ? previewBtn.classList.contains('preview-active') : false,
+      text: imeInput ? imeInput.value : '',
+    };
+  });
+}
+
+/** Enable preview mode (click the eye button if not already active). */
+async function enablePreviewMode(page) {
+  await page.evaluate(() => {
+    const btn = document.getElementById('previewModeBtn');
+    if (btn && !btn.classList.contains('preview-active')) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 100));
+}
+
+/** Disable preview mode (click the eye button if currently active). */
+async function disablePreviewMode(page) {
+  await page.evaluate(() => {
+    const btn = document.getElementById('previewModeBtn');
+    if (btn && btn.classList.contains('preview-active')) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 100));
+}
+
+/** Enable compose mode (click compose button if not already active). */
+async function enableComposeMode(page) {
+  await page.evaluate(() => {
+    const btn = document.getElementById('composeModeBtn');
+    if (btn && !btn.classList.contains('compose-active')) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 100));
+}
+
+/** Tap the Commit (send) button. */
+async function tapCommit(page) {
+  await page.evaluate(() => {
+    const btn = document.getElementById('imeCommitBtn');
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 100));
+}
+
+/** Tap the Clear button. */
+async function tapClear(page) {
+  await page.evaluate(() => {
+    const btn = document.getElementById('imeClearBtn');
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 100));
+}
+
 module.exports = {
   test, expect, screenshot, setupRealSSHConnection, sendCommand,
   swipe, pinch, adbSwipe, adbTap, dismissKeyboard, ensureKeyboardDismissed,
@@ -683,4 +882,8 @@ module.exports = {
   swipeToOlderContent, swipeToNewerContent, expectedSGRButton,
   CDP_PORT, BASE_URL,
   COMPOSE_INPUT_ID, DIRECT_INPUT_ID, DIRECT_INPUT_TYPE,
+  // Intent-based testing infrastructure
+  IntentCapture, TerminalReceiver, assertFaithful,
+  getIMEState, enablePreviewMode, disablePreviewMode, enableComposeMode,
+  tapCommit, tapClear,
 };
