@@ -26,7 +26,7 @@ import {
   initFilesPanel, initLongPressTooltips,
 } from './modules/ui.js';
 import {
-  ROOT_CSS, initTerminal, handleResize, initKeyboardAwareness,
+  getRootCSS, initTerminal, handleResize, initKeyboardAwareness,
   getKeyboardVisible, applyFontSize, applyTheme,
 } from './modules/terminal.js';
 
@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
   try {
     initDebugOverlay();
     initTerminal();
-    initUI({ keyboardVisible: getKeyboardVisible, ROOT_CSS, applyFontSize, applyTheme });
+    initUI({ keyboardVisible: getKeyboardVisible, ROOT_CSS: getRootCSS(), applyFontSize, applyTheme });
     initIME({ handleResize, applyFontSize });
     initIMEInput();
     initSelection();
