@@ -2,7 +2,7 @@
 name: delegate-scout
 description: Runs the discovery and classification phases of bot delegation. Use when /delegate needs to gather data about open issues, bot branches, and prior attempt failures before the user makes delegation decisions.
 tools: Bash, Read, Grep, Glob
-model: haiku
+model: sonnet
 background: true
 permissionMode: bypassPermissions
 ---

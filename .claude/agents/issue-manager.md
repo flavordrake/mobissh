@@ -2,7 +2,7 @@
 name: issue-manager
 description: Use when filing GitHub issues, adding issue comments, or managing issue labels. Handles the /issue skill workflow. Use proactively when the user says "bug:", "feature:", "feat:", "fix:", "issue:", "chore:", or "/issue".
 tools: Write, Bash, Read, Grep, Glob
-model: haiku
+model: sonnet
 background: true
 permissionMode: bypassPermissions
 skills:

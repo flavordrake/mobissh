@@ -1,33 +1,24 @@
 {
   "permissions": {
     "allow": [
-      "Bash(scripts/integrate-discover.sh:*)",
-      "Bash(sudo npx:*)",
-      "Bash(do:*)",
+      "Bash(scripts/*)",
       "Bash(git:*)",
-      "Bash(do gh:*)",
-      "Bash(do echo:*)",
       "Bash(bash:*)",
       "Bash(/usr/bin/env bash:*)",
-      "Bash(gh pr:*)",
-      "Bash(/home/dev/workspace/mobissh/scripts/container-ctl.sh restart:*)",
-      "Bash(tmux:*)",
-      "Bash(printf \\\\033]9;local-test\\\\007:*)",
-      "Bash(~/.claude/hooks/notify-bell.sh:*)",
-      "Bash(who:*)",
-      "Bash(scripts/gh-ops.sh comment:*)",
-      "Bash(/tmp/sub-issue-47c.md:*)",
-      "Bash(/home/dev/.claude/hooks/notify-bell.sh:*)",
-      "Bash(tty)",
-      "Read(//dev/**)",
-      "Read(//proc/223638/fd/**)",
-      "Bash(readlink /proc/$$fd/0)",
-      "Bash(du:*)",
-      "Bash(gh issue:*)",
-      "Bash(pgrep:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker:*)",
+      "Bash(gh:*)",
+      "Bash(sudo npx:*)",
       "Bash(python3:*)",
+      "Bash(tmux:*)",
+      "Bash(ssh:*)",
+      "Bash(pgrep:*)",
+      "Bash(du:*)",
       "Bash(cp:*)",
-      "Bash(identify:*)"
+      "Bash(identify:*)",
+      "Bash(who:*)",
+      "Bash(tty)",
+      "Read(//dev/**)"
     ]
   }
 }

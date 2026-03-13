@@ -1,6 +1,6 @@
 # Agents and Delegation
 
-- Four custom agents in `.claude/agents/`: issue-manager (haiku), delegate-scout (haiku), integrate-gater (sonnet), develop (sonnet).
+- Four custom agents in `.claude/agents/`: issue-manager (sonnet), delegate-scout (sonnet), integrate-gater (sonnet), develop (sonnet).
 - **Always spawn integrate-gater and develop with `isolation: "worktree"`.** Agents share main repo otherwise, causing git checkout conflicts.
 - Max 2 simultaneous integrate-gater agents.
 - Max 2 simultaneous develop agents. Queue the rest.
