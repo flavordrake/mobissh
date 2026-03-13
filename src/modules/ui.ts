@@ -117,6 +117,9 @@ export function initLongPressTooltips(): void {
     const text = target.dataset['tooltip'];
     if (!text) return;
 
+    // Prevent focus loss that would dismiss the keyboard (#124)
+    if (_keyboardVisible()) e.preventDefault();
+
     if (_tooltipTimer) clearTimeout(_tooltipTimer);
     _tooltipTimer = setTimeout(() => {
       _tooltipTimer = null;
@@ -132,7 +135,7 @@ export function initLongPressTooltips(): void {
       el.style.setProperty('--tooltip-left', `${String(left)}px`);
       el.style.setProperty('--tooltip-top', `${String(top)}px`);
     }, 500);
-  }, { passive: true });
+  });
 
   document.addEventListener('touchend', _hideTooltip, { passive: true });
   document.addEventListener('touchmove', _hideTooltip, { passive: true });
