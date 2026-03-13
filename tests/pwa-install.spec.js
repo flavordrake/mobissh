@@ -315,3 +315,42 @@ test.describe('Issue #97 — 5. Manifest fields', () => {
     }
   );
 });
+
+// ── 6. Custom PWA title (#131) ────────────────────────────────────────────────
+
+test.describe('Issue #131 — Custom PWA title via ?name= query param', () => {
+  test(
+    'manifest.json returns default name when no ?name= param',
+    async ({ request }) => {
+      const response = await request.get(BASE_URL + 'manifest.json');
+      expect(response.ok()).toBe(true);
+      const manifest = await response.json();
+      expect(manifest.name).toBe('MobiSSH');
+      expect(manifest.short_name).toBe('MobiSSH');
+    }
+  );
+
+  test(
+    'manifest.json with ?name= returns custom name and short_name',
+    async ({ request }) => {
+      const response = await request.get(BASE_URL + 'manifest.json?name=fd-mobissh');
+      expect(response.ok()).toBe(true);
+      const manifest = await response.json();
+      expect(manifest.name).toBe('fd-mobissh');
+      expect(manifest.short_name).toBe('fd-mobissh');
+    }
+  );
+
+  test(
+    'manifest.json with ?name= preserves stable id, start_url, and scope',
+    async ({ request }) => {
+      const response = await request.get(BASE_URL + 'manifest.json?name=Work+SSH');
+      expect(response.ok()).toBe(true);
+      const manifest = await response.json();
+      expect(manifest.id).toBe('mobissh');
+      expect(manifest.start_url).toBe('./#connect');
+      expect(manifest.scope).toBe('./');
+      expect(manifest.name).toBe('Work SSH');
+    }
+  );
+});
