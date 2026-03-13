@@ -19,9 +19,21 @@ SETUP_LOG="${MOBISSH_LOGDIR}/setup-avd.log"
 exec > >(tee -a "$SETUP_LOG") 2>&1
 echo "$(date '+%Y-%m-%d %H:%M:%S') setup-avd.sh started"
 
-ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+# Detect Android SDK — prefer /opt/android-sdk (container), fall back to ~/Android/Sdk (host)
+if [[ -d /opt/android-sdk ]]; then
+  ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
+else
+  ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+fi
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-JAVA_HOME="/snap/android-studio/current/jbr"
+# Detect Java — prefer JAVA_HOME, then android-studio snap, then system java
+if [[ -z "${JAVA_HOME:-}" ]]; then
+  if [[ -f /snap/android-studio/current/jbr/bin/java ]]; then
+    JAVA_HOME="/snap/android-studio/current/jbr"
+  elif command -v java &>/dev/null; then
+    JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which java)")")")"
+  fi
+fi
 AVD_NAME="MobiSSH_Pixel7"
 EMU_PORT="5554"
 SYSTEM_IMAGE="system-images;android-35;google_apis_playstore;x86_64"
@@ -43,7 +55,13 @@ log() { echo "> $*"; }
 err() { echo "! $*" >&2; exit 1; }
 
 # Sanity checks
-[[ -f "$JAVA_HOME/bin/java" ]] || err "Java not found at $JAVA_HOME/bin/java (is android-studio snap installed?)"
+if [[ -n "${JAVA_HOME:-}" && -f "$JAVA_HOME/bin/java" ]]; then
+  log "Using Java: $JAVA_HOME/bin/java"
+elif command -v java &>/dev/null; then
+  log "Using system Java: $(which java)"
+else
+  err "Java not found. Install android-studio snap or system JDK."
+fi
 [[ -e /dev/kvm ]] || err "KVM not available. Enable hardware virtualization in BIOS."
 
 # 1. Install cmdline-tools if missing
