@@ -12,6 +12,7 @@
 #   guard_cwd         — detect CWD drift and fix it
 
 # Resolve the real repo root (works from scripts/lib/, scripts/, or repo root)
+# Handles both the main repo (.git is a directory) and worktrees (.git is a file)
 _resolve_repo_root() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,13 +20,31 @@ _resolve_repo_root() {
   local candidate="$script_dir/../.."
   candidate="$(cd "$candidate" && pwd)"
 
-  # Verify it's actually a git repo (not a worktree's .git file)
+  # Main repo: .git is a directory
   if [ -d "$candidate/.git" ]; then
     echo "$candidate"
-  else
-    echo "FATAL: repo-guard cannot find .git directory at $candidate" >&2
-    return 1
+    return 0
   fi
+
+  # Worktree: .git is a file pointing to the main repo's git dir
+  if [ -f "$candidate/.git" ]; then
+    local gitdir
+    gitdir="$(grep '^gitdir:' "$candidate/.git" | sed 's/^gitdir: //')"
+    # gitdir is like /path/to/main/.git/worktrees/<name>
+    # Navigate up three levels: worktrees/<name> -> worktrees -> .git -> main
+    local main_repo
+    main_repo="$(cd "$gitdir/../../.." 2>/dev/null && pwd)" || {
+      echo "FATAL: repo-guard cannot resolve main repo from gitdir: $gitdir" >&2
+      return 1
+    }
+    if [ -d "$main_repo/.git" ]; then
+      echo "$main_repo"
+      return 0
+    fi
+  fi
+
+  echo "FATAL: repo-guard cannot find .git at $candidate" >&2
+  return 1
 }
 
 REPO_ROOT="$(_resolve_repo_root)"
