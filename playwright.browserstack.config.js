@@ -9,6 +9,7 @@ const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './tests',
+  outputDir: 'test-results/browserstack',
   // Only run files prefixed with "browserstack-" — local tests (layout, ime)
   // use fixtures that require ports not tunnelled by BrowserStack Local.
   testMatch: ['**/browserstack-*.spec.js'],

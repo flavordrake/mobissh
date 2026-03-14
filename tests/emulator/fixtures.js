@@ -318,6 +318,14 @@ const test = base.extend({
    */
   // eslint-disable-next-line no-empty-pattern
   cdpBrowser: [async ({}, use) => {
+    if (!process.env.MOBISSH_RECORDING) {
+      console.warn(
+        '\n⚠  WARNING: Running emulator tests without screen recording.\n' +
+        '   Recordings are required for user review. Use:\n' +
+        '     scripts/run-emulator-tests.sh [spec-file]\n' +
+        '   instead of raw npx playwright test.\n'
+      );
+    }
     ensureAdbForward();
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`, {
       timeout: 10_000,
@@ -339,53 +347,40 @@ const test = base.extend({
   }, { scope: 'worker' }],
 
   /**
-   * emulatorPage — test-scoped fixture
+   * vaultSnapshot — worker-scoped fixture
    *
-   * A fresh Chrome tab for each test. Clears localStorage on setup so
-   * tests don't leak state through the shared default context.
+   * Creates the vault ONCE per test file, snapshots the localStorage keys.
+   * Tests restore from this snapshot instead of recreating the vault each time.
+   * Saves ~5s per test (keyboard dismiss, modal wait, form fill).
    */
-  emulatorPage: async ({ cdpBrowser }, use) => {
-    // Android Chrome only supports a single default context — no newContext()
+  // eslint-disable-next-line no-empty-pattern
+  vaultSnapshot: [async ({ cdpBrowser }, use) => {
     const context = cdpBrowser.contexts()[0];
     const page = await context.newPage();
 
-    // Dismiss any Chrome nag modals (notification prompt, sign-in, etc.) that
-    // may appear on first launch (#141). These are native Chrome UI, not web
-    // content — look for common dismiss buttons.
+    // Dismiss Chrome nag modals on first tab
     try {
       const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("No, thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
       await nagBtn.first().click({ timeout: 2000 });
-    } catch { /* no nag modal present — normal case after first run */ }
+    } catch { /* no nag modal */ }
 
-    // Clear localStorage then reload — shared context means all tabs see the
-    // same origin storage. The app reads localStorage on init (panel state,
-    // vault, profiles), so we must clear BEFORE the app initializes.
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: 'domcontentloaded' });
 
-    // Vault setup modal should appear on first launch (no vault in clean localStorage).
-    // Fill the form and click Create. Fail loudly if this doesn't work — a stuck
-    // overlay blocks every subsequent test.
+    // Create vault
     const modalAppeared = await page.locator('#vaultSetupOverlay:not(.hidden)')
       .waitFor({ state: 'visible', timeout: 10_000 })
       .then(() => true)
       .catch(() => false);
 
-    if (!modalAppeared) {
-      // Vault might exist from a prior tab's write in the shared context — verify
-      const hasVault = await page.evaluate(() => !!localStorage.getItem('vaultMeta'));
-      if (!hasVault) {
-        throw new Error('emulatorPage fixture: vault setup modal did not appear and no vault in localStorage');
-      }
-    } else {
+    if (modalAppeared) {
       await page.locator('#vaultNewPw').fill('test');
       await page.locator('#vaultConfirmPw').fill('test');
       await page.evaluate(() => {
         const cb = document.getElementById('vaultEnableBio');
         if (cb) cb.checked = false;
       });
-      // Dismiss keyboard so it doesn't cover the Create button
       dismissKeyboard();
       await page.waitForTimeout(300);
       await page.evaluate(() => {
@@ -394,12 +389,79 @@ const test = base.extend({
       await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
     }
 
-    // Ensure terminal panel is active — vault creation or app init may show Connect
+    // Snapshot all vault-related localStorage keys
+    const snapshot = await page.evaluate(() => {
+      const keys = ['vaultMeta', 'vaultData', 'webauthnCredId', 'webauthnPrfSalt', 'sshVault'];
+      const snap = {};
+      for (const k of keys) {
+        const v = localStorage.getItem(k);
+        if (v !== null) snap[k] = v;
+      }
+      return snap;
+    });
+
+    if (!snapshot.vaultMeta) {
+      throw new Error('vaultSnapshot: vault creation failed — no vaultMeta in localStorage');
+    }
+
+    await page.close().catch(() => {});
+    await use(snapshot);
+  }, { scope: 'worker' }],
+
+  /**
+   * emulatorPage — test-scoped fixture
+   *
+   * A fresh Chrome tab for each test. Restores vault from worker snapshot
+   * and clears test-specific state (profiles, connections, settings).
+   * No vault setup modal, no keyboard dismissal, no password entry.
+   */
+  emulatorPage: async ({ cdpBrowser, vaultSnapshot }, use) => {
+    const context = cdpBrowser.contexts()[0];
+    const page = await context.newPage();
+
+    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
+
+    // Clear everything, then restore vault snapshot — app hasn't initialized yet
+    // because we'll reload after restoring. This avoids the vault setup modal.
+    await page.evaluate((snap) => {
+      localStorage.clear();
+      for (const [k, v] of Object.entries(snap)) {
+        localStorage.setItem(k, v);
+      }
+    }, vaultSnapshot);
+
+    // Reload with vault pre-seeded — app sees existing vault, skips setup modal
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    // Vault exists but is locked — unlock it with the test password.
+    // The unlock bar appears at the top when vault is present but not yet unlocked.
+    // Wait for the app to finish initializing (xterm-screen appears when ready).
+    await page.waitForSelector('.xterm-screen, #vaultUnlockBar:not(.hidden)', { timeout: 10_000 });
+
+    const needsUnlock = await page.evaluate(() => {
+      const bar = document.getElementById('vaultUnlockBar');
+      return bar && !bar.classList.contains('hidden');
+    });
+
+    if (needsUnlock) {
+      // Set value directly and click — the unlock handler reads .value
+      await page.evaluate(() => {
+        const pw = document.getElementById('vaultUnlockPw');
+        if (pw) pw.value = 'test';
+        document.getElementById('vaultUnlockBtn')?.click();
+      });
+      // Wait for unlock bar to hide (async crypto op)
+      await page.waitForFunction(() => {
+        const bar = document.getElementById('vaultUnlockBar');
+        return !bar || bar.classList.contains('hidden');
+      }, null, { timeout: 5000 });
+    }
+
+    // Ensure terminal panel is active
     await page.locator('[data-panel="terminal"]').click();
 
     await use(page);
 
-    // Close the tab, leave the browser connection open for the next test
     await page.close().catch(() => {});
   },
 
@@ -431,10 +493,10 @@ const test = base.extend({
 
 /**
  * Connect to a real SSH server through the MobiSSH bridge.
- * Sets up vault, fills connect form, accepts host key, waits for shell.
+ * Fills connect form, accepts host key, waits for shell.
  *
- * NOTE: The emulatorPage fixture already navigated to BASE_URL and cleared
- * localStorage. We do NOT navigate again — injecting state on the live page.
+ * NOTE: The emulatorPage fixture already navigated to BASE_URL with vault
+ * pre-seeded. We do NOT navigate again — injecting state on the live page.
  */
 async function setupRealSSHConnection(page, sshServer) {
   await page.waitForSelector('.xterm-screen', { timeout: 30_000 });

@@ -215,6 +215,20 @@ def format_duration(ms):
     return f"{m}m {s:.0f}s"
 
 
+def compute_video_offset(test, run_start_time):
+    """Compute the video offset in seconds for a test's start time."""
+    try:
+        test_start = test.get("startTime", "")
+        if not test_start:
+            return None
+        test_dt = datetime.fromisoformat(test_start.replace("Z", "+00:00"))
+        run_dt = datetime.fromisoformat(run_start_time.replace("Z", "+00:00"))
+        offset = (test_dt - run_dt).total_seconds()
+        return max(0, offset)
+    except Exception:
+        return None
+
+
 def render_html(tests, frames, video_rel, start_time, duration_ms):
     # Group tests by suite
     suites = {}
@@ -234,18 +248,21 @@ def render_html(tests, frames, video_rel, start_time, duration_ms):
         time_str = start_time
 
     test_sections = []
+    test_index = 0
 
     for suite_name, suite_tests in suites.items():
         for t in suite_tests:
-            section = render_test_section(t, frames)
+            video_offset = compute_video_offset(t, start_time) if start_time else None
+            section = render_test_section(t, frames, video_offset, test_index)
             test_sections.append(section)
+            test_index += 1
 
     video_section = ""
     if video_rel:
         video_section = f'''
-    <section class="video-section">
+    <section class="video-section" id="video-section">
       <h2>Full Recording</h2>
-      <video controls width="360" preload="metadata">
+      <video id="recording" controls width="360" preload="metadata">
         <source src="{video_rel}" type="video/mp4">
         Your browser does not support video playback.
       </video>
@@ -278,10 +295,16 @@ h3 {{ color: #e6edf3; margin: 16px 0 8px; font-size: 1rem; }}
 .badge.skip {{ background: #2a2a1a; color: #d29922; }}
 .test-section {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px;
   margin-bottom: 20px; overflow: hidden; }}
+.test-section.status-failed {{ border-color: #f8514966; border-width: 2px; background: #161b22; }}
+.test-section.status-failed .test-header {{ background: #2d1117; border-bottom-color: #f8514966; }}
+.test-section.status-passed .test-header {{ border-left: 3px solid #3fb950; }}
 .test-header {{ padding: 12px 16px; border-bottom: 1px solid #30363d;
   display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }}
 .test-header .title {{ font-weight: 600; color: #f0f6fc; }}
 .test-header .meta {{ font-size: 0.8rem; color: #8b949e; }}
+.seek-link {{ cursor: pointer; color: #58a6ff; font-size: 0.8rem; text-decoration: none;
+  padding: 2px 6px; border-radius: 4px; background: #1a2332; white-space: nowrap; }}
+.seek-link:hover {{ background: #253547; text-decoration: underline; }}
 .test-body {{ padding: 16px; }}
 .error-box {{ background: #2d1117; border: 1px solid #f8514966; border-radius: 6px;
   padding: 10px 14px; margin: 8px 0 16px; font-family: monospace; font-size: 0.8rem;
@@ -310,6 +333,9 @@ h3 {{ color: #e6edf3; margin: 16px 0 8px; font-size: 1rem; }}
 a {{ color: #58a6ff; }}
 .narrative {{ color: #8b949e; font-style: italic; margin: 4px 0; font-size: 0.85rem; }}
 .timestamp {{ color: #484f58; font-size: 0.75rem; }}
+.issue-link {{ display: inline-block; padding: 2px 8px; border: 1px solid #f85149; color: #f85149;
+  border-radius: 4px; font-size: 0.75rem; text-decoration: none; cursor: pointer; margin-left: 8px; }}
+.issue-link:hover {{ background: #f85149; color: #0d1117; text-decoration: none; }}
 </style>
 </head>
 <body>
@@ -332,22 +358,71 @@ a {{ color: #58a6ff; }}
 document.querySelectorAll('.step img, .frame img').forEach(img => {{
   img.addEventListener('click', () => img.classList.toggle('wide'));
 }});
+
+// File issue for a specific test
+document.querySelectorAll('[data-issue-index]').forEach(el => {{
+  el.addEventListener('click', (e) => {{
+    e.preventDefault();
+    if (!confirm('File a GitHub issue for this test?')) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    // Review server is the origin when served via /file/
+    form.action = '/file-test-issue';
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'index';
+    input.value = el.dataset.issueIndex;
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+  }});
+}});
+
+// Seek video to timestamp on click
+document.querySelectorAll('[data-seek]').forEach(el => {{
+  el.addEventListener('click', (e) => {{
+    e.preventDefault();
+    const t = parseFloat(el.dataset.seek);
+    const video = document.getElementById('recording');
+    if (!video) return;
+    // Scroll video into view
+    const section = document.getElementById('video-section');
+    if (section) section.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+    // Seek after scroll settles
+    setTimeout(() => {{
+      video.currentTime = t;
+      video.play().catch(() => {{}});
+    }}, 400);
+  }});
+}});
 </script>
 
 </body>
 </html>'''
 
 
-def render_test_section(test, frames):
+def render_test_section(test, frames, video_offset=None, test_index=0):
     title = test["title"]
     status = test["status"]
     duration = test["duration"]
 
+    seek_html = ""
+    if video_offset is not None:
+        mm = int(video_offset // 60)
+        ss = int(video_offset % 60)
+        seek_html = f' <a class="seek-link" data-seek="{video_offset:.1f}" title="Seek video to {mm}:{ss:02d}">▶ {mm}:{ss:02d}</a>'
+
+    # Issue button — POST to review server via JS form
+    import html as html_mod
+    issue_html = f' <a class="issue-link" data-issue-index="{test_index}" title="File issue for this test">⚑ Issue</a>'
+
     header = f'''
     <div class="test-header">
       <div>
-        <span class="title">{title}</span>
+        <span class="title">{html_mod.escape(title)}</span>
         <span class="meta">{format_duration(duration)}</span>
+        {seek_html}
+        {issue_html}
       </div>
       {status_badge(status)}
     </div>'''
@@ -414,7 +489,7 @@ def render_test_section(test, frames):
     body = "\n".join(body_parts) if body_parts else '<p class="narrative">No step data captured</p>'
 
     return f'''
-    <section class="test-section">
+    <section class="test-section status-{status}">
       {header}
       <div class="test-body">{body}</div>
     </section>'''

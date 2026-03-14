@@ -21,6 +21,7 @@ const useExternalServer = !!process.env.BASE_URL;
 
 module.exports = defineConfig({
   testDir: './tests/emulator',
+  outputDir: 'test-results/playwright-emulator', // Playwright-managed; prevents wiping sibling test-results/ dirs
   timeout: 60_000,
   retries: 0,
   workers: 1, // single Chrome instance via CDP — parallel workers destabilise pages

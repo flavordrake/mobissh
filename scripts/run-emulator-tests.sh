@@ -181,7 +181,7 @@ RECORD_PID=$!
 EXTRA_ARGS=()
 [[ -n "$SPEC" ]] && EXTRA_ARGS+=("tests/emulator/$SPEC")
 
-CDP_PORT=$CDP_PORT npx playwright test \
+MOBISSH_RECORDING=1 CDP_PORT=$CDP_PORT npx playwright test \
   --config=playwright.emulator.config.js \
   "${EXTRA_ARGS[@]}" || true
 EXIT=${PIPESTATUS[0]:-$?}
