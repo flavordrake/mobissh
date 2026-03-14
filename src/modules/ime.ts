@@ -240,6 +240,7 @@ export function initIMEInput(): void {
 
   // ── Textarea diffing state (handles post-composition corrections) ──────
   let _lastSentValue = '';
+  let _prevInputValue = '';  // tracks ime.value before each input event (#172)
   let _replacementHandled = false;
   let _clearTimer: ReturnType<typeof setTimeout> | null = null;
   /** Timestamp of most recent transition to idle — used to reject late browser
@@ -261,6 +262,7 @@ export function initIMEInput(): void {
       case 'idle':
         ime.value = '';
         _lastSentValue = '';
+        _prevInputValue = '';
         _idleTransitionTime = Date.now();
         ime.classList.remove('ime-visible', 'ime-editing');
         if (imeActions) imeActions.classList.remove('ime-editing');
@@ -328,7 +330,9 @@ export function initIMEInput(): void {
     if (_clearTimer) clearTimeout(_clearTimer);
     if (_isSticky()) return;
     const delay = _imeState === 'previewing' ? 4000 : 1500;
+    console.log(`[ime:scheduleClear] delay=${delay} state=${_imeState}`);
     _clearTimer = setTimeout(() => {
+      console.log(`[ime:clearFired] state=${_imeState} value="${ime.value}"`);
       // Don't auto-commit if user entered editing or a new composition started
       if (_imeState === 'composing' || _imeState === 'editing') return;
 
@@ -451,9 +455,35 @@ export function initIMEInput(): void {
       if (ime.value) { ime.value = ''; }
       return;
     }
+    // Ctrl+key: send control char immediately, bypass hold/preview (#170)
+    if (appState.ctrlActive && ime.value) {
+      _sendIMEText(ime.value);
+      ime.value = '';
+      _prevInputValue = '';
+      _transition('idle');
+      return;
+    }
+    // Single-char non-alpha input in preview: send immediately (#172)
+    // Numbers, punctuation etc. should not buffer in preview — they're
+    // typically responses to prompts or tmux key sequences.
+    // Compare against _prevInputValue to detect the NEW character, not full value.
+    if (_isHolding() && _previewMode) {
+      const prev = _prevInputValue;
+      const cur = ime.value;
+      if (cur.length === prev.length + 1) {
+        const newChar = cur.slice(prev.length);
+        if (/^[^a-zA-Z]$/.test(newChar)) {
+          sendSSHInput(newChar);
+          ime.value = prev;  // restore previous preview text
+          _prevInputValue = prev;
+          return;
+        }
+      }
+    }
     // When holding, just keep the overlay — don't send to SSH
     if (_isHolding()) {
       _showIMEOverlay();
+      _prevInputValue = ime.value;
       return;
     }
     if (appState.isComposing) {
@@ -477,6 +507,7 @@ export function initIMEInput(): void {
     if (appState.imeMode && _previewMode) {
       _transition('previewing');
       _lastSentValue = '';
+      _prevInputValue = ime.value;
       _scheduleClear();
       return;
     }
@@ -494,6 +525,7 @@ export function initIMEInput(): void {
 
     // No preview: clear after sending
     _transition('idle');
+    _prevInputValue = ime.value;
   });
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
@@ -525,6 +557,15 @@ export function initIMEInput(): void {
     const text = ime.value || e.data;
     if (!text) { _transition('idle'); return; }
 
+    // Ctrl+key: send control char immediately, bypass preview (#170)
+    if (appState.ctrlActive) {
+      appState.isComposing = false;
+      _sendIMEText(text);
+      ime.value = '';
+      _transition('idle');
+      return;
+    }
+
     // Compose + preview: hold text for review (nothing sent until commit)
     if (appState.imeMode && _previewMode) {
       _transition('previewing');
@@ -548,7 +589,9 @@ export function initIMEInput(): void {
     _imeState = 'previewing';
     // Deferred idle: if no new compositionstart within 1.5s, hide textarea
     if (_clearTimer) clearTimeout(_clearTimer);
+    console.log(`[ime:compositionend-timer] 1500ms state=${_imeState} preview=${_previewMode}`);
     _clearTimer = setTimeout(() => {
+      console.log(`[ime:compositionend-timer-fired] state=${_imeState}`);
       if (_imeState === 'composing') return; // new composition started
       _transition('idle');
     }, 1500);
