@@ -17,9 +17,10 @@ Every release must update ALL of these in sync:
 | File | Field | Example |
 |------|-------|---------|
 | `server/package.json` | `"version"` | `"0.3.0"` |
-| `public/sw.js` | `CACHE_NAME` | `'mobissh-v17'` |
 
-The server reads version from `server/package.json` at startup and injects it as `<meta name="app-version" content="{version}:{git-hash}">`. The SW cache name must be bumped to invalidate old cached shells on client devices.
+The server reads version from `server/package.json` at startup and injects it as `<meta name="app-version" content="{version}:{git-hash}">`.
+
+`public/sw.js` `CACHE_NAME` is automatically derived from a content hash of `public/` files by `container-ctl.sh` at build time. No manual bump needed — it changes only when actual file content changes.
 
 Root `package.json` has no version field (private workspace). Don't add one.
 
@@ -72,19 +73,162 @@ scripts/run-appium-tests.sh         # Appium gesture baseline
 
 Do NOT tag if any validation fails. Fix first, commit, then re-run.
 
+## Step 3.5: Security Audit (Gemini + Codex)
+
+Static security analysis using the AI tools installed on this container. Review
+`.claude/rules/security.md` for the project's security posture, then run each tool
+with a security-focused prompt against the codebase.
+
+### Setup
+
+```bash
+VERSION="{VERSION}"  # from Step 1
+SECURITY_DIR="test-history/security/v${VERSION}"
+mkdir -p "$SECURITY_DIR"
+```
+
+### Build the context prompt
+
+Before running the tools, assemble a context file with the project documentation so
+the auditors understand what MobiSSH is, its architecture, trust boundaries, and
+security policy. Without this they hallucinate about the attack surface.
+
+```bash
+CONTEXT_FILE="$SECURITY_DIR/audit-context.md"
+cat > "$CONTEXT_FILE" << 'CONTEXT_EOF'
+# MobiSSH — Security Audit Context
+CONTEXT_EOF
+
+# Append project docs that define intent, architecture, and security posture
+cat CLAUDE.md >> "$CONTEXT_FILE"
+echo -e "\n---\n" >> "$CONTEXT_FILE"
+cat .claude/rules/security.md >> "$CONTEXT_FILE"
+echo -e "\n---\n" >> "$CONTEXT_FILE"
+cat .claude/rules/server.md >> "$CONTEXT_FILE"
+```
+
+### Prompts
+
+The prompts include the assembled context so the tools understand:
+- MobiSSH is a mobile-first SSH PWA over Tailscale (network-layer auth, no public internet)
+- Single Node.js process: HTTP static + WebSocket SSH bridge on port 8081
+- AES-GCM vault with PasswordCredential (Chrome/Android biometric)
+- Cache-Control: no-store on all responses, SW network-first
+- Container deployment with baked git hash, Tailscale serve for HTTPS
+
+The audit concerns from `security.md`: plaintext credential storage, vault bypass
+paths, cache policy violations, secret leakage, XSS/injection in the WebSocket
+bridge, and SSRF via the SSH proxy.
+
+**Gemini** (headless, non-interactive):
+
+```bash
+gemini -p "$(cat "$CONTEXT_FILE")
+
+---
+
+You are a security auditor. The project documentation above describes what MobiSSH
+is, how it's deployed, and its security policy. Use this to understand the real
+attack surface — don't guess.
+
+Key trust boundaries:
+- Tailscale mesh provides network-layer auth (no public internet exposure)
+- WebSocket bridge proxies SSH — the bridge itself has no auth beyond Tailscale
+- AES-GCM vault stores credentials client-side with biometric unlock
+- Service worker caches for offline only (network-first, no-store headers)
+
+Audit for security issues, ranked by severity (critical/high/medium/low):
+1. Credential handling: plaintext storage, vault bypass, key material in localStorage/logs
+2. WebSocket bridge: command injection, SSRF via SSH host/port params, auth bypass
+3. Service worker: cache poisoning, stale credential serving, scope escalation
+4. XSS vectors: user input rendered without sanitization (terminal output, profile names)
+5. Dependencies: known CVEs in server/package.json deps
+6. Docker/deployment: container escape paths, exposed ports, secret leakage in build args
+
+For each finding: severity, file:line, description, recommended fix.
+Skip theoretical issues that don't apply given the Tailscale-only deployment.
+Output as markdown." > "$SECURITY_DIR/gemini-audit.md" 2>&1
+```
+
+**Codex** (non-interactive exec mode):
+
+```bash
+codex exec "$(cat "$CONTEXT_FILE")
+
+---
+
+You are a security auditor. The project documentation above describes MobiSSH's
+architecture, deployment model, and security policy. Read it carefully before auditing.
+
+Key facts:
+- Deployed on Tailscale mesh only — not public internet
+- Single Node.js process: static files + WebSocket SSH bridge on port 8081
+- AES-GCM vault with PasswordCredential for credential storage
+- Cache-Control: no-store on all static responses, SW is network-first
+- Docker container with baked git hash, Tailscale serve for HTTPS termination
+
+Review this codebase for:
+1. Plaintext credential storage or vault bypass paths (policy: block feature if vault unavailable)
+2. WebSocket/SSH proxy injection or SSRF (user-supplied host/port forwarded to ssh2)
+3. Cache-Control violations (must be no-store on ALL static responses)
+4. XSS in terminal output, profile names, or user input handling
+5. Secret leakage in logs, error messages, console output, or git history
+6. Dependency vulnerabilities in server/package.json
+
+Report findings as: severity | file:line | description | fix.
+Only report findings that are real given the architecture. No theoretical noise.
+Output as markdown." > "$SECURITY_DIR/codex-audit.md" 2>&1
+```
+
+### Assess and File Issues
+
+Read both reports:
+
+```
+$SECURITY_DIR/gemini-audit.md
+$SECURITY_DIR/codex-audit.md
+```
+
+For each finding:
+
+1. **Deduplicate** — if both tools flag the same issue, merge into one
+2. **Verify** — read the referenced file:line to confirm the finding is real (not hallucinated)
+3. **Classify** — map to issue labels per `.claude/process.md`:
+   - Critical/High → `bug` + `security`, file immediately
+   - Medium → `bug` + `security`, file with context
+   - Low/Informational → `chore` + `security`, batch into one issue or skip if noise
+4. **File** — use `scripts/gh-file-issue.sh` for each real finding. Title format:
+   `security: {brief description}`. Body should include the tool's analysis, the
+   verified file:line, and the recommended fix.
+
+Stage the audit results:
+
+```bash
+git add "$SECURITY_DIR/"
+```
+
+These get included in the release commit (Step 5) as permanent evidence of the
+security review for this version.
+
+### Skip conditions
+
+- If neither `gemini` nor `codex` is available, log a warning and skip. Do NOT
+  block the release for missing tools.
+- If a tool hangs (>5 min), kill it, log the timeout, and proceed with the other tool's results.
+- If no findings are real after verification, note "clean audit" in the release notes.
+
 ## Step 4: Bump Versions
 
 Update all touchpoints:
 
 1. **`server/package.json`**: Update `"version"` field
-2. **`public/sw.js`**: Increment `CACHE_NAME` suffix (e.g., `mobissh-v16` -> `mobissh-v17`)
 
-The SW cache suffix is a monotonically increasing integer, not tied to semver. Just increment by 1 from whatever the current value is.
+`public/sw.js` `CACHE_NAME` is auto-derived by `container-ctl.sh` at build time (content hash of `public/` files). No manual bump needed.
 
 ## Step 5: Commit and Tag
 
 ```bash
-git add server/package.json public/sw.js test-history/
+git add server/package.json test-history/
 git commit -m "release: v{VERSION}"
 git tag -a "v{VERSION}" -m "{CHANGELOG_SUMMARY}"
 ```
@@ -175,17 +319,8 @@ scripts/container-ctl.sh status
 
 Check that the version meta tag matches the new release.
 
-## SW Cache Name History
-
-Track cache name bumps here for reference. The number is not semver -- it's a monotonic counter for cache invalidation.
-
-| Version | SW Cache | Notes |
-|---------|----------|-------|
-| v0.2.0 | mobissh-v16 | Last known state before this skill |
-
 ## Anti-Patterns
 
 - **Don't skip validation**: "It's just a version bump" is how broken releases ship.
-- **Don't forget sw.js**: Stale cache name = users stuck on old code until they manually clear.
 - **Don't amend the release commit**: If something needs fixing, make a new commit and a new patch release.
 - **Don't tag without committing version bumps first**: The tag should point at the commit that contains the new version numbers.

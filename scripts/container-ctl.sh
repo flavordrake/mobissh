@@ -85,14 +85,23 @@ cmd_build() {
   local hash
   hash=$(head_hash)
 
-  # Auto-bump SW cache name so clients pick up new code
+  # SW cache name: content hash of cached files, not a monotonic counter.
+  # The browser re-triggers SW update when sw.js changes byte-for-byte.
+  # Network-first + no-store means the cache is offline-fallback only —
+  # bumping on every rebuild was noise (#146).
   local sw_file="public/sw.js"
   if [[ -f "$sw_file" ]]; then
-    local current_ver
-    current_ver=$(grep -oP "mobissh-v\K[0-9]+" "$sw_file" || echo "0")
-    local new_ver=$(( current_ver + 1 ))
-    sed -i "s/mobissh-v${current_ver}/mobissh-v${new_ver}/" "$sw_file"
-    log "SW cache bumped: v${current_ver} → v${new_ver}"
+    local content_hash
+    content_hash=$(find public/ -type f -not -name 'sw.js' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-8)
+    local current_name
+    current_name=$(grep -oP "mobissh-[a-z0-9]+" "$sw_file" | head -1)
+    local new_name="mobissh-${content_hash}"
+    if [[ "$current_name" != "$new_name" ]]; then
+      sed -i "s/${current_name}/${new_name}/" "$sw_file"
+      log "SW cache: ${current_name} → ${new_name}"
+    else
+      log "SW cache: ${new_name} (unchanged)"
+    fi
   fi
 
   log "Building ${CONTAINER} at ${hash}..."

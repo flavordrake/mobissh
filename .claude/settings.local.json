@@ -26,7 +26,12 @@
       "Bash(scripts/run-emulator-tests.sh compose-preview-voice.spec.js --grep \"1\\\\.2 compose\")",
       "Bash(scripts/gh-file-issue.sh --title \"bug: preview mode commit and timeout both fail to send text to terminal\" --label bug --label ux --body-file /tmp/issue-body.md)",
       "Bash(git log:*)",
-      "Bash(scripts/gh-file-issue.sh --title \"bug: preview textarea should grow dynamically as text is added, up to 50% of visible area\" --label bug --label ux --body-file /tmp/issue-body.md)"
+      "Bash(scripts/gh-file-issue.sh --title \"bug: preview textarea should grow dynamically as text is added, up to 50% of visible area\" --label bug --label ux --body-file /tmp/issue-body.md)",
+      "Bash(scripts/gh-ops.sh fetch-issues:*)",
+      "Bash(find public/ -type f -not -name 'sw.js' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-8)",
+      "Bash(which gemini:*)",
+      "Bash(gemini --help 2>&1 | head -20)",
+      "Bash(codex --help 2>&1 | head -30)"
     ]
   }
 }
