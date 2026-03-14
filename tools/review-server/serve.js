@@ -100,8 +100,10 @@ ${body}
 function fileTimestamp(filepath) {
   try {
     const stat = fs.statSync(filepath);
-    const d = new Date(stat.mtimeMs);
-    // Compact localized: "Mar 14, 10:23 PM" or "Mar 13, 2:05 AM"
+    // birthtime = when captured; fallback to mtime if birthtime unavailable
+    const ms = (stat.birthtimeMs && stat.birthtimeMs !== stat.mtimeMs)
+      ? stat.birthtimeMs : stat.mtimeMs;
+    const d = new Date(ms);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       + ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   } catch { return ''; }
