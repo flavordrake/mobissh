@@ -97,15 +97,14 @@ ${body}
 </html>`;
 }
 
-function fileAge(filepath) {
+function fileTimestamp(filepath) {
   try {
     const stat = fs.statSync(filepath);
-    const mins = Math.round((Date.now() - stat.mtimeMs) / 60000);
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.round(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.round(hrs / 24)}d ago`;
-  } catch { return 'unknown'; }
+    const d = new Date(stat.mtimeMs);
+    // Compact localized: "Mar 14, 10:23 PM" or "Mar 13, 2:05 AM"
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      + ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } catch { return ''; }
 }
 
 function listFiles(dir, ext) {
@@ -156,9 +155,9 @@ function dashboardPage() {
   sections.push(`<div class="card">
     <h2>Emulator (CDP)</h2>
     ${emuTests.length ? `<p>${emuTests.filter(t=>t.status==='passed').length} pass, ${emuTests.filter(t=>t.status==='failed').length} fail, ${emuTests.filter(t=>t.status==='skipped').length} skip</p>` : '<p class="empty">No results</p>'}
-    ${fs.existsSync(emuRecording) ? `<p><a href="/file/test-results/emulator/recording.mp4">Recording</a> (${fileAge(emuRecording)})</p>` : ''}
+    ${fs.existsSync(emuRecording) ? `<p><a href="/file/test-results/emulator/recording.mp4">Recording</a> (${fileTimestamp(emuRecording)})</p>` : ''}
     ${emuFrames.length ? `<p><a href="/frames">${emuFrames.length} frames</a></p>` : ''}
-    <p class="meta">Report: ${fs.existsSync(emuReport) ? fileAge(emuReport) : 'none'}</p>
+    <p class="meta">Report: ${fs.existsSync(emuReport) ? fileTimestamp(emuReport) : 'none'}</p>
   </div>`);
 
   // Appium results
@@ -167,7 +166,7 @@ function dashboardPage() {
   sections.push(`<div class="card">
     <h2>Appium</h2>
     ${appiumTests.length ? `<p>${appiumTests.filter(t=>t.status==='passed').length} pass, ${appiumTests.filter(t=>t.status==='failed').length} fail</p>` : '<p class="empty">No results yet</p>'}
-    <p class="meta">Report: ${fs.existsSync(appiumReport) ? fileAge(appiumReport) : 'none'}</p>
+    <p class="meta">Report: ${fs.existsSync(appiumReport) ? fileTimestamp(appiumReport) : 'none'}</p>
   </div>`);
 
   // Test history
@@ -234,7 +233,7 @@ function recordingsPage() {
   // Emulator recording
   const emuRec = path.join(ARTIFACT_DIRS.emulator, 'recording.mp4');
   if (fs.existsSync(emuRec)) {
-    recordings.push({ name: 'Emulator (latest)', path: '/file/test-results/emulator/recording.mp4', age: fileAge(emuRec), type: 'video/mp4' });
+    recordings.push({ name: 'Emulator (latest)', path: '/file/test-results/emulator/recording.mp4', age: fileTimestamp(emuRec), type: 'video/mp4' });
   }
 
   // Appium recordings from history
@@ -242,7 +241,7 @@ function recordingsPage() {
   for (const run of listFiles(historyDir).slice(0, 10)) {
     const runDir = path.join(historyDir, run);
     for (const f of listFiles(runDir, ['.webm', '.mp4'])) {
-      recordings.push({ name: `${run}/${f}`, path: `/file/test-history/appium/${run}/${f}`, age: fileAge(path.join(runDir, f)), type: f.endsWith('.webm') ? 'video/webm' : 'video/mp4' });
+      recordings.push({ name: `${run}/${f}`, path: `/file/test-history/appium/${run}/${f}`, age: fileTimestamp(path.join(runDir, f)), type: f.endsWith('.webm') ? 'video/webm' : 'video/mp4' });
     }
   }
 
@@ -355,10 +354,10 @@ function uploadsPage() {
   let body = `<h1>Uploads (${files.length})</h1>`;
 
   if (videos.length) {
-    body += `<div class="card"><h2>Videos</h2>${videos.map(v => `<div style="margin-bottom:1rem"><h2 style="font-size:0.9rem">${v}</h2><video controls style="max-width:100%"><source src="/file/test-results/uploads/${v}"></video><div class="meta">${fileAge(path.join(UPLOAD_DIR, v))}</div></div>`).join('')}</div>`;
+    body += `<div class="card"><h2>Videos</h2>${videos.map(v => `<div style="margin-bottom:1rem"><h2 style="font-size:0.9rem">${v}</h2><video controls style="max-width:100%"><source src="/file/test-results/uploads/${v}"></video><div class="meta">${fileTimestamp(path.join(UPLOAD_DIR, v))}</div></div>`).join('')}</div>`;
   }
   if (images.length) {
-    body += `<div class="card"><h2>Screenshots</h2><div class="grid">${images.map(f => `<div><a href="/file/test-results/uploads/${f}"><img class="thumb" src="/file/test-results/uploads/${f}" loading="lazy"></a><div class="meta">${f}<br>${fileAge(path.join(UPLOAD_DIR, f))}</div></div>`).join('')}</div></div>`;
+    body += `<div class="card"><h2>Screenshots</h2><div class="grid">${images.map(f => `<div><a href="/file/test-results/uploads/${f}"><img class="thumb" src="/file/test-results/uploads/${f}" loading="lazy"></a><div class="meta">${f}<br>${fileTimestamp(path.join(UPLOAD_DIR, f))}</div></div>`).join('')}</div></div>`;
   }
 
   return html('Uploads', body);
