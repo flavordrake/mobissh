@@ -1,5 +1,14 @@
 # MobiSSH -- Claude Code Context
 
+## Command Hygiene (read this first)
+- **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
+- **No shell redirects.** Scripts handle their own output. No `> /tmp/foo`, no `2>/dev/null`.
+- **No heredocs in Bash.** Use the Write tool to create files, then pass `--body-file`.
+- **No `model` parameter on Agent calls.** It breaks permission inheritance. Omit entirely.
+- **Use `scripts/gh-ops.sh`** for ALL GitHub operations. Never raw `gh` commands.
+
+Every violation creates approval noise on mobile. Wrapper scripts exist for a reason.
+
 ## What This Is
 MobiSSH is a mobile-first SSH PWA (Progressive Web App). A Node.js WebSocket bridge
 proxies SSH connections; xterm.js renders the terminal in-browser. Designed to be
