@@ -1,13 +1,44 @@
 # Agents and Delegation
 
-- Four custom agents in `.claude/agents/`: issue-manager (sonnet), delegate-scout (sonnet), integrate-gater (sonnet), develop (sonnet).
-- **Always spawn integrate-gater and develop with `isolation: "worktree"`.** Agents share main repo otherwise, causing git checkout conflicts.
-- Max 2 simultaneous integrate-gater agents.
+## Agent type reality (confirmed bugs)
+
+Custom file-based agents (`.claude/agents/*.md`) are **broken** in Claude Code's registry
+lookup. File-based discovery is unreliable — only built-in types (`general-purpose`,
+`Explore`, `Plan`) and UI-created agents (`/agents` command) work reliably.
+
+**Consequences:**
+- `subagent_type: "delegate-scout"` etc. silently fall back to defaults with wrong model/permissions
+- Agent frontmatter (`background`, `model`, `permissionMode`) is ignored when file discovery fails
+- Built-in agent types have hardcoded behavior that frontmatter cannot override
+
+**Rules:**
+- **Always use `general-purpose`** as the subagent_type. Scope restriction goes in the prompt, not the agent type.
+- Agent `.md` files in `.claude/agents/` are **prompt templates only** — read them for the prompt content, but don't rely on frontmatter for execution behavior.
+- Control `run_in_background`, `isolation`, and `model` via the Agent tool call parameters.
+- For read-only agents (scout, gater): include "Do NOT modify files" in the prompt.
+- For write agents (develop, issue-manager): use `isolation: "worktree"`.
+
+## Permission enforcement
+
+- `bypassPermissions` is inherited by all subagents and cannot be overridden per-agent.
+- **`deny` rules in `settings.json` survive `bypassPermissions`** — this is the only reliable enforcement.
+- For fine-grained control (e.g., read-only Bash), use `PreToolUse` hooks — they fire even in bypass mode.
+- Permission allow-list uses `Bash(scripts/*)` not `Bash(bash *)`.
+
+## Agent spawning patterns
+
+| Agent | subagent_type | isolation | run_in_background | model |
+|-------|---------------|-----------|-------------------|-------|
+| delegate-scout | general-purpose | (none) | false | sonnet |
+| issue-manager | general-purpose | (none) | true | sonnet |
+| integrate-gater | general-purpose | worktree | true | sonnet |
+| develop | general-purpose | worktree | true | sonnet |
+
 - Max 2 simultaneous develop agents. Queue the rest.
+- Max 2 simultaneous integrate-gater agents.
 - Develop agents have a 1-hour wall clock timeout and max 3 implementation cycles.
 - `integrate-gate.sh` takes branch name as first arg, not issue number.
-- Permission allow-list uses `Bash(scripts/*)` not `Bash(bash *)`.
-- Always commit infra changes (skills, agents, CLAUDE.md) BEFORE delegating. Worktrees and bot branches clone from HEAD, not working directory.
+- Always commit infra changes BEFORE delegating. Worktrees clone from HEAD, not working directory.
 - Verify commands in delegation: `scripts/test-fast-gate.sh` (never `npm test` or compound `&&` chains).
 - Bot branches use pattern `bot/issue-{N}`. Develop agents create and push these.
 - Bot branches get deleted during integration. Run `git remote prune origin` to clean stale tracking refs.

@@ -3,7 +3,6 @@ name: integrate-gater
 description: Runs fast-gate validation (tsc + eslint + vitest) on a bot branch. Use when /integrate needs to validate a candidate branch before merge decisions. Can run multiple instances in parallel for independent branches.
 tools: Bash, Read
 model: sonnet
-background: true
 permissionMode: bypassPermissions
 ---
 

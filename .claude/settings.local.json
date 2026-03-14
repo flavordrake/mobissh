@@ -2,34 +2,23 @@
   "permissions": {
     "allow": [
       "Bash(scripts/*)",
-      "Bash(git:*)",
+      "Bash(bash scripts/*)",
       "Bash(bash:*)",
       "Bash(/usr/bin/env bash:*)",
-      "Bash(docker compose:*)",
-      "Bash(docker:*)",
-      "Bash(gh:*)",
-      "Bash(sudo npx:*)",
-      "Bash(python3:*)",
-      "Bash(tmux:*)",
       "Bash(ssh:*)",
+      "Bash(tmux:*)",
+      "Bash(sudo npx:*)",
+      "Bash(emulator:*)",
       "Bash(pgrep:*)",
       "Bash(du:*)",
-      "Bash(cp:*)",
       "Bash(identify:*)",
       "Bash(who:*)",
       "Bash(tty)",
+      "Bash(getent hosts:*)",
+      "Bash(ip addr:*)",
+      "Bash(MOBISSH_RECORDING=*)",
       "Read(//dev/**)",
-      "Bash(npx eslint:*)",
-      "Bash(npx tsc:*)",
-      "Bash(git add:*)",
-      "Bash(git fetch:*)",
-      "Bash(git ls-tree:*)",
-      "Bash(docker ps:*)",
-      "Bash(docker exec:*)",
-      "Bash(docker port:*)",
-      "Bash(docker network:*)",
-      "Bash(docker inspect:*)",
-      "Bash(docker info:*)"
+      "Bash(git status:*)"
     ]
   }
 }

@@ -3,7 +3,6 @@ name: develop
 description: Implements a fix or feature for a single GitHub issue. Runs in worktree isolation. Iterates up to 3 cycles (implement → rebase → test → fix). Creates a branch, pushes, opens a PR. On failure, writes a structured summary.
 tools: Bash, Read, Edit, Write, Glob, Grep
 model: sonnet
-background: true
 permissionMode: bypassPermissions
 ---
 

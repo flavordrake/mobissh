@@ -113,11 +113,12 @@ not pure CPU.
 
 Example agent invocation:
 ```
-Agent(subagent_type="integrate-gater", isolation="worktree", prompt="...", description="...")
+Agent(subagent_type="general-purpose", isolation="worktree", model="sonnet", prompt="<integrate-gater prompt>", description="...")
 ```
 
-Do NOT use the built-in `general-purpose` agent for this
-(it does not inherit permissions; see `docs/agents.md`).
+Always use `general-purpose` — custom subagent_types are broken in file-based
+discovery (see `.claude/rules/agents.md`). Read `.claude/agents/integrate-gater.md`
+for the prompt content.
 
 ## Step 4: Acceptance gate (per-branch, headless)
 

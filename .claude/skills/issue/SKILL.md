@@ -13,15 +13,13 @@ File a GitHub issue from an in-conversation observation. The user types somethin
 
 ## Execution Model
 
-Invoke the **issue-manager** agent (`.claude/agents/issue-manager.md`). It runs as a
-background task with the /issue skill preloaded and proper permissions inherited.
+Spawn a `general-purpose` agent with the prompt from `.claude/agents/issue-manager.md`.
+Use `model: "sonnet"`, `run_in_background: true`. Custom subagent_types are broken in
+file-based discovery (see `.claude/rules/agents.md`).
 
-**Do NOT use the built-in `general-purpose` agent.** It does not inherit the parent
-session's permission allow-list. Background general-purpose agents auto-deny Write and
-Bash calls with no approval UI, causing silent failures. See `docs/agents.md` for details.
-
-If the issue-manager agent is unavailable (e.g., session started before agent was
-defined), fall back to filing directly in the main conversation (foreground).
+Background agents auto-deny permissions not pre-approved in `settings.json`. If the
+agent fails on permissions, run it in foreground instead or file directly in the main
+conversation.
 
 ## Step 1: Parse the trigger
 

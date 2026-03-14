@@ -45,10 +45,11 @@ agent's job is coordination, research, prototyping, and synthesis -- not data fe
 
 ## Phase 1: Discover and classify
 
-Invoke the **delegate-scout** agent (`.claude/agents/delegate-scout.md`) in the background.
-It runs discovery, classification, failure analysis, and body fetching, then returns a
-summary with file paths. Do NOT use the built-in `general-purpose` agent (it does not
-inherit permissions; see `docs/agents.md`).
+Spawn a `general-purpose` agent in **foreground** with the prompt from
+`.claude/agents/delegate-scout.md`. Custom subagent_types are broken in file-based
+discovery (see `.claude/rules/agents.md`). Use `model: "sonnet"`.
+The scout runs discovery, classification, failure analysis, and body fetching, then
+returns a summary with file paths.
 
 The scout runs these scripts and writes results to /tmp:
 

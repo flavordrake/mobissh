@@ -112,9 +112,12 @@ scripts/test-fast-gate.sh
 ## Spawning agents
 
 Use the Agent tool with:
-- `subagent_type: "develop"`
+- `subagent_type: "general-purpose"` (custom types are broken — see `.claude/rules/agents.md`)
 - `isolation: "worktree"` (MANDATORY)
+- `model: "sonnet"`
 - `run_in_background: true` for batch mode (2nd+ agent)
+
+Read `.claude/agents/develop.md` for the prompt content to inline.
 
 **Parallel limit: max 2 agents simultaneously.** If batch has >2 issues, queue the rest.
 Wait for a slot to free up before spawning the next.
@@ -124,10 +127,11 @@ Single issue mode: run in foreground (not background), show results directly.
 Example:
 ```
 Agent(
-  subagent_type="develop",
+  subagent_type="general-purpose",
   isolation="worktree",
+  model="sonnet",
   description="develop issue 16",
-  prompt="Issue #16: auto-populate profile name...\n\n## Issue body\n..."
+  prompt="<develop.md prompt content>\n\nIssue #16: auto-populate profile name...\n\n## Issue body\n..."
 )
 ```
 
