@@ -17,7 +17,16 @@
       "Bash(getent hosts:*)",
       "Bash(ip addr:*)",
       "Bash(MOBISSH_RECORDING=*)",
-      "Read(//dev/**)"
+      "Read(//dev/**)",
+      "Bash(npx tsc:*)",
+      "Bash(scripts/run-emulator-tests.sh compose-preview-voice.spec.js --grep \"3\\\\.\")",
+      "Bash(scripts/container-ctl.sh restart:*)",
+      "Bash(scripts/run-emulator-tests.sh tests/emulator/compose-preview-voice.spec.js --grep \"1.2\")",
+      "Bash(scripts/run-emulator-tests.sh tests/emulator/compose-preview-voice.spec.js --grep \"1\\\\.2 compose\")",
+      "Bash(scripts/run-emulator-tests.sh compose-preview-voice.spec.js --grep \"1\\\\.2 compose\")",
+      "Bash(scripts/gh-file-issue.sh --title \"bug: preview mode commit and timeout both fail to send text to terminal\" --label bug --label ux --body-file /tmp/issue-body.md)",
+      "Bash(git log:*)",
+      "Bash(scripts/gh-file-issue.sh --title \"bug: preview textarea should grow dynamically as text is added, up to 50% of visible area\" --label bug --label ux --body-file /tmp/issue-body.md)"
     ]
   }
 }

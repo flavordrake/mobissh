@@ -187,7 +187,14 @@ adb shell "screenrecord --time-limit 180 $RECORDING_PATH" &
 RECORD_PID=$!
 
 EXTRA_ARGS=()
-[[ -n "$SPEC" ]] && EXTRA_ARGS+=("tests/emulator/$SPEC")
+# Accept both bare filename and full path
+if [[ -n "$SPEC" ]]; then
+  if [[ "$SPEC" == tests/* ]]; then
+    EXTRA_ARGS+=("$SPEC")
+  else
+    EXTRA_ARGS+=("tests/emulator/$SPEC")
+  fi
+fi
 [[ -n "$GREP" ]] && EXTRA_ARGS+=("--grep" "$GREP")
 
 MOBISSH_RECORDING=1 CDP_PORT=$CDP_PORT npx playwright test \
