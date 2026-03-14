@@ -815,6 +815,116 @@ test.describe('IME auto-positioning based on cursor (#106)', { tag: '@device-cri
   });
 });
 
+// ── Issue #170 — ctrl+key in compose+preview mode ──────────────────────────────
+
+test.describe('Issue #170 — sticky Ctrl in compose+preview sends control char', { tag: '@device-critical' }, () => {
+  test('Ctrl (sticky) + letter in compose+preview sends control character immediately', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Activate sticky Ctrl, then press 'c' on the imeInput textarea
+    await page.locator('#keyCtrl').click();
+    await page.waitForTimeout(50);
+
+    // Simulate keydown for 'c' on imeInput (as if user tapped the key)
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true, cancelable: true, key: 'c',
+      }));
+    });
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === '\x03')).toBe(true); // ^C
+  });
+
+  test('ctrlActive resets after use in compose+preview mode', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Activate sticky Ctrl
+    await page.locator('#keyCtrl').click();
+    await page.waitForTimeout(50);
+
+    // Send Ctrl+R
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true, cancelable: true, key: 'r',
+      }));
+    });
+    await page.waitForTimeout(100);
+
+    // ctrlActive should be reset — check that the Ctrl button is no longer active
+    const ctrlActive = await page.evaluate(() => {
+      return import('./modules/state.js').then(({ appState }) => appState.ctrlActive);
+    });
+    expect(ctrlActive).toBe(false);
+  });
+});
+
+// ── Issue #172 — number keys in compose+preview mode ───────────────────────────
+
+test.describe('Issue #172 — number keys in compose+preview send directly', { tag: '@device-critical' }, () => {
+  test('number key in compose+preview sends to terminal immediately', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Press '3' on the imeInput textarea
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true, cancelable: true, key: '3',
+      }));
+    });
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === '3')).toBe(true);
+  });
+
+  test('multiple number keys each send individually', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Press '1' then '5'
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true, cancelable: true, key: '1',
+      }));
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true, cancelable: true, key: '5',
+      }));
+    });
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === '1')).toBe(true);
+    expect(msgs.some((m) => m.data === '5')).toBe(true);
+  });
+
+  test('alphabetic keys still go to textarea in compose+preview (not sent directly)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Swipe a word — should be held in preview, not sent
+    await swipeCompose(page, 'hello');
+    await page.waitForTimeout(100);
+
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('hello');
+  });
+});
+
 // ── Issue #129 — direct mode Enter key (#129) ─────────────────────────────────
 
 test.describe('Issue #129 — direct mode Enter sends \\r', { tag: '@device-critical' }, () => {

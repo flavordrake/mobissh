@@ -602,6 +602,23 @@ export function initIMEInput(): void {
       return;
     }
 
+    // Sticky Ctrl in compose mode: intercept before textarea captures the key (#170)
+    if (appState.imeMode && appState.ctrlActive && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const code = e.key.toLowerCase().charCodeAt(0) - 96;
+      sendSSHInput(code >= 1 && code <= 26 ? String.fromCharCode(code) : e.key);
+      setCtrlActive(false);
+      e.preventDefault();
+      _transition('idle');
+      return;
+    }
+
+    // Number keys in compose+preview: send directly to terminal (#172)
+    if (appState.imeMode && _previewMode && e.key.length === 1 && /^[0-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      sendSSHInput(e.key);
+      e.preventDefault();
+      return;
+    }
+
     if (!appState.imeMode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       if (appState.ctrlActive) {
         const code = e.key.toLowerCase().charCodeAt(0) - 96;
