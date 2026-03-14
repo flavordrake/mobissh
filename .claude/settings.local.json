@@ -17,8 +17,7 @@
       "Bash(getent hosts:*)",
       "Bash(ip addr:*)",
       "Bash(MOBISSH_RECORDING=*)",
-      "Read(//dev/**)",
-      "Bash(git status:*)"
+      "Read(//dev/**)"
     ]
   }
 }
