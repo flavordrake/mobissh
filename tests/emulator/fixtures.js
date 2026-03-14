@@ -614,9 +614,9 @@ async function setupRealSSHConnection(page, sshServer) {
   });
 
   if (hasProfile) {
-    // Profile exists — go to connect panel and click Connect
-    await page.locator('[data-panel="connect"]').click();
-    await page.waitForSelector('button[data-action="connect"]', { timeout: 5000 });
+    // Profile exists — click Connect directly, no panel navigation needed.
+    // The profile list is rendered on boot (loadProfiles in app.ts:63) so
+    // the button is in the DOM even if the connect panel isn't active.
     await page.evaluate(() => {
       const btn = document.querySelector('button[data-action="connect"]');
       if (btn) btn.click();
