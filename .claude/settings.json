@@ -53,6 +53,17 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.claude/hooks/enforce-hygiene.sh"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "clear",
