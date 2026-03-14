@@ -27,12 +27,17 @@ lookup. File-based discovery is unreliable — only built-in types (`general-pur
 
 ## Agent spawning patterns
 
-| Agent | subagent_type | isolation | run_in_background | model |
-|-------|---------------|-----------|-------------------|-------|
-| delegate-scout | general-purpose | (none) | false | sonnet |
-| issue-manager | general-purpose | (none) | true | sonnet |
-| integrate-gater | general-purpose | worktree | true | sonnet |
-| develop | general-purpose | worktree | true | sonnet |
+| Agent | subagent_type | isolation | run_in_background |
+|-------|---------------|-----------|-------------------|
+| delegate-scout | general-purpose | (none) | false |
+| issue-manager | general-purpose | (none) | true |
+| integrate-gater | general-purpose | worktree | true |
+| develop | general-purpose | worktree | true |
+
+**CRITICAL: Do NOT set `model` parameter on Agent tool calls.** Setting `model` (e.g.,
+`model: "sonnet"`) changes the execution context and breaks permission inheritance.
+The agent loses access to `Bash(scripts/*)` and other allow-list entries. Omit `model`
+entirely — agents inherit the parent session's model and permissions.
 
 - Max 2 simultaneous develop agents. Queue the rest.
 - Max 2 simultaneous integrate-gater agents.
