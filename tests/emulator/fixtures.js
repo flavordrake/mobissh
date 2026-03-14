@@ -430,32 +430,40 @@ const test = base.extend({
       }
     }, vaultSnapshot);
 
-    // Reload with vault pre-seeded — app sees existing vault, skips setup modal
+    // Reload with vault pre-seeded — app sees existing vault, skips setup modal.
+    // Use addInitScript to hook into the app boot and unlock the vault before
+    // promptVaultSetupOnStartup(). addInitScript runs before page scripts on every
+    // navigation, so it survives the reload.
+    await page.addInitScript(() => {
+      // The app sets window.__appReady as a signal. We replace it with a version
+      // that also unlocks the vault by filling the unlock bar and clicking.
+      Object.defineProperty(window, '__appReady', {
+        configurable: true,
+        set(fn) {
+          // Store the original callback
+          this.__origAppReady = fn;
+        },
+        get() {
+          const orig = this.__origAppReady;
+          return function() {
+            // App is initialized — unlock bar handlers are wired.
+            const pw = document.getElementById('vaultUnlockPw');
+            if (pw) {
+              pw.value = 'test';
+              document.getElementById('vaultUnlockBtn')?.click();
+            }
+            window.__vaultUnlocked = true;
+            if (orig) orig();
+          };
+        },
+      });
+    });
     await page.reload({ waitUntil: 'domcontentloaded' });
 
-    // Vault exists but is locked — unlock it with the test password.
-    // The unlock bar appears at the top when vault is present but not yet unlocked.
-    // Wait for the app to finish initializing (xterm-screen appears when ready).
-    await page.waitForSelector('.xterm-screen, #vaultUnlockBar:not(.hidden)', { timeout: 10_000 });
-
-    const needsUnlock = await page.evaluate(() => {
-      const bar = document.getElementById('vaultUnlockBar');
-      return bar && !bar.classList.contains('hidden');
-    });
-
-    if (needsUnlock) {
-      // Set value directly and click — the unlock handler reads .value
-      await page.evaluate(() => {
-        const pw = document.getElementById('vaultUnlockPw');
-        if (pw) pw.value = 'test';
-        document.getElementById('vaultUnlockBtn')?.click();
-      });
-      // Wait for unlock bar to hide (async crypto op)
-      await page.waitForFunction(() => {
-        const bar = document.getElementById('vaultUnlockBar');
-        return !bar || bar.classList.contains('hidden');
-      }, null, { timeout: 5000 });
-    }
+    // Wait for app boot + vault unlock to complete
+    await page.waitForFunction(() => window.__vaultUnlocked === true, null, { timeout: 10_000 });
+    // Give the async crypto unlock a moment to settle
+    await page.waitForTimeout(500);
 
     // Ensure terminal panel is active
     await page.locator('[data-panel="terminal"]').click();
