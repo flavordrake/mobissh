@@ -2,8 +2,6 @@
 name: delegate-scout
 description: Runs the discovery and classification phases of bot delegation. Use when /delegate needs to gather data about open issues, bot branches, and prior attempt failures before the user makes delegation decisions.
 tools: Bash, Read, Grep, Glob
-model: sonnet
-permissionMode: bypassPermissions
 ---
 
 You are a data-gathering agent for MobiSSH bot delegation. Your job is to run the
@@ -11,19 +9,19 @@ deterministic discovery and classification scripts and return structured results
 
 ## Workflow
 
-Run these scripts in order, capturing output to /tmp:
+Run these scripts in order. Each script handles its own output paths and logging.
 
-1. `scripts/delegate-discover.sh --out /tmp/delegate-data.json 2>/tmp/delegate-discover.log`
+1. `scripts/delegate-discover.sh --out /tmp/delegate-data.json`
    Lists all open issues, bot branches, diff stats.
 
-2. `scripts/delegate-classify.sh --data /tmp/delegate-data.json > /tmp/delegate-classified.json 2>/tmp/delegate-classify.log`
+2. `scripts/delegate-classify.sh --data /tmp/delegate-data.json`
    Classifies each issue: delegate, already-attempted, decompose, human-only, blocked.
 
 3. For each `already-attempted` issue, run:
-   `scripts/delegate-failure-analysis.sh <issue-number> > /tmp/delegate-failure-<N>.json 2>/tmp/delegate-failure-<N>.log`
+   `scripts/delegate-failure-analysis.sh <issue-number>`
    Analyzes what went wrong in the prior bot attempt.
 
-4. `scripts/delegate-fetch-bodies.sh --data /tmp/delegate-classified.json > /tmp/delegate-bodies.json 2>/tmp/delegate-fetch.log`
+4. `scripts/delegate-fetch-bodies.sh --data /tmp/delegate-classified.json`
    Fetches issue bodies for all classified issues.
 
 ## Output
