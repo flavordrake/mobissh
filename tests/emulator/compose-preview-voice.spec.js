@@ -22,16 +22,17 @@ const {
   tapCommit, setupRealSSHConnection,
 } = require('./fixtures');
 
-// ── Test data ─────────────────────────────────────────────────────────────────
-// All strings are 15+ words with punctuation to catch real-world Gboard behavior.
+const {
+  COMMIT_SENTENCES, SHELL_SENTENCES, BUG_SENTENCES,
+  AUTOCORRECT_SENTENCES, SHORT_INPUTS, CONTROL_SEQUENCES,
+  ALL_SENTENCES,
+} = require('./test-sentences');
 
-const TEST_SENTENCES = [
-  'fix the direct mode enter key so it actually sends a carriage return on gboard, the issue was that enterkeyhint was missing from the password field.',
-  'tail -f /var/log/syslog | grep -i error, then check if the server restarted properly and verify the version hash matches what we deployed.',
-  'I want to capture all of these individually then turn them into aggressive test cases, something is off in our preview composer and key interaction behaviors.',
-  'docker logs mobissh-prod --tail 50 and look for any websocket connection drops, especially the ones that say derp does not know about peer.',
-  'set the cache control header to no-store on all static responses, the service worker uses network-first so we never want stale cached files.',
-];
+// ── Test data mapping ────────────────────────────────────────────────────────
+// Sentences sourced from test-sentences.js (real user inputs from #139).
+// Each group draws from the category most relevant to its test concern.
+
+const TEST_SENTENCES = [...COMMIT_SENTENCES, ...SHELL_SENTENCES];
 
 // ── Setup helper ──────────────────────────────────────────────────────────────
 
@@ -80,8 +81,7 @@ test.describe('Group 1: State machine transitions', () => {
     const intent = new IntentCapture(page);
     const receiver = new TerminalReceiver(page);
 
-    // Use a shorter sentence to keep the test focused
-    const sentence = TEST_SENTENCES[0].split(' ').slice(0, 10).join(' ');
+    const sentence = TEST_SENTENCES[0];
     await intent.swipeType(sentence);
 
     // Without preview, text should be sent immediately after composition
@@ -98,7 +98,7 @@ test.describe('Group 1: State machine transitions', () => {
 
     const intent = new IntentCapture(page);
 
-    const sentence = TEST_SENTENCES[1].split(' ').slice(0, 8).join(' ');
+    const sentence = TEST_SENTENCES[1];
     await intent.swipeType(sentence);
     await page.waitForTimeout(200);
     await screenshot(page, testInfo, '1.3-text-held');
@@ -130,7 +130,7 @@ test.describe('Group 1: State machine transitions', () => {
     const intent = new IntentCapture(page);
     const receiver = new TerminalReceiver(page);
 
-    const sentence = TEST_SENTENCES[2].split(' ').slice(0, 10).join(' ');
+    const sentence = TEST_SENTENCES[2];
     await intent.swipeType(sentence);
     await page.waitForTimeout(200);
     await screenshot(page, testInfo, '1.4-before-commit');
@@ -149,7 +149,7 @@ test.describe('Group 1: State machine transitions', () => {
 
     const intent = new IntentCapture(page);
 
-    const sentence = TEST_SENTENCES[3].split(' ').slice(0, 8).join(' ');
+    const sentence = TEST_SENTENCES[3];
     await intent.swipeType(sentence);
     await page.waitForTimeout(200);
     await screenshot(page, testInfo, '1.5-before-enter');
@@ -177,7 +177,7 @@ test.describe('Group 1: State machine transitions', () => {
     await enablePreviewMode(page);
 
     const intent = new IntentCapture(page);
-    const sentence = TEST_SENTENCES[4].split(' ').slice(0, 8).join(' ');
+    const sentence = TEST_SENTENCES[4];
     await intent.swipeType(sentence);
     await page.waitForTimeout(200);
     await screenshot(page, testInfo, '1.6-previewing');
@@ -202,7 +202,7 @@ test.describe('Group 1: State machine transitions', () => {
     const intent = new IntentCapture(page);
     const receiver = new TerminalReceiver(page);
 
-    const sentence = TEST_SENTENCES[0].split(' ').slice(0, 8).join(' ');
+    const sentence = TEST_SENTENCES[5];
     await intent.swipeType(sentence);
     await page.waitForTimeout(200);
 
@@ -225,7 +225,7 @@ test.describe('Group 1: State machine transitions', () => {
 
     const intent = new IntentCapture(page);
 
-    const sentence = TEST_SENTENCES[1].split(' ').slice(0, 8).join(' ');
+    const sentence = TEST_SENTENCES[6];
     await intent.swipeType(sentence);
     await page.waitForTimeout(200);
 
@@ -254,11 +254,7 @@ test.describe('Group 1: State machine transitions', () => {
 
 // ── Group 2: Voice input lifecycle ────────────────────────────────────────────
 
-const VOICE_SENTENCES = [
-  'voice typing often disables for some reason after the first word, then if I keep talking and hit the check box to commit nothing happens but if I type space or enter it does.',
-  'the preview does appear but only the first word is captured then nothing else comes through, I think a timer is canceling compose mode prematurely.',
-  'I want to capture all of these individually then turn them into aggressive test cases, something is off in our preview composer and key interaction behaviors.',
-];
+const VOICE_SENTENCES = BUG_SENTENCES;
 
 test.describe('Group 2: Voice input lifecycle', () => {
 
@@ -284,8 +280,7 @@ test.describe('Group 2: Voice input lifecycle', () => {
 
     const intent = new IntentCapture(page);
 
-    // Use a shorter sentence to isolate the preview-auto-enable behavior
-    const sentence = VOICE_SENTENCES[1].split(' ').slice(0, 8).join(' ');
+    const sentence = VOICE_SENTENCES[1];
     await intent.voiceInput(sentence);
     await page.waitForTimeout(300);
     await screenshot(page, testInfo, '2.2-after-voice');
@@ -350,7 +345,7 @@ test.describe('Group 2: Voice input lifecycle', () => {
     const intent = new IntentCapture(page);
     const receiver = new TerminalReceiver(page);
 
-    const sentence = VOICE_SENTENCES[1].split(' ').slice(0, 8).join(' ');
+    const sentence = VOICE_SENTENCES[2];
     await intent.voiceInput(sentence);
     await page.waitForTimeout(300);
     await screenshot(page, testInfo, '2.5-before-space');
@@ -375,8 +370,7 @@ test.describe('Group 2: Voice input lifecycle', () => {
     const intent = new IntentCapture(page);
     const receiver = new TerminalReceiver(page);
 
-    const sentence = VOICE_SENTENCES[2].split(' ').slice(0, 10).join(' ');
-    await intent.voiceInput(sentence);
+    await intent.voiceInput(VOICE_SENTENCES[0]);
 
     // Wait 2s to simulate voice stopping before commit
     await page.waitForTimeout(2000);
@@ -396,11 +390,7 @@ test.describe('Group 2: Voice input lifecycle', () => {
 
     const intent = new IntentCapture(page);
 
-    // Start compositionstart manually then let it run for ~5s via voiceInput
-    // VOICE_SENTENCES[0] has many words; voiceInput fires one word every 300ms
-    // With ~30 words that is ~9s, so we use a 15-word slice for ~5s
-    const sentence = VOICE_SENTENCES[0].split(' ').slice(0, 15).join(' ');
-    await intent.voiceInput(sentence);
+    await intent.voiceInput(VOICE_SENTENCES[0]);
     await screenshot(page, testInfo, '2.7-after-5s-voice');
 
     // Verify: text must still be in textarea (no auto-clear, no state reset)
@@ -525,12 +515,11 @@ test.describe('Group 5: Cross-mode regression guards', () => {
 
     // Start without preview — first word sent immediately
     await disablePreviewMode(page);
-    const firstWord = TEST_SENTENCES[2].split(' ').slice(0, 5).join(' ');
-    await intent.swipeType(firstWord);
+    await intent.swipeType(TEST_SENTENCES[2]);
     await page.waitForTimeout(200);
     await screenshot(page, testInfo, '5.3-no-preview-sent');
 
-    // First word should have been sent
+    // First sentence should have been sent
     const msgs1 = await page.evaluate(() =>
       (window.__mockWsSpy || [])
         .map(s => { try { return JSON.parse(s); } catch { return null; } })
@@ -545,8 +534,7 @@ test.describe('Group 5: Cross-mode regression guards', () => {
 
     const intent2 = new IntentCapture(page);
     const receiver = new TerminalReceiver(page);
-    const secondSentence = TEST_SENTENCES[3].split(' ').slice(0, 5).join(' ');
-    await intent2.swipeType(secondSentence);
+    await intent2.swipeType(TEST_SENTENCES[3]);
     await page.waitForTimeout(200);
     await screenshot(page, testInfo, '5.3-preview-holding');
 
@@ -575,9 +563,9 @@ test.describe('Group 5: Cross-mode regression guards', () => {
       const intent = new IntentCapture(page);
       const receiver = new TerminalReceiver(page);
 
-      // Use a 3-word chunk from each sentence
-      const chunk = TEST_SENTENCES[i % TEST_SENTENCES.length].split(' ').slice(0, 3).join(' ');
-      await intent.swipeType(chunk);
+      // Mix short inputs with long sentences for variety
+      const text = i < 3 ? SHORT_INPUTS[i] : TEST_SENTENCES[i % TEST_SENTENCES.length];
+      await intent.swipeType(text);
       await page.waitForTimeout(100);
 
       await tapCommit(page);
@@ -597,7 +585,7 @@ test.describe('Group 5: Cross-mode regression guards', () => {
     const receiver = new TerminalReceiver(page);
 
     // "Voice" input: compositionend with data but empty textarea (voice dictation quirk)
-    const voiceSentence = TEST_SENTENCES[0].split(' ').slice(0, 6).join(' ');
+    const voiceSentence = TEST_SENTENCES[0];
     await page.evaluate((text) => {
       const el = document.getElementById('imeInput');
       if (!el) return;
@@ -630,15 +618,9 @@ test.describe('Group 5: Cross-mode regression guards', () => {
 
 // ── Test data for Groups 3 and 6 ──────────────────────────────────────────────
 
-const BACKSPACE_SENTENCES = [
-  'when preview is on and I swipe type back over a word the cursor stops at the beginning of the preview field, it should keep sending backspace to the terminal once the field is empty.',
-  'backspace stops functioning when I try to fix a partial word with a correction appended, it inserts safetyly but should be transformed into four backspaces followed by ly.',
-];
+const BACKSPACE_SENTENCES = [...BUG_SENTENCES.slice(2), ...AUTOCORRECT_SENTENCES.slice(2)];
 
-const TIMER_SENTENCES = [
-  'the preview does appear but only the first word is captured then nothing else comes through, I think a timer is canceling compose mode prematurely.',
-  'ssh into the tailscale node at 100.64.0.1 and check if the container is healthy, use docker ps to see the status and docker logs to check for errors.',
-];
+const TIMER_SENTENCES = [...AUTOCORRECT_SENTENCES.slice(0, 2), ...SHELL_SENTENCES.slice(3)];
 
 // ── Group 3: Preview backspace passthrough (#136) ─────────────────────────────
 
@@ -650,9 +632,7 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
     const intent = new IntentCapture(page);
-    // Use first 15+ word sentence
-    const sentence = BACKSPACE_SENTENCES[0].split(' ').slice(0, 15).join(' ');
-    await intent.swipeType(sentence);
+    await intent.swipeType(BACKSPACE_SENTENCES[0]);
     await page.waitForTimeout(200);
 
     const valueBefore = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
@@ -687,8 +667,7 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
     await enablePreviewMode(page);
 
     const intent = new IntentCapture(page);
-    const sentence = BACKSPACE_SENTENCES[1].split(' ').slice(0, 8).join(' ');
-    await intent.swipeType(sentence);
+    await intent.swipeType(BACKSPACE_SENTENCES[1]);
     await page.waitForTimeout(200);
 
     // Commit text so preview is empty
@@ -776,8 +755,7 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
     await enablePreviewMode(page);
 
     const intent = new IntentCapture(page);
-    const sentence = BACKSPACE_SENTENCES[0].split(' ').slice(0, 10).join(' ');
-    await intent.swipeType(sentence);
+    await intent.swipeType(BACKSPACE_SENTENCES[0]);
     await page.waitForTimeout(200);
 
     const valueBefore = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
@@ -809,10 +787,16 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
     // Word should have been removed from preview
     expect(valueAfterDelete).not.toContain(lastWord);
 
-    // Reset spy to track only the extra backspaces
+    // Trim preview to a single char so 2 backspaces = 1 drain + 1 overflow
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      if (el) el.value = 'x';
+    });
+
+    // Reset spy to track only the overflow backspaces
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
-    // 2 additional backspaces — should drain preview then reach terminal
+    // 2 backspaces: first drains preview ('x' → ''), second overflows as \x7f
     for (let i = 0; i < 2; i++) {
       await page.locator('#imeInput').press('Backspace');
       await page.waitForTimeout(50);
@@ -821,8 +805,11 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
 
     await screenshot(page, testInfo, '3.4-after-extra-backspaces');
 
-    // The 2 extra backspaces should have reached the terminal as \x7f
-    // (once preview drained to empty)
+    // Preview should be empty
+    const previewVal = await page.evaluate(() => document.getElementById('imeInput')?.value ?? '');
+    expect(previewVal).toBe('');
+
+    // The overflow backspace should have reached the terminal as \x7f
     const inputData = await page.evaluate(() =>
       (window.__mockWsSpy || [])
         .map(s => { try { return JSON.parse(s); } catch { return null; } })
@@ -831,8 +818,7 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
         .join('')
     );
     const backspaceCount = (inputData.match(/\x7f/g) || []).length;
-    // At least some \x7f should have reached the terminal
-    expect(backspaceCount).toBeGreaterThan(0);
+    expect(backspaceCount).toBe(1);
   });
 
 });
@@ -850,8 +836,7 @@ test.describe('Group 6: Timer behavior', () => {
     const intent = new IntentCapture(page);
     const receiver = new TerminalReceiver(page);
 
-    const sentence = TIMER_SENTENCES[0].split(' ').slice(0, 10).join(' ');
-    await intent.swipeType(sentence);
+    await intent.swipeType(TIMER_SENTENCES[0]);
 
     // Wait for auto-clear timer (up to 2s)
     await page.waitForTimeout(2500);
@@ -918,24 +903,21 @@ test.describe('Group 6: Timer behavior', () => {
     // Type first word, wait 1s (not enough to trigger auto-clear)
     const intent = new IntentCapture(page);
 
-    const firstWord = TIMER_SENTENCES[0].split(' ').slice(0, 5).join(' ');
-    await intent.swipeType(firstWord);
+    await intent.swipeType(TIMER_SENTENCES[0]);
     await page.waitForTimeout(1000);
 
     await screenshot(page, testInfo, '6.3-after-1s-wait');
 
-    // Type second word — timer should reset
-    const secondWord = TIMER_SENTENCES[1].split(' ').slice(0, 5).join(' ');
-    await intent.swipeType(secondWord);
+    // Type second sentence — timer should reset
+    await intent.swipeType(TIMER_SENTENCES[1]);
     await page.waitForTimeout(1000);
 
-    await screenshot(page, testInfo, '6.3-after-second-word');
+    await screenshot(page, testInfo, '6.3-after-second-input');
 
-    // Both words should have been sent by now
+    // Both sentences should have been sent by now
     const receiver = new TerminalReceiver(page);
     const received = await receiver.getReceivedText();
-    // Second word chunk should be in the received text
-    expect(received).toContain(secondWord.split(' ')[0]);
+    expect(received).toContain(TIMER_SENTENCES[1].split(' ')[0]);
 
     await screenshot(page, testInfo, '6.3-done');
   });
@@ -946,8 +928,7 @@ test.describe('Group 6: Timer behavior', () => {
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
     const intent = new IntentCapture(page);
-    const sentence = TIMER_SENTENCES[0].split(' ').slice(0, 8).join(' ');
-    await intent.swipeType(sentence);
+    await intent.swipeType(TIMER_SENTENCES[0]);
     await page.waitForTimeout(200);
 
     // Transition to editing state by tapping textarea

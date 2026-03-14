@@ -389,9 +389,90 @@ const test = base.extend({
       await page.locator('#vaultSetupOverlay').waitFor({ state: 'hidden', timeout: 5000 });
     }
 
-    // Snapshot all vault-related localStorage keys
+    // Connect SSH once to pre-seed profile + host key fingerprint.
+    // Subsequent tests restore these from snapshot — no form fill or
+    // host key dialog, saving ~5s per test.
+    await page.evaluate((wsHost) => {
+      localStorage.setItem('allowPrivateHosts', 'true');
+      window.__mockWsSpy = [];
+      const OrigWS = window.WebSocket;
+      window.WebSocket = class extends OrigWS {
+        constructor(url, ...args) {
+          let rewritten = url;
+          if (wsHost && typeof url === 'string') {
+            rewritten = url.replace(/ws:\/\/localhost(:\d+)?/, `ws://${wsHost}`);
+          }
+          super(rewritten, ...args);
+        }
+        send(data) { window.__mockWsSpy.push(data); super.send(data); }
+      };
+    }, WS_HOST);
+
+    await page.locator('[data-panel="connect"]').click();
+    await page.waitForSelector('#panel-connect.active', { timeout: 5000 });
+
+    await page.evaluate(({ host, port, user, password }) => {
+      function setField(id, val) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (nativeSetter) nativeSetter.call(el, val);
+        else el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      setField('host', host);
+      setField('port', String(port));
+      setField('remote_a', user);
+      setField('remote_c', password);
+      const nameEl = document.getElementById('profileName');
+      if (nameEl && !nameEl.value) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(nameEl, host);
+        else nameEl.value = host;
+        nameEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, { host: SSHD_HOST, port: SSHD_PORT, user: TEST_USER, password: TEST_PASS });
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => {
+      const form = document.getElementById('connectForm');
+      if (form) form.requestSubmit();
+    });
+
+    await page.waitForSelector('button[data-action="connect"]', { timeout: 5000 });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const btn = document.querySelector('button[data-action="connect"]');
+      if (btn) btn.click();
+    });
+
+    // Accept host key
+    try {
+      const acceptBtn = page.locator('.hostkey-accept');
+      await acceptBtn.waitFor({ state: 'visible', timeout: 15_000 });
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.waitForTimeout(500);
+      await page.evaluate(() => {
+        const btn = document.querySelector('.hostkey-accept');
+        if (btn) btn.click();
+      });
+      await page.waitForTimeout(1000);
+    } catch { /* host key already trusted */ }
+
+    // Wait for connected state
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).some(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch { return false; }
+      });
+    }, null, { timeout: 15_000 });
+
+    // Snapshot all vault + connection localStorage keys
     const snapshot = await page.evaluate(() => {
-      const keys = ['vaultMeta', 'vaultData', 'webauthnCredId', 'webauthnPrfSalt', 'sshVault'];
+      const keys = [
+        'vaultMeta', 'vaultData', 'webauthnCredId', 'webauthnPrfSalt', 'sshVault',
+        'knownHosts', 'sshProfiles', 'allowPrivateHosts',
+      ];
       const snap = {};
       for (const k of keys) {
         const v = localStorage.getItem(k);
@@ -509,24 +590,12 @@ const test = base.extend({
 async function setupRealSSHConnection(page, sshServer) {
   await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
 
-  // Enable private host connections (SSRF bypass for Docker sshd on localhost)
-  // and inject WS spy + URL rewriter.
-  //
-  // ADB reverse tunnels don't support WebSocket. The page loads via localhost
-  // (secure context for SubtleCrypto/vault), but WS connections must go through
-  // 10.0.2.2 (QEMU host gateway → container loopback). The spy rewrites the
-  // URL while preserving the Origin header so the server's CSWSH check passes.
+  // Inject WS spy + URL rewriter (always needed, even on fast path)
   await page.evaluate((wsHost) => {
-    localStorage.setItem('allowPrivateHosts', 'true');
-
-    // WS spy + URL rewriter — intercept WebSocket constructor to:
-    // 1. Rewrite ws://localhost:PORT → ws://10.0.2.2:PORT (bypass broken ADB reverse)
-    // 2. Record all sent messages for test assertions
     window.__mockWsSpy = [];
     const OrigWS = window.WebSocket;
     window.WebSocket = class extends OrigWS {
       constructor(url, ...args) {
-        // Rewrite localhost → QEMU host gateway for WS connections
         let rewritten = url;
         if (wsHost && typeof url === 'string') {
           rewritten = url.replace(/ws:\/\/localhost(:\d+)?/, `ws://${wsHost}`);
@@ -537,73 +606,75 @@ async function setupRealSSHConnection(page, sshServer) {
     };
   }, WS_HOST);
 
-  // Navigate to connect form
-  await page.locator('[data-panel="connect"]').click();
-  await page.waitForSelector('#panel-connect.active', { timeout: 5000 });
-
-  // Fill form fields via evaluate — Playwright fill() is unreliable on Android
-  // Chrome CDP (values appear empty, keyboard race conditions).
-  await page.evaluate(({ host, port, user, password }) => {
-    function setField(id, val) {
-      const el = document.getElementById(id);
-      if (!el) return;
-      // Use native setter to ensure React/vanilla JS picks it up
-      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      if (nativeSetter) nativeSetter.call(el, val);
-      else el.value = val;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-    setField('host', host);
-    setField('port', String(port));
-    setField('remote_a', user);
-    setField('remote_c', password);
-
-    // Auto-populate the profile name (Advanced → Name field) so save works
-    const nameEl = document.getElementById('profileName');
-    if (nameEl && !nameEl.value) {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      if (setter) setter.call(nameEl, host);
-      else nameEl.value = host;
-      nameEl.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-  }, { host: sshServer.host, port: sshServer.port, user: sshServer.user, password: sshServer.password });
-  await page.waitForTimeout(300);
-
-  // Submit form
-  await page.evaluate(() => {
-    const form = document.getElementById('connectForm');
-    if (form) form.requestSubmit();
+  // Fast path: profile + host key pre-seeded by vaultSnapshot.
+  // Just click Connect on the existing profile — no form fill, no host key dialog.
+  const hasProfile = await page.evaluate(() => {
+    const profiles = JSON.parse(localStorage.getItem('sshProfiles') || '[]');
+    return profiles.length > 0;
   });
 
-  // Wait for profile to appear, then click Connect
-  await page.waitForSelector('button[data-action="connect"]', { timeout: 5000 });
-  await page.waitForTimeout(300);
-  await page.evaluate(() => {
-    const btn = document.querySelector('button[data-action="connect"]');
-    if (btn) btn.click();
-  });
-
-  // Accept host key on first connection — each test clears localStorage so
-  // the stored fingerprint is always gone. Wait for the dialog to appear,
-  // then dismiss keyboard (password field may have focused it) and click.
-  try {
-    const acceptBtn = page.locator('.hostkey-accept');
-    await acceptBtn.waitFor({ state: 'visible', timeout: 15_000 });
-    // Dismiss keyboard — filling the password field may have opened it,
-    // and the keyboard can interfere with click routing on Android.
-    await page.evaluate(() => document.activeElement?.blur());
-    await page.waitForTimeout(500);
-    // Use DOM click via evaluate — Playwright's click() reports the
-    // hostkey-overlay as intercepting even though the button is inside it.
+  if (hasProfile) {
+    // Profile exists — go to connect panel and click Connect
+    await page.locator('[data-panel="connect"]').click();
+    await page.waitForSelector('button[data-action="connect"]', { timeout: 5000 });
     await page.evaluate(() => {
-      const btn = document.querySelector('.hostkey-accept');
+      const btn = document.querySelector('button[data-action="connect"]');
       if (btn) btn.click();
     });
-    // Wait for the overlay to dismiss and connection to proceed
-    await page.waitForTimeout(1000);
-  } catch {
-    // Host key already trusted (shouldn't happen with fresh localStorage)
+  } else {
+    // Slow path: no pre-seeded profile, fill form from scratch
+    await page.evaluate(() => localStorage.setItem('allowPrivateHosts', 'true'));
+    await page.locator('[data-panel="connect"]').click();
+    await page.waitForSelector('#panel-connect.active', { timeout: 5000 });
+
+    await page.evaluate(({ host, port, user, password }) => {
+      function setField(id, val) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (nativeSetter) nativeSetter.call(el, val);
+        else el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      setField('host', host);
+      setField('port', String(port));
+      setField('remote_a', user);
+      setField('remote_c', password);
+      const nameEl = document.getElementById('profileName');
+      if (nameEl && !nameEl.value) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(nameEl, host);
+        else nameEl.value = host;
+        nameEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, { host: sshServer.host, port: sshServer.port, user: sshServer.user, password: sshServer.password });
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => {
+      const form = document.getElementById('connectForm');
+      if (form) form.requestSubmit();
+    });
+
+    await page.waitForSelector('button[data-action="connect"]', { timeout: 5000 });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const btn = document.querySelector('button[data-action="connect"]');
+      if (btn) btn.click();
+    });
+
+    // Accept host key (only on slow path — fast path has pre-trusted key)
+    try {
+      const acceptBtn = page.locator('.hostkey-accept');
+      await acceptBtn.waitFor({ state: 'visible', timeout: 15_000 });
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.waitForTimeout(500);
+      await page.evaluate(() => {
+        const btn = document.querySelector('.hostkey-accept');
+        if (btn) btn.click();
+      });
+      await page.waitForTimeout(1000);
+    } catch { /* host key already trusted */ }
   }
 
   // Wait for connected state — resize message confirms shell is ready
@@ -856,6 +927,28 @@ class IntentCapture {
    * Fires composition events word-by-word as Gboard delivers swipe completions.
    * Accumulates into this.intended.
    */
+  /**
+   * Simulate Gboard autocorrect: replace a word in the textarea.
+   * Fires deleteContentBackward input events for the old word, then
+   * insertText for the replacement. Updates intended to match.
+   * This exercises the _sendDiff path in ime.ts.
+   */
+  async autocorrect(original, replacement) {
+    this.intended = this.intended.replace(original, replacement);
+    await this.page.evaluate(({ orig, repl }) => {
+      const el = document.getElementById('imeInput');
+      if (!el) return;
+      const idx = el.value.indexOf(orig);
+      if (idx < 0) return;
+      // Update textarea value to reflect the correction
+      el.value = el.value.slice(0, idx) + repl + el.value.slice(idx + orig.length);
+      // Fire input event so the app detects the change
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true, inputType: 'insertReplacementText', data: repl,
+      }));
+    }, { orig: original, repl: replacement });
+  }
+
   async swipeType(sentence) {
     this.intended += (this.intended ? ' ' : '') + sentence;
     const words = sentence.split(/\s+/).filter(Boolean);

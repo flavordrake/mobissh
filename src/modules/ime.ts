@@ -582,7 +582,12 @@ export function initIMEInput(): void {
       // In editing/previewing state, let editing keys work natively in the textarea
       const isNav = e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
       if (appState.imeMode && isNav) return;
-      if (_isHolding() && e.key === 'Backspace') return;
+      if (_isHolding() && e.key === 'Backspace') {
+        if (ime.value) return;
+        sendSSHInput('\x7f');
+        e.preventDefault();
+        return;
+      }
       sendSSHInput(mapped);
       _transition('idle');
       e.preventDefault();

@@ -5,8 +5,9 @@
 # Handles: server, Docker sshd, emulator boot, ADB forwarding, Chrome CDP, Playwright.
 #
 # Usage:
-#   bash scripts/run-emulator-tests.sh              # run all emulator tests
-#   bash scripts/run-emulator-tests.sh smoke.spec.js # run specific test file
+#   scripts/run-emulator-tests.sh                           # run all emulator tests
+#   scripts/run-emulator-tests.sh smoke.spec.js             # run specific test file
+#   scripts/run-emulator-tests.sh smoke.spec.js --grep "3." # filter tests by title
 
 set -euo pipefail
 
@@ -22,7 +23,14 @@ export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 AVD_NAME="MobiSSH_Pixel7"
 MOBISSH_PORT="${MOBISSH_PORT:-8081}"
 CDP_PORT="${CDP_PORT:-9222}"
-SPEC="${1:-}"
+SPEC=""
+GREP=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --grep) GREP="$2"; shift 2 ;;
+    *)      SPEC="$1"; shift ;;
+  esac
+done
 RESULTS_DIR="test-results/emulator"
 RECORDING_PATH="/sdcard/emulator-test.mp4"
 
@@ -180,6 +188,7 @@ RECORD_PID=$!
 
 EXTRA_ARGS=()
 [[ -n "$SPEC" ]] && EXTRA_ARGS+=("tests/emulator/$SPEC")
+[[ -n "$GREP" ]] && EXTRA_ARGS+=("--grep" "$GREP")
 
 MOBISSH_RECORDING=1 CDP_PORT=$CDP_PORT npx playwright test \
   --config=playwright.emulator.config.js \
