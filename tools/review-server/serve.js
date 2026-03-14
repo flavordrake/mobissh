@@ -66,8 +66,8 @@ function html(title, body) {
   h2 { color: var(--accent); margin: 1.5rem 0 0.5rem; font-size: 1.1rem; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-  nav a { padding: 0.4rem 0.8rem; background: var(--card); border-radius: 4px; }
+  nav { display: flex; gap: 0.3rem; margin: 0 0 1rem; flex-wrap: wrap; }
+  nav a { padding: 0.25rem 0.5rem; background: var(--card); border-radius: 3px; font-size: 0.85rem; }
   nav a.active { background: var(--accent); color: var(--bg); font-weight: bold; }
   .card { background: var(--card); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
@@ -80,6 +80,7 @@ function html(title, body) {
   th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--card); }
   th { color: var(--dim); font-size: 0.85rem; text-transform: uppercase; }
   .empty { color: var(--dim); font-style: italic; padding: 2rem; text-align: center; }
+  .ts { color: var(--dim); font-size: 0.8rem; margin-left: 0.4rem; }
 </style>
 </head>
 <body>
@@ -100,13 +101,22 @@ ${body}
 function fileTimestamp(filepath) {
   try {
     const stat = fs.statSync(filepath);
-    // birthtime = when captured; fallback to mtime if birthtime unavailable
     const ms = (stat.birthtimeMs && stat.birthtimeMs !== stat.mtimeMs)
       ? stat.birthtimeMs : stat.mtimeMs;
     const d = new Date(ms);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      + ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    // "Fri Mar 14 20:17"
+    const wday = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const mon = d.toLocaleDateString('en-US', { month: 'short' });
+    const day = d.getDate();
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
+    return `${wday} ${mon} ${day} ${time}`;
   } catch { return ''; }
+}
+
+/** Render a de-emphasized timestamp span for any file link */
+function ts(filepath) {
+  const t = fileTimestamp(filepath);
+  return t ? `<span class="ts">${t}</span>` : '';
 }
 
 function listFiles(dir, ext) {
@@ -157,9 +167,9 @@ function dashboardPage() {
   sections.push(`<div class="card">
     <h2>Emulator (CDP)</h2>
     ${emuTests.length ? `<p>${emuTests.filter(t=>t.status==='passed').length} pass, ${emuTests.filter(t=>t.status==='failed').length} fail, ${emuTests.filter(t=>t.status==='skipped').length} skip</p>` : '<p class="empty">No results</p>'}
-    ${fs.existsSync(emuRecording) ? `<p><a href="/file/test-results/emulator/recording.mp4">Recording</a> (${fileTimestamp(emuRecording)})</p>` : ''}
+    ${fs.existsSync(emuRecording) ? `<p><a href="/file/test-results/emulator/recording.mp4">Recording</a> ${ts(emuRecording)}</p>` : ''}
     ${emuFrames.length ? `<p><a href="/frames">${emuFrames.length} frames</a></p>` : ''}
-    <p class="meta">Report: ${fs.existsSync(emuReport) ? fileTimestamp(emuReport) : 'none'}</p>
+    <p class="meta">Report: ${fs.existsSync(emuReport) ? `<a href="/emulator">view</a> ${ts(emuReport)}` : 'none'}</p>
   </div>`);
 
   // Appium results
@@ -168,7 +178,7 @@ function dashboardPage() {
   sections.push(`<div class="card">
     <h2>Appium</h2>
     ${appiumTests.length ? `<p>${appiumTests.filter(t=>t.status==='passed').length} pass, ${appiumTests.filter(t=>t.status==='failed').length} fail</p>` : '<p class="empty">No results yet</p>'}
-    <p class="meta">Report: ${fs.existsSync(appiumReport) ? fileTimestamp(appiumReport) : 'none'}</p>
+    <p class="meta">Report: ${fs.existsSync(appiumReport) ? `<a href="/appium">view</a> ${ts(appiumReport)}` : 'none'}</p>
   </div>`);
 
   // Test history
@@ -194,8 +204,8 @@ function emulatorPage() {
 
   return html('Emulator Results', `
     <h1>Emulator Results</h1>
-    ${recording ? `<div class="card"><h2>Recording</h2><video controls><source src="/file/test-results/emulator/recording.mp4" type="video/mp4"></video></div>` : ''}
-    ${workflowReport ? `<p><a href="/file/test-results/emulator/workflow-report.html">Workflow Report</a></p>` : ''}
+    ${recording ? `<div class="card"><h2>Recording ${ts(path.join(ARTIFACT_DIRS.emulator, 'recording.mp4'))}</h2><video controls><source src="/file/test-results/emulator/recording.mp4" type="video/mp4"></video></div>` : ''}
+    ${workflowReport ? `<p><a href="/file/test-results/emulator/workflow-report.html">Workflow Report</a> ${ts(path.join(ARTIFACT_DIRS.emulator, 'workflow-report.html'))}</p>` : ''}
     <div class="card">
       <h2>Tests</h2>
       ${rows ? `<table><tr><th></th><th>Test</th><th>Time</th></tr>${rows}</table>` : '<p class="empty">No results</p>'}
@@ -221,7 +231,7 @@ function framesPage() {
     <div class="card">
       <h2>${name.replace(/-/g, ' ')}</h2>
       <div class="grid">
-        ${files.map(f => `<div><a href="/file/test-results/emulator/frames/${f}"><img class="thumb" src="/file/test-results/emulator/frames/${f}" alt="${f}" loading="lazy"></a><div class="meta">${f}</div></div>`).join('')}
+        ${files.map(f => `<div><a href="/file/test-results/emulator/frames/${f}"><img class="thumb" src="/file/test-results/emulator/frames/${f}" alt="${f}" loading="lazy"></a><div class="meta">${f} ${ts(path.join(framesDir, f))}</div></div>`).join('')}
       </div>
     </div>
   `).join('');
@@ -235,7 +245,7 @@ function recordingsPage() {
   // Emulator recording
   const emuRec = path.join(ARTIFACT_DIRS.emulator, 'recording.mp4');
   if (fs.existsSync(emuRec)) {
-    recordings.push({ name: 'Emulator (latest)', path: '/file/test-results/emulator/recording.mp4', age: fileTimestamp(emuRec), type: 'video/mp4' });
+    recordings.push({ name: 'Emulator (latest)', path: '/file/test-results/emulator/recording.mp4', abs: emuRec, type: 'video/mp4' });
   }
 
   // Appium recordings from history
@@ -243,7 +253,7 @@ function recordingsPage() {
   for (const run of listFiles(historyDir).slice(0, 10)) {
     const runDir = path.join(historyDir, run);
     for (const f of listFiles(runDir, ['.webm', '.mp4'])) {
-      recordings.push({ name: `${run}/${f}`, path: `/file/test-history/appium/${run}/${f}`, age: fileTimestamp(path.join(runDir, f)), type: f.endsWith('.webm') ? 'video/webm' : 'video/mp4' });
+      recordings.push({ name: `${run}/${f}`, path: `/file/test-history/appium/${run}/${f}`, abs: path.join(runDir, f), type: f.endsWith('.webm') ? 'video/webm' : 'video/mp4' });
     }
   }
 
@@ -251,9 +261,8 @@ function recordingsPage() {
 
   const cards = recordings.map(r => `
     <div class="card">
-      <h2>${r.name}</h2>
+      <h2>${r.name} ${ts(r.abs)}</h2>
       <video controls><source src="${r.path}" type="${r.type}"></video>
-      <div class="meta">${r.age}</div>
     </div>
   `).join('');
 
@@ -273,16 +282,16 @@ function historyRunPage(run) {
   let body = `<h1>Run: ${run}</h1>`;
 
   if (videos.length) {
-    body += videos.map(v => `<div class="card"><h2>${v}</h2><video controls><source src="/file/test-history/appium/${run}/${v}" type="${v.endsWith('.webm') ? 'video/webm' : 'video/mp4'}"></video></div>`).join('');
+    body += videos.map(v => `<div class="card"><h2>${v} ${ts(path.join(runDir, v))}</h2><video controls><source src="/file/test-history/appium/${run}/${v}" type="${v.endsWith('.webm') ? 'video/webm' : 'video/mp4'}"></video></div>`).join('');
   }
   if (images.length) {
-    body += `<div class="card"><h2>Screenshots</h2><div class="grid">${images.map(f => `<div><a href="/file/test-history/appium/${run}/${f}"><img class="thumb" src="/file/test-history/appium/${run}/${f}" loading="lazy"></a><div class="meta">${f}</div></div>`).join('')}</div></div>`;
+    body += `<div class="card"><h2>Screenshots</h2><div class="grid">${images.map(f => `<div><a href="/file/test-history/appium/${run}/${f}"><img class="thumb" src="/file/test-history/appium/${run}/${f}" loading="lazy"></a><div class="meta">${f} ${ts(path.join(runDir, f))}</div></div>`).join('')}</div></div>`;
   }
   if (htmlFiles.length) {
-    body += `<div class="card"><h2>Reports</h2>${htmlFiles.map(f => `<p><a href="/file/test-history/appium/${run}/${f}">${f}</a></p>`).join('')}</div>`;
+    body += `<div class="card"><h2>Reports</h2>${htmlFiles.map(f => `<p><a href="/file/test-history/appium/${run}/${f}">${f}</a> ${ts(path.join(runDir, f))}</p>`).join('')}</div>`;
   }
   if (others.length) {
-    body += `<div class="card"><h2>Other</h2>${others.map(f => `<p><a href="/file/test-history/appium/${run}/${f}">${f}</a></p>`).join('')}</div>`;
+    body += `<div class="card"><h2>Other</h2>${others.map(f => `<p><a href="/file/test-history/appium/${run}/${f}">${f}</a> ${ts(path.join(runDir, f))}</p>`).join('')}</div>`;
   }
 
   return html(`Run ${run}`, body);
@@ -356,10 +365,10 @@ function uploadsPage() {
   let body = `<h1>Uploads (${files.length})</h1>`;
 
   if (videos.length) {
-    body += `<div class="card"><h2>Videos</h2>${videos.map(v => `<div style="margin-bottom:1rem"><h2 style="font-size:0.9rem">${v}</h2><video controls style="max-width:100%"><source src="/file/test-results/uploads/${v}"></video><div class="meta">${fileTimestamp(path.join(UPLOAD_DIR, v))}</div></div>`).join('')}</div>`;
+    body += `<div class="card"><h2>Videos</h2>${videos.map(v => `<div style="margin-bottom:1rem"><h2 style="font-size:0.9rem">${v} ${ts(path.join(UPLOAD_DIR, v))}</h2><video controls style="max-width:100%"><source src="/file/test-results/uploads/${v}"></video></div>`).join('')}</div>`;
   }
   if (images.length) {
-    body += `<div class="card"><h2>Screenshots</h2><div class="grid">${images.map(f => `<div><a href="/file/test-results/uploads/${f}"><img class="thumb" src="/file/test-results/uploads/${f}" loading="lazy"></a><div class="meta">${f}<br>${fileTimestamp(path.join(UPLOAD_DIR, f))}</div></div>`).join('')}</div></div>`;
+    body += `<div class="card"><h2>Screenshots</h2><div class="grid">${images.map(f => `<div><a href="/file/test-results/uploads/${f}"><img class="thumb" src="/file/test-results/uploads/${f}" loading="lazy"></a><div class="meta">${f} ${ts(path.join(UPLOAD_DIR, f))}</div></div>`).join('')}</div></div>`;
   }
 
   return html('Uploads', body);
