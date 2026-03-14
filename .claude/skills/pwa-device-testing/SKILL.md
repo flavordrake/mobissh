@@ -114,6 +114,46 @@ await page.evaluate(() => localStorage.clear());
 await page.reload({ waitUntil: 'domcontentloaded' }); // app re-inits with clean state
 ```
 
+### Vault snapshot fixture (skip per-test vault setup)
+
+Creating the vault from scratch per test wastes ~5s (keyboard dismiss, modal wait, form fill). The `vaultSnapshot` worker-scoped fixture creates the vault once per test file and snapshots the localStorage keys. The `emulatorPage` fixture restores the snapshot and auto-unlocks:
+
+```javascript
+// Worker-scoped: creates vault once, snapshots localStorage keys
+vaultSnapshot: [async ({ cdpBrowser }, use) => {
+  // ... create vault with password 'test', snapshot localStorage ...
+  await use(snapshot); // { vaultMeta, vaultData, ... }
+}, { scope: 'worker' }],
+
+// Per-test: restores snapshot, unlocks vault via addInitScript hook
+emulatorPage: async ({ cdpBrowser, vaultSnapshot }, use) => {
+  // ... restore snapshot to localStorage ...
+  await page.addInitScript(() => {
+    // Hook into __appReady to unlock vault before promptVaultSetupOnStartup
+    Object.defineProperty(window, '__appReady', { /* ... fill pw + click unlock */ });
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__vaultUnlocked === true);
+  // ...
+},
+```
+
+**Key insight:** The vault unlock bar doesn't appear on startup — it appears later when `ensureVaultKeyWithUI()` is called during profile operations. Checking for the bar after reload will find `needsUnlock=false` (race condition). The `addInitScript` + `__appReady` hook approach intercepts the app boot to unlock the vault before any UI flow triggers it.
+
+Use `emulatorPage` for tests that need a pre-configured vault. Use `cleanPage` for tests that exercise vault setup from scratch.
+
+### Playwright outputDir isolation (CRITICAL)
+
+Playwright clears its `outputDir` on each run. The default is `test-results/`, which wipes emulator recordings, report.json, frames, and any other non-Playwright artifacts.
+
+Every Playwright config MUST set a dedicated `outputDir`:
+- `playwright.config.js` → `test-results/headless`
+- `playwright.emulator.config.js` → `test-results/playwright-emulator`
+- `playwright.appium.config.js` → `test-results-appium`
+- `playwright.browserstack.config.js` → `test-results/browserstack`
+
+Without this, `run-emulator-tests.sh` writes `recording.mp4` and `report.json` to `test-results/emulator/`, then the next Playwright run wipes them.
+
 ### workers: 1 is mandatory for CDP
 
 Parallel Playwright workers each try to interact with the same single Chrome instance over CDP. This causes "Target page, context or browser has been closed" across all tests. Always set `workers: 1` in the emulator config:
@@ -228,7 +268,7 @@ docker compose -f docker-compose.test.yml up -d test-sshd   # simple test contai
 ssh -p 2222 testuser@localhost  # password: testpass
 ```
 
-The `sshd-fixture.js` helper starts the container automatically and exposes credentials to tests. The `setupRealSSHConnection(page, sshServer)` helper in `fixtures.js` handles: vault creation, SSRF bypass for localhost, connect form fill, host key acceptance, and waiting for connected state.
+The `sshd-fixture.js` helper starts the container automatically and exposes credentials to tests. The `setupRealSSHConnection(page, sshServer)` helper in `fixtures.js` handles: SSRF bypass for localhost, WS URL rewriting (localhost→10.0.2.2), connect form fill, host key acceptance, and waiting for connected state. Vault setup is handled by the `vaultSnapshot` + `emulatorPage` fixture (no per-test vault creation).
 
 ## Touch Gesture Testing
 
@@ -371,11 +411,21 @@ Everything needed to add Android emulator testing to a new project is in the ski
 - `assets/emulator-test-template.js` -- Single test file with screenshot helpers and common patterns (vault setup, form interaction).
 
 **Baseline results:**
-The test runner collects results into `test-results/emulator/` (tracked by git):
-- `screenshots/` -- per-test PNG screenshots with descriptive names
-- `recording.mp4` -- full screen recording of the test run
-- `report.json` -- Playwright JSON reporter output with per-test timing
-- `frames/` -- extracted video frames at test-critical moments (see below)
+Test artifacts are split between two directories to prevent Playwright's auto-cleanup from destroying recordings and reports:
+
+- `test-results/emulator/` -- pipeline artifacts (NOT managed by Playwright):
+  - `recording.mp4` -- full screen recording from `screenrecord`
+  - `report.json` -- Playwright JSON reporter output with per-test timing
+  - `frames/` -- extracted video frames at test-critical moments (see below)
+  - `workflow-report.html` -- narrative HTML report with failure styling and video seek
+- `test-results/playwright-emulator/` -- Playwright-managed artifacts (cleared each run):
+  - Per-test subdirectories with screenshots and traces
+
+**Review server** (`tools/review-server/serve.js` on port 9090) displays both:
+- Dashboard, Emulator, Frames, Recordings tabs with per-test screenshots
+- Mark Golden / File Issue archival features
+- Per-test issue buttons (files GitHub issue with video timestamps)
+- Filter tabs (All/Failed/Passed) with seek-to-video links
 
 Add to `.gitignore`:
 ```

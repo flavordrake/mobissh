@@ -47,3 +47,9 @@ Never use `npm test` (maps to full Playwright including Appium).
 ## Test patterns
 - Vault tests: `cleanPage` for no-vault state, `emulatorPage` for pre-created vault.
 - New Appium test files: copy baseline structure (beforeEach, helpers, tmux setup via dockerExec), extend with new assertions.
+- **Vault snapshot**: `vaultSnapshot` (worker-scoped) creates vault once per file; `emulatorPage` restores snapshot + auto-unlocks via `addInitScript` hook on `window.__appReady`. Never recreate vault per test.
+- **Playwright outputDir isolation**: Every `playwright*.config.*` MUST set a dedicated `outputDir`. Playwright clears `outputDir` on each run — default `test-results/` wipes recordings, reports, and frames written by `run-emulator-tests.sh`. Current mapping:
+  - `playwright.config.js` → `test-results/headless`
+  - `playwright.emulator.config.js` → `test-results/playwright-emulator`
+  - `playwright.appium.config.js` → `test-results-appium`
+  - `playwright.browserstack.config.js` → `test-results/browserstack`
