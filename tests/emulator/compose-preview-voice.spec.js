@@ -19,7 +19,7 @@ const {
   test, expect, screenshot,
   IntentCapture, TerminalReceiver, assertFaithful,
   enablePreviewMode, disablePreviewMode, enableComposeMode,
-  tapCommit,
+  tapCommit, setupRealSSHConnection,
 } = require('./fixtures');
 
 // ── Test data ─────────────────────────────────────────────────────────────────
@@ -36,59 +36,11 @@ const TEST_SENTENCES = [
 // ── Setup helper ──────────────────────────────────────────────────────────────
 
 /**
- * Navigate to the app, establish a mock SSH connection, inject WS spy,
- * enable compose mode, and position on the terminal panel.
+ * Connect to real SSH server, inject WS spy, enable compose mode.
+ * Uses the sshServer fixture (Docker test-sshd) for real SSH.
  */
-async function setupWithCompose(page, mockSshServer) {
-  // Inject WS spy before any app code runs
-  await page.addInitScript(() => {
-    window.__mockWsSpy = [];
-    const OrigWS = window.WebSocket;
-    window.WebSocket = class extends OrigWS {
-      send(data) { window.__mockWsSpy.push(data); super.send(data); }
-    };
-  });
-  await page.addInitScript(() => { localStorage.clear(); });
-
-  await page.goto('./');
-  await page.waitForSelector('.xterm-screen', { timeout: 8000 });
-
-  // Vault setup
-  await page.evaluate(async () => {
-    const { createVault } = await import('./modules/vault.js');
-    await createVault('test', false);
-  });
-  // Dismiss vault modal if visible
-  try {
-    const cancelBtn = page.locator('#vaultSetupCancel');
-    await cancelBtn.waitFor({ state: 'visible', timeout: 1500 });
-    await cancelBtn.click();
-  } catch { /* vault already exists */ }
-
-  // Point to mock server
-  await page.evaluate((port) => {
-    localStorage.setItem('wsUrl', `ws://localhost:${port}`);
-  }, mockSshServer.port);
-
-  // Connect
-  await page.locator('[data-panel="connect"]').click();
-  await page.locator('#host').fill('mock-host');
-  await page.locator('#remote_a').fill('testuser');
-  await page.locator('#remote_c').fill('testpass');
-  await page.locator('#connectForm button[type="submit"]').click();
-
-  const connectBtn = page.locator('[data-action="connect"]').first();
-  await connectBtn.waitFor({ state: 'visible', timeout: 5000 });
-  await connectBtn.click();
-
-  // Wait for resize → connected
-  await page.waitForFunction(() => {
-    return (window.__mockWsSpy || []).some(s => {
-      try { return JSON.parse(s).type === 'resize'; } catch { return false; }
-    });
-  }, null, { timeout: 10_000 });
-
-  await page.waitForSelector('#panel-terminal.active', { timeout: 5000 });
+async function setupWithCompose(page, sshServer) {
+  await setupRealSSHConnection(page, sshServer);
 
   // Enable compose mode
   await enableComposeMode(page);
@@ -98,8 +50,8 @@ async function setupWithCompose(page, mockSshServer) {
 
 test.describe('Group 1: State machine transitions', () => {
 
-  test('1.1 cold boot + enable compose → textarea visible, state is in compose area', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.1 cold boot + enable compose → textarea visible, state is in compose area', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await screenshot(page, testInfo, '1.1-compose-enabled');
 
     // composeModeBtn should have compose-active class
@@ -119,8 +71,8 @@ test.describe('Group 1: State machine transitions', () => {
     expect(storedMode).toBe('ime');
   });
 
-  test('1.2 compose + preview off: swipe sentence → intent === received (sent immediately)', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.2 compose + preview off: swipe sentence → intent === received (sent immediately)', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     // Ensure preview mode is OFF
     await disablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -139,8 +91,8 @@ test.describe('Group 1: State machine transitions', () => {
     await assertFaithful(intent, receiver, expect);
   });
 
-  test('1.3 compose + preview on: swipe sentence → text held, nothing sent', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.3 compose + preview on: swipe sentence → text held, nothing sent', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -170,8 +122,8 @@ test.describe('Group 1: State machine transitions', () => {
     expect(actionsHidden).toBe(false);
   });
 
-  test('1.4 previewing → commit → intent === received', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.4 previewing → commit → intent === received', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -190,8 +142,8 @@ test.describe('Group 1: State machine transitions', () => {
     await assertFaithful(intent, receiver, expect);
   });
 
-  test('1.5 previewing → Enter → intent + \\r === received', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.5 previewing → Enter → intent + \\r === received', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -220,8 +172,8 @@ test.describe('Group 1: State machine transitions', () => {
     expect(inputMsgs.some(m => m === '\r')).toBe(true);
   });
 
-  test('1.6 previewing → tap textarea → editing state (green border)', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.6 previewing → tap textarea → editing state (green border)', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
 
     const intent = new IntentCapture(page);
@@ -242,8 +194,8 @@ test.describe('Group 1: State machine transitions', () => {
     expect(hasEditing).toBe(true);
   });
 
-  test('1.7 editing → commit → intent === received', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.7 editing → commit → intent === received', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -266,8 +218,8 @@ test.describe('Group 1: State machine transitions', () => {
     await assertFaithful(intent, receiver, expect);
   });
 
-  test('1.8 editing → Enter → intent + \\r === received', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('1.8 editing → Enter → intent + \\r === received', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -310,8 +262,8 @@ const VOICE_SENTENCES = [
 
 test.describe('Group 2: Voice input lifecycle', () => {
 
-  test('2.1 voice, preview off: full phrase reaches terminal', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('2.1 voice, preview off: full phrase reaches terminal', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await disablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -325,8 +277,8 @@ test.describe('Group 2: Voice input lifecycle', () => {
     await assertFaithful(intent, receiver, expect);
   });
 
-  test('2.2 voice, preview off initially: starts voice → preview overlay appears, text accumulates', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('2.2 voice, preview off initially: starts voice → preview overlay appears, text accumulates', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await disablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -349,8 +301,8 @@ test.describe('Group 2: Voice input lifecycle', () => {
     expect(actionsHidden).toBe(false);
   });
 
-  test('2.3 voice multi-word: all words captured in textarea', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('2.3 voice multi-word: all words captured in textarea', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -371,8 +323,8 @@ test.describe('Group 2: Voice input lifecycle', () => {
     }
   });
 
-  test('2.4 voice → commit sends accumulated text', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('2.4 voice → commit sends accumulated text', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -390,8 +342,8 @@ test.describe('Group 2: Voice input lifecycle', () => {
     await assertFaithful(intent, receiver, expect);
   });
 
-  test('2.5 voice → space sends text faithfully', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('2.5 voice → space sends text faithfully', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -415,8 +367,8 @@ test.describe('Group 2: Voice input lifecycle', () => {
     expect(receivedTrimmed, `Expected terminal to receive "${intendedTrimmed}" but got "${receivedTrimmed}"`).toBe(intendedTrimmed);
   });
 
-  test('2.6 voice stops → commit still works after 2s delay', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('2.6 voice stops → commit still works after 2s delay', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -437,8 +389,8 @@ test.describe('Group 2: Voice input lifecycle', () => {
     await assertFaithful(intent, receiver, expect);
   });
 
-  test('2.7 no timers fire during active voice: text accumulates continuously for 5s', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('2.7 no timers fire during active voice: text accumulates continuously for 5s', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -470,7 +422,7 @@ test.describe('Group 2: Voice input lifecycle', () => {
 
 test.describe('Group 5: Cross-mode regression guards', () => {
 
-  test('5.1 direct mode Enter (#129) → \\r sent', async ({ page, mockSshServer }, testInfo) => {
+  test('5.1 direct mode Enter (#129) → \\r sent', async ({ emulatorPage: page, sshServer }, testInfo) => {
     // Start in direct mode (default)
     await page.addInitScript(() => {
       window.__mockWsSpy = [];
@@ -495,7 +447,7 @@ test.describe('Group 5: Cross-mode regression guards', () => {
 
     await page.evaluate((port) => {
       localStorage.setItem('wsUrl', `ws://localhost:${port}`);
-    }, mockSshServer.port);
+    }, sshServer.port);
 
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('mock-host');
@@ -536,8 +488,8 @@ test.describe('Group 5: Cross-mode regression guards', () => {
     expect(msgs.some(m => m === '\r')).toBe(true);
   });
 
-  test('5.2 direct → compose → direct round-trip', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('5.2 direct → compose → direct round-trip', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await screenshot(page, testInfo, '5.2-in-compose');
 
     const composeModeOn = await page.evaluate(() =>
@@ -565,8 +517,8 @@ test.describe('Group 5: Cross-mode regression guards', () => {
     expect(hasDirectInput).toBe(true);
   });
 
-  test('5.3 preview toggle mid-session', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('5.3 preview toggle mid-session', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
     const intent = new IntentCapture(page);
@@ -612,8 +564,8 @@ test.describe('Group 5: Cross-mode regression guards', () => {
     await assertFaithful(intent2, receiver, expect);
   });
 
-  test('5.4 rapid compose/commit × 5', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('5.4 rapid compose/commit × 5', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
 
     // 5 rapid compose+commit cycles
@@ -636,8 +588,8 @@ test.describe('Group 5: Cross-mode regression guards', () => {
     await screenshot(page, testInfo, '5.4-rapid-commits-done');
   });
 
-  test('5.5 voice then keyboard handoff', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('5.5 voice then keyboard handoff', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -692,8 +644,8 @@ const TIMER_SENTENCES = [
 
 test.describe('Group 3: Preview backspace passthrough (#136)', () => {
 
-  test('3.1 backspace deletes in preview — 5x backspace loses 5 chars, terminal unchanged', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('3.1 backspace deletes in preview — 5x backspace loses 5 chars, terminal unchanged', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -730,8 +682,8 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
     expect(inputMsgs).toHaveLength(0);
   });
 
-  test('3.2 backspace on empty preview → SSH — 3x backspace sends 3x \\x7f', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('3.2 backspace on empty preview → SSH — 3x backspace sends 3x \\x7f', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
 
     const intent = new IntentCapture(page);
@@ -773,8 +725,8 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
     expect(backspaceCount).toBe(3);
   });
 
-  test('3.3 preview → SSH transition — 4x backspace on 2-char preview: 2 delete from preview, 2x \\x7f to terminal', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('3.3 preview → SSH transition — 4x backspace on 2-char preview: 2 delete from preview, 2x \\x7f to terminal', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -819,8 +771,8 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
     expect(backspaceCount).toBe(2);
   });
 
-  test('3.4 swipe-backspace through word — word removed, 2x \\x7f to terminal', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('3.4 swipe-backspace through word — word removed, 2x \\x7f to terminal', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
 
     const intent = new IntentCapture(page);
@@ -889,8 +841,8 @@ test.describe('Group 3: Preview backspace passthrough (#136)', () => {
 
 test.describe('Group 6: Timer behavior', () => {
 
-  test('6.1 auto-clear after compositionend (no preview) — text sent, textarea cleared', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('6.1 auto-clear after compositionend (no preview) — text sent, textarea cleared', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     // Preview OFF — text should auto-send and clear
     await disablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
@@ -914,8 +866,8 @@ test.describe('Group 6: Timer behavior', () => {
     await assertFaithful(intent, receiver, expect);
   });
 
-  test('6.2 auto-clear does NOT fire during active voice — words accumulate', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('6.2 auto-clear does NOT fire during active voice — words accumulate', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await disablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -958,8 +910,8 @@ test.describe('Group 6: Timer behavior', () => {
     expect(finalVal).toBe('');
   });
 
-  test('6.3 auto-clear resets on new input — no premature clear', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('6.3 auto-clear resets on new input — no premature clear', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await disablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 
@@ -988,8 +940,8 @@ test.describe('Group 6: Timer behavior', () => {
     await screenshot(page, testInfo, '6.3-done');
   });
 
-  test('6.4 editing state is sticky — no auto-clear after 10s', async ({ page, mockSshServer }, testInfo) => {
-    await setupWithCompose(page, mockSshServer);
+  test('6.4 editing state is sticky — no auto-clear after 10s', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    await setupWithCompose(page, sshServer);
     await enablePreviewMode(page);
     await page.evaluate(() => { window.__mockWsSpy = []; });
 

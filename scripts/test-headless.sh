@@ -12,8 +12,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-LOGFILE=/tmp/test-headless.log
-exec > >(tee "$LOGFILE") 2>&1
+MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
+mkdir -p "$MOBISSH_LOGDIR"
+LOGFILE="${MOBISSH_LOGDIR}/test-headless.log"
+exec > >(tee -a "$LOGFILE") 2>&1
 
 # Compile TypeScript (src/ -> public/modules/) before running browser tests
 npx tsc

@@ -18,7 +18,11 @@ const { execSync } = require('child_process');
 const { ensureTestSshd, SSHD_HOST, SSHD_PORT, TEST_USER, TEST_PASS } = require('./sshd-fixture');
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9222);
+// Page loads via localhost (ADB reverse handles HTTP fine, and localhost is a
+// secure context for SubtleCrypto/vault). WebSocket connections are overridden
+// to use 10.0.2.2 (QEMU host gateway) because ADB reverse doesn't support WS.
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
+const WS_HOST = process.env.WS_HOST || '10.0.2.2:8081';
 
 // ── Input element helpers ────────────────────────────────────────────────────
 // Centralises element IDs and expected properties so tests don't hardcode them.
@@ -436,30 +440,79 @@ async function setupRealSSHConnection(page, sshServer) {
   await page.waitForSelector('.xterm-screen', { timeout: 30_000 });
 
   // Enable private host connections (SSRF bypass for Docker sshd on localhost)
-  // and inject WS spy. Vault is already created by the emulatorPage fixture.
-  await page.evaluate(() => {
+  // and inject WS spy + URL rewriter.
+  //
+  // ADB reverse tunnels don't support WebSocket. The page loads via localhost
+  // (secure context for SubtleCrypto/vault), but WS connections must go through
+  // 10.0.2.2 (QEMU host gateway → container loopback). The spy rewrites the
+  // URL while preserving the Origin header so the server's CSWSH check passes.
+  await page.evaluate((wsHost) => {
     localStorage.setItem('allowPrivateHosts', 'true');
 
-    // WS spy — must be injected AFTER navigation, on the live page
+    // WS spy + URL rewriter — intercept WebSocket constructor to:
+    // 1. Rewrite ws://localhost:PORT → ws://10.0.2.2:PORT (bypass broken ADB reverse)
+    // 2. Record all sent messages for test assertions
     window.__mockWsSpy = [];
     const OrigWS = window.WebSocket;
     window.WebSocket = class extends OrigWS {
+      constructor(url, ...args) {
+        // Rewrite localhost → QEMU host gateway for WS connections
+        let rewritten = url;
+        if (wsHost && typeof url === 'string') {
+          rewritten = url.replace(/ws:\/\/localhost(:\d+)?/, `ws://${wsHost}`);
+        }
+        super(rewritten, ...args);
+      }
       send(data) { window.__mockWsSpy.push(data); super.send(data); }
     };
-  });
+  }, WS_HOST);
 
   // Navigate to connect form
   await page.locator('[data-panel="connect"]').click();
   await page.waitForSelector('#panel-connect.active', { timeout: 5000 });
 
-  // Fill credentials
-  await page.locator('#host').fill(sshServer.host);
-  await page.locator('#port').fill(String(sshServer.port));
-  await page.locator('#remote_a').fill(sshServer.user);
-  await page.locator('#remote_c').fill(sshServer.password);
+  // Fill form fields via evaluate — Playwright fill() is unreliable on Android
+  // Chrome CDP (values appear empty, keyboard race conditions).
+  await page.evaluate(({ host, port, user, password }) => {
+    function setField(id, val) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      // Use native setter to ensure React/vanilla JS picks it up
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (nativeSetter) nativeSetter.call(el, val);
+      else el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    setField('host', host);
+    setField('port', String(port));
+    setField('remote_a', user);
+    setField('remote_c', password);
 
-  // Submit — button has no id, select by form + type
-  await page.locator('#connectForm button[type="submit"]').click();
+    // Auto-populate the profile name (Advanced → Name field) so save works
+    const nameEl = document.getElementById('profileName');
+    if (nameEl && !nameEl.value) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (setter) setter.call(nameEl, host);
+      else nameEl.value = host;
+      nameEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }, { host: sshServer.host, port: sshServer.port, user: sshServer.user, password: sshServer.password });
+  await page.waitForTimeout(300);
+
+  // Submit form
+  await page.evaluate(() => {
+    const form = document.getElementById('connectForm');
+    if (form) form.requestSubmit();
+  });
+
+  // Wait for profile to appear, then click Connect
+  await page.waitForSelector('button[data-action="connect"]', { timeout: 5000 });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const btn = document.querySelector('button[data-action="connect"]');
+    if (btn) btn.click();
+  });
 
   // Accept host key on first connection — each test clears localStorage so
   // the stored fingerprint is always gone. Wait for the dialog to appear,

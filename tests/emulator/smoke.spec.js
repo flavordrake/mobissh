@@ -39,9 +39,8 @@ test.describe('PWA smoke (Android emulator)', () => {
     await expect(page.locator('#panel-connect')).toHaveClass(/active/);
     await screenshot(page, testInfo, '03-connect-panel');
 
-    // Fill the form
+    // Fill the form (port is inside collapsed Advanced section)
     await page.locator('#host').fill('emulator-test-host');
-    await page.locator('#port').fill('22');
     await page.locator('#remote_a').fill('testuser');
     await page.locator('#remote_c').fill('testpass');
     await screenshot(page, testInfo, '04-form-filled');

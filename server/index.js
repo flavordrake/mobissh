@@ -335,10 +335,9 @@ const wss = new WebSocket.Server({
       return;
     }
 
-    // Skip WS token auth when behind tailscale serve -- it strips query params
-    // from WebSocket upgrade requests (tailscale/tailscale#18651).
-    // Tailscale provides network-level auth; token is redundant.
-    if (process.env.TS_SERVE === '1') {
+    // Skip WS token auth when behind tailscale serve (strips query params,
+    // tailscale/tailscale#18651) or when explicitly disabled for local dev/testing.
+    if (process.env.TS_SERVE === '1' || process.env.WS_SKIP_TOKEN_AUTH === '1') {
       callback(true);
       return;
     }

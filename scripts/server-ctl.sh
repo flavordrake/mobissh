@@ -132,6 +132,12 @@ cmd_start() {
   log "Starting server on port ${PORT}..."
   local env_args="PORT=${PORT}"
   [[ -n "$BASE_PATH" ]] && env_args="${env_args} BASE_PATH=${BASE_PATH}"
+  # Local dev server: skip WS token auth and relax origin checks.
+  # Emulator tests need this because ADB reverse doesn't support WebSocket,
+  # so WS connects via 10.0.2.2 (QEMU gateway) causing origin mismatches.
+  # Security is enforced in production (container-ctl.sh / Tailscale).
+  env_args="${env_args} WS_ORIGIN_ALLOWLIST=http://localhost:${PORT},http://10.0.2.2:${PORT}"
+  env_args="${env_args} WS_SKIP_TOKEN_AUTH=1"
 
   nohup bash -c "${env_args} ${SERVER_CMD}" > "$LOGFILE" 2>&1 &
   local pid=$!
