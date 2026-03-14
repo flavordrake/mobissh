@@ -498,6 +498,7 @@ export function initIMEInput(): void {
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
   ime.addEventListener('compositionstart', () => {
+    console.log(`[ime:compositionstart] state=${_imeState} preview=${_previewMode} value="${ime.value}"`);
     // New composition: clear any stale text that browser might have re-inserted
     if (_imeState === 'idle') ime.value = '';
     // Preserve editing state — user tapped in to edit, new composition should
@@ -512,8 +513,10 @@ export function initIMEInput(): void {
   });
 
   ime.addEventListener('compositionend', (e: CompositionEvent) => {
+    console.log(`[ime:compositionend] state=${_imeState} preview=${_previewMode} holding=${_isHolding()} value="${ime.value}" data="${e.data}" lastSent="${_lastSentValue}"`);
     // If already holding (editing/previewing), stay — accumulate text
     if (_isHolding()) {
+      console.log(`[ime:compositionend] → holding, returning early`);
       appState.isComposing = false;
       _showIMEOverlay();
       return;
@@ -533,9 +536,14 @@ export function initIMEInput(): void {
     // No preview: send immediately, but keep textarea alive briefly
     // so voice dictation sessions can continue across composition cycles.
     appState.isComposing = false;
-    _sendIMEText(text);
-    _lastSentValue = '';
-    ime.value = '';
+    if (_lastSentValue) {
+      // Continuation of a multi-word swipe/voice session — diff against
+      // what was already sent so inter-word spaces aren't dropped (#162).
+      _sendDiff(_lastSentValue, text);
+    } else {
+      _sendIMEText(text);
+    }
+    _lastSentValue = text;
     // Move to previewing (allows tap-to-edit and deferred idle timer)
     _imeState = 'previewing';
     // Deferred idle: if no new compositionstart within 1.5s, hide textarea

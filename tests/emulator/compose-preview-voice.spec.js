@@ -73,6 +73,10 @@ test.describe('Group 1: State machine transitions', () => {
   });
 
   test('1.2 compose + preview off: swipe sentence → intent === received (sent immediately)', async ({ emulatorPage: page, sshServer }, testInfo) => {
+    // Capture console logs for event flow analysis
+    const logs = [];
+    page.on('console', msg => { if (msg.text().includes('[ime:')) logs.push(msg.text()); });
+
     await setupWithCompose(page, sshServer);
     // Ensure preview mode is OFF
     await disablePreviewMode(page);
@@ -86,6 +90,12 @@ test.describe('Group 1: State machine transitions', () => {
 
     // Without preview, text should be sent immediately after composition
     await page.waitForTimeout(200);
+
+    // Dump event flow for debugging
+    console.log('--- IME event flow (first 20) ---');
+    logs.slice(0, 20).forEach(l => console.log(l));
+    console.log(`--- total: ${logs.length} events ---`);
+
     await screenshot(page, testInfo, '1.2-immediate-send');
 
     await assertFaithful(intent, receiver, expect);
