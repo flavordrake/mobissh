@@ -327,7 +327,7 @@ export function initIMEInput(): void {
   function _scheduleClear(): void {
     if (_clearTimer) clearTimeout(_clearTimer);
     if (_isSticky()) return;
-    const delay = _imeState === 'previewing' ? 5000 : 1500;
+    const delay = _imeState === 'previewing' ? 4000 : 1500;
     _clearTimer = setTimeout(() => {
       // Don't auto-commit if user entered editing or a new composition started
       if (_imeState === 'composing' || _imeState === 'editing') return;
