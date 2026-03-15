@@ -661,6 +661,31 @@ test.describe('IME state machine — compose + preview (#106)', { tag: '@device-
     await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
   });
 
+  test('textarea auto-resizes as text grows (#167)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Compose a short word and record height
+    await swipeCompose(page, 'hi');
+    await page.waitForTimeout(100);
+    const shortHeight = await page.locator('#imeInput').evaluate((el) => el.offsetHeight);
+
+    // Compose several more words to force wrapping
+    await swipeCompose(page, 'this is a much longer sentence that should cause the textarea to grow');
+    await swipeCompose(page, 'and even more words to fill up the available space nicely');
+    await page.waitForTimeout(100);
+    const tallHeight = await page.locator('#imeInput').evaluate((el) => el.offsetHeight);
+
+    expect(tallHeight).toBeGreaterThan(shortHeight);
+
+    // Commit text and verify textarea shrinks back
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(100);
+    // After commit, textarea goes to idle (hidden), height reset
+    const afterCommitHeight = await page.locator('#imeInput').evaluate((el) => el.style.height);
+    expect(afterCommitHeight).toBe('');
+  });
+
   test('compose without preview: text not re-shown when eye toggled on', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     // Compose ON, preview OFF
