@@ -124,6 +124,12 @@ const MIME = {
 
 // ─── SFTP message handler (exported for unit tests) ──────────────────────────
 
+// Module-level upload registry keyed by fingerprint so entries survive WS reconnect.
+// Each entry: { stream, offset, path, fingerprint, requestId, sftp, ttlTimer }
+const resumableUploads = new Map();
+
+const UPLOAD_TTL_MS = 30_000; // 30s grace period after WS disconnect
+
 /**
  * Dispatch a single SFTP message to the open sftp channel.
  * `send` is a function(obj) that sends a JSON message to the WS client.
@@ -176,14 +182,30 @@ function handleSftpMessage(msg, sftp, send, openUploads) {
     }
 
     case 'sftp_upload_start': {
-      if (openUploads.has(requestId)) { sftpErr('Upload already in progress for this requestId'); return; }
-      const ws = sftp.createWriteStream(filePath);
-      ws.on('error', err => {
-        openUploads.delete(requestId);
-        sftpErr(err.message);
-      });
-      openUploads.set(requestId, { stream: ws, offset: 0, path: filePath });
-      send({ type: 'sftp_upload_ack', requestId, offset: 0 });
+      const fingerprint = msg.fingerprint || '';
+      // Check for a resumable entry from a previous connection
+      const existing = fingerprint ? resumableUploads.get(fingerprint) : null;
+      if (existing && existing.stream && !existing.stream.destroyed) {
+        // Clear TTL timer — client reconnected in time
+        if (existing.ttlTimer) { clearTimeout(existing.ttlTimer); existing.ttlTimer = null; }
+        // Re-register under the new requestId in the per-connection map
+        openUploads.set(requestId, { stream: existing.stream, offset: existing.offset, path: existing.path });
+        existing.requestId = requestId;
+        send({ type: 'sftp_upload_ack', requestId, offset: existing.offset });
+      } else {
+        // No resumable entry (or TTL expired) — create fresh
+        if (openUploads.has(requestId)) { sftpErr('Upload already in progress for this requestId'); return; }
+        const ws = sftp.createWriteStream(filePath);
+        ws.on('error', err => {
+          openUploads.delete(requestId);
+          if (fingerprint) resumableUploads.delete(fingerprint);
+          sftpErr(err.message);
+        });
+        const entry = { stream: ws, offset: 0, path: filePath, fingerprint, requestId, sftp, ttlTimer: null };
+        openUploads.set(requestId, { stream: ws, offset: 0, path: filePath });
+        if (fingerprint) resumableUploads.set(fingerprint, entry);
+        send({ type: 'sftp_upload_ack', requestId, offset: 0 });
+      }
       break;
     }
 
@@ -194,6 +216,10 @@ function handleSftpMessage(msg, sftp, send, openUploads) {
       const buf = Buffer.from(msg.data, 'base64');
       const canContinue = upload.stream.write(buf);
       upload.offset += buf.length;
+      // Keep resumable entry offset in sync
+      for (const [, re] of resumableUploads) {
+        if (re.requestId === requestId) { re.offset = upload.offset; break; }
+      }
       if (canContinue) {
         send({ type: 'sftp_upload_ack', requestId, offset: upload.offset });
       } else {
@@ -208,6 +234,10 @@ function handleSftpMessage(msg, sftp, send, openUploads) {
       const upload = openUploads.get(requestId);
       if (!upload) { sftpErr('No upload in progress for this requestId'); return; }
       openUploads.delete(requestId);
+      // Clean up resumable entry
+      for (const [fp, re] of resumableUploads) {
+        if (re.requestId === requestId) { resumableUploads.delete(fp); break; }
+      }
       upload.stream.end(() => {
         send({ type: 'sftp_upload_result', requestId, ok: true });
       });
@@ -218,6 +248,14 @@ function handleSftpMessage(msg, sftp, send, openUploads) {
       const upload = openUploads.get(requestId);
       if (!upload) { sftpErr('No upload in progress for this requestId'); return; }
       openUploads.delete(requestId);
+      // Clean up resumable entry
+      for (const [fp, re] of resumableUploads) {
+        if (re.requestId === requestId) {
+          if (re.ttlTimer) clearTimeout(re.ttlTimer);
+          resumableUploads.delete(fp);
+          break;
+        }
+      }
       upload.stream.destroy();
       sftp.unlink(upload.path, () => {
         send({ type: 'sftp_upload_result', requestId, ok: false, error: 'cancelled' });
@@ -593,9 +631,27 @@ wss.on('connection', (ws, req) => {
 
   function cleanup(reason) {
     pendingVerify = null; // discard any pending host-key verification (#5)
-    // Destroy any in-progress chunked uploads
-    for (const [, upload] of openUploads) {
-      try { upload.stream.destroy(); } catch (_) {}
+    // Set TTL on in-progress chunked uploads instead of destroying immediately (#123).
+    // If the client reconnects within UPLOAD_TTL_MS, it can resume from bytesWritten.
+    for (const [rid, upload] of openUploads) {
+      // Find the resumable entry for this upload
+      let found = false;
+      for (const [fp, re] of resumableUploads) {
+        if (re.requestId === rid) {
+          re.ttlTimer = setTimeout(() => {
+            try { re.stream.destroy(); } catch (_) {}
+            // Best-effort unlink of partial file via the stored sftp handle
+            try { re.sftp.unlink(re.path, () => {}); } catch (_) {}
+            resumableUploads.delete(fp);
+          }, UPLOAD_TTL_MS);
+          found = true;
+          break;
+        }
+      }
+      // If no resumable entry (e.g. no fingerprint), destroy immediately
+      if (!found) {
+        try { upload.stream.destroy(); } catch (_) {}
+      }
     }
     openUploads.clear();
     if (sshStream) {
@@ -821,4 +877,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { rewriteManifest, server, handleSftpMessage, isOriginAllowed, isPrivateIp, isCgnatIp };
+module.exports = { rewriteManifest, server, handleSftpMessage, isOriginAllowed, isPrivateIp, isCgnatIp, resumableUploads };
