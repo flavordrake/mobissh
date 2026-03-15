@@ -11,9 +11,134 @@ import { vaultLoad } from './vault.js';
 import { showErrorDialog } from './ui.js';
 
 // [SFTP_MSG] -- keep in sync with types.ts SERVER_MESSAGE sftp types and WS router below
-type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
+type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_upload_ack' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
 let _sftpHandler: ((msg: SftpMsg) => void) | null = null;
 export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler = fn; }
+
+const CHUNK_SIZE = 192 * 1024; // 192 KB per chunk
+
+// Pending ack resolvers: requestId -> resolve function
+const _ackResolvers = new Map<string, (offset: number) => void>();
+
+/** Base64-encode a Uint8Array without btoa+fromCharCode (which fails on large arrays). */
+function _uint8ToBase64(bytes: Uint8Array): string {
+  const BLOCK = 0x8000; // 32 KB blocks to avoid call stack overflow
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += BLOCK) {
+    const slice = bytes.subarray(i, Math.min(i + BLOCK, bytes.length));
+    binary += String.fromCharCode.apply(null, slice as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+/** Wait for a server ack for the given requestId. Returns the acked offset. */
+function _waitForAck(requestId: string): Promise<number> {
+  return new Promise((resolve) => {
+    _ackResolvers.set(requestId, resolve);
+  });
+}
+
+export interface UploadProgress {
+  bytesSent: number;
+  totalBytes: number;
+}
+
+/**
+ * Upload a file in chunks via the SFTP bridge.
+ * Sends sftp_upload_start, waits for ack, streams chunks, sends sftp_upload_end.
+ * Throws if cancelled or WS disconnects.
+ */
+export async function uploadFileChunked(
+  path: string,
+  file: File,
+  requestId: string,
+  onProgress: (p: UploadProgress) => void
+): Promise<void> {
+  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+    throw new Error('Not connected');
+  }
+
+  // Compute a simple fingerprint (size + name) for server-side dedup
+  const fingerprint = `${String(file.size)}-${file.name}`;
+
+  // Send start message
+  appState.ws.send(JSON.stringify({
+    type: 'sftp_upload_start',
+    path,
+    size: file.size,
+    fingerprint,
+    requestId
+  }));
+
+  // Wait for initial ack (offset 0)
+  await _waitForAck(requestId);
+
+  // Stream chunks
+  const reader = file.stream().getReader();
+  let bytesSent = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Process the chunk in CHUNK_SIZE pieces
+      let offset = 0;
+      while (offset < value.length) {
+        // Runtime check: ws may change across await boundaries
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+          throw new Error('Connection lost during upload');
+        }
+
+        const end = Math.min(offset + CHUNK_SIZE, value.length);
+        const chunk = value.subarray(offset, end);
+        const data = _uint8ToBase64(chunk);
+
+        appState.ws.send(JSON.stringify({
+          type: 'sftp_upload_chunk',
+          requestId,
+          data,
+          offset: bytesSent
+        }));
+
+        // Wait for server ack before sending next chunk
+        await _waitForAck(requestId);
+
+        bytesSent += chunk.length;
+        onProgress({ bytesSent, totalBytes: file.size });
+        offset = end;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  // Send end message (ws may have changed across awaits)
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+    appState.ws.send(JSON.stringify({
+      type: 'sftp_upload_end',
+      requestId
+    }));
+  }
+}
+
+export function sendSftpUploadCancel(requestId: string): void {
+  // Reject any pending ack so the upload loop throws
+  _ackResolvers.delete(requestId);
+  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
+  appState.ws.send(JSON.stringify({ type: 'sftp_upload_cancel', requestId }));
+}
+
+/** Resolve a pending ack. Called from the WS message handler. */
+export function _resolveAck(requestId: string, offset: number): void {
+  const resolve = _ackResolvers.get(requestId);
+  if (resolve) {
+    _ackResolvers.delete(requestId);
+    resolve(offset);
+  }
+}
 export function sendSftpLs(path: string, requestId: string): void {
   if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
   appState.ws.send(JSON.stringify({ type: 'sftp_ls', path, requestId }));
@@ -320,10 +445,12 @@ function _openWebSocket(options?: { silent?: boolean }): void {
       case 'sftp_error':
       case 'sftp_download_result':
       case 'sftp_upload_result':
+      case 'sftp_upload_ack':
       case 'sftp_stat_result':
       case 'sftp_rename_result':
       case 'sftp_delete_result':
       case 'sftp_realpath_result':
+        if (msg.type === 'sftp_upload_ack') _resolveAck(msg.requestId, msg.offset);
         _sftpHandler?.(msg);
         break;
 
