@@ -33,6 +33,15 @@ let _imeState: IMEState = 'idle';
 /** Whether "preview mode" is enabled — accumulate compositions for review. */
 let _previewMode = localStorage.getItem('imePreviewMode') === 'true';
 
+/** Preview textarea style: 'subtle' | 'accent' | 'glass' (#175). */
+const PREVIEW_STYLES = ['subtle', 'accent', 'glass'] as const;
+type PreviewStyle = typeof PREVIEW_STYLES[number];
+let _previewStyle: PreviewStyle = (() => {
+  const stored = localStorage.getItem('imePreviewStyle');
+  if (stored === 'accent' || stored === 'glass') return stored;
+  return 'subtle';
+})();
+
 export function isPreviewMode(): boolean { return _previewMode; }
 /** Callback set by initIMEInput to clear preview state (commits text). */
 let _clearPreviewCallback: (() => void) | null = null;
@@ -78,6 +87,29 @@ export function initIME({ handleResize, applyFontSize }: IMEDeps): void {
   _applyFontSize = applyFontSize;
 }
 
+/** Apply the current preview style class to the textarea, removing others. */
+function _applyPreviewStyle(el: HTMLTextAreaElement): void {
+  for (const s of PREVIEW_STYLES) el.classList.remove(`preview-${s}`);
+  el.classList.add(`preview-${_previewStyle}`);
+}
+
+/** Cycle to the next preview style and persist. */
+function _cyclePreviewStyle(el: HTMLTextAreaElement): void {
+  const idx = PREVIEW_STYLES.indexOf(_previewStyle);
+  _previewStyle = PREVIEW_STYLES[(idx + 1) % PREVIEW_STYLES.length]!;
+  localStorage.setItem('imePreviewStyle', _previewStyle);
+  _applyPreviewStyle(el);
+  console.log('[ime] preview style:', _previewStyle);
+}
+
+/** Auto-resize textarea to fit content, capped at 50% of visible viewport. */
+function _autoResizeTextarea(el: HTMLTextAreaElement): void {
+  const maxH = (window.visualViewport?.height ?? window.innerHeight) * 0.5;
+  el.style.height = 'auto';
+  el.style.height = `${String(Math.min(el.scrollHeight, maxH))}px`;
+  el.style.maxHeight = `${String(maxH)}px`;
+}
+
 export function initIMEInput(): void {
   const ime = document.getElementById('imeInput') as HTMLTextAreaElement;
 
@@ -109,6 +141,26 @@ export function initIMEInput(): void {
       togglePreviewMode();
       focusIME();
     });
+    // Long-press cycles preview style (#175)
+    let _longPressTimer: ReturnType<typeof setTimeout> | null = null;
+    let _longPressFired = false;
+    previewBtn.addEventListener('pointerdown', () => {
+      _longPressFired = false;
+      _longPressTimer = setTimeout(() => {
+        _longPressFired = true;
+        _cyclePreviewStyle(ime);
+      }, 600);
+    });
+    previewBtn.addEventListener('pointerup', () => {
+      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    });
+    previewBtn.addEventListener('pointercancel', () => {
+      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    });
+    // Suppress click after long-press to avoid toggling preview mode
+    previewBtn.addEventListener('click', (e) => {
+      if (_longPressFired) { e.stopImmediatePropagation(); _longPressFired = false; }
+    }, { capture: true });
   }
 
   // ── IME action buttons (#106) ────────────────────────────────────────
@@ -265,8 +317,10 @@ export function initIMEInput(): void {
         _prevInputValue = '';
         _idleTransitionTime = Date.now();
         ime.classList.remove('ime-visible', 'ime-editing');
+        for (const s of PREVIEW_STYLES) ime.classList.remove(`preview-${s}`);
         if (imeActions) imeActions.classList.remove('ime-editing');
         ime.style.height = '';
+        ime.style.maxHeight = '';
         _hideActions();
         appState.isComposing = false;
         _manualDock = false;
@@ -277,6 +331,7 @@ export function initIMEInput(): void {
         ime.classList.add('ime-visible');
         ime.classList.remove('ime-editing');
         if (imeActions) imeActions.classList.remove('ime-editing');
+        _applyPreviewStyle(ime);
         _showActions();
         _positionIME();
         break;
@@ -286,6 +341,7 @@ export function initIMEInput(): void {
         ime.classList.add('ime-visible');
         ime.classList.remove('ime-editing');
         if (imeActions) imeActions.classList.remove('ime-editing');
+        _applyPreviewStyle(ime);
         _showActions();
         _positionIME();
         break;
@@ -294,6 +350,7 @@ export function initIMEInput(): void {
         appState.isComposing = false;
         ime.classList.add('ime-visible', 'ime-editing');
         if (imeActions) imeActions.classList.add('ime-editing');
+        _applyPreviewStyle(ime);
         _showActions();
         _positionIME();
         break;
@@ -314,13 +371,10 @@ export function initIMEInput(): void {
   function _showIMEOverlay(): void {
     if (!_previewMode) return;
     ime.classList.add('ime-visible');
+    _applyPreviewStyle(ime);
     if (_imeState !== 'idle') _showActions();
     _positionIME();
-    // Auto-grow: reset height then set to scrollHeight, capped by CSS max-height
-    if (document.body.classList.contains('debug-ime')) {
-      ime.style.height = 'auto';
-      ime.style.height = `${String(ime.scrollHeight)}px`;
-    }
+    _autoResizeTextarea(ime);
   }
 
   /** Schedule a deferred clear — gives the IME time to fire correction events
