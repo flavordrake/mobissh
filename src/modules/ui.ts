@@ -25,7 +25,17 @@ function _isValidPanel(hash: string): hash is PanelName {
 
 function _panelFromHash(): PanelName | null {
   const raw = location.hash.replace(/^#/, '');
+  if (raw.startsWith('files/') || raw === 'files') return 'files';
   return _isValidPanel(raw) ? raw : null;
+}
+
+function _filePathFromHash(): string | null {
+  const raw = location.hash.replace(/^#/, '');
+  if (raw.startsWith('files/')) {
+    const encoded = raw.slice('files'.length);
+    try { return decodeURIComponent(encoded); } catch { return null; }
+  }
+  return null;
 }
 
 export function navigateToPanel(
@@ -63,10 +73,14 @@ export function navigateToPanel(
   }
 }
 
-/** Resolve the initial panel on cold start (#137). */
+/** Resolve the initial panel on cold start (#137, #90). */
 export function initRouting(hasProfiles: boolean): void {
   const fromHash = _panelFromHash();
   if (fromHash) {
+    // Store deep link path for files panel — SFTP not ready yet at cold start
+    if (fromHash === 'files') {
+      _filesDeepLinkPath = _filePathFromHash();
+    }
     navigateToPanel(fromHash);
   } else if (hasProfiles) {
     navigateToPanel('connect');
@@ -460,10 +474,19 @@ export function initTabBar(): void {
     });
   });
 
-  // Browser back/forward (#137)
+  // Browser back/forward (#137, #90)
   window.addEventListener('hashchange', () => {
     const panel = _panelFromHash();
-    if (panel) navigateToPanel(panel, { updateHash: false });
+    if (panel) {
+      navigateToPanel(panel, { updateHash: false });
+      // If navigating to files panel with a path in hash, navigate to that dir
+      if (panel === 'files') {
+        const filePath = _filePathFromHash();
+        if (filePath) {
+          _filesNavigateTo(filePath, { fromPopstate: true });
+        }
+      }
+    }
   });
 }
 
@@ -819,6 +842,7 @@ function _applyComposeModeUI(): void {
 // ── Files panel (#174, #175) ─────────────────────────────────────────────────
 
 let _filesPath = '/';
+let _filesDeepLinkPath: string | null = null;
 let _filesRealpathReqId: string | null = null; // pending sftp_realpath request
 const _filesCache = new Map<string, SftpEntry[]>();
 // Maps requestId -> path so SFTP ls responses can be matched to their requests
@@ -1017,8 +1041,17 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
   });
 }
 
-function _filesNavigateTo(path: string): void {
+function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): void {
   _filesPath = path;
+
+  // Update URL hash for history (#90)
+  if (!options?.fromPopstate) {
+    const newHash = '#files' + encodeURIComponent(path);
+    if (location.hash !== newHash) {
+      history.pushState(null, '', newHash);
+    }
+  }
+
   const cached = _filesCache.get(path);
   if (cached) {
     _renderFilesList(path, cached);
@@ -1292,7 +1325,14 @@ export function initFilesPanel(): void {
     } else if (msg.type === 'sftp_realpath_result') {
       if (msg.requestId === _filesRealpathReqId) {
         _filesRealpathReqId = null;
-        _filesNavigateTo(msg.path || '/');
+        // Deep link path takes priority over home dir (#90)
+        if (_filesDeepLinkPath) {
+          const deepPath = _filesDeepLinkPath;
+          _filesDeepLinkPath = null;
+          _filesNavigateTo(deepPath);
+        } else {
+          _filesNavigateTo(msg.path || '/');
+        }
       }
     } else if (msg.type === 'sftp_error') {
       // sftp_error — could be for ls, download, upload, rename, or delete
