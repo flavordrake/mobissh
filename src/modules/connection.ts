@@ -70,12 +70,13 @@ export async function uploadFileChunked(
     requestId
   }));
 
-  // Wait for initial ack (offset 0)
-  await _waitForAck(requestId);
+  // Wait for initial ack — offset > 0 means server has partial data from a previous attempt
+  const resumeOffset = await _waitForAck(requestId);
 
   // Stream chunks
   const reader = file.stream().getReader();
   let bytesSent = 0;
+  let bytesSkipped = 0;
 
   try {
     for (;;) {
@@ -85,6 +86,17 @@ export async function uploadFileChunked(
       // Process the chunk in CHUNK_SIZE pieces
       let offset = 0;
       while (offset < value.length) {
+        // Skip bytes the server already has from a previous partial upload (#123)
+        if (bytesSkipped < resumeOffset) {
+          const remaining = resumeOffset - bytesSkipped;
+          const skip = Math.min(remaining, value.length - offset);
+          bytesSkipped += skip;
+          offset += skip;
+          bytesSent += skip;
+          onProgress({ bytesSent, totalBytes: file.size });
+          continue;
+        }
+
         // Runtime check: ws may change across await boundaries
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
