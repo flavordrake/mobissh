@@ -33,6 +33,27 @@ let _imeState: IMEState = 'idle';
 /** Whether "preview mode" is enabled — accumulate compositions for review. */
 let _previewMode = localStorage.getItem('imePreviewMode') === 'true';
 
+/** Preview auto-commit durations in ms. Infinity = never auto-commit (#169). */
+const PREVIEW_DURATIONS = [4000, 8000, 15000, Infinity] as const;
+type PreviewDuration = typeof PREVIEW_DURATIONS[number];
+
+/** Load persisted preview timeout or default to 8000ms. */
+let _previewTimeout: PreviewDuration = (() => {
+  const stored = localStorage.getItem('imePreviewTimeout');
+  if (stored === 'Infinity') return Infinity;
+  const n = Number(stored);
+  if (n === 4000 || n === 8000 || n === 15000) return n;
+  return 8000;
+})();
+
+/** Cycle to the next preview duration and persist. */
+function _cyclePreviewDuration(): void {
+  const idx = PREVIEW_DURATIONS.indexOf(_previewTimeout);
+  _previewTimeout = PREVIEW_DURATIONS[(idx + 1) % PREVIEW_DURATIONS.length]!;
+  localStorage.setItem('imePreviewTimeout', String(_previewTimeout));
+  console.log('[ime] preview timeout:', _previewTimeout);
+}
+
 /** Preview textarea style: 'subtle' | 'accent' | 'glass' (#175). */
 const PREVIEW_STYLES = ['subtle', 'accent', 'glass'] as const;
 type PreviewStyle = typeof PREVIEW_STYLES[number];
@@ -301,6 +322,67 @@ export function initIMEInput(): void {
    *  re-insertion events that fire within a short window after compositionend. */
   let _idleTransitionTime = 0;
 
+  // ── Preview countdown timer (#169) ──────────────────────────────────────
+  const timerEl = document.getElementById('imeTimer');
+  const timerSpan = timerEl?.querySelector('span') as HTMLElement | null;
+  let _timerInterval: ReturnType<typeof setInterval> | null = null;
+  let _timerStart = 0;
+  let _timerDuration = 0;
+
+  /** Show the timer element and start the countdown animation. */
+  function _startTimer(durationMs: number): void {
+    if (!timerEl || !timerSpan) return;
+    if (!isFinite(durationMs)) {
+      // "Never" mode — show infinity symbol, no countdown
+      timerEl.classList.remove('hidden');
+      timerEl.style.setProperty('--progress', '1');
+      timerSpan.textContent = '\u221E';
+      _stopTimerAnimation();
+      return;
+    }
+    timerEl.classList.remove('hidden');
+    _timerStart = Date.now();
+    _timerDuration = durationMs;
+    _updateTimerDisplay();
+    _stopTimerAnimation();
+    _timerInterval = setInterval(_updateTimerDisplay, 100);
+  }
+
+  /** Update the timer's visual progress and remaining seconds. */
+  function _updateTimerDisplay(): void {
+    if (!timerEl || !timerSpan || !_timerDuration) return;
+    const elapsed = Date.now() - _timerStart;
+    const remaining = Math.max(0, _timerDuration - elapsed);
+    const progress = remaining / _timerDuration;
+    timerEl.style.setProperty('--progress', String(progress));
+    timerSpan.textContent = String(Math.ceil(remaining / 1000));
+  }
+
+  /** Stop the timer animation interval. */
+  function _stopTimerAnimation(): void {
+    if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+  }
+
+  /** Hide the timer element and stop animation. */
+  function _hideTimer(): void {
+    _stopTimerAnimation();
+    if (timerEl) timerEl.classList.add('hidden');
+  }
+
+  // Wire timer tap to cycle duration
+  _onAction(timerEl, () => {
+    _cyclePreviewDuration();
+    // If timer is running, restart with new duration
+    if (_clearTimer && _imeState === 'previewing') {
+      clearTimeout(_clearTimer);
+      _clearTimer = null;
+      _scheduleClear();
+    } else if (_imeState === 'previewing') {
+      // Was in "never" mode, now switching to a timed mode — start timer
+      _scheduleClear();
+    }
+  });
+
   /** Transition the IME state machine. All state changes go through here. */
   function _transition(to: IMEState): void {
     const from = _imeState;
@@ -324,6 +406,7 @@ export function initIMEInput(): void {
         ime.style.height = '';
         ime.style.maxHeight = '';
         _hideActions();
+        _hideTimer();
         appState.isComposing = false;
         _manualDock = false;
         break;
@@ -381,12 +464,16 @@ export function initIMEInput(): void {
 
   /** Schedule a deferred clear — gives the IME time to fire correction events
    *  after compositionend. Skipped only when editing (user tapped in).
-   *  Previewing gets a longer timeout (5s) to allow review before auto-commit. */
+   *  Previewing uses the user's selected timeout (#169); "never" skips the timer. */
   function _scheduleClear(): void {
     if (_clearTimer) clearTimeout(_clearTimer);
     if (_isSticky()) return;
-    const delay = _imeState === 'previewing' ? 8000 : 1500;
-    console.log(`[ime:scheduleClear] delay=${delay} state=${_imeState}`);
+    const delay = _imeState === 'previewing' ? _previewTimeout : 1500;
+    // Start visual countdown timer for preview state (#169)
+    if (_imeState === 'previewing') _startTimer(delay);
+    // "Never" mode — no auto-commit, just show the infinity timer
+    if (!isFinite(delay)) return;
+    console.log(`[ime:scheduleClear] delay=${String(delay)} state=${_imeState}`);
     _clearTimer = setTimeout(() => {
       console.log(`[ime:clearFired] state=${_imeState} value="${ime.value}"`);
       // Don't auto-commit if user entered editing or a new composition started
