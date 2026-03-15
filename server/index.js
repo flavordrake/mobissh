@@ -19,6 +19,10 @@
  *     { type: 'sftp_ls', path: string, requestId: string }
  *     { type: 'sftp_download', path: string, requestId: string }
  *     { type: 'sftp_upload', path: string, data: string, requestId: string }
+ *     { type: 'sftp_upload_start', path: string, size: number, fingerprint: string, requestId: string }
+ *     { type: 'sftp_upload_chunk', offset: number, data: string, requestId: string }
+ *     { type: 'sftp_upload_end', requestId: string }
+ *     { type: 'sftp_upload_cancel', requestId: string }
  *     { type: 'sftp_stat', path: string, requestId: string }
  *     { type: 'sftp_rename', oldPath: string, newPath: string, requestId: string }
  *     { type: 'sftp_delete', path: string, requestId: string }
@@ -33,6 +37,7 @@
  *     // [SFTP_RESULTS] -- keep in sync with client types.ts ServerMessage
  *     { type: 'sftp_ls_result', requestId, entries: [{name, isDir, isSymlink, size, mtime, atime, permissions, uid, gid}] }
  *     { type: 'sftp_download_result', requestId, data: string }  (base64)
+ *     { type: 'sftp_upload_ack', requestId, offset: number }
  *     { type: 'sftp_upload_result', requestId, ok: boolean, error?: string }
  *     { type: 'sftp_stat_result', requestId, stat: {isDir, size, mtime} }
  *     { type: 'sftp_rename_result', requestId, ok: true }
@@ -125,7 +130,7 @@ const MIME = {
  * All errors are returned as { type: 'sftp_error', requestId, message } so the
  * WebSocket connection is never terminated by an SFTP failure.
  */
-function handleSftpMessage(msg, sftp, send) {
+function handleSftpMessage(msg, sftp, send, openUploads) {
   const { requestId, path: filePath } = msg;
   const sftpErr = (message) => send({ type: 'sftp_error', requestId, message });
 
@@ -167,6 +172,56 @@ function handleSftpMessage(msg, sftp, send) {
       ws.on('finish', () => { send({ type: 'sftp_upload_result', requestId, ok: true }); });
       ws.on('error', err => sftpErr(err.message));
       ws.end(buf);
+      break;
+    }
+
+    case 'sftp_upload_start': {
+      if (openUploads.has(requestId)) { sftpErr('Upload already in progress for this requestId'); return; }
+      const ws = sftp.createWriteStream(filePath);
+      ws.on('error', err => {
+        openUploads.delete(requestId);
+        sftpErr(err.message);
+      });
+      openUploads.set(requestId, { stream: ws, offset: 0, path: filePath });
+      send({ type: 'sftp_upload_ack', requestId, offset: 0 });
+      break;
+    }
+
+    case 'sftp_upload_chunk': {
+      const upload = openUploads.get(requestId);
+      if (!upload) { sftpErr('No upload in progress for this requestId'); return; }
+      if (typeof msg.data !== 'string') { sftpErr('data must be a base64 string'); return; }
+      const buf = Buffer.from(msg.data, 'base64');
+      const canContinue = upload.stream.write(buf);
+      upload.offset += buf.length;
+      if (canContinue) {
+        send({ type: 'sftp_upload_ack', requestId, offset: upload.offset });
+      } else {
+        upload.stream.once('drain', () => {
+          send({ type: 'sftp_upload_ack', requestId, offset: upload.offset });
+        });
+      }
+      break;
+    }
+
+    case 'sftp_upload_end': {
+      const upload = openUploads.get(requestId);
+      if (!upload) { sftpErr('No upload in progress for this requestId'); return; }
+      openUploads.delete(requestId);
+      upload.stream.end(() => {
+        send({ type: 'sftp_upload_result', requestId, ok: true });
+      });
+      break;
+    }
+
+    case 'sftp_upload_cancel': {
+      const upload = openUploads.get(requestId);
+      if (!upload) { sftpErr('No upload in progress for this requestId'); return; }
+      openUploads.delete(requestId);
+      upload.stream.destroy();
+      sftp.unlink(upload.path, () => {
+        send({ type: 'sftp_upload_result', requestId, ok: false, error: 'cancelled' });
+      });
       break;
     }
 
@@ -512,6 +567,7 @@ wss.on('connection', (ws, req) => {
   let sftpPending = null; // pending callbacks while SFTP channel is being opened
   let connecting = false;
   let pendingVerify = null; // hostVerifier callback waiting for client response (#5)
+  const openUploads = new Map(); // requestId → { stream, offset, path } for chunked uploads
 
   function send(obj) {
     if (ws.readyState === WebSocket.OPEN) {
@@ -537,6 +593,11 @@ wss.on('connection', (ws, req) => {
 
   function cleanup(reason) {
     pendingVerify = null; // discard any pending host-key verification (#5)
+    // Destroy any in-progress chunked uploads
+    for (const [, upload] of openUploads) {
+      try { upload.stream.destroy(); } catch (_) {}
+    }
+    openUploads.clear();
     if (sshStream) {
       try { sshStream.close(); } catch (_) {}
       sshStream = null;
@@ -714,13 +775,17 @@ wss.on('connection', (ws, req) => {
       case 'sftp_ls':
       case 'sftp_download':
       case 'sftp_upload':
+      case 'sftp_upload_start':
+      case 'sftp_upload_chunk':
+      case 'sftp_upload_end':
+      case 'sftp_upload_cancel':
       case 'sftp_stat':
       case 'sftp_rename':
       case 'sftp_delete':
       case 'sftp_realpath':
         getSftp((err, sftp) => {
           if (err) { send({ type: 'sftp_error', requestId: msg.requestId, message: err.message }); return; }
-          handleSftpMessage(msg, sftp, send);
+          handleSftpMessage(msg, sftp, send, openUploads);
         });
         break;
       default: send({ type: 'error', message: `Unknown message type: ${msg.type}` });
