@@ -79,7 +79,7 @@ For each approved action, in order:
 
 ### Develop (single issue)
 Use the `/develop N` skill. Spawn agents with `isolation: "worktree"`.
-Max 2 parallel agents.
+max 3 parallel agents.
 
 ### Merge (combine issues)
 1. Pick the broadest issue as primary
@@ -135,7 +135,7 @@ Per `.claude/process.md`:
 
 ## Rules
 
-- Max 2 parallel develop agents
+- max 3 parallel develop agents
 - Theme filter is additive — issues without theme keywords are shown but deprioritized
 - Never develop `human-only` issues — report them as "needs device testing"
 - Always run `scripts/worktree-cleanup.sh` before spawning agents

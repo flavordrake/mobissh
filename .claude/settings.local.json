@@ -52,7 +52,14 @@
       "Bash(scripts/delegate-classify.sh --data /tmp/mobissh/delegate-data.json 2>&1 | tail -10)",
       "Bash(ls /home/dev/workspace/mobissh/scripts/cycle* 2>/dev/null; ls /home/dev/workspace/mobissh/scripts/delegate-* 2>/dev/null)",
       "Bash(chmod +x /home/dev/workspace/mobissh/scripts/cycle-filter.sh)",
-      "Bash(scripts/cycle-filter.sh \"ime preview compose keyboard input swipe voice typing backspace\")"
+      "Bash(scripts/cycle-filter.sh \"ime preview compose keyboard input swipe voice typing backspace\")",
+      "Bash(git restore:*)",
+      "Bash(scripts/bot-branch.sh commit:*)",
+      "Bash(scripts/bot-branch.sh pr:*)",
+      "Bash(scripts/container-ctl.sh ensure:*)",
+      "Bash(scripts/gh-file-issue.sh --title \"bug: autocorrect word replacement sends partial diff instead of full word swap\" --label bug --label ux --body-file /tmp/issue-autocorrect-diff.md)",
+      "Bash(scripts/integrate-gate.sh bot/issue-167 2>&1)",
+      "WebFetch(domain:fd-dev.tailbe5094.ts.net)"
     ]
   }
 }

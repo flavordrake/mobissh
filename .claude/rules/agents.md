@@ -39,7 +39,7 @@ lookup. File-based discovery is unreliable — only built-in types (`general-pur
 The agent loses access to `Bash(scripts/*)` and other allow-list entries. Omit `model`
 entirely — agents inherit the parent session's model and permissions.
 
-- Max 2 simultaneous develop agents. Queue the rest.
+- Max 3 simultaneous develop agents. Queue the rest.
 - Max 2 simultaneous integrate-gater agents.
 - Develop agents have a 1-hour wall clock timeout and max 3 implementation cycles.
 - `integrate-gate.sh` takes branch name as first arg, not issue number.

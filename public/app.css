@@ -92,28 +92,30 @@ html, body {
   box-shadow: 0 0 8px rgba(0, 255, 160, 0.4);
 }
 
-/* Preview style: subtle (default) — dark card, muted white border */
+/* Preview style: subtle (default) — solid dark, white text, works on any theme */
 #imeInput.preview-subtle {
-  background: var(--bg-card);
-  color: var(--text);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: #1a1a2e;
+  color: #fff;
+  caret-color: #fff;
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
-/* Preview style: accent — inverted accent color, dark text */
+/* Preview style: accent — accent bg, bold white text, unmistakable staging area */
 #imeInput.preview-accent {
   background: var(--accent);
-  color: #000;
-  caret-color: #000;
+  color: #fff;
+  caret-color: #fff;
   border-color: var(--accent-dim);
+  font-weight: bold;
 }
 
-/* Preview style: glass — frosted glass effect */
+/* Preview style: glass — solid charcoal with accent border, works on any theme */
 #imeInput.preview-glass {
-  background: rgba(22, 33, 62, 0.6);
-  color: var(--text);
-  border-color: rgba(0, 255, 136, 0.3);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: #2a2a3a;
+  color: #e0e0e0;
+  caret-color: var(--accent);
+  border-color: rgba(0, 255, 136, 0.4);
+  box-shadow: 0 0 6px rgba(0, 255, 136, 0.15);
 }
 .ime-actions.ime-editing .ime-commit {
   background: var(--accent);

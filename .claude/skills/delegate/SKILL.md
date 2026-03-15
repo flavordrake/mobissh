@@ -336,7 +336,7 @@ for a single bot pass. The `composite` label marks the parent; sub-issues get `b
 ### Proactive decomposition during delegation
 
 When Phase 1 classification tags issues as `decompose`, **immediately spawn background
-`/decompose N` agents** (one per decompose issue, max 2 parallel) during gap analysis.
+`/decompose N` agents** (one per decompose issue, max 3 parallel) during gap analysis.
 By the time the triage table is presented in Phase 6, the decomposition analysis is
 complete — sub-issue proposals, file lists, test impact, and dependency ordering are
 all ready for the user to approve or adjust.
@@ -418,7 +418,7 @@ dependency and provides faster, more reliable execution.
 
 For each approved issue, use the `/develop` skill:
 - Single issue: `/develop N`
-- Batch: `/develop 3,9,16` (max 2 parallel agents)
+- Batch: `/develop 3,9,16` (max 3 parallel agents)
 
 The develop agent handles: branch creation, implementation, rebase from main, test gate,
 PR creation, and issue comments. See `.claude/skills/develop/SKILL.md` for details.

@@ -105,9 +105,11 @@ function _cyclePreviewStyle(el: HTMLTextAreaElement): void {
 /** Auto-resize textarea to fit content, capped at 50% of visible viewport. */
 function _autoResizeTextarea(el: HTMLTextAreaElement): void {
   const maxH = (window.visualViewport?.height ?? window.innerHeight) * 0.5;
-  el.style.height = 'auto';
-  el.style.height = `${String(Math.min(el.scrollHeight, maxH))}px`;
   el.style.maxHeight = `${String(maxH)}px`;
+  // Set to 0 first so scrollHeight reflects actual content, not current box
+  el.style.height = '0';
+  const contentH = Math.max(el.scrollHeight, 48); // min ~3 lines
+  el.style.height = `${String(Math.min(contentH, maxH))}px`;
 }
 
 export function initIMEInput(): void {
@@ -383,7 +385,7 @@ export function initIMEInput(): void {
   function _scheduleClear(): void {
     if (_clearTimer) clearTimeout(_clearTimer);
     if (_isSticky()) return;
-    const delay = _imeState === 'previewing' ? 4000 : 1500;
+    const delay = _imeState === 'previewing' ? 8000 : 1500;
     console.log(`[ime:scheduleClear] delay=${delay} state=${_imeState}`);
     _clearTimer = setTimeout(() => {
       console.log(`[ime:clearFired] state=${_imeState} value="${ime.value}"`);
@@ -521,15 +523,21 @@ export function initIMEInput(): void {
     // Numbers, punctuation etc. should not buffer in preview — they're
     // typically responses to prompts or tmux key sequences.
     // Compare against _prevInputValue to detect the NEW character, not full value.
-    if (_isHolding() && _previewMode) {
+    if (appState.imeMode && _previewMode) {
       const prev = _prevInputValue;
       const cur = ime.value;
       if (cur.length === prev.length + 1) {
         const newChar = cur.slice(prev.length);
-        if (/^[^a-zA-Z]$/.test(newChar)) {
+        if (/^[0-9]$/.test(newChar)) {
           sendSSHInput(newChar);
-          ime.value = prev;  // restore previous preview text
-          _prevInputValue = prev;
+          if (prev) {
+            ime.value = prev;  // restore previous preview text
+            _prevInputValue = prev;
+          } else {
+            ime.value = '';
+            _prevInputValue = '';
+            _transition('idle');
+          }
           return;
         }
       }

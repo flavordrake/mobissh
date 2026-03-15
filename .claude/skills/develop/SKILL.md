@@ -1,6 +1,6 @@
 ---
 name: develop
-description: Use when the user says "develop", "work on issue", "implement issue", "fix issue N", or explicitly "/develop N". Spawns a local develop agent in a worktree to implement one or more GitHub issues. Supports batch mode ("/develop 3,9,16") with max 2 parallel agents. Without arguments, auto-proposes bot-labeled issues ranked by risk and relevance.
+description: Use when the user says "develop", "work on issue", "implement issue", "fix issue N", or explicitly "/develop N". Spawns a local develop agent in a worktree to implement one or more GitHub issues. Supports batch mode ("/develop 3,9,16") with max 3 parallel agents. Without arguments, auto-proposes bot-labeled issues ranked by risk and relevance.
 ---
 
 # Local Development Agent
@@ -11,7 +11,7 @@ Claude bot (GitHub Actions) with faster, more reliable local execution.
 ## Input parsing
 
 - `/develop 16` → single issue
-- `/develop 3,9,16` → batch (max 2 parallel, rest queued)
+- `/develop 3,9,16` → batch (max 3 parallel, rest queued)
 - `/develop` (no args) → **auto-propose mode** (see below)
 
 ## Auto-propose mode
