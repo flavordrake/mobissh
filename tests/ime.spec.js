@@ -1042,3 +1042,117 @@ test.describe('Issue #129 — direct mode Enter sends \\r', { tag: '@device-crit
     expect(msgs.some((m) => m.data === 'b')).toBe(true);
   });
 });
+
+// ── Issue #169 — Preview mode circle timer (#169) ─────────────────────────────
+
+test.describe('Issue #169 — preview mode countdown timer', { tag: '@device-critical' }, () => {
+
+  test('timer appears when preview text is present', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Timer should be hidden initially
+    const timerHidden = await page.locator('#imeTimer').evaluate((el) => el.classList.contains('hidden'));
+    expect(timerHidden).toBe(true);
+
+    // Swipe a word — timer should appear
+    await swipeCompose(page, 'hello world test sentence');
+    await page.waitForTimeout(200);
+
+    const timerVisible = await page.locator('#imeTimer').evaluate((el) => !el.classList.contains('hidden'));
+    expect(timerVisible).toBe(true);
+
+    // Timer should show a number (remaining seconds)
+    const timerText = await page.locator('#imeTimer span').textContent();
+    expect(Number(timerText)).toBeGreaterThan(0);
+  });
+
+  test('timer disappears when text is committed', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    await swipeCompose(page, 'commit me now please');
+    await page.waitForTimeout(200);
+
+    // Timer is visible
+    const timerVisibleBefore = await page.locator('#imeTimer').evaluate((el) => !el.classList.contains('hidden'));
+    expect(timerVisibleBefore).toBe(true);
+
+    // Commit the text
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(200);
+
+    // Timer should be hidden
+    const timerHiddenAfter = await page.locator('#imeTimer').evaluate((el) => el.classList.contains('hidden'));
+    expect(timerHiddenAfter).toBe(true);
+  });
+
+  test('tapping timer cycles through durations', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Clear any stored duration
+    await page.evaluate(() => { localStorage.removeItem('imePreviewTimeout'); });
+
+    await swipeCompose(page, 'cycle duration test words');
+    await page.waitForTimeout(200);
+
+    // Default is 8s — tap to cycle to 15s
+    await page.locator('#imeTimer').click();
+    await page.waitForTimeout(100);
+    let stored = await page.evaluate(() => localStorage.getItem('imePreviewTimeout'));
+    expect(stored).toBe('15000');
+
+    // Tap again — cycle to Infinity
+    await page.locator('#imeTimer').click();
+    await page.waitForTimeout(100);
+    stored = await page.evaluate(() => localStorage.getItem('imePreviewTimeout'));
+    expect(stored).toBe('Infinity');
+
+    // Timer should show infinity symbol
+    const timerText = await page.locator('#imeTimer span').textContent();
+    expect(timerText).toBe('\u221E');
+
+    // Tap again — cycle to 4s
+    await page.locator('#imeTimer').click();
+    await page.waitForTimeout(100);
+    stored = await page.evaluate(() => localStorage.getItem('imePreviewTimeout'));
+    expect(stored).toBe('4000');
+  });
+
+  test('duration persists across compositions', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Set duration to 15s
+    await page.evaluate(() => { localStorage.setItem('imePreviewTimeout', '15000'); });
+
+    await swipeCompose(page, 'persistence test sentence here');
+    await page.waitForTimeout(200);
+
+    // Timer should show ~15 (seconds remaining at 15s timeout)
+    const timerText = await page.locator('#imeTimer span').textContent();
+    expect(Number(timerText)).toBeGreaterThanOrEqual(13);
+    expect(Number(timerText)).toBeLessThanOrEqual(15);
+  });
+
+  test('never mode does not auto-commit', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Set duration to Infinity (never)
+    await page.evaluate(() => { localStorage.setItem('imePreviewTimeout', 'Infinity'); });
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'should stay forever in preview');
+    await page.waitForTimeout(5000);
+
+    // Text should NOT have been sent
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+
+    // Text should still be in the textarea
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('should stay forever in preview');
+  });
+});

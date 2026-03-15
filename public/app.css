@@ -158,6 +158,35 @@ html, body {
 .ime-action-btn:active { background: var(--accent); color: #000; }
 .ime-commit { font-weight: 700; }
 
+/* IME preview countdown timer (#169) */
+.ime-timer {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--progress, 1) * 360deg), transparent 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  color: #fff;
+  position: relative;
+  margin: auto 4px;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+.ime-timer::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--bg-card);
+}
+.ime-timer span {
+  position: relative;
+  z-index: 1;
+}
+
 #app {
   display: flex;
   flex-direction: column;
