@@ -33,25 +33,28 @@ let _imeState: IMEState = 'idle';
 /** Whether "preview mode" is enabled — accumulate compositions for review. */
 let _previewMode = localStorage.getItem('imePreviewMode') === 'true';
 
-/** Preview auto-commit durations in ms. Infinity = never auto-commit (#169). */
-const PREVIEW_DURATIONS = [4000, 8000, 15000, Infinity] as const;
+/** Idle grace period before countdown ring starts (ms). */
+const PREVIEW_IDLE_DELAY = 1500;
+
+/** Visible countdown durations in ms. Infinity = never auto-commit (#169). */
+const PREVIEW_DURATIONS = [3000, 5000, 10000, Infinity] as const;
 type PreviewDuration = typeof PREVIEW_DURATIONS[number];
 
-/** Load persisted preview timeout or default to 8000ms. */
+/** Load persisted countdown duration or default to 3000ms. */
 let _previewTimeout: PreviewDuration = (() => {
   const stored = localStorage.getItem('imePreviewTimeout');
   if (stored === 'Infinity') return Infinity;
   const n = Number(stored);
-  if (n === 4000 || n === 8000 || n === 15000) return n;
-  return 8000;
+  if (n === 3000 || n === 5000 || n === 10000) return n;
+  return 3000;
 })();
 
-/** Cycle to the next preview duration and persist. */
+/** Cycle to the next countdown duration and persist. */
 function _cyclePreviewDuration(): void {
   const idx = PREVIEW_DURATIONS.indexOf(_previewTimeout);
   _previewTimeout = PREVIEW_DURATIONS[(idx + 1) % PREVIEW_DURATIONS.length]!;
   localStorage.setItem('imePreviewTimeout', String(_previewTimeout));
-  console.log('[ime] preview timeout:', _previewTimeout);
+  console.log('[ime] preview countdown:', _previewTimeout);
 }
 
 /** Preview textarea style: 'subtle' | 'accent' | 'glass' (#175). */
@@ -123,13 +126,41 @@ function _cyclePreviewStyle(el: HTMLTextAreaElement): void {
   console.log('[ime] preview style:', _previewStyle);
 }
 
-/** Auto-resize textarea to fit content, capped at 50% of visible viewport. */
+/** Auto-resize textarea to fit content, growing before text wraps.
+ *  Uses a hidden measurement span to detect when the current line is
+ *  approaching the textarea width, adding a row proactively. */
 function _autoResizeTextarea(el: HTMLTextAreaElement): void {
   const maxH = (window.visualViewport?.height ?? window.innerHeight) * 0.5;
   el.style.maxHeight = `${String(maxH)}px`;
-  // Set to 0 first so scrollHeight reflects actual content, not current box
-  el.style.height = '0';
-  const contentH = Math.max(el.scrollHeight, 48); // min ~3 lines
+  const lineH = parseFloat(getComputedStyle(el).lineHeight) || 22;
+  const padY = parseFloat(getComputedStyle(el).paddingTop) + parseFloat(getComputedStyle(el).paddingBottom);
+  const padX = parseFloat(getComputedStyle(el).paddingLeft) + parseFloat(getComputedStyle(el).paddingRight);
+  const innerW = el.clientWidth - padX;
+
+  // Measure the last line's text width using a temp canvas context
+  const text = el.value;
+  const lastNewline = text.lastIndexOf('\n');
+  const lastLine = lastNewline >= 0 ? text.slice(lastNewline + 1) : text;
+  const ctx = document.createElement('canvas').getContext('2d');
+  let lastLineW = 0;
+  if (ctx) {
+    ctx.font = getComputedStyle(el).font;
+    lastLineW = ctx.measureText(lastLine).width;
+  }
+
+  // Count wrapped lines: each line wraps at innerW
+  const lines = text.split('\n');
+  let totalLines = 0;
+  for (const line of lines) {
+    if (!ctx || !line) { totalLines += 1; continue; }
+    const w = ctx.measureText(line).width;
+    totalLines += Math.max(1, Math.ceil(w / innerW));
+  }
+
+  // Add an extra line if current line is >75% full (grow before wrap)
+  if (lastLineW > innerW * 0.75) totalLines += 1;
+
+  const contentH = Math.max(totalLines * lineH + padY, 48);
   el.style.height = `${String(Math.min(contentH, maxH))}px`;
 }
 
@@ -220,8 +251,8 @@ export function initIMEInput(): void {
     const dock = _effectiveDock();
 
     if (dock === 'top') {
-      // Top: just below viewport top
-      const top = viewTop + 4;
+      // Top: just below viewport top (extra margin to clear status bar)
+      const top = viewTop + 12;
       ime.style.top = `${String(top)}px`;
       ime.style.bottom = 'auto';
       if (imeActions) {
@@ -322,40 +353,46 @@ export function initIMEInput(): void {
    *  re-insertion events that fire within a short window after compositionend. */
   let _idleTransitionTime = 0;
 
-  // ── Preview countdown timer (#169) ──────────────────────────────────────
-  const timerEl = document.getElementById('imeTimer');
-  const timerSpan = timerEl?.querySelector('span') as HTMLElement | null;
+  // ── Preview countdown ring on commit button (#169) ─────────────────────
+  const commitCountdown = commitBtn?.querySelector('.commit-countdown') as HTMLElement | null;
+  const commitRingProgress = commitBtn?.querySelector('.commit-ring-progress') as SVGCircleElement | null;
+  const RING_CIRCUMFERENCE = 100.53; // 2 * π * 16 (r=16 in SVG viewBox)
   let _timerInterval: ReturnType<typeof setInterval> | null = null;
   let _timerStart = 0;
   let _timerDuration = 0;
 
-  /** Show the timer element and start the countdown animation. */
+  /** Start the countdown ring animation on the commit button.
+   *  Ring appears full and drains to empty — no fill-up animation. */
   function _startTimer(durationMs: number): void {
-    if (!timerEl || !timerSpan) return;
+    if (!commitBtn) return;
+    _stopTimerAnimation();
     if (!isFinite(durationMs)) {
-      // "Never" mode — show infinity symbol, no countdown
-      timerEl.classList.remove('hidden');
-      timerEl.style.setProperty('--progress', '1');
-      timerSpan.textContent = '\u221E';
-      _stopTimerAnimation();
+      // "Never" mode — show ∞, full ring, no countdown
+      commitBtn.classList.add('countdown-active');
+      if (commitRingProgress) commitRingProgress.style.strokeDashoffset = '0';
+      if (commitCountdown) { commitCountdown.textContent = '\u221E'; commitCountdown.classList.remove('hidden'); }
       return;
     }
-    timerEl.classList.remove('hidden');
+    // Set ring to full immediately before showing
+    if (commitRingProgress) commitRingProgress.style.strokeDashoffset = '0';
+    commitBtn.classList.add('countdown-active');
+    if (commitCountdown) commitCountdown.classList.remove('hidden');
     _timerStart = Date.now();
     _timerDuration = durationMs;
-    _updateTimerDisplay();
-    _stopTimerAnimation();
-    _timerInterval = setInterval(_updateTimerDisplay, 100);
+    if (commitCountdown) commitCountdown.textContent = String(Math.ceil(durationMs / 1000));
+    _timerInterval = setInterval(_updateTimerDisplay, 50);
   }
 
-  /** Update the timer's visual progress and remaining seconds. */
+  /** Update the SVG ring — drains from full to empty as time elapses. */
   function _updateTimerDisplay(): void {
-    if (!timerEl || !timerSpan || !_timerDuration) return;
+    if (!_timerDuration) return;
     const elapsed = Date.now() - _timerStart;
     const remaining = Math.max(0, _timerDuration - elapsed);
-    const progress = remaining / _timerDuration;
-    timerEl.style.setProperty('--progress', String(progress));
-    timerSpan.textContent = String(Math.ceil(remaining / 1000));
+    // strokeDashoffset: 0 = full, CIRCUMFERENCE = empty
+    if (commitRingProgress) {
+      commitRingProgress.style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - remaining / _timerDuration));
+    }
+    if (commitCountdown) commitCountdown.textContent = String(Math.ceil(remaining / 1000));
   }
 
   /** Stop the timer animation interval. */
@@ -363,25 +400,15 @@ export function initIMEInput(): void {
     if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
   }
 
-  /** Hide the timer element and stop animation. */
+  /** Reset the commit button to its normal state. */
   function _hideTimer(): void {
     _stopTimerAnimation();
-    if (timerEl) timerEl.classList.add('hidden');
+    if (commitBtn) commitBtn.classList.remove('countdown-active');
+    if (commitRingProgress) commitRingProgress.style.strokeDashoffset = String(RING_CIRCUMFERENCE);
+    if (commitCountdown) commitCountdown.classList.add('hidden');
   }
 
-  // Wire timer tap to cycle duration
-  _onAction(timerEl, () => {
-    _cyclePreviewDuration();
-    // If timer is running, restart with new duration
-    if (_clearTimer && _imeState === 'previewing') {
-      clearTimeout(_clearTimer);
-      _clearTimer = null;
-      _scheduleClear();
-    } else if (_imeState === 'previewing') {
-      // Was in "never" mode, now switching to a timed mode — start timer
-      _scheduleClear();
-    }
-  });
+  // Duration cycling removed from commit button — will be a regular setting.
 
   /** Transition the IME state machine. All state changes go through here. */
   function _transition(to: IMEState): void {
@@ -390,9 +417,8 @@ export function initIMEInput(): void {
     if (from === to && to !== 'idle') return;
     _imeState = to;
 
-    // Cancel pending clear on any transition
-    if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
-    // No flag to clear — time-based guard handles stale input rejection
+    // Cancel all pending timers on any transition
+    _cancelTimers();
 
     switch (to) {
       case 'idle':
@@ -462,47 +488,51 @@ export function initIMEInput(): void {
     _autoResizeTextarea(ime);
   }
 
-  /** Schedule a deferred clear — gives the IME time to fire correction events
-   *  after compositionend. Skipped only when editing (user tapped in).
-   *  Previewing uses the user's selected timeout (#169); "never" skips the timer. */
-  function _scheduleClear(): void {
-    if (_clearTimer) clearTimeout(_clearTimer);
-    if (_isSticky()) return;
-    const delay = _imeState === 'previewing' ? _previewTimeout : 1500;
-    // Start visual countdown timer for preview state (#169)
-    if (_imeState === 'previewing') _startTimer(delay);
-    // "Never" mode — no auto-commit, just show the infinity timer
-    if (!isFinite(delay)) return;
-    console.log(`[ime:scheduleClear] delay=${String(delay)} state=${_imeState}`);
-    _clearTimer = setTimeout(() => {
-      console.log(`[ime:clearFired] state=${_imeState} value="${ime.value}"`);
-      // Don't auto-commit if user entered editing or a new composition started
-      if (_imeState === 'composing' || _imeState === 'editing') return;
+  /** Schedule a deferred clear — two phases for preview state:
+   *  Phase 1: idle delay (2s) — no visual indicator, resets on new input.
+   *  Phase 2: visible countdown ring (user-selected duration, default 4s).
+   *  When the ring completes, text is auto-committed.
+   *  Non-preview (composing without preview): simple 1.5s delay. */
+  let _idleDelayTimer: ReturnType<typeof setTimeout> | null = null;
 
-      if (_imeState === 'previewing') {
-        const text = ime.value;
-        if (text) {
-          // Send completed words (up to last space), keep trailing partial
-          const lastSpace = text.lastIndexOf(' ');
-          if (lastSpace >= 0) {
-            const committed = text.slice(0, lastSpace + 1);
-            const remainder = text.slice(lastSpace + 1);
-            sendSSHInput(committed);
-            ime.value = remainder;
-            if (remainder) {
-              // Still have a partial word — stay in previewing, reset timer
-              _lastSentValue = '';
-              _scheduleClear();
-              return;
-            }
-          } else {
-            // Single word, no spaces — send it all
-            sendSSHInput(text);
-          }
+  function _cancelTimers(): void {
+    if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
+    if (_idleDelayTimer) { clearTimeout(_idleDelayTimer); _idleDelayTimer = null; }
+    _hideTimer();
+  }
+
+  function _scheduleClear(): void {
+    _cancelTimers();
+    if (_isSticky()) return;
+
+    // Non-preview: simple delay
+    if (_imeState !== 'previewing') {
+      _clearTimer = setTimeout(() => { _transition('idle'); }, 1500);
+      return;
+    }
+
+    // "Never" mode — show ∞ ring, no auto-commit
+    if (!isFinite(_previewTimeout)) {
+      _startTimer(Infinity);
+      return;
+    }
+
+    // Phase 1: idle grace period — wait for user to stop interacting
+    _idleDelayTimer = setTimeout(() => {
+      _idleDelayTimer = null;
+      if (_imeState !== 'previewing') return;
+
+      // Phase 2: start visible countdown ring
+      _startTimer(_previewTimeout);
+      _clearTimer = setTimeout(() => {
+        if (_imeState === 'composing' || _imeState === 'editing') return;
+        if (_imeState === 'previewing') {
+          const text = ime.value;
+          if (text) sendSSHInput(text);
         }
-      }
-      _transition('idle');
-    }, delay);
+        _transition('idle');
+      }, _previewTimeout);
+    }, PREVIEW_IDLE_DELAY);
   }
 
   // Register callback so toggleComposeMode() can commit+clear active preview
@@ -591,14 +621,8 @@ export function initIMEInput(): void {
 
   // ── input event ─────────────────────────────────────────────────────────
   ime.addEventListener('input', () => {
-    // Browser can re-insert composed text after compositionend + _transition('idle').
-    // Reject input events within 150ms of idle transition — covers all late re-insertion
-    // without permanently blocking input (which caused first/every-other word loss).
-    if (Date.now() - _idleTransitionTime < 150) {
-      if (ime.value) { ime.value = ''; }
-      return;
-    }
     // Ctrl+key: send control char immediately, bypass hold/preview (#170)
+    // Must be before 150ms guard — user intent, not stale re-insertion.
     if (appState.ctrlActive && ime.value) {
       _sendIMEText(ime.value);
       ime.value = '';
@@ -606,33 +630,19 @@ export function initIMEInput(): void {
       _transition('idle');
       return;
     }
-    // Single-char non-alpha input in preview: send immediately (#172)
-    // Numbers, punctuation etc. should not buffer in preview — they're
-    // typically responses to prompts or tmux key sequences.
-    // Compare against _prevInputValue to detect the NEW character, not full value.
-    if (appState.imeMode && _previewMode) {
-      const prev = _prevInputValue;
-      const cur = ime.value;
-      if (cur.length === prev.length + 1) {
-        const newChar = cur.slice(prev.length);
-        if (/^[0-9]$/.test(newChar)) {
-          sendSSHInput(newChar);
-          if (prev) {
-            ime.value = prev;  // restore previous preview text
-            _prevInputValue = prev;
-          } else {
-            ime.value = '';
-            _prevInputValue = '';
-            _transition('idle');
-          }
-          return;
-        }
-      }
+    // Browser can re-insert composed text after compositionend + _transition('idle').
+    // Reject input events within 150ms of idle transition — covers all late re-insertion
+    // without permanently blocking input (which caused first/every-other word loss).
+    if (Date.now() - _idleTransitionTime < 150) {
+      if (ime.value) { ime.value = ''; }
+      return;
     }
     // When holding, just keep the overlay — don't send to SSH
     if (_isHolding()) {
       _showIMEOverlay();
       _prevInputValue = ime.value;
+      // Reset countdown on every new input — user is still interacting
+      if (_imeState === 'previewing') _scheduleClear();
       return;
     }
     if (appState.isComposing) {
@@ -697,9 +707,10 @@ export function initIMEInput(): void {
     console.log(`[ime:compositionend] state=${_imeState} preview=${_previewMode} holding=${_isHolding()} value="${ime.value}" data="${e.data}" lastSent="${_lastSentValue}"`);
     // If already holding (editing/previewing), stay — accumulate text
     if (_isHolding()) {
-      console.log(`[ime:compositionend] → holding, returning early`);
       appState.isComposing = false;
       _showIMEOverlay();
+      // Reset countdown — user just added more text
+      if (_imeState === 'previewing') _scheduleClear();
       return;
     }
 
@@ -801,13 +812,6 @@ export function initIMEInput(): void {
       setCtrlActive(false);
       e.preventDefault();
       _transition('idle');
-      return;
-    }
-
-    // Number keys in compose+preview: send directly to terminal (#172)
-    if (appState.imeMode && _previewMode && e.key.length === 1 && /^[0-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      sendSSHInput(e.key);
-      e.preventDefault();
       return;
     }
 

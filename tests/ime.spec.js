@@ -1043,51 +1043,51 @@ test.describe('Issue #129 — direct mode Enter sends \\r', { tag: '@device-crit
   });
 });
 
-// ── Issue #169 — Preview mode circle timer (#169) ─────────────────────────────
+// ── Issue #169 — Preview mode countdown timer on commit button (#169) ────────
 
 test.describe('Issue #169 — preview mode countdown timer', { tag: '@device-critical' }, () => {
 
-  test('timer appears when preview text is present', async ({ page, mockSshServer }) => {
+  test('countdown ring appears on commit button when preview text is present', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await enableComposePreview(page);
 
-    // Timer should be hidden initially
-    const timerHidden = await page.locator('#imeTimer').evaluate((el) => el.classList.contains('hidden'));
-    expect(timerHidden).toBe(true);
+    // Commit button should not have countdown ring initially
+    const hasCountdown = await page.locator('#imeCommitBtn').evaluate((el) => el.classList.contains('countdown-active'));
+    expect(hasCountdown).toBe(false);
 
-    // Swipe a word — timer should appear
+    // Swipe a word — countdown ring should appear on commit button
     await swipeCompose(page, 'hello world test sentence');
     await page.waitForTimeout(200);
 
-    const timerVisible = await page.locator('#imeTimer').evaluate((el) => !el.classList.contains('hidden'));
-    expect(timerVisible).toBe(true);
+    const countdownActive = await page.locator('#imeCommitBtn').evaluate((el) => el.classList.contains('countdown-active'));
+    expect(countdownActive).toBe(true);
 
-    // Timer should show a number (remaining seconds)
-    const timerText = await page.locator('#imeTimer span').textContent();
-    expect(Number(timerText)).toBeGreaterThan(0);
+    // Countdown text should show remaining seconds
+    const countdownText = await page.locator('#imeCommitBtn .commit-countdown').textContent();
+    expect(Number(countdownText)).toBeGreaterThan(0);
   });
 
-  test('timer disappears when text is committed', async ({ page, mockSshServer }) => {
+  test('countdown ring disappears when text is committed', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await enableComposePreview(page);
 
     await swipeCompose(page, 'commit me now please');
     await page.waitForTimeout(200);
 
-    // Timer is visible
-    const timerVisibleBefore = await page.locator('#imeTimer').evaluate((el) => !el.classList.contains('hidden'));
-    expect(timerVisibleBefore).toBe(true);
+    // Countdown ring is active
+    const activeBefore = await page.locator('#imeCommitBtn').evaluate((el) => el.classList.contains('countdown-active'));
+    expect(activeBefore).toBe(true);
 
     // Commit the text
     await page.locator('#imeCommitBtn').click();
     await page.waitForTimeout(200);
 
-    // Timer should be hidden
-    const timerHiddenAfter = await page.locator('#imeTimer').evaluate((el) => el.classList.contains('hidden'));
-    expect(timerHiddenAfter).toBe(true);
+    // Countdown ring should be gone
+    const activeAfter = await page.locator('#imeCommitBtn').evaluate((el) => el.classList.contains('countdown-active'));
+    expect(activeAfter).toBe(false);
   });
 
-  test('tapping timer cycles through durations', async ({ page, mockSshServer }) => {
+  test('long-press on commit button cycles through durations', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     await enableComposePreview(page);
 
@@ -1097,24 +1097,31 @@ test.describe('Issue #169 — preview mode countdown timer', { tag: '@device-cri
     await swipeCompose(page, 'cycle duration test words');
     await page.waitForTimeout(200);
 
-    // Default is 8s — tap to cycle to 15s
-    await page.locator('#imeTimer').click();
+    // Default is 8s — long-press to cycle to 15s
+    const commitBtn = page.locator('#imeCommitBtn');
+    await commitBtn.dispatchEvent('pointerdown');
+    await page.waitForTimeout(700);
+    await commitBtn.dispatchEvent('pointerup');
     await page.waitForTimeout(100);
     let stored = await page.evaluate(() => localStorage.getItem('imePreviewTimeout'));
     expect(stored).toBe('15000');
 
-    // Tap again — cycle to Infinity
-    await page.locator('#imeTimer').click();
+    // Long-press again — cycle to Infinity
+    await commitBtn.dispatchEvent('pointerdown');
+    await page.waitForTimeout(700);
+    await commitBtn.dispatchEvent('pointerup');
     await page.waitForTimeout(100);
     stored = await page.evaluate(() => localStorage.getItem('imePreviewTimeout'));
     expect(stored).toBe('Infinity');
 
-    // Timer should show infinity symbol
-    const timerText = await page.locator('#imeTimer span').textContent();
-    expect(timerText).toBe('\u221E');
+    // Countdown should show infinity symbol
+    const countdownText = await page.locator('#imeCommitBtn .commit-countdown').textContent();
+    expect(countdownText).toBe('\u221E');
 
-    // Tap again — cycle to 4s
-    await page.locator('#imeTimer').click();
+    // Long-press again — cycle to 4s
+    await commitBtn.dispatchEvent('pointerdown');
+    await page.waitForTimeout(700);
+    await commitBtn.dispatchEvent('pointerup');
     await page.waitForTimeout(100);
     stored = await page.evaluate(() => localStorage.getItem('imePreviewTimeout'));
     expect(stored).toBe('4000');
@@ -1130,10 +1137,10 @@ test.describe('Issue #169 — preview mode countdown timer', { tag: '@device-cri
     await swipeCompose(page, 'persistence test sentence here');
     await page.waitForTimeout(200);
 
-    // Timer should show ~15 (seconds remaining at 15s timeout)
-    const timerText = await page.locator('#imeTimer span').textContent();
-    expect(Number(timerText)).toBeGreaterThanOrEqual(13);
-    expect(Number(timerText)).toBeLessThanOrEqual(15);
+    // Countdown should show ~15 (seconds remaining at 15s timeout)
+    const countdownText = await page.locator('#imeCommitBtn .commit-countdown').textContent();
+    expect(Number(countdownText)).toBeGreaterThanOrEqual(13);
+    expect(Number(countdownText)).toBeLessThanOrEqual(15);
   });
 
   test('never mode does not auto-commit', async ({ page, mockSshServer }) => {
