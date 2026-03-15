@@ -2173,6 +2173,20 @@ hr {
   color: var(--text-dim);
 }
 
+.files-upload-cancel {
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.files-upload-cancel:active {
+  opacity: 0.8;
+}
+
 
 #panel-files {
   display: none;

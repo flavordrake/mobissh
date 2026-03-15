@@ -8,7 +8,8 @@
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState } from './state.js';
-import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath } from './connection.js';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
+import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
 import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, connectFromProfile, newConnection } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
@@ -859,13 +860,11 @@ let _pressTimer: ReturnType<typeof setTimeout> | null = null;
 let _longPressFired = false;
 // Context menu dismiss handle (allows external callers to fully tear down)
 let _ctxMenuDismiss: (() => void) | null = null;
-let _uploadQueue: Array<{remotePath: string; data: string; fileName: string; fileSize: number}> = [];
 let _uploadActive = false;
 let _uploadCompleted = 0;
 let _uploadTotal = 0;
 let _transferStatus = '';
-let _uploadTimeoutId: ReturnType<typeof setTimeout> | null = null;
-const UPLOAD_TIMEOUT_MS = 60_000;
+let _activeUploadRequestId: string | null = null;
 
 function _setTransferStatus(text: string): void {
   _transferStatus = text;
@@ -873,6 +872,10 @@ function _setTransferStatus(text: string): void {
   if (el) {
     el.textContent = text;
     el.classList.toggle('hidden', !text);
+  }
+  const cancelBtn = document.querySelector<HTMLElement>('.files-upload-cancel');
+  if (cancelBtn) {
+    cancelBtn.classList.toggle('hidden', !_uploadActive);
   }
 }
 
@@ -891,73 +894,66 @@ function _triggerBlobDownload(filename: string, base64Data: string): void {
   setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
 }
 
-function _readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.split(',')[1] ?? '');
-    };
-    reader.onerror = () => { reject(new Error(reader.error?.message ?? 'FileReader error')); };
-    reader.readAsDataURL(file);
-  });
+function _formatBytes(n: number): string {
+  if (n < 1024) return `${String(n)} B`;
+  if (n < 1_048_576) return `${String(Math.round(n / 1024))} KB`;
+  return `${(n / 1_048_576).toFixed(1)} MB`;
 }
 
-function _cancelUploadTimeout(): void {
-  if (_uploadTimeoutId !== null) {
-    clearTimeout(_uploadTimeoutId);
-    _uploadTimeoutId = null;
-  }
-}
-
-function _processNextUpload(): void {
-  _cancelUploadTimeout();
-  const item = _uploadQueue.shift();
-  if (!item) {
+function _cancelActiveUpload(): void {
+  if (_activeUploadRequestId) {
+    sendSftpUploadCancel(_activeUploadRequestId);
+    _uploadPending.delete(_activeUploadRequestId);
+    _activeUploadRequestId = null;
     _uploadActive = false;
     _setTransferStatus('');
-    _filesCache.delete(_filesPath);
-    _filesNavigateTo(_filesPath);
-    return;
+    toast('Upload cancelled');
   }
-  _uploadCompleted++;
-  const name = item.remotePath.split('/').pop() ?? item.remotePath;
-  const bytes = Math.floor(item.data.length * 3 / 4);
-  const sizeStr = bytes < 1024 ? `${String(bytes)} B`
-    : bytes < 1_048_576 ? `${String(Math.round(bytes / 1024))} KB`
-    : `${(bytes / 1_048_576).toFixed(1)} MB`;
-  const countStr = _uploadTotal > 1 ? ` (${String(_uploadCompleted)}/${String(_uploadTotal)})` : '';
-  _setTransferStatus(`Uploading ${name} — ${sizeStr}${countStr}`);
-  const reqId = `up-${String(Date.now())}`;
-  _uploadPending.set(reqId, item.remotePath);
-  sendSftpUpload(item.remotePath, item.data, reqId);
-  _uploadTimeoutId = setTimeout(() => {
-    _uploadTimeoutId = null;
-    _uploadPending.delete(reqId);
-    _uploadQueue = [];
-    _uploadActive = false;
-    _setTransferStatus('');
-    toast('Upload timed out');
-  }, UPLOAD_TIMEOUT_MS);
 }
 
 async function _startUpload(files: FileList): Promise<void> {
   if (_uploadActive) return;
   _uploadActive = true;
-  _uploadQueue = [];
   _uploadCompleted = 0;
   _uploadTotal = files.length;
+
   for (let i = 0; i < files.length; i++) {
+    if (!_uploadActive) break; // cancelled
     const file = files[i]!;
     const remotePath = _filesPath === '/' ? `/${file.name}` : `${_filesPath}/${file.name}`;
+    _uploadCompleted++;
+    const name = file.name;
+    const countStr = _uploadTotal > 1 ? ` (${String(_uploadCompleted)}/${String(_uploadTotal)})` : '';
+    _setTransferStatus(`Uploading ${name} — 0 B / ${_formatBytes(file.size)}${countStr}`);
+
+    const reqId = `up-${String(Date.now())}-${String(i)}`;
+    _activeUploadRequestId = reqId;
+    _uploadPending.set(reqId, remotePath);
+
     try {
-      const data = await _readFileAsBase64(file);
-      _uploadQueue.push({ remotePath, data, fileName: file.name, fileSize: file.size });
-    } catch {
-      toast(`Failed to read ${file.name}`);
+      await uploadFileChunked(remotePath, file, reqId, (p) => {
+        const pct = p.totalBytes > 0 ? Math.round(p.bytesSent / p.totalBytes * 100) : 0;
+        _setTransferStatus(`Uploading ${name} — ${_formatBytes(p.bytesSent)} / ${_formatBytes(p.totalBytes)} (${String(pct)}%)${countStr}`);
+      });
+      _uploadPending.delete(reqId);
+    } catch (err) {
+      _uploadPending.delete(reqId);
+      if (_uploadActive) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast(`Upload failed: ${message}`);
+      }
+      _activeUploadRequestId = null;
+      _uploadActive = false;
+      _setTransferStatus('');
+      return;
     }
   }
-  _processNextUpload();
+
+  _activeUploadRequestId = null;
+  _uploadActive = false;
+  _setTransferStatus('');
+  _filesCache.delete(_filesPath);
+  _filesNavigateTo(_filesPath);
 }
 
 function _renderFilesPanel(path: string, bodyHtml: string): void {
@@ -980,6 +976,7 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
       <button class="files-upload-btn">Upload</button>
       <input type="file" class="files-upload-input" multiple />
       <span class="files-transfer-status${statusHidden}">${escHtml(_transferStatus)}</span>
+      <button class="files-upload-cancel${_uploadActive ? '' : ' hidden'}">Cancel</button>
     </div>
     <div class="files-body">${bodyHtml}</div>
   `;
@@ -1039,6 +1036,8 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
       fileInput.value = '';
     }
   });
+  const cancelBtn = panel.querySelector<HTMLElement>('.files-upload-cancel');
+  cancelBtn?.addEventListener('click', () => { _cancelActiveUpload(); });
 }
 
 function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): void {
@@ -1298,15 +1297,12 @@ export function initFilesPanel(): void {
       _setTransferStatus('');
       if (filename) _triggerBlobDownload(filename, msg.data);
     } else if (msg.type === 'sftp_upload_result') {
-      _cancelUploadTimeout();
       _uploadPending.delete(msg.requestId);
       if (!msg.ok) {
-        _uploadQueue = [];
         _uploadActive = false;
+        _activeUploadRequestId = null;
         _setTransferStatus('');
         toast('Upload failed');
-      } else {
-        _processNextUpload();
       }
     } else if (msg.type === 'sftp_rename_result') {
       const dir = _renamePending.get(msg.requestId);
@@ -1348,8 +1344,10 @@ export function initFilesPanel(): void {
         toast(`Download failed: ${msg.message}`);
       } else if (_uploadPending.has(msg.requestId)) {
         _uploadPending.delete(msg.requestId);
+        _uploadActive = false;
+        _activeUploadRequestId = null;
+        _setTransferStatus('');
         toast(`Upload failed: ${msg.message}`);
-        _processNextUpload();
       } else if (_renamePending.has(msg.requestId)) {
         _renamePending.delete(msg.requestId);
         toast(`Rename failed: ${msg.message}`);
