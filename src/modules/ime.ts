@@ -33,11 +33,20 @@ let _imeState: IMEState = 'idle';
 /** Whether "preview mode" is enabled — accumulate compositions for review. */
 let _previewMode = localStorage.getItem('imePreviewMode') === 'true';
 
-/** Idle grace period before countdown ring starts (ms). */
-const PREVIEW_IDLE_DELAY = 1500;
+/** Idle grace period options (ms) (#181). */
+export const PREVIEW_IDLE_DELAYS = [1000, 1500, 2000, 3000] as const;
+type PreviewIdleDelay = typeof PREVIEW_IDLE_DELAYS[number];
+
+/** Load persisted idle delay or default to 1500ms (#181). */
+let _previewIdleDelay: PreviewIdleDelay = (() => {
+  const stored = localStorage.getItem('imePreviewIdleDelay');
+  const n = Number(stored);
+  if (n === 1000 || n === 1500 || n === 2000 || n === 3000) return n;
+  return 1500;
+})();
 
 /** Visible countdown durations in ms. Infinity = never auto-commit (#169). */
-const PREVIEW_DURATIONS = [3000, 5000, 10000, Infinity] as const;
+export const PREVIEW_DURATIONS = [3000, 5000, 10000, Infinity] as const;
 type PreviewDuration = typeof PREVIEW_DURATIONS[number];
 
 /** Load persisted countdown duration or default to 3000ms. */
@@ -48,6 +57,37 @@ let _previewTimeout: PreviewDuration = (() => {
   if (n === 3000 || n === 5000 || n === 10000) return n;
   return 3000;
 })();
+
+/** Get the current countdown duration (reads localStorage to pick up external changes). */
+export function getPreviewTimeout(): PreviewDuration {
+  const stored = localStorage.getItem('imePreviewTimeout');
+  if (stored === 'Infinity') return (_previewTimeout = Infinity);
+  const n = Number(stored);
+  if (n === 3000 || n === 5000 || n === 10000) return (_previewTimeout = n);
+  return _previewTimeout;
+}
+
+/** Set and persist the countdown duration (#181). */
+export function setPreviewTimeout(val: PreviewDuration): void {
+  _previewTimeout = val;
+  localStorage.setItem('imePreviewTimeout', String(val));
+}
+
+/** Get the current idle delay (reads localStorage to pick up external changes). */
+export function getPreviewIdleDelay(): PreviewIdleDelay {
+  const stored = localStorage.getItem('imePreviewIdleDelay');
+  const n = Number(stored);
+  if (n === 1000 || n === 1500 || n === 2000 || n === 3000) return (_previewIdleDelay = n);
+  return _previewIdleDelay;
+}
+
+/** Set and persist the idle delay (#181). */
+export function setPreviewIdleDelay(val: number): void {
+  if (val === 1000 || val === 1500 || val === 2000 || val === 3000) {
+    _previewIdleDelay = val;
+    localStorage.setItem('imePreviewIdleDelay', String(val));
+  }
+}
 
 /** Cycle to the next countdown duration and persist. */
 function _cyclePreviewDuration(): void {
@@ -532,7 +572,7 @@ export function initIMEInput(): void {
         }
         _transition('idle');
       }, _previewTimeout);
-    }, PREVIEW_IDLE_DELAY);
+    }, _previewIdleDelay);
   }
 
   // Register callback so toggleComposeMode() can commit+clear active preview
