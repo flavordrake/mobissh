@@ -128,12 +128,43 @@ describe('uploadFileChunked', () => {
     appState.sshConnected = true;
   });
 
-  it('throws when not connected', async () => {
-    appState.sshConnected = false;
+  it('throws when WS is null', async () => {
+    appState.ws = null;
     const file = new File(['test'], 'test.txt');
     await expect(
       uploadFileChunked('/remote/path.txt', file, 'req-1', vi.fn()),
     ).rejects.toThrow('Not connected');
+  });
+
+  it('throws when WS is not OPEN', async () => {
+    appState.ws!.readyState = WebSocket.CLOSED;
+    const file = new File(['test'], 'test.txt');
+    await expect(
+      uploadFileChunked('/remote/path.txt', file, 'req-ws-closed', vi.fn()),
+    ).rejects.toThrow('Not connected');
+  });
+
+  it('does not throw when sshConnected is false but WS is OPEN (#194)', async () => {
+    // Bug #194: uploadFileChunked checked appState.sshConnected which could be
+    // false even though the WS is open and SFTP operations work fine.
+    appState.sshConnected = false;
+    const file = new File(['test'], 'test.txt');
+
+    const uploadPromise = uploadFileChunked('/remote/path.txt', file, 'req-194', vi.fn());
+
+    // Should have sent start message (not thrown)
+    expect(wsSendSpy).toHaveBeenCalledTimes(1);
+    const startMsg = JSON.parse(wsSendSpy.mock.calls[0][0] as string) as Record<string, unknown>;
+    expect(startMsg.type).toBe('sftp_upload_start');
+
+    // Resolve acks to let the upload complete
+    _resolveAck('req-194', 0);
+    await vi.waitFor(() => {
+      expect(wsSendSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    }, { timeout: 500 });
+    _resolveAck('req-194', 4);
+
+    await uploadPromise;
   });
 
   it('sends start message with correct fields', async () => {
