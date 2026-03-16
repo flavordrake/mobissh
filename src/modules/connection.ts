@@ -15,13 +15,13 @@ type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 
 let _sftpHandler: ((msg: SftpMsg) => void) | null = null;
 export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler = fn; }
 
-const CHUNK_SIZE = 192 * 1024; // 192 KB per chunk
+export const CHUNK_SIZE = 192 * 1024; // 192 KB per chunk
 
 // Pending ack resolvers: requestId -> resolve function
 const _ackResolvers = new Map<string, (offset: number) => void>();
 
 /** Base64-encode a Uint8Array without btoa+fromCharCode (which fails on large arrays). */
-function _uint8ToBase64(bytes: Uint8Array): string {
+export function _uint8ToBase64(bytes: Uint8Array): string {
   const BLOCK = 0x8000; // 32 KB blocks to avoid call stack overflow
   let binary = '';
   for (let i = 0; i < bytes.length; i += BLOCK) {
