@@ -2279,6 +2279,21 @@ hr {
   align-items: center;
 }
 
+.transfer-direction {
+  font-size: 14px;
+  font-weight: bold;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.transfer-direction-upload {
+  color: var(--accent);
+}
+
+.transfer-direction-download {
+  color: #44aaff;
+}
+
 .transfer-item-name {
   font-size: 13px;
   overflow: hidden;

@@ -886,12 +886,13 @@ interface TransferRecord {
   size: number;
   sent: number;
   status: 'active' | 'done' | 'failed';
+  direction: 'upload' | 'download';
   error?: string;
 }
 
-const _transferRecords = new Map<string, TransferRecord>();
+export const _transferRecords = new Map<string, TransferRecord>();
 
-function _renderTransferList(): void {
+export function _renderTransferList(): void {
   const list = document.getElementById('transferList');
   if (!list) return;
 
@@ -905,8 +906,11 @@ function _renderTransferList(): void {
   _transferRecords.forEach((rec, id) => {
     const pct = rec.size > 0 ? Math.round(rec.sent / rec.size * 100) : (rec.status === 'done' ? 100 : 0);
     const statusLabel = rec.status === 'active' ? `${String(pct)}%` : rec.status === 'failed' ? (rec.error ?? 'Failed') : 'Done';
+    const dirArrow = rec.direction === 'upload' ? '\u2191' : '\u2193';
+    const dirClass = `transfer-direction transfer-direction-${rec.direction}`;
     items.push(`<div class="transfer-item" data-id="${escHtml(id)}">
       <div class="transfer-item-header">
+        <span class="${dirClass}">${dirArrow}</span>
         <span class="transfer-item-name">${escHtml(rec.name)}</span>
         <span class="transfer-item-status" data-status="${rec.status}">${escHtml(statusLabel)}</span>
       </div>
@@ -1002,7 +1006,7 @@ async function _startUpload(files: FileList): Promise<void> {
     _activeUploadRequestId = reqId;
     _uploadPending.set(reqId, remotePath);
 
-    _transferRecords.set(reqId, { name, size: file.size, sent: 0, status: 'active' });
+    _transferRecords.set(reqId, { name, size: file.size, sent: 0, status: 'active', direction: 'upload' });
     _renderTransferList();
 
     try {
@@ -1104,6 +1108,8 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
       _setTransferStatus('Downloading...');
       const reqId = `dl-${String(Date.now())}`;
       _downloadPending.set(reqId, filename);
+      _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download' });
+      _renderTransferList();
       sendSftpDownload(filePath, reqId);
     });
   });
@@ -1336,6 +1342,8 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
         _setTransferStatus('Downloading...');
         const reqId = `dl-${String(Date.now())}`;
         _downloadPending.set(reqId, filename);
+        _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download' });
+        _renderTransferList();
         sendSftpDownload(path, reqId);
         break;
       }
@@ -1388,6 +1396,8 @@ export function initFilesPanel(): void {
       _downloadPending.delete(msg.requestId);
       _setTransferStatus('');
       if (filename && msg.data) _triggerBlobDownload(filename, msg.data);
+      const dlRec = _transferRecords.get(msg.requestId);
+      if (dlRec) { dlRec.status = 'done'; _renderTransferList(); }
     } else if (msg.type === 'sftp_upload_result') {
       _uploadPending.delete(msg.requestId);
       if (!msg.ok) {
@@ -1433,6 +1443,8 @@ export function initFilesPanel(): void {
       } else if (_downloadPending.has(msg.requestId)) {
         _downloadPending.delete(msg.requestId);
         _setTransferStatus('');
+        const dlErrRec = _transferRecords.get(msg.requestId);
+        if (dlErrRec) { dlErrRec.status = 'failed'; dlErrRec.error = msg.message; _renderTransferList(); }
         toast(`Download failed: ${msg.message}`);
       } else if (_uploadPending.has(msg.requestId)) {
         _uploadPending.delete(msg.requestId);
