@@ -15,6 +15,27 @@ summary of what shipped and what's next.
 - `/cycle "ime text entry"` — explicit theme keywords
 - `/cycle --dry-run` — discover and plan only, don't develop
 
+## Phase 0.5: Surface Unworked Issues
+
+Before theme filtering, check for issues that may have been filed outside of sessions
+and never triaged:
+
+```bash
+scripts/gh-ops.sh search "is:open no:label"
+```
+
+Any results = issues filed without labels or classification. These need:
+1. Label assignment (bug/feature/chore + domain labels)
+2. Body review — if minimal, ask user for scope before developing
+3. Include in the triage summary with a "NEW/UNLABELED" flag
+
+Also check for issues with no comments (never worked on):
+```bash
+scripts/gh-ops.sh search "is:open comments:0"
+```
+
+Present any findings to the user before proceeding to theme selection.
+
 ## Phase 1: Discover and Classify
 
 ```bash
