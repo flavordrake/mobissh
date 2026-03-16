@@ -136,6 +136,25 @@ changed need updating. Tests that fail intermittently need investigation.
 | 2 | Re-delegate only if failure mode is clearly addressable (stale-base, trivial scope-creep) |
 | 3+ | Do NOT re-delegate same scope. Decompose into different sub-tasks or classify human-only |
 
+### Test-driven development (TDD) requirement
+
+All bot development follows a TDD workflow (see `.claude/agents/develop.md` for full spec):
+
+1. **Analyze first** — classify the issue (bug/feature/refactor), assess TDD viability
+2. **Write tests before code** — smoketests (feature accessible) + behavior tests (feature works).
+   For bugs: a test that reproduces the failure. Run to establish "red" baseline.
+3. **Code until tests pass** — implement, verify new tests go fail→pass, existing tests stay green
+4. **Done-when**: existing tests updated + new fail→pass tests + smoketest + fast gate passes
+
+**Valuable failures**: An agent that aborts with code + failing tests is useful output.
+The branch documents the attempted approach and the tests document expected behavior.
+Always push the branch — the user reviews to provide guidance or rethink the ask.
+
+**Abort conditions** (valid, not failure):
+- Issue needs decomposition (tests reveal the spec isn't testable as-is)
+- 3 cycles exhausted (code + tests on branch for review)
+- Design conflict discovered (existing behavior contradicts the issue spec)
+
 ### Delegation template requirements
 
 Every `@claude` comment must include:
@@ -145,7 +164,8 @@ Every `@claude` comment must include:
 3. **Acceptance criteria** -- numbered, independently verifiable
 4. **Context** -- code snippets from current main branch, API signatures, patterns to follow
 5. **Do NOT** -- hard constraints (no inline styles, no new abstractions, no changes outside scope)
-6. **Verify** -- exact command sequence: `npx tsc --noEmit && npx eslint src/ public/ && npm test`
+6. **Test expectations** -- what tests should be written (smoketest, regression, behavior)
+7. **Verify** -- exact command sequence: `scripts/test-fast-gate.sh`
 
 The bot's entire instruction set is this comment. It has no other context, no memory of
 prior attempts, and no access to conversation history.

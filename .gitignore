@@ -15,4 +15,5 @@ public/app.js
 public/modules/*.js
 test-data/
 .claude/worktrees/
+.claude/settings.local.json
 test-history/

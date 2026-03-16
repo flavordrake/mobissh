@@ -99,11 +99,31 @@ Issue #{N}: {title}
 - Do NOT add inline styles
 - Do NOT over-engineer — minimal changes only
 - Follow existing code patterns
-- MUST add/update headless Playwright tests for any behavior change or new feature
-- MUST update existing test mocks to match the actual API being used (e.g., if code uses
-  ServiceWorkerRegistration.showNotification, mock that — not new Notification())
-- MUST remove or .skip tests that are no longer relevant after changes
-- Major UX changes also require emulator/Appium test updates
+
+## TDD Requirements (MANDATORY)
+The agent MUST follow the TDD workflow defined in `.claude/agents/develop.md`:
+
+1. **Phase 0 — First-order analysis**: Classify the issue (bug fix / feature / refactor),
+   assess TDD viability (deterministic / smoketest-only / needs-decomposition),
+   identify existing tests affected and new tests needed.
+
+2. **Phase 1 — Write tests first**: Before any implementation code, write the test
+   harness. For bugs: a test that reproduces the failure. For features: a smoketest
+   (feature accessible) + behavior tests. Run to establish the "red" baseline.
+
+3. **Phase 2 — Code until tests pass**: Implement, then verify new tests go from
+   fail→pass and existing tests stay green. Merge from main each cycle.
+
+### Done-when criteria (all must be true):
+- Existing tests updated where behavior changed
+- New tests added that went from fail→pass
+- Smoketest exists for feature accessibility
+- Fast gate passes (`scripts/test-fast-gate.sh`)
+
+### Valuable failures:
+An agent that aborts with code + failing tests is still useful. The branch shows
+the attempted approach and the tests document the expected behavior. Push the branch
+and report the failure — the user can review and provide guidance.
 
 ## Verify
 scripts/test-fast-gate.sh

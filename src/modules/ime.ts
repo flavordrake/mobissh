@@ -689,7 +689,7 @@ export function initIMEInput(): void {
 
   // ── IME composition (multi-step input methods, e.g. CJK, Gboard swipe) ─
   ime.addEventListener('compositionstart', () => {
-    console.log(`[ime:compositionstart] state=${_imeState} preview=${_previewMode} value="${ime.value}"`);
+    console.log(`[ime:compositionstart] state=${_imeState} preview=${String(_previewMode)} value="${ime.value}"`);
     // New composition: clear any stale text that browser might have re-inserted
     if (_imeState === 'idle') ime.value = '';
     // Preserve editing state — user tapped in to edit, new composition should
@@ -704,7 +704,7 @@ export function initIMEInput(): void {
   });
 
   ime.addEventListener('compositionend', (e: CompositionEvent) => {
-    console.log(`[ime:compositionend] state=${_imeState} preview=${_previewMode} holding=${_isHolding()} value="${ime.value}" data="${e.data}" lastSent="${_lastSentValue}"`);
+    console.log(`[ime:compositionend] state=${_imeState} preview=${String(_previewMode)} holding=${String(_isHolding())} value="${ime.value}" data="${e.data}" lastSent="${_lastSentValue}"`);
     // If already holding (editing/previewing), stay — accumulate text
     if (_isHolding()) {
       appState.isComposing = false;
@@ -749,7 +749,7 @@ export function initIMEInput(): void {
     _imeState = 'previewing';
     // Deferred idle: if no new compositionstart within 1.5s, hide textarea
     if (_clearTimer) clearTimeout(_clearTimer);
-    console.log(`[ime:compositionend-timer] 1500ms state=${_imeState} preview=${_previewMode}`);
+    console.log(`[ime:compositionend-timer] 1500ms state=${_imeState} preview=${String(_previewMode)}`);
     _clearTimer = setTimeout(() => {
       console.log(`[ime:compositionend-timer-fired] state=${_imeState}`);
       if (_imeState === 'composing') return; // new composition started

@@ -61,7 +61,67 @@ Your prompt will contain:
    git fetch origin bot/issue-{N} && git checkout bot/issue-{N} && git merge origin/main
    ```
 
-## Development Loop (max 3 cycles)
+## Phase 0: First-Order Analysis (before any code)
+
+Classify the issue:
+
+| Type | Behavior change? | Test strategy |
+|------|-----------------|---------------|
+| **Bug fix** | No — existing behavior restored | Regression test that reproduces the bug (fails before fix, passes after) |
+| **Feature** | Yes — new behavior added | Smoketest (feature accessible) + behavior tests (feature works) |
+| **Refactor** | No — same behavior, different code | Existing tests must still pass, no new tests needed |
+| **Protocol/API** | Depends | Unit tests for message handling, integration smoketest |
+
+Then assess TDD viability:
+
+- **Deterministic spec** (clear inputs → expected outputs): TDD is mandatory.
+  Write tests first, watch them fail, then implement.
+- **Exploratory** (UI layout, gesture tuning, visual polish): TDD at smoketest level
+  only. Write a test that the feature element exists and is accessible, then implement.
+- **Not testable without decomposition**: Report this in the analysis. Propose how to
+  decompose into testable units. This is a valid abort — code + failing tests is valuable.
+
+Output your analysis before writing any code:
+```
+ANALYSIS:
+- Type: bug fix / feature / refactor / protocol
+- Behavior change: yes / no
+- TDD viable: full / smoketest-only / needs-decomposition
+- Existing tests affected: [list files]
+- New tests planned: [list with descriptions]
+```
+
+## Phase 1: Write Tests First (TDD Harness)
+
+**Before writing implementation code**, write the minimum viable test harness:
+
+### For bug fixes:
+1. Write a test that reproduces the bug (expected behavior, currently fails)
+2. Run it — confirm it fails for the right reason
+3. This is your "fail→pass" target
+
+### For features:
+1. Write a **smoketest** — verify the feature is accessible at all (element exists,
+   function is callable, message type is handled). This catches "feature not wired up."
+2. Write **behavior tests** — verify the feature works as specified (input → output)
+3. Run them — confirm they fail because the feature doesn't exist yet
+
+### For protocol/API changes:
+1. Write unit tests for the new message types (send message, verify response)
+2. Write integration smoketest (end-to-end flow)
+
+### Test file locations:
+- Logic/protocol → `src/modules/__tests__/*.test.ts` (Vitest)
+- UI/behavior → `tests/*.spec.js` (Playwright)
+- Use fixtures from `tests/fixtures.js` — never duplicate mock server setup
+
+Run the tests to establish the "red" baseline:
+```bash
+scripts/test-unit.sh
+```
+Record which tests fail and why. These are your targets.
+
+## Phase 2: Development Loop (max 3 cycles)
 
 Before each cycle, check the wall clock:
 ```bash
@@ -71,77 +131,68 @@ If TIMEOUT, skip to the Failure section.
 
 ### Cycle N:
 
-**1. Plan (cycle 1 only)**
-- Read all files in scope
-- Read adjacent code to understand existing patterns
-- If there's a prior failure summary, read it and avoid the same approach
-- Plan the minimal change needed — implementation AND tests
-- Identify which test files need updating or creating
-
-**2. Implement**
-- Make changes. Prefer small, focused edits.
-- **Write or update tests alongside the implementation:**
-  - Logic changes → add/update Vitest unit test in `src/modules/__tests__/`
-  - UI changes → add/update Playwright test in `tests/`
-  - CSS-only changes → Playwright test verifying visibility/layout
-  - Bug fixes → regression test that would have caught the bug
-- Use the fixtures from `tests/fixtures.js` — never duplicate mock server setup
-- Follow patterns from `testing.md` reference doc
-- Do NOT touch files outside scope unless absolutely necessary
-- Do NOT add abstractions, helpers, or refactors beyond what's needed
-- Do NOT add comments, docstrings, or type annotations to unchanged code
-- Follow existing code patterns — read adjacent code first
-
-**3. Merge from main**
+**1. Merge from main (every cycle)**
 ```bash
 git fetch origin main
 git merge origin/main --no-edit
 ```
 If conflicts: resolve them. If unresolvable, report in failure summary.
-Merge from main EVERY cycle to minimize drift. See `git-integration.md`.
 
-**4. Compile**
+**2. Implement**
+- Make changes. Prefer small, focused edits.
+- Follow existing code patterns — read adjacent code first
+- Do NOT touch files outside scope unless absolutely necessary
+- Do NOT add abstractions, helpers, or refactors beyond what's needed
+- Do NOT add comments, docstrings, or type annotations to unchanged code
+
+**3. Update existing tests**
+- If your code changes behavior, update existing tests to match
+- If your code renames/moves things, update test imports and selectors
+- Run `scripts/test-unit.sh` — existing tests must pass (green baseline)
+
+**4. Verify new tests pass**
+- Run your new tests from Phase 1 — they should now pass (fail→pass)
+- If they don't pass, fix implementation (not the test) and re-run
+- If a test was wrong (testing the wrong thing), fix it and document why
+
+**5. Compile + Lint**
 ```bash
 scripts/test-typecheck.sh
-```
-If type errors in YOUR changes: fix them and re-check.
-If type errors in OTHER code: note in failure summary, this is a pre-existing issue.
-See `typescript.md` for common type error resolutions.
-
-**5. Lint**
-```bash
 scripts/test-lint.sh
 ```
-Fix lint errors in your changes only. Do not fix pre-existing warnings.
-See `eslint-resolution.md` for fix patterns.
+Fix errors in your changes only. Note pre-existing issues.
 
-**6. Unit test**
-```bash
-scripts/test-unit.sh
-```
-If tests fail due to your changes: analyze, fix, continue this cycle (not a new cycle).
-If tests fail for unrelated reasons: note and proceed.
-
-**7. Self-review**
-Before declaring success, review your own diff:
+**6. Self-review**
 ```bash
 git diff origin/main --stat
 git diff origin/main
 ```
-Check against these criteria:
+Check:
 - Lines changed < 200? If not, you're over-engineering.
 - Files changed <= 5? If not, scope creep.
 - Every changed file is in scope?
-- No inline styles added?
-- No `force: true` or timeout hacks in tests?
-- Test coverage for the change exists?
-- Import extensions use `.js`?
-- Types use `import type` where appropriate?
+- No inline styles, no `force: true` test hacks?
+- **New tests exist and went from fail→pass?**
+- **Existing tests updated where behavior changed?**
+- Import extensions use `.js`? Types use `import type`?
 
-**8. Evaluate**
-- All passing + self-review clean? → go to Commit
-- Failures in your code? → fix within this cycle if possible, else increment cycle
-- Cycle limit reached? → go to Failure
+**7. Evaluate**
+- All tests green + self-review clean → Commit
+- New tests still failing → fix within this cycle if possible, else increment cycle
+- Cycle limit (3) reached → Failure (but push branch — code + failing tests is valuable)
+
+## Done-When Criteria
+
+A PR is integration-ready when ALL of these are true:
+1. **Existing tests updated** — any test broken by the change has been fixed
+2. **New tests added** — at least one test that went from fail→pass
+3. **Smoketest exists** — feature is accessible (element exists, handler registered)
+4. **Fast gate passes** — `scripts/test-fast-gate.sh` (tsc + lint + vitest)
+5. **Simplify validates** — no code changed without test coverage
+
+If done-when cannot be met within 3 cycles, the agent aborts but pushes the branch.
+The branch contains code + failing tests — this is valuable for the user to review
+the attempted approach and provide guidance.
 
 ## Commit and PR
 
@@ -169,14 +220,20 @@ Write `/tmp/pr-body-{N}.md` with:
 ## Summary
 <1-3 bullet points of what changed>
 
+## TDD Analysis
+- Type: <bug fix / feature / refactor / protocol>
+- Behavior change: <yes / no>
+- TDD approach: <full / smoketest-only / exploratory>
+
 ## Test coverage
-- <what tests were added or updated>
-- <what the tests verify>
+- **Existing tests updated**: <list, or "none needed">
+- **New tests added (fail→pass)**: <list with what each verifies>
+- **Smoketest**: <what it checks — feature accessible, handler registered, etc.>
 
 ## Test results
 - tsc: PASS/FAIL
 - eslint: PASS/FAIL
-- vitest: PASS/FAIL
+- vitest: PASS/FAIL (N tests, M new)
 
 ## Diff stats
 - Files changed: N
@@ -209,14 +266,16 @@ ISSUE: {N}
 CYCLES: {count}/3
 WALL_CLOCK: {elapsed}s
 BRANCH: bot/issue-{N}
-FAILURE_TYPE: <timeout|test-failure|merge-conflict|type-error|lint-error|scope-exceeded>
+FAILURE_TYPE: <timeout|test-failure|merge-conflict|type-error|lint-error|scope-exceeded|needs-decomposition>
 FILES_TOUCHED: <list>
 TESTS_WRITTEN: <list of test files added/modified, or "none">
+TESTS_FAILING: <list of tests that still fail, with expected vs actual>
+TDD_ANALYSIS: <bug-fix|feature|refactor> / <full|smoketest|exploratory>
 SUMMARY: <2-3 sentences: what was attempted, what failed, what would help>
 LAST_ERROR: <exact error message from the last failing step>
 ```
 
-2. If any commits were made, push the branch anyway (useful for debugging):
+2. **Always push the branch** — code + failing tests is valuable for user review:
 ```bash
 git push -u origin bot/issue-{N} 2>/dev/null || true
 ```
@@ -238,6 +297,8 @@ BRANCH: bot/issue-{N}
 PR: <pr-url>
 FILES_TOUCHED: <list>
 TESTS_WRITTEN: <list of test files added/modified>
+TESTS_FAIL_TO_PASS: <list of tests that went from fail to pass>
+TDD_ANALYSIS: <bug-fix|feature|refactor> / <full|smoketest|exploratory>
 ```
 
 ## Rules

@@ -94,7 +94,21 @@ max 3 parallel agents.
 ### Decompose
 Use the `/decompose N` skill. File sub-issues, then develop them.
 
-## Phase 5: Gate
+## Phase 5: Idle Maintenance (while agents run)
+
+While develop agents are running in background, use the wait time productively:
+
+1. **Integrate** — merge any completed PRs from earlier in the cycle or prior cycles
+2. **Rebuild server** — `scripts/container-ctl.sh ensure` after merges
+3. **Simplify** — review recently changed code for quality, fix pre-existing lint/type errors
+4. **Compile learnings** — update skills, rules, project memory, docs with session insights
+5. **File issues** — capture bugs and improvements noticed during the session
+6. **Prepare Q&A** — draft clarifying questions for human-only/blocked issues using AskUserQuestion
+
+This phase runs concurrently — don't block on agent completion. Check agent output
+files periodically but don't poll. You'll be notified on completion.
+
+## Phase 6: Gate
 
 For each completed development:
 
@@ -104,7 +118,7 @@ scripts/integrate-gate.sh <branch-name>
 
 Use **integrate-gater** agents with `isolation: "worktree"` for parallel gating.
 
-## Phase 6: Report
+## Phase 7: Report
 
 ```
 ## Cycle Complete

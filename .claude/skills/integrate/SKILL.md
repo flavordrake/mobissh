@@ -149,6 +149,9 @@ If the container is stale, the user sees old behavior and files false bugs.
 - Fast gate passes (typecheck + lint + unit tests)
 - Acceptance gate passes (emulator or headless, depending on availability)
 - No test regressions vs main
+- **Test coverage**: PR includes new or updated tests. Check PR body for "Tests added"
+  and "fail→pass" entries. A PR with zero test changes for a feature/bugfix is incomplete —
+  reject with comment requesting test coverage.
 - Diff review: no plaintext secret storage, no `force: true` Playwright hacks, no inline
   styles (prefer CSS), no `--no-verify` bypasses
 
