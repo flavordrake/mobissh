@@ -133,9 +133,16 @@ scripts/test-fast-gate.sh
 
 Use the Agent tool with:
 - `subagent_type: "general-purpose"` (custom types are broken — see `.claude/rules/agents.md`)
-- `isolation: "worktree"` (MANDATORY)
-- `model: "sonnet"`
+- `isolation: "worktree"` **(MANDATORY — never omit)**
 - `run_in_background: true` for batch mode (2nd+ agent)
+- Model: omit for default (inherits parent). See "Model Selection" above.
+
+**Why worktree isolation is non-negotiable:** Without it, agents share the working tree.
+Uncommitted changes from one agent contaminate others and the main session. This caused
+type errors in `container-ctl.sh ensure` when partial edits leaked into a build (2026-03-16).
+The earlier Edit/Write permission failures that motivated dropping isolation have been
+fixed by adding permissions to `~/.claude/settings.json` (user-level, survives branch
+switches). If worktree agents fail on permissions, fix the settings — do NOT remove isolation.
 
 Read `.claude/agents/develop.md` for the prompt content to inline.
 
