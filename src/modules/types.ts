@@ -196,7 +196,10 @@ export type ServerMessage =
   | { type: 'disconnected'; reason?: string }
   | { type: 'hostkey'; host: string; port: number; keyType: string; fingerprint: string }
   | { type: 'sftp_ls_result'; requestId: string; entries: SftpEntry[] }
-  | { type: 'sftp_download_result'; requestId: string; data: string }
+  | { type: 'sftp_download_result'; requestId: string; data?: string; ok?: boolean; error?: string }
+  | { type: 'sftp_download_meta'; requestId: string; size: number }
+  | { type: 'sftp_download_chunk'; requestId: string; offset: number; data: string }
+  | { type: 'sftp_download_end'; requestId: string }
   | { type: 'sftp_upload_ack'; requestId: string; offset: number }
   | { type: 'sftp_upload_result'; requestId: string; ok: boolean }
   | { type: 'sftp_rename_result'; requestId: string; ok: boolean }

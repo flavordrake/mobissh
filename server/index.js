@@ -23,6 +23,7 @@
  *     { type: 'sftp_upload_chunk', offset: number, data: string, requestId: string }
  *     { type: 'sftp_upload_end', requestId: string }
  *     { type: 'sftp_upload_cancel', requestId: string }
+ *     { type: 'sftp_download_start', path: string, requestId: string }
  *     { type: 'sftp_stat', path: string, requestId: string }
  *     { type: 'sftp_rename', oldPath: string, newPath: string, requestId: string }
  *     { type: 'sftp_delete', path: string, requestId: string }
@@ -37,6 +38,9 @@
  *     // [SFTP_RESULTS] -- keep in sync with client types.ts ServerMessage
  *     { type: 'sftp_ls_result', requestId, entries: [{name, isDir, isSymlink, size, mtime, atime, permissions, uid, gid}] }
  *     { type: 'sftp_download_result', requestId, data: string }  (base64)
+ *     { type: 'sftp_download_meta', requestId, size: number }
+ *     { type: 'sftp_download_chunk', requestId, offset: number, data: string }  (base64)
+ *     { type: 'sftp_download_end', requestId }
  *     { type: 'sftp_upload_ack', requestId, offset: number }
  *     { type: 'sftp_upload_result', requestId, ok: boolean, error?: string }
  *     { type: 'sftp_stat_result', requestId, stat: {isDir, size, mtime} }
@@ -136,7 +140,7 @@ const UPLOAD_TTL_MS = 30_000; // 30s grace period after WS disconnect
  * All errors are returned as { type: 'sftp_error', requestId, message } so the
  * WebSocket connection is never terminated by an SFTP failure.
  */
-function handleSftpMessage(msg, sftp, send, openUploads) {
+function handleSftpMessage(msg, sftp, send, openUploads, ws) {
   const { requestId, path: filePath } = msg;
   const sftpErr = (message) => send({ type: 'sftp_error', requestId, message });
 
@@ -168,6 +172,31 @@ function handleSftpMessage(msg, sftp, send, openUploads) {
         send({ type: 'sftp_download_result', requestId, data: Buffer.concat(chunks).toString('base64') });
       });
       rs.on('error', err => sftpErr(err.message));
+      break;
+    }
+
+    case 'sftp_download_start': {
+      sftp.stat(filePath, (err, stats) => {
+        if (err) { sftpErr(err.message); return; }
+        send({ type: 'sftp_download_meta', requestId, size: stats.size });
+        const rs = sftp.createReadStream(filePath);
+        let offset = 0;
+        rs.on('data', (chunk) => {
+          const data = chunk.toString('base64');
+          const currentOffset = offset;
+          offset += chunk.length;
+          rs.pause();
+          ws.send(JSON.stringify({ type: 'sftp_download_chunk', requestId, offset: currentOffset, data }), () => {
+            rs.resume();
+          });
+        });
+        rs.on('end', () => {
+          send({ type: 'sftp_download_end', requestId });
+        });
+        rs.on('error', (e) => {
+          send({ type: 'sftp_download_result', requestId, ok: false, error: e.message });
+        });
+      });
       break;
     }
 
@@ -830,6 +859,7 @@ wss.on('connection', (ws, req) => {
       // [SFTP_ROUTER] -- every type in SFTP_HANDLER must be listed here
       case 'sftp_ls':
       case 'sftp_download':
+      case 'sftp_download_start':
       case 'sftp_upload':
       case 'sftp_upload_start':
       case 'sftp_upload_chunk':
@@ -841,7 +871,7 @@ wss.on('connection', (ws, req) => {
       case 'sftp_realpath':
         getSftp((err, sftp) => {
           if (err) { send({ type: 'sftp_error', requestId: msg.requestId, message: err.message }); return; }
-          handleSftpMessage(msg, sftp, send, openUploads);
+          handleSftpMessage(msg, sftp, send, openUploads, ws);
         });
         break;
       default: send({ type: 'error', message: `Unknown message type: ${msg.type}` });
