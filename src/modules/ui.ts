@@ -26,13 +26,13 @@ function _isValidPanel(hash: string): hash is PanelName {
 
 function _panelFromHash(): PanelName | null {
   const raw = location.hash.replace(/^#/, '');
-  if (raw.startsWith('files/') || raw === 'files') return 'files';
+  if (raw.startsWith('files/') || raw.startsWith('files%2F') || raw === 'files') return 'files';
   return _isValidPanel(raw) ? raw : null;
 }
 
 function _filePathFromHash(): string | null {
   const raw = location.hash.replace(/^#/, '');
-  if (raw.startsWith('files/')) {
+  if (raw.startsWith('files/') || raw.startsWith('files%2F')) {
     const encoded = raw.slice('files'.length);
     try { return decodeURIComponent(encoded); } catch { return null; }
   }
@@ -475,12 +475,27 @@ export function initTabBar(): void {
     });
   });
 
-  // Browser back/forward (#137, #90)
-  window.addEventListener('hashchange', () => {
+  // Browser back/forward (#137, #90, #188)
+  // Use popstate instead of hashchange so directory navigation coexists
+  // with modal dismiss (detail sheet / context menu) history entries.
+  window.addEventListener('popstate', (event) => {
+    const state = event.state as Record<string, unknown> | null;
+
+    // Modal dismiss entries are handled by their own popstate listeners
+    // (_showDetailsPanel, _showContextMenu). Skip them here.
+    if (state && (state.detailSheet === true || state.ctxMenu === true)) return;
+
+    // Structured files state from _filesNavigateTo (#188)
+    if (state && state.type === 'files' && typeof state.path === 'string') {
+      navigateToPanel('files', { updateHash: false });
+      _filesNavigateTo(state.path, { fromPopstate: true });
+      return;
+    }
+
+    // Fallback: parse hash for panel navigation (#137)
     const panel = _panelFromHash();
     if (panel) {
       navigateToPanel(panel, { updateHash: false });
-      // If navigating to files panel with a path in hash, navigate to that dir
       if (panel === 'files') {
         const filePath = _filePathFromHash();
         if (filePath) {
@@ -1043,11 +1058,13 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
 function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): void {
   _filesPath = path;
 
-  // Update URL hash for history (#90)
+  // Update URL hash for history (#90, #188)
+  // Encode each path segment individually so '/' stays literal in the hash.
   if (!options?.fromPopstate) {
-    const newHash = '#files' + encodeURIComponent(path);
+    const encodedPath = path.split('/').map(s => encodeURIComponent(s)).join('/');
+    const newHash = '#files' + encodedPath;
     if (location.hash !== newHash) {
-      history.pushState(null, '', newHash);
+      history.pushState({ type: 'files', path }, '', newHash);
     }
   }
 
@@ -1174,12 +1191,16 @@ function _showDetailsPanel(entry: SftpEntry, path: string): void {
     dismissed = true;
     overlay.remove();
     sheet.remove();
-    window.removeEventListener('popstate', dismiss);
+    window.removeEventListener('popstate', onPopstate);
   }
 
-  overlay.addEventListener('click', dismiss);
-  sheet.querySelector('.files-detail-close')!.addEventListener('click', dismiss);
-  window.addEventListener('popstate', dismiss);
+  function onPopstate(): void {
+    dismiss();
+  }
+
+  overlay.addEventListener('click', () => { dismiss(); history.back(); });
+  sheet.querySelector('.files-detail-close')!.addEventListener('click', () => { dismiss(); history.back(); });
+  window.addEventListener('popstate', onPopstate);
 }
 
 function _dismissContextMenu(): void {
@@ -1225,19 +1246,24 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
     dismissed = true;
     overlay.remove();
     menu.remove();
-    window.removeEventListener('popstate', dismiss);
+    window.removeEventListener('popstate', onPopstate);
     _ctxMenuDismiss = null;
   }
 
+  function onPopstate(): void {
+    dismiss();
+  }
+
   _ctxMenuDismiss = dismiss;
-  overlay.addEventListener('click', dismiss);
-  window.addEventListener('popstate', dismiss);
+  overlay.addEventListener('click', () => { dismiss(); history.back(); });
+  window.addEventListener('popstate', onPopstate);
 
   menu.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!btn) return;
     const action = btn.dataset.action ?? '';
     dismiss();
+    history.back();
     switch (action) {
       case 'download': {
         const filename = path.split('/').pop() ?? path;
