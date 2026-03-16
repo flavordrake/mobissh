@@ -9,6 +9,7 @@ import type { SettingsDeps } from './types.js';
 import { getDefaultWsUrl, THEMES } from './constants.js';
 import type { ThemeName } from './types.js';
 import { showErrorDialog } from './ui.js';
+import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewIdleDelay } from './ime.js';
 
 
 let _toast = (_msg: string): void => {};
@@ -221,6 +222,23 @@ export function initSettingsPanel(): void {
       const dock = dockEl.checked ? 'left' : 'right';
       localStorage.setItem('keyControlsDock', dock);
       document.documentElement.classList.toggle('key-dock-left', dock === 'left');
+    });
+  }
+
+  const countdownEl = document.getElementById('previewCountdownDuration') as HTMLSelectElement | null;
+  if (countdownEl) {
+    countdownEl.value = String(getPreviewTimeout());
+    countdownEl.addEventListener('change', () => {
+      const val = countdownEl.value === 'Infinity' ? Infinity : Number(countdownEl.value);
+      setPreviewTimeout(val);
+    });
+  }
+
+  const idleEl = document.getElementById('previewIdleTimeout') as HTMLSelectElement | null;
+  if (idleEl) {
+    idleEl.value = String(getPreviewIdleDelay());
+    idleEl.addEventListener('change', () => {
+      setPreviewIdleDelay(Number(idleEl.value));
     });
   }
 
