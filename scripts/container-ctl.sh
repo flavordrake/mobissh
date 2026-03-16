@@ -28,6 +28,36 @@ log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
 ok()  { echo "+ $*"; }
 
+DEPLOY_LOG="${MOBISSH_TMPDIR}/deploy-changelog.md"
+
+# Show what changed since last deploy and what's in flight
+show_changelog() {
+  local old_hash="$1"
+  local new_hash="$2"
+
+  {
+    echo "## Deploy: ${old_hash:-initial} → ${new_hash}"
+    echo "$(date '+%Y-%m-%d %H:%M:%S')"
+    echo ""
+
+    if [[ -n "$old_hash" && "$old_hash" != "$new_hash" ]]; then
+      echo "### What's new"
+      git log --oneline "${old_hash}..${new_hash}" 2>/dev/null || echo "(unable to diff)"
+      echo ""
+    fi
+
+    local in_flight
+    in_flight=$(git branch -r --list 'origin/bot/*' 2>/dev/null | sed 's|origin/||')
+    if [[ -n "$in_flight" ]]; then
+      echo "### In flight (not yet merged)"
+      echo "$in_flight"
+    else
+      echo "### In flight: none"
+    fi
+    echo ""
+  } | tee "$DEPLOY_LOG"
+}
+
 head_hash() {
   git rev-parse --short HEAD 2>/dev/null || echo "unknown"
 }
@@ -119,6 +149,7 @@ cmd_up() {
     local serving
     serving=$(container_version)
     ok "Container healthy (version ${serving})."
+    show_changelog "${PREV_VERSION:-}" "$serving"
   else
     err "Container failed to become healthy within ${HEALTH_TIMEOUT}s."
     err "Logs:"
@@ -133,8 +164,10 @@ cmd_start() {
     return 0
   fi
 
+  PREV_VERSION=""
   if is_running; then
-    log "Container running but stale (serving $(container_version), HEAD is $(head_hash)). Rebuilding..."
+    PREV_VERSION=$(container_version)
+    log "Container running but stale (serving ${PREV_VERSION}, HEAD is $(head_hash)). Rebuilding..."
   fi
 
   cmd_build
@@ -192,6 +225,7 @@ cmd_push() {
   docker cp server/. "${CONTAINER}:/app/server/"
 
   ok "Files pushed. Refresh the browser (no container restart needed)."
+  show_changelog "$(container_version)" "$(head_hash) (hot-push)"
 }
 
 case "${1:-}" in
