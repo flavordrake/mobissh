@@ -1387,7 +1387,7 @@ export function initFilesPanel(): void {
       const filename = _downloadPending.get(msg.requestId);
       _downloadPending.delete(msg.requestId);
       _setTransferStatus('');
-      if (filename) _triggerBlobDownload(filename, msg.data);
+      if (filename && msg.data) _triggerBlobDownload(filename, msg.data);
     } else if (msg.type === 'sftp_upload_result') {
       _uploadPending.delete(msg.requestId);
       if (!msg.ok) {
