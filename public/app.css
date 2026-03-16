@@ -1770,7 +1770,13 @@ hr {
   margin-top: 12px;
 }
 
-.setting-row-info { flex: 1; }
+.setting-row-info { flex: 1; min-width: 0; }
+
+.setting-row select,
+.setting-row button {
+  max-width: 120px;
+  flex-shrink: 0;
+}
 
 .setting-row-label {
   display: block;
