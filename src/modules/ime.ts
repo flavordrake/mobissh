@@ -22,6 +22,7 @@ import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { focusIME, setCtrlActive } from './ui.js';
 import { isSelectionActive } from './selection.js';
+import { computeDiff } from './ime-diff.js';
 
 let _handleResize = (): void => {};
 let _applyFontSize = (_size: number): void => {};
@@ -603,16 +604,7 @@ export function initIMEInput(): void {
 
   /** Diff old vs new value: send backspaces to erase changed region + replacement text. */
   function _sendDiff(oldVal: string, newVal: string): void {
-    if (oldVal === newVal) return;
-    // Find longest common prefix
-    let prefix = 0;
-    while (prefix < oldVal.length && prefix < newVal.length && oldVal[prefix] === newVal[prefix]) prefix++;
-    // Find longest common suffix (not overlapping prefix)
-    let suffix = 0;
-    while (suffix < oldVal.length - prefix && suffix < newVal.length - prefix &&
-           oldVal[oldVal.length - 1 - suffix] === newVal[newVal.length - 1 - suffix]) suffix++;
-    const deletions = oldVal.length - prefix - suffix;
-    const insertion = newVal.slice(prefix, newVal.length - suffix);
+    const { deletions, insertion } = computeDiff(oldVal, newVal);
     if (deletions > 0) sendSSHInput('\x7f'.repeat(deletions));
     if (insertion) sendSSHInput(insertion);
   }
