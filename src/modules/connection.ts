@@ -54,7 +54,7 @@ export async function uploadFileChunked(
   requestId: string,
   onProgress: (p: UploadProgress) => void
 ): Promise<void> {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+  if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
     throw new Error('Not connected');
   }
 
