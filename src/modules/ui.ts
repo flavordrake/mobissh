@@ -881,6 +881,63 @@ let _uploadTotal = 0;
 let _transferStatus = '';
 let _activeUploadRequestId: string | null = null;
 
+interface TransferRecord {
+  name: string;
+  size: number;
+  sent: number;
+  status: 'active' | 'done' | 'failed';
+  error?: string;
+}
+
+const _transferRecords = new Map<string, TransferRecord>();
+
+function _renderTransferList(): void {
+  const list = document.getElementById('transferList');
+  if (!list) return;
+
+  if (_transferRecords.size === 0) {
+    list.innerHTML = '<div class="files-empty">No transfers yet.</div>';
+    _updateTransferBadge();
+    return;
+  }
+
+  const items: string[] = [];
+  _transferRecords.forEach((rec, id) => {
+    const pct = rec.size > 0 ? Math.round(rec.sent / rec.size * 100) : (rec.status === 'done' ? 100 : 0);
+    const statusLabel = rec.status === 'active' ? `${String(pct)}%` : rec.status === 'failed' ? (rec.error ?? 'Failed') : 'Done';
+    items.push(`<div class="transfer-item" data-id="${escHtml(id)}">
+      <div class="transfer-item-header">
+        <span class="transfer-item-name">${escHtml(rec.name)}</span>
+        <span class="transfer-item-status" data-status="${rec.status}">${escHtml(statusLabel)}</span>
+      </div>
+      <div class="transfer-progress"><div class="transfer-progress-bar" style="width:${String(pct)}%"></div></div>
+    </div>`);
+  });
+  list.innerHTML = items.join('');
+  _updateTransferBadge();
+}
+
+function _updateTransferBadge(): void {
+  let activeCount = 0;
+  _transferRecords.forEach((rec) => { if (rec.status === 'active') activeCount++; });
+  const badge = document.querySelector<HTMLElement>('.files-subtab[data-subtab="transfer"] .files-subtab-badge');
+  if (activeCount > 0) {
+    if (!badge) {
+      const btn = document.querySelector<HTMLElement>('.files-subtab[data-subtab="transfer"]');
+      if (btn) {
+        const span = document.createElement('span');
+        span.className = 'files-subtab-badge';
+        span.textContent = String(activeCount);
+        btn.appendChild(span);
+      }
+    } else {
+      badge.textContent = String(activeCount);
+    }
+  } else {
+    badge?.remove();
+  }
+}
+
 function _setTransferStatus(text: string): void {
   _transferStatus = text;
   const el = document.querySelector<HTMLElement>('.files-transfer-status');
@@ -945,16 +1002,25 @@ async function _startUpload(files: FileList): Promise<void> {
     _activeUploadRequestId = reqId;
     _uploadPending.set(reqId, remotePath);
 
+    _transferRecords.set(reqId, { name, size: file.size, sent: 0, status: 'active' });
+    _renderTransferList();
+
     try {
       await uploadFileChunked(remotePath, file, reqId, (p) => {
         const pct = p.totalBytes > 0 ? Math.round(p.bytesSent / p.totalBytes * 100) : 0;
         _setTransferStatus(`Uploading ${name} — ${_formatBytes(p.bytesSent)} / ${_formatBytes(p.totalBytes)} (${String(pct)}%)${countStr}`);
+        const rec = _transferRecords.get(reqId);
+        if (rec) { rec.sent = p.bytesSent; _renderTransferList(); }
       });
       _uploadPending.delete(reqId);
+      const rec = _transferRecords.get(reqId);
+      if (rec) { rec.status = 'done'; rec.sent = rec.size; _renderTransferList(); }
     } catch (err) {
       _uploadPending.delete(reqId);
+      const message = err instanceof Error ? err.message : String(err);
+      const rec = _transferRecords.get(reqId);
+      if (rec) { rec.status = 'failed'; rec.error = message; _renderTransferList(); }
       if (_uploadActive) {
-        const message = err instanceof Error ? err.message : String(err);
         toast(`Upload failed: ${message}`);
       }
       _activeUploadRequestId = null;
@@ -973,7 +1039,7 @@ async function _startUpload(files: FileList): Promise<void> {
 
 function _renderFilesPanel(path: string, bodyHtml: string): void {
   _dismissContextMenu();
-  const panel = document.getElementById('panel-files');
+  const panel = document.getElementById('filesExplore');
   if (!panel) return;
 
   const parts = path === '/' ? [] : path.split('/').slice(1);
@@ -1387,10 +1453,39 @@ export function initFilesPanel(): void {
     }
   });
 
+  // Sub-tab switching
+  document.querySelectorAll<HTMLElement>('.files-subtab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.subtab;
+      if (!target) return;
+      document.querySelectorAll<HTMLElement>('.files-subtab').forEach((b) => b.classList.toggle('active', b === btn));
+      const explore = document.getElementById('filesExplore');
+      const transfer = document.getElementById('filesTransfer');
+      if (target === 'explore') {
+        explore?.classList.remove('hidden');
+        explore?.classList.add('active');
+        transfer?.classList.add('hidden');
+        transfer?.classList.remove('active');
+      } else {
+        transfer?.classList.remove('hidden');
+        transfer?.classList.add('active');
+        explore?.classList.add('hidden');
+        explore?.classList.remove('active');
+        _renderTransferList();
+      }
+    });
+  });
+
+  // Transfer tab upload button
+  document.getElementById('transferUploadBtn')?.addEventListener('click', () => {
+    const fileInput = document.querySelector<HTMLInputElement>('#filesExplore .files-upload-input');
+    fileInput?.click();
+  });
+
   // On first Files tab activation, resolve home dir via sftp_realpath then navigate
   const filesTab = document.querySelector<HTMLElement>('[data-panel="files"]');
   filesTab?.addEventListener('click', () => {
-    if (!document.getElementById('panel-files')?.querySelector('.files-body')) {
+    if (!document.getElementById('filesExplore')?.querySelector('.files-body')) {
       _filesRealpathReqId = `rp-${String(Date.now())}`;
       sendSftpRealpath(_filesRealpathReqId);
       _renderFilesPanel(_filesPath, '<div class="files-loading">Loading...</div>');
