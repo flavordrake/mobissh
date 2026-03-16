@@ -1163,3 +1163,60 @@ test.describe('Issue #169 — preview mode countdown timer', { tag: '@device-cri
     expect(imeVal).toContain('should stay forever in preview');
   });
 });
+
+// ── Issue #166 — preview mode commit and timeout must send text (#166) ────────
+
+test.describe('Issue #166 — preview mode commit and timeout send text', { tag: '@device-critical' }, () => {
+
+  test('commit button in preview mode sends swipe-composed text via WebSocket', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Swipe-compose a multi-word sentence
+    await swipeCompose(page, 'the quick brown fox jumps over');
+    await page.waitForTimeout(200);
+
+    // Text should be held in textarea, NOT sent yet
+    const msgsBeforeCommit = await getInputMessages(page);
+    expect(msgsBeforeCommit).toHaveLength(0);
+
+    // Tap the commit button
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(200);
+
+    // Text must have been sent to SSH via WebSocket
+    const msgsAfterCommit = await getInputMessages(page);
+    expect(msgsAfterCommit.some((m) => m.data.includes('the quick brown fox jumps over'))).toBe(true);
+    // No trailing \r — commit sends text only
+    expect(msgsAfterCommit.every((m) => m.data !== '\r')).toBe(true);
+  });
+
+  test('auto-commit timeout sends preview text to SSH after countdown expires', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Use shortest countdown (3s) for faster test; idle delay is 1.5s, total ~4.5s
+    await page.evaluate(() => { localStorage.setItem('imePreviewTimeout', '3000'); });
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await swipeCompose(page, 'auto-sent after timeout expires!');
+    await page.waitForTimeout(200);
+
+    // Text should be held — not sent yet
+    const msgsBeforeTimeout = await getInputMessages(page);
+    expect(msgsBeforeTimeout).toHaveLength(0);
+
+    // Wait for idle delay (1.5s) + countdown (3s) + margin = ~5.5s
+    await page.waitForTimeout(5500);
+
+    // Text must have been auto-committed to SSH
+    const msgsAfterTimeout = await getInputMessages(page);
+    expect(msgsAfterTimeout.some((m) => m.data.includes('auto-sent after timeout expires!'))).toBe(true);
+
+    // Textarea should be cleared and hidden after auto-commit
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toBe('');
+    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
+  });
+});
