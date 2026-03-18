@@ -1978,6 +1978,23 @@ hr {
   background: var(--bg-card);
 }
 
+.files-entry.files-selected {
+  background: rgba(0, 255, 136, 0.1);
+  border-left: 3px solid var(--accent);
+}
+
+.files-download-btn {
+  background: #44aaff;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 .files-entry-icon {
   font-size: 12px;
   font-weight: 600;
@@ -2169,6 +2186,10 @@ hr {
 .files-upload-btn:active {
   opacity: 0.8;
 }
+.files-upload-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
 
 .files-upload-input {
   display: none;
@@ -2302,18 +2323,25 @@ hr {
   flex: 1;
 }
 
-.transfer-item-status {
-  font-size: 11px;
+.transfer-item-pct {
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-dim);
   flex-shrink: 0;
   margin-left: 8px;
 }
 
-.transfer-item-status[data-status="done"] {
+.transfer-item-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.transfer-item[data-status="done"] .transfer-item-pct {
   color: var(--accent);
 }
 
-.transfer-item-status[data-status="failed"] {
+.transfer-item[data-status="failed"] .transfer-item-pct {
   color: var(--danger);
 }
 

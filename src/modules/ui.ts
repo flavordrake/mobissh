@@ -195,6 +195,11 @@ export function setStatus(state: ConnectionStatus, text: string): void {
     btn.textContent = state === 'connected' ? text : 'MobiSSH';
     btn.classList.toggle('connected', state === 'connected');
   }
+  // Enable/disable upload buttons based on connection state
+  const connected = state === 'connected';
+  document.querySelectorAll<HTMLButtonElement>('.files-upload-btn, #transferUploadBtn').forEach(b => {
+    b.disabled = !connected;
+  });
 }
 
 // ── Session list (#60) ───────────────────────────────────────────────────────
@@ -888,6 +893,7 @@ interface TransferRecord {
   status: 'active' | 'done' | 'failed';
   direction: 'upload' | 'download';
   error?: string;
+  startTime: number;
 }
 
 export const _transferRecords = new Map<string, TransferRecord>();
@@ -905,15 +911,28 @@ export function _renderTransferList(): void {
   const items: string[] = [];
   _transferRecords.forEach((rec, id) => {
     const pct = rec.size > 0 ? Math.round(rec.sent / rec.size * 100) : (rec.status === 'done' ? 100 : 0);
-    const statusLabel = rec.status === 'active' ? `${String(pct)}%` : rec.status === 'failed' ? (rec.error ?? 'Failed') : 'Done';
     const dirArrow = rec.direction === 'upload' ? '\u2191' : '\u2193';
     const dirClass = `transfer-direction transfer-direction-${rec.direction}`;
+    let detail = '';
+    if (rec.status === 'active' && rec.error) {
+      detail = rec.error;
+    } else if (rec.status === 'active') {
+      const elapsed = (Date.now() - rec.startTime) / 1000;
+      const rate = elapsed > 0 ? rec.sent / elapsed : 0;
+      detail = `${_formatBytes(rec.sent)} / ${_formatBytes(rec.size)}  ${_formatBytes(rate)}/s`;
+    } else if (rec.status === 'done') {
+      const elapsed = (Date.now() - rec.startTime) / 1000;
+      detail = `${_formatBytes(rec.size)}  ${elapsed > 0 ? _formatBytes(rec.size / elapsed) + '/s' : ''}`;
+    } else {
+      detail = rec.error ?? 'Failed';
+    }
     items.push(`<div class="transfer-item" data-id="${escHtml(id)}">
       <div class="transfer-item-header">
         <span class="${dirClass}">${dirArrow}</span>
         <span class="transfer-item-name">${escHtml(rec.name)}</span>
-        <span class="transfer-item-status" data-status="${rec.status}">${escHtml(statusLabel)}</span>
+        <span class="transfer-item-pct">${rec.status === 'active' ? String(pct) + '%' : rec.status === 'done' ? '\u2713' : '\u2717'}</span>
       </div>
+      <div class="transfer-item-detail">${escHtml(detail)}</div>
       <div class="transfer-progress"><div class="transfer-progress-bar" style="width:${String(pct)}%"></div></div>
     </div>`);
   });
@@ -940,6 +959,54 @@ function _updateTransferBadge(): void {
   } else {
     badge?.remove();
   }
+}
+
+/** Update the download button visibility based on file selection count. */
+function _updateFileSelectionToolbar(panel: HTMLElement): void {
+  const selected = panel.querySelectorAll('.files-entry.files-selected');
+  const dlBtn = panel.querySelector<HTMLElement>('.files-download-btn');
+  if (dlBtn) {
+    if (selected.length > 0) {
+      dlBtn.textContent = `Download (${String(selected.length)})`;
+      dlBtn.classList.remove('hidden');
+    } else {
+      dlBtn.classList.add('hidden');
+    }
+  }
+}
+
+/** Download all selected files in the Explore panel. */
+function _downloadSelectedFiles(panel: HTMLElement): void {
+  const selected = panel.querySelectorAll<HTMLElement>('.files-entry.files-selected');
+  selected.forEach((row) => {
+    const filePath = row.dataset.path;
+    if (!filePath) return;
+    const filename = filePath.split('/').pop() ?? filePath;
+    const reqId = `dl-${String(Date.now())}-${filename.slice(0, 8)}`;
+    _downloadPending.set(reqId, filename);
+    _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
+    sendSftpDownload(filePath, reqId);
+    row.classList.remove('files-selected');
+  });
+  _renderTransferList();
+  _updateFileSelectionToolbar(panel);
+}
+
+/** Wait for WS connection to be open, polling every 500ms up to timeoutMs. */
+function _waitForConnection(timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (appState.ws && appState.ws.readyState === WebSocket.OPEN) { resolve(); return; }
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+        clearInterval(interval);
+        resolve();
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(interval);
+        reject(new Error('Connection timeout'));
+      }
+    }, 500);
+  });
 }
 
 function _setTransferStatus(text: string): void {
@@ -987,27 +1054,42 @@ function _cancelActiveUpload(): void {
   }
 }
 
-async function _startUpload(files: FileList): Promise<void> {
-  if (_uploadActive) return;
-  _uploadActive = true;
-  _uploadCompleted = 0;
-  _uploadTotal = files.length;
+/** Pending upload queue — files added while an upload is in progress. */
+const _uploadQueue: Array<{ file: File; remotePath: string }> = [];
 
+async function _startUpload(files: FileList): Promise<void> {
+  // Queue files — create transfer records immediately so they appear in the Transfer tab
+  const newEntries: Array<{ file: File; remotePath: string; reqId: string }> = [];
   for (let i = 0; i < files.length; i++) {
-    if (!_uploadActive) break; // cancelled
     const file = files[i]!;
     const remotePath = _filesPath === '/' ? `/${file.name}` : `${_filesPath}/${file.name}`;
-    _uploadCompleted++;
+    const reqId = `up-${String(Date.now())}-${String(i)}`;
+    _transferRecords.set(reqId, { name: file.name, size: file.size, sent: 0, status: 'active', direction: 'upload', startTime: Date.now() });
+    newEntries.push({ file, remotePath, reqId });
+  }
+  _renderTransferList();
+
+  if (_uploadActive) {
+    console.log('[upload] queuing', newEntries.length, 'files — upload already active');
+    for (const e of newEntries) _uploadQueue.push({ file: e.file, remotePath: e.remotePath });
+    return;
+  }
+  console.log('[upload] starting batch of', newEntries.length, 'files');
+
+  _uploadActive = true;
+  _uploadCompleted = 0;
+  _uploadTotal = newEntries.length;
+
+  for (const entry of newEntries) {
+    if (!_uploadActive) break; // cancelled
+    const { file, remotePath, reqId } = entry;
     const name = file.name;
+    _uploadCompleted++;
     const countStr = _uploadTotal > 1 ? ` (${String(_uploadCompleted)}/${String(_uploadTotal)})` : '';
     _setTransferStatus(`Uploading ${name} — 0 B / ${_formatBytes(file.size)}${countStr}`);
 
-    const reqId = `up-${String(Date.now())}-${String(i)}`;
     _activeUploadRequestId = reqId;
     _uploadPending.set(reqId, remotePath);
-
-    _transferRecords.set(reqId, { name, size: file.size, sent: 0, status: 'active', direction: 'upload' });
-    _renderTransferList();
 
     try {
       await uploadFileChunked(remotePath, file, reqId, (p) => {
@@ -1024,13 +1106,9 @@ async function _startUpload(files: FileList): Promise<void> {
       const message = err instanceof Error ? err.message : String(err);
       const rec = _transferRecords.get(reqId);
       if (rec) { rec.status = 'failed'; rec.error = message; _renderTransferList(); }
-      if (_uploadActive) {
-        toast(`Upload failed: ${message}`);
-      }
-      _activeUploadRequestId = null;
-      _uploadActive = false;
-      _setTransferStatus('');
-      return;
+      toast(`Upload failed: ${name}`);
+      // Continue to next file instead of aborting the batch
+      continue;
     }
   }
 
@@ -1039,6 +1117,14 @@ async function _startUpload(files: FileList): Promise<void> {
   _setTransferStatus('');
   _filesCache.delete(_filesPath);
   _filesNavigateTo(_filesPath);
+
+  // Process queued uploads (files added while this batch was in progress)
+  if (_uploadQueue.length > 0) {
+    const queued = _uploadQueue.splice(0);
+    const dt = new DataTransfer();
+    for (const q of queued) dt.items.add(q.file);
+    void _startUpload(dt.files);
+  }
 }
 
 function _renderFilesPanel(path: string, bodyHtml: string): void {
@@ -1059,6 +1145,7 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
     <div class="files-breadcrumb">${breadcrumbHtml}</div>
     <div class="files-toolbar">
       <button class="files-upload-btn">Upload</button>
+      <button class="files-download-btn hidden">Download</button>
       <input type="file" class="files-upload-input" multiple />
       <span class="files-transfer-status${statusHidden}">${escHtml(_transferStatus)}</span>
       <button class="files-upload-cancel${_uploadActive ? '' : ' hidden'}">Cancel</button>
@@ -1099,18 +1186,12 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
     });
   });
 
+  // Single tap on file = toggle selection (not download)
   panel.querySelectorAll<HTMLElement>('.files-entry[data-dir="false"]').forEach((row) => {
     row.addEventListener('click', () => {
       if (_longPressFired) { _longPressFired = false; return; }
-      const filePath = row.dataset.path;
-      if (!filePath) return;
-      const filename = filePath.split('/').pop() ?? filePath;
-      _setTransferStatus('Downloading...');
-      const reqId = `dl-${String(Date.now())}`;
-      _downloadPending.set(reqId, filename);
-      _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download' });
-      _renderTransferList();
-      sendSftpDownload(filePath, reqId);
+      row.classList.toggle('files-selected');
+      _updateFileSelectionToolbar(panel);
     });
   });
 
@@ -1123,6 +1204,8 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
       fileInput.value = '';
     }
   });
+  const dlBtn = panel.querySelector<HTMLElement>('.files-download-btn');
+  dlBtn?.addEventListener('click', () => { _downloadSelectedFiles(panel); });
   const cancelBtn = panel.querySelector<HTMLElement>('.files-upload-cancel');
   cancelBtn?.addEventListener('click', () => { _cancelActiveUpload(); });
 }
@@ -1342,7 +1425,7 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
         _setTransferStatus('Downloading...');
         const reqId = `dl-${String(Date.now())}`;
         _downloadPending.set(reqId, filename);
-        _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download' });
+        _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
         _renderTransferList();
         sendSftpDownload(path, reqId);
         break;

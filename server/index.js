@@ -59,6 +59,7 @@ const { execSync } = require('child_process');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
 const { isOriginAllowed } = require('./origin');
+const TRACE_TRANSFER = process.env.MOBISSH_TRACE_TRANSFER === '1' || true; // default on for data gathering
 const { rewriteManifest } = require('./manifest');
 
 const PORT = process.env.PORT || 8081;
@@ -242,17 +243,24 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws) {
       const upload = openUploads.get(requestId);
       if (!upload) { sftpErr('No upload in progress for this requestId'); return; }
       if (typeof msg.data !== 'string') { sftpErr('data must be a base64 string'); return; }
+      const tDecode = performance.now();
       const buf = Buffer.from(msg.data, 'base64');
+      const decodeMs = performance.now() - tDecode;
+      const tWrite = performance.now();
       const canContinue = upload.stream.write(buf);
+      const writeMs = performance.now() - tWrite;
       upload.offset += buf.length;
       // Keep resumable entry offset in sync
       for (const [, re] of resumableUploads) {
         if (re.requestId === requestId) { re.offset = upload.offset; break; }
       }
       if (canContinue) {
+        if (TRACE_TRANSFER) console.log(`[transfer:${requestId.slice(-6)}] srv chunk offset=${upload.offset} decode=${decodeMs.toFixed(0)}ms write=${writeMs.toFixed(0)}ms drain=no`);
         send({ type: 'sftp_upload_ack', requestId, offset: upload.offset });
       } else {
+        const tDrain = performance.now();
         upload.stream.once('drain', () => {
+          if (TRACE_TRANSFER) console.log(`[transfer:${requestId.slice(-6)}] srv chunk offset=${upload.offset} decode=${decodeMs.toFixed(0)}ms write=${writeMs.toFixed(0)}ms drain=${(performance.now() - tDrain).toFixed(0)}ms`);
           send({ type: 'sftp_upload_ack', requestId, offset: upload.offset });
         });
       }

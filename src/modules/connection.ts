@@ -58,6 +58,13 @@ export async function uploadFileChunked(
     throw new Error('Not connected');
   }
 
+  const trace = localStorage.getItem('transferTracing') !== 'false';
+  const t0 = performance.now();
+  let chunkCount = 0;
+  let totalReadMs = 0;
+  let totalEncodeMs = 0;
+  let totalAckMs = 0;
+
   // Compute a simple fingerprint (size + name) for server-side dedup
   const fingerprint = `${String(file.size)}-${file.name}`;
 
@@ -71,7 +78,9 @@ export async function uploadFileChunked(
   }));
 
   // Wait for initial ack — offset > 0 means server has partial data from a previous attempt
+  const tAck0 = performance.now();
   const resumeOffset = await _waitForAck(requestId);
+  if (trace) console.log(`[transfer:${requestId.slice(-6)}] start ack=${(performance.now() - tAck0).toFixed(0)}ms resume=${String(resumeOffset)}`);
 
   // Stream chunks
   const reader = file.stream().getReader();
@@ -80,7 +89,10 @@ export async function uploadFileChunked(
 
   try {
     for (;;) {
+      const tRead = performance.now();
       const { done, value } = await reader.read();
+      const readMs = performance.now() - tRead;
+      totalReadMs += readMs;
       if (done) break;
 
       // Process the chunk in CHUNK_SIZE pieces
@@ -105,8 +117,13 @@ export async function uploadFileChunked(
 
         const end = Math.min(offset + CHUNK_SIZE, value.length);
         const chunk = value.subarray(offset, end);
-        const data = _uint8ToBase64(chunk);
 
+        const tEncode = performance.now();
+        const data = _uint8ToBase64(chunk);
+        const encodeMs = performance.now() - tEncode;
+        totalEncodeMs += encodeMs;
+
+        const buffered = appState.ws.bufferedAmount;
         appState.ws.send(JSON.stringify({
           type: 'sftp_upload_chunk',
           requestId,
@@ -115,24 +132,53 @@ export async function uploadFileChunked(
         }));
 
         // Wait for server ack before sending next chunk
+        const tAck = performance.now();
         await _waitForAck(requestId);
+        const ackMs = performance.now() - tAck;
+        totalAckMs += ackMs;
 
+        chunkCount++;
         bytesSent += chunk.length;
         onProgress({ bytesSent, totalBytes: file.size });
         offset = end;
+
+        if (trace) {
+          console.log(`[transfer:${requestId.slice(-6)}] chunk ${String(chunkCount)} read=${readMs.toFixed(0)}ms encode=${encodeMs.toFixed(0)}ms ack=${ackMs.toFixed(0)}ms buffered=${String(buffered)}`);
+        }
       }
     }
   } finally {
     reader.releaseLock();
   }
 
-  // Send end message (ws may have changed across awaits)
+  if (trace) {
+    const elapsed = performance.now() - t0;
+    const throughput = bytesSent > 0 ? (bytesSent / (elapsed / 1000) / 1024).toFixed(0) : '0';
+    console.log(`[transfer:${requestId.slice(-6)}] DONE ${String(chunkCount)} chunks ${(elapsed / 1000).toFixed(1)}s ${throughput} KB/s | read=${totalReadMs.toFixed(0)}ms encode=${totalEncodeMs.toFixed(0)}ms ack_wait=${totalAckMs.toFixed(0)}ms (${(totalAckMs / elapsed * 100).toFixed(0)}% ack-bound)`);
+  }
+
+  // Send end message and wait for server confirmation
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (appState.ws && appState.ws.readyState === WebSocket.OPEN) {
     appState.ws.send(JSON.stringify({
       type: 'sftp_upload_end',
       requestId
     }));
+    // Wait for the server's sftp_upload_result (routed through sftpHandler).
+    // Use a one-shot listener on the ack resolver — server sends an ack or
+    // result after end. Give it 10s before timing out.
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 10000);
+      const origHandler = _sftpHandler;
+      _sftpHandler = (msg) => {
+        origHandler?.(msg);
+        if (msg.type === 'sftp_upload_result' && msg.requestId === requestId) {
+          clearTimeout(timeout);
+          _sftpHandler = origHandler;
+          resolve();
+        }
+      };
+    });
   }
 }
 
