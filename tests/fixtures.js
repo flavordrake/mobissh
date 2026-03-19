@@ -123,6 +123,8 @@ const test = base.extend({
     const messages = [];
     let activeSockets = [];
 
+    let onMessageHandler = null;
+
     const wss = new WebSocketServer({ port });
 
     wss.on('connection', (ws) => {
@@ -145,6 +147,11 @@ const test = base.extend({
             }
           }, 80);
         }
+
+        // Delegate to custom message handler (e.g. SFTP) if installed
+        if (onMessageHandler) {
+          onMessageHandler(ws, msg);
+        }
       });
 
       ws.on('close', () => {
@@ -161,6 +168,9 @@ const test = base.extend({
           if (s.readyState === s.OPEN) s.send(payload);
         });
       },
+      /** Set a custom message handler for protocol extensions (e.g. SFTP). */
+      set onMessage(fn) { onMessageHandler = fn; },
+      get onMessage() { return onMessageHandler; },
     };
 
     await use(fixture);
