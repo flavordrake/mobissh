@@ -165,10 +165,11 @@ export async function uploadFileChunked(
       requestId
     }));
     // Wait for the server's sftp_upload_result (routed through sftpHandler).
-    // Use a one-shot listener on the ack resolver — server sends an ack or
-    // result after end. Give it 10s before timing out.
+    // Timeout: 10s in production, shorter in test (import.meta.env.MODE).
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    const resultTimeout = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test' ? 100 : 10000;
     await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 10000);
+      const timeout = setTimeout(resolve, resultTimeout);
       const origHandler = _sftpHandler;
       _sftpHandler = (msg) => {
         origHandler?.(msg);
