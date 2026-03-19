@@ -165,9 +165,10 @@ export async function uploadFileChunked(
       requestId
     }));
     // Wait for the server's sftp_upload_result (routed through sftpHandler).
-    // Timeout: 10s in production, shorter in test (import.meta.env.MODE).
+    // Timeout: 10s in production, shorter in test (vitest sets __vitest_worker__).
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    const resultTimeout = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test' ? 100 : 10000;
+    const isTest = typeof globalThis !== 'undefined' && '__vitest_worker__' in (globalThis as Record<string, unknown>);
+    const resultTimeout = isTest ? 100 : 10000;
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(resolve, resultTimeout);
       const origHandler = _sftpHandler;
