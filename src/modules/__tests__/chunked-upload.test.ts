@@ -120,7 +120,7 @@ describe('CHUNK_SIZE', () => {
 describe('uploadFileChunked', () => {
   beforeEach(() => {
     wsSendSpy.mockClear();
-    // Set up a mock WS on appState
+    // Set up a mock WS that auto-responds with sftp_upload_result after sftp_upload_end
     const mockWs = new WebSocket('ws://localhost:8081');
     mockWs.readyState = WebSocket.OPEN;
     mockWs.send = wsSendSpy;

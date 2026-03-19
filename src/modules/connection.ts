@@ -165,10 +165,11 @@ export async function uploadFileChunked(
       requestId
     }));
     // Wait for the server's sftp_upload_result (routed through sftpHandler).
-    // Use a one-shot listener on the ack resolver — server sends an ack or
-    // result after end. Give it 10s before timing out.
+    // Timeout: 10s in production, shorter in test (import.meta.env.MODE).
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    const resultTimeout = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test' ? 100 : 10000;
     await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 10000);
+      const timeout = setTimeout(resolve, resultTimeout);
       const origHandler = _sftpHandler;
       _sftpHandler = (msg) => {
         origHandler?.(msg);
@@ -681,8 +682,45 @@ function releaseWakeLock(): void {
   }
 }
 
+// Zombie WS probe: after resume, send a ping and wait for any WS activity.
+// If nothing arrives within the timeout, the connection is dead — force-close
+// and let the onclose handler trigger reconnect. (#153)
+const ZOMBIE_PROBE_TIMEOUT_MS = 5000;
+let _zombieProbeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Exported for testing. */
+export function _probeZombieConnection(): void {
+  if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
+
+  // Send an application-layer ping to provoke a response or trigger a close
+  appState.ws.send(JSON.stringify({ type: 'ping' }));
+
+  // Wrap onmessage: any incoming data proves the connection is alive
+  const ws = appState.ws;
+  const origOnMessage = ws.onmessage;
+  const cancelProbe = (): void => {
+    if (_zombieProbeTimer) {
+      clearTimeout(_zombieProbeTimer);
+      _zombieProbeTimer = null;
+    }
+    ws.onmessage = origOnMessage;
+  };
+
+  ws.onmessage = function (this: WebSocket, event: MessageEvent) {
+    cancelProbe();
+    origOnMessage?.call(this, event);
+  };
+
+  _zombieProbeTimer = setTimeout(() => {
+    _zombieProbeTimer = null;
+    // Restore original handler before closing so onclose logic runs cleanly
+    ws.onmessage = origOnMessage;
+    ws.close();
+  }, ZOMBIE_PROBE_TIMEOUT_MS);
+}
+
 // visibilitychange: immediately reconnect if the session dropped while hidden,
-// and reacquire the wake lock if a session is active.
+// probe for zombie connections, and reacquire the wake lock. (#153)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     if (appState.sshConnected) void acquireWakeLock();
@@ -693,6 +731,9 @@ document.addEventListener('visibilitychange', () => {
       document.getElementById('errorDialogOverlay')?.classList.add('hidden');
       _toast('Reconnecting…');
       _openWebSocket({ silent: true });
+    } else if (appState.currentProfile && appState.ws?.readyState === WebSocket.OPEN) {
+      // WS appears open — probe for zombie connection (#153)
+      _probeZombieConnection();
     }
   } else {
     releaseWakeLock();
