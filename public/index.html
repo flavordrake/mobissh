@@ -681,14 +681,18 @@
     </div>
   </div>
 
-  <!-- Debug overlay — shows console output on mobile devices without DevTools -->
-  <div id="debugOverlayPanel" class="debug-overlay hidden">
-    <div class="debug-overlay-header">
+  <!-- Debug FAB — floating bug icon, visible when debug enabled + panel collapsed -->
+  <button id="debugFab" class="debug-fab hidden" aria-label="Open debug panel">&#x1f41b;</button>
+
+  <!-- Debug panel — collapsible top panel, pushes content down (#208) -->
+  <div id="debugOverlayPanel" class="debug-panel hidden">
+    <div class="debug-panel-header">
       <span>Debug Log</span>
-      <button id="debugCopyBtn" class="debug-overlay-btn">Copy</button>
-      <button id="debugClearBtn" class="debug-overlay-btn">Clear</button>
+      <button id="debugCopyBtn" class="debug-panel-btn">Copy</button>
+      <button id="debugClearBtn" class="debug-panel-btn">Clear</button>
+      <button id="debugCollapseBtn" class="debug-panel-btn debug-panel-close" aria-label="Collapse debug panel">&#x2715;</button>
     </div>
-    <div id="debugOverlayLog" class="debug-overlay-log"></div>
+    <div id="debugOverlayLog" class="debug-panel-log"></div>
   </div>
 
   <!-- Recovery watchdog — loaded before app.js so it fires even on init failure.
