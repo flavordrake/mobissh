@@ -1,15 +1,20 @@
 /**
- * modules/debug.ts — On-screen debug overlay for mobile
+ * modules/debug.ts — Collapsible debug panel for mobile (#208)
  *
- * Captures console.log/warn/error output and displays
- * it in a floating panel. Controlled by the "Debug overlay" toggle in settings.
+ * Captures console.log/warn/error output and displays it in a
+ * collapsible top panel. Controlled by the "Debug overlay" toggle in settings.
+ *
+ * Collapsed: floating bug icon (FAB) at bottom-right above tab bar.
+ * Expanded: sticky panel at top, pushes content down, max 25vh.
  */
 
 const MAX_LINES = 200;
 let _lines: string[] = [];
 let _enabled = false;
+let _expanded = false;
 let _panel: HTMLElement | null = null;
 let _log: HTMLElement | null = null;
+let _fab: HTMLElement | null = null;
 const _origLog = console.log;
 const _origWarn = console.warn;
 const _origError = console.error;
@@ -30,8 +35,8 @@ function _appendLine(level: string, args: unknown[]): void {
   if (_log) {
     const div = document.createElement('div');
     div.textContent = line;
-    if (level === 'W') div.style.color = '#ffaa00';
-    if (level === 'E') div.style.color = '#ff4444';
+    if (level === 'W') div.classList.add('debug-line-warn');
+    if (level === 'E') div.classList.add('debug-line-error');
     _log.appendChild(div);
     if (_log.children.length > MAX_LINES) {
       _log.removeChild(_log.children[0]!);
@@ -64,24 +69,58 @@ function _hookConsole(): void {
   };
 }
 
+function _expand(): void {
+  _expanded = true;
+  if (_panel) _panel.classList.remove('hidden');
+  if (_fab) _fab.classList.add('hidden');
+}
+
+function _collapse(): void {
+  _expanded = false;
+  if (_panel) _panel.classList.add('hidden');
+  if (_fab) _fab.classList.remove('hidden');
+}
+
+function _hideAll(): void {
+  _expanded = false;
+  if (_panel) _panel.classList.add('hidden');
+  if (_fab) _fab.classList.add('hidden');
+}
+
 export function initDebugOverlay(): void {
   _panel = document.getElementById('debugOverlayPanel');
   _log = document.getElementById('debugOverlayLog');
+  _fab = document.getElementById('debugFab');
 
   const toggle = document.getElementById('debugOverlay') as HTMLInputElement | null;
   if (toggle) {
     _enabled = localStorage.getItem('debugOverlay') === 'true';
     toggle.checked = _enabled;
-    if (_enabled && _panel) _panel.classList.remove('hidden');
+    if (_enabled) {
+      // Start in collapsed state: FAB visible, panel hidden
+      if (_fab) _fab.classList.remove('hidden');
+    }
 
     toggle.addEventListener('change', () => {
       _enabled = toggle.checked;
       localStorage.setItem('debugOverlay', _enabled ? 'true' : 'false');
-      if (_panel) {
-        _panel.classList.toggle('hidden', !_enabled);
+      if (_enabled) {
+        _collapse(); // show FAB, hide panel
+      } else {
+        _hideAll();
       }
     });
   }
+
+  // FAB click -> expand panel
+  _fab?.addEventListener('click', () => {
+    _expand();
+  });
+
+  // Collapse button -> collapse panel, show FAB
+  document.getElementById('debugCollapseBtn')?.addEventListener('click', () => {
+    _collapse();
+  });
 
   document.getElementById('debugCopyBtn')?.addEventListener('click', () => {
     const text = _lines.join('\n');
