@@ -80,13 +80,22 @@ Options:
 - `--issue N` -- clean up a specific issue's branches
 - `--all` -- delete all bot branches (nuclear option)
 
-## Step 3: Fast gate
+## Step 3: Gate (5 tiers)
 
 For each candidate branch (in risk order: low first, then medium, then high):
 
 ```bash
 scripts/integrate-gate.sh <branch-name>
 ```
+
+The gate runs 5 tiers:
+1. **tsc** — TypeScript typecheck
+2. **eslint** — static analysis
+3. **vitest** — unit tests
+4. **coverage** — verifies source changes include test changes (rejects PRs with
+   0 test files changed when source files changed)
+5. **headless** — Playwright browser tests (auto-runs when PR touches UI files:
+   `ui.ts`, `index.html`, `app.css`). Skipped for non-UI PRs.
 
 The script:
 1. Stashes any local uncommitted changes

@@ -4,8 +4,12 @@
 # Checks out a bot branch, runs the fast gate tier scripts, reports results.
 # Optionally closes the PR/branch on failure.
 #
-# Fast gate = typecheck + lint + unit tests (NO browser tests).
-# Headless Playwright is a separate acceptance step (scripts/test-headless.sh).
+# Gate tiers:
+#   1. TypeScript typecheck
+#   2. ESLint
+#   3. Vitest unit tests
+#   4. Test coverage check (source changes must include test changes)
+#   5. Headless Playwright (auto-runs when PR touches UI files)
 #
 # When running inside a worktree (agent isolation), stash/restore is skipped
 # since the working directory is already isolated.
@@ -56,6 +60,8 @@ err() { echo "! $*" >&2; }
 TSC_RESULT=""
 LINT_RESULT=""
 UNIT_RESULT=""
+COVERAGE_RESULT=""
+HEADLESS_RESULT=""
 GATE_PASSED=true
 
 # Detect worktree isolation: if we're in a worktree (not the main .git dir),
@@ -165,24 +171,76 @@ else
   GATE_PASSED=false
 fi
 
+# Gate 4: Test coverage check — source changes must include test changes
+log "Gate 4/5: Test coverage check..."
+CHANGED_SRC=$(git diff --name-only origin/main -- 'src/modules/*.ts' 'server/index.js' 2>/dev/null | grep -v '__tests__' | grep -v '\.d\.ts$' || true)
+CHANGED_TESTS=$(git diff --name-only origin/main -- 'src/modules/__tests__/*' 'tests/*' 2>/dev/null || true)
+CHANGED_INFRA=$(git diff --name-only origin/main -- 'scripts/*' '.claude/*' '*.json' '*.md' 2>/dev/null || true)
+CHANGED_CSS_ONLY=false
+CHANGED_SRC_COUNT=$(echo "$CHANGED_SRC" | grep -c '[^[:space:]]' || true)
+CHANGED_TESTS_COUNT=$(echo "$CHANGED_TESTS" | grep -c '[^[:space:]]' || true)
+
+# CSS/HTML-only changes under 20 lines are exempt
+if [ "$CHANGED_SRC_COUNT" -eq 0 ]; then
+  CSS_HTML=$(git diff --name-only origin/main -- 'public/app.css' 'public/index.html' 2>/dev/null || true)
+  CSS_HTML_LINES=$(git diff --stat origin/main -- 'public/app.css' 'public/index.html' 2>/dev/null | tail -1 | grep -oP '\d+ insertion' | grep -oP '^\d+' || echo "0")
+  if [ -n "$CSS_HTML" ] && [ "${CSS_HTML_LINES:-0}" -lt 20 ]; then
+    CHANGED_CSS_ONLY=true
+  fi
+fi
+
+if [ "$CHANGED_SRC_COUNT" -gt 0 ] && [ "$CHANGED_TESTS_COUNT" -eq 0 ] && [ "$CHANGED_CSS_ONLY" = false ]; then
+  COVERAGE_RESULT="fail"
+  err "coverage: FAIL — ${CHANGED_SRC_COUNT} source file(s) changed, 0 test files changed"
+  err "  Changed: ${CHANGED_SRC}"
+  GATE_PASSED=false
+else
+  COVERAGE_RESULT="pass"
+  if [ "$CHANGED_SRC_COUNT" -gt 0 ]; then
+    ok "coverage: pass (${CHANGED_SRC_COUNT} src, ${CHANGED_TESTS_COUNT} test files)"
+  else
+    ok "coverage: pass (no source changes or exempt)"
+  fi
+fi
+
+# Gate 5: Headless Playwright for UI-touching PRs
+log "Gate 5/5: Headless Playwright (UI PRs only)..."
+TOUCHES_UI=$(git diff --name-only origin/main -- 'src/modules/ui.ts' 'public/index.html' 'public/app.css' 2>/dev/null | head -1 || true)
+if [ -n "$TOUCHES_UI" ]; then
+  log "PR touches UI files — running headless Playwright..."
+  if scripts/test-headless.sh 2>&1; then
+    HEADLESS_RESULT="pass"
+    ok "headless: pass"
+  else
+    HEADLESS_RESULT="fail"
+    err "headless: FAIL"
+    GATE_PASSED=false
+  fi
+else
+  HEADLESS_RESULT="skip"
+  ok "headless: skip (no UI files changed)"
+fi
+
 # Summary
 echo ""
 if [ "$GATE_PASSED" = true ]; then
-  ok "FAST GATE PASSED: ${BRANCH}"
-  ok "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT}"
+  ok "GATE PASSED: ${BRANCH}"
+  ok "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT} | coverage: ${COVERAGE_RESULT} | headless: ${HEADLESS_RESULT}"
 else
-  err "FAST GATE FAILED: ${BRANCH}"
-  err "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT}"
+  err "GATE FAILED: ${BRANCH}"
+  err "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT} | coverage: ${COVERAGE_RESULT} | headless: ${HEADLESS_RESULT}"
 
   # Close PR if requested
   if [ "$CLOSE_ON_FAIL" = true ] && [ -n "$PR_NUMBER" ]; then
     log "Closing PR #${PR_NUMBER}..."
     gh pr close "$PR_NUMBER" --comment "$(cat <<COMMENT
-Closing: fast gate failed during integration triage.
+Closing: gate failed during integration triage.
 
 **tsc:** ${TSC_RESULT}
 **eslint:** ${LINT_RESULT}
 **vitest:** ${UNIT_RESULT}
+**coverage:** ${COVERAGE_RESULT}
+**headless:** ${HEADLESS_RESULT}
 
 The bot can retry from the issue if the root cause is addressed.
 COMMENT
