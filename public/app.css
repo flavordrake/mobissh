@@ -1790,31 +1790,27 @@ hr {
 /* Debug FAB — floating bug icon, bottom-right above tab bar (#208) */
 .debug-fab {
   position: fixed;
-  bottom: calc(var(--tab-height) + 12px);
-  right: 12px;
-  z-index: 10000;
-  width: 44px;
-  height: 44px;
+  top: calc(env(safe-area-inset-top) + 4px);
+  right: 6px;
+  z-index: 10002;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  border: 1px solid var(--accent);
-  background: var(--bg-panel);
-  color: var(--accent);
-  font-size: 20px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   -webkit-tap-highlight-color: transparent;
 }
 
 /* Debug panel — collapsible top panel, pushes content down (#208) */
 .debug-panel {
-  position: sticky;
-  top: 0;
-  left: 0;
-  right: 0;
+  flex-shrink: 0;
   max-height: 25vh;
   background: rgba(0, 0, 0, 0.92);
   z-index: 10001;
