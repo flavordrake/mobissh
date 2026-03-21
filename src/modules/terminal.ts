@@ -102,7 +102,10 @@ function shouldNotify(): boolean {
   if (localStorage.getItem('termNotifications') !== 'true') return false;
   if (Notification.permission !== 'granted') return false;
   const backgroundOnly = localStorage.getItem('notifBackgroundOnly') !== 'false';
-  if (backgroundOnly && (document.hasFocus() || document.visibilityState === 'visible')) return false;
+  // Only suppress if BOTH signals confirm user is actively looking at the app.
+  // Android PWA: hasFocus() can be true when backgrounded, visibilityState can
+  // stay 'visible' during app switching. Either alone is unreliable.
+  if (backgroundOnly && document.hasFocus() && document.visibilityState === 'visible') return false;
   const cooldownMs = parseInt(localStorage.getItem('notifCooldown') ?? '15000') || 15000;
   if (Date.now() - _lastNotifTime < cooldownMs) return false;
   return true;
