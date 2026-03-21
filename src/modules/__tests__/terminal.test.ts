@@ -192,25 +192,27 @@ describe('background-only filtering (#94)', () => {
     expect(getNotifications().length).toBe(1);
   });
 
-  it('blocks notifications when backgroundOnly=true and page is visible', () => {
+  // _addNotification always adds to the in-UI bell badge regardless of settings.
+  // Only fireNotification (Android push) is gated by shouldNotify().
+  it('adds to bell badge even when backgroundOnly=true and page is visible', () => {
     enableNotifications(false);
     storage.set('notifBackgroundOnly', 'true');
-    _addNotification('should be blocked');
-    expect(getNotifications().length).toBe(0);
+    _addNotification('should show in badge');
+    expect(getNotifications().length).toBe(1);
   });
 
-  it('blocks notifications when termNotifications is disabled', () => {
+  it('adds to bell badge even when termNotifications is disabled', () => {
     enableNotifications(false);
     storage.set('termNotifications', 'false');
-    _addNotification('should be blocked');
-    expect(getNotifications().length).toBe(0);
+    _addNotification('should show in badge');
+    expect(getNotifications().length).toBe(1);
   });
 
-  it('blocks notifications when Notification.permission is not granted', () => {
+  it('adds to bell badge even when Notification.permission is not granted', () => {
     enableNotifications(false);
     vi.stubGlobal('Notification', { permission: 'denied' });
-    _addNotification('no permission');
-    expect(getNotifications().length).toBe(0);
+    _addNotification('no permission but still in badge');
+    expect(getNotifications().length).toBe(1);
   });
 
   it('allows notifications when backgroundOnly=false and page is visible', () => {
