@@ -29,7 +29,7 @@ async function enableNotifications(page) {
     // Mock ServiceWorkerRegistration.showNotification
     const mockReg = {
       showNotification: (title, options) => {
-        window.__notifications.push({ title, body: options?.body ?? '' });
+        window.__notifications.push({ title, body: options?.body ?? '', tag: options?.tag ?? '' });
         return Promise.resolve();
       },
     };
@@ -244,6 +244,28 @@ test.describe('Bell badge UI (#33)', { tag: '@headless-adequate' }, () => {
 });
 
 test.describe('Test notification button (#32)', { tag: '@headless-adequate' }, () => {
+
+  test('test notification includes tag: mobissh-agent (#160)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableNotifications(page);
+
+    // Navigate to settings
+    await page.evaluate(() => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelector('[data-panel="settings"]')?.classList.add('active');
+      document.getElementById('panel-settings')?.classList.add('active');
+    });
+    await page.waitForTimeout(200);
+
+    // Click the test notification button
+    await page.click('#testNotifBtn');
+    await page.waitForTimeout(500);
+
+    const notifs = await getNotifications(page);
+    expect(notifs.length).toBe(1);
+    expect(notifs[0].tag).toBe('mobissh-agent');
+  });
 
   test('test notification button uses ServiceWorker.showNotification', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);

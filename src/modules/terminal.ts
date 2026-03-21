@@ -106,10 +106,10 @@ function shouldNotify(): boolean {
   return true;
 }
 
-function fireNotification(title: string, body: string): void {
+export function fireNotification(title: string, body: string): void {
   if (!('serviceWorker' in navigator)) return;
   void navigator.serviceWorker.ready.then((reg) => {
-    return reg.showNotification(title, { body });
+    return reg.showNotification(title, { body, tag: 'mobissh-agent' });
   }).then(() => {
     _lastNotifTime = Date.now();
   }).catch(() => { /* permission may have been revoked */ });

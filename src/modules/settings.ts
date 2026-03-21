@@ -188,7 +188,7 @@ export function initSettingsPanel(): void {
       const sendNotification = (): void => {
         void navigator.serviceWorker.ready.then((reg) => {
           console.log('[settings] SW registration ready, showing notification');
-          return reg.showNotification('MobiSSH', { body: 'Test notification' });
+          return reg.showNotification('MobiSSH', { body: 'Test notification', tag: 'mobissh-agent' });
         }).then(() => {
           console.log('[settings] Notification shown via SW');
           _toast('Notification sent.');
