@@ -660,10 +660,16 @@ export function initTerminalActions(): void {
     focusIME();
   });
 
+  // Prevent key bar taps from stealing focus / dismissing keyboard (#225)
+  const keyBar = document.getElementById('key-bar');
+  if (keyBar) {
+    keyBar.addEventListener('mousedown', (e) => { e.preventDefault(); });
+    keyBar.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
+  }
+
   const keys: Record<string, string> = {
     keyCtrlC:  '\x03',
     keyCtrlZ:  '\x1a',
-    keyEsc:    '\x1b',
     keyTab:    '\t',
     keySlash:  '/',
     keyPipe:   '|',
@@ -676,8 +682,11 @@ export function initTerminalActions(): void {
     keyEnd:    '\x1b[F',
     keyPgUp:   '\x1b[5~',
     keyPgDn:   '\x1b[6~',
+    keyCtrlB:  '\x02',
+    keyCtrlD:  '\x04',
+    // Esc on row-keys (depth-1 primary)
+    keyEscM2:  '\x1b',
     // Merged depth-1 row nav keys (same sequences, different element IDs)
-    keyEscM:   '\x1b',
     keyUpM:    '\x1b[A',
     keyDownM:  '\x1b[B',
     keyLeftM:  '\x1b[D',
@@ -686,6 +695,8 @@ export function initTerminalActions(): void {
     keyEndM:   '\x1b[F',
     keyPgUpM:  '\x1b[5~',
     keyPgDnM:  '\x1b[6~',
+    keyCtrlBM: '\x02',
+    keyCtrlDM: '\x04',
   };
 
   for (const [id, seq] of Object.entries(keys)) {

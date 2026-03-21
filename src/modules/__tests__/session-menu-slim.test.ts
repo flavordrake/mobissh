@@ -28,7 +28,7 @@ describe('issue-217: slim session menu', () => {
       const ctrlC = row!.buttons.find((b) => b.id === 'keyCtrlC');
       expect(ctrlC).toBeDefined();
       expect(ctrlC!.sequence).toBe('\x03');
-      expect(ctrlC!.label).toBe('C-c');
+      expect(ctrlC!.label).toBe('^C');
     });
 
     it('row-keys contains keyCtrlZ with correct sequence', () => {
@@ -37,7 +37,7 @@ describe('issue-217: slim session menu', () => {
       const ctrlZ = row!.buttons.find((b) => b.id === 'keyCtrlZ');
       expect(ctrlZ).toBeDefined();
       expect(ctrlZ!.sequence).toBe('\x1a');
-      expect(ctrlZ!.label).toBe('C-z');
+      expect(ctrlZ!.label).toBe('^Z');
     });
   });
 
