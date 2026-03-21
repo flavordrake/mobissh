@@ -26,8 +26,6 @@ export const DEFAULT_KEY_BAR_CONFIG: KeyBarConfig = [
     id: 'row-keys',
     buttons: [
       { id: 'keyEsc',   label: 'Esc',  sequence: '\x1b' },
-      { id: 'keyCtrlC', label: '^C',   sequence: '\x03' },
-      { id: 'keyCtrlZ', label: '^Z',   sequence: '\x1a' },
       { id: 'keyTab',   label: '↹',    sequence: '\t' },
       { id: 'keySlash', label: '/',    sequence: '/' },
       { id: 'keyDash',  label: '-',    sequence: '-' },
@@ -45,6 +43,8 @@ export const DEFAULT_KEY_BAR_CONFIG: KeyBarConfig = [
       { id: 'keyEnd',   label: 'End',  sequence: '\x1b[F' },
       { id: 'keyPgUp',  label: 'PgUp', sequence: '\x1b[5~' },
       { id: 'keyPgDn',  label: 'PgDn', sequence: '\x1b[6~' },
+      { id: 'keyCtrlC', label: '^C',   sequence: '\x03' },
+      { id: 'keyCtrlZ', label: '^Z',   sequence: '\x1a' },
       { id: 'keyCtrlB', label: '^B',   sequence: '\x02' },
       { id: 'keyCtrlD', label: '^D',   sequence: '\x04' },
     ],
