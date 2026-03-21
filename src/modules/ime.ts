@@ -17,7 +17,7 @@
  */
 
 import type { IMEDeps } from './types.js';
-import { KEY_MAP } from './constants.js';
+import { KEY_MAP, isMediaKey } from './constants.js';
 import { appState } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { focusIME, setCtrlActive } from './ui.js';
@@ -800,6 +800,9 @@ export function initIMEInput(): void {
 
   // ── keydown: special keys not captured by 'input' ─────────────────────
   ime.addEventListener('keydown', (e) => {
+    // Never intercept hardware media/volume keys — let the system handle them (#221)
+    if (isMediaKey(e.key)) return;
+
     // Enter: commit held text and send \r
     if (e.key === 'Enter') {
       ime.setAttribute('autocomplete', 'off');
@@ -1100,6 +1103,9 @@ export function initIMEInput(): void {
   });
 
   directEl.addEventListener('keydown', (e) => {
+    // Never intercept hardware media/volume keys — let the system handle them (#221)
+    if (isMediaKey(e.key)) return;
+
     if (e.ctrlKey && !e.altKey && e.key.length === 1) {
       const code = e.key.toLowerCase().charCodeAt(0) - 96;
       if (code >= 1 && code <= 26) {

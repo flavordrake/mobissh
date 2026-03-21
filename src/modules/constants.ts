@@ -273,6 +273,12 @@ export const KEY_MAP: Record<string, string> = {
 
 export const FONT_SIZE = { MIN: 8, MAX: 32 } as const;
 
+// Hardware media/volume keys that must never be intercepted (#221).
+// The browser should pass these through to the OS for system volume, playback, etc.
+export function isMediaKey(key: string): boolean {
+  return key.startsWith('Audio') || key.startsWith('Media');
+}
+
 // HTML escaping for safe rendering of user-supplied strings
 export function escHtml(str: string): string {
   return str
