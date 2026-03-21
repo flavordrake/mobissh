@@ -77,12 +77,13 @@ for item in data:
   prs)
     # Search PRs by looking at git log for commits mentioning the query
     echo "PRs referencing '$QUERY' (from git log):"
-    PR_REFS=$(git log --all --oneline --grep="$QUERY" 2>/dev/null | head -20)
+    PR_REFS=$(git log --all --oneline --max-count=20 --grep="$QUERY" 2>&1)
     if [ -z "$PR_REFS" ]; then
       echo "  No commits found mentioning: $QUERY"
     else
       echo "$PR_REFS" | while IFS= read -r line; do
-        refs=$(echo "$line" | grep -oP '#\d+' | tr '\n' ' ' | sed 's/ $//')
+        refs=$(echo "$line" | grep -oP '#\d+' || true)
+        refs=$(echo "$refs" | tr '\n' ' ' | sed 's/ $//')
         if [ -n "$refs" ]; then
           echo "  $line  (refs: $refs)"
         else
@@ -95,12 +96,11 @@ for item in data:
   code)
     # Search for the query in the current codebase using git grep
     echo "Code references for '$QUERY':"
-    CODE_REFS=$(git grep -l "$QUERY" 2>/dev/null | head -20)
+    CODE_REFS=$(git grep -c "$QUERY" 2>&1 | head -20)
     if [ -z "$CODE_REFS" ]; then
       echo "  No code references found for: $QUERY"
     else
-      echo "$CODE_REFS" | while IFS= read -r file; do
-        count=$(git grep -c "$QUERY" "$file" 2>/dev/null | cut -d: -f2)
+      echo "$CODE_REFS" | while IFS=: read -r file count; do
         echo "  $file  ($count matches)"
       done
     fi

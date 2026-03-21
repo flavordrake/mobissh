@@ -52,9 +52,11 @@ extract_refs() {
   echo "$1" | grep -oP '#\d+' || true
 }
 
-# Get commits with --follow to track renames
 LOG_FORMAT="%H%x09%h%x09%aI%x09%an%x09%s"
-LOG_OUTPUT=$(git log --follow --format="$LOG_FORMAT" -- "$FILE" 2>/dev/null || true)
+if ! LOG_OUTPUT=$(git log --follow --max-count=50 --format="$LOG_FORMAT" -- "$FILE" 2>&1); then
+  echo "git log failed for: $FILE" >&2
+  exit 1
+fi
 
 if [ -z "$LOG_OUTPUT" ]; then
   echo "No commits found for: $FILE" >&2

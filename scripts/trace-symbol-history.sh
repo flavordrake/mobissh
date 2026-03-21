@@ -60,11 +60,15 @@ if [ -n "$FILE_SCOPE" ]; then
   FILE_ARGS=("--" "$FILE_SCOPE")
 fi
 
-# Pickaxe: commits that added/removed the symbol
-PICKAXE_OUTPUT=$(git log --format="$LOG_FORMAT" -S "$SYMBOL" "${FILE_ARGS[@]+"${FILE_ARGS[@]}"}" 2>/dev/null || true)
+if ! PICKAXE_OUTPUT=$(git log --max-count=50 --format="$LOG_FORMAT" -S "$SYMBOL" "${FILE_ARGS[@]+"${FILE_ARGS[@]}"}" 2>&1); then
+  echo "git log -S failed for: $SYMBOL" >&2
+  exit 1
+fi
 
-# Grep: commits that changed lines matching the symbol
-GREP_OUTPUT=$(git log --format="$LOG_FORMAT" -G "$SYMBOL" "${FILE_ARGS[@]+"${FILE_ARGS[@]}"}" 2>/dev/null || true)
+if ! GREP_OUTPUT=$(git log --max-count=50 --format="$LOG_FORMAT" -G "$SYMBOL" "${FILE_ARGS[@]+"${FILE_ARGS[@]}"}" 2>&1); then
+  echo "git log -G failed for: $SYMBOL" >&2
+  exit 1
+fi
 
 # Merge and deduplicate by hash, preserving order
 ALL_OUTPUT=$(printf '%s\n%s\n' "$PICKAXE_OUTPUT" "$GREP_OUTPUT" | awk -F'\t' '!seen[$1]++ && $1 != ""')
@@ -80,6 +84,14 @@ if [ -n "$FILE_SCOPE" ]; then
 fi
 echo ""
 
+# Build hash set of pickaxe hits for O(1) lookup (avoids O(N*M) grep per line)
+declare -A PICKAXE_HASHES
+if [ -n "$PICKAXE_OUTPUT" ]; then
+  while IFS=$'\t' read -r ph _rest; do
+    PICKAXE_HASHES["$ph"]=1
+  done <<< "$PICKAXE_OUTPUT"
+fi
+
 while IFS=$'\t' read -r short_hash date author subject; do
   refs=$(extract_refs "$subject" | tr '\n' ' ' | sed 's/ $//')
   ref_str=""
@@ -89,7 +101,7 @@ while IFS=$'\t' read -r short_hash date author subject; do
 
   # Determine if this was a pickaxe hit (added/removed) or grep hit (usage change)
   hit_type="changed"
-  if [ -n "$PICKAXE_OUTPUT" ] && echo "$PICKAXE_OUTPUT" | grep -q "^${short_hash}"; then
+  if [[ -v "PICKAXE_HASHES[$short_hash]" ]]; then
     hit_type="added/removed"
   fi
 
