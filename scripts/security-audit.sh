@@ -114,11 +114,24 @@ CONTEXT_FILE="${AUDIT_DIR}/audit-context.md"
 {
   echo "# MobiSSH — Security Audit Context"
   echo ""
+  echo "## Project Overview and Architecture"
   cat CLAUDE.md
   echo -e "\n---\n"
+  echo "## Security Policy"
   cat .claude/rules/security.md
   echo -e "\n---\n"
+  echo "## Server Deployment (Docker + Tailscale)"
   cat .claude/rules/server.md
+  echo -e "\n---\n"
+  echo "## Code Style (explains escHtml usage, CSS-over-inline policy)"
+  cat .claude/rules/code-style.md
+  echo -e "\n---\n"
+  echo "## By-Design Decisions (do NOT flag these)"
+  echo "- ws:// WebSocket: allowed behind explicit danger-zone toggle with user acknowledgment"
+  echo "- HTTP server on port 8081: Tailscale serve handles TLS termination externally"
+  echo "- innerHTML usage: all user-controlled strings pass through escHtml() sanitizer"
+  echo "- No CSP header: PWA served over Tailscale (private network), not public internet"
+  echo "- PasswordCredential vault: Chrome/Android only by design, iOS blocked until WebAuthn"
 } > "$CONTEXT_FILE"
 
 AUDIT_PROMPT="You are a security auditor. The project documentation above describes MobiSSH — a mobile SSH PWA that proxies SSH connections over WebSocket via Tailscale. It uses AES-GCM encrypted vault for credentials (Chrome/Android only).
@@ -145,14 +158,15 @@ Output as markdown."
 log "Running Gemini security audit..."
 if ! command -v gemini &>/dev/null; then
   log "gemini: not installed — skipping"
-elif [ -z "${GEMINI_API_KEY:-}" ] && ! grep -q "apiKey" ~/.gemini/settings.json 2>/dev/null; then
-  log "gemini: no API key configured — skipping (set GEMINI_API_KEY or configure ~/.gemini/settings.json)"
 else
-  GEMINI_PROMPT="Read ${CONTEXT_FILE} then audit the codebase for security issues. ${AUDIT_PROMPT}"
+  GEMINI_PROMPT="IMPORTANT: First read the file ${CONTEXT_FILE} — it contains the project architecture, security policy, and deployment model. All findings must be evaluated against this context. Do NOT report issues that the documentation explicitly addresses as by-design (e.g., ws:// behind a danger-zone toggle, HTTP server behind Tailscale TLS, innerHTML with escHtml sanitization). ${AUDIT_PROMPT}"
   timeout 300 gemini -p "$GEMINI_PROMPT" > "${AUDIT_DIR}/gemini-audit.md" 2>&1 || {
     err "Gemini audit failed or timed out (5min limit)"
   }
-  if [ -s "${AUDIT_DIR}/gemini-audit.md" ]; then
+  # Check if output is an auth error vs real audit
+  if grep -qi "please set an auth\|API_KEY\|authentication" "${AUDIT_DIR}/gemini-audit.md" 2>/dev/null; then
+    log "gemini: auth not configured — run 'gemini auth' to log in"
+  elif [ -s "${AUDIT_DIR}/gemini-audit.md" ]; then
     ok "gemini: audit complete ($(wc -l < "${AUDIT_DIR}/gemini-audit.md") lines)"
   fi
 fi
@@ -162,14 +176,15 @@ fi
 log "Running Codex security audit..."
 if ! command -v codex &>/dev/null; then
   log "codex: not installed — skipping"
-elif [ -z "${OPENAI_API_KEY:-}" ]; then
-  log "codex: no API key configured — skipping (set OPENAI_API_KEY)"
 else
-  CODEX_PROMPT="Read ${CONTEXT_FILE} then audit the codebase for security issues. ${AUDIT_PROMPT}"
+  CODEX_PROMPT="IMPORTANT: First read the file ${CONTEXT_FILE} — it contains the project architecture, security policy, and deployment model. All findings must be evaluated against this context. Do NOT report issues that the documentation explicitly addresses as by-design (e.g., ws:// behind a danger-zone toggle, HTTP server behind Tailscale TLS, innerHTML with escHtml sanitization). ${AUDIT_PROMPT}"
   timeout 300 codex exec "$CODEX_PROMPT" > "${AUDIT_DIR}/codex-audit.md" 2>&1 || {
     err "Codex audit failed or timed out (5min limit)"
   }
-  if [ -s "${AUDIT_DIR}/codex-audit.md" ]; then
+  # Check if output is an auth error vs real audit
+  if grep -qi "401\|Unauthorized\|authentication\|login" "${AUDIT_DIR}/codex-audit.md" 2>/dev/null; then
+    log "codex: auth not configured — run 'codex login' to authenticate"
+  elif [ -s "${AUDIT_DIR}/codex-audit.md" ]; then
     ok "codex: audit complete ($(wc -l < "${AUDIT_DIR}/codex-audit.md") lines)"
   fi
 fi
