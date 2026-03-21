@@ -5,7 +5,7 @@
  * The WebSocket connection itself is always live (no caching).
  */
 
-const CACHE_NAME = 'mobissh-542dad56';
+const CACHE_NAME = 'mobissh-d33fe98a';
 
 // Files to cache for offline shell.
 // Relative paths so they resolve correctly when served at a subpath (e.g. /ssh/).
@@ -61,15 +61,26 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Notification click: focus or open the app when tapping a notification
+// Notification click: focus or open the app when tapping a notification.
+// Uses origin + pathname prefix matching so hash routes (#connect, #terminal)
+// and query params don't prevent focusing the existing PWA window (#219).
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const scopeUrl = new URL(self.registration.scope);
       // Focus existing window if available
       for (const client of clients) {
-        if (client.url.includes(self.registration.scope) && 'focus' in client) {
-          return client.focus();
+        try {
+          const clientUrl = new URL(client.url);
+          const sameApp =
+            clientUrl.origin === scopeUrl.origin &&
+            clientUrl.pathname.startsWith(scopeUrl.pathname);
+          if (sameApp && 'focus' in client) {
+            return client.focus();
+          }
+        } catch (_) {
+          // Malformed URL — skip this client
         }
       }
       // Otherwise open a new window
