@@ -173,6 +173,49 @@ Validate that a TRACE is complete:
 - If pivots exist, each has triggering evidence and delta
 - If telemetry exists, it has corresponding strategy references
 
+## 7. Fractal TRACE Architecture
+
+TRACEs operate at multiple levels:
+
+### Level 1: Agent TRACE
+Single agent, single issue. `.traces/trace-issue-N-*/`.
+Captures the agent's decision chain for one task.
+
+### Level 2: Session TRACE
+The orchestrator session generates a TRACE covering the full session arc —
+multiple cycles, multiple agents, user corrections, strategy pivots.
+`.traces/trace-session-*/`. Key content:
+- Issues worked on and outcomes
+- **User corrections** (the most valuable data — "no, that's wrong" moments)
+- Process improvements discovered and where captured
+- Cross-agent dependencies and sequencing decisions
+
+### Level 3: Project TRACE (future)
+Aggregation across sessions. How a feature evolved from issue filing through
+multiple sessions to release.
+
+### Prior-run enrichment
+
+When an agent is spawned, the orchestrator checks `.traces/` for prior runs
+on the same issue and includes a distilled summary in the agent prompt:
+
+```
+## Prior TRACE context
+- trace-issue-N-20260315: FAIL — "touchstart preventDefault blocks scroll"
+- trace-issue-N-20260316: PARTIAL — "tabindex=-1 prevents focus but not on all Android"
+
+Session learnings: "User correction: ^keys go at end, not interspersed"
+```
+
+This gives the agent accumulated intelligence without loading full trace files.
+
+### Context exhaustion
+
+Before context compaction (or on session end), the orchestrator should:
+1. Write session learnings to the session TRACE
+2. The compaction summary references the TRACE for full details
+3. New context window starts with TRACE pointers, not raw history
+
 ## Outcome Goal
 
 Every TRACE directory should be a self-contained training sample for a

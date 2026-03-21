@@ -85,6 +85,24 @@ Issue #{N}: {title}
 ## Prior failures
 {section from bot-attempts.md for this issue, or "No prior attempts"}
 
+## Prior TRACE context
+{check .traces/ for existing traces related to this issue:
+  ls .traces/trace-*issue-{N}* 2>/dev/null
+If found, read each TRACE.md and extract:
+  - status (success/failure/partial)
+  - knowledge seed (one-sentence heuristic)
+  - pivots (what was tried and why it changed)
+  - ambiguity gap (what was unclear)
+Include as a focused summary — NOT the full trace content.
+If no prior traces: "No prior traces."}
+
+## Session learnings
+{include any session-level learnings relevant to the agent's task scope.
+These come from user corrections and process discoveries in the current
+orchestrator session. Focus on strategy, not implementation details.
+Example: "User correction: ^keys go at end of keybar, not interspersed"
+Example: "IME state machine is source of truth — no external detection logic"}
+
 ## Files in scope
 {list of files, read each to extract relevant context snippets}
 
