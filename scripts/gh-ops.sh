@@ -217,7 +217,9 @@ case "$CMD" in
       esac
     done
 
-    # Step 0: Ensure PR branch is up-to-date with main before merging
+    # Step 0: Ensure PR branch is up-to-date with main before merging.
+    # Uses a temporary local branch to avoid conflicting with worktrees
+    # that may still hold the PR branch (#235).
     echo "==> Checking PR #${PR_NUM} is up-to-date with main" >&2
     PR_BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName' 2>/dev/null || true)
     if [ -n "$PR_BRANCH" ]; then
@@ -225,21 +227,26 @@ case "$CMD" in
       BEHIND=$(git rev-list --count "origin/${PR_BRANCH}..origin/main" 2>/dev/null || echo "0")
       if [ "$BEHIND" -gt 0 ]; then
         echo "==> Branch is ${BEHIND} commit(s) behind main — merging main into PR branch" >&2
-        git checkout "$PR_BRANCH" 2>/dev/null || git checkout -b "$PR_BRANCH" "origin/${PR_BRANCH}"
+        # Use a temp branch to avoid conflicts with worktrees holding PR_BRANCH
+        TEMP_BRANCH="_integrate-merge-${PR_NUM}"
+        git branch -D "$TEMP_BRANCH" 2>/dev/null || true
+        git checkout -b "$TEMP_BRANCH" "origin/${PR_BRANCH}"
         if ! git merge origin/main --no-edit 2>/dev/null; then
           echo "Error: merge of main into ${PR_BRANCH} failed — resolve conflicts first" >&2
+          git checkout main 2>/dev/null || true
+          git branch -D "$TEMP_BRANCH" 2>/dev/null || true
           exit 1
         fi
-        git push origin "$PR_BRANCH" 2>/dev/null
+        git push origin "${TEMP_BRANCH}:${PR_BRANCH}" 2>/dev/null
         git checkout main 2>/dev/null || true
+        git branch -D "$TEMP_BRANCH" 2>/dev/null || true
       else
         echo "==> Branch is up-to-date with main" >&2
       fi
     fi
 
-    # Step 1: Merge PR (reuses pr-merge worktree cleanup)
+    # Step 1: Merge PR — worktree cleanup deferred to release (#235)
     echo "==> Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
-    _cleanup_pr_worktree "$PR_NUM"
     gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch
 
     # Step 2: Close issue
