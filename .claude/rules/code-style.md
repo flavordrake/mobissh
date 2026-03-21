@@ -6,6 +6,7 @@
 - `node_modules/` is gitignored. Install via `npm install` in `server/`.
 - Build step is TypeScript compilation only. No heavy bundlers (webpack, vite) unless justified.
 - **Compiled JS (`public/app.js`, `public/modules/*.js`) is gitignored.** Do NOT commit compiled output. It is built automatically by Docker (`Dockerfile`), `scripts/server-ctl.sh`, and `scripts/test-headless.sh`. Run `npx tsc` locally if needed for development.
+- **`public/sw.js` cache hash is build-derived — do NOT commit hash changes.** `container-ctl.sh` modifies `sw.js` in-place with a content hash (known design flaw #237). If `sw.js` shows as dirty with only a `CACHE_NAME` change, restore it: `git checkout -- public/sw.js`.
 - **No compound `&&` chains.** Use wrapper scripts, not `&&`-chained raw commands. Chained commands cause false positive failures (e.g., local branch delete fails but remote merge succeeded, exit 1 blocks downstream steps).
   - Merge + close: `scripts/gh-ops.sh integrate <PR> <issue>`
   - Delegate setup: `scripts/gh-ops.sh delegate <issue> [--label L]`
