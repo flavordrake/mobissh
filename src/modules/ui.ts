@@ -623,33 +623,49 @@ function _attachRepeat(element: HTMLElement, onRepeat: () => void, onPress?: () 
     _delayTimer = _intervalTimer = null;
   }
 
+  let _fired = false;
+  let _cancelled = false;
+
   element.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     _startX = e.clientX;
     _startY = e.clientY;
+    _fired = false;
+    _cancelled = false;
     if (onPress) {
       _hapticTimer = setTimeout(() => { _hapticTimer = null; onPress(); }, HAPTIC_DEFER_MS);
     }
-    onRepeat();
+    // Don't fire immediately — wait for repeat delay. If the user lifts before
+    // the delay, fire once on pointerup (tap). If they drag away, cancel.
     _delayTimer = setTimeout(() => {
+      _fired = true;
+      onRepeat(); // first repeat fires after delay
       _intervalTimer = setInterval(onRepeat, KEY_REPEAT.INTERVAL_MS);
     }, KEY_REPEAT.DELAY_MS);
   });
 
   element.addEventListener('pointermove', (e) => {
-    if (_hapticTimer !== null) {
-      const dx = Math.abs(e.clientX - _startX);
-      const dy = Math.abs(e.clientY - _startY);
-      if (dx > HAPTIC_SCROLL_THRESHOLD || dy > HAPTIC_SCROLL_THRESHOLD) {
+    const dx = Math.abs(e.clientX - _startX);
+    const dy = Math.abs(e.clientY - _startY);
+    // Cancel if dragged beyond threshold (user is scrolling, not tapping)
+    if (dx > HAPTIC_SCROLL_THRESHOLD || dy > HAPTIC_SCROLL_THRESHOLD) {
+      _cancelled = true;
+      _clear();
+      if (_hapticTimer !== null) {
         clearTimeout(_hapticTimer);
         _hapticTimer = null;
       }
     }
   });
 
-  element.addEventListener('pointerup', () => { _clear(); setTimeout(focusIME, 50); });
-  element.addEventListener('pointercancel', _clear);
-  element.addEventListener('pointerleave', _clear);
+  element.addEventListener('pointerup', () => {
+    _clear();
+    // If not cancelled and not already fired by repeat, fire once (tap)
+    if (!_cancelled && !_fired) onRepeat();
+    setTimeout(focusIME, 50);
+  });
+  element.addEventListener('pointercancel', () => { _cancelled = true; _clear(); });
+  element.addEventListener('pointerleave', () => { _cancelled = true; _clear(); });
   element.addEventListener('contextmenu', (e) => { e.preventDefault(); });
 }
 
@@ -660,11 +676,16 @@ export function initTerminalActions(): void {
     focusIME();
   });
 
-  // Prevent key bar taps from stealing focus / dismissing keyboard (#225)
+  // Prevent key bar from stealing focus / dismissing keyboard (#225).
+  // 1. tabindex="-1" makes buttons unfocusable (prevents Android keyboard dismiss)
+  // 2. mousedown preventDefault handles desktop focus steal
+  // No touchstart preventDefault — that blocks horizontal scroll.
   const keyBar = document.getElementById('key-bar');
   if (keyBar) {
     keyBar.addEventListener('mousedown', (e) => { e.preventDefault(); });
-    keyBar.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
+    keyBar.querySelectorAll<HTMLElement>('.key-btn').forEach((btn) => {
+      btn.setAttribute('tabindex', '-1');
+    });
   }
 
   const keys: Record<string, string> = {

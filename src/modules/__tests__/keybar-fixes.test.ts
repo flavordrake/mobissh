@@ -20,24 +20,23 @@ describe('issues #225/#226: keybar fixes', () => {
   });
 
   describe('#226: key order and label format', () => {
-    it('row-keys order: Esc ^C ^Z Tab / - |', () => {
+    it('row-keys order: Esc Tab / - | (no ctrl keys)', () => {
       const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-keys');
       expect(row).toBeDefined();
       const ids = row!.buttons.map((b) => b.id);
       expect(ids).toEqual([
-        'keyEsc', 'keyCtrlC', 'keyCtrlZ', 'keyTab',
-        'keySlash', 'keyDash', 'keyPipe',
+        'keyEsc', 'keyTab', 'keySlash', 'keyDash', 'keyPipe',
       ]);
     });
 
-    it('row-nav order: arrows Home End PgUp PgDn ^B ^D', () => {
+    it('row-nav order: arrows Home End PgUp PgDn then all ^keys at end', () => {
       const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
       expect(row).toBeDefined();
       const ids = row!.buttons.map((b) => b.id);
       expect(ids).toEqual([
         'keyLeft', 'keyRight', 'keyUp', 'keyDown',
         'keyHome', 'keyEnd', 'keyPgUp', 'keyPgDn',
-        'keyCtrlB', 'keyCtrlD',
+        'keyCtrlC', 'keyCtrlZ', 'keyCtrlB', 'keyCtrlD',
       ]);
     });
 

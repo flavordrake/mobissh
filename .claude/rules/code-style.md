@@ -16,3 +16,6 @@
   Raw `gh` calls bypass error handling, audit logging, and hook notifications.
   If `gh-ops.sh` doesn't have a subcommand for what you need, add one — don't work around it.
   This applies to ALL contexts: main session, agent prompts, skill docs, and inline Bash calls.
+- **Never bump localStorage keys to solve cache/staleness.** Config systems must support:
+  default init, user reset (Settings button), schema migration (version inside the value,
+  not the key), and corrupt data resilience (validation → fallback, no crash).

@@ -7,6 +7,7 @@
 
 import type { SettingsDeps } from './types.js';
 import { getDefaultWsUrl, THEMES } from './constants.js';
+import { resetKeyBarConfig } from './keybar-config.js';
 import type { ThemeName } from './types.js';
 import { showErrorDialog } from './ui.js';
 import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewIdleDelay } from './ime.js';
@@ -214,6 +215,11 @@ export function initSettingsPanel(): void {
       });
     });
   }
+
+  document.getElementById('resetKeyBarBtn')?.addEventListener('click', () => {
+    resetKeyBarConfig();
+    location.reload();
+  });
 
   const dockEl = document.getElementById('keyControlsDockLeft') as HTMLInputElement | null;
   if (dockEl) {

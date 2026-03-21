@@ -101,7 +101,32 @@ Issue #{N}: {title}
 - Follow existing code patterns
 
 ## TDD Requirements (MANDATORY)
-The agent MUST follow the TDD workflow defined in `.claude/agents/develop.md`:
+
+### Two-phase TDD (recommended for non-trivial issues)
+
+For features with non-obvious edge cases, protocol changes, or UI behavior:
+
+1. **Phase A — Test design (Opus)**: Spawn a `/write-tests` agent first. It reads
+   the issue, reads the code, writes failing tests, and pushes to `bot/issue-{N}`.
+   This agent does NOT write implementation code.
+
+2. **Phase B — Implementation (Sonnet or default)**: Spawn a `/develop` agent on
+   the same branch. It finds the failing tests and implements until they pass.
+
+The orchestrator manages this sequence:
+```
+# Phase A: test agent writes tests
+Agent(isolation="worktree", description="write tests for #{N}", prompt="...")
+# Wait for completion, merge tests to bot/issue-{N}
+
+# Phase B: develop agent implements
+Agent(isolation="worktree", description="develop issue #{N}", prompt="...branch already has failing tests...")
+```
+
+### Single-phase TDD (for simple issues)
+
+For bug fixes with clear repro, small features, or refactors — a single develop
+agent handles both test writing and implementation per `.claude/agents/develop.md`:
 
 1. **Phase 0 — First-order analysis**: Classify the issue (bug fix / feature / refactor),
    assess TDD viability (deterministic / smoketest-only / needs-decomposition),
@@ -110,6 +135,16 @@ The agent MUST follow the TDD workflow defined in `.claude/agents/develop.md`:
 2. **Phase 1 — Write tests first**: Before any implementation code, write the test
    harness. For bugs: a test that reproduces the failure. For features: a smoketest
    (feature accessible) + behavior tests. Run to establish the "red" baseline.
+
+### Decision rule
+
+| Issue complexity | Test design difficulty | Approach |
+|-----------------|----------------------|----------|
+| Simple bug fix with clear repro | Low | Single-phase (Sonnet) |
+| Feature with obvious spec | Low | Single-phase (Sonnet) |
+| Feature with non-obvious edge cases | High | Two-phase (Opus tests → Sonnet impl) |
+| Protocol/state machine changes | High | Two-phase |
+| Test backfill for existing code | N/A | `/write-tests` only (no impl needed) |
 
 3. **Phase 2 — Code until tests pass**: Implement, then verify new tests go from
    fail→pass and existing tests stay green. Merge from main each cycle.
