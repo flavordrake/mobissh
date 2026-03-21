@@ -1,6 +1,6 @@
 ---
 name: develop
-description: Use when the user says "develop", "work on issue", "implement issue", "fix issue N", or explicitly "/develop N". Spawns a local develop agent in a worktree to implement one or more GitHub issues. Supports batch mode ("/develop 3,9,16") with max 3 parallel agents. Without arguments, auto-proposes bot-labeled issues ranked by risk and relevance.
+description: Use when the user says "develop", "work on issue", "implement issue", "fix issue N", or explicitly "/develop N". Spawns a local develop agent in a worktree to implement one or more GitHub issues. Supports batch mode ("/develop 3,9,16") with max 4 parallel agents. Without arguments, auto-proposes bot-labeled issues ranked by risk and relevance.
 ---
 
 # Local Development Agent
@@ -156,7 +156,6 @@ Example:
 Agent(
   subagent_type="general-purpose",
   isolation="worktree",
-  model="sonnet",
   description="develop issue 16",
   prompt="<develop.md prompt content>\n\nIssue #16: auto-populate profile name...\n\n## Issue body\n..."
 )

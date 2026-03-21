@@ -26,6 +26,7 @@ import { computeDiff } from './ime-diff.js';
 
 let _handleResize = (): void => {};
 let _applyFontSize = (_size: number): void => {};
+let _measureCtx: CanvasRenderingContext2D | null = null;
 
 // ── IME state machine (#106) ────────────────────────────────────────────────
 type IMEState = 'idle' | 'composing' | 'previewing' | 'editing';
@@ -182,7 +183,8 @@ function _autoResizeTextarea(el: HTMLTextAreaElement): void {
   const text = el.value;
   const lastNewline = text.lastIndexOf('\n');
   const lastLine = lastNewline >= 0 ? text.slice(lastNewline + 1) : text;
-  const ctx = document.createElement('canvas').getContext('2d');
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+  const ctx = _measureCtx;
   let lastLineW = 0;
   if (ctx) {
     ctx.font = getComputedStyle(el).font;

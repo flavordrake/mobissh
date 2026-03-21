@@ -100,7 +100,7 @@ For each approved action, in order:
 
 ### Develop (single issue)
 Use the `/develop N` skill. Spawn agents with `isolation: "worktree"`.
-max 3 parallel agents.
+max 4 parallel agents.
 
 ### Merge (combine issues)
 1. Pick the broadest issue as primary

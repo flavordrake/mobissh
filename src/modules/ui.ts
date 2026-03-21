@@ -878,7 +878,29 @@ interface TransferRecord {
 
 export const _transferRecords = new Map<string, TransferRecord>();
 
+let _transferRenderPending = false;
 export function _renderTransferList(): void {
+  if (_transferRenderPending) return;
+  _transferRenderPending = true;
+  requestAnimationFrame(() => {
+    _transferRenderPending = false;
+    _renderTransferListNow();
+  });
+}
+
+const MAX_TRANSFER_RECORDS = 50;
+
+function _evictOldTransfers(): void {
+  if (_transferRecords.size <= MAX_TRANSFER_RECORDS) return;
+  for (const [id, rec] of _transferRecords) {
+    if (rec.status !== 'active' && _transferRecords.size > MAX_TRANSFER_RECORDS) {
+      _transferRecords.delete(id);
+    }
+  }
+}
+
+function _renderTransferListNow(): void {
+  _evictOldTransfers();
   const list = document.getElementById('transferList');
   if (!list) return;
 
