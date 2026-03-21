@@ -168,8 +168,8 @@ If the container is stale, the user sees old behavior and files false bugs.
 scripts/gh-ops.sh integrate <PR-N> <issue-N>
 ```
 
-This single command: merges the PR (with worktree cleanup), closes the issue,
-removes the `bot` label, pulls main, and prunes stale refs. No compound `&&` chains.
+This single command: merges the PR, closes the issue, removes the `bot` label,
+pulls main, and prunes stale refs. Worktree cleanup is deferred to release.
 
 For orphaned branches (no PR), create a PR first, then integrate:
 ```bash

@@ -190,7 +190,7 @@ Per `.claude/process.md`:
 - max 3 parallel develop agents
 - Theme filter is additive — issues without theme keywords are shown but deprioritized
 - Never develop `human-only` issues — report them as "needs device testing"
-- Always run `scripts/worktree-cleanup.sh` before spawning agents
+- Worktree cleanup deferred to release — do NOT clean while agents might be active
 - Gate results determine merge readiness, but actual merging is `/integrate`'s job
 - The cycle discovers and develops. Integration is a separate step — the user
   runs `/integrate` when ready to review and merge the PRs this cycle produced.
