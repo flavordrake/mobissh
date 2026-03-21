@@ -1,5 +1,10 @@
 # Workflow
 
+## Fix the process, not the symptom
+- **When a process failure occurs, diagnose and fix the process** — do not work around it by doing the task manually. If an agent fails because of CWD drift, fix the CWD guard, don't "just do the small change" yourself.
+- **Separate concerns in persistent policy.** Rules about TypeScript belong in `typescript.md`, not mixed with application-specific state machine rules. Application conventions get their own scoped rule files (e.g., `ime.md` for IME state machine).
+- **Capture compound bash patterns as intent-named scripts** for reusability, not inline chains.
+
 ## Inferred constraints
 - **Never silently adopt an inferred constraint** that impacts architecture, language, or testability.
 - If a constraint wasn't explicitly stated by the user, call it out prominently: "I'm assuming X, this affects Y and Z. Confirm?"

@@ -202,8 +202,14 @@ git add -A
 scripts/bot-branch.sh commit {N} "fix: <concise description> (#N)"
 ```
 
-If `bot-branch.sh commit` is unavailable (e.g. in a worktree with limited staging needs), fall back to raw git — but always merge from main first:
+If `bot-branch.sh commit` is unavailable (e.g. in a worktree with limited staging needs), fall back to raw git — but **ALWAYS verify the branch first**:
 ```bash
+# MANDATORY: verify you're on the right branch before ANY commit
+CURRENT_BRANCH=$(git branch --show-current)
+if [ "$CURRENT_BRANCH" != "bot/issue-{N}" ]; then
+  echo "WRONG BRANCH: on $CURRENT_BRANCH, expected bot/issue-{N}"
+  git checkout bot/issue-{N}
+fi
 git fetch origin main
 git merge origin/main --no-edit
 git add -A
@@ -212,6 +218,10 @@ git commit -m "fix: <concise description> (#N)
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 git push -u origin bot/issue-{N}
 ```
+
+**NEVER commit without verifying the branch name.** Worktree CWD drift can silently
+switch you to main. If `git branch --show-current` doesn't return `bot/issue-{N}`,
+stop and fix the checkout before proceeding.
 
 Create the PR (write body to temp file first with the Write tool, then use gh-ops.sh):
 
