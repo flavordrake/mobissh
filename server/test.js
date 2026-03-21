@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { Readable, Writable } = require('stream');
 
-const { rewriteManifest, handleSftpMessage, isPrivateIp, isCgnatIp } = require('./index.js');
+const { rewriteManifest, handleSftpMessage, isPrivateIp, isCgnatIp, resumableUploads } = require('./index.js');
 
 test('rewriteManifest: sets id="mobissh"', () => {
   const input = Buffer.from(JSON.stringify({ name: 'MobiSSH', start_url: '/' }));
@@ -329,4 +329,59 @@ test('CGNAT exemption logic: TS_SERVE=1 still blocks 10.0.0.1', () => {
   const tsMode = true;
   const blocked = isPrivateIp(ip) && !(tsMode && isCgnatIp(ip));
   assert.equal(blocked, true);
+});
+
+// Cross-session upload hijack prevention (issue #241)
+
+test('sftp_upload_start: same connectionId allows resume (#241)', () => {
+  resumableUploads.clear();
+  const results = [];
+  const openUploads = new Map();
+  const connId = 'conn-same-1';
+  const mockStream = new Writable({ write(c, e, cb) { cb(); } });
+  // Pre-populate a resumable entry as if a previous connection created it
+  resumableUploads.set('fp-same', {
+    stream: mockStream, offset: 500, path: '/upload.bin',
+    fingerprint: 'fp-same', requestId: 'old-req', sftp: {}, ttlTimer: null,
+    connectionId: connId,
+  });
+  const mockSftp = { createWriteStream: () => mockStream };
+  handleSftpMessage(
+    { type: 'sftp_upload_start', path: '/upload.bin', size: 1000, fingerprint: 'fp-same', requestId: 'new-req' },
+    mockSftp, (msg) => results.push(msg), openUploads, null, connId,
+  );
+  assert.equal(results.length, 1);
+  assert.equal(results[0].type, 'sftp_upload_ack');
+  assert.equal(results[0].offset, 500, 'should resume from existing offset');
+  assert.equal(results[0].requestId, 'new-req');
+  resumableUploads.clear();
+});
+
+test('sftp_upload_start: different connectionId rejects resume (#241)', () => {
+  resumableUploads.clear();
+  const results = [];
+  const openUploads = new Map();
+  const attackerConnId = 'conn-attacker';
+  const victimConnId = 'conn-victim';
+  const mockStream = new Writable({ write(c, e, cb) { cb(); } });
+  // Pre-populate a resumable entry owned by victim
+  resumableUploads.set('fp-hijack', {
+    stream: mockStream, offset: 500, path: '/upload.bin',
+    fingerprint: 'fp-hijack', requestId: 'victim-req', sftp: {}, ttlTimer: null,
+    connectionId: victimConnId,
+  });
+  const freshStream = new Writable({ write(c, e, cb) { cb(); } });
+  const mockSftp = { createWriteStream: () => freshStream };
+  handleSftpMessage(
+    { type: 'sftp_upload_start', path: '/upload.bin', size: 1000, fingerprint: 'fp-hijack', requestId: 'atk-req' },
+    mockSftp, (msg) => results.push(msg), openUploads, null, attackerConnId,
+  );
+  assert.equal(results.length, 1);
+  assert.equal(results[0].type, 'sftp_upload_ack');
+  assert.equal(results[0].offset, 0, 'should start fresh, not resume from 500');
+  assert.equal(results[0].requestId, 'atk-req');
+  // The fresh entry should have the attacker's connectionId
+  const entry = resumableUploads.get('fp-hijack');
+  assert.equal(entry.connectionId, attackerConnId);
+  resumableUploads.clear();
 });

@@ -141,7 +141,7 @@ const UPLOAD_TTL_MS = 30_000; // 30s grace period after WS disconnect
  * All errors are returned as { type: 'sftp_error', requestId, message } so the
  * WebSocket connection is never terminated by an SFTP failure.
  */
-function handleSftpMessage(msg, sftp, send, openUploads, ws) {
+function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
   const { requestId, path: filePath } = msg;
   const sftpErr = (message) => send({ type: 'sftp_error', requestId, message });
 
@@ -215,7 +215,7 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws) {
       const fingerprint = msg.fingerprint || '';
       // Check for a resumable entry from a previous connection
       const existing = fingerprint ? resumableUploads.get(fingerprint) : null;
-      if (existing && existing.stream && !existing.stream.destroyed) {
+      if (existing && existing.stream && !existing.stream.destroyed && existing.connectionId === connectionId) {
         // Clear TTL timer — client reconnected in time
         if (existing.ttlTimer) { clearTimeout(existing.ttlTimer); existing.ttlTimer = null; }
         // Re-register under the new requestId in the per-connection map
@@ -231,7 +231,7 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws) {
           if (fingerprint) resumableUploads.delete(fingerprint);
           sftpErr(err.message);
         });
-        const entry = { stream: ws, offset: 0, path: filePath, fingerprint, requestId, sftp, ttlTimer: null };
+        const entry = { stream: ws, offset: 0, path: filePath, fingerprint, requestId, sftp, ttlTimer: null, connectionId };
         openUploads.set(requestId, { stream: ws, offset: 0, path: filePath });
         if (fingerprint) resumableUploads.set(fingerprint, entry);
         send({ type: 'sftp_upload_ack', requestId, offset: 0 });
@@ -642,6 +642,7 @@ wss.on('connection', (ws, req) => {
   let sftpPending = null; // pending callbacks while SFTP channel is being opened
   let connecting = false;
   let pendingVerify = null; // hostVerifier callback waiting for client response (#5)
+  const connectionId = randomBytes(16).toString('hex'); // unique per WS session
   const openUploads = new Map(); // requestId → { stream, offset, path } for chunked uploads
 
   function send(obj) {
@@ -879,7 +880,7 @@ wss.on('connection', (ws, req) => {
       case 'sftp_realpath':
         getSftp((err, sftp) => {
           if (err) { send({ type: 'sftp_error', requestId: msg.requestId, message: err.message }); return; }
-          handleSftpMessage(msg, sftp, send, openUploads, ws);
+          handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId);
         });
         break;
       default: send({ type: 'error', message: `Unknown message type: ${msg.type}` });
