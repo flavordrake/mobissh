@@ -95,8 +95,8 @@ cleanup() {
       git stash pop 2>/dev/null || true
     fi
   fi
-  # Clean up stale agent worktrees
-  scripts/worktree-cleanup.sh --quiet 2>/dev/null || true
+  # Worktree cleanup deferred to release — running it here kills active agents
+  git worktree prune 2>/dev/null || true
 }
 trap cleanup EXIT
 
