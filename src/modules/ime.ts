@@ -764,6 +764,9 @@ export function initIMEInput(): void {
 
     // Compose + preview: hold text for review (nothing sent until commit)
     if (appState.imeMode && _previewMode) {
+      // Ensure textarea has the text — voice dictation may leave ime.value
+      // empty while e.data carries the composed text (#163)
+      if (!ime.value && e.data) ime.value = e.data;
       _transition('previewing');
       _lastSentValue = '';
       _scheduleClear();
