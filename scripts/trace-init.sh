@@ -62,17 +62,14 @@ EOF
 cat > "${TRACE_DIR}/strategy/initial_plan.md" << EOF
 # Initial Strategy
 
-## Objective
-${SLUG}
+Issue: ${SLUG}
+Approach: as described in issue body
 
-## Approach
-<!-- Document the initial approach before writing any code -->
+## Assumptions that might be wrong
+<!-- List only non-obvious assumptions — don't restate the issue -->
 
-## Assumptions
-<!-- What are we assuming about the existing code? -->
-
-## Expected Changes
-<!-- Files to modify, test strategy, risk assessment -->
+## Notes
+<!-- Anything not in the issue that affects approach -->
 EOF
 
 echo "+ TRACE initialized: ${TRACE_DIR}/"

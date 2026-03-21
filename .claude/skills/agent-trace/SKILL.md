@@ -54,10 +54,20 @@ metrics:
 
 ### Step 1: Initial Hypothesis
 
-Before writing code, record the Initial Strategy in `strategy/initial_plan.md`.
-Define tiling sizes, register budgets, and memory alignment expectations.
-For non-HPC tasks: document the approach, expected file changes, test strategy,
-and any assumptions about existing code behavior.
+Record the starting point in `strategy/initial_plan.md` — but don't duplicate
+the issue body. The initial plan is a **pointer**, not a rewrite:
+
+```markdown
+# Initial Strategy
+Issue: #165 — fix: test 5.1 uses relative URL that CDP rejects
+Approach: as described in issue body
+Assumptions that might be wrong: [list only non-obvious assumptions]
+```
+
+The value of the TRACE is in the **delta** — what changed from the plan.
+If nothing changed, the trace is trivially short and that's fine.
+For HPC/performance tasks: also record tiling sizes, register budgets,
+memory alignment expectations — things not in the issue.
 
 ### Step 2: Telemetry Ingestion
 
