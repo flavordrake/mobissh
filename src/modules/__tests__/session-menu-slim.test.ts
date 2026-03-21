@@ -80,5 +80,35 @@ describe('issue-217: slim session menu', () => {
       expect(css).not.toContain('.rec-btn');
       expect(css).not.toContain('.ctrl-btn');
     });
+
+    it('animation keyframes preserve translateX(-50%) centering (#222)', () => {
+      // The sessionMenuSlideUp animation must include translateX(-50%) in both
+      // from and to keyframes, otherwise the animation overrides the centering
+      // transform and causes a visible snap from right to center.
+      // Extract the full keyframes block using a multiline match
+      const keyframeStart = css.indexOf('@keyframes sessionMenuSlideUp');
+      expect(keyframeStart).toBeGreaterThan(-1);
+      // Find the closing brace of the @keyframes block (third '}' after start)
+      let braceDepth = 0;
+      let keyframeEnd = -1;
+      for (let i = keyframeStart; i < css.length; i++) {
+        if (css[i] === '{') braceDepth++;
+        if (css[i] === '}') {
+          braceDepth--;
+          if (braceDepth === 0) { keyframeEnd = i + 1; break; }
+        }
+      }
+      expect(keyframeEnd).toBeGreaterThan(keyframeStart);
+      const keyframeBlock = css.slice(keyframeStart, keyframeEnd);
+
+      // Extract from and to blocks
+      const fromMatch = keyframeBlock.match(/from\s*\{([^}]*)\}/);
+      const toMatch = keyframeBlock.match(/to\s*\{([^}]*)\}/);
+      expect(fromMatch).toBeTruthy();
+      expect(toMatch).toBeTruthy();
+      // Both frames must include translateX(-50%) to maintain centering
+      expect(fromMatch![1]).toContain('translateX(-50%)');
+      expect(toMatch![1]).toContain('translateX(-50%)');
+    });
   });
 });
