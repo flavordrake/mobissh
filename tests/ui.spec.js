@@ -496,3 +496,125 @@ test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, ()
   });
 
 });
+
+test.describe('Key bar (#225/#226)', { tag: '@device-critical' }, () => {
+
+  test('key bar buttons have tabindex="-1" to prevent focus steal', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // After connection and initTerminalActions(), all .key-btn elements
+    // inside #key-bar should have tabindex="-1" to prevent focus steal on tap.
+    const buttons = page.locator('#key-bar .key-btn');
+    const count = await buttons.count();
+    expect(count).toBeGreaterThan(0);
+
+    for (let i = 0; i < count; i++) {
+      const tabindex = await buttons.nth(i).getAttribute('tabindex');
+      expect(tabindex).toBe('-1');
+    }
+  });
+
+  test('key-scroll container is horizontally scrollable', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    const keyScroll = page.locator('#key-scroll');
+    const overflowX = await keyScroll.evaluate((el) => getComputedStyle(el).overflowX);
+    expect(['auto', 'scroll']).toContain(overflowX);
+
+    // Content (scrollWidth) should exceed the visible container (clientWidth)
+    // because the buttons overflow horizontally.
+    const { scrollWidth, clientWidth } = await keyScroll.evaluate((el) => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    }));
+    expect(scrollWidth).toBeGreaterThan(clientWidth);
+  });
+
+  test('key bar button tap sends key without changing focus', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Ensure direct input is focused (default mode after connect)
+    const inputId = await page.evaluate((ids) =>
+      document.getElementById(ids.compose) === document.activeElement
+        ? ids.compose : ids.direct,
+      { compose: 'imeInput', direct: 'directInput' }
+    );
+    await page.locator(`#${inputId}`).focus();
+    await page.waitForTimeout(50);
+
+    // Record which element has focus before the tap
+    const focusBefore = await page.evaluate(() => document.activeElement?.id);
+
+    // Clear the WS spy to isolate messages from this action
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Click the Tab key button — should send '\t' via WS
+    await page.locator('#keyTab').click();
+    await page.waitForTimeout(200);
+
+    // Verify a WS message with the tab character was sent
+    const messages = await page.evaluate(() => window.__mockWsSpy || []);
+    const inputMessages = messages.filter((m) => {
+      try { return JSON.parse(m).type === 'input'; } catch (_) { return false; }
+    });
+    expect(inputMessages.length).toBeGreaterThan(0);
+    const payload = JSON.parse(inputMessages[0]);
+    expect(payload.data).toBe('\t');
+
+    // Verify focus was NOT stolen — the same input element should still be focused
+    const focusAfter = await page.evaluate(() => document.activeElement?.id);
+    expect(focusAfter).toBe(focusBefore);
+  });
+
+  test('key bar tap sends exactly one key (no double-fire)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Focus input
+    const inputId = await page.evaluate((ids) =>
+      document.getElementById(ids.compose) === document.activeElement
+        ? ids.compose : ids.direct,
+      { compose: 'imeInput', direct: 'directInput' }
+    );
+    await page.locator(`#${inputId}`).focus();
+    await page.waitForTimeout(50);
+
+    // Clear WS spy
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Single click on Esc button
+    await page.locator('#keyEscM2').click();
+    await page.waitForTimeout(300);
+
+    // Count input messages — should be exactly 1
+    const messages = await page.evaluate(() => window.__mockWsSpy || []);
+    const inputMessages = messages.filter((m) => {
+      try { return JSON.parse(m).type === 'input'; } catch (_) { return false; }
+    });
+    expect(inputMessages).toHaveLength(1);
+    const payload = JSON.parse(inputMessages[0]);
+    expect(payload.data).toBe('\x1b');
+  });
+
+  test('key order in key-scroll matches expected layout', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Get the text content of all .key-btn children inside #key-scroll
+    // (including those inside .key-nav-subset)
+    const labels = await page.locator('#key-scroll .key-btn').evaluateAll((btns) =>
+      btns.map((b) => b.textContent.trim())
+    );
+
+    // Expected order: Ctl, Esc, Tab, /, -, |, then nav subset ending with ^C, ^Z, ^B, ^D
+    expect(labels[0]).toBe('Ctl');
+    expect(labels[1]).toBe('Esc');
+    expect(labels[2]).toBe('\u21B9');  // Tab symbol ↹
+    expect(labels[3]).toBe('/');
+    expect(labels[4]).toBe('-');
+    expect(labels[5]).toBe('|');
+
+    // Nav subset ends with ^C, ^Z, ^B, ^D
+    const lastFour = labels.slice(-4);
+    expect(lastFour).toEqual(['^C', '^Z', '^B', '^D']);
+  });
+
+});
