@@ -45,6 +45,7 @@ Never use `npm test` (maps to full Playwright including Appium).
 - Develop agents that skip test updates are producing incomplete work. The fast gate (tsc + lint + unit) catching zero failures does not mean the change is tested.
 
 ## Test patterns
+- **Emulator tests: always use `BASE_URL` from fixtures**, never relative URLs like `page.goto('./')`. CDP on Android Chrome rejects relative URLs.
 - Vault tests: `cleanPage` for no-vault state, `emulatorPage` for pre-created vault.
 - New Appium test files: copy baseline structure (beforeEach, helpers, tmux setup via dockerExec), extend with new assertions.
 - **Vault snapshot**: `vaultSnapshot` (worker-scoped) creates vault once per file; `emulatorPage` restores snapshot + auto-unlocks via `addInitScript` hook on `window.__appReady`. Never recreate vault per test.
