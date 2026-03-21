@@ -480,26 +480,22 @@ export function initIMEInput(): void {
 
       case 'composing':
         appState.isComposing = true;
-        if (_previewMode) {
-          ime.classList.add('ime-visible');
-          ime.classList.remove('ime-editing');
-          if (imeActions) imeActions.classList.remove('ime-editing');
-          _applyPreviewStyle(ime);
-          _showActions();
-          _positionIME();
-        }
+        ime.classList.add('ime-visible');
+        ime.classList.remove('ime-editing');
+        if (imeActions) imeActions.classList.remove('ime-editing');
+        _applyPreviewStyle(ime);
+        _showActions();
+        _positionIME();
         break;
 
       case 'previewing':
         appState.isComposing = false;
-        if (_previewMode) {
-          ime.classList.add('ime-visible');
-          ime.classList.remove('ime-editing');
-          if (imeActions) imeActions.classList.remove('ime-editing');
-          _applyPreviewStyle(ime);
-          _showActions();
-          _positionIME();
-        }
+        ime.classList.add('ime-visible');
+        ime.classList.remove('ime-editing');
+        if (imeActions) imeActions.classList.remove('ime-editing');
+        _applyPreviewStyle(ime);
+        _showActions();
+        _positionIME();
         break;
 
       case 'editing':
