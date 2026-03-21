@@ -57,6 +57,15 @@ metrics:
 
 ## The "Knowledge Seed"
 <!-- One-sentence heuristic for future agents -->
+
+## Performance Delta
+<!-- One-line: before/after impact. Reference telemetry/perf-*.txt -->
+
+## Security Summary
+<!-- One-line: static analysis findings on changed files. Reference logs/security-findings.md -->
+
+## Outcome Classification
+<!-- success | success-with-caveats | partial | failure-informative | failure -->
 EOF
 
 cat > "${TRACE_DIR}/strategy/initial_plan.md" << EOF

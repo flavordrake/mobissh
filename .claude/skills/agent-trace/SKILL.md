@@ -111,6 +111,10 @@ Whenever the telemetry contradicts the hypothesis:
 
 ### Step 4: Final Summarization (The Learning Step)
 
+The agent has the best context to summarize — it just lived through the arc.
+The harvester should not have to re-derive what the agent already knows.
+The agent writes concise summaries; the harvester scans them at scale.
+
 The final act of a TRACE agent is to populate the body of `TRACE.md` with:
 
 - **The "Why"**: A post-mortem on why the final strategy succeeded or failed.
@@ -120,6 +124,26 @@ The final act of a TRACE agent is to populate the body of `TRACE.md` with:
   (e.g., "On sm_90, favor TMA over manual SMem loads for 10% gain",
   "Never bump localStorage keys — migrate the value schema instead",
   "touchstart preventDefault on a scroll container blocks horizontal scroll").
+- **Performance Delta**: One-line summary of before/after performance impact.
+  Reference `telemetry/perf-before.txt` and `telemetry/perf-after.txt`.
+  (e.g., "Test suite: 7.5s → 7.9s (+5%, from new 14 Playwright tests)",
+  "Bundle: connection.js 12KB → 14KB (+2KB, transfer tracing instrumentation)",
+  "No measurable impact" is a valid and valuable result.)
+- **Security Summary**: One-line summary of static analysis findings.
+  Reference `logs/security-findings.md`.
+  (e.g., "semgrep: 0 new findings on changed files",
+  "1 innerHTML usage in _renderTransferList — uses escHtml, accepted",
+  "No security-relevant changes".)
+- **Outcome Classification**: `success` | `failure` | `partial` — and a shade:
+  - `success` — tests pass, no regressions, no security concerns
+  - `success-with-caveats` — works but performance regressed or security finding deferred
+  - `partial` — some goals met, others need follow-up (file issues for remainder)
+  - `failure-informative` — didn't work but TRACE documents why, code+tests on branch
+  - `failure` — didn't work, no useful artifacts
+
+These one-line summaries are designed for **scale discovery** — a harvester scanning
+hundreds of TRACEs can grep for performance regressions, security patterns, or
+failure modes without reading the full trace content.
 
 ## 4. Embedded Logic (For Non-Skill Agents)
 
