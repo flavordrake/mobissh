@@ -119,6 +119,8 @@ cmd_build() {
   # The browser re-triggers SW update when sw.js changes byte-for-byte.
   # Network-first + no-store means the cache is offline-fallback only —
   # bumping on every rebuild was noise (#146).
+  # Derive SW cache name from content hash. Write to a temp copy so the
+  # source file stays clean — no in-place modification (#237).
   local sw_file="public/sw.js"
   if [[ -f "$sw_file" ]]; then
     local content_hash
@@ -127,8 +129,12 @@ cmd_build() {
     current_name=$(grep -oP "mobissh-[a-z0-9]+" "$sw_file" | head -1)
     local new_name="mobissh-${content_hash}"
     if [[ "$current_name" != "$new_name" ]]; then
-      sed -i "s/${current_name}/${new_name}/" "$sw_file"
+      cp "$sw_file" "${sw_file}.build"
+      sed -i "s/${current_name}/${new_name}/" "${sw_file}.build"
+      mv "${sw_file}.build" "$sw_file"
       log "SW cache: ${current_name} → ${new_name}"
+      # Restore source after Docker COPY picks up the modified version
+      trap 'git checkout -- public/sw.js 2>/dev/null' EXIT
     else
       log "SW cache: ${new_name} (unchanged)"
     fi

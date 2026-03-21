@@ -16,8 +16,8 @@ if [ -z "$SLUG" ]; then
   exit 1
 fi
 
-TIMESTAMP=$(date +%Y%m%dT%H%M%S%z)
-TRACE_DIR=".traces/trace-${SLUG}-${TIMESTAMP}"
+# Short timestamp suffix for uniqueness — slug provides the context
+TRACE_DIR=".traces/trace-${SLUG}-$(date +%H%M%S)"
 
 mkdir -p "${TRACE_DIR}/specs"
 mkdir -p "${TRACE_DIR}/strategy"
