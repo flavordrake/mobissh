@@ -39,11 +39,10 @@ describe('keybar-config', () => {
       expect(ids).toContain('keyDash');
     });
 
-    it('row-nav contains arrow and navigation keys', () => {
+    it('row-nav contains arrow, navigation, and control keys', () => {
       const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
       expect(row).toBeDefined();
       const ids = row!.buttons.map((b) => b.id);
-      expect(ids).toContain('keyEsc');
       expect(ids).toContain('keyUp');
       expect(ids).toContain('keyDown');
       expect(ids).toContain('keyLeft');
@@ -52,13 +51,16 @@ describe('keybar-config', () => {
       expect(ids).toContain('keyEnd');
       expect(ids).toContain('keyPgUp');
       expect(ids).toContain('keyPgDn');
+      expect(ids).toContain('keyCtrlB');
+      expect(ids).toContain('keyCtrlD');
     });
 
     it('sequences match expected terminal escape codes', () => {
       const navRow = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav')!;
       const up = navRow.buttons.find((b) => b.id === 'keyUp');
       expect(up?.sequence).toBe('\x1b[A');
-      const esc = navRow.buttons.find((b) => b.id === 'keyEsc');
+      const keysRow = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-keys')!;
+      const esc = keysRow.buttons.find((b) => b.id === 'keyEsc');
       expect(esc?.sequence).toBe('\x1b');
     });
   });
