@@ -229,6 +229,29 @@ import { stopAndDownloadRecording } from './recording.js';
 
 let _toast = (_msg: string): void => {};
 let _setStatus = (_state: ConnectionStatus, _text: string): void => {};
+
+// ── Terminal write batching (#185) ──────────────────────────────────────────
+// Buffer incoming SSH output and flush to xterm.js once per animation frame.
+// On slow connections, many small chunks arrive faster than the renderer can
+// process them, causing visible replay/scrollback jumps. Batching coalesces
+// writes into a single terminal.write() per frame.
+let _writeBuf = '';
+let _writeRaf: number | null = null;
+
+function _flushTerminalWrite(): void {
+  _writeRaf = null;
+  if (_writeBuf && appState.terminal) {
+    appState.terminal.write(_writeBuf);
+    _writeBuf = '';
+  }
+}
+
+function _bufferTerminalWrite(data: string): void {
+  _writeBuf += data;
+  if (!_writeRaf) {
+    _writeRaf = requestAnimationFrame(_flushTerminalWrite);
+  }
+}
 let _focusIME = (): void => {};
 let _applyTabBarVisibility = (): void => {};
 
@@ -482,7 +505,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
 
       case 'output':
-        appState.terminal?.write(msg.data);
+        _bufferTerminalWrite(msg.data);
         if (appState.recording && appState.recordingStartTime !== null) {
           appState.recordingEvents.push([(Date.now() - appState.recordingStartTime) / 1000, 'o', msg.data]);
         }
