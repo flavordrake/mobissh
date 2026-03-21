@@ -15,6 +15,7 @@ const localStorageMock = {
 };
 vi.stubGlobal('localStorage', localStorageMock);
 vi.stubGlobal('location', { hostname: 'localhost', hash: '', replace: vi.fn(), host: 'localhost:8081', pathname: '/', protocol: 'http:' });
+vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { cb(); return 0; });
 
 let transferListEl: { innerHTML: string; querySelector: ReturnType<typeof vi.fn> };
 

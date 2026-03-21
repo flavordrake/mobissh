@@ -77,7 +77,8 @@ describe('trace-symbol-history.sh', () => {
   });
 
   it('handles symbol not found gracefully', () => {
-    const out = run('trace-symbol-history.sh', ['xyzzy_nonexistent_symbol_12345']);
+    // Scope to a file that definitely doesn't contain our search term
+    const out = run('trace-symbol-history.sh', ['xyzzy_never_existed', '--file', 'package.json']);
     expect(out.toLowerCase()).toContain('no commits found');
   });
 });
