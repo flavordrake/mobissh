@@ -146,15 +146,22 @@ After all agents complete, collect and review their traces:
 1. List all traces: `ls .traces/trace-*/TRACE.md`
 2. For each trace:
    - Read TRACE.md — check status, knowledge seed, ambiguity gap
-   - If knowledge seed is valuable: create/update memory file in
-     `.claude/projects/-home-dev-workspace-mobissh/memory/`
-   - If ambiguity gap reveals a missing rule: update the relevant `.claude/rules/` file
+   - If knowledge seed is valuable: create/update memory file
+   - If ambiguity gap reveals a missing rule: update `.claude/rules/`
    - If pivot pattern repeats across traces: file a process improvement issue
-3. Validate traces exist and are informative:
+3. **Security finding aggregation**:
+   - Collect `logs/security-findings.md` from all traces in this cycle
+   - Cross-reference findings across agents — same pattern in multiple PRs
+     indicates a systemic issue (e.g., innerHTML usage pattern, missing escHtml)
+   - Aggregate into a single security summary for the cycle report
+   - Recurring patterns → file a security issue or update `.claude/rules/security.md`
+   - This replaces the need for a cold-start release audit on code that was
+     already incrementally reviewed
+4. Validate traces exist and are informative:
    - Develop agents without a trace directory = process violation (note in report)
-   - Traces with empty TRACE.md or missing `strategy/initial_plan.md` = incomplete
+   - Traces with empty TRACE.md = incomplete
    - Flag incomplete traces so the develop agent prompt can be tightened
-4. Report harvested insights in the cycle summary
+5. Report harvested insights in the cycle summary
 
 ## Phase 8: Report
 

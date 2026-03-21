@@ -174,6 +174,30 @@ scripts/test-lint.sh
 ```
 Fix errors in your changes only. Note pre-existing issues.
 
+**5.5. Static Analysis (security + architecture)**
+
+Run a focused security scan on your changes only (not the full codebase):
+```bash
+git diff origin/main --name-only | xargs semgrep scan --config auto --json --quiet 2>/dev/null
+```
+
+Write findings to the TRACE (not stdout — the TRACE is the artifact):
+- Save raw output to `{TRACE_DIR}/telemetry/semgrep-diff.json`
+- For each finding in YOUR changed code (not pre-existing):
+  - Is it a real concern given the project architecture? (read the audit-context
+    in `.claude/skills/agent-trace/SKILL.md` section 5 for by-design decisions)
+  - If real: log to `{TRACE_DIR}/logs/security-findings.md` with severity and recommendation
+  - If false positive: log as "accepted — {rationale}"
+
+**Do NOT block on findings.** The agent's job is to capture them in the TRACE,
+not necessarily resolve them. If a finding is trivially fixable (e.g., missing
+escHtml), fix it in this cycle. If it requires architectural discussion (e.g.,
+innerHTML pattern), log it and continue.
+
+The orchestrator harvests security findings from TRACEs and can optionally
+spawn an additional development cycle focused on addressing them, or aggregate
+them into cross-cutting security issues at the project level.
+
 **6. Self-review**
 ```bash
 git diff origin/main --stat

@@ -139,7 +139,32 @@ Agent(isolation="worktree", description="write tests for #{N}", prompt="...")
 
 # Phase B: develop agent implements
 Agent(isolation="worktree", description="develop issue #{N}", prompt="...branch already has failing tests...")
+# Wait for completion
+
+# Phase C (optional): security fixup
+# Orchestrator reads TRACE security findings from Phase B
+# If non-trivial findings exist: spawn a focused fixup agent
+Agent(isolation="worktree", description="security fixup #{N}", prompt="...address findings from TRACE...")
 ```
+
+### Phase C: Security-informed fixup (optional)
+
+After Phase B completes, the orchestrator checks the TRACE for security findings:
+```bash
+cat .traces/trace-issue-{N}-*/logs/security-findings.md 2>/dev/null
+```
+
+If findings exist that the agent flagged as "real but not trivially fixable":
+1. Spawn a focused fixup agent on the same branch
+2. The prompt includes the specific findings and the project's security context
+3. The agent addresses what it can and logs remaining items to the TRACE
+4. Findings that require architectural discussion get filed as issues
+
+If no findings, or all were false positives / trivially fixed: skip Phase C.
+
+This fractalizes the release-time security audit (`scripts/security-audit.sh`)
+into per-PR incremental analysis. The release audit becomes a cross-cutting
+review of accumulated TRACE findings rather than a cold-start scan.
 
 ### Single-phase TDD (for simple issues)
 
