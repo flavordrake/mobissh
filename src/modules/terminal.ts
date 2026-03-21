@@ -27,6 +27,8 @@ export function _sanitizeNotifText(raw: string): string {
   /* eslint-enable no-control-regex */
   // Remove Unicode replacement / block characters
   s = s.replace(/[▯\uFFFD]/g, '');
+  // Strip leading # from hook-injected messages (e.g., "# Approve: Edit — file.ts")
+  s = s.replace(/^#\s*/, '');
   // Collapse whitespace runs to single space and trim
   s = s.replace(/\s+/g, ' ').trim();
   // Truncate to 120 chars with ellipsis
@@ -55,7 +57,7 @@ export function clearNotifications(): void {
 }
 
 export function _addNotification(message: string): void {
-  if (!shouldNotify()) return;
+  // In-UI bell badge always shows — only Android push is gated by shouldNotify()
   if (message.length < 3) return;
   if (_notifications.length >= NOTIF_MAX) _notifications.shift();
   _notifications.push({ time: Date.now(), message });
@@ -100,16 +102,19 @@ function shouldNotify(): boolean {
   if (localStorage.getItem('termNotifications') !== 'true') return false;
   if (Notification.permission !== 'granted') return false;
   const backgroundOnly = localStorage.getItem('notifBackgroundOnly') !== 'false';
-  if (backgroundOnly && (document.hasFocus() || document.visibilityState === 'visible')) return false;
+  // Only suppress if BOTH signals confirm user is actively looking at the app.
+  // Android PWA: hasFocus() can be true when backgrounded, visibilityState can
+  // stay 'visible' during app switching. Either alone is unreliable.
+  if (backgroundOnly && document.hasFocus() && document.visibilityState === 'visible') return false;
   const cooldownMs = parseInt(localStorage.getItem('notifCooldown') ?? '15000') || 15000;
   if (Date.now() - _lastNotifTime < cooldownMs) return false;
   return true;
 }
 
-function fireNotification(title: string, body: string): void {
+export function fireNotification(title: string, body: string): void {
   if (!('serviceWorker' in navigator)) return;
   void navigator.serviceWorker.ready.then((reg) => {
-    return reg.showNotification(title, { body });
+    return reg.showNotification(title, { body, tag: 'mobissh-agent' });
   }).then(() => {
     _lastNotifTime = Date.now();
   }).catch(() => { /* permission may have been revoked */ });
