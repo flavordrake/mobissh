@@ -10,7 +10,6 @@ import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState } from './state.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
-import { startRecording, stopAndDownloadRecording } from './recording.js';
 import { saveProfile, connectFromProfile, newConnection } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 
@@ -420,27 +419,6 @@ export function initSessionMenu(): void {
     appState.terminal?.clear();
   });
 
-  document.getElementById('sessionRecordStartBtn')!.addEventListener('click', () => {
-    closeMenu();
-    startRecording();
-  });
-
-  document.getElementById('sessionRecordStopBtn')!.addEventListener('click', () => {
-    closeMenu();
-    stopAndDownloadRecording();
-  });
-
-  document.getElementById('sessionCtrlCBtn')!.addEventListener('click', () => {
-    closeMenu();
-    if (!appState.sshConnected) return;
-    sendSSHInput('\x03');
-  });
-
-  document.getElementById('sessionCtrlZBtn')!.addEventListener('click', () => {
-    closeMenu();
-    if (!appState.sshConnected) return;
-    sendSSHInput('\x1a');
-  });
 
   document.getElementById('sessionReconnectBtn')!.addEventListener('click', () => {
     closeMenu();
@@ -683,6 +661,8 @@ export function initTerminalActions(): void {
   });
 
   const keys: Record<string, string> = {
+    keyCtrlC:  '\x03',
+    keyCtrlZ:  '\x1a',
     keyEsc:    '\x1b',
     keyTab:    '\t',
     keySlash:  '/',

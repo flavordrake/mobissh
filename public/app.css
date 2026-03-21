@@ -362,8 +362,11 @@ html, body {
 #sessionMenu {
   position: absolute;
   bottom: calc(100% + 4px); /* 4px gap above the handle strip */
-  left: 0;
-  right: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  min-width: 180px;
+  max-width: min(260px, 90vw);
   z-index: 200;
   background: var(--bg-panel);
   border: 1px solid var(--border);

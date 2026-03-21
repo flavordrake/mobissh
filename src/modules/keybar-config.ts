@@ -25,6 +25,8 @@ export const DEFAULT_KEY_BAR_CONFIG: KeyBarConfig = [
   {
     id: 'row-keys',
     buttons: [
+      { id: 'keyCtrlC', label: 'C-c',  sequence: '\x03' },
+      { id: 'keyCtrlZ', label: 'C-z',  sequence: '\x1a' },
       { id: 'keyTab',   label: '↹',    sequence: '\t' },
       { id: 'keySlash', label: '/',    sequence: '/' },
       { id: 'keyPipe',  label: '|',    sequence: '|' },

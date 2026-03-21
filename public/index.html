@@ -244,15 +244,6 @@
           </div>
           <button id="sessionResetBtn"      class="session-menu-item" role="menuitem">Reset terminal</button>
           <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
-          <div class="session-menu-item rec-row" role="group" aria-label="Recording">
-            <button id="sessionRecordStartBtn" class="rec-btn" role="menuitem">Record</button>
-            <span id="recIndicator" class="rec-indicator hidden"><span id="recTimer">0:00</span></span>
-            <button id="sessionRecordStopBtn" class="rec-btn rec-stop hidden" role="menuitem">Stop</button>
-          </div>
-          <div class="session-menu-item ctrl-row" role="group" aria-label="Send control sequences">
-            <button id="sessionCtrlCBtn" class="ctrl-btn" role="menuitem">Ctrl+C</button>
-            <button id="sessionCtrlZBtn" class="ctrl-btn" role="menuitem">Ctrl+Z</button>
-          </div>
           <button id="sessionThemeBtn"      class="session-menu-item" role="menuitem">Theme: Dark ▸</button>
           <button id="sessionReconnectBtn"  class="session-menu-item" role="menuitem">Reconnect</button>
           <button id="sessionNavBarBtn"     class="session-menu-item" role="menuitem">≡ Toggle nav bar</button>
@@ -264,6 +255,8 @@
         <div id="key-keys-row">
           <div id="key-scroll">
             <button id="keyCtrl"  class="key-btn modifier" title="Ctrl modifier">Ctl</button>
+            <button id="keyCtrlC" class="key-btn" title="Ctrl+C">C-c</button>
+            <button id="keyCtrlZ" class="key-btn" title="Ctrl+Z">C-z</button>
             <button id="keyTab"   class="key-btn" title="Tab">↹</button>
             <button id="keySlash" class="key-btn" title="/">/</button>
             <button id="keyPipe"  class="key-btn" title="|">|</button>
