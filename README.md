@@ -16,19 +16,21 @@ You're on your phone. You have an idea, a bug report, a task for your coding age
 
 **Drive coding agents.** Launch `claude`, `opencode`, `gemini`, or `codex` over SSH. Compose long prompts with swipe or voice. Review diffs in the terminal. Approve or reject changes. The full agent TUI renders correctly -- xterm.js is the same engine as VS Code's terminal.
 
-**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Upload screenshots or logs directly to where your agent can read them.
+**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Chunked streaming with byte-level progress, cancel, and resume after reconnect. Upload screenshots or logs directly to where your agent can read them.
 
 **Manage credentials.** Copy a GitHub token from your password manager, paste it into the terminal. Copy a URL from your browser, paste it into a prompt. Vault-encrypted credential storage means your SSH passwords are biometric-locked, not plaintext.
 
 **Navigate the terminal.** Swipe vertically to scroll output. Swipe horizontally to switch tmux windows. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. All designed for one-handed phone use.
 
-**Get notified.** Set up coding agent hooks so MobiSSH alerts you when your agent needs input. See [INTEGRATION.md](INTEGRATION.md).
+**Get notified.** Terminal bells and coding agent hooks alert you when your agent needs input. Notifications merge into a single Android notification (no stacking) with actionable content — tool names, file paths, not boilerplate. See [INTEGRATION.md](INTEGRATION.md).
 
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the full security model, threat assessment, and audit history.
 
 Summary: MobiSSH is designed for personal use over Tailscale (WireGuard mesh). Credentials are AES-GCM encrypted with biometric unlock (Chrome/Android). No plaintext fallback, ever. The bridge forwards raw bytes with no telemetry.
+
+Automated security audit via `scripts/security-audit.sh` — runs semgrep (static analysis) with Gemini and Codex (AI-assisted review). Accepted findings documented in `test-history/security/accepted.json`.
 
 ## Architecture
 

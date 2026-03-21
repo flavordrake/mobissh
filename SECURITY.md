@@ -39,7 +39,7 @@ Two independent static reviews were conducted in March 2026. Full reports are in
 
 Both reviews independently flagged CSWSH and SSRF as the top actionable issues. Both praised the vault implementation.
 
-### Actions taken
+### Actions taken (v0.7.0)
 
 | Finding | Severity | Action | Status |
 |---------|----------|--------|--------|
@@ -47,9 +47,19 @@ Both reviews independently flagged CSWSH and SSRF as the top actionable issues. 
 | SSRF: string-prefix bypass via DNS rebinding | Medium/Low | Replaced with post-DNS `isPrivateIp()` using numeric CIDR matching | Fixed (#84) |
 | Clipboard: OSC 52 addon loaded unconditionally | Medium | Disabled by default; opt-in toggle in Settings > Danger Zone | Fixed (#85) |
 | WS token described as auth boundary | High | Revised docs to clarify it's anti-automation, not session auth | Fixed |
-| SFTP downloads buffered in memory | Low | Accepted risk; streaming would limit full-featured SFTP functionality | Won't fix |
+| SFTP downloads buffered in memory | Low | Accepted risk; chunked streaming added in v0.8.0 (#189) | Fixed |
 | Root container execution | Low | Required for embedded Tailscale daemon; standard for this architecture | Accepted |
 | Insecure transport (non-VPN) | Low | Already mitigated: UI warning + Tailscale default deployment | No change needed |
+
+### Actions taken (v0.8.0)
+
+| Finding | Severity | Action | Status |
+|---------|----------|--------|--------|
+| Cross-session SFTP upload hijack via fingerprint | High/Medium | Added connectionId per WS connection; resume verifies ownership | Fixed (#241) |
+| escHtml missing single-quote escape | Low | Added `&#39;` escape for defense-in-depth | Fixed (#242) |
+| SW ignores Cache-Control: no-store | Low | Filed; SW caches responses despite no-store header | Open (#243) |
+| SSRF via allowPrivate client flag | Low/Medium | Accepted: danger zone toggle, Tailscale-only deployment | By design |
+| Git hash in meta tag | Low | Accepted: intentional for version tracking | By design |
 
 ### Positive findings (both reviews)
 
