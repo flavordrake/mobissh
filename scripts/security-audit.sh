@@ -49,9 +49,9 @@ NEW_FINDINGS=0
 
 log "Running semgrep scan..."
 if command -v semgrep &>/dev/null; then
-  semgrep scan --config auto --json src/ server/ public/ \
+  semgrep scan --config auto --json --quiet src/ server/ public/ \
     --max-target-bytes 500000 --timeout 30 \
-    > "${AUDIT_DIR}/semgrep-raw.json" 2>&1 || true
+    > "${AUDIT_DIR}/semgrep-raw.json" 2>/dev/null || true
 
   # Extract findings and diff against accepted
   node -e "
@@ -143,7 +143,11 @@ Output as markdown."
 # ── Gate 3: Gemini audit ─────────────────────────────────────────────────────
 
 log "Running Gemini security audit..."
-if command -v gemini &>/dev/null; then
+if ! command -v gemini &>/dev/null; then
+  log "gemini: not installed — skipping"
+elif [ -z "${GEMINI_API_KEY:-}" ] && ! grep -q "apiKey" ~/.gemini/settings.json 2>/dev/null; then
+  log "gemini: no API key configured — skipping (set GEMINI_API_KEY or configure ~/.gemini/settings.json)"
+else
   GEMINI_PROMPT="Read ${CONTEXT_FILE} then audit the codebase for security issues. ${AUDIT_PROMPT}"
   timeout 300 gemini -p "$GEMINI_PROMPT" > "${AUDIT_DIR}/gemini-audit.md" 2>&1 || {
     err "Gemini audit failed or timed out (5min limit)"
@@ -151,14 +155,16 @@ if command -v gemini &>/dev/null; then
   if [ -s "${AUDIT_DIR}/gemini-audit.md" ]; then
     ok "gemini: audit complete ($(wc -l < "${AUDIT_DIR}/gemini-audit.md") lines)"
   fi
-else
-  err "gemini not installed — skipping"
 fi
 
 # ── Gate 4: Codex audit ──────────────────────────────────────────────────────
 
 log "Running Codex security audit..."
-if command -v codex &>/dev/null; then
+if ! command -v codex &>/dev/null; then
+  log "codex: not installed — skipping"
+elif [ -z "${OPENAI_API_KEY:-}" ]; then
+  log "codex: no API key configured — skipping (set OPENAI_API_KEY)"
+else
   CODEX_PROMPT="Read ${CONTEXT_FILE} then audit the codebase for security issues. ${AUDIT_PROMPT}"
   timeout 300 codex exec "$CODEX_PROMPT" > "${AUDIT_DIR}/codex-audit.md" 2>&1 || {
     err "Codex audit failed or timed out (5min limit)"
@@ -166,8 +172,6 @@ if command -v codex &>/dev/null; then
   if [ -s "${AUDIT_DIR}/codex-audit.md" ]; then
     ok "codex: audit complete ($(wc -l < "${AUDIT_DIR}/codex-audit.md") lines)"
   fi
-else
-  err "codex not installed — skipping"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
