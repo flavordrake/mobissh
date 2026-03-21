@@ -16,7 +16,7 @@ if [ -z "$SLUG" ]; then
   exit 1
 fi
 
-TIMESTAMP=$(date +%Y%m%dT%H%M%S)
+TIMESTAMP=$(date +%Y%m%dT%H%M%S%z)
 TRACE_DIR=".traces/trace-${SLUG}-${TIMESTAMP}"
 
 mkdir -p "${TRACE_DIR}/specs"
