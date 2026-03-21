@@ -3,7 +3,11 @@
 #
 # Removes orphaned worktree directories, worktrees for closed/merged PRs,
 # stale local branches (bot/issue-*, worktree-agent-*), and stale remote
-# bot branches. Safe to call at any time.
+# bot branches.
+#
+# WARNING: Do NOT run while develop agents are active — their worktrees
+# will be deleted mid-operation. Defer cleanup to release time or when
+# no agents are running. Worktrees are cheap (git hardlinks).
 #
 # Usage: scripts/worktree-cleanup.sh [--quiet] [--dry-run]
 #

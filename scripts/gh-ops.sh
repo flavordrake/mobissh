@@ -53,7 +53,7 @@ _cleanup_pr_worktree() {
     done
     git worktree prune 2>/dev/null || true
     git branch -D "$branch" 2>/dev/null || true
-    scripts/worktree-cleanup.sh --quiet 2>/dev/null || true
+    # Full worktree cleanup deferred to release — prune handles the merged branch
   fi
 }
 

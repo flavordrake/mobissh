@@ -58,4 +58,4 @@ entirely — agents inherit the parent session's model and permissions.
   - `scripts/worktree-cleanup.sh` — safe orphan removal
   - `scripts/gh-ops.sh integrate PR ISSUE` — merge + cleanup (has guards built in)
 - **CWD drift:** All workflow scripts source `scripts/lib/repo-guard.sh` which detects and fixes CWD drift automatically. If you must run raw git commands, run `cd /home/dev/workspace/mobissh` first.
-- **Worktree cleanup is safe:** `worktree-cleanup.sh` and `gh-ops.sh` both use `safe_rm_worktree()` which refuses to delete the main repo or anything outside `.claude/worktrees/`.
+- **Worktree cleanup is deferred to release.** Do NOT run `worktree-cleanup.sh` while agents are active — it deletes their worktrees mid-operation. Worktrees are cheap (git hardlinks). Let them accumulate during development and clean in bulk at release time when nothing is in flight. `git worktree prune` (removes only already-deleted directories) is always safe.
