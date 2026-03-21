@@ -58,7 +58,8 @@ if command -v semgrep &>/dev/null; then
     const fs = require('fs');
     const raw = JSON.parse(fs.readFileSync('${AUDIT_DIR}/semgrep-raw.json', 'utf8'));
     const accepted = JSON.parse(fs.readFileSync('${ACCEPTED_FILE}', 'utf8'));
-    const acceptedIds = new Set(accepted.map(a => a.fingerprint || a.check_id + ':' + a.path + ':' + a.line));
+    // Match on check_id + path (without line number — lines shift on edits)
+    const acceptedIds = new Set(accepted.map(a => a.check_id + ':' + a.path));
 
     const results = (raw.results || []).map(r => ({
       check_id: r.check_id,
@@ -66,7 +67,7 @@ if command -v semgrep &>/dev/null; then
       line: r.start?.line,
       severity: r.extra?.severity || 'UNKNOWN',
       message: r.extra?.message || '',
-      fingerprint: r.check_id + ':' + r.path + ':' + r.start?.line
+      fingerprint: r.check_id + ':' + r.path
     }));
 
     const newFindings = results.filter(r => !acceptedIds.has(r.fingerprint));
@@ -143,13 +144,8 @@ Output as markdown."
 
 log "Running Gemini security audit..."
 if command -v gemini &>/dev/null; then
-  {
-    echo "Read the following project documentation, then audit the codebase."
-    echo ""
-    cat "$CONTEXT_FILE"
-    echo -e "\n---\n"
-    echo "$AUDIT_PROMPT"
-  } | timeout 300 gemini > "${AUDIT_DIR}/gemini-audit.md" 2>&1 || {
+  GEMINI_PROMPT="Read ${CONTEXT_FILE} then audit the codebase for security issues. ${AUDIT_PROMPT}"
+  timeout 300 gemini -p "$GEMINI_PROMPT" > "${AUDIT_DIR}/gemini-audit.md" 2>&1 || {
     err "Gemini audit failed or timed out (5min limit)"
   }
   if [ -s "${AUDIT_DIR}/gemini-audit.md" ]; then
@@ -163,13 +159,8 @@ fi
 
 log "Running Codex security audit..."
 if command -v codex &>/dev/null; then
-  {
-    echo "Read the following project documentation, then audit the codebase."
-    echo ""
-    cat "$CONTEXT_FILE"
-    echo -e "\n---\n"
-    echo "$AUDIT_PROMPT"
-  } | timeout 300 codex > "${AUDIT_DIR}/codex-audit.md" 2>&1 || {
+  CODEX_PROMPT="Read ${CONTEXT_FILE} then audit the codebase for security issues. ${AUDIT_PROMPT}"
+  timeout 300 codex exec "$CODEX_PROMPT" > "${AUDIT_DIR}/codex-audit.md" 2>&1 || {
     err "Codex audit failed or timed out (5min limit)"
   }
   if [ -s "${AUDIT_DIR}/codex-audit.md" ]; then
