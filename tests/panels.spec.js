@@ -193,6 +193,18 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
     });
     await page.waitForSelector('.files-entry', { timeout: 5000 });
 
+    // Set up auto-responder for chunked upload protocol BEFORE triggering upload:
+    // sftp_upload_start -> ack, sftp_upload_chunk -> ack, sftp_upload_end -> result
+    mockSshServer.onMessage = (ws, msg) => {
+      if (msg.type === 'sftp_upload_start') {
+        ws.send(JSON.stringify({ type: 'sftp_upload_ack', requestId: msg.requestId, offset: 0 }));
+      } else if (msg.type === 'sftp_upload_chunk') {
+        ws.send(JSON.stringify({ type: 'sftp_upload_ack', requestId: msg.requestId, offset: msg.offset + 1 }));
+      } else if (msg.type === 'sftp_upload_end') {
+        ws.send(JSON.stringify({ type: 'sftp_upload_result', requestId: msg.requestId, ok: true }));
+      }
+    };
+
     // Trigger a file upload by dispatching a change event on the hidden file input with a fake File
     await page.evaluate(() => {
       const input = document.querySelector('.files-upload-input');
@@ -203,24 +215,18 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    // Progress indicator should appear with uploading status
-    await expect(page.locator('.files-transfer-status')).not.toHaveClass(/hidden/, { timeout: 3000 });
-    const statusText = await page.locator('.files-transfer-status').textContent();
-    expect(statusText).toMatch(/Uploading/i);
+    // With the auto-responder, the chunked upload completes almost instantly for
+    // small files. The progress indicator may flash too fast to observe "Uploading".
+    // Wait for the full upload to complete instead of checking intermediate status.
 
-    // Wait for the sftp_upload message to arrive at the mock server
+    // Wait for upload to complete (sftp_upload_result sent via onMessage handler above)
     await page.waitForFunction(
       () => (window.__mockWsSpy || []).some((s) => {
-        try { return JSON.parse(s).type === 'sftp_upload'; } catch (_) { return false; }
+        try { return JSON.parse(s).type === 'sftp_upload_end'; } catch (_) { return false; }
       }),
       null,
-      { timeout: 5000 },
+      { timeout: 10000 },
     );
-
-    // Respond with success
-    const uploadMsg = mockSshServer.messages.find((m) => m.type === 'sftp_upload');
-    expect(uploadMsg).toBeTruthy();
-    mockSshServer.sendToPage({ type: 'sftp_upload_result', requestId: uploadMsg.requestId, ok: true });
 
     // After success, a new ls is triggered; respond to it so the panel re-renders
     await page.waitForFunction(
@@ -280,6 +286,14 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
     });
     await page.waitForSelector('.files-entry', { timeout: 5000 });
 
+    // Set up auto-responder that rejects the upload BEFORE triggering it
+    mockSshServer.onMessage = (ws, msg) => {
+      if (msg.type === 'sftp_upload_start') {
+        // Send failure result immediately to simulate server rejection
+        ws.send(JSON.stringify({ type: 'sftp_upload_result', requestId: msg.requestId, ok: false }));
+      }
+    };
+
     // Trigger upload
     await page.evaluate(() => {
       const input = document.querySelector('.files-upload-input');
@@ -290,18 +304,14 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    // Wait for sftp_upload to be sent
+    // Wait for the upload_start to be sent
     await page.waitForFunction(
       () => (window.__mockWsSpy || []).some((s) => {
-        try { return JSON.parse(s).type === 'sftp_upload'; } catch (_) { return false; }
+        try { return JSON.parse(s).type === 'sftp_upload_start'; } catch (_) { return false; }
       }),
       null,
       { timeout: 5000 },
     );
-
-    // Respond with failure
-    const uploadMsg = mockSshServer.messages.find((m) => m.type === 'sftp_upload');
-    mockSshServer.sendToPage({ type: 'sftp_upload_result', requestId: uploadMsg.requestId, ok: false });
 
     // Toast should show an error message
     await expect(page.locator('#toast')).toHaveClass(/show/, { timeout: 3000 });

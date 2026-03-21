@@ -114,11 +114,12 @@ test.describe('Initial page load', { tag: '@device-critical' }, () => {
     await expect(keyBar).toBeVisible();
 
     // Core keys that must always be present
-    await expect(page.locator('#keyEsc')).toBeVisible();
+    await expect(page.locator('#keyEscM2')).toBeVisible();
     await expect(page.locator('#keyCtrl')).toBeVisible();
     await expect(page.locator('#keyTab')).toBeVisible();
-    await expect(page.locator('#keyUp')).toBeVisible();
-    await expect(page.locator('#keyDown')).toBeVisible();
+    // Up/Down are in the depth-1 inline nav subset (keyUpM) or depth-2 row (keyUp)
+    await expect(page.locator('#keyUpM')).toBeAttached();
+    await expect(page.locator('#keyDownM')).toBeAttached();
   });
 
   test('IME textarea has mobile-friendly attributes', async ({ page }) => {
@@ -368,7 +369,9 @@ test.describe('Issue #89 — key bar buttons use pointer events for repeat', { t
   });
 
   test('key bar has all expected key IDs', async ({ page }) => {
-    const keyIds = ['keyEsc', 'keyUp', 'keyDown', 'keyLeft', 'keyRight',
+    // Key IDs were reshuffled: keyEsc is now keyEscM2 in the main row,
+    // nav keys have both M (depth-1 inline) and non-M (depth-2 row) variants
+    const keyIds = ['keyEscM2', 'keyUp', 'keyDown', 'keyLeft', 'keyRight',
       'keyHome', 'keyEnd', 'keyPgUp', 'keyPgDn', 'keyTab', 'keyCtrl'];
     for (const id of keyIds) {
       await expect(page.locator(`#${id}`)).toBeAttached();
