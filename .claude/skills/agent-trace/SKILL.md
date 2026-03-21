@@ -69,14 +69,34 @@ If nothing changed, the trace is trivially short and that's fine.
 For HPC/performance tasks: also record tiling sizes, register budgets,
 memory alignment expectations — things not in the issue.
 
-### Step 2: Telemetry Ingestion
+### Step 2: Telemetry Ingestion (before/after snapshots)
 
-If the task is performance-critical (e.g., CUDA/HPC), the agent MUST run profiling
-tools (Nsight Compute, Systems, or Sanitizers). Save the raw output to `telemetry/`
-and a summary of the bottleneck to `logs/`.
+Capture performance data **before** and **after** implementation so deltas are
+visible during harvest. The agent does NOT analyze — just captures. Significant
+regressions or improvements are discovered at harvest time.
 
-For web/PWA tasks: capture browser performance traces, network waterfall data,
-transfer throughput measurements, or xterm.js rendering metrics.
+**Principle: aspect-oriented, zero-effort instrumentation.** Use tools that don't
+require code changes or special setup. Capture raw output to `telemetry/`.
+
+#### HPC/CUDA tasks
+Run Nsight Compute, Nsight Systems, or compute-sanitizer. Save raw output to
+`telemetry/` and bottleneck summary to `logs/`.
+
+#### Web/PWA tasks (MobiSSH)
+
+| File | What to capture | Tool |
+|------|----------------|------|
+| `telemetry/perf-before.txt` | Test suite duration before changes | `scripts/test-unit.sh` duration line |
+| `telemetry/perf-after.txt` | Test suite duration after changes | `scripts/test-unit.sh` duration line |
+| `telemetry/bundle-size.txt` | Compiled JS sizes | `ls -la public/modules/*.js` |
+| `telemetry/page-metrics.json` | Layout count, style recalcs, heap | Playwright `page.metrics()` |
+| `telemetry/transfer-trace.log` | Chunk timing, ack latency | App's built-in transfer tracing |
+
+**When to capture more than just test duration:**
+- Terminal rendering changes → page metrics (layout thrashing)
+- SFTP/WebSocket changes → transfer tracing (throughput, ack-wait %)
+- UI changes → bundle size + page metrics
+- All changes → test suite duration (always)
 
 ### Step 3: The Pivot (The Delta)
 

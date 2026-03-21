@@ -198,6 +198,43 @@ The orchestrator harvests security findings from TRACEs and can optionally
 spawn an additional development cycle focused on addressing them, or aggregate
 them into cross-cutting security issues at the project level.
 
+**5.7. Performance snapshot (before/after)**
+
+Capture a lightweight performance baseline so deltas are visible:
+
+```bash
+# Before implementing (run once at cycle start, save to TRACE):
+scripts/test-unit.sh 2>&1 | tail -1  # vitest duration line
+# Save to {TRACE_DIR}/telemetry/perf-before.txt
+
+# After implementing (run again after code changes):
+scripts/test-unit.sh 2>&1 | tail -1
+# Save to {TRACE_DIR}/telemetry/perf-after.txt
+```
+
+For web/PWA performance (when changes touch rendering, WS, or terminal):
+- **Lighthouse CI** (if available): `npx lhci autorun` — captures FCP, TTI, CLS
+- **Playwright `page.metrics()`**: captures JSHeapUsedSize, LayoutCount, RecalcStyleCount
+- **`performance.measure()` in app code**: transfer tracing (#207) already captures
+  per-chunk timing — the TRACE should reference those console logs
+
+The agent does NOT need to analyze the data — just capture it. The TRACE becomes
+the artifact. Significant deltas are discovered during harvest, not during development.
+
+**What to capture (aspect-oriented, zero-effort instrumentation):**
+
+| Layer | Tool | What it measures | When to use |
+|-------|------|-----------------|-------------|
+| Test suite | vitest duration line | Overall test speed regression | Always |
+| Browser render | `page.metrics()` | Layout thrashing, style recalcs, heap | UI changes |
+| Network/WS | Transfer tracing (localStorage) | Chunk timing, ack latency, throughput | Connection/SFTP changes |
+| Terminal | `performance.mark/measure` | Write batching effectiveness | xterm.js changes |
+| Bundle size | `ls -la public/modules/*.js` | Compiled output size delta | Any TS change |
+
+None of these require code changes to capture — they're built into the
+tools or already instrumented in the app. The agent runs them, saves output
+to `telemetry/`, and moves on. Analysis happens at harvest time.
+
 **6. Self-review**
 ```bash
 git diff origin/main --stat
