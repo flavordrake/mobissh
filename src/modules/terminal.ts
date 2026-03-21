@@ -27,6 +27,8 @@ export function _sanitizeNotifText(raw: string): string {
   /* eslint-enable no-control-regex */
   // Remove Unicode replacement / block characters
   s = s.replace(/[▯\uFFFD]/g, '');
+  // Strip leading # from hook-injected messages (e.g., "# Approve: Edit — file.ts")
+  s = s.replace(/^#\s*/, '');
   // Collapse whitespace runs to single space and trim
   s = s.replace(/\s+/g, ' ').trim();
   // Truncate to 120 chars with ellipsis
