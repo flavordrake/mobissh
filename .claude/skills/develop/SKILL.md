@@ -146,7 +146,7 @@ switches). If worktree agents fail on permissions, fix the settings — do NOT r
 
 Read `.claude/agents/develop.md` for the prompt content to inline.
 
-**Parallel limit: max 2 agents simultaneously.** If batch has >2 issues, queue the rest.
+**Parallel limit: max 4 agents simultaneously.** If batch has >4 issues, queue the rest.
 Wait for a slot to free up before spawning the next.
 
 Single issue mode: run in foreground (not background), show results directly.

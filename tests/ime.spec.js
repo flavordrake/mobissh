@@ -1220,3 +1220,328 @@ test.describe('Issue #166 — preview mode commit and timeout send text', { tag:
     await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
   });
 });
+
+// ── Issue #136 — backspace on empty preview forwards DEL to terminal (#136) ──
+
+test.describe('Issue #136 — backspace on empty preview forwards to terminal', { tag: '@device-critical' }, () => {
+
+  test('backspace in empty preview textarea sends \\x7f to SSH', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Compose text and commit it — text is sent, textarea becomes empty
+    await swipeCompose(page, 'deleteme');
+    await page.waitForTimeout(200);
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(200);
+
+    // Verify textarea is now empty
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toBe('');
+
+    // Clear spy to isolate the backspace
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Focus the textarea and press Backspace
+    await page.locator('#imeInput').focus();
+    await page.waitForTimeout(100);
+    await page.locator('#imeInput').press('Backspace');
+    await page.waitForTimeout(200);
+
+    // Verify DEL (\x7f) was sent to the terminal
+    const msgs = await getInputMessages(page);
+    expect(msgs.length).toBeGreaterThanOrEqual(1);
+    expect(msgs.some((m) => m.data === '\x7f')).toBe(true);
+  });
+});
+
+// ── Issue #137 — commit button sends text after voice input (#137) ──────────
+
+test.describe('Issue #137 — commit button sends text after voice input', { tag: '@device-critical' }, () => {
+
+  test('voice composition text is sent via commit button', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Simulate voice dictation: compositionstart, value set, compositionend
+    // Voice input typically sets the full text at once (no incremental updates)
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.value = 'hello from voice dictation';
+      el.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true, data: 'hello from voice dictation',
+      }));
+    });
+    await page.waitForTimeout(200);
+
+    // Verify text is in the textarea
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('hello from voice dictation');
+
+    // Nothing sent yet (preview mode holds text)
+    const msgsBefore = await getInputMessages(page);
+    expect(msgsBefore).toHaveLength(0);
+
+    // Click commit button
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(200);
+
+    // Text must have been sent to SSH
+    const msgsAfter = await getInputMessages(page);
+    expect(msgsAfter.some((m) => m.data.includes('hello from voice dictation'))).toBe(true);
+    // No trailing \r — commit sends text only
+    expect(msgsAfter.every((m) => m.data !== '\r')).toBe(true);
+  });
+
+  test('voice input with empty e.data but textarea has text — commit still sends', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Voice dictation quirk: compositionend fires with empty data,
+    // but the textarea value has the full dictated text
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.value = 'voice text with empty data field';
+      el.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true, data: '',
+      }));
+    });
+    await page.waitForTimeout(200);
+
+    // Verify text is held in textarea
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('voice text with empty data field');
+
+    // Click commit button
+    await page.locator('#imeCommitBtn').click();
+    await page.waitForTimeout(200);
+
+    // Text must have been sent
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data.includes('voice text with empty data field'))).toBe(true);
+  });
+});
+
+// ── Issue #132 — voice input auto-preview and no premature clear (#132) ─────
+
+test.describe('Issue #132 — voice input auto-preview on first use', { tag: '@device-critical' }, () => {
+
+  test('first voice composition triggers preview display (ime-visible)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Verify textarea is NOT visible before any composition
+    await expect(page.locator('#imeInput')).not.toHaveClass(/ime-visible/);
+
+    // Simulate first-ever voice composition
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.value = 'first voice input ever';
+      el.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true, data: 'first voice input ever',
+      }));
+    });
+    await page.waitForTimeout(200);
+
+    // Textarea must become visible (ime-visible class added)
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+    // Action buttons must be visible
+    await expect(page.locator('#imeActions')).not.toHaveClass(/hidden/);
+  });
+
+  test('voice input text is NOT auto-cleared within 2s (preview holds)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Set a long countdown to avoid auto-commit interfering
+    await page.evaluate(() => { localStorage.setItem('imePreviewTimeout', 'Infinity'); });
+
+    // Simulate voice composition
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.value = 'do not clear this text prematurely';
+      el.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true, data: 'do not clear this text prematurely',
+      }));
+    });
+    await page.waitForTimeout(200);
+
+    // Text should be in the textarea
+    const imeVal1 = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal1).toContain('do not clear this text prematurely');
+
+    // Wait 2 seconds — text must still be there (not auto-cleared)
+    await page.waitForTimeout(2000);
+
+    const imeVal2 = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal2).toContain('do not clear this text prematurely');
+
+    // Textarea must still be visible
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+
+    // Nothing should have been sent to SSH yet
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+  });
+
+  test('voice composition shows textarea even on compositionstart (preview mode)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Simulate just compositionstart (voice recognition starting)
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    });
+    await page.waitForTimeout(200);
+
+    // Textarea should become visible immediately during composition
+    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+  });
+});
+
+// ── Issue #135 — voice typing captures only first word ──────────────────────
+
+test.describe('Issue #135 — voice typing multi-word composition', { tag: '@device-critical' }, () => {
+
+  /**
+   * Simulate voice dictation: compositionstart, compositionupdate with partial
+   * text, then compositionend with the full multi-word phrase. Voice engines
+   * typically send partial updates (first word) then deliver the full text on
+   * compositionend. The textarea value is set to the full text at the end.
+   */
+  async function voiceCompose(page, partialText, fullText) {
+    await page.evaluate(({ partial, full }) => {
+      const el = document.getElementById('imeInput');
+      el.focus();
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      // Voice engine sends partial updates (first word only)
+      el.value = partial;
+      el.dispatchEvent(new CompositionEvent('compositionupdate', {
+        bubbles: true, data: partial,
+      }));
+      // Voice engine delivers full text on compositionend
+      el.value = full;
+      el.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true, data: full,
+      }));
+    }, { partial: partialText, full: fullText });
+    await page.waitForTimeout(100);
+  }
+
+  test('compose+preview holds full multi-word voice text, not just first word', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await voiceCompose(page, 'hello', 'hello world');
+
+    // Full text must be in the textarea (not truncated to first word)
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toBe('hello world');
+
+    // Nothing should be sent yet (preview holds text)
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+
+    // Action buttons should be visible for the user to commit
+    await expect(page.locator('#imeActions')).not.toHaveClass(/hidden/);
+  });
+
+  test('voice text survives 2s without being cleared by timer', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+
+    // Use "never" timeout so auto-commit doesn't interfere
+    await page.evaluate(() => { localStorage.setItem('imePreviewTimeout', 'Infinity'); });
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await voiceCompose(page, 'the', 'the quick brown fox');
+
+    // Wait 2 seconds — text must still be there (timer must not clear it early)
+    await page.waitForTimeout(2000);
+
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toBe('the quick brown fox');
+
+    // Still not sent
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+  });
+
+  test('non-preview mode sends full voice text immediately', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    // Compose ON, preview OFF
+    await page.evaluate(() => {
+      const btn = document.getElementById('composeModeBtn');
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(100);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    await voiceCompose(page, 'good', 'good morning everyone');
+
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data.includes('good morning everyone'))).toBe(true);
+  });
+});
+
+// ── Issue #163 — compositionend e.data populates ime.value ──────────────────
+
+test.describe('Issue #163 — compositionend e.data fallback', { tag: '@device-critical' }, () => {
+
+  test('compositionend with e.data fills textarea when ime.value is empty', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // Simulate voice dictation where ime.value stays empty but e.data has text
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.focus();
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      // Crucially: do NOT set el.value — simulates the voice quirk
+      el.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true, data: 'test phrase',
+      }));
+    });
+    await page.waitForTimeout(100);
+
+    // The code uses `ime.value || e.data` so e.data should be used as fallback
+    // and the text should be sent to SSH
+    const msgs = await getInputMessages(page);
+    expect(msgs.some((m) => m.data === 'test phrase')).toBe(true);
+  });
+
+  test('compose+preview mode captures e.data when ime.value is empty', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+    await enableComposePreview(page);
+    await page.evaluate(() => { window.__mockWsSpy = []; });
+
+    // In compose+preview, compositionend with empty value but e.data present
+    await page.evaluate(() => {
+      const el = document.getElementById('imeInput');
+      el.focus();
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      // Voice quirk: value stays empty, e.data has text
+      el.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true, data: 'voice dictated sentence',
+      }));
+    });
+    await page.waitForTimeout(100);
+
+    // In preview mode, text should be held (not sent)
+    const msgs = await getInputMessages(page);
+    expect(msgs).toHaveLength(0);
+
+    // The textarea must have the text for the user to see and commit
+    const imeVal = await page.evaluate(() => document.getElementById('imeInput').value);
+    expect(imeVal).toContain('voice dictated sentence');
+  });
+});
