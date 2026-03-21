@@ -29,4 +29,5 @@ paths:
   - Do NOT use `TMPDIR` as the variable name — it conflicts with the system `TMPDIR` used by `mktemp` and other tools.
   - Scripts log via `exec > >(tee -a "$LOGFILE") 2>&1` where `LOGFILE="${MOBISSH_LOGDIR}/<script-name>.log"`.
 - Never use `|| true` to swallow errors. Use `if ! cmd; then log "failed (reason)"; fi`.
+- **Exception: grep in pipelines.** Under `set -euo pipefail`, `grep` exits non-zero on zero matches, killing the pipeline. Wrap in a function: `extract() { grep -oP 'pattern' || true; }`. This is the only valid use of `|| true`.
 - `scripts/setup-appium.sh` must NOT run as root/sudo.
