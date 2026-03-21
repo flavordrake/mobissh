@@ -109,6 +109,25 @@ The `/develop` skill's TDD workflow writes tests as part of implementation.
 - Expanding coverage for a specific function or behavior
 - Writing the test that SHOULD have been written but wasn't
 
+## TRACE for Test Design
+
+When writing tests for non-trivial code (state machines, protocol changes, complex UI
+interactions), create a TRACE to document test design decisions:
+
+```bash
+scripts/trace-init.sh "tests-{target-slug}"
+```
+
+Record in `strategy/initial_plan.md`:
+- What edge cases were identified and why they matter
+- What was considered but skipped (and the rationale)
+- What failure modes the tests are designed to catch
+- What mocking strategy was chosen and alternatives considered
+
+TRACE is optional for simple test backfills (single function, obvious behavior).
+Create a TRACE when: the test design involves trade-offs, the code under test has
+non-obvious interactions, or prior test attempts failed.
+
 ## Rules
 
 - Test-only PRs. Zero application code changes.

@@ -319,6 +319,32 @@ scripts/container-ctl.sh status
 
 Check that the version meta tag matches the new release.
 
+## TRACE for Release Process
+
+Create a TRACE for every release:
+
+```bash
+scripts/trace-init.sh "release-v{VERSION}"
+```
+
+Record in `strategy/initial_plan.md`:
+- What is included in this release (features, fixes, refactors)
+- Version bump rationale (why patch/minor/major)
+- Known risks or areas of concern
+
+Log pivots when:
+- Validation fails and blocks the release
+- Security audit surfaces findings that must be addressed before tagging
+- Issues discovered during close-out that change what ships
+
+Populate `TRACE.md` on completion with:
+- What shipped, what was held back, and why
+- Security audit summary (findings, false positives, filed issues)
+- Knowledge seed: lessons for future releases
+
+Release TRACEs are always created (not optional) since they document the decision
+trail for what went into production.
+
 ## Anti-Patterns
 
 - **Don't skip validation**: "It's just a version bump" is how broken releases ship.

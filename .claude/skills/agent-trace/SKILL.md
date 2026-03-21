@@ -111,15 +111,16 @@ status: partial
 ### Where TRACEs live
 
 ```text
-test-history/traces/
+.traces/
 ├── trace-sftp-upload-20260316/
 ├── trace-preview-countdown-20260315/
 ├── trace-keybar-scroll-20260321/
 └── ...
 ```
 
-`test-history/` is gitignored — TRACEs are local development artifacts,
-not committed to the repo. They inform memory updates and process improvements.
+`.traces/` is the default local directory (gitignored, project-local, like `.claude/worktrees/`).
+TRACEs are local development artifacts, not committed to the repo. They inform memory
+updates and process improvements.
 
 ### When to generate a TRACE
 
@@ -149,7 +150,7 @@ Initialize a new TRACE directory with boilerplate:
 
 ```bash
 scripts/trace-init.sh "objective-slug"
-# Creates: test-history/traces/trace-{slug}-{timestamp}/
+# Creates: .traces/trace-{slug}-{timestamp}/
 # With: TRACE.md, specs/, strategy/, logs/, telemetry/, artifacts/
 ```
 

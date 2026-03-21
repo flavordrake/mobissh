@@ -17,3 +17,4 @@ test-data/
 .claude/worktrees/
 .claude/settings.local.json
 test-history/
+.traces/

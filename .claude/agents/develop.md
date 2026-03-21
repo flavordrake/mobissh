@@ -46,17 +46,23 @@ Your prompt will contain:
 (absolute) will be denied by permission patterns. Use `scripts/*` paths, never absolute.
 
 1. Record the start time: `date +%s`
-2. Read reference docs:
+2. **Initialize TRACE** (mandatory):
+   ```bash
+   scripts/trace-init.sh "issue-{N}-{slug}"
+   ```
+   Record your initial plan in `strategy/initial_plan.md` — approach, expected file changes,
+   test strategy, assumptions. This happens BEFORE writing any code.
+3. Read reference docs:
    ```
    .claude/skills/develop/reference/project-context.md
    .claude/skills/develop/reference/lessons-learned.md
    ```
    Plus the topic-specific reference relevant to your issue (typescript.md, testing.md, etc.)
-3. Create and switch to branch:
+4. Create and switch to branch:
    ```bash
    git checkout -b bot/issue-{N} origin/main
    ```
-4. If the branch already exists remotely, reset to it:
+5. If the branch already exists remotely, reset to it:
    ```bash
    git fetch origin bot/issue-{N} && git checkout bot/issue-{N} && git merge origin/main
    ```
@@ -131,6 +137,12 @@ If TIMEOUT, skip to the Failure section.
 
 ### Cycle N:
 
+**0. Log pivot (cycle 2+)**
+If this is not the first cycle, record a pivot in the TRACE:
+- Create `strategy/pivot_N.md` in the trace directory
+- Document what failed (triggering evidence) and what changed (structural change)
+- Quantify the delta if possible
+
 **1. Merge from main (every cycle)**
 ```bash
 git fetch origin main
@@ -189,6 +201,7 @@ A PR is integration-ready when ALL of these are true:
 3. **Smoketest exists** — feature is accessible (element exists, handler registered)
 4. **Fast gate passes** — `scripts/test-fast-gate.sh` (tsc + lint + vitest)
 5. **Simplify validates** — no code changed without test coverage
+6. **TRACE populated** — `TRACE.md` has status, Why, Ambiguity Gap, and Knowledge Seed
 
 If done-when cannot be met within 3 cycles, the agent aborts but pushes the branch.
 The branch contains code + failing tests — this is valuable for the user to review
@@ -269,6 +282,10 @@ scripts/gh-ops.sh comment {N} --body "PR opened: <pr-url>. Cycles: {count}/3. Al
 
 If cycles exhausted or timeout reached:
 
+0. **Populate TRACE.md** with status `failure`, the Why (post-mortem on what failed),
+   Ambiguity Gap (what was unclear in the issue), and Knowledge Seed (heuristic for
+   future agents). A failure TRACE is especially valuable — it documents what NOT to do.
+
 1. Write a failure summary to stdout (the orchestrator captures this):
 ```
 DEVELOP_RESULT: FAIL
@@ -297,7 +314,13 @@ scripts/gh-ops.sh comment {N} --body "Development agent failed after {count} cyc
 
 ## Success
 
-On success, write to stdout:
+On success:
+
+0. **Populate TRACE.md** with status `success`, the Why (why the final approach worked),
+   Ambiguity Gap (specs clarified during execution), and Knowledge Seed (one-sentence
+   heuristic for future agents).
+
+Then write to stdout:
 ```
 DEVELOP_RESULT: PASS
 ISSUE: {N}

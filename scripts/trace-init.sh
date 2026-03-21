@@ -5,7 +5,7 @@
 #   scripts/trace-init.sh "objective-slug"
 #   scripts/trace-init.sh "sftp-upload-throughput"
 #
-# Creates: test-history/traces/trace-{slug}-{timestamp}/
+# Creates: .traces/trace-{slug}-{timestamp}/
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,7 +17,7 @@ if [ -z "$SLUG" ]; then
 fi
 
 TIMESTAMP=$(date +%Y%m%dT%H%M%S)
-TRACE_DIR="test-history/traces/trace-${SLUG}-${TIMESTAMP}"
+TRACE_DIR=".traces/trace-${SLUG}-${TIMESTAMP}"
 
 mkdir -p "${TRACE_DIR}/specs"
 mkdir -p "${TRACE_DIR}/strategy"

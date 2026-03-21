@@ -160,6 +160,18 @@ An agent that aborts with code + failing tests is still useful. The branch shows
 the attempted approach and the tests document the expected behavior. Push the branch
 and report the failure — the user can review and provide guidance.
 
+## TRACE Requirement
+
+Develop agents MUST initialize a TRACE via `scripts/trace-init.sh "issue-{N}-{slug}"`
+before starting work. The orchestrator validates that a trace directory exists in
+`.traces/` before accepting a PR. Traces capture strategy pivots, failure reasons,
+and knowledge seeds — they are how the project learns from bot work.
+
+- TRACE initialization is part of the Setup phase (see `.claude/agents/develop.md`)
+- Pivots are logged in `strategy/pivot_N.md` when approach changes between cycles
+- `TRACE.md` is populated on both success AND failure — failure traces are especially valuable
+- TRACE is part of done-when criteria: a PR without a populated TRACE is not integration-ready
+
 ## Verify
 scripts/test-fast-gate.sh
 ```

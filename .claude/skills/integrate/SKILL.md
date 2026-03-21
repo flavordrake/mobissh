@@ -274,6 +274,33 @@ When processing multiple PRs:
 - If main breaks: revert the last merge, report which PR caused it
 - After all merges: run `scripts/run-appium-tests.sh` (Step 7) for final acceptance with recording
 
+## TRACE for Integration Decisions
+
+Create a TRACE when integrating multiple PRs or when a non-trivial merge/reject
+decision is made:
+
+```bash
+scripts/trace-init.sh "integrate-{date-or-theme}"
+```
+
+Record in `strategy/initial_plan.md`:
+- Which PRs are candidates and their risk scores
+- The planned integration order and rationale
+
+Log pivots when:
+- A PR that was expected to pass fails a gate
+- A merge breaks main and requires revert
+- A reject decision is made for a non-obvious reason
+
+Populate `TRACE.md` on completion with:
+- What was gated, what passed/failed
+- What was merged/rejected and why
+- Knowledge seed: patterns for future integration decisions
+
+TRACE is optional for single-PR integration with clear pass/fail. Create a TRACE
+when: batch integrating, making judgment calls on edge cases, or when a PR reveals
+a systemic issue.
+
 ## Encoded Lessons
 
 These rules come from real project history. They are not suggestions.

@@ -139,7 +139,24 @@ scripts/integrate-gate.sh <branch-name>
 
 Use **integrate-gater** agents with `isolation: "worktree"` for parallel gating.
 
-## Phase 7: Report
+## Phase 7: TRACE Harvesting
+
+After all agents complete, collect and review their traces:
+
+1. List all traces: `ls .traces/trace-*/TRACE.md`
+2. For each trace:
+   - Read TRACE.md — check status, knowledge seed, ambiguity gap
+   - If knowledge seed is valuable: create/update memory file in
+     `.claude/projects/-home-dev-workspace-mobissh/memory/`
+   - If ambiguity gap reveals a missing rule: update the relevant `.claude/rules/` file
+   - If pivot pattern repeats across traces: file a process improvement issue
+3. Validate traces exist and are informative:
+   - Develop agents without a trace directory = process violation (note in report)
+   - Traces with empty TRACE.md or missing `strategy/initial_plan.md` = incomplete
+   - Flag incomplete traces so the develop agent prompt can be tightened
+4. Report harvested insights in the cycle summary
+
+## Phase 8: Report
 
 ```
 ## Cycle Complete

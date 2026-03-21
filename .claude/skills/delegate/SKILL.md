@@ -503,6 +503,33 @@ Skipped (blocked): #B1 (labeled blocked, comment added)
 Skipped (icebox): #I1
 ```
 
+## TRACE for Delegation Decisions
+
+Create a TRACE when delegating multiple issues or making non-obvious classification
+decisions:
+
+```bash
+scripts/trace-init.sh "delegate-{date-or-theme}"
+```
+
+Record in `strategy/initial_plan.md`:
+- Classification rationale for borderline issues (why `delegate` vs `human-only` vs `decompose`)
+- Decomposition choices and alternatives considered
+- Cluster groupings and the reasoning behind merge vs sequence vs parallel
+
+Log pivots when:
+- An issue initially classified one way gets reclassified after reading the code
+- Gap analysis reveals a systemic issue that changes the delegation strategy
+- User feedback overrides a classification
+
+Populate `TRACE.md` on completion with:
+- What was delegated, decomposed, merged, skipped, and why
+- Knowledge seed: patterns for future classification decisions
+
+TRACE is optional for single-issue delegation with obvious classification. Create
+a TRACE when: batch delegating, performing gap analysis, or when classification
+involves judgment calls.
+
 ## Encoded Lessons
 
 These come from real project history. They are not suggestions -- they are hard rules.
