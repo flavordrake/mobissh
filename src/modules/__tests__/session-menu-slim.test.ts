@@ -64,4 +64,21 @@ describe('issue-217: slim session menu', () => {
       expect(html).not.toContain('rec-row');
     });
   });
+
+  describe('session menu CSS', () => {
+    const css = readFileSync(resolve(__dirname, '../../../public/app.css'), 'utf-8');
+
+    it('has narrower max-width (220px or less)', () => {
+      const match = css.match(/#sessionMenu\s*\{[^}]*max-width:\s*min\((\d+)px/);
+      expect(match).toBeTruthy();
+      expect(Number(match![1])).toBeLessThanOrEqual(220);
+    });
+
+    it('does not contain dead .rec-row or .ctrl-row styles', () => {
+      expect(css).not.toContain('.rec-row');
+      expect(css).not.toContain('.ctrl-row');
+      expect(css).not.toContain('.rec-btn');
+      expect(css).not.toContain('.ctrl-btn');
+    });
+  });
 });
