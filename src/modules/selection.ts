@@ -464,9 +464,13 @@ export function initSelection(): void {
 
 // ── Selection watcher ────────────────────────────────────────────────────────
 
+/** Track which terminal we've bound to, so we re-bind on session switch. */
+let _watchedTerminal: Terminal | null = null;
+
 function _watchSelection(copyBtn: HTMLElement): void {
-  const watchTerm = currentSession()?.terminal;
-  if (!watchTerm) return;
+  const watchTerm = currentSession()?.terminal ?? null;
+  if (!watchTerm || watchTerm === _watchedTerminal) return;
+  _watchedTerminal = watchTerm;
   watchTerm.onSelectionChange(() => {
     const sel = currentSession()?.terminal?.getSelection();
     if (sel) {
@@ -474,7 +478,12 @@ function _watchSelection(copyBtn: HTMLElement): void {
       copyBtn.classList.remove('hidden');
     } else {
       copyBtn.classList.add('hidden');
-      // Don't clear _selectionActive here — the chip might still be showing
     }
   });
+}
+
+/** Re-bind selection watcher after session switch. Call from switchSession(). */
+export function rebindSelectionWatcher(): void {
+  const copyBtn = document.getElementById('handleCopyBtn');
+  if (copyBtn) _watchSelection(copyBtn);
 }

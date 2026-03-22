@@ -236,6 +236,7 @@ export function sendSftpRealpath(requestId: string): void {
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, currentSession, createSession } from './state.js';
 import { createSessionTerminal } from './terminal.js';
+import { rebindSelectionWatcher } from './selection.js';
 import { stopAndDownloadRecording } from './recording.js';
 
 let _toast = (_msg: string): void => {};
@@ -434,6 +435,9 @@ export async function connect(profile: SSHProfile): Promise<void> {
   document.querySelectorAll<HTMLElement>('#terminal > [data-session-id]').forEach((el) => {
     el.classList.toggle('hidden', el.dataset.sessionId !== sessionId);
   });
+
+  // Re-bind selection watcher to the new session's terminal (#283)
+  rebindSelectionWatcher();
 
   _openWebSocket();
 }
