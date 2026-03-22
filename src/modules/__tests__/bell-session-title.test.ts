@@ -93,13 +93,20 @@ function makeMockElement(opts: {
   return el;
 }
 
+// Cache elements so state persists across getElementById calls (like real DOM)
+let _sessionMenuBtnEl: Record<string, unknown> | null = null;
+let _sessionMenuEl: Record<string, unknown> | null = null;
+
 function getElementById(id: string): unknown {
   switch (id) {
     case 'sessionMenuBtn':
-      return makeMockElement({
-        text: sessionMenuBtnText,
-        classes: sessionMenuBtnClasses,
-      });
+      if (!_sessionMenuBtnEl) {
+        _sessionMenuBtnEl = makeMockElement({
+          text: sessionMenuBtnText,
+          classes: sessionMenuBtnClasses,
+        }) as Record<string, unknown>;
+      }
+      return _sessionMenuBtnEl;
     case 'bellIndicatorBtn':
       return makeMockElement({
         text: '',
@@ -109,10 +116,13 @@ function getElementById(id: string): unknown {
         },
       });
     case 'sessionMenu':
-      return makeMockElement({
-        innerHTML: sessionMenuInnerHTML,
-        classes: sessionMenuClasses,
-      });
+      if (!_sessionMenuEl) {
+        _sessionMenuEl = makeMockElement({
+          innerHTML: sessionMenuInnerHTML,
+          classes: sessionMenuClasses,
+        }) as Record<string, unknown>;
+      }
+      return _sessionMenuEl;
     case 'notifDrawer':
       return makeMockElement({ classes: new Set<string>(['hidden']) });
     case 'notifDrawerList':
@@ -176,6 +186,8 @@ function resetState(): void {
   storage.clear();
   sessionMenuBtnText = 'user@host';
   sessionMenuBtnClasses = new Set<string>(['connected']);
+  _sessionMenuBtnEl = null; // Reset cached mocks so they pick up new text
+  _sessionMenuEl = null;
   bellIndicatorBtnClasses = new Set<string>(['hidden']);
   bellBadgeText = '0';
   bellBadgeClasses = new Set<string>(['hidden']);

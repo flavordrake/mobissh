@@ -64,14 +64,49 @@ export function _addNotification(message: string): void {
   _updateBellBadge();
 }
 
+/** Base session name for reconstructing title with count. */
+let _sessionTitleBase = '';
+
 function _updateBellBadge(): void {
-  const btn = document.getElementById('bellIndicatorBtn');
-  const badge = btn?.querySelector('.bell-badge');
-  if (!btn || !badge) return;
+  // Keep bell icon always hidden (#251) — count goes on session title
+  const bellBtn = document.getElementById('bellIndicatorBtn');
+  if (bellBtn) bellBtn.classList.add('hidden');
+  const badge = bellBtn?.querySelector('.bell-badge');
+  if (badge) {
+    (badge as HTMLElement).classList.add('hidden');
+    badge.textContent = '0';
+  }
+
+  // Update session title with notification count
+  const sessionBtn = document.getElementById('sessionMenuBtn');
+  if (!sessionBtn) return;
   const count = _notifications.length;
-  btn.classList.toggle('hidden', count === 0);
-  badge.classList.toggle('hidden', count === 0);
-  badge.textContent = String(count);
+
+  // Capture base name on first call or when no count suffix exists
+  const current = sessionBtn.textContent ?? '';
+  const baseMatch = current.replace(/\s*\(\d+\)$/, '');
+  if (baseMatch && baseMatch !== _sessionTitleBase) _sessionTitleBase = baseMatch;
+  if (!_sessionTitleBase) _sessionTitleBase = current;
+
+  sessionBtn.textContent = count > 0
+    ? `${_sessionTitleBase} (${String(count)})`
+    : _sessionTitleBase;
+
+  // Render notification entries into session menu
+  const menu = document.getElementById('sessionMenu');
+  if (menu && count > 0) {
+    const notifHtml = _notifications.map((n) =>
+      `<div class="notif-entry menu-notif">${n.message}</div>`
+    ).join('');
+    // Only update the notification section, not the whole menu
+    const existing = menu.innerHTML;
+    const notifSection = `<div class="menu-notif-section">${notifHtml}</div>`;
+    if (!existing.includes('menu-notif-section')) {
+      menu.innerHTML = existing + notifSection;
+    } else {
+      menu.innerHTML = existing.replace(/<div class="menu-notif-section">.*?<\/div>/s, notifSection);
+    }
+  }
 }
 
 // ── CSS layout constants (read from :root on first access; JS never hardcodes px values) ─
