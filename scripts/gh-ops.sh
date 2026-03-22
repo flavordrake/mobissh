@@ -52,7 +52,9 @@ _cleanup_pr_worktree() {
       fi
     done
     git worktree prune 2>/dev/null || true
-    git branch -D "$branch" 2>/dev/null || true
+    if ! git branch -D "$branch" 2>/dev/null; then
+      echo "Skipping local branch deletion — worktree holds it (cleanup deferred to release)" >&2
+    fi
     # Full worktree cleanup deferred to release — prune handles the merged branch
   fi
 }
@@ -247,7 +249,18 @@ case "$CMD" in
 
     # Step 1: Merge PR — worktree cleanup deferred to release (#235)
     echo "==> Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
-    gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch
+    MERGE_ERR=""
+    if ! MERGE_ERR=$(gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch 2>&1); then
+      case "$MERGE_ERR" in
+        *"used by worktree"*)
+          echo "Skipping local branch deletion — worktree holds it (cleanup deferred to release)" >&2
+          ;;
+        *)
+          echo "$MERGE_ERR" >&2
+          exit 1
+          ;;
+      esac
+    fi
 
     # Step 2: Close issue
     echo "==> Closing issue #${ISSUE_NUM}" >&2
