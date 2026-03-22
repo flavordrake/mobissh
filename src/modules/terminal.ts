@@ -4,7 +4,7 @@
 
 import type { ThemeName, RootCSS } from './types.js';
 import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
-import { appState } from './state.js';
+import { appState, currentSession, createSession } from './state.js';
 
 interface NotifEntry {
   time: number;
@@ -128,7 +128,11 @@ export function initTerminal(): void {
   const savedFont = localStorage.getItem('termFont') ?? 'monospace';
   const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
 
-  appState.terminal = new Terminal({
+  // Create a lobby session for the welcome terminal
+  const lobby = createSession('lobby');
+  appState.activeSessionId = 'lobby';
+
+  const terminal = new Terminal({
     fontFamily,
     fontSize,
     theme: THEMES[appState.activeThemeName].theme,
@@ -137,17 +141,21 @@ export function initTerminal(): void {
     convertEol: false,
   });
 
-  appState.fitAddon = new FitAddon.FitAddon();
-  appState.terminal.loadAddon(appState.fitAddon);
+  const fitAddon = new FitAddon.FitAddon();
+  terminal.loadAddon(fitAddon);
   if (localStorage.getItem('enableRemoteClipboard') === 'true') {
-    appState.terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
+    terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
   }
-  appState.terminal.open(document.getElementById('terminal')!);
-  appState.fitAddon.fit();
+  terminal.open(document.getElementById('terminal')!);
+  fitAddon.fit();
+
+  lobby.terminal = terminal;
+  lobby.fitAddon = fitAddon;
+
   applyTheme(appState.activeThemeName);
 
-  appState.terminal.onBell(() => {
-    const buffer = appState.terminal!.buffer.active;
+  terminal.onBell(() => {
+    const buffer = terminal.buffer.active;
     let body = 'Terminal bell';
     for (let i = buffer.cursorY; i >= 0; i--) {
       const line = buffer.getLine(i)?.translateToString(true).trim();
@@ -157,14 +165,14 @@ export function initTerminal(): void {
     if (shouldNotify()) fireNotification('MobiSSH', body);
   });
 
-  appState.terminal.parser.registerOscHandler(9, (data: string) => {
+  terminal.parser.registerOscHandler(9, (data: string) => {
     const body = _sanitizeNotifText(data);
     _addNotification(body);
     if (shouldNotify()) fireNotification('MobiSSH', body);
     return true;
   });
 
-  appState.terminal.parser.registerOscHandler(777, (data: string) => {
+  terminal.parser.registerOscHandler(777, (data: string) => {
     const parts = data.split(';');
     if (parts[0] === 'notify') {
       const body = _sanitizeNotifText(parts[2] ?? '');
@@ -192,17 +200,86 @@ export function initTerminal(): void {
 
   // Re-measure character cells after web fonts finish loading (#71)
   void document.fonts.ready.then(() => {
-    if (!appState.terminal || !fontFamily) return;
-    appState.terminal.options.fontFamily = fontFamily;
-    appState.fitAddon?.fit();
+    const t = currentSession()?.terminal;
+    if (!t || !fontFamily) return;
+    t.options.fontFamily = fontFamily;
+    currentSession()?.fitAddon?.fit();
   });
 
   window.addEventListener('resize', handleResize);
 
   // Show welcome banner
-  appState.terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
-  appState.terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
-  appState.terminal.writeln('');
+  terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
+  terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
+  terminal.writeln('');
+}
+
+/**
+ * Create a Terminal + FitAddon for a specific session, in its own DOM container
+ * inside #terminal with data-session-id. Returns { terminal, fitAddon } for the
+ * caller to store in SessionState. (#261 — Part A of multi-terminal infrastructure)
+ */
+export function createSessionTerminal(sessionId: string): { terminal: Terminal; fitAddon: FitAddon.FitAddon } {
+  const fontSize = parseFloat(localStorage.getItem('fontSize') ?? '14') || 14;
+  const savedFont = localStorage.getItem('termFont') ?? 'monospace';
+  const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
+
+  const terminal = new Terminal({
+    fontFamily,
+    fontSize,
+    theme: THEMES[appState.activeThemeName].theme,
+    cursorBlink: true,
+    scrollback: 5000,
+    convertEol: false,
+  });
+
+  const fitAddon = new FitAddon.FitAddon();
+  terminal.loadAddon(fitAddon);
+  if (localStorage.getItem('enableRemoteClipboard') === 'true') {
+    terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
+  }
+
+  // Create a per-session container div inside #terminal
+  const container = document.createElement('div');
+  container.dataset['sessionId'] = sessionId;
+  container.style.width = '100%';
+  container.style.height = '100%';
+  document.getElementById('terminal')!.appendChild(container);
+
+  terminal.open(container);
+  fitAddon.fit();
+
+  // Wire bell handler
+  terminal.onBell(() => {
+    const buffer = terminal.buffer.active;
+    let body = 'Terminal bell';
+    for (let i = buffer.cursorY; i >= 0; i--) {
+      const line = buffer.getLine(i)?.translateToString(true).trim();
+      if (line) { body = _sanitizeNotifText(line); break; }
+    }
+    _addNotification(body);
+    if (shouldNotify()) fireNotification('MobiSSH', body);
+  });
+
+  // Wire OSC handlers
+  terminal.parser.registerOscHandler(9, (data: string) => {
+    const body = _sanitizeNotifText(data);
+    _addNotification(body);
+    if (shouldNotify()) fireNotification('MobiSSH', body);
+    return true;
+  });
+
+  terminal.parser.registerOscHandler(777, (data: string) => {
+    const parts = data.split(';');
+    if (parts[0] === 'notify') {
+      const body = _sanitizeNotifText(parts[2] ?? '');
+      _addNotification(body);
+      if (shouldNotify()) fireNotification(parts[1] ?? 'MobiSSH', body);
+    }
+    return true;
+  });
+
+  return { terminal, fitAddon };
 }
 
 function _toggleNotifDrawer(show?: boolean): void {
@@ -249,12 +326,13 @@ function _renderNotifDrawer(): void {
 }
 
 export function handleResize(): void {
-  appState.fitAddon?.fit();
-  if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
-    appState.ws.send(JSON.stringify({
+  const session = currentSession();
+  session?.fitAddon?.fit();
+  if (session?.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+    session.ws.send(JSON.stringify({
       type: 'resize',
-      cols: appState.terminal?.cols ?? 80,
-      rows: appState.terminal?.rows ?? 24,
+      cols: session.terminal?.cols ?? 80,
+      rows: session.terminal?.rows ?? 24,
     }));
   }
 }
@@ -294,11 +372,12 @@ export function initKeyboardAwareness(): void {
       document.documentElement.style.setProperty('--viewport-height', `${String(h)}px`);
     }
 
-    appState.fitAddon?.fit();
-    appState.terminal?.scrollToBottom();
+    const session = currentSession();
+    session?.fitAddon?.fit();
+    session?.terminal?.scrollToBottom();
 
-    if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
-      appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal?.cols ?? 80, rows: appState.terminal?.rows ?? 24 }));
+    if (session?.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+      session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal?.cols ?? 80, rows: session.terminal?.rows ?? 24 }));
     }
   }
 
@@ -317,11 +396,12 @@ export function applyFontSize(size: number): void {
   const sizeStr = Number.isInteger(size) ? String(size) : size.toFixed(1);
   if (labelEl) labelEl.textContent = `${sizeStr}px`;
   if (menuLabel) menuLabel.textContent = `${sizeStr}px`;
-  if (appState.terminal) {
-    appState.terminal.options.fontSize = size;
-    appState.fitAddon?.fit();
-    if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
-      appState.ws.send(JSON.stringify({ type: 'resize', cols: appState.terminal.cols, rows: appState.terminal.rows }));
+  const session = currentSession();
+  if (session?.terminal) {
+    session.terminal.options.fontSize = size;
+    session.fitAddon?.fit();
+    if (session.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+      session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal.cols, rows: session.terminal.rows }));
     }
   }
 }
@@ -330,7 +410,8 @@ export function applyTheme(name: string, { persist = false } = {}): void {
   if (!((name as ThemeName) in THEMES)) return;
   const t = THEMES[name as ThemeName];
   appState.activeThemeName = name as ThemeName;
-  if (appState.terminal) appState.terminal.options.theme = t.theme;
+  const term = currentSession()?.terminal;
+  if (term) term.options.theme = t.theme;
   if (persist) localStorage.setItem('termTheme', name);
   const { style } = document.documentElement;
   style.setProperty('--terminal-bg', t.theme.background);

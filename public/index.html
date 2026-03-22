@@ -55,6 +55,8 @@
   ></textarea>
   <!-- IME action buttons — float alongside textarea when visible (#106) -->
   <div id="imeActions" class="ime-actions hidden">
+    <button id="imeHistoryUp" class="ime-action-btn ime-history-btn" aria-label="Older commit" tabindex="-1">▲</button>
+    <button id="imeHistoryDown" class="ime-action-btn ime-history-btn" aria-label="Newer commit" tabindex="-1">▼</button>
     <button id="imeClearBtn" class="ime-action-btn" aria-label="Clear compose" tabindex="-1">✕</button>
     <button id="imeCommitBtn" class="ime-action-btn ime-commit" aria-label="Send compose" tabindex="-1"><svg class="commit-ring" viewBox="0 0 36 36"><circle class="commit-ring-track" cx="18" cy="18" r="16" /><circle class="commit-ring-progress" cx="18" cy="18" r="16" /></svg><span class="commit-label">✓</span><span class="commit-countdown hidden"></span></button>
     <button id="imeDockToggle" class="ime-action-btn" aria-label="Toggle position" tabindex="-1">↕</button>

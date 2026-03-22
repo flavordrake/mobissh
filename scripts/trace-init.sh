@@ -30,7 +30,7 @@ BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 
 cat > "${TRACE_DIR}/TRACE.md" << EOF
 ---
-id: trace-${SLUG}-${TIMESTAMP}
+id: trace-${SLUG}
 objective: "${SLUG}"
 status: in-progress
 skills-used: []

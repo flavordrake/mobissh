@@ -60,7 +60,7 @@ const {
 } = await import('../connection.js');
 
 // Access appState to wire up a mock WS
-const { appState } = await import('../state.js');
+const { appState, createSession } = await import('../state.js');
 
 describe('_uint8ToBase64', () => {
   it('encodes an empty array', () => {
@@ -120,16 +120,20 @@ describe('CHUNK_SIZE', () => {
 describe('uploadFileChunked', () => {
   beforeEach(() => {
     wsSendSpy.mockClear();
-    // Set up a mock WS that auto-responds with sftp_upload_result after sftp_upload_end
+    appState.sessions.clear();
+    // Set up a mock WS on a session
     const mockWs = new WebSocket('ws://localhost:8081');
     mockWs.readyState = WebSocket.OPEN;
     mockWs.send = wsSendSpy;
-    appState.ws = mockWs;
-    appState.sshConnected = true;
+    const session = createSession('upload-test');
+    appState.activeSessionId = 'upload-test';
+    session.ws = mockWs;
+    session.sshConnected = true;
   });
 
   it('throws when WS is null', async () => {
-    appState.ws = null;
+    const session = appState.sessions.get('upload-test')!;
+    session.ws = null;
     const file = new File(['test'], 'test.txt');
     await expect(
       uploadFileChunked('/remote/path.txt', file, 'req-1', vi.fn()),
@@ -137,7 +141,7 @@ describe('uploadFileChunked', () => {
   });
 
   it('throws when WS is not OPEN', async () => {
-    appState.ws!.readyState = WebSocket.CLOSED;
+    appState.sessions.get('upload-test')!.ws!.readyState = WebSocket.CLOSED;
     const file = new File(['test'], 'test.txt');
     await expect(
       uploadFileChunked('/remote/path.txt', file, 'req-ws-closed', vi.fn()),
@@ -145,9 +149,9 @@ describe('uploadFileChunked', () => {
   });
 
   it('does not throw when sshConnected is false but WS is OPEN (#194)', async () => {
-    // Bug #194: uploadFileChunked checked appState.sshConnected which could be
+    // Bug #194: uploadFileChunked checked session.sshConnected which could be
     // false even though the WS is open and SFTP operations work fine.
-    appState.sshConnected = false;
+    appState.sessions.get('upload-test')!.sshConnected = false;
     const file = new File(['test'], 'test.txt');
 
     const uploadPromise = uploadFileChunked('/remote/path.txt', file, 'req-194', vi.fn());
@@ -238,11 +242,14 @@ describe('uploadFileChunked', () => {
 describe('sendSftpUploadCancel', () => {
   beforeEach(() => {
     wsSendSpy.mockClear();
+    appState.sessions.clear();
     const mockWs = new WebSocket('ws://localhost:8081');
     mockWs.readyState = WebSocket.OPEN;
     mockWs.send = wsSendSpy;
-    appState.ws = mockWs;
-    appState.sshConnected = true;
+    const session = createSession('cancel-test');
+    appState.activeSessionId = 'cancel-test';
+    session.ws = mockWs;
+    session.sshConnected = true;
   });
 
   it('sends cancel message when connected', () => {
@@ -254,7 +261,7 @@ describe('sendSftpUploadCancel', () => {
   });
 
   it('does not send when disconnected', () => {
-    appState.sshConnected = false;
+    appState.sessions.get('cancel-test')!.sshConnected = false;
     sendSftpUploadCancel('req-cancel-disc');
     expect(wsSendSpy).not.toHaveBeenCalled();
   });

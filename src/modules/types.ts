@@ -94,16 +94,6 @@ export interface AppState {
   // Multi-session infrastructure
   sessions: Map<string, SessionState>;
   activeSessionId: string | null;
-  // Core terminal and connection
-  terminal: Terminal | null;
-  fitAddon: FitAddon.FitAddon | null;
-  ws: WebSocket | null;
-  _wsConnected: boolean;
-  sshConnected: boolean;
-  currentProfile: SSHProfile | null;
-  reconnectTimer: ReturnType<typeof setTimeout> | null;
-  reconnectDelay: number;
-  keepAliveTimer: ReturnType<typeof setInterval> | null;
 
   // Input state
   isComposing: boolean;

@@ -18,7 +18,7 @@
 
 import type { IMEDeps } from './types.js';
 import { KEY_MAP, isMediaKey } from './constants.js';
-import { appState } from './state.js';
+import { appState, currentSession } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { focusIME, setCtrlActive } from './ui.js';
 import { isSelectionActive } from './selection.js';
@@ -112,6 +112,48 @@ export function isPreviewMode(): boolean { return _previewMode; }
 /** Callback set by initIMEInput to clear preview state (commits text). */
 let _clearPreviewCallback: (() => void) | null = null;
 
+// ── Preview commit history ring buffer (#254) ────────────────────────────────
+const HISTORY_MAX = 20;
+const _commitHistory: string[] = [];
+let _historyIndex = -1; // -1 = not browsing
+let _historyStash = ''; // saves current textarea text when entering history
+
+/** Record text into the history ring — called on preview, commit, and clear. */
+function _recordHistory(text: string): void {
+  if (!text) return;
+  // Deduplicate consecutive identical entries
+  if (_commitHistory.length > 0 && _commitHistory[_commitHistory.length - 1] === text) return;
+  _commitHistory.push(text);
+  if (_commitHistory.length > HISTORY_MAX) _commitHistory.shift();
+  _historyIndex = -1;
+  _historyStash = '';
+}
+
+/** Navigate commit history: -1 = older, +1 = newer. Returns text or null. */
+function _navigateHistory(direction: -1 | 1, currentText?: string): string | null {
+  if (_commitHistory.length === 0) return null;
+  if (_historyIndex === -1) {
+    if (direction === -1) {
+      // Entering history — stash current text so ▼ can return to it
+      _historyStash = currentText ?? '';
+      _historyIndex = _commitHistory.length - 1;
+    } else {
+      return null; // already at newest
+    }
+  } else {
+    _historyIndex += direction;
+  }
+  // Past newest → return stashed text
+  if (_historyIndex >= _commitHistory.length) {
+    _historyIndex = -1;
+    return _historyStash || null;
+  }
+  // Clamp at oldest
+  if (_historyIndex < 0) { _historyIndex = 0; return _commitHistory[0]!; }
+  if (_historyIndex >= _commitHistory.length) { _historyIndex = -1; return null; }
+  return _commitHistory[_historyIndex]!;
+}
+
 export function togglePreviewMode(): void {
   _previewMode = !_previewMode;
   localStorage.setItem('imePreviewMode', _previewMode ? 'true' : 'false');
@@ -142,8 +184,9 @@ const _PASSWORD_RE = /(?:password|passphrase|PIN)[^:]*:\s*$/i;
 let _pwdListenerSetup = false;
 
 function _checkPasswordPrompt(el: HTMLTextAreaElement): void {
-  if (!appState.terminal) return;
-  const buf = appState.terminal.buffer.active;
+  const terminal = currentSession()?.terminal;
+  if (!terminal) return;
+  const buf = terminal.buffer.active;
   const lastLine = (buf.getLine(buf.cursorY)?.translateToString(true) ?? '').trimEnd();
   el.setAttribute('autocomplete', _PASSWORD_RE.test(lastLine) ? 'new-password' : 'off');
 }
@@ -213,18 +256,35 @@ export function initIMEInput(): void {
   // Register cursor-move listener once the terminal is available, and re-check
   // whenever focus lands on the textarea (covers the "prompt just appeared" case).
   function _lazySetupPwdListener(): void {
-    if (_pwdListenerSetup || !appState.terminal) return;
+    const terminal = currentSession()?.terminal;
+    if (_pwdListenerSetup || !terminal) return;
     _pwdListenerSetup = true;
-    appState.terminal.onCursorMove(() => { _checkPasswordPrompt(ime); });
+    terminal.onCursorMove(() => { _checkPasswordPrompt(ime); });
   }
   ime.addEventListener('focus', () => {
     _lazySetupPwdListener();
     _checkPasswordPrompt(ime);
   });
 
-  // When user taps inside the visible textarea to edit, transition to editing state.
-  // This cancels any pending auto-clear timer and makes the textarea sticky.
-  ime.addEventListener('touchstart', () => {
+  // ── Preview history navigation (#254) ────────────────────────────────────
+  // Swipe on textarea doesn't work on mobile (browser's native touch handling
+  // intercepts). History navigation uses ▲▼ buttons instead.
+
+  /** Load a history entry into the preview textarea. */
+  function _loadHistoryEntry(direction: -1 | 1): void {
+    if (_commitHistory.length === 0) return;
+    const text = _navigateHistory(direction, ime.value);
+    if (text !== null) {
+      ime.value = text;
+      _autoResizeTextarea(ime);
+      if (_imeState === 'idle') _transition('previewing');
+      _cancelTimers();
+      if ('vibrate' in navigator) navigator.vibrate(10);
+    }
+  }
+
+  // Tap on preview textarea → enter editing mode
+  ime.addEventListener('touchend', () => {
     if ((_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
       _transition('editing');
     }
@@ -264,6 +324,8 @@ export function initIMEInput(): void {
   const imeActions = document.getElementById('imeActions');
   const clearBtn = document.getElementById('imeClearBtn');
   const commitBtn = document.getElementById('imeCommitBtn');
+  const historyUp = document.getElementById('imeHistoryUp');
+  const historyDown = document.getElementById('imeHistoryDown');
   const dockToggle = document.getElementById('imeDockToggle');
 
   let _dockPosition: 'top' | 'bottom' = localStorage.getItem('imeDockPosition') === 'bottom' ? 'bottom' : 'top';
@@ -277,7 +339,7 @@ export function initIMEInput(): void {
    */
   function _effectiveDock(): 'top' | 'bottom' {
     if (_manualDock) return _dockPosition;
-    const term = appState.terminal;
+    const term = currentSession()?.terminal;
     if (!term) return _dockPosition;
     const cursorY = term.buffer.active.cursorY;
     const rows = term.rows;
@@ -327,6 +389,10 @@ export function initIMEInput(): void {
   /** Show the action button bar and position everything. */
   function _showActions(): void {
     if (imeActions) imeActions.classList.remove('hidden');
+    // Always show history buttons — dim when no history available
+    const hasHistory = _commitHistory.length > 0;
+    if (historyUp) historyUp.classList.toggle('disabled', !hasHistory);
+    if (historyDown) historyDown.classList.toggle('disabled', !hasHistory);
     _positionIME();
   }
   /** Hide the action button bar. */
@@ -357,6 +423,8 @@ export function initIMEInput(): void {
   }
 
   _onAction(clearBtn, () => {
+    // Save text before clearing — so user can recover discarded input
+    _recordHistory(ime.value);
     // Erase what was already sent to SSH (if anything)
     if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
     _transition('idle');
@@ -373,6 +441,7 @@ export function initIMEInput(): void {
       if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
       if (text) sendSSHInput(text);
     }
+    _recordHistory(text);
     _transition('idle');
     focusIME();
   });
@@ -384,6 +453,16 @@ export function initIMEInput(): void {
     _manualDock = true;
     localStorage.setItem('imeDockPosition', _dockPosition);
     _positionIME();
+    focusIME();
+  });
+
+  // ── History scroll buttons (#254) ──────────────────────────────────────
+  _onAction(historyUp, () => {
+    _loadHistoryEntry(-1);
+    focusIME();
+  });
+  _onAction(historyDown, () => {
+    _loadHistoryEntry(1);
     focusIME();
   });
 
@@ -462,6 +541,9 @@ export function initIMEInput(): void {
 
     // Cancel all pending timers on any transition
     _cancelTimers();
+
+    // Save any text before it gets cleared — so user can always recover
+    if (to === 'idle' && ime.value) _recordHistory(ime.value);
 
     switch (to) {
       case 'idle':
@@ -572,6 +654,7 @@ export function initIMEInput(): void {
         if (_imeState === 'previewing') {
           const text = ime.value;
           if (text) sendSSHInput(text);
+          _recordHistory(text);
         }
         _transition('idle');
       }, _previewTimeout);
@@ -583,6 +666,7 @@ export function initIMEInput(): void {
     if (appState.isComposing) appState.isComposing = false;
     const text = ime.value;
     if (text) sendSSHInput(text);
+    _recordHistory(text);
     _transition('idle');
   };
 
@@ -887,9 +971,10 @@ export function initIMEInput(): void {
 
   function _flushScroll(): void {
     _scrollRafId = null;
-    if (_pendingLines !== 0 && appState.terminal) {
+    const flushTerm = currentSession()?.terminal;
+    if (_pendingLines !== 0 && flushTerm) {
       console.log('[scroll] flush scrollLines=', _pendingLines);
-      appState.terminal.scrollLines(_pendingLines);
+      flushTerm.scrollLines(_pendingLines);
       _pendingLines = 0;
     }
     if (_pendingSGR && _pendingSGR.count > 0) {
@@ -933,14 +1018,15 @@ export function initIMEInput(): void {
     // browser's native scroll/bounce so it doesn't fight our handler.
     if (_isTouchScroll) e.preventDefault();
 
-    if (_isTouchScroll && appState.terminal) {
-      const cellH = Math.max(20, (appState.terminal.options.fontSize ?? 14) * 1.5);
+    const scrollTerm = currentSession()?.terminal;
+    if (_isTouchScroll && scrollTerm) {
+      const cellH = Math.max(20, (scrollTerm.options.fontSize ?? 14) * 1.5);
       const targetLines = Math.round(totalDy / cellH);
       const delta = targetLines - _scrolledLines;
       if (delta !== 0) {
         _scrolledLines = targetLines;
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- xterm modes is untyped
-        const termUnk = appState.terminal as unknown as Record<string, unknown>;
+        const termUnk = scrollTerm as unknown as Record<string, unknown>;
         const mouseMode = termUnk.modes &&
           (termUnk.modes as Record<string, unknown>).mouseTrackingMode;
         console.log('[scroll] delta=', delta, 'mouseMode=', mouseMode);
@@ -953,10 +1039,10 @@ export function initIMEInput(): void {
             ? (delta > 0 ? 65 : 64)
             : (delta > 0 ? 64 : 65);
           const rect = termEl.getBoundingClientRect();
-          const col = Math.max(1, Math.min(appState.terminal.cols,
-            Math.floor((e.touches[0]!.clientX - rect.left) / (rect.width / appState.terminal.cols)) + 1));
-          const row = Math.max(1, Math.min(appState.terminal.rows,
-            Math.floor((e.touches[0]!.clientY - rect.top) / (rect.height / appState.terminal.rows)) + 1));
+          const col = Math.max(1, Math.min(scrollTerm.cols,
+            Math.floor((e.touches[0]!.clientX - rect.left) / (rect.width / scrollTerm.cols)) + 1));
+          const row = Math.max(1, Math.min(scrollTerm.rows,
+            Math.floor((e.touches[0]!.clientY - rect.top) / (rect.height / scrollTerm.rows)) + 1));
           const count = Math.abs(delta);
           if (_pendingSGR?.btn === btn) {
             _pendingSGR.count += count;
@@ -1033,8 +1119,9 @@ export function initIMEInput(): void {
   termEl.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 2 || !_pinchEnabled()) return;
     _pinchStartDist = _pinchDist(e.touches);
-    _pinchStartSize = appState.terminal
-      ? (appState.terminal.options.fontSize ?? 14)
+    const pinchTerm = currentSession()?.terminal;
+    _pinchStartSize = pinchTerm
+      ? (pinchTerm.options.fontSize ?? 14)
       : (parseInt(localStorage.getItem('fontSize') ?? '14') || 14);
     e.preventDefault();
   }, { passive: false });

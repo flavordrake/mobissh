@@ -15,7 +15,7 @@
  * canvas using the theme's selectionBackground. No DOM overlay.
  */
 
-import { appState } from './state.js';
+import { currentSession } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { toast, focusIME } from './ui.js';
 import { getKeyboardVisible } from './terminal.js';
@@ -141,9 +141,10 @@ export function initSelection(): void {
     if (_selectionLevel === 'unit') {
       // Contract URL/path selection down to just the word at tap position
       const pos = _touchToBufferPos(e.clientX, e.clientY);
-      if (pos && appState.terminal) {
+      const term = currentSession()?.terminal;
+      if (pos && term) {
         const [startCol, startRow, len] = _wordAt(pos.row, pos.col);
-        appState.terminal.select(startCol, startRow, len);
+        term.select(startCol, startRow, len);
         _selectionLevel = 'word';
         return;
       }
@@ -164,16 +165,18 @@ export function initSelection(): void {
 
   document.getElementById('selectionVisibleBtn')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!appState.terminal) return;
-    const buf = appState.terminal.buffer.active;
-    appState.terminal.selectLines(buf.viewportY, buf.viewportY + appState.terminal.rows - 1);
+    const visTerm = currentSession()?.terminal;
+    if (!visTerm) return;
+    const buf = visTerm.buffer.active;
+    visTerm.selectLines(buf.viewportY, buf.viewportY + visTerm.rows - 1);
     _hideChip();
   });
 
   document.getElementById('selectionAllBtn')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!appState.terminal) return;
-    appState.terminal.selectAll();
+    const allTerm = currentSession()?.terminal;
+    if (!allTerm) return;
+    allTerm.selectAll();
     _hideChip();
   });
 
@@ -186,7 +189,7 @@ export function initSelection(): void {
 
   copyBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const sel = appState.terminal?.getSelection();
+    const sel = currentSession()?.terminal?.getSelection();
     if (sel) {
       void navigator.clipboard.writeText(sel)
         .then(() => { toast('Copied'); _showPasteIfClipboard(); })
@@ -245,7 +248,7 @@ export function initSelection(): void {
     if (_selectionActive) {
       _selectionActive = false;
       _hideChip();
-      appState.terminal?.clearSelection();
+      currentSession()?.terminal?.clearSelection();
       copyBtn.classList.add('hidden');
       pasteBtn.classList.add('hidden');
       if (_keyboardWasVisible) setTimeout(focusIME, 50);
@@ -279,7 +282,7 @@ export function initSelection(): void {
     _selectionActive = false;
     _dragActive = false;
     _hideChip();
-    appState.terminal?.clearSelection();
+    currentSession()?.terminal?.clearSelection();
     copyBtn.classList.add('hidden');
     pasteBtn.classList.add('hidden');
     // Pop the history entry we pushed (unless back gesture already did it)
@@ -297,7 +300,7 @@ export function initSelection(): void {
 
   /** Convert CSS client coordinates to {col, bufferRow} in the terminal. */
   function _touchToBufferPos(clientX: number, clientY: number): { col: number; row: number } | null {
-    const term = appState.terminal;
+    const term = currentSession()?.terminal;
     if (!term) return null;
     const screen = term.element?.querySelector('.xterm-screen');
     if (!screen) return null;
@@ -317,7 +320,7 @@ export function initSelection(): void {
    * the first buffer row, and the column count per row.
    */
   function _getLogicalLine(bufferRow: number): { text: string; firstRow: number; cols: number } {
-    const term = appState.terminal;
+    const term = currentSession()?.terminal;
     if (!term) return { text: '', firstRow: bufferRow, cols: 1 };
     const buf = term.buffer.active;
     const cols = term.cols;
@@ -347,7 +350,7 @@ export function initSelection(): void {
    * Handles URLs that wrap across multiple terminal rows.
    */
   function _selectableUnitAt(bufferRow: number, col: number): [number, number, number] {
-    const term = appState.terminal;
+    const term = currentSession()?.terminal;
     if (!term) return [col, bufferRow, 1];
 
     // Build the full logical line (joining wrapped rows)
@@ -394,7 +397,7 @@ export function initSelection(): void {
    *  Uses tighter word boundaries that break on URL/path delimiters so
    *  contracting a URL selects a path segment, not the entire URL. */
   function _wordAt(bufferRow: number, col: number): [number, number, number] {
-    const term = appState.terminal;
+    const term = currentSession()?.terminal;
     if (!term) return [col, bufferRow, 1];
     const { text, firstRow, cols } = _getLogicalLine(bufferRow);
     if (!text) return [col, bufferRow, 1];
@@ -415,9 +418,10 @@ export function initSelection(): void {
   /** Word/URL-select at touch position. Called on long-press. */
   function _startDragSelect(clientX: number, clientY: number): void {
     const pos = _touchToBufferPos(clientX, clientY);
-    if (!pos || !appState.terminal) return;
+    const dragTerm = currentSession()?.terminal;
+    if (!pos || !dragTerm) return;
     const [startCol, startRow, len] = _selectableUnitAt(pos.row, pos.col);
-    appState.terminal.select(startCol, startRow, len);
+    dragTerm.select(startCol, startRow, len);
     _selectionLevel = 'unit';
     _anchorCol = pos.col;
     _anchorRow = pos.row;
@@ -426,7 +430,8 @@ export function initSelection(): void {
 
   /** Extend selection from anchor to current touch position. */
   function _extendDragSelect(clientX: number, clientY: number): void {
-    if (!_dragActive || !appState.terminal) return;
+    const extTerm = currentSession()?.terminal;
+    if (!_dragActive || !extTerm) return;
     _hideChip();
     const pos = _touchToBufferPos(clientX, clientY);
     if (!pos) return;
@@ -440,12 +445,12 @@ export function initSelection(): void {
       endCol = pos.col; endRow = pos.row;
     }
     if (startRow === endRow) {
-      appState.terminal.select(startCol, startRow, endCol - startCol + 1);
+      extTerm.select(startCol, startRow, endCol - startCol + 1);
     } else {
       // Multi-line: select from startCol to end of startRow, full middle rows,
       // start of endRow to endCol. Use selectLines for simplicity, then we can
       // refine later if character-level multi-line is needed.
-      appState.terminal.selectLines(startRow, endRow);
+      extTerm.selectLines(startRow, endRow);
     }
   }
 
@@ -460,9 +465,10 @@ export function initSelection(): void {
 // ── Selection watcher ────────────────────────────────────────────────────────
 
 function _watchSelection(copyBtn: HTMLElement): void {
-  if (!appState.terminal) return;
-  appState.terminal.onSelectionChange(() => {
-    const sel = appState.terminal?.getSelection();
+  const watchTerm = currentSession()?.terminal;
+  if (!watchTerm) return;
+  watchTerm.onSelectionChange(() => {
+    const sel = currentSession()?.terminal?.getSelection();
     if (sel) {
       _selectionActive = true;
       copyBtn.classList.remove('hidden');

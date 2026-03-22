@@ -1,10 +1,12 @@
 # MobiSSH -- Claude Code Context
 
+> **Active TRACE**: `.traces/trace-multi-session-isolation-011716/` — per-session terminal + mirror state removal
+
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
 - **No shell redirects.** Scripts handle their own output. No `> /tmp/foo`, no `2>/dev/null`.
 - **No heredocs in Bash.** Use the Write tool to create files, then pass `--body-file`.
-- **No `model` parameter on Agent calls.** It breaks permission inheritance. Omit entirely.
+- **No `model` parameter on Agent calls.** Agents inherit parent permissions; setting model can break this.
 - **Use `scripts/gh-ops.sh`** for ALL GitHub operations. Never raw `gh` commands.
 
 Every violation creates approval noise on mobile. Wrapper scripts exist for a reason.
@@ -88,3 +90,8 @@ Detailed rules live in `.claude/rules/` (modular, some path-scoped):
 - `typescript.md` -- strict mode, compilation, imports (scoped to `src/`)
 - `agents.md` -- delegation, integration, worktree isolation
 - `workflow.md` -- issue workflow, PR checklist, inferred constraints
+
+## TRACE Protocol
+Development arcs are captured in `.traces/` (gitignored, local). Use `scripts/trace-init.sh <slug>`
+to start a new TRACE. See `.claude/skills/agent-trace/SKILL.md` for full protocol.
+Active TRACE should be referenced at top of this file for session continuity.

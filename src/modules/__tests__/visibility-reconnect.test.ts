@@ -87,19 +87,25 @@ vi.useFakeTimers();
 
 const { cancelReconnect, scheduleReconnect, _probeZombieConnection } = await import('../connection.js');
 const { appState, createSession } = await import('../state.js');
-const { RECONNECT } = await import('../constants.js');
+
+/** Helper: create a session with profile and optional WS */
+function _setupSession(opts?: { ws?: unknown; profile?: boolean; connected?: boolean }): void {
+  const profile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
+  const session = createSession('test-session');
+  appState.activeSessionId = 'test-session';
+  if (opts?.profile !== false) session.profile = profile;
+  if (opts?.ws !== undefined) session.ws = opts.ws as WebSocket;
+  if (opts?.connected) {
+    session.wsConnected = true;
+    session.sshConnected = true;
+  }
+}
 
 describe('visibility-triggered reconnect (#153)', () => {
   beforeEach(() => {
     storage.clear();
     appState.sessions.clear();
     appState.activeSessionId = null;
-    appState.ws = null;
-    appState._wsConnected = false;
-    appState.sshConnected = false;
-    appState.currentProfile = null;
-    appState.reconnectTimer = null;
-    appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
     appState.hasConnected = false;
     _visibilityState = 'visible';
     lastWsInstance = null;
@@ -112,8 +118,7 @@ describe('visibility-triggered reconnect (#153)', () => {
 
   it('reconnects immediately when WS is closed on resume', () => {
     // Simulate having a profile and a dead WS
-    appState.currentProfile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
-    appState.ws = null; // WS already gone
+    _setupSession({ ws: null });
 
     // Go hidden then visible
     _visibilityState = 'hidden';
@@ -126,9 +131,7 @@ describe('visibility-triggered reconnect (#153)', () => {
   });
 
   it('does not reconnect when no profile is set', () => {
-    appState.currentProfile = null;
-    appState.ws = null;
-
+    // No session at all — no profile
     _visibilityState = 'visible';
     visibilityHandler?.();
 
@@ -147,13 +150,7 @@ describe('visibility-triggered reconnect (#153)', () => {
       onmessage: null,
       onerror: null,
     };
-    appState.ws = fakeWs as unknown as WebSocket;
-    appState._wsConnected = true;
-    appState.sshConnected = true;
-    appState.currentProfile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
-    const session = createSession('test-session');
-    appState.activeSessionId = 'test-session';
-    session.profile = appState.currentProfile;
+    _setupSession({ ws: fakeWs, connected: true });
 
     // Resume from background
     _visibilityState = 'visible';
@@ -174,13 +171,7 @@ describe('visibility-triggered reconnect (#153)', () => {
       onmessage: null as ((e?: unknown) => void) | null,
       onerror: null,
     };
-    appState.ws = fakeWs as unknown as WebSocket;
-    appState._wsConnected = true;
-    appState.sshConnected = true;
-    appState.currentProfile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
-    const session = createSession('test-session');
-    appState.activeSessionId = 'test-session';
-    session.profile = appState.currentProfile;
+    _setupSession({ ws: fakeWs, connected: true });
 
     // Resume — starts probe
     _visibilityState = 'visible';
@@ -204,13 +195,7 @@ describe('visibility-triggered reconnect (#153)', () => {
       onmessage: null as ((e?: unknown) => void) | null,
       onerror: null,
     };
-    appState.ws = fakeWs as unknown as WebSocket;
-    appState._wsConnected = true;
-    appState.sshConnected = true;
-    appState.currentProfile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
-    const session = createSession('test-session');
-    appState.activeSessionId = 'test-session';
-    session.profile = appState.currentProfile;
+    _setupSession({ ws: fakeWs, connected: true });
 
     // Resume — starts probe
     _visibilityState = 'visible';
@@ -228,12 +213,12 @@ describe('visibility-triggered reconnect (#153)', () => {
   });
 
   it('dismisses pending reconnect timer on resume', () => {
-    appState.currentProfile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
-    appState.ws = null;
+    _setupSession({ ws: null });
 
     // Schedule a reconnect with backoff
     scheduleReconnect();
-    expect(appState.reconnectTimer).not.toBeNull();
+    const session = appState.sessions.get('test-session')!;
+    expect(session.reconnectTimer).not.toBeNull();
 
     // Resume
     _visibilityState = 'visible';
@@ -245,8 +230,7 @@ describe('visibility-triggered reconnect (#153)', () => {
   });
 
   it('dismisses error dialog overlay on resume reconnect', () => {
-    appState.currentProfile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
-    appState.ws = null;
+    _setupSession({ ws: null });
 
     _visibilityState = 'visible';
     visibilityHandler?.();
@@ -258,10 +242,8 @@ describe('visibility-triggered reconnect (#153)', () => {
 describe('_probeZombieConnection (#153)', () => {
   beforeEach(() => {
     storage.clear();
-    appState.ws = null;
-    appState._wsConnected = false;
-    appState.sshConnected = false;
-    appState.currentProfile = null;
+    appState.sessions.clear();
+    appState.activeSessionId = null;
     lastWsInstance = null;
   });
 
@@ -270,8 +252,7 @@ describe('_probeZombieConnection (#153)', () => {
   });
 
   it('does nothing when WS is null', () => {
-    appState.ws = null;
-    // Should not throw
+    // No session — should not throw
     expect(() => _probeZombieConnection()).not.toThrow();
   });
 
@@ -282,7 +263,7 @@ describe('_probeZombieConnection (#153)', () => {
       close: vi.fn(),
       onmessage: null,
     };
-    appState.ws = fakeWs as unknown as WebSocket;
+    _setupSession({ ws: fakeWs });
     _probeZombieConnection();
     expect(fakeWs.send).not.toHaveBeenCalled();
   });

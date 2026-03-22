@@ -1,29 +1,27 @@
 # Agents and Delegation
 
-## Agent type reality (confirmed bugs)
+## Agent type reality (confirmed 2026-03-22)
 
-Custom file-based agents (`.claude/agents/*.md`) are **broken** in Claude Code's registry
-lookup. File-based discovery is unreliable — only built-in types (`general-purpose`,
-`Explore`, `Plan`) and UI-created agents (`/agents` command) work reliably.
-
-**Consequences:**
-- `subagent_type: "delegate-scout"` etc. silently fall back to defaults with wrong model/permissions
-- Agent frontmatter (`background`, `model`, `permissionMode`) is ignored when file discovery fails
-- Built-in agent types have hardcoded behavior that frontmatter cannot override
+Custom `subagent_type` names (e.g., `issue-manager`) do NOT resolve to `.claude/agents/*.md`
+files. The Agent tool only accepts built-in types: `general-purpose`, `Explore`, `Plan`,
+`claude-code-guide`, `statusline-setup`. Custom names produce an error, not a silent fallback.
 
 **Rules:**
 - **Always use `general-purpose`** as the subagent_type. Scope restriction goes in the prompt, not the agent type.
 - Agent `.md` files in `.claude/agents/` are **prompt templates only** — read them for the prompt content, but don't rely on frontmatter for execution behavior.
-- Control `run_in_background`, `isolation`, and `model` via the Agent tool call parameters.
+- Control `run_in_background` and `isolation` via the Agent tool call parameters.
 - For read-only agents (scout, gater): include "Do NOT modify files" in the prompt.
 - For write agents (develop, issue-manager): use `isolation: "worktree"`.
 
 ## Permission enforcement
 
-- `bypassPermissions` is inherited by all subagents and cannot be overridden per-agent.
+- Agent frontmatter (`permissionMode`, `model`, `tools`) is **ignored** — agents inherit the parent session's permissions.
+- **All tools agents need must be in `settings.json` allow-list.** This is the only way to grant permissions to background agents. Without it, background agents auto-deny unapproved tools.
+- `Edit` and `Write` are in the allow-list for this reason — agents that create files (issue-manager, develop) need them.
 - **`deny` rules in `settings.json` survive `bypassPermissions`** — this is the only reliable enforcement.
 - For fine-grained control (e.g., read-only Bash), use `PreToolUse` hooks — they fire even in bypass mode.
 - Permission allow-list uses `Bash(scripts/*)` not `Bash(bash *)`.
+- **Do NOT accumulate one-off approvals in `settings.local.json`.** If an agent needs a tool pattern, generalize it into `settings.json`. Clean `settings.local.json` periodically.
 
 ## Agent spawning patterns
 
