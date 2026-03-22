@@ -27,3 +27,5 @@ networks:
 
 volumes:
   tailscale-state:
+    name: mobissh-tailscale-state
+    external: true
