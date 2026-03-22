@@ -296,6 +296,7 @@ export function initIMEInput(): void {
   ime.addEventListener('touchend', () => {
     if (!_imeTouchClaimed && (_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
       // Was a tap, not a swipe — transition to editing
+      if ('vibrate' in navigator) navigator.vibrate(10);
       _transition('editing');
     }
     _imeTouchStartY = null;
