@@ -258,48 +258,58 @@ export function initIMEInput(): void {
 
   // ── Preview touch: tap-to-edit vs vertical-swipe-to-scrollback (#254) ────
   // Vertical swipe on the preview textarea cycles through commit history.
-  // Tap (no significant movement) transitions to editing state as before.
+  // Each 40px of accumulated movement triggers one history step (allows
+  // multiple steps in a single long swipe). Tap = edit as before.
   let _imeTouchStartY: number | null = null;
   let _imeTouchClaimed = false;
+  let _imeTouchSteps = 0; // how many 40px steps consumed so far
+
+  /** Load a history entry into the preview textarea. */
+  function _loadHistoryEntry(direction: -1 | 1): void {
+    const text = _navigateHistory(direction);
+    if (text !== null) {
+      ime.value = text;
+      _autoResizeTextarea(ime);
+      if (_imeState === 'idle') _transition('previewing');
+      _cancelTimers();
+      if ('vibrate' in navigator) navigator.vibrate(10);
+    } else if (direction === 1 && _historyIndex === -1) {
+      ime.value = '';
+      _transition('idle');
+      if ('vibrate' in navigator) navigator.vibrate(10);
+    }
+  }
 
   ime.addEventListener('touchstart', (e) => {
     _imeTouchStartY = e.touches[0]!.clientY;
     _imeTouchClaimed = false;
+    _imeTouchSteps = 0;
   }, { passive: true });
 
   ime.addEventListener('touchmove', (e) => {
     if (_imeTouchStartY === null) return;
     const dy = _imeTouchStartY - e.touches[0]!.clientY;
-    if (!_imeTouchClaimed && Math.abs(dy) > 20) {
-      _imeTouchClaimed = true;
+    const STEP_PX = 40;
+    const targetSteps = Math.trunc(dy / STEP_PX);
+    if (targetSteps !== _imeTouchSteps) {
+      if (!_imeTouchClaimed) { _imeTouchClaimed = true; }
       e.preventDefault();
-      // Swipe up = older (-1), swipe down = newer (+1)
-      const direction: -1 | 1 = dy > 0 ? -1 : 1;
-      const text = _navigateHistory(direction);
-      if (text !== null) {
-        ime.value = text;
-        _autoResizeTextarea(ime);
-        if (_imeState === 'idle') {
-          _transition('previewing');
-        }
-        _cancelTimers(); // Don't auto-clear while browsing history
-        if ('vibrate' in navigator) navigator.vibrate(10);
-      } else if (direction === 1 && _historyIndex === -1) {
-        // Swiped past newest — clear to empty preview
-        ime.value = '';
-        _transition('idle');
-        if ('vibrate' in navigator) navigator.vibrate(10);
-      }
+      // Each step change triggers one history navigation
+      const stepDelta = targetSteps - _imeTouchSteps;
+      const direction: -1 | 1 = stepDelta > 0 ? -1 : 1;
+      const count = Math.abs(stepDelta);
+      for (let i = 0; i < count; i++) _loadHistoryEntry(direction);
+      _imeTouchSteps = targetSteps;
     }
   }, { passive: false });
 
   ime.addEventListener('touchend', () => {
     if (!_imeTouchClaimed && (_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
-      // Was a tap, not a swipe — transition to editing
       _transition('editing');
     }
     _imeTouchStartY = null;
     _imeTouchClaimed = false;
+    _imeTouchSteps = 0;
   });
 
   // ── Preview mode toggle (#106) — wired here to avoid circular import ──
@@ -336,6 +346,8 @@ export function initIMEInput(): void {
   const imeActions = document.getElementById('imeActions');
   const clearBtn = document.getElementById('imeClearBtn');
   const commitBtn = document.getElementById('imeCommitBtn');
+  const historyUp = document.getElementById('imeHistoryUp');
+  const historyDown = document.getElementById('imeHistoryDown');
   const dockToggle = document.getElementById('imeDockToggle');
 
   let _dockPosition: 'top' | 'bottom' = localStorage.getItem('imeDockPosition') === 'bottom' ? 'bottom' : 'top';
@@ -399,6 +411,10 @@ export function initIMEInput(): void {
   /** Show the action button bar and position everything. */
   function _showActions(): void {
     if (imeActions) imeActions.classList.remove('hidden');
+    // Show/hide history buttons based on whether history exists
+    const hasHistory = _commitHistory.length > 0;
+    if (historyUp) historyUp.classList.toggle('hidden', !hasHistory);
+    if (historyDown) historyDown.classList.toggle('hidden', !hasHistory);
     _positionIME();
   }
   /** Hide the action button bar. */
@@ -457,6 +473,16 @@ export function initIMEInput(): void {
     _manualDock = true;
     localStorage.setItem('imeDockPosition', _dockPosition);
     _positionIME();
+    focusIME();
+  });
+
+  // ── History scroll buttons (#254) ──────────────────────────────────────
+  _onAction(historyUp, () => {
+    _loadHistoryEntry(-1);
+    focusIME();
+  });
+  _onAction(historyDown, () => {
+    _loadHistoryEntry(1);
     focusIME();
   });
 
