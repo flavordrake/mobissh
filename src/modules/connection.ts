@@ -430,6 +430,11 @@ export async function connect(profile: SSHProfile): Promise<void> {
   session.terminal = terminal;
   session.fitAddon = fitAddon;
 
+  // Hide all other session containers (including lobby), show the new one
+  document.querySelectorAll<HTMLElement>('#terminal > [data-session-id]').forEach((el) => {
+    el.classList.toggle('hidden', el.dataset.sessionId !== sessionId);
+  });
+
   _openWebSocket();
 }
 
