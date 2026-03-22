@@ -32,6 +32,41 @@ let _measureCtx: CanvasRenderingContext2D | null = null;
 type IMEState = 'idle' | 'composing' | 'previewing' | 'editing';
 let _imeState: IMEState = 'idle';
 
+// ── Dock position (#255) ──────────────────────────────────────────────────
+export const DOCK_POSITIONS = ['hover-top', 'hover-bottom', 'cursor-follow', 'dock-above', 'dock-below'] as const;
+export type DockPosition = typeof DOCK_POSITIONS[number];
+
+/** Debounce delay for cursor-follow repositioning (ms). */
+export const CURSOR_FOLLOW_DEBOUNCE_MS = 200;
+
+/** Load persisted dock position or default to hover-top. */
+let _dockPosition: DockPosition = (() => {
+  const stored = localStorage.getItem('imeDockPosition');
+  if (stored === 'hover-top' || stored === 'hover-bottom' || stored === 'cursor-follow' || stored === 'dock-above' || stored === 'dock-below') return stored;
+  return 'hover-top';
+})();
+
+/** Get the current dock position (reads localStorage to pick up external changes). */
+export function getDockPosition(): DockPosition {
+  const stored = localStorage.getItem('imeDockPosition');
+  if (stored === 'hover-top' || stored === 'hover-bottom' || stored === 'cursor-follow' || stored === 'dock-above' || stored === 'dock-below') return (_dockPosition = stored);
+  return _dockPosition;
+}
+
+/** Set and persist the dock position (#255). */
+export function setDockPosition(val: DockPosition): void {
+  _dockPosition = val;
+  localStorage.setItem('imeDockPosition', val);
+}
+
+/** Cycle to the next dock position and persist (#255). */
+export function cycleDockPosition(): void {
+  const idx = DOCK_POSITIONS.indexOf(_dockPosition);
+  _dockPosition = DOCK_POSITIONS[(idx + 1) % DOCK_POSITIONS.length]!;
+  localStorage.setItem('imeDockPosition', _dockPosition);
+  console.log('[ime] dock position:', _dockPosition);
+}
+
 /** Whether "preview mode" is enabled — accumulate compositions for review. */
 let _previewMode = localStorage.getItem('imePreviewMode') === 'true';
 
@@ -215,7 +250,10 @@ export function initIMEInput(): void {
   function _lazySetupPwdListener(): void {
     if (_pwdListenerSetup || !appState.terminal) return;
     _pwdListenerSetup = true;
-    appState.terminal.onCursorMove(() => { _checkPasswordPrompt(ime); });
+    appState.terminal.onCursorMove(() => {
+      _checkPasswordPrompt(ime);
+      _scheduleCursorFollowReposition();
+    });
   }
   ime.addEventListener('focus', () => {
     _lazySetupPwdListener();
@@ -266,23 +304,25 @@ export function initIMEInput(): void {
   const commitBtn = document.getElementById('imeCommitBtn');
   const dockToggle = document.getElementById('imeDockToggle');
 
-  let _dockPosition: 'top' | 'bottom' = localStorage.getItem('imeDockPosition') === 'bottom' ? 'bottom' : 'top';
   let _manualDock = false;
+  let _cursorFollowTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * Compute effective dock position: if the user explicitly toggled, use that.
-   * Otherwise, auto-select based on terminal cursor position — place the preview
-   * opposite the cursor so it doesn't obscure the active line.
-   * Falls back to _dockPosition (persisted) when terminal is unavailable.
+   * Compute effective dock position (#255): returns the resolved position.
+   * For hover-top/hover-bottom: if manual, use persisted; else auto-select
+   * based on cursor half. For cursor-follow/dock-above/dock-below: always
+   * use the persisted value directly.
    */
-  function _effectiveDock(): 'top' | 'bottom' {
-    if (_manualDock) return _dockPosition;
+  function _effectiveDock(): DockPosition {
+    const pos = getDockPosition();
+    if (pos === 'cursor-follow' || pos === 'dock-above' || pos === 'dock-below') return pos;
+    // hover-top / hover-bottom: auto-select unless manually toggled
+    if (_manualDock) return pos;
     const term = appState.terminal;
-    if (!term) return _dockPosition;
+    if (!term) return pos;
     const cursorY = term.buffer.active.cursorY;
     const rows = term.rows;
-    // Cursor in top half → show preview at bottom; cursor in bottom half → show at top
-    return cursorY < rows / 2 ? 'bottom' : 'top';
+    return cursorY < rows / 2 ? 'hover-bottom' : 'hover-top';
   }
 
   /** Position the textarea + action bar using visualViewport to avoid the keyboard. */
@@ -293,7 +333,7 @@ export function initIMEInput(): void {
     const actionH = 36; // matches CSS .ime-action-btn height
     const dock = _effectiveDock();
 
-    if (dock === 'top') {
+    if (dock === 'hover-top') {
       // Top: just below viewport top (extra margin to clear status bar)
       const top = viewTop + 12;
       ime.style.top = `${String(top)}px`;
@@ -302,7 +342,7 @@ export function initIMEInput(): void {
         imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
         imeActions.style.bottom = 'auto';
       }
-    } else {
+    } else if (dock === 'hover-bottom') {
       // Bottom: above the keyboard
       const bottom = window.innerHeight - (viewTop + viewH) + 8;
       ime.style.bottom = `${String(bottom + actionH)}px`;
@@ -311,7 +351,72 @@ export function initIMEInput(): void {
         imeActions.style.bottom = `${String(bottom)}px`;
         imeActions.style.top = 'auto';
       }
+    } else if (dock === 'cursor-follow') {
+      // Position just above the cursor row in the terminal
+      const term = appState.terminal;
+      const termEl = document.getElementById('terminal');
+      if (term && termEl) {
+        const termRect = termEl.getBoundingClientRect();
+        const cellH = termRect.height / term.rows;
+        const cursorY = term.buffer.active.cursorY;
+        const cursorScreenY = termRect.top + cursorY * cellH;
+        // Place textarea above the cursor row
+        const top = Math.max(viewTop + 4, cursorScreenY - ime.offsetHeight - actionH - 4);
+        ime.style.top = `${String(top)}px`;
+        ime.style.bottom = 'auto';
+        if (imeActions) {
+          imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
+          imeActions.style.bottom = 'auto';
+        }
+      } else {
+        // Fallback: hover-top positioning
+        const top = viewTop + 12;
+        ime.style.top = `${String(top)}px`;
+        ime.style.bottom = 'auto';
+        if (imeActions) {
+          imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
+          imeActions.style.bottom = 'auto';
+        }
+      }
+    } else if (dock === 'dock-above') {
+      // Position above the #terminal element (not overlapping)
+      const termEl = document.getElementById('terminal');
+      if (termEl) {
+        const termRect = termEl.getBoundingClientRect();
+        const top = Math.max(viewTop + 4, termRect.top - ime.offsetHeight - actionH - 4);
+        ime.style.top = `${String(top)}px`;
+        ime.style.bottom = 'auto';
+        if (imeActions) {
+          imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
+          imeActions.style.bottom = 'auto';
+        }
+      }
+    } else {
+      // dock-below:
+      // Position below the #terminal element (not overlapping)
+      const termEl = document.getElementById('terminal');
+      if (termEl) {
+        const termRect = termEl.getBoundingClientRect();
+        const top = termRect.bottom + 4;
+        ime.style.top = `${String(top)}px`;
+        ime.style.bottom = 'auto';
+        if (imeActions) {
+          imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
+          imeActions.style.bottom = 'auto';
+        }
+      }
     }
+  }
+
+  /** Debounced reposition for cursor-follow mode (#255). */
+  function _scheduleCursorFollowReposition(): void {
+    if (getDockPosition() !== 'cursor-follow') return;
+    if (!ime.classList.contains('ime-visible')) return;
+    if (_cursorFollowTimer) clearTimeout(_cursorFollowTimer);
+    _cursorFollowTimer = setTimeout(() => {
+      _cursorFollowTimer = null;
+      _positionIME();
+    }, CURSOR_FOLLOW_DEBOUNCE_MS);
   }
 
   // Re-position when viewport changes (keyboard open/close)
@@ -378,12 +483,15 @@ export function initIMEInput(): void {
   });
 
   _onAction(dockToggle, () => {
-    // Determine what auto-positioning would choose, then flip from that
-    const auto = _effectiveDock();
-    _dockPosition = auto === 'top' ? 'bottom' : 'top';
+    cycleDockPosition();
     _manualDock = true;
-    localStorage.setItem('imeDockPosition', _dockPosition);
     _positionIME();
+    // Update button text to indicate current mode
+    const labels: Record<DockPosition, string> = {
+      'hover-top': '\u2B06', 'hover-bottom': '\u2B07',
+      'cursor-follow': '\u2195', 'dock-above': '\u23EB', 'dock-below': '\u23EC',
+    };
+    if (dockToggle) dockToggle.textContent = labels[getDockPosition()];
     focusIME();
   });
 
@@ -541,6 +649,7 @@ export function initIMEInput(): void {
   function _cancelTimers(): void {
     if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
     if (_idleDelayTimer) { clearTimeout(_idleDelayTimer); _idleDelayTimer = null; }
+    if (_cursorFollowTimer) { clearTimeout(_cursorFollowTimer); _cursorFollowTimer = null; }
     _hideTimer();
   }
 
