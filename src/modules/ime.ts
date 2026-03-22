@@ -117,10 +117,10 @@ const HISTORY_MAX = 20;
 const _commitHistory: string[] = [];
 let _historyIndex = -1; // -1 = not browsing
 
-/** Record a committed preview text into the history ring. */
-function _recordCommit(text: string): void {
+/** Record text into the history ring — called on preview, commit, and clear. */
+function _recordHistory(text: string): void {
   if (!text) return;
-  // Deduplicate consecutive identical commits
+  // Deduplicate consecutive identical entries
   if (_commitHistory.length > 0 && _commitHistory[_commitHistory.length - 1] === text) return;
   _commitHistory.push(text);
   if (_commitHistory.length > HISTORY_MAX) _commitHistory.shift();
@@ -264,8 +264,9 @@ export function initIMEInput(): void {
   let _imeTouchClaimed = false;
   let _imeTouchSteps = 0; // how many 40px steps consumed so far
 
-  /** Load a history entry into the preview textarea. */
-  function _loadHistoryEntry(direction: -1 | 1): void {
+  /** Load a history entry into the preview textarea. Returns true if history changed. */
+  function _loadHistoryEntry(direction: -1 | 1): boolean {
+    if (_commitHistory.length === 0) return false;
     const text = _navigateHistory(direction);
     if (text !== null) {
       ime.value = text;
@@ -273,11 +274,9 @@ export function initIMEInput(): void {
       if (_imeState === 'idle') _transition('previewing');
       _cancelTimers();
       if ('vibrate' in navigator) navigator.vibrate(10);
-    } else if (direction === 1 && _historyIndex === -1) {
-      ime.value = '';
-      _transition('idle');
-      if ('vibrate' in navigator) navigator.vibrate(10);
+      return true;
     }
+    return false;
   }
 
   ime.addEventListener('touchstart', (e) => {
@@ -288,17 +287,23 @@ export function initIMEInput(): void {
 
   ime.addEventListener('touchmove', (e) => {
     if (_imeTouchStartY === null) return;
+    // Don't intercept touch if there's no history to scroll through
+    if (_commitHistory.length === 0) return;
     const dy = _imeTouchStartY - e.touches[0]!.clientY;
     const STEP_PX = 40;
     const targetSteps = Math.trunc(dy / STEP_PX);
     if (targetSteps !== _imeTouchSteps) {
-      if (!_imeTouchClaimed) { _imeTouchClaimed = true; }
-      e.preventDefault();
-      // Each step change triggers one history navigation
       const stepDelta = targetSteps - _imeTouchSteps;
       const direction: -1 | 1 = stepDelta > 0 ? -1 : 1;
       const count = Math.abs(stepDelta);
-      for (let i = 0; i < count; i++) _loadHistoryEntry(direction);
+      let moved = false;
+      for (let i = 0; i < count; i++) {
+        if (_loadHistoryEntry(direction)) moved = true;
+      }
+      if (moved) {
+        if (!_imeTouchClaimed) { _imeTouchClaimed = true; }
+        e.preventDefault();
+      }
       _imeTouchSteps = targetSteps;
     }
   }, { passive: false });
@@ -411,10 +416,10 @@ export function initIMEInput(): void {
   /** Show the action button bar and position everything. */
   function _showActions(): void {
     if (imeActions) imeActions.classList.remove('hidden');
-    // Show/hide history buttons based on whether history exists
+    // Always show history buttons — dim when no history available
     const hasHistory = _commitHistory.length > 0;
-    if (historyUp) historyUp.classList.toggle('hidden', !hasHistory);
-    if (historyDown) historyDown.classList.toggle('hidden', !hasHistory);
+    if (historyUp) historyUp.classList.toggle('disabled', !hasHistory);
+    if (historyDown) historyDown.classList.toggle('disabled', !hasHistory);
     _positionIME();
   }
   /** Hide the action button bar. */
@@ -445,6 +450,8 @@ export function initIMEInput(): void {
   }
 
   _onAction(clearBtn, () => {
+    // Save text before clearing — so user can recover discarded input
+    _recordHistory(ime.value);
     // Erase what was already sent to SSH (if anything)
     if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
     _transition('idle');
@@ -461,7 +468,7 @@ export function initIMEInput(): void {
       if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
       if (text) sendSSHInput(text);
     }
-    _recordCommit(text);
+    _recordHistory(text);
     _transition('idle');
     focusIME();
   });
@@ -561,6 +568,9 @@ export function initIMEInput(): void {
 
     // Cancel all pending timers on any transition
     _cancelTimers();
+
+    // Save any text before it gets cleared — so user can always recover
+    if (to === 'idle' && ime.value) _recordHistory(ime.value);
 
     switch (to) {
       case 'idle':
@@ -671,7 +681,7 @@ export function initIMEInput(): void {
         if (_imeState === 'previewing') {
           const text = ime.value;
           if (text) sendSSHInput(text);
-          _recordCommit(text);
+          _recordHistory(text);
         }
         _transition('idle');
       }, _previewTimeout);
@@ -683,7 +693,7 @@ export function initIMEInput(): void {
     if (appState.isComposing) appState.isComposing = false;
     const text = ime.value;
     if (text) sendSSHInput(text);
-    _recordCommit(text);
+    _recordHistory(text);
     _transition('idle');
   };
 
