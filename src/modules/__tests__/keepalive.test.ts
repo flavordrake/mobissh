@@ -56,12 +56,12 @@ describe('per-session keep-alive timer isolation (#62)', () => {
   beforeEach(() => {
     appState.sessions.clear();
     appState.activeSessionId = null;
-    // Provide a fake WS so startKeepAlive can create the Worker
-    appState.ws = { readyState: 1, url: 'ws://localhost:8081', send: vi.fn(), close: vi.fn(), onopen: null, onclose: null, onmessage: null, onerror: null } as unknown as WebSocket;
   });
 
   it('startKeepAlive sets timer on the target session only', () => {
+    const fakeWs = { readyState: 1, url: 'ws://localhost:8081', send: vi.fn(), close: vi.fn(), onopen: null, onclose: null, onmessage: null, onerror: null } as unknown as WebSocket;
     const s1 = createSession('session-1');
+    s1.ws = fakeWs;
     const s2 = createSession('session-2');
 
     _startKeepAlive('session-1');
@@ -71,8 +71,11 @@ describe('per-session keep-alive timer isolation (#62)', () => {
   });
 
   it('stopKeepAlive clears timer on the target session only', () => {
+    const fakeWs = { readyState: 1, url: 'ws://localhost:8081', send: vi.fn(), close: vi.fn(), onopen: null, onclose: null, onmessage: null, onerror: null } as unknown as WebSocket;
     const s1 = createSession('session-a');
+    s1.ws = fakeWs;
     const s2 = createSession('session-b');
+    s2.ws = fakeWs;
 
     _startKeepAlive('session-a');
     _startKeepAlive('session-b');
@@ -89,8 +92,11 @@ describe('per-session keep-alive timer isolation (#62)', () => {
   });
 
   it('stopKeepAlive terminates the Worker for the target session only', () => {
+    const fakeWs = { readyState: 1, url: 'ws://localhost:8081', send: vi.fn(), close: vi.fn(), onopen: null, onclose: null, onmessage: null, onerror: null } as unknown as WebSocket;
     const s1 = createSession('s1');
+    s1.ws = fakeWs;
     const s2 = createSession('s2');
+    s2.ws = fakeWs;
 
     _startKeepAlive('s1');
     _startKeepAlive('s2');
@@ -117,7 +123,9 @@ describe('per-session keep-alive timer isolation (#62)', () => {
   });
 
   it('stopKeepAlive clears both timer and worker on the session', () => {
+    const fakeWs = { readyState: 1, url: 'ws://localhost:8081', send: vi.fn(), close: vi.fn(), onopen: null, onclose: null, onmessage: null, onerror: null } as unknown as WebSocket;
     const s = createSession('full-stop');
+    s.ws = fakeWs;
     _startKeepAlive('full-stop');
     expect(s.keepAliveTimer).not.toBeNull();
     expect(s.keepAliveWorker).not.toBeNull();

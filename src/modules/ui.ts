@@ -7,7 +7,7 @@
 
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
-import { appState } from './state.js';
+import { appState, currentSession } from './state.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection } from './profiles.js';
@@ -52,7 +52,7 @@ export function navigateToPanel(
   document.getElementById(`panel-${panel}`)?.classList.add('active');
 
   if (panel === 'terminal') {
-    setTimeout(() => { appState.fitAddon?.fit(); focusIME(); }, 50);
+    setTimeout(() => { currentSession()?.fitAddon?.fit(); focusIME(); }, 50);
   }
   // Tab bar stays visible when switching panels -- user needs to navigate
   // between terminal and files. The handle bar toggle still hides/shows it.
@@ -355,7 +355,7 @@ export function initSessionMenu(): void {
 
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!appState.sshConnected) return;
+    if (!currentSession()?.sshConnected) return;
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
   });
@@ -415,14 +415,14 @@ export function initSessionMenu(): void {
 
   document.getElementById('sessionResetBtn')!.addEventListener('click', () => {
     closeMenu();
-    if (!appState.sshConnected) return;
+    if (!currentSession()?.sshConnected) return;
     sendSSHInput('\x1bc');
-    appState.terminal?.reset();
+    currentSession()?.terminal?.reset();
   });
 
   document.getElementById('sessionClearBtn')!.addEventListener('click', () => {
     closeMenu();
-    appState.terminal?.clear();
+    currentSession()?.terminal?.clear();
   });
 
 
@@ -750,13 +750,14 @@ export function initTerminalResizeObserver(): void {
   _resizeObserverActive = true;
 
   const observer = new ResizeObserver(() => {
-    appState.fitAddon?.fit();
-    appState.terminal?.scrollToBottom();
-    if (appState.sshConnected && appState.ws?.readyState === WebSocket.OPEN) {
-      appState.ws.send(JSON.stringify({
+    const session = currentSession();
+    session?.fitAddon?.fit();
+    session?.terminal?.scrollToBottom();
+    if (session?.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+      session.ws.send(JSON.stringify({
         type: 'resize',
-        cols: appState.terminal?.cols ?? 80,
-        rows: appState.terminal?.rows ?? 24,
+        cols: session.terminal?.cols ?? 80,
+        rows: session.terminal?.rows ?? 24,
       }));
     }
   });
@@ -1035,10 +1036,12 @@ function _downloadSelectedFiles(panel: HTMLElement): void {
 /** Wait for WS connection to be open, polling every 500ms up to timeoutMs. */
 function _waitForConnection(timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (appState.ws && appState.ws.readyState === WebSocket.OPEN) { resolve(); return; }
+    const ws = currentSession()?.ws;
+    if (ws && ws.readyState === WebSocket.OPEN) { resolve(); return; }
     const start = Date.now();
     const interval = setInterval(() => {
-      if (appState.ws && appState.ws.readyState === WebSocket.OPEN) {
+      const sessionWs = currentSession()?.ws;
+      if (sessionWs && sessionWs.readyState === WebSocket.OPEN) {
         clearInterval(interval);
         resolve();
       } else if (Date.now() - start > timeoutMs) {
@@ -1121,6 +1124,7 @@ async function _startUpload(files: FileList): Promise<void> {
   _uploadTotal = newEntries.length;
 
   for (const entry of newEntries) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated during await
     if (!_uploadActive) break; // cancelled
     const { file, remotePath, reqId } = entry;
     const name = file.name;
