@@ -18,7 +18,7 @@
 
 import type { IMEDeps } from './types.js';
 import { KEY_MAP, isMediaKey } from './constants.js';
-import { appState } from './state.js';
+import { appState, currentSession } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { focusIME, setCtrlActive } from './ui.js';
 import { isSelectionActive } from './selection.js';
@@ -184,8 +184,9 @@ const _PASSWORD_RE = /(?:password|passphrase|PIN)[^:]*:\s*$/i;
 let _pwdListenerSetup = false;
 
 function _checkPasswordPrompt(el: HTMLTextAreaElement): void {
-  if (!appState.terminal) return;
-  const buf = appState.terminal.buffer.active;
+  const terminal = currentSession()?.terminal;
+  if (!terminal) return;
+  const buf = terminal.buffer.active;
   const lastLine = (buf.getLine(buf.cursorY)?.translateToString(true) ?? '').trimEnd();
   el.setAttribute('autocomplete', _PASSWORD_RE.test(lastLine) ? 'new-password' : 'off');
 }
@@ -255,9 +256,10 @@ export function initIMEInput(): void {
   // Register cursor-move listener once the terminal is available, and re-check
   // whenever focus lands on the textarea (covers the "prompt just appeared" case).
   function _lazySetupPwdListener(): void {
-    if (_pwdListenerSetup || !appState.terminal) return;
+    const terminal = currentSession()?.terminal;
+    if (_pwdListenerSetup || !terminal) return;
     _pwdListenerSetup = true;
-    appState.terminal.onCursorMove(() => { _checkPasswordPrompt(ime); });
+    terminal.onCursorMove(() => { _checkPasswordPrompt(ime); });
   }
   ime.addEventListener('focus', () => {
     _lazySetupPwdListener();
@@ -337,7 +339,7 @@ export function initIMEInput(): void {
    */
   function _effectiveDock(): 'top' | 'bottom' {
     if (_manualDock) return _dockPosition;
-    const term = appState.terminal;
+    const term = currentSession()?.terminal;
     if (!term) return _dockPosition;
     const cursorY = term.buffer.active.cursorY;
     const rows = term.rows;
@@ -969,9 +971,10 @@ export function initIMEInput(): void {
 
   function _flushScroll(): void {
     _scrollRafId = null;
-    if (_pendingLines !== 0 && appState.terminal) {
+    const flushTerm = currentSession()?.terminal;
+    if (_pendingLines !== 0 && flushTerm) {
       console.log('[scroll] flush scrollLines=', _pendingLines);
-      appState.terminal.scrollLines(_pendingLines);
+      flushTerm.scrollLines(_pendingLines);
       _pendingLines = 0;
     }
     if (_pendingSGR && _pendingSGR.count > 0) {
@@ -1015,14 +1018,15 @@ export function initIMEInput(): void {
     // browser's native scroll/bounce so it doesn't fight our handler.
     if (_isTouchScroll) e.preventDefault();
 
-    if (_isTouchScroll && appState.terminal) {
-      const cellH = Math.max(20, (appState.terminal.options.fontSize ?? 14) * 1.5);
+    const scrollTerm = currentSession()?.terminal;
+    if (_isTouchScroll && scrollTerm) {
+      const cellH = Math.max(20, (scrollTerm.options.fontSize ?? 14) * 1.5);
       const targetLines = Math.round(totalDy / cellH);
       const delta = targetLines - _scrolledLines;
       if (delta !== 0) {
         _scrolledLines = targetLines;
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- xterm modes is untyped
-        const termUnk = appState.terminal as unknown as Record<string, unknown>;
+        const termUnk = scrollTerm as unknown as Record<string, unknown>;
         const mouseMode = termUnk.modes &&
           (termUnk.modes as Record<string, unknown>).mouseTrackingMode;
         console.log('[scroll] delta=', delta, 'mouseMode=', mouseMode);
@@ -1035,10 +1039,10 @@ export function initIMEInput(): void {
             ? (delta > 0 ? 65 : 64)
             : (delta > 0 ? 64 : 65);
           const rect = termEl.getBoundingClientRect();
-          const col = Math.max(1, Math.min(appState.terminal.cols,
-            Math.floor((e.touches[0]!.clientX - rect.left) / (rect.width / appState.terminal.cols)) + 1));
-          const row = Math.max(1, Math.min(appState.terminal.rows,
-            Math.floor((e.touches[0]!.clientY - rect.top) / (rect.height / appState.terminal.rows)) + 1));
+          const col = Math.max(1, Math.min(scrollTerm.cols,
+            Math.floor((e.touches[0]!.clientX - rect.left) / (rect.width / scrollTerm.cols)) + 1));
+          const row = Math.max(1, Math.min(scrollTerm.rows,
+            Math.floor((e.touches[0]!.clientY - rect.top) / (rect.height / scrollTerm.rows)) + 1));
           const count = Math.abs(delta);
           if (_pendingSGR?.btn === btn) {
             _pendingSGR.count += count;
@@ -1115,8 +1119,9 @@ export function initIMEInput(): void {
   termEl.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 2 || !_pinchEnabled()) return;
     _pinchStartDist = _pinchDist(e.touches);
-    _pinchStartSize = appState.terminal
-      ? (appState.terminal.options.fontSize ?? 14)
+    const pinchTerm = currentSession()?.terminal;
+    _pinchStartSize = pinchTerm
+      ? (pinchTerm.options.fontSize ?? 14)
       : (parseInt(localStorage.getItem('fontSize') ?? '14') || 14);
     e.preventDefault();
   }, { passive: false });
