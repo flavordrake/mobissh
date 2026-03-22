@@ -10,7 +10,7 @@
  */
 
 import type { RecordingDeps, AsciicastHeader } from './types.js';
-import { appState } from './state.js';
+import { appState, currentSession } from './state.js';
 
 // Injected dependency — set by initRecording()
 let _toast = (_msg: string): void => {};
@@ -37,13 +37,14 @@ export function stopAndDownloadRecording(): void {
 }
 
 async function _downloadCastFile(): Promise<void> {
+  const session = currentSession();
   const header: AsciicastHeader = {
     version: 2,
-    width: appState.terminal ? appState.terminal.cols : 220,
-    height: appState.terminal ? appState.terminal.rows : 50,
+    width: session?.terminal ? session.terminal.cols : 220,
+    height: session?.terminal ? session.terminal.rows : 50,
     timestamp: Math.floor((appState.recordingStartTime ?? 0) / 1000),
-    title: appState.currentProfile
-      ? `${appState.currentProfile.username}@${appState.currentProfile.host}:${String(appState.currentProfile.port || 22)}`
+    title: session?.profile
+      ? `${session.profile.username}@${session.profile.host}:${String(session.profile.port || 22)}`
       : 'MobiSSH Session',
   };
   const lines = [JSON.stringify(header), ...appState.recordingEvents.map((e) => JSON.stringify(e))].join('\n');

@@ -54,7 +54,8 @@ export async function uploadFileChunked(
   requestId: string,
   onProgress: (p: UploadProgress) => void
 ): Promise<void> {
-  if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+  const session = currentSession();
+  if (!session?.ws || session.ws.readyState !== WebSocket.OPEN) {
     throw new Error('Not connected');
   }
 
@@ -69,7 +70,7 @@ export async function uploadFileChunked(
   const fingerprint = `${String(file.size)}-${file.name}`;
 
   // Send start message
-  appState.ws.send(JSON.stringify({
+  session.ws.send(JSON.stringify({
     type: 'sftp_upload_start',
     path,
     size: file.size,
@@ -110,8 +111,9 @@ export async function uploadFileChunked(
         }
 
         // Runtime check: ws may change across await boundaries
+        const ws = currentSession()?.ws;
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
           throw new Error('Connection lost during upload');
         }
 
@@ -123,8 +125,8 @@ export async function uploadFileChunked(
         const encodeMs = performance.now() - tEncode;
         totalEncodeMs += encodeMs;
 
-        const buffered = appState.ws.bufferedAmount;
-        appState.ws.send(JSON.stringify({
+        const buffered = ws.bufferedAmount;
+        ws.send(JSON.stringify({
           type: 'sftp_upload_chunk',
           requestId,
           data,
@@ -158,9 +160,10 @@ export async function uploadFileChunked(
   }
 
   // Send end message and wait for server confirmation
+  const endWs = currentSession()?.ws;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (appState.ws && appState.ws.readyState === WebSocket.OPEN) {
-    appState.ws.send(JSON.stringify({
+  if (endWs && endWs.readyState === WebSocket.OPEN) {
+    endWs.send(JSON.stringify({
       type: 'sftp_upload_end',
       requestId
     }));
@@ -187,8 +190,9 @@ export async function uploadFileChunked(
 export function sendSftpUploadCancel(requestId: string): void {
   // Reject any pending ack so the upload loop throws
   _ackResolvers.delete(requestId);
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'sftp_upload_cancel', requestId }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_upload_cancel', requestId }));
 }
 
 /** Resolve a pending ack. Called from the WS message handler. */
@@ -200,31 +204,37 @@ export function _resolveAck(requestId: string, offset: number): void {
   }
 }
 export function sendSftpLs(path: string, requestId: string): void {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'sftp_ls', path, requestId }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_ls', path, requestId }));
 }
 export function sendSftpDownload(path: string, requestId: string): void {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'sftp_download', path, requestId }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_download', path, requestId }));
 }
 export function sendSftpUpload(path: string, data: string, requestId: string): void {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'sftp_upload', path, data, requestId }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_upload', path, data, requestId }));
 }
 export function sendSftpRename(oldPath: string, newPath: string, requestId: string): void {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'sftp_rename', oldPath, newPath, requestId }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_rename', oldPath, newPath, requestId }));
 }
 export function sendSftpDelete(path: string, requestId: string): void {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'sftp_delete', path, requestId }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_delete', path, requestId }));
 }
 export function sendSftpRealpath(requestId: string): void {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
-import { appState, createSession } from './state.js';
+import { appState, currentSession, createSession } from './state.js';
 import { createSessionTerminal } from './terminal.js';
 import { stopAndDownloadRecording } from './recording.js';
 
@@ -241,8 +251,9 @@ let _writeRaf: number | null = null;
 
 function _flushTerminalWrite(): void {
   _writeRaf = null;
-  if (_writeBuf && appState.terminal) {
-    appState.terminal.write(_writeBuf);
+  const terminal = currentSession()?.terminal;
+  if (_writeBuf && terminal) {
+    terminal.write(_writeBuf);
     _writeBuf = '';
   }
 }
@@ -404,8 +415,6 @@ export async function connect(profile: SSHProfile): Promise<void> {
     }
   }
 
-  appState.currentProfile = profile;
-  appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
   _wsConsecFailures = 0;
   cancelReconnect();
 
@@ -428,11 +437,12 @@ export async function connect(profile: SSHProfile): Promise<void> {
 function _openWebSocket(options?: { silent?: boolean }): void {
   const silent = options?.silent ?? false;
   const sessionId = appState.activeSessionId ?? '';
+  const session = currentSession();
 
-  if (appState.ws) {
-    appState.ws.onclose = null;
-    appState.ws.close();
-    appState.ws = null;
+  if (session?.ws) {
+    session.ws.onclose = null;
+    session.ws.close();
+    session.ws = null;
   }
 
   const baseUrl = localStorage.getItem('wsUrl') ?? getDefaultWsUrl();
@@ -443,9 +453,10 @@ function _openWebSocket(options?: { silent?: boolean }): void {
   if (!silent) _showConnectionStatus(`Connecting to ${baseUrl}…`);
 
   let openedThisAttempt = false;
+  let newWs: WebSocket;
 
   try {
-    appState.ws = new WebSocket(wsUrl);
+    newWs = new WebSocket(wsUrl);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     _showConnectionStatus(`WebSocket error: ${message}`);
@@ -453,44 +464,49 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     return;
   }
 
-  appState.ws.onopen = () => {
+  if (session) session.ws = newWs;
+
+  newWs.onopen = () => {
     openedThisAttempt = true;
     _wsConsecFailures = 0;
-    appState._wsConnected = true;
+    if (session) session.wsConnected = true;
     startKeepAlive(sessionId);
-    if (!appState.currentProfile) return;
+    const profile = session?.profile;
+    if (!profile) return;
     const authMsg: ConnectMessage = {
       type: 'connect',
-      host: appState.currentProfile.host,
-      port: appState.currentProfile.port || 22,
-      username: appState.currentProfile.username,
+      host: profile.host,
+      port: profile.port || 22,
+      username: profile.username,
     };
-    if (appState.currentProfile.authType === 'key' && appState.currentProfile.privateKey) {
-      authMsg.privateKey = appState.currentProfile.privateKey;
-      if (appState.currentProfile.passphrase) authMsg.passphrase = appState.currentProfile.passphrase;
+    if (profile.authType === 'key' && profile.privateKey) {
+      authMsg.privateKey = profile.privateKey;
+      if (profile.passphrase) authMsg.passphrase = profile.passphrase;
     } else {
-      authMsg.password = appState.currentProfile.password ?? '';
+      authMsg.password = profile.password ?? '';
     }
-    if (appState.currentProfile.initialCommand) authMsg.initialCommand = appState.currentProfile.initialCommand;
+    if (profile.initialCommand) authMsg.initialCommand = profile.initialCommand;
     if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
-    appState.ws?.send(JSON.stringify(authMsg));
-    if (!silent) _showConnectionStatus(`SSH → ${appState.currentProfile.username}@${appState.currentProfile.host}:${String(appState.currentProfile.port || 22)}…`);
+    newWs.send(JSON.stringify(authMsg));
+    if (!silent) _showConnectionStatus(`SSH → ${profile.username}@${profile.host}:${String(profile.port || 22)}…`);
   };
 
-  appState.ws.onmessage = (event: MessageEvent) => {
+  newWs.onmessage = (event: MessageEvent) => {
     let msg: ServerMessage;
     try { msg = JSON.parse(event.data as string) as ServerMessage; } catch { return; }
 
     switch (msg.type) {
       case 'connected':
-        appState.sshConnected = true;
-        appState.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+        if (session) {
+          session.sshConnected = true;
+          session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+        }
         void acquireWakeLock();
         // Reset terminal modes so stale mouse tracking from a previous session
         // doesn't cause scroll gestures to send SGR codes to a plain shell (#81)
-        appState.terminal?.reset();
-        if (appState.currentProfile) {
-          _setStatus('connected', `${appState.currentProfile.username}@${appState.currentProfile.host}`);
+        session?.terminal?.reset();
+        if (session?.profile) {
+          _setStatus('connected', `${session.profile.username}@${session.profile.host}`);
         }
         if (silent) {
           _dismissConnectionStatus();
@@ -499,7 +515,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
           _dismissConnectionStatus(1500);
         }
         // Sync terminal size to server
-        appState.ws?.send(JSON.stringify({ type: 'resize', cols: appState.terminal?.cols ?? 80, rows: appState.terminal?.rows ?? 24 }));
+        newWs.send(JSON.stringify({ type: 'resize', cols: session?.terminal?.cols ?? 80, rows: session?.terminal?.rows ?? 24 }));
         // On first connect: collapse nav chrome and switch to terminal (#36).
         // On reconnect: leave the tab bar as-is so user isn't interrupted.
         if (!appState.hasConnected) {
@@ -522,7 +538,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
 
       case 'disconnected':
-        appState.sshConnected = false;
+        if (session) session.sshConnected = false;
         _setStatus('disconnected', 'Disconnected');
         if (!silent) _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`);
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
@@ -554,10 +570,10 @@ function _openWebSocket(options?: { silent?: boolean }): void {
               knownHosts[hostKey] = { fingerprint: msg.fingerprint, keyType: msg.keyType, addedAt: new Date().toISOString() };
               localStorage.setItem('knownHosts', JSON.stringify(knownHosts));
             }
-            appState.ws?.send(JSON.stringify({ type: 'hostkey_response', accepted }));
+            currentSession()?.ws?.send(JSON.stringify({ type: 'hostkey_response', accepted }));
           });
         } else if (known.fingerprint === msg.fingerprint) {
-          appState.ws?.send(JSON.stringify({ type: 'hostkey_response', accepted: true }));
+          currentSession()?.ws?.send(JSON.stringify({ type: 'hostkey_response', accepted: true }));
         } else {
           _showHostKeyPrompt(msg, known.fingerprint, (accepted) => {
             if (accepted) {
@@ -565,7 +581,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
               updated[hostKey] = { fingerprint: msg.fingerprint, keyType: msg.keyType, addedAt: new Date().toISOString() };
               localStorage.setItem('knownHosts', JSON.stringify(updated));
             }
-            appState.ws?.send(JSON.stringify({ type: 'hostkey_response', accepted }));
+            currentSession()?.ws?.send(JSON.stringify({ type: 'hostkey_response', accepted }));
           });
         }
         break;
@@ -573,11 +589,13 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     }
   };
 
-  appState.ws.onclose = (event) => {
-    appState._wsConnected = false;
-    appState.sshConnected = false;
+  newWs.onclose = (event) => {
+    if (session) {
+      session.wsConnected = false;
+      session.sshConnected = false;
+    }
     stopKeepAlive(sessionId);
-    if (appState.currentProfile) {
+    if (session?.profile) {
       _setStatus('disconnected', 'Disconnected');
       if (!openedThisAttempt) {
         // Connection closed before onopen — likely an auth rejection (HTTP 401).
@@ -608,37 +626,42 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     }
   };
 
-  appState.ws.onerror = () => {
+  newWs.onerror = () => {
     if (!silent) showErrorDialog('WebSocket error — check server URL in Settings.');
   };
 }
 
 export function scheduleReconnect(): void {
-  if (!appState.currentProfile) return;
+  const session = currentSession();
+  if (!session?.profile) return;
 
-  const delaySec = Math.round(appState.reconnectDelay / 1000);
+  const delaySec = Math.round(session.reconnectDelay / 1000);
   _toast(`Reconnecting in ${String(delaySec)}s…`);
   _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
   _showConnectionStatus(`Reconnecting in ${String(delaySec)}s…`);
 
-  appState.reconnectTimer = setTimeout(() => {
-    appState.reconnectDelay = Math.min(
-      appState.reconnectDelay * RECONNECT.BACKOFF_FACTOR,
-      RECONNECT.MAX_DELAY_MS
-    );
+  session.reconnectTimer = setTimeout(() => {
+    const s = currentSession();
+    if (s) {
+      s.reconnectDelay = Math.min(
+        s.reconnectDelay * RECONNECT.BACKOFF_FACTOR,
+        RECONNECT.MAX_DELAY_MS
+      );
+    }
     _openWebSocket({ silent: true });
-  }, appState.reconnectDelay);
+  }, session.reconnectDelay);
 }
 
 export function cancelReconnect(): void {
-  if (appState.reconnectTimer) {
-    clearTimeout(appState.reconnectTimer);
-    appState.reconnectTimer = null;
+  const session = currentSession();
+  if (session?.reconnectTimer) {
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
   }
 }
 
 export function reconnect(): void {
-  if (appState.currentProfile) _openWebSocket();
+  if (currentSession()?.profile) _openWebSocket();
 }
 
 // Application-layer keepalive (#29, #204): sends a ping every 25s so NAT/proxies
@@ -660,15 +683,16 @@ function startKeepAlive(sessionId: string): void {
 
   // Main-thread keepalive (throttled in background, but works when visible)
   session.keepAliveTimer = setInterval(() => {
-    if (appState.ws?.readyState === WebSocket.OPEN) {
-      appState.ws.send(JSON.stringify({ type: 'ping' }));
+    const ws = currentSession()?.ws;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping' }));
     } else {
       stopKeepAlive(sessionId);
     }
   }, WS_PING_INTERVAL_MS);
 
   // Worker keepalive: opens a separate WS that pings even when tab is frozen
-  const wsUrl = appState.ws?.url;
+  const wsUrl = session.ws?.url;
   if (!wsUrl) return;
   try {
     session.keepAliveWorker = new Worker('ws-keepalive-worker.js');
@@ -720,13 +744,14 @@ let _zombieProbeTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Exported for testing. */
 export function _probeZombieConnection(): void {
-  if (!appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
+  const sessionWs = currentSession()?.ws;
+  if (!sessionWs || sessionWs.readyState !== WebSocket.OPEN) return;
 
   // Send an application-layer ping to provoke a response or trigger a close
-  appState.ws.send(JSON.stringify({ type: 'ping' }));
+  sessionWs.send(JSON.stringify({ type: 'ping' }));
 
   // Wrap onmessage: any incoming data proves the connection is alive
-  const ws = appState.ws;
+  const ws = sessionWs;
   const origOnMessage = ws.onmessage;
   const cancelProbe = (): void => {
     if (_zombieProbeTimer) {
@@ -753,15 +778,16 @@ export function _probeZombieConnection(): void {
 // probe for zombie connections, and reacquire the wake lock. (#153)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    if (appState.sshConnected) void acquireWakeLock();
-    if (appState.currentProfile && (!appState.ws || appState.ws.readyState !== WebSocket.OPEN)) {
+    const session = currentSession();
+    if (session?.sshConnected) void acquireWakeLock();
+    if (session?.profile && (!session.ws || session.ws.readyState !== WebSocket.OPEN)) {
       cancelReconnect();
       _dismissConnectionStatus();
       // Dismiss any error dialog left by failed reconnect attempts while hidden
       document.getElementById('errorDialogOverlay')?.classList.add('hidden');
       _toast('Reconnecting…');
       _openWebSocket({ silent: true });
-    } else if (appState.currentProfile && appState.ws?.readyState === WebSocket.OPEN) {
+    } else if (session?.profile && session.ws?.readyState === WebSocket.OPEN) {
       // WS appears open — probe for zombie connection (#153)
       _probeZombieConnection();
     }
@@ -775,15 +801,18 @@ export function disconnect(): void {
   cancelReconnect();
   if (appState.activeSessionId) stopKeepAlive(appState.activeSessionId);
   releaseWakeLock();
-  appState.currentProfile = null;
-  appState.sshConnected = false;
-  appState._wsConnected = false;
+  const session = currentSession();
+  if (session) {
+    session.profile = null;
+    session.sshConnected = false;
+    session.wsConnected = false;
+  }
 
-  if (appState.ws) {
-    appState.ws.onclose = null;
-    try { appState.ws.send(JSON.stringify({ type: 'disconnect' })); } catch { /* may already be closed */ }
-    appState.ws.close();
-    appState.ws = null;
+  if (session?.ws) {
+    session.ws.onclose = null;
+    try { session.ws.send(JSON.stringify({ type: 'disconnect' })); } catch { /* may already be closed */ }
+    session.ws.close();
+    session.ws = null;
   }
 
   _setStatus('disconnected', 'Disconnected');
@@ -791,8 +820,9 @@ export function disconnect(): void {
 }
 
 export function sendSSHInput(data: string): void {
-  if (!appState.sshConnected || !appState.ws || appState.ws.readyState !== WebSocket.OPEN) return;
-  appState.ws.send(JSON.stringify({ type: 'input', data }));
+  const session = currentSession();
+  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'input', data }));
 }
 
 // ── Connection status overlay (#172) ─────────────────────────────────────────

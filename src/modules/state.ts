@@ -16,17 +16,6 @@ export const appState: AppState = {
   sessions: new Map<string, SessionState>(),
   activeSessionId: null,
 
-  // Core terminal and connection
-  terminal: null,
-  fitAddon: null,
-  ws: null,
-  _wsConnected: false,
-  sshConnected: false,
-  currentProfile: null,
-  reconnectTimer: null,
-  reconnectDelay: RECONNECT.INITIAL_DELAY_MS,
-  keepAliveTimer: null,
-
   // Input state
   isComposing: false,
   ctrlActive: false,
