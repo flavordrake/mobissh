@@ -225,6 +225,7 @@ export function sendSftpRealpath(requestId: string): void {
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, createSession } from './state.js';
+import { createSessionTerminal } from './terminal.js';
 import { stopAndDownloadRecording } from './recording.js';
 
 let _toast = (_msg: string): void => {};
@@ -415,6 +416,11 @@ export async function connect(profile: SSHProfile): Promise<void> {
   session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
   session.activeThemeName = appState.activeThemeName;
   appState.activeSessionId = sessionId;
+
+  // Create per-session terminal instance (#261)
+  const { terminal, fitAddon } = createSessionTerminal(sessionId);
+  session.terminal = terminal;
+  session.fitAddon = fitAddon;
 
   _openWebSocket();
 }
