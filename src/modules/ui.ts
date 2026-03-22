@@ -8,6 +8,7 @@
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession } from './state.js';
+import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection } from './profiles.js';
@@ -268,6 +269,9 @@ export function switchSession(id: string): void {
   document.querySelectorAll<HTMLElement>('[data-session-id]').forEach((el) => {
     el.classList.toggle('hidden', el.dataset.sessionId !== id);
   });
+
+  // Restore per-session theme (#104)
+  applyTheme(session.activeThemeName);
 
   // Fit the newly visible terminal
   session.fitAddon?.fit();

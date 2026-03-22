@@ -423,7 +423,6 @@ export async function connect(profile: SSHProfile): Promise<void> {
   const session = createSession(sessionId);
   session.profile = profile;
   session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
-  session.activeThemeName = appState.activeThemeName;
   appState.activeSessionId = sessionId;
 
   // Create per-session terminal instance (#261)
