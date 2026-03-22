@@ -1,4 +1,7 @@
 {
+  "ignorePatterns": [
+    "public/modules/"
+  ],
   "env": {
     "browser": true,
     "node": true,

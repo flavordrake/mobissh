@@ -1118,6 +1118,7 @@ async function _startUpload(files: FileList): Promise<void> {
   _uploadTotal = newEntries.length;
 
   for (const entry of newEntries) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated during await
     if (!_uploadActive) break; // cancelled
     const { file, remotePath, reqId } = entry;
     const name = file.name;
