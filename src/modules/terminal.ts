@@ -205,6 +205,74 @@ export function initTerminal(): void {
   appState.terminal.writeln('');
 }
 
+/**
+ * Create a Terminal + FitAddon for a specific session, in its own DOM container
+ * inside #terminal with data-session-id. Returns { terminal, fitAddon } for the
+ * caller to store in SessionState. (#261 — Part A of multi-terminal infrastructure)
+ */
+export function createSessionTerminal(sessionId: string): { terminal: Terminal; fitAddon: FitAddon.FitAddon } {
+  const fontSize = parseFloat(localStorage.getItem('fontSize') ?? '14') || 14;
+  const savedFont = localStorage.getItem('termFont') ?? 'monospace';
+  const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
+
+  const terminal = new Terminal({
+    fontFamily,
+    fontSize,
+    theme: THEMES[appState.activeThemeName].theme,
+    cursorBlink: true,
+    scrollback: 5000,
+    convertEol: false,
+  });
+
+  const fitAddon = new FitAddon.FitAddon();
+  terminal.loadAddon(fitAddon);
+  if (localStorage.getItem('enableRemoteClipboard') === 'true') {
+    terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
+  }
+
+  // Create a per-session container div inside #terminal
+  const container = document.createElement('div');
+  container.dataset['sessionId'] = sessionId;
+  container.style.width = '100%';
+  container.style.height = '100%';
+  document.getElementById('terminal')!.appendChild(container);
+
+  terminal.open(container);
+  fitAddon.fit();
+
+  // Wire bell handler
+  terminal.onBell(() => {
+    const buffer = terminal.buffer.active;
+    let body = 'Terminal bell';
+    for (let i = buffer.cursorY; i >= 0; i--) {
+      const line = buffer.getLine(i)?.translateToString(true).trim();
+      if (line) { body = _sanitizeNotifText(line); break; }
+    }
+    _addNotification(body);
+    if (shouldNotify()) fireNotification('MobiSSH', body);
+  });
+
+  // Wire OSC handlers
+  terminal.parser.registerOscHandler(9, (data: string) => {
+    const body = _sanitizeNotifText(data);
+    _addNotification(body);
+    if (shouldNotify()) fireNotification('MobiSSH', body);
+    return true;
+  });
+
+  terminal.parser.registerOscHandler(777, (data: string) => {
+    const parts = data.split(';');
+    if (parts[0] === 'notify') {
+      const body = _sanitizeNotifText(parts[2] ?? '');
+      _addNotification(body);
+      if (shouldNotify()) fireNotification(parts[1] ?? 'MobiSSH', body);
+    }
+    return true;
+  });
+
+  return { terminal, fitAddon };
+}
+
 function _toggleNotifDrawer(show?: boolean): void {
   const drawer = document.getElementById('notifDrawer');
   if (!drawer) return;
