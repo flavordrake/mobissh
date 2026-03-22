@@ -47,9 +47,14 @@ export function currentSession(): SessionState | undefined {
 }
 
 export function createSession(id: string): SessionState {
+  let _profile: SessionState['profile'] = null;
   const session: SessionState = {
     id,
-    profile: null,
+    get profile() { return _profile; },
+    set profile(p: SessionState['profile']) {
+      _profile = p;
+      if (p?.theme) session.activeThemeName = p.theme;
+    },
     terminal: null,
     fitAddon: null,
     ws: null,
