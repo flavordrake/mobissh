@@ -264,17 +264,13 @@ export function initIMEInput(): void {
     _checkPasswordPrompt(ime);
   });
 
-  // ── Preview touch: tap-to-edit vs vertical-swipe-to-scrollback (#254) ────
-  // Vertical swipe on the preview textarea cycles through commit history.
-  // Each 40px of accumulated movement triggers one history step (allows
-  // multiple steps in a single long swipe). Tap = edit as before.
-  let _imeTouchStartY: number | null = null;
-  let _imeTouchClaimed = false;
-  let _imeTouchSteps = 0; // how many 40px steps consumed so far
+  // ── Preview history navigation (#254) ────────────────────────────────────
+  // Swipe on textarea doesn't work on mobile (browser's native touch handling
+  // intercepts). History navigation uses ▲▼ buttons instead.
 
-  /** Load a history entry into the preview textarea. Returns true if history changed. */
-  function _loadHistoryEntry(direction: -1 | 1): boolean {
-    if (_commitHistory.length === 0) return false;
+  /** Load a history entry into the preview textarea. */
+  function _loadHistoryEntry(direction: -1 | 1): void {
+    if (_commitHistory.length === 0) return;
     const text = _navigateHistory(direction, ime.value);
     if (text !== null) {
       ime.value = text;
@@ -282,47 +278,14 @@ export function initIMEInput(): void {
       if (_imeState === 'idle') _transition('previewing');
       _cancelTimers();
       if ('vibrate' in navigator) navigator.vibrate(10);
-      return true;
     }
-    return false;
   }
 
-  ime.addEventListener('touchstart', (e) => {
-    _imeTouchStartY = e.touches[0]!.clientY;
-    _imeTouchClaimed = false;
-    _imeTouchSteps = 0;
-  }, { passive: true });
-
-  ime.addEventListener('touchmove', (e) => {
-    if (_imeTouchStartY === null) return;
-    // Don't intercept touch if there's no history to scroll through
-    if (_commitHistory.length === 0) return;
-    const dy = _imeTouchStartY - e.touches[0]!.clientY;
-    const STEP_PX = 40;
-    const targetSteps = Math.trunc(dy / STEP_PX);
-    if (targetSteps !== _imeTouchSteps) {
-      const stepDelta = targetSteps - _imeTouchSteps;
-      const direction: -1 | 1 = stepDelta > 0 ? -1 : 1;
-      const count = Math.abs(stepDelta);
-      let moved = false;
-      for (let i = 0; i < count; i++) {
-        if (_loadHistoryEntry(direction)) moved = true;
-      }
-      if (moved) {
-        if (!_imeTouchClaimed) { _imeTouchClaimed = true; }
-        e.preventDefault();
-      }
-      _imeTouchSteps = targetSteps;
-    }
-  }, { passive: false });
-
+  // Tap on preview textarea → enter editing mode
   ime.addEventListener('touchend', () => {
-    if (!_imeTouchClaimed && (_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
+    if ((_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
       _transition('editing');
     }
-    _imeTouchStartY = null;
-    _imeTouchClaimed = false;
-    _imeTouchSteps = 0;
   });
 
   // ── Preview mode toggle (#106) — wired here to avoid circular import ──
