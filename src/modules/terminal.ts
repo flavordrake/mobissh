@@ -146,7 +146,14 @@ export function initTerminal(): void {
   if (localStorage.getItem('enableRemoteClipboard') === 'true') {
     terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
   }
-  terminal.open(document.getElementById('terminal')!);
+  // Lobby terminal gets a container div like session terminals (#261)
+  // so switchSession() can hide it when a real session connects.
+  const lobbyContainer = document.createElement('div');
+  lobbyContainer.dataset['sessionId'] = 'lobby';
+  lobbyContainer.style.width = '100%';
+  lobbyContainer.style.height = '100%';
+  document.getElementById('terminal')!.appendChild(lobbyContainer);
+  terminal.open(lobbyContainer);
   fitAddon.fit();
 
   lobby.terminal = terminal;
