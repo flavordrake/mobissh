@@ -381,6 +381,8 @@ html, body {
      the on-screen keyboard consumes viewport height (issue #183). */
   max-height: calc(var(--viewport-height, 100svh) - var(--keybar-handle-height) - var(--keybar-height) - env(safe-area-inset-top));
   animation: sessionMenuSlideUp 0.15s ease-out;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 
@@ -597,6 +599,8 @@ html, body {
   overflow-y: auto;
   max-height: 260px;
   padding: 4px 0;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 .notif-entry {
@@ -1823,6 +1827,8 @@ hr {
   white-space: pre-wrap;
   word-break: break-all;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 .debug-line-warn { color: #ffaa00; }

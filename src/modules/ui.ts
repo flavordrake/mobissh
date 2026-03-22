@@ -373,9 +373,15 @@ export function initSessionMenu(): void {
   let _swipeTouchId = -1;
   let _swipeStartY = 0;
 
+  // Scrollable overlays that can overlap the handle strip (#268).
+  const _scrollableOverlay = '#sessionMenu, .notif-drawer-list, .debug-panel-log, .files-body, .vault-file-list';
+
   handle.addEventListener('touchstart', (e) => {
     const t = e.touches[0];
     if (e.touches.length === 1 && t) {
+      // If touch originated inside a scrollable overlay, let the overlay own the gesture (#268).
+      const target = t.target as Element | null;
+      if (target && target.closest(_scrollableOverlay)) return;
       _swipeTouchId = t.identifier;
       _swipeStartY = t.clientY;
     }
