@@ -1,6 +1,8 @@
 {
   "permissions": {
     "allow": [
+      "Edit",
+      "Write",
       "WebSearch",
       "WebFetch",
       "Bash(git *)",
@@ -60,6 +62,26 @@
           {
             "type": "command",
             "command": "./.claude/hooks/enforce-hygiene.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.claude/hooks/trace-signal.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.claude/hooks/trace-signal.sh"
           }
         ]
       }

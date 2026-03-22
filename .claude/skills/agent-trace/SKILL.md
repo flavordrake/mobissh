@@ -184,6 +184,25 @@ updates and process improvements.
 - **On failure**: when an agent aborts — the TRACE documents why and what was tried
 - **On request**: `/trace` generates a TRACE for the current or most recent work
 
+### Automatic TRACE signals (PostToolUse hook)
+
+A PostToolUse hook (`.claude/hooks/trace-signal.sh`) fires on every Write/Edit and
+detects writes to **decision-signal paths**:
+
+| Path pattern | Signal | Meaning |
+|---|---|---|
+| `memory/` | `MEMORY_UPDATE` | A learning was captured — likely a pivot or discovery |
+| `.claude/settings*.json` | `SETTINGS_UPDATE` | Process/permission change — an infra decision |
+| `.claude/rules/` | `RULE_UPDATE` | Policy change — a process decision |
+| `CLAUDE.md` | `CONTEXT_UPDATE` | Project context changed |
+
+When triggered, the hook returns `additionalContext` reminding to update the active TRACE.
+It does NOT block execution. Writes to `.traces/` itself are excluded to avoid loops.
+
+**The principle:** any time we escalate to self-setting changes, there's an important
+decision worth capturing. Memory updates, rule changes, and permission changes are
+reliable proxies for "something significant just happened."
+
 ### Harvesting: TRACE → Memory
 
 After a TRACE is complete, the orchestrator (main session) extracts:
