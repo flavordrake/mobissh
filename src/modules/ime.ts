@@ -116,6 +116,7 @@ let _clearPreviewCallback: (() => void) | null = null;
 const HISTORY_MAX = 20;
 const _commitHistory: string[] = [];
 let _historyIndex = -1; // -1 = not browsing
+let _historyStash = ''; // saves current textarea text when entering history
 
 /** Record text into the history ring — called on preview, commit, and clear. */
 function _recordHistory(text: string): void {
@@ -125,22 +126,29 @@ function _recordHistory(text: string): void {
   _commitHistory.push(text);
   if (_commitHistory.length > HISTORY_MAX) _commitHistory.shift();
   _historyIndex = -1;
+  _historyStash = '';
 }
 
 /** Navigate commit history: -1 = older, +1 = newer. Returns text or null. */
-function _navigateHistory(direction: -1 | 1): string | null {
+function _navigateHistory(direction: -1 | 1, currentText?: string): string | null {
   if (_commitHistory.length === 0) return null;
   if (_historyIndex === -1) {
-    // Entering history browsing — start from the newest
     if (direction === -1) {
+      // Entering history — stash current text so ▼ can return to it
+      _historyStash = currentText ?? '';
       _historyIndex = _commitHistory.length - 1;
     } else {
-      return null; // can't go newer than current
+      return null; // already at newest
     }
   } else {
     _historyIndex += direction;
   }
-  // Clamp
+  // Past newest → return stashed text
+  if (_historyIndex >= _commitHistory.length) {
+    _historyIndex = -1;
+    return _historyStash || null;
+  }
+  // Clamp at oldest
   if (_historyIndex < 0) { _historyIndex = 0; return _commitHistory[0]!; }
   if (_historyIndex >= _commitHistory.length) { _historyIndex = -1; return null; }
   return _commitHistory[_historyIndex]!;
@@ -267,7 +275,7 @@ export function initIMEInput(): void {
   /** Load a history entry into the preview textarea. Returns true if history changed. */
   function _loadHistoryEntry(direction: -1 | 1): boolean {
     if (_commitHistory.length === 0) return false;
-    const text = _navigateHistory(direction);
+    const text = _navigateHistory(direction, ime.value);
     if (text !== null) {
       ime.value = text;
       _autoResizeTextarea(ime);
