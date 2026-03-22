@@ -1,15 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Edit",
-      "Write",
-      "WebSearch",
-      "WebFetch",
-      "Bash(git *)",
       "Bash(gh *)",
-      "Bash(npm *)",
-      "Bash(npx *)",
-      "Bash(node *)",
       "Bash(./scripts/*)",
       "Bash(scripts/*)",
       "Bash(//home/dev/workspace/mobissh/scripts/*)",
@@ -17,7 +9,6 @@
       "Bash(nohup *)",
       "Bash(curl *)",
       "Bash(docker *)",
-      "Bash(python3 *)",
       "Bash(semgrep *)",
       "Bash(adb *)",
       "Bash(lsof *)",
@@ -25,27 +16,6 @@
       "Bash(kill *)",
       "Bash(pkill *)",
       "Bash(jobs)",
-      "Bash(ps *)",
-      "Bash(ls *)",
-      "Bash(tree *)",
-      "Bash(sort *)",
-      "Bash(sleep *)",
-      "Bash(cat *)",
-      "Bash(head *)",
-      "Bash(tail *)",
-      "Bash(diff *)",
-      "Bash(wc *)",
-      "Bash(which *)",
-      "Bash(date *)",
-      "Bash(test *)",
-      "Bash(mkdir *)",
-      "Bash(cp *)",
-      "Bash(mv *)",
-      "Bash(rm *)",
-      "Bash(chmod *)",
-      "Bash(echo *)",
-      "Bash(env *)",
-      "Bash(export *)",
       "Bash(BASE_PATH=*)",
       "Bash(PORT=*)"
     ],
@@ -55,37 +25,6 @@
     ]
   },
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/dev/workspace/mobissh/.claude/hooks/enforce-hygiene.sh"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/dev/workspace/mobissh/.claude/hooks/trace-signal.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/dev/workspace/mobissh/.claude/hooks/trace-signal.sh"
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "matcher": "clear",
