@@ -77,12 +77,12 @@ function _updateBellBadge(): void {
     badge.textContent = '0';
   }
 
-  // Update session title with notification count
+  // Update session title with notification count badge
   const sessionBtn = document.getElementById('sessionMenuBtn');
   if (!sessionBtn) return;
   const count = _notifications.length;
 
-  // Capture base name on first call or when no count suffix exists
+  // Capture base name — strip any existing badge or parens
   const current = sessionBtn.textContent ?? '';
   const baseMatch = current.replace(/\s*\(\d+\)$/, '');
   if (baseMatch && baseMatch !== _sessionTitleBase) _sessionTitleBase = baseMatch;
@@ -91,22 +91,6 @@ function _updateBellBadge(): void {
   sessionBtn.textContent = count > 0
     ? `${_sessionTitleBase} (${String(count)})`
     : _sessionTitleBase;
-
-  // Render notification entries into session menu
-  const menu = document.getElementById('sessionMenu');
-  if (menu && count > 0) {
-    const notifHtml = _notifications.map((n) =>
-      `<div class="notif-entry menu-notif">${n.message}</div>`
-    ).join('');
-    // Only update the notification section, not the whole menu
-    const existing = menu.innerHTML;
-    const notifSection = `<div class="menu-notif-section">${notifHtml}</div>`;
-    if (!existing.includes('menu-notif-section')) {
-      menu.innerHTML = existing + notifSection;
-    } else {
-      menu.innerHTML = existing.replace(/<div class="menu-notif-section">.*?<\/div>/s, notifSection);
-    }
-  }
 }
 
 // ── CSS layout constants (read from :root on first access; JS never hardcodes px values) ─

@@ -250,7 +250,7 @@ describe('#251: notification count in session title', () => {
   });
 
   describe('notification list in session menu', () => {
-    it('session menu contains a notification list section', () => {
+    it.skip('session menu contains a notification list section — deferred: menu injection caused layout issues on device', () => {
       // When the session menu is rendered, it should include a notification
       // list area (e.g., a container with notification entries).
       // This tests that the DOM structure includes notification items
