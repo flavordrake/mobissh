@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-session-agent-hygiene-004017/` — agent permission fix + multi-session prep
+> **Active TRACE**: `.traces/trace-multi-session-isolation-011716/` — per-session terminal + mirror state removal
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.

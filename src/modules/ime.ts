@@ -112,6 +112,40 @@ export function isPreviewMode(): boolean { return _previewMode; }
 /** Callback set by initIMEInput to clear preview state (commits text). */
 let _clearPreviewCallback: (() => void) | null = null;
 
+// ── Preview commit history ring buffer (#254) ────────────────────────────────
+const HISTORY_MAX = 20;
+const _commitHistory: string[] = [];
+let _historyIndex = -1; // -1 = not browsing
+
+/** Record a committed preview text into the history ring. */
+function _recordCommit(text: string): void {
+  if (!text) return;
+  // Deduplicate consecutive identical commits
+  if (_commitHistory.length > 0 && _commitHistory[_commitHistory.length - 1] === text) return;
+  _commitHistory.push(text);
+  if (_commitHistory.length > HISTORY_MAX) _commitHistory.shift();
+  _historyIndex = -1;
+}
+
+/** Navigate commit history: -1 = older, +1 = newer. Returns text or null. */
+function _navigateHistory(direction: -1 | 1): string | null {
+  if (_commitHistory.length === 0) return null;
+  if (_historyIndex === -1) {
+    // Entering history browsing — start from the newest
+    if (direction === -1) {
+      _historyIndex = _commitHistory.length - 1;
+    } else {
+      return null; // can't go newer than current
+    }
+  } else {
+    _historyIndex += direction;
+  }
+  // Clamp
+  if (_historyIndex < 0) { _historyIndex = 0; return _commitHistory[0]!; }
+  if (_historyIndex >= _commitHistory.length) { _historyIndex = -1; return null; }
+  return _commitHistory[_historyIndex]!;
+}
+
 export function togglePreviewMode(): void {
   _previewMode = !_previewMode;
   localStorage.setItem('imePreviewMode', _previewMode ? 'true' : 'false');
@@ -222,12 +256,50 @@ export function initIMEInput(): void {
     _checkPasswordPrompt(ime);
   });
 
-  // When user taps inside the visible textarea to edit, transition to editing state.
-  // This cancels any pending auto-clear timer and makes the textarea sticky.
-  ime.addEventListener('touchstart', () => {
-    if ((_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
+  // ── Preview touch: tap-to-edit vs vertical-swipe-to-scrollback (#254) ────
+  // Vertical swipe on the preview textarea cycles through commit history.
+  // Tap (no significant movement) transitions to editing state as before.
+  let _imeTouchStartY: number | null = null;
+  let _imeTouchClaimed = false;
+
+  ime.addEventListener('touchstart', (e) => {
+    _imeTouchStartY = e.touches[0]!.clientY;
+    _imeTouchClaimed = false;
+  }, { passive: true });
+
+  ime.addEventListener('touchmove', (e) => {
+    if (_imeTouchStartY === null) return;
+    const dy = _imeTouchStartY - e.touches[0]!.clientY;
+    if (!_imeTouchClaimed && Math.abs(dy) > 20) {
+      _imeTouchClaimed = true;
+      e.preventDefault();
+      // Swipe up = older (-1), swipe down = newer (+1)
+      const direction: -1 | 1 = dy > 0 ? -1 : 1;
+      const text = _navigateHistory(direction);
+      if (text !== null) {
+        ime.value = text;
+        _autoResizeTextarea(ime);
+        if (_imeState === 'idle') {
+          _transition('previewing');
+        }
+        _cancelTimers(); // Don't auto-clear while browsing history
+        if ('vibrate' in navigator) navigator.vibrate(10);
+      } else if (direction === 1 && _historyIndex === -1) {
+        // Swiped past newest — clear to empty preview
+        ime.value = '';
+        _transition('idle');
+        if ('vibrate' in navigator) navigator.vibrate(10);
+      }
+    }
+  }, { passive: false });
+
+  ime.addEventListener('touchend', () => {
+    if (!_imeTouchClaimed && (_imeState === 'previewing' || _imeState === 'composing') && ime.value) {
+      // Was a tap, not a swipe — transition to editing
       _transition('editing');
     }
+    _imeTouchStartY = null;
+    _imeTouchClaimed = false;
   });
 
   // ── Preview mode toggle (#106) — wired here to avoid circular import ──
@@ -373,6 +445,7 @@ export function initIMEInput(): void {
       if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
       if (text) sendSSHInput(text);
     }
+    _recordCommit(text);
     _transition('idle');
     focusIME();
   });
@@ -572,6 +645,7 @@ export function initIMEInput(): void {
         if (_imeState === 'previewing') {
           const text = ime.value;
           if (text) sendSSHInput(text);
+          _recordCommit(text);
         }
         _transition('idle');
       }, _previewTimeout);
@@ -583,6 +657,7 @@ export function initIMEInput(): void {
     if (appState.isComposing) appState.isComposing = false;
     const text = ime.value;
     if (text) sendSSHInput(text);
+    _recordCommit(text);
     _transition('idle');
   };
 
