@@ -248,22 +248,24 @@ let _setStatus = (_state: ConnectionStatus, _text: string): void => {};
 // On slow connections, many small chunks arrive faster than the renderer can
 // process them, causing visible replay/scrollback jumps. Batching coalesces
 // writes into a single terminal.write() per frame.
-let _writeBuf = '';
-let _writeRaf: number | null = null;
+// Per-session write buffers so output doesn't bleed across sessions
+const _writeBufs = new Map<string, string>();
+const _writeRafs = new Map<string, number>();
 
-function _flushTerminalWrite(): void {
-  _writeRaf = null;
-  const terminal = currentSession()?.terminal;
-  if (_writeBuf && terminal) {
-    terminal.write(_writeBuf);
-    _writeBuf = '';
+function _flushTerminalWrite(sessionId: string): void {
+  _writeRafs.delete(sessionId);
+  const session = appState.sessions.get(sessionId);
+  const buf = _writeBufs.get(sessionId) ?? '';
+  if (buf && session?.terminal) {
+    session.terminal.write(buf);
+    _writeBufs.set(sessionId, '');
   }
 }
 
-function _bufferTerminalWrite(data: string): void {
-  _writeBuf += data;
-  if (!_writeRaf) {
-    _writeRaf = requestAnimationFrame(_flushTerminalWrite);
+function _bufferTerminalWrite(sessionId: string, data: string): void {
+  _writeBufs.set(sessionId, (_writeBufs.get(sessionId) ?? '') + data);
+  if (!_writeRafs.has(sessionId)) {
+    _writeRafs.set(sessionId, requestAnimationFrame(() => _flushTerminalWrite(sessionId)));
   }
 }
 let _focusIME = (): void => {};
@@ -539,7 +541,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
 
       case 'output':
-        _bufferTerminalWrite(msg.data);
+        _bufferTerminalWrite(sessionId, msg.data);
         if (appState.recording && appState.recordingStartTime !== null) {
           appState.recordingEvents.push([(Date.now() - appState.recordingStartTime) / 1000, 'o', msg.data]);
         }
