@@ -368,7 +368,9 @@ export function initSessionMenu(): void {
 
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!currentSession()?.sshConnected) return;
+    // Allow menu when any real session exists — user needs to switch even if current is disconnected
+    const hasRealSession = Array.from(appState.sessions.keys()).some((k) => k !== 'lobby');
+    if (!hasRealSession) return;
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
     // Position menu bottom above the handle bar using actual element position
