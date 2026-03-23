@@ -735,7 +735,18 @@ export function initTerminalActions(): void {
     if (!el) continue;
     _attachRepeat(
       el,
-      () => { sendSSHInput(seq); },
+      () => {
+        const ime = document.getElementById('imeInput') as HTMLTextAreaElement | null;
+        if (ime && ime.classList.contains('ime-visible') && ime.value) {
+          // Route to preview textarea when IME is holding content
+          const start = ime.selectionStart ?? ime.value.length;
+          ime.value = ime.value.slice(0, start) + seq + ime.value.slice(ime.selectionEnd ?? start);
+          ime.selectionStart = ime.selectionEnd = start + seq.length;
+          ime.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          sendSSHInput(seq);
+        }
+      },
       () => { if ('vibrate' in navigator) navigator.vibrate(10); },
     );
   }

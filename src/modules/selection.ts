@@ -207,7 +207,7 @@ export function initSelection(): void {
       if (text) sendSSHInput(text);
       else toast('Clipboard empty');
     }).catch(() => { toast('Paste failed'); });
-    pasteBtn.classList.add('hidden');
+    _dismissSelection();
   });
 
   // Show paste button when long-press activates selection (clipboard likely has content)
