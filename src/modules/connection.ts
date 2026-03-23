@@ -480,7 +480,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     newWs = new WebSocket(wsUrl);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    _showConnectionStatus(`WebSocket error: ${message}`);
+    _showConnectionStatus(`WebSocket error: ${message}`, { error: true });
     scheduleReconnect();
     return;
   }
@@ -562,7 +562,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
       case 'disconnected':
         if (session) session.sshConnected = false;
         _setStatus('disconnected', 'Disconnected');
-        if (!silent) _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`);
+        if (!silent) _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`, { error: true });
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
         scheduleReconnect();
         break;
@@ -646,7 +646,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         _toast('Reconnecting…');
         _openWebSocket({ silent: true });
       } else {
-        _showConnectionStatus('Connection lost.');
+        _showConnectionStatus('Connection lost.', { error: true });
         scheduleReconnect();
       }
     }
@@ -864,20 +864,22 @@ export function sendSSHInput(data: string): void {
 
 let _currentOverlay: HTMLDivElement | null = null;
 
-function _showConnectionStatus(message: string): void {
+function _showConnectionStatus(message: string, opts?: { error?: boolean }): void {
   // Reuse existing overlay — append message to scrollable log
   if (_currentOverlay) {
     const log = _currentOverlay.querySelector('.conn-status-log');
     if (log) {
       const line = document.createElement('div');
-      line.className = 'conn-status-message';
+      line.className = opts?.error ? 'conn-status-message conn-status-error' : 'conn-status-message';
       line.textContent = message;
       log.appendChild(line);
       log.scrollTop = log.scrollHeight;
     }
-    // Change button to "Close" since process has progressed/failed
-    const btn = _currentOverlay.querySelector('.conn-status-cancel');
-    if (btn) btn.textContent = 'Close';
+    if (opts?.error) {
+      const btn = _currentOverlay.querySelector('.conn-status-cancel');
+      if (btn) btn.textContent = 'Close';
+      _currentOverlay.classList.add('conn-status-failed');
+    }
     return;
   }
 

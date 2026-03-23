@@ -1944,6 +1944,15 @@ hr {
 .conn-status-cancel:active {
   background: var(--bg-input);
 }
+.conn-status-error {
+  color: #f44;
+  font-weight: 600;
+}
+.conn-status-failed .conn-status-cancel {
+  background: var(--bg-input);
+  border-color: #f44;
+  color: #f44;
+}
 
 /* Files panel (#174) */
 
