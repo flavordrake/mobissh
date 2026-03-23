@@ -443,7 +443,9 @@ export function initSessionMenu(): void {
 
   document.getElementById('sessionDisconnectBtn')!.addEventListener('click', () => {
     closeMenu();
+    const sessionId = appState.activeSessionId;
     disconnect();
+    if (sessionId) closeSession(sessionId);
   });
 
   // Theme cycle — persist to session so it survives switching (#104)
