@@ -617,34 +617,37 @@ function _openWebSocket(options?: { silent?: boolean }): void {
       session.sshConnected = false;
     }
     stopKeepAlive(sessionId);
-    if (session?.profile) {
-      _setStatus('disconnected', 'Disconnected');
-      if (!openedThisAttempt) {
-        // Connection closed before onopen — likely an auth rejection (HTTP 401).
-        _wsConsecFailures++;
-        if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
-          _wsConsecFailures = 0;
-          _dismissConnectionStatus();
-          showErrorDialog('Connection rejected repeatedly.\n\nYour session token may have expired — reload the page to get a fresh one.');
-          _setStatus('disconnected', 'Auth failed — reload to reconnect');
-          closeSession(sessionId);
-          return; // stop the reconnect loop
-        }
-        if (!silent) _showConnectionStatus('Connection lost.');
-        scheduleReconnect();
-      } else {
+    if (!session?.profile) return;
+
+    _setStatus('disconnected', 'Disconnected');
+
+    // If SSH never connected, this session is dead — clean up, don't reconnect
+    if (!session.sshConnected && !openedThisAttempt) {
+      _wsConsecFailures++;
+      if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
         _wsConsecFailures = 0;
-        if (!event.wasClean) {
-          // If the page is visible, reconnect silently -- just toast,
-          // don't throw up the full overlay unless it fails (#204).
-          if (document.visibilityState === 'visible') {
-            _toast('Reconnecting…');
-            _openWebSocket({ silent: true });
-          } else {
-            _showConnectionStatus('Connection lost.');
-            scheduleReconnect();
-          }
-        }
+        _dismissConnectionStatus();
+        showErrorDialog('Connection rejected repeatedly.\n\nYour session token may have expired — reload the page to get a fresh one.');
+      }
+      closeSession(sessionId);
+      return;
+    }
+
+    if (!session.sshConnected) {
+      // WS opened but SSH never connected (auth failure, timeout, etc.)
+      closeSession(sessionId);
+      return;
+    }
+
+    // SSH was connected — this is a network drop, try to reconnect
+    _wsConsecFailures = 0;
+    if (!event.wasClean) {
+      if (document.visibilityState === 'visible') {
+        _toast('Reconnecting…');
+        _openWebSocket({ silent: true });
+      } else {
+        _showConnectionStatus('Connection lost.');
+        scheduleReconnect();
       }
     }
   };
