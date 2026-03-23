@@ -57,7 +57,6 @@ export function clearNotifications(): void {
 }
 
 export function _addNotification(message: string): void {
-  // In-UI bell badge always shows — only Android push is gated by shouldNotify()
   if (message.length < 3) return;
   if (_notifications.length >= NOTIF_MAX) _notifications.shift();
   _notifications.push({ time: Date.now(), message });
@@ -180,15 +179,12 @@ export function initTerminal(): void {
 
   applyTheme(appState.activeThemeName);
 
+  // Bell: simple notification without buffer scraping (#276)
+  // Buffer scraping caused garbled text from status lines and hook output.
+  // Real notification content comes via OSC 9 and OSC 777 handlers below.
   terminal.onBell(() => {
-    const buffer = terminal.buffer.active;
-    let body = 'Terminal bell';
-    for (let i = buffer.cursorY; i >= 0; i--) {
-      const line = buffer.getLine(i)?.translateToString(true).trim();
-      if (line) { body = _sanitizeNotifText(line); break; }
-    }
-    _addNotification(body);
-    if (shouldNotify()) fireNotification('MobiSSH', body);
+    _addNotification('Terminal bell');
+    if (shouldNotify()) fireNotification('MobiSSH', 'Terminal bell');
   });
 
   terminal.parser.registerOscHandler(9, (data: string) => {
@@ -276,15 +272,12 @@ export function createSessionTerminal(sessionId: string): { terminal: Terminal; 
   fitAddon.fit();
 
   // Wire bell handler
+  // Bell: simple notification without buffer scraping (#276)
+  // Buffer scraping caused garbled text from status lines and hook output.
+  // Real notification content comes via OSC 9 and OSC 777 handlers below.
   terminal.onBell(() => {
-    const buffer = terminal.buffer.active;
-    let body = 'Terminal bell';
-    for (let i = buffer.cursorY; i >= 0; i--) {
-      const line = buffer.getLine(i)?.translateToString(true).trim();
-      if (line) { body = _sanitizeNotifText(line); break; }
-    }
-    _addNotification(body);
-    if (shouldNotify()) fireNotification('MobiSSH', body);
+    _addNotification('Terminal bell');
+    if (shouldNotify()) fireNotification('MobiSSH', 'Terminal bell');
   });
 
   // Wire OSC handlers
