@@ -363,13 +363,14 @@ html, body {
 }
 
 #sessionMenu {
-  position: absolute;
-  bottom: calc(100% + 4px); /* 4px gap above the handle strip */
+  position: fixed;
+  bottom: calc(var(--tab-height, 40px) + var(--keybar-height, 36px) + 40px);
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
   min-width: 180px;
   max-width: min(220px, 90vw);
+  top: 8px;
   z-index: 200;
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -377,9 +378,9 @@ html, body {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   overflow-x: hidden;
   overflow-y: auto;
-  max-height: min(60vh, calc(var(--viewport-height, 100vh) - 80px));
   touch-action: pan-y;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   animation: sessionMenuSlideUp 0.15s ease-out;
 }
 
