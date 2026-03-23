@@ -813,7 +813,7 @@ document.addEventListener('visibilitychange', () => {
     const savedActiveId = appState.activeSessionId;
     let reconnected = false;
     for (const [sid, session] of appState.sessions) {
-      if (sid === 'lobby') continue;
+      if (!session.profile) continue;
       if (session.profile && (!session.ws || session.ws.readyState !== WebSocket.OPEN)) {
         // Temporarily set active so _openWebSocket targets this session
         appState.activeSessionId = sid;

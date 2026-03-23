@@ -86,10 +86,9 @@ export function initRouting(hasProfiles: boolean): void {
       _filesDeepLinkPath = _filePathFromHash();
     }
     navigateToPanel(fromHash);
-  } else if (hasProfiles) {
-    navigateToPanel('connect');
   } else {
-    history.replaceState(null, '', '#terminal');
+    // No hash — start on Connect panel (no lobby terminal)
+    navigateToPanel('connect');
   }
 }
 
@@ -211,8 +210,7 @@ export function renderSessionList(): void {
   const container = document.getElementById('sessionList');
   if (!container) return;
 
-  // Filter out lobby — it's the welcome screen, not a real session
-  const sessions = Array.from(appState.sessions.values()).filter((s) => s.id !== 'lobby');
+  const sessions = Array.from(appState.sessions.values());
 
   container.classList.remove('hidden');
 
@@ -315,13 +313,11 @@ export function closeSession(id: string): void {
 
   appState.sessions.delete(id);
 
-  // If we just closed the active session, switch to another (prefer real sessions over lobby)
+  // If we just closed the active session, switch to another or go to Connect
   if (appState.activeSessionId === id) {
     const remaining = Array.from(appState.sessions.keys());
-    const realSession = remaining.find((k) => k !== 'lobby');
-    const fallback = realSession ?? remaining[0];
-    if (fallback) {
-      switchSession(fallback);
+    if (remaining.length > 0) {
+      switchSession(remaining[0]!);
     } else {
       appState.activeSessionId = null;
       const btn = document.getElementById('sessionMenuBtn');
@@ -329,6 +325,7 @@ export function closeSession(id: string): void {
         btn.textContent = 'MobiSSH';
         btn.classList.remove('connected');
       }
+      navigateToPanel('connect');
     }
   }
 
@@ -368,9 +365,7 @@ export function initSessionMenu(): void {
 
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    // Allow menu when any real session exists — user needs to switch even if current is disconnected
-    const hasRealSession = Array.from(appState.sessions.keys()).some((k) => k !== 'lobby');
-    if (!hasRealSession) return;
+    if (appState.sessions.size === 0) return;
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
     // Position menu bottom above the handle bar using actual element position

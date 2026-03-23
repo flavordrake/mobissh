@@ -4,7 +4,7 @@
 
 import type { ThemeName, RootCSS } from './types.js';
 import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
-import { appState, currentSession, createSession } from './state.js';
+import { appState, currentSession } from './state.js';
 
 interface NotifEntry {
   time: number;
@@ -141,70 +141,13 @@ export function fireNotification(title: string, body: string): void {
 }
 
 export function initTerminal(): void {
-  const fontSize = parseFloat(localStorage.getItem('fontSize') ?? '14') || 14;
   const savedTheme = localStorage.getItem('termTheme') ?? 'dark';
   appState.activeThemeName = ((savedTheme as ThemeName) in THEMES ? savedTheme : 'dark') as ThemeName;
-
-  const savedFont = localStorage.getItem('termFont') ?? 'monospace';
-  const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
-
-  // Create a lobby session for the welcome terminal
-  const lobby = createSession('lobby');
-  appState.activeSessionId = 'lobby';
-
-  const terminal = new Terminal({
-    fontFamily,
-    fontSize,
-    theme: THEMES[appState.activeThemeName].theme,
-    cursorBlink: true,
-    scrollback: 5000,
-    convertEol: false,
-  });
-
-  const fitAddon = new FitAddon.FitAddon();
-  terminal.loadAddon(fitAddon);
-  if (localStorage.getItem('enableRemoteClipboard') === 'true') {
-    terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
-  }
-  // Lobby terminal gets a container div like session terminals (#261)
-  // so switchSession() can hide it when a real session connects.
-  const lobbyContainer = document.createElement('div');
-  lobbyContainer.dataset['sessionId'] = 'lobby';
-  lobbyContainer.style.width = '100%';
-  lobbyContainer.style.height = '100%';
-  document.getElementById('terminal')!.appendChild(lobbyContainer);
-  terminal.open(lobbyContainer);
-  fitAddon.fit();
-
-  lobby.terminal = terminal;
-  lobby.fitAddon = fitAddon;
-
   applyTheme(appState.activeThemeName);
 
-  // Bell: simple notification without buffer scraping (#276)
-  // Buffer scraping caused garbled text from status lines and hook output.
-  // Real notification content comes via OSC 9 and OSC 777 handlers below.
-  terminal.onBell(() => {
-    _addNotification('Terminal bell');
-    if (shouldNotify()) fireNotification('MobiSSH', 'Terminal bell');
-  });
-
-  terminal.parser.registerOscHandler(9, (data: string) => {
-    const body = _sanitizeNotifText(data);
-    _addNotification(body);
-    if (shouldNotify()) fireNotification('MobiSSH', body);
-    return true;
-  });
-
-  terminal.parser.registerOscHandler(777, (data: string) => {
-    const parts = data.split(';');
-    if (parts[0] === 'notify') {
-      const body = _sanitizeNotifText(parts[2] ?? '');
-      _addNotification(body);
-      if (shouldNotify()) fireNotification(parts[1] ?? 'MobiSSH', body);
-    }
-    return true;
-  });
+  // No lobby session — app starts on Connect panel if no sessions exist.
+  // Sessions are created by connect() in connection.ts.
+  appState.activeSessionId = null;
 
   // Notification drawer toggle (#34)
   const bellBtn = document.getElementById('bellIndicatorBtn');
@@ -225,17 +168,14 @@ export function initTerminal(): void {
   // Re-measure character cells after web fonts finish loading (#71)
   void document.fonts.ready.then(() => {
     const t = currentSession()?.terminal;
-    if (!t || !fontFamily) return;
+    if (!t) return;
+    const savedFont = localStorage.getItem('termFont') ?? 'monospace';
+    const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
     t.options.fontFamily = fontFamily;
     currentSession()?.fitAddon?.fit();
   });
 
   window.addEventListener('resize', handleResize);
-
-  // Show welcome banner
-  terminal.writeln(ANSI.bold(ANSI.green('MobiSSH')));
-  terminal.writeln(ANSI.dim('Tap terminal to activate keyboard  •  Use Connect tab to open a session'));
-  terminal.writeln('');
 }
 
 /**

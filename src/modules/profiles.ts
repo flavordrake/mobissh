@@ -124,7 +124,7 @@ export function loadProfiles(): void {
 
   // Find active sessions matching each profile
   const activeSessions = Array.from(appState.sessions.values()).filter(
-    (s) => s.id !== 'lobby' && s.sshConnected && s.profile
+    (s) => s.sshConnected && s.profile
   );
 
   list.innerHTML = profiles.map((p, i) => {
