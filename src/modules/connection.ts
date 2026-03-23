@@ -237,6 +237,7 @@ import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, currentSession, createSession } from './state.js';
 import { createSessionTerminal } from './terminal.js';
 import { rebindSelectionWatcher } from './selection.js';
+import { renderSessionList } from './ui.js';
 import { stopAndDownloadRecording } from './recording.js';
 
 let _toast = (_msg: string): void => {};
@@ -438,6 +439,9 @@ export async function connect(profile: SSHProfile): Promise<void> {
 
   // Re-bind selection watcher to the new session's terminal (#283)
   rebindSelectionWatcher();
+
+  // Update session list so user can switch between sessions
+  renderSessionList();
 
   _openWebSocket();
 }

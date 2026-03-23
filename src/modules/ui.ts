@@ -208,9 +208,10 @@ export function renderSessionList(): void {
   const container = document.getElementById('sessionList');
   if (!container) return;
 
-  const sessions = Array.from(appState.sessions.values());
+  // Filter out lobby — it's the welcome screen, not a real session
+  const sessions = Array.from(appState.sessions.values()).filter((s) => s.id !== 'lobby');
 
-  // Hide the list when only 1 session exists
+  // Hide the list when only 1 real session exists
   if (sessions.length <= 1) {
     container.classList.add('hidden');
     container.innerHTML = '';
