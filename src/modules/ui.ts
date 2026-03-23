@@ -371,6 +371,14 @@ export function initSessionMenu(): void {
     if (!currentSession()?.sshConnected) return;
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
+    // Position menu bottom above the handle bar using actual element position
+    if (!wasHidden) {
+      const handleBar = document.getElementById('key-bar-handle');
+      if (handleBar) {
+        const handleTop = handleBar.getBoundingClientRect().top;
+        menu.style.bottom = `${String(window.innerHeight - handleTop + 4)}px`;
+      }
+    }
   });
 
   function closeMenu(): void { menu.classList.add('hidden'); backdrop.classList.add('hidden'); }

@@ -364,13 +364,13 @@ html, body {
 
 #sessionMenu {
   position: fixed;
-  bottom: calc(var(--tab-height, 40px) + var(--keybar-height, 36px) + 40px);
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
   min-width: 180px;
   max-width: min(220px, 90vw);
   top: 8px;
+  bottom: 120px;
   z-index: 200;
   background: var(--bg-panel);
   border: 1px solid var(--border);

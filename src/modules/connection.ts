@@ -237,7 +237,7 @@ import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, currentSession, createSession } from './state.js';
 import { createSessionTerminal } from './terminal.js';
 import { rebindSelectionWatcher } from './selection.js';
-import { renderSessionList } from './ui.js';
+import { renderSessionList, closeSession } from './ui.js';
 import { stopAndDownloadRecording } from './recording.js';
 
 let _toast = (_msg: string): void => {};
@@ -555,6 +555,8 @@ function _openWebSocket(options?: { silent?: boolean }): void {
 
       case 'error':
         showErrorDialog(`Connection error:\n\n${msg.message}`);
+        // Clean up the failed session
+        closeSession(sessionId);
         break;
 
       case 'disconnected':
@@ -625,6 +627,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
           _dismissConnectionStatus();
           showErrorDialog('Connection rejected repeatedly.\n\nYour session token may have expired — reload the page to get a fresh one.');
           _setStatus('disconnected', 'Auth failed — reload to reconnect');
+          closeSession(sessionId);
           return; // stop the reconnect loop
         }
         if (!silent) _showConnectionStatus('Connection lost.');
@@ -860,6 +863,9 @@ function _showConnectionStatus(message: string): void {
       log.appendChild(line);
       log.scrollTop = log.scrollHeight;
     }
+    // Change button to "Close" since process has progressed/failed
+    const btn = _currentOverlay.querySelector('.conn-status-cancel');
+    if (btn) btn.textContent = 'Close';
     return;
   }
 
