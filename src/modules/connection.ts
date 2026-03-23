@@ -800,23 +800,32 @@ export function _probeZombieConnection(): void {
   }, ZOMBIE_PROBE_TIMEOUT_MS);
 }
 
-// visibilitychange: immediately reconnect if the session dropped while hidden,
+// visibilitychange: reconnect ALL sessions that dropped while hidden,
 // probe for zombie connections, and reacquire the wake lock. (#153)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    const session = currentSession();
-    if (session?.sshConnected) void acquireWakeLock();
-    if (session?.profile && (!session.ws || session.ws.readyState !== WebSocket.OPEN)) {
-      cancelReconnect();
-      _dismissConnectionStatus();
-      // Dismiss any error dialog left by failed reconnect attempts while hidden
-      document.getElementById('errorDialogOverlay')?.classList.add('hidden');
-      _toast('Reconnecting…');
-      _openWebSocket({ silent: true });
-    } else if (session?.profile && session.ws?.readyState === WebSocket.OPEN) {
-      // WS appears open — probe for zombie connection (#153)
-      _probeZombieConnection();
+    void acquireWakeLock();
+    document.getElementById('errorDialogOverlay')?.classList.add('hidden');
+
+    // Reconnect all dropped sessions, not just the active one
+    const savedActiveId = appState.activeSessionId;
+    let reconnected = false;
+    for (const [sid, session] of appState.sessions) {
+      if (sid === 'lobby') continue;
+      if (session.profile && (!session.ws || session.ws.readyState !== WebSocket.OPEN)) {
+        // Temporarily set active so _openWebSocket targets this session
+        appState.activeSessionId = sid;
+        cancelReconnect();
+        _openWebSocket({ silent: true });
+        reconnected = true;
+      } else if (session.profile && session.ws?.readyState === WebSocket.OPEN) {
+        appState.activeSessionId = sid;
+        _probeZombieConnection();
+      }
     }
+    // Restore the session the user was viewing
+    appState.activeSessionId = savedActiveId;
+    if (reconnected) _toast('Reconnecting sessions…');
   } else {
     releaseWakeLock();
   }
