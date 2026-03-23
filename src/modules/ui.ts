@@ -329,6 +329,9 @@ export function closeSession(id: string): void {
         btn.textContent = 'MobiSSH';
         btn.classList.remove('connected');
       }
+      // Restore default theme from localStorage
+      const defaultTheme = localStorage.getItem('termTheme') ?? 'dark';
+      _applyTheme(defaultTheme);
       navigateToPanel('connect');
     }
   }
