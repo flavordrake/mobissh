@@ -612,6 +612,8 @@ function _openWebSocket(options?: { silent?: boolean }): void {
   };
 
   newWs.onclose = (event) => {
+    // Capture before clearing — needed to distinguish "was connected" from "never connected"
+    const wasSshConnected = session?.sshConnected ?? false;
     if (session) {
       session.wsConnected = false;
       session.sshConnected = false;
@@ -622,7 +624,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     _setStatus('disconnected', 'Disconnected');
 
     // If SSH never connected, this session is dead — clean up, don't reconnect
-    if (!session.sshConnected && !openedThisAttempt) {
+    if (!wasSshConnected && !openedThisAttempt) {
       _wsConsecFailures++;
       if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
         _wsConsecFailures = 0;
@@ -633,13 +635,13 @@ function _openWebSocket(options?: { silent?: boolean }): void {
       return;
     }
 
-    if (!session.sshConnected) {
+    if (!wasSshConnected) {
       // WS opened but SSH never connected (auth failure, timeout, etc.)
       closeSession(sessionId);
       return;
     }
 
-    // SSH was connected — this is a network drop, try to reconnect
+    // SSH was previously connected — this is a network drop, try to reconnect
     _wsConsecFailures = 0;
     if (!event.wasClean) {
       if (document.visibilityState === 'visible') {
