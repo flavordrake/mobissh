@@ -122,17 +122,35 @@ export function loadProfiles(): void {
     return;
   }
 
-  list.innerHTML = profiles.map((p, i) => `
-    <div class="profile-item" data-idx="${String(i)}">
-      <span class="profile-name">${escHtml(p.name)}${p.hasVaultCreds ? ' <span class="vault-badge">saved</span>' : ''}</span>
+  // Find active sessions matching each profile
+  const activeSessions = Array.from(appState.sessions.values()).filter(
+    (s) => s.id !== 'lobby' && s.sshConnected && s.profile
+  );
+
+  list.innerHTML = profiles.map((p, i) => {
+    const matching = activeSessions.filter(
+      (s) => s.profile!.host === p.host && (s.profile!.port || 22) === (p.port || 22) && s.profile!.username === p.username
+    );
+    const connected = matching.length > 0;
+    const connectedClass = connected ? ' profile-connected' : '';
+    const connInfo = connected
+      ? `<span class="profile-conn-badge">${String(matching.length)} active</span>`
+      : '';
+    const switchBtn = connected
+      ? `<button class="item-btn accent" data-action="switch" data-session-id="${escHtml(matching[0]!.id)}">Switch</button>`
+      : '';
+
+    return `<div class="profile-item${connectedClass}" data-idx="${String(i)}">
+      <span class="profile-name">${escHtml(p.name)}${p.hasVaultCreds ? ' <span class="vault-badge">saved</span>' : ''} ${connInfo}</span>
       <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
       <div class="item-actions">
+        ${switchBtn}
         <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
         <button class="item-btn" data-action="connect" data-idx="${String(i)}">Connect</button>
         <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 
   formSection?.classList.add('connect-form-hidden');
   if (newConnBtn) newConnBtn.hidden = false;

@@ -11,7 +11,7 @@ import { appState, currentSession } from './state.js';
 import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
-import { saveProfile, connectFromProfile, newConnection } from './profiles.js';
+import { saveProfile, connectFromProfile, newConnection, loadProfiles } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
@@ -54,6 +54,9 @@ export function navigateToPanel(
 
   if (panel === 'terminal') {
     setTimeout(() => { currentSession()?.fitAddon?.fit(); focusIME(); }, 50);
+  }
+  if (panel === 'connect') {
+    loadProfiles(); // Refresh to show active session badges
   }
   // Tab bar stays visible when switching panels -- user needs to navigate
   // between terminal and files. The handle bar toggle still hides/shows it.
@@ -610,10 +613,19 @@ export function initConnectForm(): void {
   });
 
   document.getElementById('profileList')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action="connect"]');
-    if (!btn) return;
-    const idx = parseInt(btn.dataset.idx ?? '0', 10);
-    void connectFromProfile(idx).then((ok) => { if (ok) navigateToPanel('terminal'); });
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+    if (action === 'connect') {
+      const idx = parseInt(target.dataset.idx ?? '0', 10);
+      void connectFromProfile(idx).then((ok) => { if (ok) navigateToPanel('terminal'); });
+    } else if (action === 'switch') {
+      const sessionId = target.dataset.sessionId;
+      if (sessionId) {
+        switchSession(sessionId);
+        navigateToPanel('terminal');
+      }
+    }
   });
 }
 
