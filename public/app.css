@@ -347,6 +347,7 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 4px;
+  touch-action: manipulation;
   cursor: pointer;
   text-align: center;
   height: 100%;

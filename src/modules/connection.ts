@@ -676,6 +676,7 @@ export function scheduleReconnect(): void {
         RECONNECT.MAX_DELAY_MS
       );
     }
+    _showConnectionStatus('Attempting reconnect…');
     _openWebSocket({ silent: true });
   }, session.reconnectDelay);
 }
