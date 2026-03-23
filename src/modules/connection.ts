@@ -464,7 +464,14 @@ function _openWebSocket(options?: { silent?: boolean }): void {
   const wsUrl = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
 
   _setStatus('connecting', `Connecting to ${baseUrl}…`);
-  if (!silent) _showConnectionStatus(`Connecting to ${baseUrl}…`);
+  // Only show status overlay after 5s timeout — happy path never shows it
+  let _connectTimeout: ReturnType<typeof setTimeout> | null = null;
+  if (!silent) {
+    _connectTimeout = setTimeout(() => {
+      _connectTimeout = null;
+      _showConnectionStatus(`Connecting to ${baseUrl}…`);
+    }, 5000);
+  }
 
   let openedThisAttempt = false;
   let newWs: WebSocket;
@@ -502,7 +509,8 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     if (profile.initialCommand) authMsg.initialCommand = profile.initialCommand;
     if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
     newWs.send(JSON.stringify(authMsg));
-    if (!silent) _showConnectionStatus(`SSH → ${profile.username}@${profile.host}:${String(profile.port || 22)}…`);
+    // Status overlay only shows if the 5s timeout already fired
+    if (!silent && _currentOverlay) _showConnectionStatus(`SSH → ${profile.username}@${profile.host}:${String(profile.port || 22)}…`);
   };
 
   newWs.onmessage = (event: MessageEvent) => {
@@ -522,12 +530,10 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         if (session?.profile) {
           _setStatus('connected', `${session.profile.username}@${session.profile.host}`);
         }
-        if (silent) {
-          _dismissConnectionStatus();
-        } else {
-          _showConnectionStatus('Connected');
-          _dismissConnectionStatus(1500);
-        }
+        // Cancel the 5s timeout if it hasn't fired yet
+        if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
+        // Dismiss any visible overlay (happy path: overlay never appeared)
+        _dismissConnectionStatus();
         // Sync terminal size to server
         newWs.send(JSON.stringify({ type: 'resize', cols: session?.terminal?.cols ?? 80, rows: session?.terminal?.rows ?? 24 }));
         // On first connect: collapse nav chrome and switch to terminal (#36).
@@ -830,7 +836,7 @@ export function disconnect(): void {
   }
 
   _setStatus('disconnected', 'Disconnected');
-  _showConnectionStatus('Disconnected.');
+  _dismissConnectionStatus();
 }
 
 export function sendSSHInput(data: string): void {

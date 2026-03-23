@@ -312,11 +312,13 @@ export function closeSession(id: string): void {
 
   appState.sessions.delete(id);
 
-  // If we just closed the active session, switch to another
+  // If we just closed the active session, switch to another (prefer real sessions over lobby)
   if (appState.activeSessionId === id) {
     const remaining = Array.from(appState.sessions.keys());
-    if (remaining.length > 0) {
-      switchSession(remaining[0]!);
+    const realSession = remaining.find((k) => k !== 'lobby');
+    const fallback = realSession ?? remaining[0];
+    if (fallback) {
+      switchSession(fallback);
     } else {
       appState.activeSessionId = null;
       const btn = document.getElementById('sessionMenuBtn');
