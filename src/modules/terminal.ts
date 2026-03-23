@@ -82,13 +82,13 @@ function _updateBellBadge(): void {
   const count = _notifications.length;
 
   // Capture base name — strip badge span if present, or strip parens for compat
-  const current = sessionBtn.textContent ?? '';
+  const current = sessionBtn.textContent || '';
   const baseMatch = current.replace(/\s*\(\d+\)$/, '').replace(/\s*\d+$/, '');
   if (baseMatch && baseMatch !== _sessionTitleBase) _sessionTitleBase = baseMatch;
   if (!_sessionTitleBase) _sessionTitleBase = current;
 
   if (count > 0) {
-    sessionBtn.innerHTML = `${escHtml(_sessionTitleBase)} <span class="session-notif-badge">${String(count)}</span>`;
+    sessionBtn.textContent = `${_sessionTitleBase} (${String(count)})`;
   } else {
     sessionBtn.textContent = _sessionTitleBase;
   }

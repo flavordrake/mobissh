@@ -265,7 +265,7 @@ function _flushTerminalWrite(sessionId: string): void {
 function _bufferTerminalWrite(sessionId: string, data: string): void {
   _writeBufs.set(sessionId, (_writeBufs.get(sessionId) ?? '') + data);
   if (!_writeRafs.has(sessionId)) {
-    _writeRafs.set(sessionId, requestAnimationFrame(() => _flushTerminalWrite(sessionId)));
+    _writeRafs.set(sessionId, requestAnimationFrame(() => { _flushTerminalWrite(sessionId); }));
   }
 }
 let _focusIME = (): void => {};
@@ -814,13 +814,14 @@ document.addEventListener('visibilitychange', () => {
     let reconnected = false;
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
-      if (session.profile && (!session.ws || session.ws.readyState !== WebSocket.OPEN)) {
+      if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
         // Temporarily set active so _openWebSocket targets this session
         appState.activeSessionId = sid;
         cancelReconnect();
         _openWebSocket({ silent: true });
         reconnected = true;
-      } else if (session.profile && session.ws?.readyState === WebSocket.OPEN) {
+      } else {
+        // WS is open — probe for zombie connection
         appState.activeSessionId = sid;
         _probeZombieConnection();
       }

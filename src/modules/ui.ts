@@ -391,7 +391,7 @@ export function initSessionMenu(): void {
     if (appState.sessions.size <= 1) return;
     _swipeX0 = e.touches[0]!.clientX;
     _swipeClaimed = false;
-    _origText.value = menuBtn.textContent ?? '';
+    _origText.value = menuBtn.textContent || '';
   }, { passive: true });
 
   menuBtn.addEventListener('touchmove', (e) => {
@@ -827,8 +827,8 @@ export function initTerminalActions(): void {
         const ime = document.getElementById('imeInput') as HTMLTextAreaElement | null;
         if (ime && ime.classList.contains('ime-visible') && ime.value) {
           // Route to preview textarea when IME is holding content
-          const start = ime.selectionStart ?? ime.value.length;
-          ime.value = ime.value.slice(0, start) + seq + ime.value.slice(ime.selectionEnd ?? start);
+          const start = ime.selectionStart;
+          ime.value = ime.value.slice(0, start) + seq + ime.value.slice(ime.selectionEnd);
           ime.selectionStart = ime.selectionEnd = start + seq.length;
           ime.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
