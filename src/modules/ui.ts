@@ -56,7 +56,11 @@ export function navigateToPanel(
     setTimeout(() => { currentSession()?.fitAddon?.fit(); focusIME(); }, 50);
   }
   if (panel === 'connect') {
-    loadProfiles(); // Refresh to show active session badges
+    // Only refresh if the form isn't already visible (avoids clobbering edit-in-progress)
+    const form = document.getElementById('connect-form-section');
+    if (form?.classList.contains('connect-form-hidden')) {
+      loadProfiles();
+    }
   }
   // Tab bar stays visible when switching panels -- user needs to navigate
   // between terminal and files. The handle bar toggle still hides/shows it.
