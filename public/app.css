@@ -157,7 +157,7 @@ html, body {
 .ime-action-btn:last-child { border-radius: 0 0 10px 0; }
 .ime-action-btn:active { background: var(--accent); color: #000; }
 .ime-history-btn { flex: 0.5; font-size: 12px; }
-.ime-history-btn.disabled { opacity: 0.3; pointer-events: none; }
+.ime-history-btn.disabled { color: var(--text-dim); pointer-events: none; }
 .ime-history-btn:active { background: var(--accent); color: #000; }
 .ime-commit {
   font-weight: 700;
