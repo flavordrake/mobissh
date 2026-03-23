@@ -266,16 +266,23 @@ export function switchSession(id: string): void {
 
   appState.activeSessionId = id;
 
-  // Hide all terminal containers, show the active one
-  document.querySelectorAll<HTMLElement>('[data-session-id]').forEach((el) => {
+  // Hide all terminal containers, show the active one (scope to #terminal only)
+  document.querySelectorAll<HTMLElement>('#terminal > [data-session-id]').forEach((el) => {
     el.classList.toggle('hidden', el.dataset.sessionId !== id);
   });
 
   // Restore per-session theme (#104)
   applyTheme(session.activeThemeName);
 
-  // Fit the newly visible terminal
+  // Fit the newly visible terminal and sync dimensions to server
   session.fitAddon?.fit();
+  if (session.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+    session.ws.send(JSON.stringify({
+      type: 'resize',
+      cols: session.terminal?.cols ?? 80,
+      rows: session.terminal?.rows ?? 24,
+    }));
+  }
 
   // Update session menu button text
   const btn = document.getElementById('sessionMenuBtn');
