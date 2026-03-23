@@ -446,12 +446,14 @@ export function initSessionMenu(): void {
     disconnect();
   });
 
-  // Theme cycle — session-only (no localStorage write)
+  // Theme cycle — persist to session so it survives switching (#104)
   document.getElementById('sessionThemeBtn')!.addEventListener('click', (e) => {
     e.stopPropagation();
     const idx = THEME_ORDER.indexOf(appState.activeThemeName);
     const next = THEME_ORDER[(idx + 1) % THEME_ORDER.length] as ThemeName;
     _applyTheme(next, { persist: false });
+    const session = currentSession();
+    if (session) session.activeThemeName = next;
   });
 }
 

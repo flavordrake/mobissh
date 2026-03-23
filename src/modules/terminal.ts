@@ -81,15 +81,17 @@ function _updateBellBadge(): void {
   if (!sessionBtn) return;
   const count = _notifications.length;
 
-  // Capture base name — strip any existing badge or parens
+  // Capture base name — strip badge span if present, or strip parens for compat
   const current = sessionBtn.textContent ?? '';
-  const baseMatch = current.replace(/\s*\(\d+\)$/, '');
+  const baseMatch = current.replace(/\s*\(\d+\)$/, '').replace(/\s*\d+$/, '');
   if (baseMatch && baseMatch !== _sessionTitleBase) _sessionTitleBase = baseMatch;
   if (!_sessionTitleBase) _sessionTitleBase = current;
 
-  sessionBtn.textContent = count > 0
-    ? `${_sessionTitleBase} (${String(count)})`
-    : _sessionTitleBase;
+  if (count > 0) {
+    sessionBtn.innerHTML = `${escHtml(_sessionTitleBase)} <span class="session-notif-badge">${String(count)}</span>`;
+  } else {
+    sessionBtn.textContent = _sessionTitleBase;
+  }
 }
 
 // ── CSS layout constants (read from :root on first access; JS never hardcodes px values) ─
