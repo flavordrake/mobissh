@@ -346,6 +346,9 @@ export function initSessionMenu(): void {
   const menu = document.getElementById('sessionMenu')!;
   const backdrop = document.getElementById('menuBackdrop')!;
 
+  // Stop touch events from leaking through the menu to parent gesture handlers
+  menu.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { passive: false });
+
   // Sync session menu theme label with the active theme
   const initialTheme = THEMES[appState.activeThemeName];
   const themeBtn = document.getElementById('sessionThemeBtn');
