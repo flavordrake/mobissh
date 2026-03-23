@@ -363,8 +363,10 @@ export function initSessionMenu(): void {
     });
   }
 
+  let _swipeJustFired = false;
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (_swipeJustFired) { _swipeJustFired = false; return; }
     if (appState.sessions.size === 0) return;
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
@@ -379,6 +381,57 @@ export function initSessionMenu(): void {
   });
 
   function closeMenu(): void { menu.classList.add('hidden'); backdrop.classList.add('hidden'); }
+
+  // ── Swipe left/right on session title to switch sessions ──────────────
+  let _swipeX0: number | null = null;
+  let _swipeClaimed = false;
+  const _origText = { value: '' };
+
+  menuBtn.addEventListener('touchstart', (e) => {
+    if (appState.sessions.size <= 1) return;
+    _swipeX0 = e.touches[0]!.clientX;
+    _swipeClaimed = false;
+    _origText.value = menuBtn.textContent ?? '';
+  }, { passive: true });
+
+  menuBtn.addEventListener('touchmove', (e) => {
+    if (_swipeX0 === null) return;
+    const dx = e.touches[0]!.clientX - _swipeX0;
+    if (!_swipeClaimed && Math.abs(dx) > 30) {
+      _swipeClaimed = true;
+      e.preventDefault();
+      // Peek: show next/prev session name
+      const keys = Array.from(appState.sessions.keys());
+      const idx = keys.indexOf(appState.activeSessionId ?? '');
+      const targetIdx = dx > 0 ? idx - 1 : idx + 1;
+      if (targetIdx >= 0 && targetIdx < keys.length) {
+        const target = appState.sessions.get(keys[targetIdx]!);
+        if (target?.profile) {
+          menuBtn.textContent = `→ ${target.profile.username}@${target.profile.host}`;
+          menuBtn.style.opacity = '0.6';
+        }
+      }
+    }
+  }, { passive: false });
+
+  menuBtn.addEventListener('touchend', (e) => {
+    if (!_swipeClaimed) { _swipeX0 = null; return; }
+    _swipeJustFired = true;
+    const dx = (e.changedTouches[0]?.clientX ?? _swipeX0 ?? 0) - (_swipeX0 ?? 0);
+    _swipeX0 = null;
+    menuBtn.style.opacity = '';
+
+    const keys = Array.from(appState.sessions.keys());
+    const idx = keys.indexOf(appState.activeSessionId ?? '');
+    const targetIdx = dx > 0 ? idx - 1 : idx + 1;
+    if (targetIdx >= 0 && targetIdx < keys.length) {
+      switchSession(keys[targetIdx]!);
+      if ('vibrate' in navigator) navigator.vibrate(10);
+    } else {
+      // Restore original text if swipe didn't land on a valid session
+      menuBtn.textContent = _origText.value;
+    }
+  });
 
   // Hamburger ≡ button — toggles tab bar as fallback for non-swipe users.
   document.getElementById('handleMenuBtn')!.addEventListener('click', () => {
