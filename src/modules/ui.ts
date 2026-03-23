@@ -633,6 +633,14 @@ export function initConnectForm(): void {
         switchSession(sessionId);
         navigateToPanel('terminal');
       }
+    } else if (action === 'disconnect') {
+      const sessionId = target.dataset.sessionId;
+      if (sessionId) {
+        appState.activeSessionId = sessionId;
+        disconnect();
+        closeSession(sessionId);
+        loadProfiles(); // Refresh to remove session actions
+      }
     }
   });
 }

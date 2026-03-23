@@ -1151,6 +1151,14 @@ hr {
   vertical-align: middle;
 }
 
+.session-actions {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--accent-dim);
+}
+
 .item-btn.accent {
   background: var(--accent);
   color: var(--bg-deep);

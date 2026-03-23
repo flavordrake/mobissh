@@ -136,15 +136,20 @@ export function loadProfiles(): void {
     const connInfo = connected
       ? `<span class="profile-conn-badge">${String(matching.length)} active</span>`
       : '';
-    const switchBtn = connected
-      ? `<button class="item-btn accent" data-action="switch" data-session-id="${escHtml(matching[0]!.id)}">Switch</button>`
-      : '';
+
+    // Session actions (Switch/Disconnect) — separate from profile management
+    const sessionActions = matching.map((s) =>
+      `<div class="session-actions">
+        <button class="item-btn accent" data-action="switch" data-session-id="${escHtml(s.id)}">Switch</button>
+        <button class="item-btn danger" data-action="disconnect" data-session-id="${escHtml(s.id)}">Disconnect</button>
+      </div>`
+    ).join('');
 
     return `<div class="profile-item${connectedClass}" data-idx="${String(i)}">
       <span class="profile-name">${escHtml(p.name)}${p.hasVaultCreds ? ' <span class="vault-badge">saved</span>' : ''} ${connInfo}</span>
       <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
+      ${sessionActions}
       <div class="item-actions">
-        ${switchBtn}
         <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
         <button class="item-btn" data-action="connect" data-idx="${String(i)}">Connect</button>
         <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
