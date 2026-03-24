@@ -887,6 +887,19 @@ export function initIMEInput(): void {
     // Never intercept hardware media/volume keys — let the system handle them (#221)
     if (isMediaKey(e.key)) return;
 
+    // Tab: commit held text and send \t for autocomplete (#295)
+    if (e.key === 'Tab') {
+      const text = ime.value;
+      if (_isHolding() && text) {
+        _recordHistory(text);
+        sendSSHInput(text);
+        sendSSHInput('\t');
+        _transition('idle');
+        e.preventDefault();
+        return;
+      }
+    }
+
     // Enter: commit held text and send \r
     if (e.key === 'Enter') {
       ime.setAttribute('autocomplete', 'off');
