@@ -8,7 +8,11 @@
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 import { vaultLoad } from './vault.js';
-import { showErrorDialog } from './ui.js';
+import { showErrorDialog, navigateToPanel } from './ui.js';
+
+// Sessions that should navigate to the terminal panel when SSH connects.
+// Populated by _openWebSocket for user-initiated connections (not reconnects).
+const _pendingNavigateSessions = new Set<string>();
 
 // [SFTP_MSG] -- keep in sync with types.ts SERVER_MESSAGE sftp types and WS router below
 type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_download_meta' | 'sftp_download_chunk' | 'sftp_download_end' | 'sftp_upload_result' | 'sftp_upload_ack' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
@@ -453,6 +457,9 @@ function _openWebSocket(options?: { silent?: boolean }): void {
   const sessionId = appState.activeSessionId ?? '';
   const session = currentSession();
 
+  // User-initiated connections navigate to terminal once SSH is established (#309)
+  if (!silent && sessionId) _pendingNavigateSessions.add(sessionId);
+
   if (session?.ws) {
     session.ws.onclose = null;
     session.ws.close();
@@ -534,6 +541,11 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
         // Dismiss any visible overlay (happy path: overlay never appeared)
         _dismissConnectionStatus();
+        // Navigate to terminal now that SSH is established (#309).
+        // Only for user-initiated connections — reconnects don't navigate.
+        if (_pendingNavigateSessions.delete(sessionId)) {
+          navigateToPanel('terminal');
+        }
         // Sync terminal size to server — if the session's container is visible,
         // fit first to get accurate dimensions. If hidden (background reconnect),
         // use the active session's dimensions as a reasonable default rather than

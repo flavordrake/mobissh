@@ -681,7 +681,7 @@ export function initConnectForm(): void {
     const action = target.dataset.action;
     if (action === 'connect') {
       const idx = parseInt(target.dataset.idx ?? '0', 10);
-      void connectFromProfile(idx).then((ok) => { if (ok) navigateToPanel('terminal'); });
+      void connectFromProfile(idx);
     } else if (action === 'switch') {
       const sessionId = target.dataset.sessionId;
       if (sessionId) {

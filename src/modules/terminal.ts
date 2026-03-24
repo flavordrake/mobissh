@@ -165,6 +165,12 @@ export function initTerminal(): void {
     });
   }
 
+  // Stop touch events from leaking through the drawer list to parent gesture handlers (#267)
+  const notifList = document.getElementById('notifDrawerList');
+  if (notifList) {
+    notifList.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { passive: false });
+  }
+
   // Re-measure character cells after web fonts finish loading (#71)
   void document.fonts.ready.then(() => {
     const t = currentSession()?.terminal;
