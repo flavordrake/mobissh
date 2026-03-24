@@ -626,7 +626,6 @@ export function initIMEInput(): void {
         _hideActions();
         _hideTimer();
         appState.isComposing = false;
-        _manualDock = false;
         break;
 
       case 'composing':
