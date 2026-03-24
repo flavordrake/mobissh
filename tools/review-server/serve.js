@@ -373,6 +373,7 @@ function appiumPage() {
       ${rows ? `<table><tr><th></th><th>Test</th><th>Time</th></tr>${rows}</table>` : '<p class="empty">No Appium results. Run <code>scripts/run-appium-tests.sh</code></p>'}
     </div>
     ${runs.length ? `<div class="card"><h2>Recent Runs</h2>${runs.map(r => `<p><a href="/history/${r}">${r}</a></p>`).join('')}</div>` : ''}
+    <p><a href="/recordings">View all recordings</a></p>
   `);
 }
 
@@ -416,12 +417,17 @@ function recordingsPage() {
     recordings.push({ name: 'Emulator (latest)', path: '/file/test-results/emulator/recording.mp4', abs: emuRec, type: 'video/mp4' });
   }
 
-  // Appium recordings from history
+  // Appium recordings from history (recordings are in run/recordings/ subdir)
   const historyDir = path.join(ARTIFACT_DIRS.history, 'appium');
   for (const run of listFiles(historyDir).slice(0, 10)) {
     const runDir = path.join(historyDir, run);
-    for (const f of listFiles(runDir, ['.webm', '.mp4'])) {
-      recordings.push({ name: `${run}/${f}`, path: `/file/test-history/appium/${run}/${f}`, abs: path.join(runDir, f), type: f.endsWith('.webm') ? 'video/webm' : 'video/mp4' });
+    // Check both top-level and recordings/ subdirectory
+    for (const subdir of ['', 'recordings']) {
+      const searchDir = subdir ? path.join(runDir, subdir) : runDir;
+      for (const f of listFiles(searchDir, ['.webm', '.mp4'])) {
+        const relPath = subdir ? `${subdir}/${f}` : f;
+        recordings.push({ name: `${run}/${relPath}`, path: `/file/test-history/appium/${run}/${relPath}`, abs: path.join(searchDir, f), type: f.endsWith('.webm') ? 'video/webm' : 'video/mp4' });
+      }
     }
   }
 
