@@ -57,34 +57,26 @@ client_router_types=$(echo "$CLIENT_ROUTER" | grep -oP "sftp_\w+" | sort -u)
 # Server handler types should match server router types
 check "SFTP_HANDLER types" "SFTP_ROUTER types" "$handler_types" "$router_types"
 
-# Client types.ts should be superset of server handler + result types
-# (types.ts has both request handling types like sftp_error and result types)
-# Just check that every server result type exists in types.ts
-for t in $handler_types; do
-  result="${t}_result"
-  # sftp_ls -> sftp_ls_result, sftp_realpath -> sftp_realpath_result
-  if ! echo "$SERVER_MSG" | grep -q "^${result}$" 2>/dev/null; then
-    # Some types like sftp_error don't follow the _result pattern
-    if [[ "$t" != "sftp_error" ]]; then
-      echo "MISSING: ${result} not in types.ts ServerMessage"
-      FAIL=1
-    fi
-  fi
-done
+# Client types.ts must include all sftp_* server-to-client message types.
+# These are result types (_result), streaming types (_meta, _chunk, _end, _ack), and sftp_error.
+# The handler→result naming convention is 1:1 for simple operations but N:1 for streaming.
+# Instead of inferring result types from handler names, just verify all types.ts sftp types
+# are present in the client router and SftpMsg Extract.
 
-# Client router should handle all result types from types.ts
-types_results=$(echo "$SERVER_MSG" | grep '_result$' | sort -u)
-for t in $types_results; do
+# All sftp types defined in types.ts ServerMessage (server-to-client messages)
+types_sftp=$(echo "$SERVER_MSG" | sort -u)
+
+# Client router should handle all sftp types from types.ts
+for t in $types_sftp; do
   if ! echo "$client_router_types" | grep -q "^${t}$" 2>/dev/null; then
     echo "MISSING: ${t} not in connection.ts SFTP_CLIENT_ROUTER"
     FAIL=1
   fi
 done
 
-# SftpMsg Extract type should include all result types
-sftp_msg_types=$(echo "$SFTP_MSG" | grep '_result$\|sftp_error' | sort -u)
-for t in $types_results; do
-  if ! echo "$sftp_msg_types" | grep -q "^${t}$" 2>/dev/null; then
+# SftpMsg Extract type should include all sftp types from types.ts
+for t in $types_sftp; do
+  if ! echo "$SFTP_MSG" | grep -q "^${t}$" 2>/dev/null; then
     echo "MISSING: ${t} not in connection.ts SFTP_MSG type"
     FAIL=1
   fi

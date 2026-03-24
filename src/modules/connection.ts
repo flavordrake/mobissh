@@ -11,7 +11,7 @@ import { vaultLoad } from './vault.js';
 import { showErrorDialog } from './ui.js';
 
 // [SFTP_MSG] -- keep in sync with types.ts SERVER_MESSAGE sftp types and WS router below
-type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_upload_result' | 'sftp_upload_ack' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
+type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_download_meta' | 'sftp_download_chunk' | 'sftp_download_end' | 'sftp_upload_result' | 'sftp_upload_ack' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
 let _sftpHandler: ((msg: SftpMsg) => void) | null = null;
 export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler = fn; }
 
@@ -571,6 +571,9 @@ function _openWebSocket(options?: { silent?: boolean }): void {
       case 'sftp_ls_result':
       case 'sftp_error':
       case 'sftp_download_result':
+      case 'sftp_download_meta':
+      case 'sftp_download_chunk':
+      case 'sftp_download_end':
       case 'sftp_upload_result':
       case 'sftp_upload_ack':
       case 'sftp_stat_result':
