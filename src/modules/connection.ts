@@ -656,7 +656,6 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         _toast('Reconnecting…');
         _openWebSocket({ silent: true });
       } else {
-        _showConnectionStatus('Connection lost.', { error: true });
         scheduleReconnect();
       }
     }
@@ -674,7 +673,6 @@ export function scheduleReconnect(): void {
   const delaySec = Math.round(session.reconnectDelay / 1000);
   _toast(`Reconnecting in ${String(delaySec)}s…`);
   _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
-  _showConnectionStatus(`Reconnecting in ${String(delaySec)}s…`);
 
   session.reconnectTimer = setTimeout(() => {
     const s = currentSession();
@@ -684,7 +682,6 @@ export function scheduleReconnect(): void {
         RECONNECT.MAX_DELAY_MS
       );
     }
-    _showConnectionStatus('Attempting reconnect…');
     _openWebSocket({ silent: true });
   }, session.reconnectDelay);
 }
