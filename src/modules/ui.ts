@@ -824,10 +824,65 @@ export function initTerminalActions(): void {
     _attachRepeat(
       el,
       () => {
+        // Ctrl+key bypasses preview, sends to terminal directly
+        if (appState.ctrlActive) {
+          sendSSHInput(seq);
+          return;
+        }
+
         const ime = document.getElementById('imeInput') as HTMLTextAreaElement | null;
-        if (ime && ime.classList.contains('ime-visible') && ime.value) {
-          // Route to preview textarea when IME is holding content
+        if (ime && ime.classList.contains('ime-visible')) {
+          // Route intelligently when IME preview is visible
           const start = ime.selectionStart;
+          const end = ime.selectionEnd;
+
+          // Arrow keys: move cursor in textarea, don't insert escape sequences
+          const isArrow = seq === '\x1b[D' || seq === '\x1b[C'
+            || seq === '\x1b[A' || seq === '\x1b[B';
+          if (isArrow) {
+            if (seq === '\x1b[D') {
+              // left arrow
+              const pos = Math.max(0, start - 1);
+              ime.selectionStart = start - 1 >= 0 ? pos : 0;
+              ime.selectionEnd = ime.selectionStart;
+            } else if (seq === '\x1b[C') {
+              // right arrow
+              const pos = Math.min(ime.value.length, start + 1);
+              ime.selectionStart = start + 1 <= ime.value.length ? pos : ime.value.length;
+              ime.selectionEnd = ime.selectionStart;
+            }
+            // Up/Down arrows are no-ops in a single-line preview
+            return;
+          }
+
+          // Backspace: delete char before cursor, don't send \x7f to terminal
+          const isBackspace = seq === '\x7f' || seq === '\x08';
+          if (isBackspace) {
+            if (start > 0) {
+              ime.value = ime.value.slice(0, start - 1) + ime.value.slice(end);
+              ime.selectionStart = ime.selectionEnd = start - 1;
+              ime.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            return;
+          }
+
+          // Enter: commit preview text then send carriage return, transition to idle
+          const isEnter = seq === '\r' || seq === '\n';
+          if (isEnter) {
+            sendSSHInput(ime.value);
+            sendSSHInput('\r');
+            clearIMEPreview();
+            return;
+          }
+
+          // Escape: dismiss preview (transition to idle), don't send to terminal
+          const isEsc = seq === '\x1b';
+          if (isEsc) {
+            clearIMEPreview();
+            return;
+          }
+
+          // Other printable keys: insert into textarea at cursor
           ime.value = ime.value.slice(0, start) + seq + ime.value.slice(ime.selectionEnd);
           ime.selectionStart = ime.selectionEnd = start + seq.length;
           ime.dispatchEvent(new Event('input', { bubbles: true }));
