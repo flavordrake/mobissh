@@ -446,7 +446,7 @@ html, body {
   align-items: center;
   gap: 10px;
   width: 100%;
-  background: none;
+  background: var(--bg-card);
   border: none;
   border-top: 1px solid var(--border);
   padding: 10px 16px;
