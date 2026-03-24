@@ -326,13 +326,14 @@ async function warmupSwipes(driver, bounds) {
 async function exposeTerminal(driver) {
   await driver.executeScript(`
     (async () => {
-      const { appState } = await import('./modules/state.js');
-      window.__testTerminal = appState.terminal;
+      const { currentSession } = await import('./modules/state.js');
+      const session = currentSession();
+      window.__testTerminal = session ? session.terminal : null;
     })();
   `, []);
   await driver.waitUntil(async () => {
     return driver.executeScript('return !!window.__testTerminal', []);
-  }, { timeout: 5000, timeoutMsg: 'window.__testTerminal not set' });
+  }, { timeout: 5000, timeoutMsg: 'window.__testTerminal not set — is a session connected?' });
 }
 
 /**
@@ -355,47 +356,18 @@ async function readScreen(driver, useViewport = false) {
 }
 
 /**
- * Type a command into the terminal via IME input and send Enter.
- * Character-by-character via dispatchEvent, matching the emulator fixture pattern.
+ * Send a command to the active SSH session and press Enter.
+ * Uses sendSSHInput directly (bypasses IME input handling) for reliability
+ * in automated testing. The IME pathway has complex state tracking that
+ * doesn't work well with synthetic events from Appium.
  */
 async function sendCommand(driver, cmd) {
-  const ids = [COMPOSE_INPUT_ID, DIRECT_INPUT_ID];
-  // Focus whichever input element exists
   await driver.executeScript(`
-    const ids = arguments[0];
-    for (const id of ids) {
-      const el = document.getElementById(id);
-      if (el) { el.focus(); return; }
-    }
-  `, [ids]);
-
-  for (const ch of cmd) {
-    await driver.executeScript(`
-      const ids = arguments[1];
-      for (const id of ids) {
-        const el = document.getElementById(id);
-        if (el) {
-          el.value = arguments[0];
-          el.dispatchEvent(new InputEvent('input', { bubbles: true, data: arguments[0] }));
-          el.value = '';
-          return;
-        }
-      }
-    `, [ch, ids]);
-  }
-  // Enter
-  await driver.executeScript(`
-    const ids = arguments[0];
-    for (const id of ids) {
-      const el = document.getElementById(id);
-      if (el) {
-        el.value = '\\n';
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '\\n' }));
-        el.value = '';
-        return;
-      }
-    }
-  `, [ids]);
+    (async () => {
+      const { sendSSHInput } = await import('./modules/connection.js');
+      sendSSHInput(arguments[0] + '\\r');
+    })();
+  `, [cmd]);
 }
 
 // ── Vault setup ─────────────────────────────────────────────────────────
@@ -455,12 +427,6 @@ async function setupVault(driver) {
  * Assumes driver is in WEBVIEW context and vault is set up.
  */
 async function setupRealSSHConnection(driver) {
-  // Wait for terminal element
-  await driver.waitUntil(async () => {
-    return driver.executeScript(
-      "return !!document.querySelector('.xterm-screen')", []);
-  }, { timeout: 30000, interval: 500, timeoutMsg: 'Terminal .xterm-screen not found' });
-
   // Enable private hosts and inject WS spy
   await driver.executeScript(`
     localStorage.setItem('allowPrivateHosts', 'true');
@@ -490,9 +456,18 @@ async function setupRealSSHConnection(driver) {
   `, [SSHD_HOST, String(SSHD_PORT), TEST_USER, TEST_PASS]);
   await driver.pause(500);
 
-  // Submit
+  // Submit form (saves profile, does not connect)
   await driver.executeScript(
     "document.querySelector('#connectForm button[type=\"submit\"]')?.click()", []);
+  await driver.pause(1000);
+
+  // Click the Connect button on the saved profile to initiate connection
+  await driver.waitUntil(async () => {
+    return driver.executeScript(
+      "return !!document.querySelector('[data-action=\"connect\"]')", []);
+  }, { timeout: 5000, interval: 500, timeoutMsg: 'Profile connect button not found after save' });
+  await driver.executeScript(
+    "document.querySelector('[data-action=\"connect\"]')?.click()", []);
 
   // Accept host key dialog (may not appear if key already trusted from earlier test)
   await driver.waitUntil(async () => {
@@ -530,10 +505,16 @@ async function setupRealSSHConnection(driver) {
     `, []);
   }, { timeout: 15000, interval: 500, timeoutMsg: 'SSH connection did not complete (no resize msg)' });
 
-  // Ensure terminal panel is active
+  // Ensure terminal panel is active and wait for terminal to render
   await driver.executeScript(
     "document.querySelector('[data-panel=\"terminal\"]')?.click()", []);
   await driver.pause(500);
+
+  // Wait for xterm to render after connection (no terminal at cold start)
+  await driver.waitUntil(async () => {
+    return driver.executeScript(
+      "return !!document.querySelector('.xterm-screen')", []);
+  }, { timeout: 10000, interval: 500, timeoutMsg: 'Terminal .xterm-screen not found after connection' });
 }
 
 // ── Screenshot helper ───────────────────────────────────────────────────

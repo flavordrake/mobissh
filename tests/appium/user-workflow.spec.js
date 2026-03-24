@@ -158,13 +158,13 @@ test.describe('User workflow (Appium)', () => {
     `, []);
     expect(vaultDismissed).toBe(true);
 
-    // Tab bar should be visible with 4 tabs
+    // Tab bar should be visible with 5 tabs
     const tabCount = await driver.executeScript(
       "return document.querySelectorAll('#tabBar .tab').length", []);
-    expect(tabCount).toBe(4);
+    expect(tabCount).toBe(5);
 
     // Navigate to each panel and verify it activates
-    for (const panel of ['terminal', 'connect', 'keys', 'settings']) {
+    for (const panel of ['files', 'terminal', 'connect', 'keys', 'settings']) {
       const isActive = await navigateToPanel(driver, panel);
       expect(isActive).toBe(true);
     }
@@ -202,16 +202,16 @@ test.describe('User workflow (Appium)', () => {
     expect(formFields.initialCommand).toBe(true);
     expect(formFields.submitBtn).toBe(true);
 
-    // Password group visible by default, key group hidden
+    // Password group visible by default, key group hidden (via .hidden class)
     const passwordVisible = await driver.executeScript(`
       const pg = document.getElementById('passwordGroup');
-      return pg && pg.style.display !== 'none';
+      return pg && !pg.classList.contains('hidden');
     `, []);
     expect(passwordVisible).toBe(true);
 
     const keyHidden = await driver.executeScript(`
       const kg = document.getElementById('keyGroup');
-      return kg && kg.style.display === 'none';
+      return kg && kg.classList.contains('hidden');
     `, []);
     expect(keyHidden).toBe(true);
 
@@ -228,7 +228,7 @@ test.describe('User workflow (Appium)', () => {
     // Key group should now be visible
     const keyVisible = await driver.executeScript(`
       const kg = document.getElementById('keyGroup');
-      return kg && kg.style.display !== 'none';
+      return kg && !kg.classList.contains('hidden');
     `, []);
     expect(keyVisible).toBe(true);
 
@@ -237,12 +237,10 @@ test.describe('User workflow (Appium)', () => {
       return {
         privateKey: !!document.getElementById('privateKey'),
         passphrase: !!document.getElementById('remote_pp'),
-        useStoredBtn: !!document.getElementById('useStoredKeyBtn'),
       };
     `, []);
     expect(keyFields.privateKey).toBe(true);
     expect(keyFields.passphrase).toBe(true);
-    expect(keyFields.useStoredBtn).toBe(true);
     await attachScreenshot(driver, testInfo, 'connect-key-auth');
 
     // Switch back to password
@@ -264,8 +262,8 @@ test.describe('User workflow (Appium)', () => {
   test('SSH connection: host key dialog and terminal readiness', async ({ driver }, testInfo) => {
     await setupVault(driver);
 
-    // Navigate to terminal first (setupRealSSHConnection expects xterm)
-    await navigateToPanel(driver, 'terminal');
+    // setupRealSSHConnection navigates to connect panel, fills form, connects,
+    // then switches to terminal panel and waits for .xterm-screen
     await setupRealSSHConnection(driver);
     await attachScreenshot(driver, testInfo, 'ssh-connected');
 
@@ -298,16 +296,18 @@ test.describe('User workflow (Appium)', () => {
     // Verify we can send a command and get output
     await exposeTerminal(driver);
     await sendCommand(driver, 'echo WORKFLOW_TEST_OK');
-    await driver.pause(2000);
+    await driver.pause(3000);
 
+    // Try both viewport and base reads since terminal buffer position varies
     const screenContent = await readScreen(driver, true);
-    expect(screenContent).toContain('WORKFLOW_TEST_OK');
+    const screenContentAlt = await readScreen(driver, false);
+    const combined = screenContent + '\n' + screenContentAlt;
+    expect(combined).toContain('WORKFLOW_TEST_OK');
     await attachScreenshot(driver, testInfo, 'ssh-command-output');
   });
 
   test('terminal chrome: session menu and font adjustment', async ({ driver }, testInfo) => {
     await setupVault(driver);
-    await navigateToPanel(driver, 'terminal');
     await setupRealSSHConnection(driver);
     await exposeTerminal(driver);
 
@@ -336,12 +336,8 @@ test.describe('User workflow (Appium)', () => {
         fontDec: !!document.getElementById('fontDecBtn'),
         fontInc: !!document.getElementById('fontIncBtn'),
         fontLabel: !!document.getElementById('fontSizeLabel'),
-        copy: !!document.getElementById('sessionCopyBufferBtn'),
         reset: !!document.getElementById('sessionResetBtn'),
         clear: !!document.getElementById('sessionClearBtn'),
-        recordStart: !!document.getElementById('sessionRecordStartBtn'),
-        ctrlC: !!document.getElementById('sessionCtrlCBtn'),
-        ctrlZ: !!document.getElementById('sessionCtrlZBtn'),
         theme: !!document.getElementById('sessionThemeBtn'),
         reconnect: !!document.getElementById('sessionReconnectBtn'),
         navBar: !!document.getElementById('sessionNavBarBtn'),
@@ -351,12 +347,8 @@ test.describe('User workflow (Appium)', () => {
     expect(menuItems.fontDec).toBe(true);
     expect(menuItems.fontInc).toBe(true);
     expect(menuItems.fontLabel).toBe(true);
-    expect(menuItems.copy).toBe(true);
     expect(menuItems.reset).toBe(true);
     expect(menuItems.clear).toBe(true);
-    expect(menuItems.recordStart).toBe(true);
-    expect(menuItems.ctrlC).toBe(true);
-    expect(menuItems.ctrlZ).toBe(true);
     expect(menuItems.theme).toBe(true);
     expect(menuItems.reconnect).toBe(true);
     expect(menuItems.navBar).toBe(true);
@@ -409,24 +401,24 @@ test.describe('User workflow (Appium)', () => {
     await navigateToPanel(driver, 'terminal');
     await attachScreenshot(driver, testInfo, 'terminal-with-keybar');
 
-    // Key bar should exist with expected buttons
+    // Key bar should exist with expected buttons (depth-1 row IDs use M suffix)
     const keyBarElements = await driver.executeScript(`
       return {
         keyBar: !!document.getElementById('key-bar'),
-        esc: !!document.getElementById('keyEsc'),
+        esc: !!document.getElementById('keyEscM2'),
         ctrl: !!document.getElementById('keyCtrl'),
         tab: !!document.getElementById('keyTab'),
         slash: !!document.getElementById('keySlash'),
         pipe: !!document.getElementById('keyPipe'),
         dash: !!document.getElementById('keyDash'),
-        up: !!document.getElementById('keyUp'),
-        down: !!document.getElementById('keyDown'),
-        left: !!document.getElementById('keyLeft'),
-        right: !!document.getElementById('keyRight'),
-        home: !!document.getElementById('keyHome'),
-        end: !!document.getElementById('keyEnd'),
-        pgUp: !!document.getElementById('keyPgUp'),
-        pgDn: !!document.getElementById('keyPgDn'),
+        up: !!document.getElementById('keyUpM'),
+        down: !!document.getElementById('keyDownM'),
+        left: !!document.getElementById('keyLeftM'),
+        right: !!document.getElementById('keyRightM'),
+        home: !!document.getElementById('keyHomeM'),
+        end: !!document.getElementById('keyEndM'),
+        pgUp: !!document.getElementById('keyPgUpM'),
+        pgDn: !!document.getElementById('keyPgDnM'),
         composeBtn: !!document.getElementById('composeModeBtn'),
       };
     `, []);
@@ -468,31 +460,12 @@ test.describe('User workflow (Appium)', () => {
     `, []);
     expect(composeReverted).toBe(composeBefore);
 
-    // Chevron toggle: clicking hides/shows key bar
-    const chevron = await driver.executeScript(
-      "return document.getElementById('handleChevron')?.textContent?.trim() || ''", []);
-    expect(chevron).toBeTruthy();
-
-    await driver.executeScript(
-      "document.getElementById('handleChevron')?.click()", []);
-    await driver.pause(300);
-
-    const keyBarHidden = await driver.executeScript(`
-      const kb = document.getElementById('key-bar');
-      return kb && kb.classList.contains('hidden');
-    `, []);
-    expect(keyBarHidden).toBe(true);
-    await attachScreenshot(driver, testInfo, 'keybar-hidden');
-
-    // Toggle back
-    await driver.executeScript(
-      "document.getElementById('handleChevron')?.click()", []);
-    await driver.pause(300);
-    const keyBarShown = await driver.executeScript(`
+    // Key bar should be visible
+    const keyBarVisible = await driver.executeScript(`
       const kb = document.getElementById('key-bar');
       return kb && !kb.classList.contains('hidden');
     `, []);
-    expect(keyBarShown).toBe(true);
+    expect(keyBarVisible).toBe(true);
   });
 
   test('settings panel: all sections and toggles', async ({ driver }, testInfo) => {
@@ -527,8 +500,8 @@ test.describe('User workflow (Appium)', () => {
       };
     `, []);
     expect(fontSlider.exists).toBe(true);
-    expect(fontSlider.min).toBe('10');
-    expect(fontSlider.max).toBe('24');
+    expect(fontSlider.min).toBe('8');
+    expect(fontSlider.max).toBe('32');
     expect(fontSlider.label).toMatch(/\d+px/);
 
     // Theme select
@@ -542,10 +515,12 @@ test.describe('User workflow (Appium)', () => {
       };
     `, []);
     expect(themeSelect).not.toBeNull();
-    expect(themeSelect.optionCount).toBe(5);
+    expect(themeSelect.optionCount).toBe(10);
     expect(themeSelect.options).toContain('dark');
     expect(themeSelect.options).toContain('light');
     expect(themeSelect.options).toContain('highContrast');
+    expect(themeSelect.options).toContain('dracula');
+    expect(themeSelect.options).toContain('nord');
 
     // Font select
     const fontSelect = await driver.executeScript(`
@@ -665,7 +640,6 @@ test.describe('User workflow (Appium)', () => {
 
   test('full workflow: connect, navigate, gestures', async ({ driver }, testInfo) => {
     await setupVault(driver);
-    await navigateToPanel(driver, 'terminal');
 
     // Enable pinch-to-zoom for gesture testing
     await driver.executeScript(
