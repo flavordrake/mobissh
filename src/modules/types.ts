@@ -44,6 +44,17 @@ export interface VaultMeta {
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
+export type SessionLifecycleState =
+  | 'idle'
+  | 'connecting'
+  | 'authenticating'
+  | 'connected'
+  | 'soft_disconnected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'failed'
+  | 'closed';
+
 // ── Terminal theme ──────────────────────────────────────────────────────────
 
 export interface TerminalTheme {
@@ -75,6 +86,7 @@ export interface ThemeEntry {
 
 export interface SessionState {
   id: string;
+  state: SessionLifecycleState;
   profile: SSHProfile | null;
   terminal: Terminal | null;
   fitAddon: FitAddon.FitAddon | null;
