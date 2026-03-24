@@ -410,13 +410,11 @@ export function initSessionMenu(): void {
       // Peek: show next/prev session name
       const keys = Array.from(appState.sessions.keys());
       const idx = keys.indexOf(appState.activeSessionId ?? '');
-      const targetIdx = dx > 0 ? idx - 1 : idx + 1;
-      if (targetIdx >= 0 && targetIdx < keys.length) {
-        const target = appState.sessions.get(keys[targetIdx]!);
-        if (target?.profile) {
-          menuBtn.textContent = `→ ${target.profile.username}@${target.profile.host}`;
-          menuBtn.style.opacity = '0.6';
-        }
+      const targetIdx = (idx + (dx > 0 ? -1 : 1) + keys.length) % keys.length;
+      const target = appState.sessions.get(keys[targetIdx]!);
+      if (target?.profile) {
+        menuBtn.textContent = `→ ${target.profile.username}@${target.profile.host}`;
+        menuBtn.style.opacity = '0.6';
       }
     }
   }, { passive: false });
@@ -430,14 +428,9 @@ export function initSessionMenu(): void {
 
     const keys = Array.from(appState.sessions.keys());
     const idx = keys.indexOf(appState.activeSessionId ?? '');
-    const targetIdx = dx > 0 ? idx - 1 : idx + 1;
-    if (targetIdx >= 0 && targetIdx < keys.length) {
-      switchSession(keys[targetIdx]!);
-      if ('vibrate' in navigator) navigator.vibrate(10);
-    } else {
-      // Restore original text if swipe didn't land on a valid session
-      menuBtn.textContent = _origText.value;
-    }
+    const targetIdx = (idx + (dx > 0 ? -1 : 1) + keys.length) % keys.length;
+    switchSession(keys[targetIdx]!);
+    if ('vibrate' in navigator) navigator.vibrate(10);
   });
 
   // Hamburger ≡ button — toggles tab bar as fallback for non-swipe users.
