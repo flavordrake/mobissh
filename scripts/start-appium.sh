@@ -33,7 +33,7 @@ load_nvm() {
     # if no default alias is set — temporarily disable errexit
     set +e
     . "$NVM_DIR/nvm.sh"
-    nvm use 20 >/dev/null 2>&1
+    nvm use --delete-prefix 20 >/dev/null 2>&1
     local rc=$?
     set -e
     if [ $rc -ne 0 ]; then

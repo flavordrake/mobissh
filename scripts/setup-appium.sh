@@ -70,12 +70,12 @@ else
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
   . "$NVM_DIR/nvm.sh"
 fi
-nvm use 20 >/dev/null 2>&1
+nvm use --delete-prefix 20 >/dev/null 2>&1
 NVM_RC=$?
 set -e
 if [ $NVM_RC -ne 0 ]; then
   echo "  Node 20 not available, installing..."
-  set +e; nvm install 20; nvm use 20; set -e
+  set +e; nvm install 20; nvm use --delete-prefix 20; set -e
 fi
 if ! node --version &>/dev/null; then
   echo "! Node.js not available after nvm setup. Check nvm installation."
