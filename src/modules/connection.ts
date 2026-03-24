@@ -554,9 +554,14 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
 
       case 'error':
-        showErrorDialog(`Connection error:\n\n${msg.message}`);
-        // Clean up the failed session
-        closeSession(sessionId);
+        if (session?.sshConnected) {
+          // Already connected — transient error, don't interrupt with modal
+          _toast(`Error: ${msg.message}`);
+        } else {
+          // Not yet connected — this is a connection failure, clean up
+          _toast(`Connection failed: ${msg.message}`);
+          closeSession(sessionId);
+        }
         break;
 
       case 'disconnected':
