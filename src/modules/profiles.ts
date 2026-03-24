@@ -134,7 +134,7 @@ export function loadProfiles(): void {
     const connected = matching.length > 0;
     const connectedClass = connected ? ' profile-connected' : '';
     const connInfo = connected
-      ? `<span class="profile-conn-badge">${String(matching.length)} active</span>`
+      ? `<span class="profile-conn-badge">Connected</span>`
       : '';
 
     // Session actions (Switch/Disconnect) — separate from profile management
@@ -146,7 +146,7 @@ export function loadProfiles(): void {
     ).join('');
 
     return `<div class="profile-item${connectedClass}" data-idx="${String(i)}">
-      <span class="profile-name">${escHtml(p.name)}${p.hasVaultCreds ? ' <span class="vault-badge">saved</span>' : ''} ${connInfo}</span>
+      <span class="profile-name">${escHtml(p.name)} ${connInfo}</span>
       <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
       ${sessionActions}
       <div class="item-actions">
