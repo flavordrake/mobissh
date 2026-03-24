@@ -272,15 +272,20 @@ export function switchSession(id: string): void {
   // Restore per-session theme (#104)
   applyTheme(session.activeThemeName);
 
-  // Fit the newly visible terminal and sync dimensions to server
-  session.fitAddon?.fit();
-  if (session.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
-    session.ws.send(JSON.stringify({
-      type: 'resize',
-      cols: session.terminal?.cols ?? 80,
-      rows: session.terminal?.rows ?? 24,
-    }));
-  }
+  // Fit the newly visible terminal and sync dimensions to server.
+  // Use rAF to ensure the browser has laid out the now-visible container
+  // before measuring — fit() on a just-unhidden element can return stale
+  // zero dimensions. (#312)
+  requestAnimationFrame(() => {
+    session.fitAddon?.fit();
+    if (session.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+      session.ws.send(JSON.stringify({
+        type: 'resize',
+        cols: session.terminal?.cols ?? 80,
+        rows: session.terminal?.rows ?? 24,
+      }));
+    }
+  });
 
   // Update session menu button text
   const btn = document.getElementById('sessionMenuBtn');

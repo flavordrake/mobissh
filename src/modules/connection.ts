@@ -534,8 +534,19 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
         // Dismiss any visible overlay (happy path: overlay never appeared)
         _dismissConnectionStatus();
-        // Sync terminal size to server
-        newWs.send(JSON.stringify({ type: 'resize', cols: session?.terminal?.cols ?? 80, rows: session?.terminal?.rows ?? 24 }));
+        // Sync terminal size to server — if the session's container is visible,
+        // fit first to get accurate dimensions. If hidden (background reconnect),
+        // use the active session's dimensions as a reasonable default rather than
+        // the potentially-zero dimensions from a hidden container. (#312)
+        if (session?.fitAddon) {
+          const container = document.querySelector<HTMLElement>(`#terminal > [data-session-id="${sessionId}"]`);
+          if (container && !container.classList.contains('hidden')) {
+            session.fitAddon.fit();
+          }
+        }
+        const cols = (session?.terminal?.cols && session.terminal.cols > 1) ? session.terminal.cols : 80;
+        const rows = (session?.terminal?.rows && session.terminal.rows > 1) ? session.terminal.rows : 24;
+        newWs.send(JSON.stringify({ type: 'resize', cols, rows }));
         // On first connect: collapse nav chrome and switch to terminal (#36).
         // On reconnect: leave the tab bar as-is so user isn't interrupted.
         if (!appState.hasConnected) {
