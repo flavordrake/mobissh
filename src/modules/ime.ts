@@ -308,6 +308,7 @@ export function initIMEInput(): void {
     if (text !== null) {
       ime.value = text;
       _autoResizeTextarea(ime);
+      _positionIME();
       if (_imeState === 'idle') _transition('previewing');
       _cancelTimers();
       if ('vibrate' in navigator) navigator.vibrate(10);
