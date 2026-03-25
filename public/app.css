@@ -588,6 +588,7 @@ html, body {
   overflow: hidden;
   z-index: 50;
   box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+  touch-action: pan-y;
 }
 
 .notif-drawer-header {

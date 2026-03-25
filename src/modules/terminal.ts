@@ -165,10 +165,11 @@ export function initTerminal(): void {
     });
   }
 
-  // Stop touch events from leaking through the drawer list to parent gesture handlers (#267)
-  const notifList = document.getElementById('notifDrawerList');
-  if (notifList) {
-    notifList.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { passive: false });
+  // Stop touch events from leaking through the drawer to parent gesture handlers (#267)
+  // Isolate the entire drawer, not just the list — header/padding touches also leak
+  const notifDrawer = document.getElementById('notifDrawer');
+  if (notifDrawer) {
+    notifDrawer.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { passive: false });
   }
 
   // Re-measure character cells after web fonts finish loading (#71)
