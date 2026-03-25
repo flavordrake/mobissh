@@ -631,31 +631,37 @@ export function initIMEInput(): void {
 
       case 'composing':
         appState.isComposing = true;
-        ime.classList.add('ime-visible');
+        if (_previewMode) {
+          ime.classList.add('ime-visible');
+          _applyPreviewStyle(ime);
+          _showActions();
+          _positionIME();
+        }
         ime.classList.remove('ime-editing');
         if (imeActions) imeActions.classList.remove('ime-editing');
-        _applyPreviewStyle(ime);
-        _showActions();
-        _positionIME();
         break;
 
       case 'previewing':
         appState.isComposing = false;
-        ime.classList.add('ime-visible');
+        if (_previewMode) {
+          ime.classList.add('ime-visible');
+          _applyPreviewStyle(ime);
+          _showActions();
+          _positionIME();
+        }
         ime.classList.remove('ime-editing');
         if (imeActions) imeActions.classList.remove('ime-editing');
-        _applyPreviewStyle(ime);
-        _showActions();
-        _positionIME();
         break;
 
       case 'editing':
         appState.isComposing = false;
-        ime.classList.add('ime-visible', 'ime-editing');
-        if (imeActions) imeActions.classList.add('ime-editing');
-        _applyPreviewStyle(ime);
-        _showActions();
-        _positionIME();
+        if (_previewMode) {
+          ime.classList.add('ime-visible', 'ime-editing');
+          if (imeActions) imeActions.classList.add('ime-editing');
+          _applyPreviewStyle(ime);
+          _showActions();
+          _positionIME();
+        }
         break;
     }
   }
