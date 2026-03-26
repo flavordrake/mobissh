@@ -556,9 +556,11 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
         }
         void acquireWakeLock();
-        // Reset terminal modes so stale mouse tracking from a previous session
-        // doesn't cause scroll gestures to send SGR codes to a plain shell (#81)
-        session?.terminal?.reset();
+        // Reset terminal modes on FIRST connect only — stale mouse tracking from
+        // a previous session can cause scroll gestures to send SGR codes (#81).
+        // On reconnect, the terminal already has correct modes from the running
+        // session — reset() sends a DA1 query whose response leaks as ?1;2c.
+        if (!silent && session?.terminal) session.terminal.reset();
         if (session?.profile) {
           _setStatus('connected', `${session.profile.username}@${session.profile.host}`);
         }
