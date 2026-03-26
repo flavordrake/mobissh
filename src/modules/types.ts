@@ -98,6 +98,7 @@ export interface SessionState {
   keepAliveTimer: ReturnType<typeof setInterval> | null;
   keepAliveWorker: Worker | null;
   activeThemeName: ThemeName;
+  _onDataDisposable: { dispose: () => void } | null;
 }
 
 // ── Application state ───────────────────────────────────────────────────────
