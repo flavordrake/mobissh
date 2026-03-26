@@ -19,8 +19,8 @@ const VALID_TRANSITIONS: Record<SessionLifecycleState, readonly SessionLifecycle
   connected: ['soft_disconnected', 'disconnected', 'closed'],
   soft_disconnected: ['reconnecting', 'disconnected', 'closed'],
   reconnecting: ['authenticating', 'connected', 'failed', 'closed'],
-  failed: ['closed'],
-  disconnected: ['closed'],
+  failed: ['reconnecting', 'closed'],
+  disconnected: ['reconnecting', 'closed'],
   closed: [],
 };
 

@@ -498,7 +498,9 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   // side-effects clean up the OLD WS (or no-op if null), not the new one (#331).
   if (session) {
     if (session.state === 'idle') transitionSession(sessionId, 'connecting');
-    else if (session.state === 'soft_disconnected') transitionSession(sessionId, 'reconnecting');
+    else if (session.state === 'soft_disconnected' || session.state === 'disconnected' || session.state === 'failed') {
+      transitionSession(sessionId, 'reconnecting');
+    }
   }
 
   // Create a new connection cycle — AbortController signal auto-removes all
