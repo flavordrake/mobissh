@@ -84,6 +84,11 @@ export interface ThemeEntry {
 
 // ── Session state (per-connection) ──────────────────────────────────────────
 
+export interface ConnectionCycle {
+  controller: AbortController;
+  disposables: Array<{ dispose(): void }>;
+}
+
 export interface SessionState {
   id: string;
   state: SessionLifecycleState;
@@ -97,6 +102,7 @@ export interface SessionState {
   keepAliveWorker: Worker | null;
   activeThemeName: ThemeName;
   _onDataDisposable: { dispose: () => void } | null;
+  _cycle: ConnectionCycle | null;
 }
 
 /** SessionState with backward-compat read-only getters for wsConnected/sshConnected. */

@@ -35,6 +35,22 @@ const { appState, createSession, transitionSession, onStateChange } = await impo
 const uiSrc = readFileSync(resolve(__dirname, '../ui.ts'), 'utf-8');
 const connectionSrc = readFileSync(resolve(__dirname, '../connection.ts'), 'utf-8');
 
+/** Extract a function body from source, handling type annotations in params. */
+function extractFnBody(src: string, fnName: string): string {
+  const fnStart = src.indexOf(fnName);
+  if (fnStart === -1) return '';
+  // Find the opening brace of the function body (skip type annotations in params)
+  const sigEnd = src.indexOf('{', src.indexOf(')', fnStart));
+  if (sigEnd === -1) return '';
+  let depth = 0, fnEnd = sigEnd;
+  for (let i = sigEnd; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    if (src[i] === '}') depth--;
+    if (depth === 0) { fnEnd = i + 1; break; }
+  }
+  return src.slice(fnStart, fnEnd);
+}
+
 // ---------- Mock helpers ----------
 
 /** Minimal mock WebSocket with addEventListener tracking. */
@@ -160,14 +176,14 @@ describe('AbortController connection lifecycle cleanup (#334)', () => {
       const fnStart = connectionSrc.indexOf('function _openWebSocket');
       expect(fnStart).toBeGreaterThan(-1);
 
-      // Find end of function
+      // Find the function body opening brace (skip type annotations in params)
+      const bodyStart = connectionSrc.indexOf('{\n', connectionSrc.indexOf('): void', fnStart));
       let depth = 0;
-      let fnEnd = fnStart;
-      let started = false;
-      for (let i = fnStart; i < connectionSrc.length; i++) {
-        if (connectionSrc[i] === '{') { depth++; started = true; }
-        if (connectionSrc[i] === '}') { depth--; }
-        if (started && depth === 0) { fnEnd = i + 1; break; }
+      let fnEnd = bodyStart;
+      for (let i = bodyStart; i < connectionSrc.length; i++) {
+        if (connectionSrc[i] === '{') depth++;
+        if (connectionSrc[i] === '}') depth--;
+        if (depth === 0) { fnEnd = i + 1; break; }
       }
       const fnBody = connectionSrc.slice(fnStart, fnEnd);
 
@@ -179,40 +195,16 @@ describe('AbortController connection lifecycle cleanup (#334)', () => {
     });
 
     it('passes AbortController signal to addEventListener in _openWebSocket', () => {
-      const fnStart = connectionSrc.indexOf('function _openWebSocket');
-      expect(fnStart).toBeGreaterThan(-1);
-
-      let depth = 0;
-      let fnEnd = fnStart;
-      let started = false;
-      for (let i = fnStart; i < connectionSrc.length; i++) {
-        if (connectionSrc[i] === '{') { depth++; started = true; }
-        if (connectionSrc[i] === '}') { depth--; }
-        if (started && depth === 0) { fnEnd = i + 1; break; }
-      }
-      const fnBody = connectionSrc.slice(fnStart, fnEnd);
-
-      // Must contain AbortController or signal usage
+      const fnBody = extractFnBody(connectionSrc, 'function _openWebSocket');
+      expect(fnBody.length).toBeGreaterThan(100);
       const hasAbortController = fnBody.includes('AbortController');
       const hasSignal = fnBody.includes('signal');
       expect(hasAbortController || hasSignal).toBe(true);
     });
 
     it('aborts previous cycle controller before creating new WS', () => {
-      const fnStart = connectionSrc.indexOf('function _openWebSocket');
-      expect(fnStart).toBeGreaterThan(-1);
-
-      let depth = 0;
-      let fnEnd = fnStart;
-      let started = false;
-      for (let i = fnStart; i < connectionSrc.length; i++) {
-        if (connectionSrc[i] === '{') { depth++; started = true; }
-        if (connectionSrc[i] === '}') { depth--; }
-        if (started && depth === 0) { fnEnd = i + 1; break; }
-      }
-      const fnBody = connectionSrc.slice(fnStart, fnEnd);
-
-      // Must abort the old controller or clean up the cycle before new WS
+      const fnBody = extractFnBody(connectionSrc, 'function _openWebSocket');
+      expect(fnBody.length).toBeGreaterThan(100);
       const hasAbort = fnBody.includes('.abort()');
       const hasCycleCleanup = fnBody.includes('_cycle') || fnBody.includes('cycle.dispose') || fnBody.includes('cycle.abort');
       expect(hasAbort || hasCycleCleanup).toBe(true);
@@ -223,30 +215,11 @@ describe('AbortController connection lifecycle cleanup (#334)', () => {
 
   describe('terminal.onData re-registration after reconnect', () => {
     it('terminal.onData registration appears in _openWebSocket or connected effect (not just connect)', () => {
-      // _openWebSocket should re-register terminal.onData, OR a connected
-      // transition effect should do it -- so reconnects get a fresh listener
-      const fnStart = connectionSrc.indexOf('function _openWebSocket');
-      expect(fnStart).toBeGreaterThan(-1);
-
-      let depth = 0;
-      let fnEnd = fnStart;
-      let started = false;
-      for (let i = fnStart; i < connectionSrc.length; i++) {
-        if (connectionSrc[i] === '{') { depth++; started = true; }
-        if (connectionSrc[i] === '}') { depth--; }
-        if (started && depth === 0) { fnEnd = i + 1; break; }
-      }
-      const openWsBody = connectionSrc.slice(fnStart, fnEnd);
-
-      // Check if terminal.onData is registered in _openWebSocket
+      const openWsBody = extractFnBody(connectionSrc, 'function _openWebSocket');
+      expect(openWsBody.length).toBeGreaterThan(100);
       const inOpenWs = openWsBody.includes('terminal.onData') || openWsBody.includes('.onData(');
-
-      // Also check if a connected transition effect re-registers it
-      // (could be in state.ts or connection.ts)
       const connectedEffectPattern = /registerTransitionEffect\s*\(\s*['"]connected['"]/;
       const hasConnectedEffect = connectedEffectPattern.test(connectionSrc);
-
-      // At least one must be true for reconnect to get terminal.onData
       expect(inOpenWs || hasConnectedEffect).toBe(true);
     });
 

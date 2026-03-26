@@ -438,10 +438,7 @@ export async function connect(profile: SSHProfile): Promise<void> {
   session.terminal = terminal;
   session.fitAddon = fitAddon;
 
-  // Track terminal.onData disposable so reconnecting effect can dispose it (#324)
-  session._onDataDisposable = session.terminal.onData((data: string) => {
-    sendSSHInput(data);
-  });
+  // terminal.onData is registered in _openWebSocket as part of the connection cycle (#334)
 
   // Hide all other session containers (including lobby), show the new one
   document.querySelectorAll<HTMLElement>('#terminal > [data-session-id]').forEach((el) => {
@@ -504,9 +501,23 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     else if (session.state === 'soft_disconnected') transitionSession(sessionId, 'reconnecting');
   }
 
+  // Create a new connection cycle — AbortController signal auto-removes all
+  // addEventListener listeners when aborted, eliminating manual handler cleanup (#334).
+  if (session) {
+    session._cycle = { controller: new AbortController(), disposables: [] };
+  }
+  const signal = session?._cycle?.controller.signal;
+
   if (session) session.ws = newWs;
 
-  newWs.onopen = () => {
+  // Register terminal.onData in the cycle so reconnects get a fresh listener (#334)
+  if (session?.terminal) {
+    const onDataDisp = session.terminal.onData((data: string) => { sendSSHInput(data); });
+    session._cycle?.disposables.push(onDataDisp);
+    session._onDataDisposable = onDataDisp;
+  }
+
+  newWs.addEventListener('open', () => {
     openedThisAttempt = true;
     _wsConsecFailures = 0;
     startKeepAlive(sessionId);
@@ -529,9 +540,9 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     newWs.send(JSON.stringify(authMsg));
     // Status overlay only shows if the 5s timeout already fired
     if (!silent && _currentOverlay) _showConnectionStatus(`SSH → ${profile.username}@${profile.host}:${String(profile.port || 22)}…`);
-  };
+  }, signal ? { signal } : undefined);
 
-  newWs.onmessage = (event: MessageEvent) => {
+  newWs.addEventListener('message', (event: MessageEvent) => {
     let msg: ServerMessage;
     try { msg = JSON.parse(event.data as string) as ServerMessage; } catch { return; }
 
@@ -651,9 +662,9 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
       }
     }
-  };
+  }, signal ? { signal } : undefined);
 
-  newWs.onclose = (event) => {
+  newWs.addEventListener('close', (event: CloseEvent) => {
     // Capture before clearing — needed to distinguish "was connected" from "never connected"
     const wasSshConnected = session ? isSessionConnected(session) : false;
     if (session && session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {
@@ -694,11 +705,11 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         scheduleReconnect();
       }
     }
-  };
+  }, signal ? { signal } : undefined);
 
-  newWs.onerror = () => {
+  newWs.addEventListener('error', () => {
     if (!silent) showErrorDialog('WebSocket error — check server URL in Settings.');
-  };
+  }, signal ? { signal } : undefined);
 }
 
 export function scheduleReconnect(): void {
