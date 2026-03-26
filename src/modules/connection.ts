@@ -454,10 +454,10 @@ export async function connect(profile: SSHProfile): Promise<void> {
   _openWebSocket();
 }
 
-function _openWebSocket(options?: { silent?: boolean }): void {
+function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): void {
   const silent = options?.silent ?? false;
-  const sessionId = appState.activeSessionId ?? '';
-  const session = currentSession();
+  const sessionId = options?.sessionId ?? appState.activeSessionId ?? '';
+  const session = appState.sessions.get(sessionId) ?? null;
 
   // User-initiated connections navigate to terminal once SSH is established (#309)
   if (!silent && sessionId) _pendingNavigateSessions.add(sessionId);
@@ -700,7 +700,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     if (!event.wasClean) {
       if (document.visibilityState === 'visible') {
         _toast('Reconnecting…');
-        _openWebSocket({ silent: true });
+        _openWebSocket({ silent: true, sessionId });
       } else {
         scheduleReconnect();
       }
@@ -715,20 +715,21 @@ function _openWebSocket(options?: { silent?: boolean }): void {
 export function scheduleReconnect(): void {
   const session = currentSession();
   if (!session?.profile) return;
+  const sid = appState.activeSessionId ?? '';
 
   const delaySec = Math.round(session.reconnectDelay / 1000);
   _toast(`Reconnecting in ${String(delaySec)}s…`);
   _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
 
   session.reconnectTimer = setTimeout(() => {
-    const s = currentSession();
+    const s = appState.sessions.get(sid);
     if (s) {
       s.reconnectDelay = Math.min(
         s.reconnectDelay * RECONNECT.BACKOFF_FACTOR,
         RECONNECT.MAX_DELAY_MS
       );
     }
-    _openWebSocket({ silent: true });
+    _openWebSocket({ silent: true, sessionId: sid });
   }, session.reconnectDelay);
 }
 
@@ -867,19 +868,17 @@ document.addEventListener('visibilitychange', () => {
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
       if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
-        // Temporarily set active so _openWebSocket targets this session
-        appState.activeSessionId = sid;
         cancelReconnect();
-        _openWebSocket({ silent: true });
+        _openWebSocket({ silent: true, sessionId: sid });
         reconnected = true;
       } else {
         // WS is open — probe for zombie connection
+        const prevActive = appState.activeSessionId;
         appState.activeSessionId = sid;
         _probeZombieConnection();
+        appState.activeSessionId = prevActive;
       }
     }
-    // Restore the session the user was viewing
-    appState.activeSessionId = savedActiveId;
     if (reconnected) _toast('Reconnecting sessions…');
   } else {
     releaseWakeLock();
