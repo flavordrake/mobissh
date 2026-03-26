@@ -438,6 +438,11 @@ export async function connect(profile: SSHProfile): Promise<void> {
   session.terminal = terminal;
   session.fitAddon = fitAddon;
 
+  // Track terminal.onData disposable so reconnecting effect can dispose it (#324)
+  session._onDataDisposable = session.terminal.onData((data: string) => {
+    sendSSHInput(data);
+  });
+
   // Hide all other session containers (including lobby), show the new one
   document.querySelectorAll<HTMLElement>('#terminal > [data-session-id]').forEach((el) => {
     el.classList.toggle('hidden', el.dataset.sessionId !== sessionId);
@@ -893,7 +898,12 @@ export function disconnect(): void {
 
 export function sendSSHInput(data: string): void {
   const session = currentSession();
-  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) {
+    if (session && !isSessionConnected(session)) {
+      _toast('Session not connected — input dropped');
+    }
+    return;
+  }
   session.ws.send(JSON.stringify({ type: 'input', data }));
 }
 

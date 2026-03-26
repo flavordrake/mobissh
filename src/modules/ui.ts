@@ -7,7 +7,7 @@
 
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
-import { appState, currentSession, isSessionConnected } from './state.js';
+import { appState, currentSession, isSessionConnected, onStateChange } from './state.js';
 import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
@@ -224,8 +224,11 @@ export function renderSessionList(): void {
       : escHtml(s.id);
     const isActive = s.id === appState.activeSessionId;
     const activeClass = isActive ? ' active' : '';
-    return `<div class="session-item${activeClass}" data-session-id="${escHtml(s.id)}" role="menuitem">
-      <span class="session-item-dot" aria-hidden="true"></span>
+    const dotClass = isSessionConnected(s) ? ' session-item-dot-connected' : '';
+    // State-derived CSS class for session lifecycle (#324): session-connected, session-disconnected, etc.
+    const stateClass = `session-${s.state}`;
+    return `<div class="session-item${activeClass}" data-session-id="${escHtml(s.id)}" data-state="${s.state}" role="menuitem">
+      <span class="session-item-dot ${stateClass}${dotClass}" aria-hidden="true"></span>
       <span class="session-item-label">${label}</span>
       <button class="session-item-close" data-close-id="${escHtml(s.id)}" aria-label="Close session">✕</button>
     </div>`;
@@ -271,6 +274,17 @@ export function switchSession(id: string): void {
 
   // Restore per-session theme (#104)
   applyTheme(session.activeThemeName);
+
+  // Show disconnect indicator when session is not connected (#324)
+  const container = document.querySelector<HTMLElement>(`#terminal > [data-session-id="${id}"]`);
+  if (container) {
+    if (session.state !== 'connected') {
+      container.classList.add('session-disconnected');
+      toast(`Session not connected — ${session.state}`);
+    } else {
+      container.classList.remove('session-disconnected');
+    }
+  }
 
   // Fit the newly visible terminal and sync dimensions to server.
   // Use rAF to ensure the browser has laid out the now-visible container
@@ -342,6 +356,16 @@ export function closeSession(id: string): void {
   }
 
   renderSessionList();
+
+  // Subscribe to session state changes to keep UI in sync (#324)
+  onStateChange((session, _newState, _oldState) => {
+    renderSessionList();
+    // Update session menu button if active session changed state
+    const btn = document.getElementById('sessionMenuBtn');
+    if (btn && session.id === appState.activeSessionId && session.profile) {
+      btn.textContent = `${session.profile.username}@${session.profile.host}`;
+    }
+  });
 }
 
 // ── Focus IME ────────────────────────────────────────────────────────────────
