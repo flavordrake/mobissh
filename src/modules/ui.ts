@@ -7,7 +7,7 @@
 
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
-import { appState, currentSession } from './state.js';
+import { appState, currentSession, isSessionConnected } from './state.js';
 import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
@@ -278,7 +278,7 @@ export function switchSession(id: string): void {
   // zero dimensions. (#312)
   requestAnimationFrame(() => {
     session.fitAddon?.fit();
-    if (session.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+    if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
       session.ws.send(JSON.stringify({
         type: 'resize',
         cols: session.terminal?.cols ?? 80,
@@ -305,7 +305,7 @@ export function closeSession(id: string): void {
   const session = appState.sessions.get(id);
   if (!session) return;
 
-  if (session.sshConnected) {
+  if (isSessionConnected(session)) {
     if (!confirm('Disconnect and close this session?')) return;
     // Disconnect: close the WebSocket
     try { session.ws?.close(); } catch { /* ignore */ }
@@ -491,7 +491,7 @@ export function initSessionMenu(): void {
 
   document.getElementById('sessionResetBtn')!.addEventListener('click', () => {
     closeMenu();
-    if (!currentSession()?.sshConnected) return;
+    const _cs = currentSession(); if (!_cs || !isSessionConnected(_cs)) return;
     sendSSHInput('\x1bc');
     currentSession()?.terminal?.reset();
   });
@@ -916,7 +916,7 @@ export function initTerminalResizeObserver(): void {
     const session = currentSession();
     session?.fitAddon?.fit();
     session?.terminal?.scrollToBottom();
-    if (session?.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+    if (session && isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
       session.ws.send(JSON.stringify({
         type: 'resize',
         cols: session.terminal?.cols ?? 80,

@@ -86,7 +86,7 @@ vi.stubGlobal('window', {
 vi.useFakeTimers();
 
 const { cancelReconnect, scheduleReconnect, _probeZombieConnection } = await import('../connection.js');
-const { appState, createSession } = await import('../state.js');
+const { appState, createSession, transitionSession } = await import('../state.js');
 
 /** Helper: create a session with profile and optional WS */
 function _setupSession(opts?: { ws?: unknown; profile?: boolean; connected?: boolean }): void {
@@ -96,8 +96,9 @@ function _setupSession(opts?: { ws?: unknown; profile?: boolean; connected?: boo
   if (opts?.profile !== false) session.profile = profile;
   if (opts?.ws !== undefined) session.ws = opts.ws as WebSocket;
   if (opts?.connected) {
-    session.wsConnected = true;
-    session.sshConnected = true;
+    transitionSession('test-session', 'connecting');
+    transitionSession('test-session', 'authenticating');
+    transitionSession('test-session', 'connected');
   }
 }
 

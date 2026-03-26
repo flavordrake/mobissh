@@ -7,7 +7,7 @@
  */
 
 import type { ProfilesDeps, SSHProfile, ThemeName } from './types.js';
-import { appState } from './state.js';
+import { appState, isSessionConnected } from './state.js';
 import { escHtml } from './constants.js';
 import { vaultStore, vaultLoad, vaultDelete } from './vault.js';
 import { ensureVaultKeyWithUI } from './vault-ui.js';
@@ -124,7 +124,7 @@ export function loadProfiles(): void {
 
   // Find active sessions matching each profile
   const activeSessions = Array.from(appState.sessions.values()).filter(
-    (s) => s.sshConnected && s.profile
+    (s) => isSessionConnected(s) && s.profile
   );
 
   list.innerHTML = profiles.map((p, i) => {

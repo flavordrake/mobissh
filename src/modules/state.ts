@@ -7,7 +7,7 @@
  * without relying on shared global scope.
  */
 
-import type { AppState, SessionState, SessionLifecycleState } from './types.js';
+import type { AppState, SessionState, SessionLifecycleState, SessionStateWithCompat } from './types.js';
 import { RECONNECT } from './constants.js';
 import { DEFAULT_KEY_BAR_CONFIG } from './keybar-config.js';
 
@@ -117,6 +117,18 @@ registerTransitionEffect('closed', (session) => {
   clearKeepAlive(session);
 });
 
+// -- State-derived accessors --
+
+/** Returns true only when session is in the 'connected' state. */
+export function isSessionConnected(session: { state: string }): boolean {
+  return session.state === 'connected';
+}
+
+/** Returns true when the WebSocket should be considered open (not idle/closed/failed/disconnected). */
+export function isWsOpen(session: { state: string }): boolean {
+  return !['idle', 'closed', 'failed', 'disconnected'].includes(session.state);
+}
+
 // -- State and session management --
 
 export const appState: AppState = {
@@ -156,26 +168,41 @@ export function currentSession(): SessionState | undefined {
 
 export function createSession(id: string): SessionState {
   let _profile: SessionState['profile'] = null;
-  const session: SessionState = {
-    id,
-    state: 'idle',
-    get profile() { return _profile; },
-    set profile(p: SessionState['profile']) {
-      _profile = p;
-      if (p?.theme) session.activeThemeName = p.theme;
+  const session: SessionStateWithCompat = Object.create(null);
+  Object.defineProperties(session, {
+    id: { value: id, writable: true, enumerable: true, configurable: true },
+    state: { value: 'idle' as SessionLifecycleState, writable: true, enumerable: true, configurable: true },
+    profile: {
+      get() { return _profile; },
+      set(p: SessionState['profile']) {
+        _profile = p;
+        if (p?.theme) session.activeThemeName = p.theme;
+      },
+      enumerable: true,
+      configurable: true,
     },
-    terminal: null,
-    fitAddon: null,
-    ws: null,
-    wsConnected: false,
-    sshConnected: false,
-    reconnectTimer: null,
-    reconnectDelay: RECONNECT.INITIAL_DELAY_MS,
-    keepAliveTimer: null,
-    keepAliveWorker: null,
-    activeThemeName: appState.activeThemeName,
-    _onDataDisposable: null,
-  };
+    terminal: { value: null, writable: true, enumerable: true, configurable: true },
+    fitAddon: { value: null, writable: true, enumerable: true, configurable: true },
+    ws: { value: null, writable: true, enumerable: true, configurable: true },
+    reconnectTimer: { value: null, writable: true, enumerable: true, configurable: true },
+    reconnectDelay: { value: RECONNECT.INITIAL_DELAY_MS, writable: true, enumerable: true, configurable: true },
+    keepAliveTimer: { value: null, writable: true, enumerable: true, configurable: true },
+    keepAliveWorker: { value: null, writable: true, enumerable: true, configurable: true },
+    activeThemeName: { value: appState.activeThemeName, writable: true, enumerable: true, configurable: true },
+    _onDataDisposable: { value: null, writable: true, enumerable: true, configurable: true },
+    // Compat getters: derive from session.state
+    // Setters are no-ops to avoid throwing in strict mode when legacy code assigns
+    wsConnected: {
+      get() { return isWsOpen(session); },
+      enumerable: true,
+      configurable: true,
+    },
+    sshConnected: {
+      get() { return isSessionConnected(session); },
+      enumerable: true,
+      configurable: true,
+    },
+  });
   appState.sessions.set(id, session);
   return session;
 }

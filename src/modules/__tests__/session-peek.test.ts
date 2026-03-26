@@ -169,7 +169,7 @@ vi.stubGlobal('ClipboardAddon', { ClipboardAddon: vi.fn() });
 
 const { applyTheme } = await import('../terminal.js');
 const { switchSession } = await import('../ui.js');
-const { appState, createSession } = await import('../state.js');
+const { appState, createSession, transitionSession } = await import('../state.js');
 
 import type { SSHProfile, ThemeName } from '../types.js';
 
@@ -417,7 +417,9 @@ describe('issue-288: full-screen terminal peek on session swipe', () => {
       // Set up sess-2 as connected with a WebSocket
       const mockWs = { readyState: 1, send: vi.fn(), close: vi.fn() };
       s2.ws = mockWs as unknown as WebSocket;
-      s2.sshConnected = true;
+      transitionSession('sess-2', 'connecting');
+      transitionSession('sess-2', 'authenticating');
+      transitionSession('sess-2', 'connected');
 
       switchSession('sess-2');
 

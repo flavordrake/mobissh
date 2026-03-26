@@ -60,7 +60,7 @@ const {
 } = await import('../connection.js');
 
 // Access appState to wire up a mock WS
-const { appState, createSession } = await import('../state.js');
+const { appState, createSession, transitionSession } = await import('../state.js');
 
 describe('_uint8ToBase64', () => {
   it('encodes an empty array', () => {
@@ -128,7 +128,9 @@ describe('uploadFileChunked', () => {
     const session = createSession('upload-test');
     appState.activeSessionId = 'upload-test';
     session.ws = mockWs;
-    session.sshConnected = true;
+    transitionSession('upload-test', 'connecting');
+    transitionSession('upload-test', 'authenticating');
+    transitionSession('upload-test', 'connected');
   });
 
   it('throws when WS is null', async () => {
@@ -151,7 +153,7 @@ describe('uploadFileChunked', () => {
   it('does not throw when sshConnected is false but WS is OPEN (#194)', async () => {
     // Bug #194: uploadFileChunked checked session.sshConnected which could be
     // false even though the WS is open and SFTP operations work fine.
-    appState.sessions.get('upload-test')!.sshConnected = false;
+    transitionSession('upload-test', 'soft_disconnected');
     const file = new File(['test'], 'test.txt');
 
     const uploadPromise = uploadFileChunked('/remote/path.txt', file, 'req-194', vi.fn());
@@ -249,7 +251,9 @@ describe('sendSftpUploadCancel', () => {
     const session = createSession('cancel-test');
     appState.activeSessionId = 'cancel-test';
     session.ws = mockWs;
-    session.sshConnected = true;
+    transitionSession('cancel-test', 'connecting');
+    transitionSession('cancel-test', 'authenticating');
+    transitionSession('cancel-test', 'connected');
   });
 
   it('sends cancel message when connected', () => {
@@ -261,7 +265,8 @@ describe('sendSftpUploadCancel', () => {
   });
 
   it('does not send when disconnected', () => {
-    appState.sessions.get('cancel-test')!.sshConnected = false;
+    transitionSession('cancel-test', 'soft_disconnected');
+    transitionSession('cancel-test', 'disconnected');
     sendSftpUploadCancel('req-cancel-disc');
     expect(wsSendSpy).not.toHaveBeenCalled();
   });
