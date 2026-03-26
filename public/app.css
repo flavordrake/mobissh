@@ -1231,6 +1231,19 @@ hr {
 
 .item-btn.danger { color: var(--danger); }
 
+/* Connecting animation on profile Connect button (#318) */
+.item-btn.connecting {
+  background: linear-gradient(90deg, var(--bg-input) 0%, var(--accent) 50%, var(--bg-input) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  color: var(--bg);
+  pointer-events: none;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .form-section {
   display: flex;
   flex-direction: column;
@@ -1247,6 +1260,13 @@ hr {
   width: 100%;
   position: sticky;
   bottom: 0;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 10px;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 /* Compact form: labels to left of inputs */
