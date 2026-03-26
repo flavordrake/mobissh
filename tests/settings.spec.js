@@ -13,7 +13,7 @@ test.describe('Settings panel (#110 Phase 6)', { tag: '@headless-adequate' }, ()
   test('saving a wss:// URL persists to localStorage', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="settings"]').click();
     await page.locator('#wsUrl').fill('wss://custom.example.com/ws');
@@ -27,7 +27,7 @@ test.describe('Settings panel (#110 Phase 6)', { tag: '@headless-adequate' }, ()
   test('ws:// URL is rejected when danger zone toggle is off', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="settings"]').click();
     await page.locator('#wsUrl').fill('ws://insecure.example.com/ws');
@@ -44,7 +44,7 @@ test.describe('Settings panel (#110 Phase 6)', { tag: '@headless-adequate' }, ()
   test('ws:// URL is accepted when danger zone toggle is on', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="settings"]').click();
 
@@ -67,7 +67,7 @@ test.describe('Settings panel (#110 Phase 6)', { tag: '@headless-adequate' }, ()
   test('danger zone toggle persists to localStorage', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="settings"]').click();
 
@@ -90,7 +90,7 @@ test.describe('Settings panel (#110 Phase 6)', { tag: '@headless-adequate' }, ()
   test('clear data resets localStorage and profile list', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Seed a profile after page load so xterm-screen is visible
     await page.evaluate(() => {
@@ -115,7 +115,7 @@ test.describe('Settings panel (#110 Phase 6)', { tag: '@headless-adequate' }, ()
   test('font size slider updates localStorage', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="settings"]').click();
     await page.locator('#fontSize').fill('18');

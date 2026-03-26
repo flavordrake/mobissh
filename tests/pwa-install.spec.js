@@ -179,7 +179,7 @@ test.describe('Issue #97 — 3. ?reset=1 cache clear', { tag: '@device-critical'
       // The global config blocks service workers, so recovery.js handles ?reset=1
       // (this is the fallback path when the SW itself is broken/absent).
       await page.goto('./');
-      await page.waitForSelector('.xterm-screen', { timeout: 10_000 });
+      await Promise.race([page.waitForSelector('#connectForm', { timeout: 10000 }), page.waitForSelector('.xterm-screen', { timeout: 10000 })]);
 
       // Seed stale caches that the reset should remove
       await page.evaluate(async () => {

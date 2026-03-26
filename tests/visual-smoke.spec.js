@@ -93,7 +93,7 @@ test.describe('Visual smoke tests', { tag: '@smoke' }, () => {
   test('welcome banner visible before connect', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // The lobby terminal should show "MobiSSH" welcome text
     const hasBanner = await page.evaluate(() => {

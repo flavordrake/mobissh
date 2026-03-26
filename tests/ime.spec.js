@@ -90,11 +90,14 @@ async function setupConnected(page, mockSshServer) {
     };
   });
 
-  // Clear localStorage (no profiles → app lands on Terminal tab)
+  // Clear localStorage (no profiles → app lands on Connect panel)
   await page.addInitScript(() => { localStorage.clear(); });
 
   await page.goto('./');
-  await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+  await Promise.race([
+    page.waitForSelector('#connectForm', { timeout: 8000 }),
+    page.waitForSelector('.xterm-screen', { timeout: 8000 }),
+  ]);
 
   // Pre-create a test vault so saveProfile() doesn't show the setup modal
   await page.evaluate(async () => {

@@ -125,13 +125,13 @@ test.describe('Layout screenshots', { tag: '@device-critical' }, () => {
 
   test('cold start — terminal tab', async ({ page }) => {
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'layout-terminal.png') });
   });
 
   test('connect tab', async ({ page }) => {
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
     await page.click('[data-panel="connect"]');
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'layout-connect.png') });
@@ -139,7 +139,7 @@ test.describe('Layout screenshots', { tag: '@device-critical' }, () => {
 
   test('settings tab', async ({ page }) => {
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
     await page.click('[data-panel="settings"]');
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'layout-settings.png') });

@@ -226,7 +226,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
     // Don't use setupConnected — just navigate to a clean page
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="connect"]').click();
     const hint = page.locator('#profileList .empty-hint');

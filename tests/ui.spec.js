@@ -84,7 +84,7 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
   test('session menu opens only when connected', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Click session menu button when not connected — menu should stay hidden
     await page.locator('#sessionMenuBtn').click();
@@ -142,7 +142,7 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
   test('connect form auth type switch toggles password/key fields', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="connect"]').click();
 
@@ -162,7 +162,7 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
   test('toast shows and auto-hides', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="settings"]').click();
 
@@ -329,7 +329,7 @@ test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, ()
   test('toolbar buttons have data-tooltip attributes', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Verify data-tooltip on key toolbar buttons
     await expect(page.locator('#handleMenuBtn')).toHaveAttribute('data-tooltip', 'Show tabs');
@@ -344,7 +344,7 @@ test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, ()
 
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     const btn = page.locator('#composeModeBtn');
 
@@ -372,7 +372,7 @@ test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, ()
     test.skip(browserName === 'webkit', 'Touch() constructor unsupported in WebKit');
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     const btn = page.locator('#composeModeBtn');
 
@@ -401,7 +401,7 @@ test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, ()
     test.skip(browserName === 'webkit', 'Touch() constructor unsupported in WebKit');
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     const btn = page.locator('#composeModeBtn');
 
@@ -431,7 +431,7 @@ test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, ()
     test.skip(browserName === 'webkit', 'Touch() constructor unsupported in WebKit');
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Inject a keyboardVisible override that returns true, simulating an open keyboard
     await page.evaluate(async () => {
@@ -467,7 +467,7 @@ test.describe('Long-press tooltip hints (#111)', { tag: '@device-critical' }, ()
     test.skip(browserName === 'webkit', 'Touch() constructor unsupported in WebKit');
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Default: keyboardVisible returns false (no keyboard open)
     await page.evaluate(async () => {

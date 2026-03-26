@@ -10,7 +10,7 @@ test.describe('Terminal (#110 Phase 10)', { tag: '@device-critical' }, () => {
   test('xterm.js terminal is created and visible on load', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
     await expect(page.locator('.xterm-screen')).toBeVisible();
   });
 
@@ -20,7 +20,7 @@ test.describe('Terminal (#110 Phase 10)', { tag: '@device-critical' }, () => {
       localStorage.setItem('fontSize', '20');
     });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Settings slider should reflect saved value
     const slider = page.locator('#fontSize');
@@ -34,7 +34,7 @@ test.describe('Terminal (#110 Phase 10)', { tag: '@device-critical' }, () => {
       localStorage.setItem('termTheme', 'solarizedDark');
     });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Settings selector should reflect saved theme
     const sel = page.locator('#termThemeSelect');
@@ -44,7 +44,7 @@ test.describe('Terminal (#110 Phase 10)', { tag: '@device-critical' }, () => {
   test('font size change syncs slider, label, and menu label', async ({ page, mockSshServer }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Navigate to settings and change font size
     await page.locator('[data-panel="settings"]').click();
