@@ -666,8 +666,8 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }, signal ? { signal } : undefined);
 
   newWs.addEventListener('close', (event: CloseEvent) => {
-    // Capture before clearing — needed to distinguish "was connected" from "never connected"
-    const wasSshConnected = session ? isSessionConnected(session) : false;
+    // Capture BEFORE transition — needed to distinguish "was connected" from "never connected"
+    const wasSshConnected = session ? (session.state === 'connected' || session.state === 'soft_disconnected') : false;
     if (session && session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {
       // From connecting/authenticating, transition to 'failed'; from connected/soft_disconnected to 'disconnected'
       const target = (session.state === 'connecting' || session.state === 'authenticating') ? 'failed' : 'disconnected';
