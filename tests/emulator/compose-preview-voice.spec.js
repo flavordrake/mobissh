@@ -434,7 +434,7 @@ test.describe('Group 5: Cross-mode regression guards', () => {
     await page.addInitScript(() => { localStorage.clear(); });
 
     await page.goto(BASE_URL);
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.evaluate(async () => {
       const { createVault } = await import('./modules/vault.js');

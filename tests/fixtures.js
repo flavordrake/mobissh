@@ -29,6 +29,18 @@ const DIRECT_INPUT_ID  = 'directInput';
 /** Expected `type` attribute of the direct-mode input. */
 const DIRECT_INPUT_TYPE = 'password';
 
+/**
+ * Wait for the app to be ready after navigation.
+ * The app cold-starts on the Connect panel (lobby terminal removed in dae5f66).
+ * Waits for either #connectForm or .xterm-screen, whichever appears first.
+ */
+async function waitForAppReady(page, timeout = 8000) {
+  await Promise.race([
+    page.waitForSelector('#connectForm', { timeout }),
+    page.waitForSelector('.xterm-screen', { timeout }),
+  ]);
+}
+
 /** Open the Advanced section in the connect form (port, name, command are inside <details>). */
 async function openConnectAdvanced(page) {
   const details = page.locator('#connectAdvanced');
@@ -243,11 +255,11 @@ async function setupConnected(page, mockSshServer) {
     };
   });
 
-  // Clear localStorage (no profiles → app lands on Terminal tab)
+  // Clear localStorage (no profiles → app lands on Connect panel)
   await page.addInitScript(() => { localStorage.clear(); });
 
   await page.goto('./');
-  await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+  await waitForAppReady(page);
 
   // Create and unlock a test vault before any profile operations
   await ensureTestVault(page);

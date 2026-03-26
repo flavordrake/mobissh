@@ -26,7 +26,7 @@ test.describe('Initial page load', { tag: '@device-critical' }, () => {
     await page.goto('./');
     // Wait for DOMContentLoaded + xterm.js init
     // xterm.js uses a DOM renderer in headless Chrome (no GPU canvas)
-    await page.waitForSelector('.xterm-screen', { timeout: 10_000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 10000 }), page.waitForSelector('.xterm-screen', { timeout: 10000 })]);
   });
 
   test('smoke: UI loads and all tabs switch panels', async ({ page }) => {
@@ -146,7 +146,7 @@ test.describe('Tab navigation', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen');
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
   });
 
   test('clicking Connect tab shows connect panel', async ({ page }) => {
@@ -179,7 +179,7 @@ test.describe('Connect form', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen');
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
     await page.locator('[data-panel="connect"]').click();
   });
 
@@ -279,7 +279,7 @@ test.describe('Settings panel', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen');
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
     await page.locator('[data-panel="settings"]').click();
   });
 
@@ -329,7 +329,7 @@ test.describe('Settings panel', { tag: '@headless-adequate' }, () => {
 test.describe('Issue #87 — tab buttons prevent text selection on long-press', { tag: '@device-critical' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 5000 }), page.waitForSelector('.xterm-screen', { timeout: 5000 })]);
   });
 
   test('tab buttons have user-select: none', async ({ page }) => {
@@ -353,7 +353,7 @@ test.describe('Issue #87 — tab buttons prevent text selection on long-press', 
 test.describe('Issue #89 — key bar buttons use pointer events for repeat', { tag: '@device-critical' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 5000 }), page.waitForSelector('.xterm-screen', { timeout: 5000 })]);
   });
 
   test('key bar buttons suppress context menu on long-press', async ({ page }) => {
@@ -384,7 +384,7 @@ test.describe('Issue #89 — key bar buttons use pointer events for repeat', { t
 test.describe('Issue #71 — no redundant status indicator', { tag: '@headless-adequate' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 5000 }), page.waitForSelector('.xterm-screen', { timeout: 5000 })]);
   });
 
   test('statusIndicator element does not exist in the DOM', async ({ page }) => {
@@ -410,7 +410,7 @@ test.describe('Issue #71 — no redundant status indicator', { tag: '@headless-a
       }
     });
     await page.reload();
-    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 5000 }), page.waitForSelector('.xterm-screen', { timeout: 5000 })]);
     expect(violations).toHaveLength(0);
   });
 });

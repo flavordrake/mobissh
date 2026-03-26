@@ -35,7 +35,7 @@ test.describe('Panel navigation smoke', { tag: '@headless-adequate' }, () => {
 
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     // Terminal is the default active panel
     await expect(page.locator('#panel-terminal')).toHaveClass(/active/);
@@ -76,7 +76,7 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
 
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="files"]').click();
     await expect(page.locator('#panel-files')).toHaveClass(/active/);

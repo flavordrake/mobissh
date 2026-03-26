@@ -149,7 +149,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
     });
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('no-vault-host');
@@ -176,7 +176,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
   test('vault setup modal creates vault and encrypts credentials', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
-    await page.waitForSelector('.xterm-screen', { timeout: 8000 });
+    await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
     await page.locator('[data-panel="connect"]').click();
     await page.locator('#host').fill('setup-test-host');
