@@ -707,10 +707,13 @@ export function initConnectForm(): void {
       // Immediate visual feedback — shimmer animation (#318)
       target.classList.add('connecting');
       target.textContent = 'Connecting…';
-      void connectFromProfile(idx).finally(() => {
-        target.classList.remove('connecting');
-        target.textContent = 'Connect';
+      const clearAnim = (): void => { target.classList.remove('connecting'); target.textContent = 'Connect'; };
+      // Clear when session reaches a terminal state (connected navigates away, failed/closed stays)
+      onStateChange((_sess, newState) => {
+        if (newState === 'connected' || newState === 'failed' || newState === 'closed' || newState === 'disconnected') clearAnim();
       });
+      setTimeout(clearAnim, 30000); // Safety timeout
+      void connectFromProfile(idx);
     } else if (action === 'switch') {
       const sessionId = target.dataset.sessionId;
       if (sessionId) {
