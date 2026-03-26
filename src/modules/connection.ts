@@ -497,15 +497,18 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     return;
   }
 
+  // Transition BEFORE assigning session.ws so the 'connecting'/'reconnecting'
+  // side-effects clean up the OLD WS (or no-op if null), not the new one (#331).
+  if (session) {
+    if (session.state === 'idle') transitionSession(sessionId, 'connecting');
+    else if (session.state === 'soft_disconnected') transitionSession(sessionId, 'reconnecting');
+  }
+
   if (session) session.ws = newWs;
 
   newWs.onopen = () => {
     openedThisAttempt = true;
     _wsConsecFailures = 0;
-    if (session) {
-      if (session.state === 'idle') transitionSession(sessionId, 'connecting');
-      else if (session.state === 'soft_disconnected') transitionSession(sessionId, 'reconnecting');
-    }
     startKeepAlive(sessionId);
     const profile = session?.profile;
     if (!profile) return;
