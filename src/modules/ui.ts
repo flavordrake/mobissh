@@ -704,7 +704,13 @@ export function initConnectForm(): void {
     const action = target.dataset.action;
     if (action === 'connect') {
       const idx = parseInt(target.dataset.idx ?? '0', 10);
-      void connectFromProfile(idx);
+      // Immediate visual feedback — shimmer animation (#318)
+      target.classList.add('connecting');
+      target.textContent = 'Connecting…';
+      void connectFromProfile(idx).finally(() => {
+        target.classList.remove('connecting');
+        target.textContent = 'Connect';
+      });
     } else if (action === 'switch') {
       const sessionId = target.dataset.sessionId;
       if (sessionId) {
