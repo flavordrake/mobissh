@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-multi-session-isolation-011716/` — per-session terminal + mirror state removal
+> **Active TRACE**: `.traces/trace-session-dock-revert-triage-20260326-025645/` — dock revert, state machine migration, session lifecycle fixes
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
