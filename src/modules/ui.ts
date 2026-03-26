@@ -7,7 +7,7 @@
 
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
-import { appState, currentSession, isSessionConnected, onStateChange } from './state.js';
+import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
 import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
@@ -313,6 +313,9 @@ export function switchSession(id: string): void {
 
   // Re-render session list to update active indicator
   renderSessionList();
+
+  // Restore IME focus so keyboard input reaches the session (#341)
+  focusIME();
 }
 
 export function closeSession(id: string): void {
@@ -321,20 +324,17 @@ export function closeSession(id: string): void {
 
   if (isSessionConnected(session)) {
     if (!confirm('Disconnect and close this session?')) return;
-    // Disconnect: close the WebSocket
-    try { session.ws?.close(); } catch { /* ignore */ }
   }
 
-  // Clean up timers
-  if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
-  if (session.keepAliveTimer) clearInterval(session.keepAliveTimer);
-  session.keepAliveWorker?.terminate();
+  // Transition through state machine — handles WS close, AbortController abort,
+  // timer cleanup, terminal dispose via the 'closed' effect (#341)
+  if (session.state !== 'closed') {
+    transitionSession(id, 'closed');
+  }
 
   // Remove terminal DOM container
   const termContainer = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(id)}"]`);
   termContainer?.remove();
-
-  appState.sessions.delete(id);
 
   // If we just closed the active session, switch to another or go to Connect
   if (appState.activeSessionId === id) {
