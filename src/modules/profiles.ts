@@ -110,10 +110,40 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
 export function loadProfiles(): void {
   const profiles = getProfiles();
   const list = document.getElementById('profileList');
+  const sessionList = document.getElementById('activeSessionList');
   if (!list) return;
 
   const formSection = document.getElementById('connect-form-section');
   const newConnBtn = document.getElementById('newConnBtn') as HTMLButtonElement | null;
+
+  // Render active sessions section (#306)
+  const allSessions = Array.from(appState.sessions.values()).filter((s) => s.profile);
+  if (sessionList) {
+    if (allSessions.length > 0) {
+      const hasDropped = allSessions.some((s) => !isSessionConnected(s));
+      const reconnectAllBtn = hasDropped
+        ? '<button class="item-btn accent reconnect-all-btn" data-action="reconnect-all">Reconnect all</button>'
+        : '';
+      sessionList.innerHTML = `<h3 class="section-label">Active Sessions</h3>`
+        + allSessions.map((s) => {
+          const stateClass = `session-state-${s.state}`;
+          const dotColor = isSessionConnected(s) ? 'dot-connected' : s.state === 'reconnecting' || s.state === 'connecting' ? 'dot-connecting' : 'dot-dropped';
+          const label = s.profile ? `${escHtml(s.profile.username)}@${escHtml(s.profile.host)}` : escHtml(s.id);
+          const actionBtn = isSessionConnected(s)
+            ? `<button class="item-btn accent" data-action="switch" data-session-id="${escHtml(s.id)}">Switch</button>`
+            : `<button class="item-btn accent" data-action="reconnect" data-session-id="${escHtml(s.id)}">Reconnect</button>`;
+          return `<div class="active-session-item ${stateClass}" data-session-id="${escHtml(s.id)}">
+            <span class="session-dot ${dotColor}"></span>
+            <span class="session-label">${label}</span>
+            ${actionBtn}
+            <button class="item-btn danger" data-action="close-session" data-session-id="${escHtml(s.id)}">✕</button>
+          </div>`;
+        }).join('')
+        + reconnectAllBtn;
+    } else {
+      sessionList.innerHTML = '';
+    }
+  }
 
   if (!profiles.length) {
     list.innerHTML = '<p class="empty-hint">No saved profiles yet.</p>';
@@ -122,40 +152,23 @@ export function loadProfiles(): void {
     return;
   }
 
-  // Find active sessions matching each profile
-  const activeSessions = Array.from(appState.sessions.values()).filter(
-    (s) => isSessionConnected(s) && s.profile
-  );
-
-  list.innerHTML = profiles.map((p, i) => {
-    const matching = activeSessions.filter(
-      (s) => s.profile!.host === p.host && (s.profile!.port || 22) === (p.port || 22) && s.profile!.username === p.username
-    );
-    const connected = matching.length > 0;
-    const connectedClass = connected ? ' profile-connected' : '';
-    const connInfo = connected
-      ? `<span class="profile-conn-badge">Connected</span>`
-      : '';
-
-    // Session actions (Switch/Disconnect) — separate from profile management
-    const sessionActions = matching.map((s) =>
-      `<div class="session-actions">
-        <button class="item-btn accent" data-action="switch" data-session-id="${escHtml(s.id)}">Switch</button>
-        <button class="item-btn danger" data-action="disconnect" data-session-id="${escHtml(s.id)}">Disconnect</button>
-      </div>`
-    ).join('');
-
-    return `<div class="profile-item${connectedClass}" data-idx="${String(i)}">
-      <span class="profile-name">${escHtml(p.name)} ${connInfo}</span>
-      <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
-      ${sessionActions}
-      <div class="item-actions">
-        <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
-        <button class="item-btn" data-action="connect" data-idx="${String(i)}">Connect</button>
-        <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
-      </div>
-    </div>`;
-  }).join('');
+  // Profiles section — clean list without session actions (#306)
+  list.innerHTML = `<h3 class="section-label">Profiles</h3>`
+    + profiles.map((p, i) => {
+      const hasSession = allSessions.some(
+        (s) => s.profile!.host === p.host && (s.profile!.port || 22) === (p.port || 22) && s.profile!.username === p.username
+      );
+      const connClass = hasSession ? ' profile-connected' : '';
+      return `<div class="profile-item${connClass}" data-idx="${String(i)}">
+        <span class="profile-name">${escHtml(p.name)}</span>
+        <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
+        <div class="item-actions">
+          <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
+          <button class="item-btn" data-action="connect" data-idx="${String(i)}">Connect</button>
+          <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
 
   formSection?.classList.add('connect-form-hidden');
   if (newConnBtn) newConnBtn.hidden = false;

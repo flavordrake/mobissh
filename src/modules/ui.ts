@@ -739,6 +739,40 @@ export function initConnectForm(): void {
       }
     }
   });
+
+  // Active sessions list click handler (#306)
+  document.getElementById('activeSessionList')?.addEventListener('click', (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+    const sessionId = target.dataset.sessionId;
+    if (action === 'switch' && sessionId) {
+      switchSession(sessionId);
+      navigateToPanel('terminal');
+    } else if (action === 'reconnect' && sessionId) {
+      reconnect();
+      target.classList.add('connecting');
+      target.textContent = 'Reconnecting…';
+      onStateChange((_sess, newState) => {
+        if (newState === 'connected' || newState === 'failed' || newState === 'closed') {
+          target.classList.remove('connecting');
+          target.textContent = 'Reconnect';
+          loadProfiles();
+        }
+      });
+    } else if (action === 'close-session' && sessionId) {
+      closeSession(sessionId);
+      loadProfiles();
+    } else if (action === 'reconnect-all') {
+      for (const [sid, session] of appState.sessions) {
+        if (!isSessionConnected(session) && session.profile) {
+          appState.activeSessionId = sid;
+          reconnect();
+        }
+      }
+      loadProfiles();
+    }
+  });
 }
 
 // ── Key bar ──────────────────────────────────────────────────────────────────
