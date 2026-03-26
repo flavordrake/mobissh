@@ -104,19 +104,6 @@ registerTransitionEffect('connecting', (session) => {
 registerTransitionEffect('connected', (session) => {
   clearReconnectTimer(session);
   session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
-  // Re-register terminal.onData if the session has a terminal but the old
-  // disposable was cleaned up during reconnect (#334)
-  if (session.terminal && !session._onDataDisposable) {
-    if (!session._cycle) {
-      session._cycle = { controller: new AbortController(), disposables: [] };
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const disp = (session.terminal as any).onData(() => {}) as { dispose(): void };
-    // The actual onData handler is set by connection.ts — this is a placeholder
-    // that gets replaced. For now, just track it so tests can verify re-registration.
-    session._onDataDisposable = disp;
-    session._cycle.disposables.push(disp);
-  }
 });
 
 registerTransitionEffect('disconnected', (session) => {

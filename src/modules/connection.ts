@@ -513,6 +513,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   // Register terminal.onData in the cycle so reconnects get a fresh listener (#334)
   if (session?.terminal) {
     const onDataDisp = session.terminal.onData((data: string) => { sendSSHInput(data); });
+    session._onDataDisposable = onDataDisp;
     session._cycle?.disposables.push(onDataDisp);
     session._onDataDisposable = onDataDisp;
   }
