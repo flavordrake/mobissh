@@ -91,8 +91,6 @@ export interface SessionState {
   terminal: Terminal | null;
   fitAddon: FitAddon.FitAddon | null;
   ws: WebSocket | null;
-  wsConnected: boolean;
-  sshConnected: boolean;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   reconnectDelay: number;
   keepAliveTimer: ReturnType<typeof setInterval> | null;
@@ -100,6 +98,12 @@ export interface SessionState {
   activeThemeName: ThemeName;
   _onDataDisposable: { dispose: () => void } | null;
 }
+
+/** SessionState with backward-compat read-only getters for wsConnected/sshConnected. */
+export type SessionStateWithCompat = SessionState & {
+  readonly wsConnected: ReturnType<() => boolean>;
+  readonly sshConnected: ReturnType<() => boolean>;
+};
 
 // ── Application state ───────────────────────────────────────────────────────
 

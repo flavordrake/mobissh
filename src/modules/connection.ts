@@ -195,7 +195,7 @@ export function sendSftpUploadCancel(requestId: string): void {
   // Reject any pending ack so the upload loop throws
   _ackResolvers.delete(requestId);
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_upload_cancel', requestId }));
 }
 
@@ -209,36 +209,36 @@ export function _resolveAck(requestId: string, offset: number): void {
 }
 export function sendSftpLs(path: string, requestId: string): void {
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_ls', path, requestId }));
 }
 export function sendSftpDownload(path: string, requestId: string): void {
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_download', path, requestId }));
 }
 export function sendSftpUpload(path: string, data: string, requestId: string): void {
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_upload', path, data, requestId }));
 }
 export function sendSftpRename(oldPath: string, newPath: string, requestId: string): void {
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_rename', oldPath, newPath, requestId }));
 }
 export function sendSftpDelete(path: string, requestId: string): void {
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_delete', path, requestId }));
 }
 export function sendSftpRealpath(requestId: string): void {
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
-import { appState, currentSession, createSession } from './state.js';
+import { appState, currentSession, createSession, transitionSession, isSessionConnected } from './state.js';
 import { createSessionTerminal } from './terminal.js';
 import { rebindSelectionWatcher } from './selection.js';
 import { renderSessionList, closeSession } from './ui.js';
@@ -497,7 +497,10 @@ function _openWebSocket(options?: { silent?: boolean }): void {
   newWs.onopen = () => {
     openedThisAttempt = true;
     _wsConsecFailures = 0;
-    if (session) session.wsConnected = true;
+    if (session) {
+      if (session.state === 'idle') transitionSession(sessionId, 'connecting');
+      else if (session.state === 'soft_disconnected') transitionSession(sessionId, 'reconnecting');
+    }
     startKeepAlive(sessionId);
     const profile = session?.profile;
     if (!profile) return;
@@ -527,8 +530,8 @@ function _openWebSocket(options?: { silent?: boolean }): void {
     switch (msg.type) {
       case 'connected':
         if (session) {
-          session.sshConnected = true;
-          session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+          if (session.state === 'connecting' || session.state === 'reconnecting') transitionSession(sessionId, 'authenticating');
+          if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
         }
         void acquireWakeLock();
         // Reset terminal modes so stale mouse tracking from a previous session
@@ -577,7 +580,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
 
       case 'error':
-        if (session?.sshConnected) {
+        if (session && isSessionConnected(session)) {
           // Already connected — transient error, don't interrupt with modal
           _toast(`Error: ${msg.message}`);
         } else {
@@ -588,7 +591,7 @@ function _openWebSocket(options?: { silent?: boolean }): void {
         break;
 
       case 'disconnected':
-        if (session) session.sshConnected = false;
+        if (session && session.state === 'connected') transitionSession(sessionId, 'soft_disconnected');
         _setStatus('disconnected', 'Disconnected');
         if (!silent) _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`, { error: true });
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
@@ -644,10 +647,11 @@ function _openWebSocket(options?: { silent?: boolean }): void {
 
   newWs.onclose = (event) => {
     // Capture before clearing — needed to distinguish "was connected" from "never connected"
-    const wasSshConnected = session?.sshConnected ?? false;
-    if (session) {
-      session.wsConnected = false;
-      session.sshConnected = false;
+    const wasSshConnected = session ? isSessionConnected(session) : false;
+    if (session && session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {
+      // From connecting/authenticating, transition to 'failed'; from connected/soft_disconnected to 'disconnected'
+      const target = (session.state === 'connecting' || session.state === 'authenticating') ? 'failed' : 'disconnected';
+      transitionSession(sessionId, target);
     }
     stopKeepAlive(sessionId);
     if (!session?.profile) return;
@@ -871,15 +875,16 @@ export function disconnect(): void {
   const session = currentSession();
   if (session) {
     session.profile = null;
-    session.sshConnected = false;
-    session.wsConnected = false;
-  }
-
-  if (session?.ws) {
-    session.ws.onclose = null;
-    try { session.ws.send(JSON.stringify({ type: 'disconnect' })); } catch { /* may already be closed */ }
-    session.ws.close();
-    session.ws = null;
+    if (session.ws) {
+      session.ws.onclose = null;
+      try { session.ws.send(JSON.stringify({ type: 'disconnect' })); } catch { /* may already be closed */ }
+      session.ws.close();
+      session.ws = null;
+    }
+    if (session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {
+      const target = (session.state === 'connecting' || session.state === 'authenticating') ? 'failed' : 'disconnected';
+      transitionSession(session.id, target);
+    }
   }
 
   _setStatus('disconnected', 'Disconnected');
@@ -888,7 +893,7 @@ export function disconnect(): void {
 
 export function sendSSHInput(data: string): void {
   const session = currentSession();
-  if (!session?.sshConnected || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'input', data }));
 }
 

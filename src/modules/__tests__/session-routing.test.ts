@@ -103,7 +103,14 @@ vi.stubGlobal('ClipboardAddon', { ClipboardAddon: vi.fn() });
 const { sendSSHInput, setSftpHandler, sendSftpLs } = await import('../connection.js');
 const { handleResize } = await import('../terminal.js');
 const { switchSession } = await import('../ui.js');
-const { appState, createSession, currentSession } = await import('../state.js');
+const { appState, createSession, currentSession, transitionSession } = await import('../state.js');
+
+/** Transition a session to 'connected' through valid state machine path. */
+function connectSession(id: string): void {
+  transitionSession(id, 'connecting');
+  transitionSession(id, 'authenticating');
+  transitionSession(id, 'connected');
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -152,8 +159,8 @@ describe('session routing (#263)', () => {
       const ws2 = makeMockWs();
       s1.ws = ws1;
       s2.ws = ws2;
-      s1.sshConnected = true;
-      s2.sshConnected = true;
+      connectSession('sess-1');
+      connectSession('sess-2');
 
       appState.activeSessionId = 'sess-1';
       sendSSHInput('hello');
@@ -171,8 +178,8 @@ describe('session routing (#263)', () => {
       const ws2 = makeMockWs();
       s1.ws = ws1;
       s2.ws = ws2;
-      s1.sshConnected = true;
-      s2.sshConnected = true;
+      connectSession('sess-1');
+      connectSession('sess-2');
 
       appState.activeSessionId = 'sess-2';
       sendSSHInput('world');
@@ -187,7 +194,7 @@ describe('session routing (#263)', () => {
       const s1 = createSession('sess-1');
       const ws1 = makeMockWs();
       s1.ws = ws1;
-      s1.sshConnected = true;
+      connectSession('sess-1');
 
       appState.activeSessionId = null;
       sendSSHInput('data');
@@ -203,7 +210,7 @@ describe('session routing (#263)', () => {
       const terminal = makeMockTerminal();
       const fitAddon = makeMockFitAddon();
       s1.ws = ws1;
-      s1.sshConnected = true;
+      connectSession('resize-sess');
       s1.terminal = terminal as unknown as typeof s1.terminal;
       s1.fitAddon = fitAddon as unknown as typeof s1.fitAddon;
 
@@ -223,8 +230,8 @@ describe('session routing (#263)', () => {
       const ws2 = makeMockWs();
       s1.ws = ws1;
       s2.ws = ws2;
-      s1.sshConnected = true;
-      s2.sshConnected = true;
+      connectSession('sess-a');
+      connectSession('sess-b');
       s1.terminal = makeMockTerminal() as unknown as typeof s1.terminal;
       s2.terminal = makeMockTerminal() as unknown as typeof s2.terminal;
       s1.fitAddon = makeMockFitAddon() as unknown as typeof s1.fitAddon;
@@ -261,8 +268,8 @@ describe('session routing (#263)', () => {
       const ws2 = makeMockWs();
       s1.ws = ws1;
       s2.ws = ws2;
-      s1.sshConnected = true;
-      s2.sshConnected = true;
+      connectSession('route-1');
+      connectSession('route-2');
       s1.fitAddon = makeMockFitAddon() as unknown as typeof s1.fitAddon;
       s2.fitAddon = makeMockFitAddon() as unknown as typeof s2.fitAddon;
 
@@ -333,8 +340,8 @@ describe('session routing (#263)', () => {
       const ws2 = makeMockWs();
       s1.ws = ws1;
       s2.ws = ws2;
-      s1.sshConnected = true;
-      s2.sshConnected = true;
+      connectSession('sftp-1');
+      connectSession('sftp-2');
 
       appState.activeSessionId = 'sftp-1';
       sendSftpLs('/home', 'req-1');

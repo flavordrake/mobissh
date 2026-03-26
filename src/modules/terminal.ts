@@ -4,7 +4,7 @@
 
 import type { ThemeName, RootCSS } from './types.js';
 import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
-import { appState, currentSession } from './state.js';
+import { appState, currentSession, isSessionConnected } from './state.js';
 
 interface NotifEntry {
   time: number;
@@ -296,7 +296,7 @@ function _renderNotifDrawer(): void {
 export function handleResize(): void {
   const session = currentSession();
   session?.fitAddon?.fit();
-  if (session?.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+  if (session && isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
     session.ws.send(JSON.stringify({
       type: 'resize',
       cols: session.terminal?.cols ?? 80,
@@ -344,7 +344,7 @@ export function initKeyboardAwareness(): void {
     session?.fitAddon?.fit();
     session?.terminal?.scrollToBottom();
 
-    if (session?.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+    if (session && isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
       session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal?.cols ?? 80, rows: session.terminal?.rows ?? 24 }));
     }
   }
@@ -368,7 +368,7 @@ export function applyFontSize(size: number): void {
   if (session?.terminal) {
     session.terminal.options.fontSize = size;
     session.fitAddon?.fit();
-    if (session.sshConnected && session.ws?.readyState === WebSocket.OPEN) {
+    if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
       session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal.cols, rows: session.terminal.rows }));
     }
   }
