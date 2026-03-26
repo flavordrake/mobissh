@@ -356,16 +356,6 @@ export function closeSession(id: string): void {
   }
 
   renderSessionList();
-
-  // Subscribe to session state changes to keep UI in sync (#324)
-  onStateChange((session, _newState, _oldState) => {
-    renderSessionList();
-    // Update session menu button if active session changed state
-    const btn = document.getElementById('sessionMenuBtn');
-    if (btn && session.id === appState.activeSessionId && session.profile) {
-      btn.textContent = `${session.profile.username}@${session.profile.host}`;
-    }
-  });
 }
 
 // ── Focus IME ────────────────────────────────────────────────────────────────
@@ -381,6 +371,15 @@ export function initSessionMenu(): void {
   const menuBtn = document.getElementById('sessionMenuBtn')!;
   const menu = document.getElementById('sessionMenu')!;
   const backdrop = document.getElementById('menuBackdrop')!;
+
+  // Subscribe to session state changes to keep UI in sync (#334 — one-time registration)
+  onStateChange((session, _newState, _oldState) => {
+    renderSessionList();
+    const btn = document.getElementById('sessionMenuBtn');
+    if (btn && session.id === appState.activeSessionId && session.profile) {
+      btn.textContent = `${session.profile.username}@${session.profile.host}`;
+    }
+  });
 
   // Stop touch events from leaking through the menu to parent gesture handlers
   menu.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { passive: false });
