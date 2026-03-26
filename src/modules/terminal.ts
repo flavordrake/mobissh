@@ -295,8 +295,16 @@ function _renderNotifDrawer(): void {
 
 export function handleResize(): void {
   const session = currentSession();
-  session?.fitAddon?.fit();
-  if (session && isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
+  if (!session) return;
+  // Only fit if the session's terminal container is visible and has dimensions.
+  // Background sessions receive resize events (keyboard show/hide) but fitting
+  // them gives zero dimensions that persist when switching back (#316).
+  const container = document.querySelector<HTMLElement>(
+    `#terminal [data-session-id="${CSS.escape(session.id)}"]`
+  );
+  if (!container || container.offsetHeight === 0) return;
+  session.fitAddon?.fit();
+  if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
     session.ws.send(JSON.stringify({
       type: 'resize',
       cols: session.terminal?.cols ?? 80,
@@ -341,7 +349,11 @@ export function initKeyboardAwareness(): void {
     }
 
     const session = currentSession();
-    session?.fitAddon?.fit();
+    // Guard: only fit if session container is visible (#316)
+    if (session) {
+      const c = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(session.id)}"]`);
+      if (c && c.offsetHeight > 0) session.fitAddon?.fit();
+    }
     session?.terminal?.scrollToBottom();
 
     if (session && isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {

@@ -287,19 +287,28 @@ export function switchSession(id: string): void {
   }
 
   // Fit the newly visible terminal and sync dimensions to server.
-  // Use rAF to ensure the browser has laid out the now-visible container
-  // before measuring — fit() on a just-unhidden element can return stale
-  // zero dimensions. (#312)
-  requestAnimationFrame(() => {
-    session.fitAddon?.fit();
-    if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({
-        type: 'resize',
-        cols: session.terminal?.cols ?? 80,
-        rows: session.terminal?.rows ?? 24,
-      }));
+  // A single rAF isn't sufficient — the browser may not have completed layout
+  // for the just-unhidden container by the next frame, especially on mobile
+  // where keyboard adjustments delay layout. Use double-rAF + fallback. (#316)
+  const fitAndResize = (): void => {
+    if (!session.fitAddon || !session.terminal) return;
+    const container = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(session.id)}"]`);
+    if (container && container.offsetHeight > 0) {
+      session.fitAddon.fit();
+      if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
+        session.ws.send(JSON.stringify({
+          type: 'resize',
+          cols: session.terminal.cols ?? 80,
+          rows: session.terminal.rows ?? 24,
+        }));
+      }
+    } else {
+      // Container still has zero height — try again next frame
+      requestAnimationFrame(fitAndResize);
     }
-  });
+  };
+  // Double-rAF: first frame for layout, second for measurement
+  requestAnimationFrame(() => requestAnimationFrame(fitAndResize));
 
   // Update session menu button text
   const btn = document.getElementById('sessionMenuBtn');
