@@ -872,11 +872,8 @@ document.addEventListener('visibilitychange', () => {
         _openWebSocket({ silent: true, sessionId: sid });
         reconnected = true;
       } else {
-        // WS is open — probe for zombie connection
-        const prevActive = appState.activeSessionId;
-        appState.activeSessionId = sid;
-        _probeZombieConnection();
-        appState.activeSessionId = prevActive;
+        // WS is open — send a keepalive ping to keep the connection warm
+        try { session.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* ignore */ }
       }
     }
     if (reconnected) _toast('Reconnecting sessions…');
