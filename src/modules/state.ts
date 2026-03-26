@@ -24,6 +24,101 @@ const VALID_TRANSITIONS: Record<SessionLifecycleState, readonly SessionLifecycle
   closed: [],
 };
 
+// -- Side-effect registration --
+
+type TransitionEffectCallback = (session: SessionState, previousState: SessionLifecycleState) => void;
+type StateChangeCallback = (session: SessionState, newState: SessionLifecycleState, oldState: SessionLifecycleState) => void;
+
+const transitionEffects = new Map<SessionLifecycleState, TransitionEffectCallback[]>();
+const stateChangeSubscribers: StateChangeCallback[] = [];
+
+/** Register a callback that fires when any session enters the given state. */
+export function registerTransitionEffect(state: SessionLifecycleState, callback: TransitionEffectCallback): void {
+  const list = transitionEffects.get(state);
+  if (list) {
+    list.push(callback);
+  } else {
+    transitionEffects.set(state, [callback]);
+  }
+}
+
+/** Subscribe to all state transitions. Callback receives (session, newState, oldState). */
+export function onStateChange(callback: StateChangeCallback): void {
+  stateChangeSubscribers.push(callback);
+}
+
+// -- Helpers for built-in effects --
+
+/** Null all WS event handlers on a WebSocket. */
+function nullWsHandlers(ws: WebSocket): void {
+  ws.onmessage = null;
+  ws.onerror = null;
+  ws.onclose = null;
+  ws.onopen = null;
+}
+
+/** Full WS cleanup: null handlers, close, set session.ws to null. */
+function cleanupWebSocket(session: SessionState): void {
+  if (session.ws) {
+    nullWsHandlers(session.ws);
+    session.ws.close();
+    session.ws = null;
+  }
+}
+
+/** Clear keepAliveTimer and set to null. */
+function clearKeepAlive(session: SessionState): void {
+  if (session.keepAliveTimer != null) {
+    clearInterval(session.keepAliveTimer);
+    session.keepAliveTimer = null;
+  }
+}
+
+/** Clear reconnectTimer and set to null. */
+function clearReconnectTimer(session: SessionState): void {
+  if (session.reconnectTimer != null) {
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
+  }
+}
+
+// -- Built-in side-effects --
+
+registerTransitionEffect('connecting', (session) => {
+  if (session.ws) {
+    nullWsHandlers(session.ws);
+  }
+});
+
+registerTransitionEffect('connected', (session) => {
+  clearReconnectTimer(session);
+  session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+});
+
+registerTransitionEffect('disconnected', (session) => {
+  cleanupWebSocket(session);
+  clearKeepAlive(session);
+});
+
+registerTransitionEffect('reconnecting', (session) => {
+  cleanupWebSocket(session);
+  if (session._onDataDisposable) {
+    session._onDataDisposable.dispose();
+  }
+});
+
+registerTransitionEffect('closed', (session) => {
+  cleanupWebSocket(session);
+  if (session.terminal) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (session.terminal as any).dispose();
+  }
+  clearReconnectTimer(session);
+  clearKeepAlive(session);
+});
+
+// -- State and session management --
+
 export const appState: AppState = {
   // Multi-session infrastructure
   sessions: new Map<string, SessionState>(),
@@ -79,6 +174,7 @@ export function createSession(id: string): SessionState {
     keepAliveTimer: null,
     keepAliveWorker: null,
     activeThemeName: appState.activeThemeName,
+    _onDataDisposable: null,
   };
   appState.sessions.set(id, session);
   return session;
@@ -87,6 +183,7 @@ export function createSession(id: string): SessionState {
 /**
  * Transition a session to a new lifecycle state.
  * Throws if the session doesn't exist or the transition is invalid.
+ * Fires registered transition effects and state change subscribers.
  * Removes the session from the map when transitioning to 'closed'.
  */
 export function transitionSession(id: string, targetState: SessionLifecycleState): void {
@@ -102,7 +199,21 @@ export function transitionSession(id: string, targetState: SessionLifecycleState
     );
   }
 
+  const previousState = session.state;
   session.state = targetState;
+
+  // Fire onEnter effects for the target state
+  const effects = transitionEffects.get(targetState);
+  if (effects) {
+    for (const effect of effects) {
+      effect(session, previousState);
+    }
+  }
+
+  // Notify state change subscribers
+  for (const subscriber of stateChangeSubscribers) {
+    subscriber(session, targetState, previousState);
+  }
 
   if (targetState === 'closed') {
     appState.sessions.delete(id);
