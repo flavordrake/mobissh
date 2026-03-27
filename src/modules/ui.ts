@@ -53,10 +53,16 @@ export function navigateToPanel(
   document.getElementById(`panel-${panel}`)?.classList.add('active');
 
   if (panel === 'terminal') {
-    // Fit twice: fast (50ms) for immediate visual, delayed (500ms) for correct dimensions
-    // after mobile layout settles. (#316)
-    setTimeout(() => { currentSession()?.fitAddon?.fit(); focusIME(); }, 50);
-    setTimeout(() => { currentSession()?.fitAddon?.fit(); }, 500);
+    // Fit + force canvas repaint. xterm.js canvas doesn't always repaint after fit()
+    // alone — refresh() forces a full redraw. (#316)
+    const fitAndRefresh = (): void => {
+      const s = currentSession();
+      if (!s?.fitAddon || !s.terminal) return;
+      s.fitAddon.fit();
+      s.terminal.refresh(0, s.terminal.rows - 1);
+    };
+    setTimeout(() => { fitAndRefresh(); focusIME(); }, 50);
+    setTimeout(fitAndRefresh, 500);
   }
   if (panel === 'connect') {
     // Only refresh if the form isn't already visible (avoids clobbering edit-in-progress)
@@ -302,6 +308,7 @@ export function switchSession(id: string): void {
   const doFit = (): void => {
     if (!session.fitAddon || !session.terminal) return;
     session.fitAddon.fit();
+    session.terminal.refresh(0, session.terminal.rows - 1);
     if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
       session.ws.send(JSON.stringify({
         type: 'resize',

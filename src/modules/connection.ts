@@ -901,6 +901,7 @@ document.addEventListener('visibilitychange', () => {
       const active = appState.sessions.get(appState.activeSessionId ?? '');
       if (active?.fitAddon) {
         active.fitAddon.fit();
+        active.terminal?.refresh(0, (active.terminal?.rows ?? 24) - 1);
         if (active.terminal && isSessionConnected(active) && active.ws?.readyState === WebSocket.OPEN) {
           active.ws.send(JSON.stringify({
             type: 'resize',
