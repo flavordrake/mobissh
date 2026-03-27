@@ -884,6 +884,23 @@ document.addEventListener('visibilitychange', () => {
       }
     }
     if (reconnected) _toast('Reconnecting sessions…');
+
+    // Re-fit the active terminal after visibility restore — Android's viewport
+    // dimensions are temporarily wrong during the tab restore transition.
+    // Delay to let the viewport settle before measuring. (#316)
+    setTimeout(() => {
+      const active = appState.sessions.get(appState.activeSessionId ?? '');
+      if (active?.fitAddon) {
+        active.fitAddon.fit();
+        if (active.terminal && isSessionConnected(active) && active.ws?.readyState === WebSocket.OPEN) {
+          active.ws.send(JSON.stringify({
+            type: 'resize',
+            cols: active.terminal.cols ?? 80,
+            rows: active.terminal.rows ?? 24,
+          }));
+        }
+      }
+    }, 500);
   } else {
     releaseWakeLock();
   }
