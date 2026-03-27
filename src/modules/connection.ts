@@ -556,12 +556,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
         }
         void acquireWakeLock();
-        // Disable mouse tracking modes that may persist from a previous session (#81).
-        // Do NOT use terminal.reset() — it sends a DA1 query whose response (?1;2c)
-        // leaks into the input buffer and can trigger tmux panel switches.
-        if (session?.terminal) {
-          session.terminal.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
-        }
+        // Mouse tracking reset removed — xterm.js starts clean, and writing mode
+        // disables here leaks through onData → SSH → echo. If stale mouse tracking
+        // is an issue (#81), the fix should be server-side or via a dedicated
+        // reset-modes message, not terminal.write/reset.
         if (session?.profile) {
           _setStatus('connected', `${session.profile.username}@${session.profile.host}`);
         }
