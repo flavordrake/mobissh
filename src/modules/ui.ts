@@ -307,6 +307,9 @@ export function switchSession(id: string): void {
       }));
     }
   };
+  // Fast path: rAF fit immediately (may get wrong dimensions but shows something)
+  // Reliable path: ResizeObserver fires when container has real dimensions, fits again
+  requestAnimationFrame(doFit);
   if (sessionContainer) {
     let fitted = false;
     const ro = new ResizeObserver(() => {
@@ -316,10 +319,7 @@ export function switchSession(id: string): void {
       doFit();
     });
     ro.observe(sessionContainer);
-    // Fallback: if ResizeObserver doesn't fire (e.g., dimensions unchanged), force fit
-    setTimeout(() => { if (!fitted) { fitted = true; ro.disconnect(); doFit(); } }, 500);
-  } else {
-    requestAnimationFrame(() => requestAnimationFrame(doFit));
+    setTimeout(() => { if (!fitted) { fitted = true; ro.disconnect(); doFit(); } }, 300);
   }
 
   // Update session menu button text
