@@ -517,7 +517,6 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     const onDataDisp = session.terminal.onData((data: string) => { sendSSHInput(data); });
     session._onDataDisposable = onDataDisp;
     session._cycle?.disposables.push(onDataDisp);
-    session._onDataDisposable = onDataDisp;
   }
 
   newWs.addEventListener('open', () => {
@@ -911,6 +910,11 @@ export function disconnect(): void {
   _dismissConnectionStatus();
 }
 
+// Filter DA1/DA2/DA3 responses — xterm.js auto-responds to terminal capability
+// queries from the remote (CSI c, CSI > c). If not filtered, responses leak
+// through to the shell and appear as visible ?1;2c text (#350).
+const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
+
 export function sendSSHInput(data: string): void {
   const session = currentSession();
   if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) {
@@ -919,7 +923,9 @@ export function sendSSHInput(data: string): void {
     }
     return;
   }
-  session.ws.send(JSON.stringify({ type: 'input', data }));
+  const filtered = data.replace(DA_RESPONSE_RE, '');
+  if (!filtered) return;
+  session.ws.send(JSON.stringify({ type: 'input', data: filtered }));
 }
 
 // ── Connection status overlay (#172) ─────────────────────────────────────────

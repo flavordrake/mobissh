@@ -285,4 +285,25 @@ test.describe('Reconnect lifecycle', { tag: '@headless-adequate' }, () => {
     // Should still show host info — session is disconnected, not closed
     expect(btnTextAfter).toContain('mock-host');
   });
+
+  test('DA1/DA2 responses are filtered from terminal.onData — not sent to SSH (#350)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Simulate xterm.js emitting DA responses through onData
+    // (happens when remote sends CSI c to query terminal capabilities)
+    await page.evaluate(() => {
+      return import('./modules/connection.js').then(m => {
+        m.sendSSHInput('\x1b[?1;2c');       // DA1 response
+        m.sendSSHInput('\x1b[>0;276;0c');   // DA2 response
+        m.sendSSHInput('real-input');         // Normal text
+      });
+    });
+    await page.waitForTimeout(300);
+
+    const inputMsgs = mockSshServer.messages.filter(m => m.type === 'input');
+    const allInput = inputMsgs.map(m => m.data).join('');
+    expect(allInput).not.toContain('?1;2c');
+    expect(allInput).not.toContain('0;276;0c');
+    expect(allInput).toContain('real-input');
+  });
 });
