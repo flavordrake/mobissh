@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-session-dock-revert-triage-20260326-025645/` — dock revert, state machine migration, session lifecycle fixes
+> **Active TRACE**: `.traces/trace-session-test-first-reconnect-20260327-005707/` — test-first reconnect lifecycle, DA1 leak fix, connect UX polish
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
