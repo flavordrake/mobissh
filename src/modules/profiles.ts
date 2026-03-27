@@ -152,8 +152,9 @@ export function loadProfiles(): void {
     return;
   }
 
-  // Profiles section — clean list without session actions (#306)
-  list.innerHTML = `<h3 class="section-label">Profiles</h3>`
+  // Profiles section — only show header when active sessions exist above (#306)
+  const profilesHeader = allSessions.length > 0 ? '<h3 class="section-label">Profiles</h3>' : '';
+  list.innerHTML = profilesHeader
     + profiles.map((p, i) => {
       const hasSession = allSessions.some(
         (s) => s.profile!.host === p.host && (s.profile!.port || 22) === (p.port || 22) && s.profile!.username === p.username
