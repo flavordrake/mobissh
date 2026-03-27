@@ -606,9 +606,13 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           // Already connected — transient error, don't interrupt with modal
           _toast(`Error: ${msg.message}`);
         } else {
-          // Not yet connected — this is a connection failure, clean up
+          // Not yet connected — connection failure. Retry if session has a profile.
           _toast(`Connection failed: ${msg.message}`);
-          closeSession(sessionId);
+          if (session?.profile) {
+            scheduleReconnect();
+          } else {
+            closeSession(sessionId);
+          }
         }
         break;
 
