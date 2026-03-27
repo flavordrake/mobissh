@@ -205,6 +205,7 @@ export function createSession(id: string): SessionState {
     keepAliveWorker: { value: null, writable: true, enumerable: true, configurable: true },
     activeThemeName: { value: appState.activeThemeName, writable: true, enumerable: true, configurable: true },
     _onDataDisposable: { value: null, writable: true, enumerable: true, configurable: true },
+    _wsConsecFailures: { value: 0, writable: true, enumerable: true, configurable: true },
     _cycle: { value: null, writable: true, enumerable: true, configurable: true },
     // Compat getters: derive from session.state
     // Setters are no-ops to avoid throwing in strict mode when legacy code assigns

@@ -297,7 +297,7 @@ export function switchSession(id: string): void {
       container.classList.add('session-disconnected');
       if (session.profile) {
         toast('Reconnecting…');
-        reconnect();
+        reconnect(id);
       } else {
         toast(`Session not connected — ${session.state}`);
       }
@@ -561,7 +561,7 @@ export function initSessionMenu(): void {
 
   document.getElementById('sessionReconnectBtn')!.addEventListener('click', () => {
     closeMenu();
-    reconnect();
+    if (appState.activeSessionId) reconnect(appState.activeSessionId);
   });
 
   document.getElementById('sessionNavBarBtn')!.addEventListener('click', () => {
@@ -572,7 +572,7 @@ export function initSessionMenu(): void {
   document.getElementById('sessionDisconnectBtn')!.addEventListener('click', () => {
     closeMenu();
     const sessionId = appState.activeSessionId;
-    disconnect();
+    if (sessionId) disconnect(sessionId);
     if (sessionId) closeSession(sessionId);
   });
 
@@ -757,8 +757,7 @@ export function initConnectForm(): void {
     } else if (action === 'disconnect') {
       const sessionId = target.dataset.sessionId;
       if (sessionId) {
-        appState.activeSessionId = sessionId;
-        disconnect();
+        disconnect(sessionId);
         closeSession(sessionId);
         loadProfiles(); // Refresh to remove session actions
       }
@@ -775,7 +774,7 @@ export function initConnectForm(): void {
       switchSession(sessionId);
       navigateToPanel('terminal');
     } else if (action === 'reconnect' && sessionId) {
-      reconnect();
+      reconnect(sessionId);
       target.classList.add('connecting');
       target.textContent = 'Reconnecting…';
       onStateChange((_sess, newState) => {
@@ -791,8 +790,7 @@ export function initConnectForm(): void {
     } else if (action === 'reconnect-all') {
       for (const [sid, session] of appState.sessions) {
         if (!isSessionConnected(session) && session.profile) {
-          appState.activeSessionId = sid;
-          reconnect();
+          reconnect(sid);
         }
       }
       loadProfiles();
