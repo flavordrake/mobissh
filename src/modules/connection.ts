@@ -238,7 +238,7 @@ export function sendSftpRealpath(requestId: string): void {
   session.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
-import { appState, currentSession, createSession, transitionSession, isSessionConnected } from './state.js';
+import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
 import { createSessionTerminal } from './terminal.js';
 import { rebindSelectionWatcher } from './selection.js';
 import { renderSessionList, closeSession } from './ui.js';
@@ -757,10 +757,47 @@ export function cancelReconnect(sessionId?: string): void {
   }
 }
 
-export function reconnect(sessionId?: string): void {
+// Per-session reconnect transaction tracking (#362)
+const _reconnectInFlight = new Map<string, Promise<string>>();
+
+/**
+ * Reconnect a session. Returns a promise that resolves with the outcome state.
+ * If a reconnect is already in flight for this session, returns the existing
+ * promise — callers get the same result without creating duplicate connections.
+ * Timeout: 30s. On timeout, resolves with 'timeout' but doesn't cancel the attempt.
+ */
+export function reconnect(sessionId?: string): Promise<string> {
   const sid = sessionId ?? appState.activeSessionId ?? '';
   const session = appState.sessions.get(sid);
-  if (session?.profile) _openWebSocket({ sessionId: sid });
+  if (!session?.profile) return Promise.resolve('no-profile');
+  if (session.state === 'connected') return Promise.resolve('connected');
+
+  // If a reconnect is already in flight, join it instead of creating a new one
+  const existing = _reconnectInFlight.get(sid);
+  if (existing) return existing;
+
+  // Start the reconnect
+  _openWebSocket({ sessionId: sid });
+
+  // Create a promise that resolves when the session reaches a terminal state
+  const txn = new Promise<string>((resolve) => {
+    const timer = setTimeout(() => {
+      _reconnectInFlight.delete(sid);
+      resolve('timeout');
+    }, 30000);
+
+    onStateChange((s, newState) => {
+      if (s.id !== sid) return;
+      if (newState === 'connected' || newState === 'failed' || newState === 'disconnected' || newState === 'closed') {
+        clearTimeout(timer);
+        _reconnectInFlight.delete(sid);
+        resolve(newState);
+      }
+    });
+  });
+
+  _reconnectInFlight.set(sid, txn);
+  return txn;
 }
 
 // Application-layer keepalive (#29, #204): sends a ping every 25s so NAT/proxies

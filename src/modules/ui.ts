@@ -788,12 +788,23 @@ export function initConnectForm(): void {
       closeSession(sessionId);
       loadProfiles();
     } else if (action === 'reconnect-all') {
+      target.textContent = 'Reconnecting…';
+      target.classList.add('connecting');
+      const promises: Promise<string>[] = [];
       for (const [sid, session] of appState.sessions) {
         if (!isSessionConnected(session) && session.profile) {
-          reconnect(sid);
+          promises.push(reconnect(sid));
         }
       }
       loadProfiles();
+      void Promise.all(promises).then((results) => {
+        const connected = results.filter(r => r === 'connected').length;
+        const failed = results.filter(r => r !== 'connected').length;
+        if (connected > 0 && failed === 0) toast(`${String(connected)} session(s) reconnected`);
+        else if (connected > 0) toast(`${String(connected)} reconnected, ${String(failed)} failed`);
+        else toast('Reconnect failed');
+        loadProfiles();
+      });
     }
   });
 }
