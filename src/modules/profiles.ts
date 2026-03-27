@@ -156,16 +156,20 @@ export function loadProfiles(): void {
   const profilesHeader = allSessions.length > 0 ? '<h3 class="section-label">Profiles</h3>' : '';
   list.innerHTML = profilesHeader
     + profiles.map((p, i) => {
-      const hasSession = allSessions.some(
+      const matchingSessions = allSessions.filter(
         (s) => s.profile!.host === p.host && (s.profile!.port || 22) === (p.port || 22) && s.profile!.username === p.username
       );
+      const hasSession = matchingSessions.length > 0;
+      const isConnecting = matchingSessions.some((s) => s.state === 'connecting' || s.state === 'authenticating' || s.state === 'reconnecting');
       const connClass = hasSession ? ' profile-connected' : '';
+      const connectBtnClass = isConnecting ? 'item-btn connecting' : 'item-btn';
+      const connectBtnText = isConnecting ? 'Connecting…' : 'Connect';
       return `<div class="profile-item${connClass}" data-idx="${String(i)}">
         <span class="profile-name">${escHtml(p.name)}</span>
         <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
         <div class="item-actions">
           <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
-          <button class="item-btn" data-action="connect" data-idx="${String(i)}">Connect</button>
+          <button class="${connectBtnClass}" data-action="connect" data-idx="${String(i)}">${connectBtnText}</button>
           <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
         </div>
       </div>`;
