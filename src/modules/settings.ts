@@ -11,6 +11,7 @@ import { resetKeyBarConfig } from './keybar-config.js';
 import type { ThemeName } from './types.js';
 import { showErrorDialog } from './ui.js';
 import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewIdleDelay } from './ime.js';
+import { getProfiles } from './profiles.js';
 
 
 /** Declarative schema for validatable localStorage keys. */
@@ -301,12 +302,130 @@ export function initSettingsPanel(): void {
     void clearCacheAndReload();
   });
 
+  document.getElementById('exportBackupBtn')?.addEventListener('click', () => {
+    exportBackup();
+  });
+
+  const importBtn = document.getElementById('importBackupBtn');
+  const importFile = document.getElementById('importBackupFile') as HTMLInputElement | null;
+  if (importBtn && importFile) {
+    importBtn.addEventListener('click', () => { importFile.click(); });
+    importFile.addEventListener('change', () => {
+      const file = importFile.files?.[0];
+      if (file) void importBackup(file);
+      importFile.value = '';
+    });
+  }
+
   const versionEl = document.getElementById('versionInfo');
   const versionMeta = document.querySelector<HTMLMetaElement>('meta[name="app-version"]');
   if (versionEl && versionMeta?.content) {
     const [version, hash] = versionMeta.content.split(':');
     versionEl.textContent = `MobiSSH v${version ?? '?'} \u00b7 ${hash ?? '?'}`;
   }
+}
+
+// Backup export/import
+
+const BACKUP_VERSION = 1;
+
+interface BackupFile {
+  version: number;
+  exported: string;
+  profiles: unknown[];
+  vault?: {
+    encrypted: string | null;
+    meta: string | null;
+  };
+}
+
+export function exportBackup(): void {
+  const profiles = getProfiles();
+  const vaultData = localStorage.getItem('sshVault');
+  const vaultMeta = localStorage.getItem('vaultMeta');
+
+  const backup: BackupFile = {
+    version: BACKUP_VERSION,
+    exported: new Date().toISOString(),
+    profiles,
+    vault: {
+      encrypted: vaultData,
+      meta: vaultMeta,
+    },
+  };
+
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const date = new Date().toISOString().slice(0, 10);
+  a.download = `mobissh-backup-${date}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  _toast(`Exported ${String(profiles.length)} profiles.`);
+}
+
+export async function importBackup(file: File): Promise<void> {
+  let text: string;
+  try {
+    text = await file.text();
+  } catch {
+    _toast('Failed to read backup file.');
+    return;
+  }
+
+  let backup: BackupFile;
+  try {
+    backup = JSON.parse(text) as BackupFile;
+  } catch {
+    _toast('Invalid backup file — not valid JSON.');
+    return;
+  }
+
+  if (typeof backup.version !== 'number' || backup.version > BACKUP_VERSION) {
+    _toast(`Unsupported backup version: ${String(backup.version)}`);
+    return;
+  }
+
+  if (!Array.isArray(backup.profiles)) {
+    _toast('Invalid backup file — missing profiles.');
+    return;
+  }
+
+  // Upsert profiles (match on host+port+username)
+  const existing = getProfiles();
+  let imported = 0;
+  for (const p of backup.profiles) {
+    const profile = p as { host?: string; port?: number; username?: string };
+    if (!profile.host || !profile.username) continue;
+    const idx = existing.findIndex(
+      (e) => e.host === profile.host &&
+             String(e.port || 22) === String(profile.port || 22) &&
+             e.username === profile.username
+    );
+    if (idx >= 0) {
+      existing[idx] = p as typeof existing[0];
+    } else {
+      existing.push(p as typeof existing[0]);
+    }
+    imported++;
+  }
+  localStorage.setItem('sshProfiles', JSON.stringify(existing));
+
+  // Import vault data (encrypted blob — stays encrypted)
+  let credsImported = false;
+  if (backup.vault?.encrypted) {
+    localStorage.setItem('sshVault', backup.vault.encrypted);
+    credsImported = true;
+  }
+  if (backup.vault?.meta) {
+    localStorage.setItem('vaultMeta', backup.vault.meta);
+  }
+
+  const credMsg = credsImported ? ', credentials imported (enter vault passphrase to unlock)' : '';
+  _toast(`Imported ${String(imported)} profiles${credMsg}`);
 }
 
 export function registerServiceWorker(): void {
