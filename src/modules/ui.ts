@@ -53,7 +53,10 @@ export function navigateToPanel(
   document.getElementById(`panel-${panel}`)?.classList.add('active');
 
   if (panel === 'terminal') {
+    // Fit twice: fast (50ms) for immediate visual, delayed (500ms) for correct dimensions
+    // after mobile layout settles. (#316)
     setTimeout(() => { currentSession()?.fitAddon?.fit(); focusIME(); }, 50);
+    setTimeout(() => { currentSession()?.fitAddon?.fit(); }, 500);
   }
   if (panel === 'connect') {
     // Only refresh if the form isn't already visible (avoids clobbering edit-in-progress)
