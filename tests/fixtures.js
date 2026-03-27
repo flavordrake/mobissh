@@ -180,6 +180,10 @@ const test = base.extend({
           if (s.readyState === s.OPEN) s.send(payload);
         });
       },
+      /** Force-close all active WebSocket connections (simulates server-side disconnect). */
+      dropAll() {
+        activeSockets.forEach((s) => { try { s.close(); } catch (_) {} });
+      },
       /** Set a custom message handler for protocol extensions (e.g. SFTP). */
       set onMessage(fn) { onMessageHandler = fn; },
       get onMessage() { return onMessageHandler; },

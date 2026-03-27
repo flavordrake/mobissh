@@ -387,11 +387,13 @@ export function initSessionMenu(): void {
   const backdrop = document.getElementById('menuBackdrop')!;
 
   // Subscribe to session state changes to keep UI in sync (#334 — one-time registration)
-  onStateChange((session, _newState, _oldState) => {
+  onStateChange((session, newState, _oldState) => {
     renderSessionList();
+    loadProfiles(); // Refresh Connect panel active sessions section (#351)
     const btn = document.getElementById('sessionMenuBtn');
     if (btn && session.id === appState.activeSessionId && session.profile) {
-      btn.textContent = `${session.profile.username}@${session.profile.host}`;
+      const host = `${session.profile.username}@${session.profile.host}`;
+      btn.textContent = isSessionConnected(session) ? host : `${host} (${newState})`;
     }
   });
 

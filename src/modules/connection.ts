@@ -616,7 +616,8 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       case 'disconnected':
         if (session && session.state === 'connected') transitionSession(sessionId, 'soft_disconnected');
         _setStatus('disconnected', 'Disconnected');
-        if (!silent) _showConnectionStatus(`Disconnected: ${msg.reason ?? 'unknown reason'}`, { error: true });
+        // Toast instead of blocking overlay — the session will auto-reconnect (#351)
+        _toast(`Disconnected: ${msg.reason ?? 'connection lost'}`);
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
         scheduleReconnect();
         break;
