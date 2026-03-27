@@ -102,6 +102,7 @@ export interface SessionState {
   keepAliveWorker: Worker | null;
   activeThemeName: ThemeName;
   _onDataDisposable: { dispose: () => void } | null;
+  _wsConsecFailures: number;
   _cycle: ConnectionCycle | null;
 }
 

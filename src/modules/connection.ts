@@ -387,7 +387,7 @@ function _promptPassphrase(): Promise<string | null> {
 // Max consecutive pre-open WS close events before halting the reconnect loop.
 // A close before onopen fires typically indicates a server-side auth rejection.
 const WS_MAX_AUTH_FAILURES = 3;
-let _wsConsecFailures = 0;
+// _wsConsecFailures is now per-session (SessionState._wsConsecFailures) — #362
 
 /** Read the HMAC token injected by the server on page load (#93). */
 function _getWsToken(): string {
@@ -423,8 +423,7 @@ export async function connect(profile: SSHProfile): Promise<void> {
     }
   }
 
-  _wsConsecFailures = 0;
-  cancelReconnect();
+  // Don't cancel other sessions' reconnect timers when creating a new session
 
   // Create a SessionState entry for multi-session infrastructure (#59)
   const sessionId = `${profile.host}:${String(profile.port || 22)}:${profile.username}:${String(Date.now())}`;
@@ -530,7 +529,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
   newWs.addEventListener('open', () => {
     openedThisAttempt = true;
-    _wsConsecFailures = 0;
+    if (session) session._wsConsecFailures = 0;
     startKeepAlive(sessionId);
     const profile = session?.profile;
     if (!profile) return;
@@ -703,10 +702,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       return;
     }
 
-    if (!wasSshConnected && !openedThisAttempt) {
-      _wsConsecFailures++;
-      if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
-        _wsConsecFailures = 0;
+    if (!wasSshConnected && !openedThisAttempt && session) {
+      session._wsConsecFailures++;
+      if (session._wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
+        session._wsConsecFailures = 0;
         _dismissConnectionStatus();
         showErrorDialog('Connection rejected repeatedly.\n\nYour session token may have expired — reload the page to get a fresh one.');
         return; // Don't close — let user decide from the Connect panel
@@ -714,7 +713,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     }
 
     // Always reconnect for sessions with profiles
-    _wsConsecFailures = 0;
+    if (session) session._wsConsecFailures = 0;
     if (document.visibilityState === 'visible') {
       _toast('Reconnecting…');
       _openWebSocket({ silent: true, sessionId });
@@ -728,10 +727,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }, signal ? { signal } : undefined);
 }
 
-export function scheduleReconnect(): void {
-  const session = currentSession();
+export function scheduleReconnect(sessionId?: string): void {
+  const sid = sessionId ?? appState.activeSessionId ?? '';
+  const session = appState.sessions.get(sid);
   if (!session?.profile) return;
-  const sid = appState.activeSessionId ?? '';
 
   const delaySec = Math.round(session.reconnectDelay / 1000);
   _toast(`Reconnecting in ${String(delaySec)}s…`);
@@ -749,16 +748,19 @@ export function scheduleReconnect(): void {
   }, session.reconnectDelay);
 }
 
-export function cancelReconnect(): void {
-  const session = currentSession();
+export function cancelReconnect(sessionId?: string): void {
+  const sid = sessionId ?? appState.activeSessionId ?? '';
+  const session = appState.sessions.get(sid);
   if (session?.reconnectTimer) {
     clearTimeout(session.reconnectTimer);
     session.reconnectTimer = null;
   }
 }
 
-export function reconnect(): void {
-  if (currentSession()?.profile) _openWebSocket();
+export function reconnect(sessionId?: string): void {
+  const sid = sessionId ?? appState.activeSessionId ?? '';
+  const session = appState.sessions.get(sid);
+  if (session?.profile) _openWebSocket({ sessionId: sid });
 }
 
 // Application-layer keepalive (#29, #204): sends a ping every 25s so NAT/proxies
@@ -778,11 +780,11 @@ function startKeepAlive(sessionId: string): void {
   const session = appState.sessions.get(sessionId);
   if (!session) return;
 
-  // Main-thread keepalive (throttled in background, but works when visible)
+  // Main-thread keepalive — ping THIS session's WS, not currentSession() (#362)
   session.keepAliveTimer = setInterval(() => {
-    const ws = currentSession()?.ws;
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'ping' }));
+    const s = appState.sessions.get(sessionId);
+    if (s?.ws?.readyState === WebSocket.OPEN) {
+      s.ws.send(JSON.stringify({ type: 'ping' }));
     } else {
       stopKeepAlive(sessionId);
     }
@@ -878,13 +880,12 @@ document.addEventListener('visibilitychange', () => {
     void acquireWakeLock();
     document.getElementById('errorDialogOverlay')?.classList.add('hidden');
 
-    // Reconnect all dropped sessions, not just the active one
-    const savedActiveId = appState.activeSessionId;
+    // Reconnect all dropped sessions — each session manages its own reconnect (#362)
     let reconnected = false;
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
       if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
-        cancelReconnect();
+        cancelReconnect(sid);
         _openWebSocket({ silent: true, sessionId: sid });
         reconnected = true;
       } else {
@@ -916,12 +917,13 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-export function disconnect(): void {
+export function disconnect(sessionId?: string): void {
+  const sid = sessionId ?? appState.activeSessionId ?? '';
+  const session = appState.sessions.get(sid);
   stopAndDownloadRecording(); // auto-save any active recording (#54)
-  cancelReconnect();
-  if (appState.activeSessionId) stopKeepAlive(appState.activeSessionId);
+  cancelReconnect(sid);
+  stopKeepAlive(sid);
   releaseWakeLock();
-  const session = currentSession();
   if (session) {
     session.profile = null;
     if (session.ws) {
