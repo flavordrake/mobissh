@@ -275,12 +275,17 @@ export function switchSession(id: string): void {
   // Restore per-session theme (#104)
   applyTheme(session.activeThemeName);
 
-  // Show disconnect indicator when session is not connected (#324)
+  // Auto-reconnect disconnected sessions on switch (#306)
   const container = document.querySelector<HTMLElement>(`#terminal > [data-session-id="${id}"]`);
   if (container) {
-    if (session.state !== 'connected') {
+    if (session.state !== 'connected' && session.state !== 'connecting' && session.state !== 'authenticating' && session.state !== 'reconnecting') {
       container.classList.add('session-disconnected');
-      toast(`Session not connected — ${session.state}`);
+      if (session.profile) {
+        toast('Reconnecting…');
+        reconnect();
+      } else {
+        toast(`Session not connected — ${session.state}`);
+      }
     } else {
       container.classList.remove('session-disconnected');
     }

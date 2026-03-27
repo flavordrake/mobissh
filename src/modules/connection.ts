@@ -700,15 +700,15 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       return;
     }
 
-    // SSH was previously connected — this is a network drop, try to reconnect
+    // SSH was previously connected — reconnect regardless of clean/unclean close.
+    // On mobile, any disconnect should auto-reconnect if the session has a profile.
+    // The clean/unclean distinction doesn't matter — the user expects persistence.
     _wsConsecFailures = 0;
-    if (!event.wasClean) {
-      if (document.visibilityState === 'visible') {
-        _toast('Reconnecting…');
-        _openWebSocket({ silent: true, sessionId });
-      } else {
-        scheduleReconnect();
-      }
+    if (document.visibilityState === 'visible') {
+      _toast('Reconnecting…');
+      _openWebSocket({ silent: true, sessionId });
+    } else {
+      scheduleReconnect();
     }
   }, signal ? { signal } : undefined);
 
