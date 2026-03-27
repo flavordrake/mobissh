@@ -682,26 +682,25 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     _setStatus('disconnected', 'Disconnected');
 
     // If SSH never connected, this session is dead — clean up, don't reconnect
+    // Never close a session that has a profile — always retry or show as disconnected.
+    // closeSession permanently destroys the session, losing the user's connection intent.
+    if (!session?.profile) {
+      // No profile = ephemeral session, safe to close
+      closeSession(sessionId);
+      return;
+    }
+
     if (!wasSshConnected && !openedThisAttempt) {
       _wsConsecFailures++;
       if (_wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
         _wsConsecFailures = 0;
         _dismissConnectionStatus();
         showErrorDialog('Connection rejected repeatedly.\n\nYour session token may have expired — reload the page to get a fresh one.');
+        return; // Don't close — let user decide from the Connect panel
       }
-      closeSession(sessionId);
-      return;
     }
 
-    if (!wasSshConnected) {
-      // WS opened but SSH never connected (auth failure, timeout, etc.)
-      closeSession(sessionId);
-      return;
-    }
-
-    // SSH was previously connected — reconnect regardless of clean/unclean close.
-    // On mobile, any disconnect should auto-reconnect if the session has a profile.
-    // The clean/unclean distinction doesn't matter — the user expects persistence.
+    // Always reconnect for sessions with profiles
     _wsConsecFailures = 0;
     if (document.visibilityState === 'visible') {
       _toast('Reconnecting…');
