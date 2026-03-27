@@ -556,11 +556,12 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
         }
         void acquireWakeLock();
-        // Reset terminal modes on FIRST connect only — stale mouse tracking from
-        // a previous session can cause scroll gestures to send SGR codes (#81).
-        // On reconnect, the terminal already has correct modes from the running
-        // session — reset() sends a DA1 query whose response leaks as ?1;2c.
-        if (!silent && session?.terminal) session.terminal.reset();
+        // Disable mouse tracking modes that may persist from a previous session (#81).
+        // Do NOT use terminal.reset() — it sends a DA1 query whose response (?1;2c)
+        // leaks into the input buffer and can trigger tmux panel switches.
+        if (session?.terminal) {
+          session.terminal.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+        }
         if (session?.profile) {
           _setStatus('connected', `${session.profile.username}@${session.profile.host}`);
         }
