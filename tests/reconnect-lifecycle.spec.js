@@ -630,4 +630,59 @@ test.describe('Reconnect lifecycle', { tag: '@headless-adequate' }, () => {
     const allInput = inputMsgs.map(m => m.data).join('');
     expect(allInput).not.toMatch(/\?[\d;]+c/);
   });
+
+  test('active session: background → WS drops → resume → input works without manual reconnect', async ({ page, mockSshServer }) => {
+    // DEVICE-FAILS: passes in headless but fails on real Android. Headless can't
+    // simulate the race condition where onclose fires asynchronously during/after
+    // visibilitychange. Needs emulator test (#357) for real validation.
+    // This is the most critical test — the exact user scenario:
+    // 1. Connected and using the app
+    // 2. Switch to another Android app (background)
+    // 3. WS dies while backgrounded
+    // 4. Return to MobiSSH
+    // 5. Terminal is visible — input should work WITHOUT tapping reconnect
+    await setupConnected(page, mockSshServer);
+
+    // Verify input works initially
+    const before = mockSshServer.messages.filter(m => m.type === 'input').length;
+    await page.evaluate(() => {
+      return import('./modules/connection.js').then(m => m.sendSSHInput('before-bg'));
+    });
+    await page.waitForTimeout(200);
+    expect(mockSshServer.messages.filter(m => m.type === 'input').length).toBeGreaterThan(before);
+
+    // Simulate background: visibility hidden
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(200);
+
+    // WS drops while backgrounded (server kills connection)
+    mockSshServer.dropAll();
+    await page.waitForTimeout(500);
+
+    // Resume: visibility visible
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Wait for auto-reconnect — should happen without user action
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 2;
+    }, null, { timeout: 15_000 });
+    await page.waitForTimeout(500);
+
+    // Input should work NOW — no manual reconnect needed
+    const afterReconnect = mockSshServer.messages.filter(m => m.type === 'input').length;
+    await page.evaluate(() => {
+      return import('./modules/connection.js').then(m => m.sendSSHInput('after-bg'));
+    });
+    await page.waitForTimeout(300);
+    const final = mockSshServer.messages.filter(m => m.type === 'input').length;
+    expect(final).toBeGreaterThan(afterReconnect);
+  });
 });
