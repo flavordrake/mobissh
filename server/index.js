@@ -798,7 +798,7 @@ wss.on('connection', (ws, req) => {
       host: resolvedIp,
       port: parseInt(cfg.port) || 22,
       username: cfg.username,
-      readyTimeout: 15000,
+      readyTimeout: 30000,  // 30s — Tailscale relay can be slow on reconnect
       keepaliveInterval: 15000,  // SSH-layer keepalive every 15s
       keepaliveCountMax: 10,      // drop after 10 unanswered (~150s) — mobile needs longer grace
       hostVerifier(keyBuffer, verify) {
