@@ -494,8 +494,25 @@ if (require.main === module) {
         client._missedPongs = (client._missedPongs || 0) + 1;
         console.log(`[keepalive] Client missed pong #${client._missedPongs}/${WS_MAX_MISSED_PONGS}`);
         if (client._missedPongs >= WS_MAX_MISSED_PONGS) {
-          console.log(`[keepalive] Terminating client after ${WS_MAX_MISSED_PONGS} missed pongs`);
-          client.terminate();
+          // Before terminating: check if any OTHER WS from the same IP is still responding.
+          // The Worker keepalive opens a separate WS — if it's alive, the client is reachable
+          // and the main WS pong is just delayed by Android throttling.
+          const clientIP = client._clientIP;
+          let siblingAlive = false;
+          if (clientIP) {
+            wss.clients.forEach((other) => {
+              if (other !== client && other._clientIP === clientIP && other.readyState === WebSocket.OPEN && !other._pongPending) {
+                siblingAlive = true;
+              }
+            });
+          }
+          if (siblingAlive) {
+            console.log(`[keepalive] Client missed ${client._missedPongs} pongs but sibling WS from ${clientIP} is alive — keeping`);
+            client._missedPongs = 0; // Reset — the client is reachable via sibling
+          } else {
+            console.log(`[keepalive] Terminating client after ${WS_MAX_MISSED_PONGS} missed pongs`);
+            client.terminate();
+          }
           return;
         }
       } else {
@@ -634,6 +651,7 @@ wss.on('connection', (ws, req) => {
   }
 
   track.active++;
+  ws._clientIP = clientIP; // Store for sibling-alive check in keepalive
   console.log(`[ssh-bridge] Client connected: ${clientIP} (active: ${track.active})`);
 
   let sshClient = null;
