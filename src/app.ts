@@ -14,7 +14,7 @@ import {
   loadProfileIntoForm, deleteProfile,
   loadKeys, importKey, useKey, deleteKey, renameKey, populateKeyDropdown,
 } from './modules/profiles.js';
-import { initSettings, initSettingsPanel, registerServiceWorker } from './modules/settings.js';
+import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
 import { initIME, initIMEInput } from './modules/ime.js';
 import { initSelection } from './modules/selection.js';
@@ -41,6 +41,7 @@ declare global {
 
 document.addEventListener('DOMContentLoaded', () => void (async () => {
   try {
+    migrateSettings();
     initDebugOverlay();
     initTerminal();
     initUI({ keyboardVisible: getKeyboardVisible, ROOT_CSS: getRootCSS(), applyFontSize, applyTheme });
