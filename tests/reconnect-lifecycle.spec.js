@@ -286,6 +286,69 @@ test.describe('Reconnect lifecycle', { tag: '@headless-adequate' }, () => {
     expect(btnTextAfter).toContain('mock-host');
   });
 
+  test('terminal fills available space after session switch (#316)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Get terminal dimensions after first connect
+    const dims1 = await page.evaluate(() => {
+      const el = document.querySelector('.xterm-screen');
+      return el ? { w: el.clientWidth, h: el.clientHeight } : null;
+    });
+    expect(dims1).not.toBeNull();
+    expect(dims1.w).toBeGreaterThan(100);
+    expect(dims1.h).toBeGreaterThan(100);
+
+    // Force-close and reconnect to create a "second" session state
+    mockSshServer.dropAll();
+    await page.waitForTimeout(1000);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 2;
+    }, null, { timeout: 10_000 });
+
+    // Check terminal dimensions after reconnect — should be similar to initial
+    await page.waitForTimeout(500);
+    const dims2 = await page.evaluate(() => {
+      const el = document.querySelector('.xterm-screen');
+      return el ? { w: el.clientWidth, h: el.clientHeight } : null;
+    });
+    expect(dims2).not.toBeNull();
+    // Width should be at least 50% of original (not collapsed to narrow column)
+    expect(dims2.w).toBeGreaterThan(dims1.w * 0.5);
+    expect(dims2.h).toBeGreaterThan(dims1.h * 0.5);
+  });
+
+  test('no control character leak after reconnect (#350)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Force-close and reconnect
+    mockSshServer.dropAll();
+    await page.waitForTimeout(1000);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 2;
+    }, null, { timeout: 10_000 });
+    await page.waitForTimeout(500);
+
+    // Check terminal content for leaked escape code responses
+    const termText = await page.evaluate(() => {
+      const el = document.querySelector('.xterm-screen');
+      return el ? el.textContent : '';
+    });
+    expect(termText).not.toContain('?1;2c');
+    expect(termText).not.toContain('0;276;0c');
+  });
+
   test('DA1/DA2 responses are filtered from terminal.onData — not sent to SSH (#350)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 

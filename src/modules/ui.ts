@@ -291,29 +291,36 @@ export function switchSession(id: string): void {
     }
   }
 
-  // Fit the newly visible terminal and sync dimensions to server.
-  // A single rAF isn't sufficient — the browser may not have completed layout
-  // for the just-unhidden container by the next frame, especially on mobile
-  // where keyboard adjustments delay layout. Use double-rAF + fallback. (#316)
-  const fitAndResize = (): void => {
+  // Fit the newly visible terminal after layout completes.
+  // Use a one-shot ResizeObserver on the session container — fires exactly when
+  // the browser has laid out the now-visible element with its real dimensions.
+  // Fallback: retry with rAF if ResizeObserver doesn't fire within 500ms. (#316)
+  const sessionContainer = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(session.id)}"]`);
+  const doFit = (): void => {
     if (!session.fitAddon || !session.terminal) return;
-    const container = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(session.id)}"]`);
-    if (container && container.offsetHeight > 0) {
-      session.fitAddon.fit();
-      if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-        session.ws.send(JSON.stringify({
-          type: 'resize',
-          cols: session.terminal.cols ?? 80,
-          rows: session.terminal.rows ?? 24,
-        }));
-      }
-    } else {
-      // Container still has zero height — try again next frame
-      requestAnimationFrame(fitAndResize);
+    session.fitAddon.fit();
+    if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
+      session.ws.send(JSON.stringify({
+        type: 'resize',
+        cols: session.terminal.cols ?? 80,
+        rows: session.terminal.rows ?? 24,
+      }));
     }
   };
-  // Double-rAF: first frame for layout, second for measurement
-  requestAnimationFrame(() => requestAnimationFrame(fitAndResize));
+  if (sessionContainer) {
+    let fitted = false;
+    const ro = new ResizeObserver(() => {
+      if (fitted) return;
+      fitted = true;
+      ro.disconnect();
+      doFit();
+    });
+    ro.observe(sessionContainer);
+    // Fallback: if ResizeObserver doesn't fire (e.g., dimensions unchanged), force fit
+    setTimeout(() => { if (!fitted) { fitted = true; ro.disconnect(); doFit(); } }, 500);
+  } else {
+    requestAnimationFrame(() => requestAnimationFrame(doFit));
+  }
 
   // Update session menu button text
   const btn = document.getElementById('sessionMenuBtn');
