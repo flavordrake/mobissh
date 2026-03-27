@@ -425,7 +425,6 @@ export function initSessionMenu(): void {
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (_swipeJustFired) { _swipeJustFired = false; return; }
-    if (appState.sessions.size === 0) return;
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
     // Position menu bottom above the handle bar using actual element position
@@ -473,6 +472,8 @@ export function initSessionMenu(): void {
   menuBtn.addEventListener('touchend', (e) => {
     if (!_swipeClaimed) { _swipeX0 = null; return; }
     _swipeJustFired = true;
+    // Auto-reset after 300ms so the next tap isn't consumed
+    setTimeout(() => { _swipeJustFired = false; }, 300);
     const dx = (e.changedTouches[0]?.clientX ?? _swipeX0 ?? 0) - (_swipeX0 ?? 0);
     _swipeX0 = null;
     menuBtn.style.opacity = '';
