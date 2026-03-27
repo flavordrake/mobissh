@@ -482,11 +482,11 @@ const wss = new WebSocket.Server({
 });
 
 // WebSocket-level ping/pong to keep idle connections alive through proxies/NAT.
-// Allow 2 missed pongs (~50s grace) before terminating (#204). Mobile browsers
-// in background may not respond within a single 25s interval.
-// Only started when the server is actually running (not when imported for tests).
+// Allow missed pongs before terminating (#204). Mobile browsers in background
+// throttle the main thread — pong responses may be delayed significantly.
+// 6 missed × 25s = 150s grace period before terminating.
 if (require.main === module) {
-  const WS_MAX_MISSED_PONGS = 3;
+  const WS_MAX_MISSED_PONGS = 6;
   const wsPingInterval = setInterval(() => {
     wss.clients.forEach((client) => {
       if (client.readyState !== WebSocket.OPEN) return;
@@ -800,7 +800,7 @@ wss.on('connection', (ws, req) => {
       username: cfg.username,
       readyTimeout: 15000,
       keepaliveInterval: 15000,  // SSH-layer keepalive every 15s
-      keepaliveCountMax: 4,       // drop after 4 unanswered (~60s)
+      keepaliveCountMax: 10,      // drop after 10 unanswered (~150s) — mobile needs longer grace
       hostVerifier(keyBuffer, verify) {
         // Compute SHA-256 fingerprint in OpenSSH format (#5)
         const fp = createHash('sha256').update(keyBuffer).digest('base64');
