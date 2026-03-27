@@ -14,6 +14,14 @@ import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSf
 import { saveProfile, connectFromProfile, newConnection, loadProfiles } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 
+/** Update session menu button text without clobbering child elements like badges (#355). */
+function _setMenuBtnText(text: string): void {
+  const btn = document.getElementById('sessionMenuBtn');
+  if (!btn) return;
+  const textNode = Array.from(btn.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+  if (textNode) { textNode.textContent = text; } else { btn.prepend(document.createTextNode(text)); }
+}
+
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
 
 type PanelName = 'terminal' | 'connect' | 'files' | 'keys' | 'settings';
@@ -205,11 +213,9 @@ export function showErrorDialog(message: string): void {
 // ── Status indicator ─────────────────────────────────────────────────────────
 
 export function setStatus(state: ConnectionStatus, text: string): void {
+  _setMenuBtnText(state === 'connected' ? text : 'MobiSSH');
   const btn = document.getElementById('sessionMenuBtn');
-  if (btn) {
-    btn.textContent = state === 'connected' ? text : 'MobiSSH';
-    btn.classList.toggle('connected', state === 'connected');
-  }
+  if (btn) btn.classList.toggle('connected', state === 'connected');
   // Enable/disable upload buttons based on connection state
   const connected = state === 'connected';
   document.querySelectorAll<HTMLButtonElement>('.files-upload-btn, #transferUploadBtn').forEach(b => {
@@ -334,8 +340,8 @@ export function switchSession(id: string): void {
 
   // Update session menu button text
   const btn = document.getElementById('sessionMenuBtn');
-  if (btn && session.profile) {
-    btn.textContent = `${session.profile.username}@${session.profile.host}`;
+  if (session.profile) {
+    _setMenuBtnText(`${session.profile.username}@${session.profile.host}`);
   }
 
   // Close the menu
@@ -374,11 +380,9 @@ export function closeSession(id: string): void {
       switchSession(remaining[0]!);
     } else {
       appState.activeSessionId = null;
+      _setMenuBtnText('MobiSSH');
       const btn = document.getElementById('sessionMenuBtn');
-      if (btn) {
-        btn.textContent = 'MobiSSH';
-        btn.classList.remove('connected');
-      }
+      if (btn) btn.classList.remove('connected');
       // Restore default theme from localStorage
       const defaultTheme = localStorage.getItem('termTheme') ?? 'dark';
       _applyTheme(defaultTheme);
@@ -410,10 +414,7 @@ export function initSessionMenu(): void {
     const btn = document.getElementById('sessionMenuBtn');
     if (btn && session.id === appState.activeSessionId && session.profile) {
       const host = `${session.profile.username}@${session.profile.host}`;
-      const label = isSessionConnected(session) ? host : `${host} (${newState})`;
-      // Update only the first text node — preserve child elements like notification badges (#355)
-      const textNode = Array.from(btn.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
-      if (textNode) { textNode.textContent = label; } else { btn.prepend(label); }
+      _setMenuBtnText(isSessionConnected(session) ? host : `${host} (${newState})`);
     }
   });
 
