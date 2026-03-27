@@ -462,8 +462,17 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   // User-initiated connections navigate to terminal once SSH is established (#309)
   if (!silent && sessionId) _pendingNavigateSessions.add(sessionId);
 
+  // Abort the previous connection cycle FIRST — removes all addEventListener
+  // listeners via signal before we close the WS, preventing race conditions
+  // where the old onclose handler fires and triggers a duplicate reconnect.
+  if (session?._cycle) {
+    session._cycle.controller.abort();
+    if (session._cycle.disposables) {
+      for (const d of session._cycle.disposables) d.dispose();
+    }
+    session._cycle = null;
+  }
   if (session?.ws) {
-    session.ws.onclose = null;
     session.ws.close();
     session.ws = null;
   }
