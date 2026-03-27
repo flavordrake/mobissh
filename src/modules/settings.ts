@@ -13,6 +13,25 @@ import { showErrorDialog } from './ui.js';
 import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewIdleDelay } from './ime.js';
 
 
+/** Declarative schema for validatable localStorage keys. */
+const SETTING_SCHEMAS: Array<{ key: string; valid: string[]; defaultValue: string }> = [
+  { key: 'imeDockPosition', valid: ['top', 'bottom'], defaultValue: 'top' },
+  { key: 'imePreviewMode', valid: ['true', 'false'], defaultValue: 'true' },
+  { key: 'imeMode', valid: ['ime', 'direct'], defaultValue: 'direct' },
+  { key: 'keyControlsDock', valid: ['left', 'right'], defaultValue: 'right' },
+];
+
+/** Validate localStorage keys against current valid values. Remove invalid entries. */
+export function migrateSettings(): void {
+  for (const { key, valid, defaultValue } of SETTING_SCHEMAS) {
+    const stored = localStorage.getItem(key);
+    if (stored !== null && !valid.includes(stored)) {
+      console.info(`[settings] migrated ${key}: "${stored}" → removed (default: ${defaultValue})`);
+      localStorage.removeItem(key);
+    }
+  }
+}
+
 let _toast = (_msg: string): void => {};
 let _applyFontSize = (_size: number): void => {};
 let _applyTheme = (_name: string, _opts?: { persist?: boolean }): void => {};
