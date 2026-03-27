@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-session-test-first-reconnect-20260327-005707/` — test-first reconnect lifecycle, DA1 leak fix, connect UX polish
+> **Active TRACE**: `.traces/trace-cycle-test-baseline-20260327-165914/` — cycle: test baseline for session lifecycle
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.

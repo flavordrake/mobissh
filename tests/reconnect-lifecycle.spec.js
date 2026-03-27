@@ -369,4 +369,259 @@ test.describe('Reconnect lifecycle', { tag: '@headless-adequate' }, () => {
     expect(allInput).not.toContain('0;276;0c');
     expect(allInput).toContain('real-input');
   });
+
+  // ── Tier 1 baseline tests (#356) ─────────────────────────────────────────
+  // Some of these are intentionally RED — they express expected behavior for
+  // known bugs. When the bugs are fixed, these tests go green.
+
+  test('multi-session: both sessions reconnect after background drop (#354)', async ({ page, mockSshServer }) => {
+    // RED BASELINE — #354: only active session reconnects
+    await setupConnected(page, mockSshServer);
+
+    // Save a second profile and connect it
+    await page.evaluate((port) => {
+      localStorage.setItem('wsUrl', `ws://localhost:${port}`);
+    }, mockSshServer.port);
+    await page.locator('#handleMenuBtn').click();
+    await page.waitForTimeout(100);
+    await page.locator('[data-panel="connect"]').click();
+    await page.waitForTimeout(200);
+
+    // Fill second profile
+    await page.locator('#host').fill('mock-host-2');
+    await page.locator('#remote_a').fill('testuser2');
+    await page.locator('#remote_c').fill('testpass2');
+    await page.locator('#connectForm button[type="submit"]').click();
+    await page.waitForTimeout(500);
+
+    // Connect second profile
+    const connectBtns = page.locator('[data-action="connect"]');
+    await connectBtns.last().click();
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 2;
+    }, null, { timeout: 10_000 });
+
+    // Both sessions connected — now drop all
+    mockSshServer.dropAll();
+    await page.waitForTimeout(1000);
+
+    // Simulate visibility restore
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Wait for reconnects — should see 4+ resize messages total (2 initial + 2 reconnect)
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 4;
+    }, null, { timeout: 15_000 });
+
+    // Both sessions should exist and be connected
+    const sessionCount = await page.evaluate(() => {
+      return import('./modules/state.js').then(m => {
+        let connected = 0;
+        for (const [, s] of m.appState.sessions) {
+          if (s.state === 'connected') connected++;
+        }
+        return connected;
+      });
+    });
+    expect(sessionCount).toBe(2);
+  });
+
+  test('multi-session: background session has input after reconnect (#354)', async ({ page, mockSshServer }) => {
+    // RED BASELINE — #354: background session may need manual reconnect
+    await setupConnected(page, mockSshServer);
+
+    // Get first session ID
+    const firstSessionId = await page.evaluate(() => {
+      return import('./modules/state.js').then(m => m.appState.activeSessionId);
+    });
+
+    // Connect second session (same mock server, different profile name)
+    await page.locator('#handleMenuBtn').click();
+    await page.waitForTimeout(100);
+    await page.locator('[data-panel="connect"]').click();
+    await page.waitForTimeout(200);
+    await page.locator('#host').fill('mock-host-2');
+    await page.locator('#remote_a').fill('testuser2');
+    await page.locator('#remote_c').fill('testpass2');
+    await page.locator('#connectForm button[type="submit"]').click();
+    await page.waitForTimeout(500);
+    await page.locator('[data-action="connect"]').last().click();
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 2;
+    }, null, { timeout: 10_000 });
+
+    // Drop all, restore visibility
+    mockSshServer.dropAll();
+    await page.waitForTimeout(1000);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(3000);
+
+    // Switch back to first session
+    await page.evaluate((sid) => {
+      return import('./modules/ui.js').then(m => m.switchSession(sid));
+    }, firstSessionId);
+    await page.waitForTimeout(1000);
+
+    // Send input on first session — should arrive
+    const beforeCount = mockSshServer.messages.filter(m => m.type === 'input').length;
+    await page.evaluate(() => {
+      return import('./modules/connection.js').then(m => m.sendSSHInput('bg-session-test'));
+    });
+    await page.waitForTimeout(300);
+    const afterCount = mockSshServer.messages.filter(m => m.type === 'input').length;
+    expect(afterCount).toBeGreaterThan(beforeCount);
+  });
+
+  test('terminal cols correct after visibility restore (#316)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Get initial cols
+    const colsBefore = await page.evaluate(() => {
+      return import('./modules/state.js').then(m => m.currentSession()?.terminal?.cols ?? 0);
+    });
+    expect(colsBefore).toBeGreaterThan(40);
+
+    // Background and restore
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Wait for fit to settle
+    await page.waitForTimeout(1000);
+
+    const colsAfter = await page.evaluate(() => {
+      return import('./modules/state.js').then(m => m.currentSession()?.terminal?.cols ?? 0);
+    });
+    // Should be within 10% of original — not shrunken to single digits
+    expect(colsAfter).toBeGreaterThan(colsBefore * 0.8);
+  });
+
+  test('terminal cols correct after panel round-trip (#316)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    const colsBefore = await page.evaluate(() => {
+      return import('./modules/state.js').then(m => m.currentSession()?.terminal?.cols ?? 0);
+    });
+
+    // Navigate away and back
+    await page.locator('#handleMenuBtn').click();
+    await page.waitForTimeout(100);
+    await page.locator('[data-panel="connect"]').click();
+    await page.waitForTimeout(300);
+    await page.locator('[data-panel="terminal"]').click();
+    await page.waitForTimeout(1000);
+
+    const colsAfter = await page.evaluate(() => {
+      return import('./modules/state.js').then(m => m.currentSession()?.terminal?.cols ?? 0);
+    });
+    expect(colsAfter).toBeGreaterThan(colsBefore * 0.8);
+  });
+
+  test('session menu opens after full reconnect cycle', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Full cycle: drop, reconnect
+    mockSshServer.dropAll();
+    await page.waitForTimeout(1000);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 2;
+    }, null, { timeout: 10_000 });
+
+    // Click session menu — should open
+    await page.locator('#sessionMenuBtn').click();
+    await page.waitForTimeout(300);
+    const menuHidden = await page.locator('#sessionMenu').evaluate(el => el.classList.contains('hidden'));
+    expect(menuHidden).toBe(false);
+  });
+
+  test('session menu button preserves badge HTML after state change (#355)', async ({ page, mockSshServer }) => {
+    // RED BASELINE — #355: textContent clobbers badge
+    await setupConnected(page, mockSshServer);
+
+    // Simulate notification badge by injecting one
+    await page.evaluate(() => {
+      const btn = document.getElementById('sessionMenuBtn');
+      if (btn) {
+        const badge = document.createElement('span');
+        badge.className = 'notif-badge';
+        badge.textContent = '3';
+        btn.appendChild(badge);
+      }
+    });
+
+    // Verify badge exists
+    const badgeBefore = await page.locator('#sessionMenuBtn .notif-badge').count();
+    expect(badgeBefore).toBe(1);
+
+    // Trigger state change (disconnect + reconnect)
+    mockSshServer.dropAll();
+    await page.waitForTimeout(1000);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(2000);
+
+    // Badge should still exist after state changes
+    const badgeAfter = await page.locator('#sessionMenuBtn .notif-badge').count();
+    expect(badgeAfter).toBe(1);
+  });
+
+  test('no escape codes after reconnect via visibility restore (#350)', async ({ page, mockSshServer }) => {
+    await setupConnected(page, mockSshServer);
+
+    // Full visibility cycle
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    mockSshServer.dropAll();
+    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForFunction(() => {
+      return (window.__mockWsSpy || []).filter(s => {
+        try { return JSON.parse(s).type === 'resize'; } catch (_) { return false; }
+      }).length >= 2;
+    }, null, { timeout: 10_000 });
+    await page.waitForTimeout(1000);
+
+    // Check for leaked escape sequences
+    const termText = await page.evaluate(() => {
+      const el = document.querySelector('.xterm-screen');
+      return el ? el.textContent : '';
+    });
+    expect(termText).not.toContain('?1;2c');
+    expect(termText).not.toContain('0;276;0c');
+    // Also check no input messages contained DA responses
+    const inputMsgs = mockSshServer.messages.filter(m => m.type === 'input');
+    const allInput = inputMsgs.map(m => m.data).join('');
+    expect(allInput).not.toMatch(/\?[\d;]+c/);
+  });
 });
