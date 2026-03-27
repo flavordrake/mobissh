@@ -410,7 +410,10 @@ export function initSessionMenu(): void {
     const btn = document.getElementById('sessionMenuBtn');
     if (btn && session.id === appState.activeSessionId && session.profile) {
       const host = `${session.profile.username}@${session.profile.host}`;
-      btn.textContent = isSessionConnected(session) ? host : `${host} (${newState})`;
+      const label = isSessionConnected(session) ? host : `${host} (${newState})`;
+      // Update only the first text node — preserve child elements like notification badges (#355)
+      const textNode = Array.from(btn.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+      if (textNode) { textNode.textContent = label; } else { btn.prepend(label); }
     }
   });
 

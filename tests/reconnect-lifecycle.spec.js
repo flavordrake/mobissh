@@ -387,6 +387,10 @@ test.describe('Reconnect lifecycle', { tag: '@headless-adequate' }, () => {
     await page.locator('[data-panel="connect"]').click();
     await page.waitForTimeout(200);
 
+    // Click New Connection to reveal form
+    await page.locator('#newConnBtn').click();
+    await page.waitForTimeout(200);
+
     // Fill second profile
     await page.locator('#host').fill('mock-host-2');
     await page.locator('#remote_a').fill('testuser2');
@@ -446,6 +450,8 @@ test.describe('Reconnect lifecycle', { tag: '@headless-adequate' }, () => {
     await page.locator('#handleMenuBtn').click();
     await page.waitForTimeout(100);
     await page.locator('[data-panel="connect"]').click();
+    await page.waitForTimeout(200);
+    await page.locator('#newConnBtn').click();
     await page.waitForTimeout(200);
     await page.locator('#host').fill('mock-host-2');
     await page.locator('#remote_a').fill('testuser2');
