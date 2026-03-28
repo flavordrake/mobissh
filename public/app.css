@@ -2553,6 +2553,8 @@ hr {
   overflow: auto;
   padding: 12px;
   -webkit-overflow-scrolling: touch;
+  color: var(--text);
+  background: var(--bg);
 }
 
 .preview-rendered img {
@@ -2575,47 +2577,42 @@ hr {
   border: none;
 }
 
+/* Preview text uses only --text and --bg-card for maximum contrast across themes */
 .preview-rendered h1,
 .preview-rendered h2,
 .preview-rendered h3 {
-  color: var(--fg, #ccc);
+  color: var(--text);
   margin: 12px 0 6px;
 }
 
 .preview-rendered p {
-  color: var(--fg, #ccc);
+  color: var(--text);
   margin: 6px 0;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .preview-rendered pre {
-  background: var(--bar-bg, #1a1a2e);
+  background: var(--bg-card);
+  color: var(--text);
   padding: 10px;
   border-radius: 4px;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
   font-size: 13px;
 }
 
 .preview-rendered code {
+  color: var(--text);
   font-size: 13px;
 }
 
 .source-view {
-  background: var(--bar-bg, #1a1a2e);
-  padding: 10px;
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 12px;
   border-radius: 4px;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
   font-size: 13px;
-  line-height: 1.5;
-  color: var(--fg, #ccc);
-}
-
-.line-num {
-  display: inline-block;
-  width: 3em;
-  text-align: right;
-  margin-right: 1em;
-  color: var(--fg, #666);
-  opacity: 0.5;
-  user-select: none;
+  line-height: 1.6;
 }

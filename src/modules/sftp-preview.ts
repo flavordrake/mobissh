@@ -199,11 +199,7 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
 
 function renderSource(data: Uint8Array | string): string {
   const text = toText(data);
-  const lines = text.split('\n');
-  const numbered = lines.map((line, i) =>
-    `<span class="line-num">${String(i + 1)}</span> ${escapeHtml(line)}`
-  ).join('\n');
-  return `<pre class="source-view">${numbered}</pre>`;
+  return `<pre class="source-view">${escapeHtml(text)}</pre>`;
 }
 
 // ── Preview panel with source/rendered toggle ────────────────────────────────
