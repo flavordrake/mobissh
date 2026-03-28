@@ -7,8 +7,12 @@ server/node_modules
 tests
 scripts
 playwright-report
+playwright-report-*
 test-results
+test-results-*
 test-history
+.traces
+tools
 docs
 memory
 playwright*.config.*
