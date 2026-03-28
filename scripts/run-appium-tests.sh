@@ -22,7 +22,7 @@ RUN_LOG="${MOBISSH_LOGDIR}/run-appium-tests.log"
 exec > >(tee -a "$RUN_LOG") 2>&1
 echo "$(date '+%Y-%m-%d %H:%M:%S') run-appium-tests.sh started"
 
-ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 
 AVD_NAME="MobiSSH_Pixel7"

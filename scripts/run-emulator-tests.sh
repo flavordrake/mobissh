@@ -17,7 +17,7 @@ mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 LOGFILE="${MOBISSH_LOGDIR}/emulator-tests.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
-ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 
 AVD_NAME="MobiSSH_Pixel7"
