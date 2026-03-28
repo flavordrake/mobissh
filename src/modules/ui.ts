@@ -213,7 +213,14 @@ export function showErrorDialog(message: string): void {
 // ── Status indicator ─────────────────────────────────────────────────────────
 
 export function setStatus(state: ConnectionStatus, text: string): void {
-  _setMenuBtnText(state === 'connected' ? text : 'MobiSSH');
+  if (state === 'connected') {
+    _setMenuBtnText(text);
+  } else {
+    // Only reset to 'MobiSSH' if NO session is connected — a background session
+    // disconnecting shouldn't clobber the active connected session's name (#362)
+    const anyConnected = Array.from(appState.sessions.values()).some(s => isSessionConnected(s));
+    if (!anyConnected) _setMenuBtnText('MobiSSH');
+  }
   const btn = document.getElementById('sessionMenuBtn');
   if (btn) btn.classList.toggle('connected', state === 'connected');
   // Enable/disable upload buttons based on connection state
