@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-cycle-test-baseline-20260327-165914/` — cycle: test baseline for session lifecycle
+> **Active TRACE**: `.traces/trace-issue-374-session-handle-173849/` — SessionHandle class refactor, single fit path
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
