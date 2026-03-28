@@ -13,6 +13,7 @@ import { applyTheme } from './terminal.js';
 import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
+import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
 
 /** Update session menu button text without clobbering child elements like badges (#355). */
 function _setMenuBtnText(text: string): void {
@@ -1168,6 +1169,8 @@ const _filesCache = new Map<string, SftpEntry[]>();
 const _filesPending = new Map<string, string>();
 // Maps requestId -> filename for pending downloads
 const _downloadPending = new Map<string, string>();
+// Set of requestIds that are preview downloads (not browser-save downloads)
+const _previewPending = new Set<string>();
 // Maps requestId -> remotePath for pending uploads
 const _uploadPending = new Map<string, string>();
 // Maps requestId -> parent dir for pending renames/deletes
@@ -1450,6 +1453,91 @@ async function _startUpload(files: FileList): Promise<void> {
   }
 }
 
+/** Request a file download for preview purposes. */
+function _requestFilePreview(filePath: string): void {
+  const filename = filePath.split('/').pop() ?? filePath;
+  const reqId = `preview-${String(Date.now())}-${filename.slice(0, 8)}`;
+  _downloadPending.set(reqId, filename);
+  _previewPending.add(reqId);
+  _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
+  _setTransferStatus('Loading preview...');
+  _renderTransferList();
+  sendSftpDownload(filePath, reqId);
+}
+
+/** Active preview panel cleanup handle. */
+let _activePreviewCleanup: (() => void) | null = null;
+
+/** Show a file preview in the filePreview container. */
+function _showFilePreview(filename: string, data: Uint8Array): void {
+  const containerEl = document.getElementById('filePreview');
+  const exploreEl = document.getElementById('filesExplore');
+  if (!containerEl || !exploreEl) return;
+  // Local const bindings so closures see non-null types
+  const container = containerEl;
+  const explore = exploreEl;
+
+  // Clean up any previous preview
+  if (_activePreviewCleanup) {
+    _activePreviewCleanup();
+    _activePreviewCleanup = null;
+  }
+
+  const panel = createPreviewPanel(filename, data);
+
+  // Build back button
+  const backBtn = document.createElement('button');
+  backBtn.className = 'preview-back-btn';
+  backBtn.textContent = '\u2190 ' + filename;
+
+  container.innerHTML = '';
+  container.appendChild(backBtn);
+  container.appendChild(panel);
+  container.classList.remove('hidden');
+  explore.classList.add('hidden');
+
+  history.pushState({ type: 'preview' }, '');
+
+  _activePreviewCleanup = (): void => { panel.cleanup(); };
+
+  function closePreview(): void {
+    panel.cleanup();
+    _activePreviewCleanup = null;
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    explore.classList.remove('hidden');
+    window.removeEventListener('popstate', onPopstate);
+  }
+
+  function onPopstate(): void {
+    closePreview();
+  }
+
+  backBtn.addEventListener('click', () => {
+    closePreview();
+    history.back();
+  });
+
+  window.addEventListener('popstate', onPopstate);
+
+  // Wire tab switching (event delegation on the panel)
+  panel.addEventListener('click', (e) => {
+    const tab = (e.target as HTMLElement).closest<HTMLElement>('.preview-tab');
+    if (!tab) return;
+    const target = tab.dataset.tab;
+    panel.querySelectorAll('.preview-tab').forEach((t) => t.classList.toggle('active', t === tab));
+    const srcView = panel.querySelector<HTMLElement>('.preview-source');
+    const renView = panel.querySelector<HTMLElement>('.preview-rendered');
+    if (target === 'source') {
+      if (srcView) srcView.style.display = '';
+      if (renView) renView.style.display = 'none';
+    } else {
+      if (srcView) srcView.style.display = 'none';
+      if (renView) renView.style.display = '';
+    }
+  });
+}
+
 function _renderFilesPanel(path: string, bodyHtml: string): void {
   _dismissContextMenu();
   const panel = document.getElementById('filesExplore');
@@ -1509,12 +1597,18 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
     });
   });
 
-  // Single tap on file = toggle selection (not download)
+  // Single tap on file: preview if previewable, otherwise toggle selection
   panel.querySelectorAll<HTMLElement>('.files-entry[data-dir="false"]').forEach((row) => {
     row.addEventListener('click', () => {
       if (_longPressFired) { _longPressFired = false; return; }
-      row.classList.toggle('files-selected');
-      _updateFileSelectionToolbar(panel);
+      const filePath = row.dataset.path ?? '';
+      const filename = filePath.split('/').pop() ?? filePath;
+      if (isPreviewable(filename)) {
+        _requestFilePreview(filePath);
+      } else {
+        row.classList.toggle('files-selected');
+        _updateFileSelectionToolbar(panel);
+      }
     });
   });
 
@@ -1697,11 +1791,15 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
   menu.id = 'filesCtxMenu';
   menu.className = 'ctx-menu';
 
+  const filename = path.split('/').pop() ?? path;
+  const fileActions = isPreviewable(filename)
+    ? ['preview', 'download', 'rename', 'delete', 'details', 'copy-path']
+    : ['download', 'rename', 'delete', 'details', 'copy-path'];
   const actions = isDir
     ? ['rename', 'delete', 'details', 'copy-path']
-    : ['download', 'rename', 'delete', 'details', 'copy-path'];
+    : fileActions;
   const labels: Record<string, string> = {
-    download: 'Download', rename: 'Rename', delete: 'Delete',
+    preview: 'Preview', download: 'Download', rename: 'Rename', delete: 'Delete',
     details: 'Details', 'copy-path': 'Copy Path',
   };
   menu.innerHTML = actions.map(a => `<button class="ctx-menu-item" data-action="${a}">${labels[a]!}</button>`).join('');
@@ -1743,6 +1841,10 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
     dismiss();
     history.back();
     switch (action) {
+      case 'preview': {
+        _requestFilePreview(path);
+        break;
+      }
       case 'download': {
         const filename = path.split('/').pop() ?? path;
         _setTransferStatus('Downloading...');
@@ -1801,7 +1903,15 @@ export function initFilesPanel(): void {
       const filename = _downloadPending.get(msg.requestId);
       _downloadPending.delete(msg.requestId);
       _setTransferStatus('');
-      if (filename && msg.data) _triggerBlobDownload(filename, msg.data);
+      if (filename && msg.data && _previewPending.has(msg.requestId)) {
+        _previewPending.delete(msg.requestId);
+        const binary = atob(msg.data);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!;
+        _showFilePreview(filename, bytes);
+      } else if (filename && msg.data) {
+        _triggerBlobDownload(filename, msg.data);
+      }
       const dlRec = _transferRecords.get(msg.requestId);
       if (dlRec) { dlRec.status = 'done'; _renderTransferList(); }
     } else if (msg.type === 'sftp_upload_result') {
