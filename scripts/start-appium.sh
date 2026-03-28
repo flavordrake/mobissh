@@ -47,7 +47,12 @@ load_nvm() {
 }
 
 load_android_env() {
-  export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+  # Detect SDK location — /opt/android-sdk is the container default
+  if [[ -d "/opt/android-sdk" ]]; then
+    export ANDROID_HOME="/opt/android-sdk"
+  else
+    export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+  fi
   export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"
 }
 

@@ -22,6 +22,8 @@ RUN_LOG="${MOBISSH_LOGDIR}/run-appium-tests.log"
 exec > >(tee -a "$RUN_LOG") 2>&1
 echo "$(date '+%Y-%m-%d %H:%M:%S') run-appium-tests.sh started"
 
+# Override ANDROID_HOME — .bashrc may have wrong default
+[[ -d "/opt/android-sdk" ]] && ANDROID_HOME="/opt/android-sdk"
 ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 
