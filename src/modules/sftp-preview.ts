@@ -9,6 +9,7 @@
 // ── Extension maps ───────────────────────────────────────────────────────────
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.m4v']);
 const TEXT_EXTS = new Set(['.md', '.txt', '.log']);
 const HTML_EXTS = new Set(['.html', '.htm']);
 
@@ -24,9 +25,12 @@ export function isPreviewable(filename: string): boolean {
   return getPreviewType(filename) !== null;
 }
 
-export function getPreviewType(filename: string): 'image' | 'text' | 'html' | null {
+export type PreviewType = 'image' | 'video' | 'text' | 'html';
+
+export function getPreviewType(filename: string): PreviewType | null {
   const ext = extOf(filename);
   if (IMAGE_EXTS.has(ext)) return 'image';
+  if (VIDEO_EXTS.has(ext)) return 'video';
   if (TEXT_EXTS.has(ext)) return 'text';
   if (HTML_EXTS.has(ext)) return 'html';
   return null;
@@ -55,6 +59,10 @@ const MIME_MAP: Record<string, string> = {
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/mp4',
 };
 
 /** Track blob URLs created during rendering so cleanup can revoke them. */
@@ -162,6 +170,15 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
       const url = URL.createObjectURL(blob);
       _lastBlobUrls.push(url);
       return `<img src="${url}" alt="${escapeHtml(filename)}" style="max-width:100%;max-height:80vh;">`;
+    }
+    case 'video': {
+      const ext = extOf(filename);
+      const mime = MIME_MAP[ext] ?? 'video/mp4';
+      const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+      const blob = new Blob([bytes as BlobPart], { type: mime });
+      const url = URL.createObjectURL(blob);
+      _lastBlobUrls.push(url);
+      return `<video controls src="${url}" style="max-width:100%;max-height:80vh;"></video>`;
     }
     case 'text': {
       const text = toText(data);
