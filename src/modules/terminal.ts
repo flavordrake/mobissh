@@ -6,6 +6,14 @@ import type { ThemeName, RootCSS } from './types.js';
 import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected } from './state.js';
 
+// Late-bound handle lookup to avoid circular import with connection.ts (#374)
+let _getSessionHandle: ((id: string) => { fitIfVisible(): void } | undefined) | null = null;
+
+/** Register the SessionHandle lookup function (called by connection.ts at init). */
+export function setSessionHandleLookup(fn: (id: string) => { fitIfVisible(): void } | undefined): void {
+  _getSessionHandle = fn;
+}
+
 interface NotifEntry {
   time: number;
   message: string;
@@ -296,9 +304,13 @@ function _renderNotifDrawer(): void {
 export function handleResize(): void {
   const session = currentSession();
   if (!session) return;
-  // Only fit if the session's terminal container is visible and has dimensions.
-  // Background sessions receive resize events (keyboard show/hide) but fitting
-  // them gives zero dimensions that persist when switching back (#316).
+  // Delegate to SessionHandle's single fit path if available (#374)
+  const handle = _getSessionHandle?.(session.id);
+  if (handle) {
+    handle.fitIfVisible();
+    return;
+  }
+  // Fallback for sessions without a handle
   const container = document.querySelector<HTMLElement>(
     `#terminal [data-session-id="${CSS.escape(session.id)}"]`
   );
@@ -349,16 +361,18 @@ export function initKeyboardAwareness(): void {
     }
 
     const session = currentSession();
-    // Guard: only fit if session container is visible (#316)
-    if (session) {
+    // Delegate to SessionHandle's single fit path if available (#374)
+    const viewportHandle = session ? _getSessionHandle?.(session.id) : undefined;
+    if (viewportHandle) {
+      viewportHandle.fitIfVisible();
+    } else if (session) {
       const c = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(session.id)}"]`);
       if (c && c.offsetHeight > 0) session.fitAddon?.fit();
+      if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
+        session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal?.cols ?? 80, rows: session.terminal?.rows ?? 24 }));
+      }
     }
     session?.terminal?.scrollToBottom();
-
-    if (session && isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal?.cols ?? 80, rows: session.terminal?.rows ?? 24 }));
-    }
   }
 
   window.visualViewport.addEventListener('resize', onViewportChange);
