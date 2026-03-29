@@ -1,18 +1,22 @@
 /**
- * modules/session.ts — Self-contained SessionHandle class (#374)
+ * modules/session.ts — SessionHandle: buffered terminal with debounced resize.
  *
- * Buffered terminal — no automatic fit, no ResizeObserver, no timers.
- * Each session owns its Terminal, FitAddon, and container. Output is
- * buffered when the session is not foreground and replayed on show().
+ * Each session owns its Terminal, FitAddon, container, and ResizeObserver.
+ * Output is buffered when the session is not foreground and replayed on show().
+ * Container resize events are debounced and deduplicated before sending to server.
  */
 
 import type { SSHProfile, ThemeName, SessionLifecycleState, ConnectionCycle } from './types.js';
 import { THEMES, RECONNECT } from './constants.js';
+import { FONT_FAMILIES } from './terminal.js';
 
 // Filter DA1/DA2/DA3 responses — xterm.js auto-responds to terminal capability
 // queries from the remote (CSI c, CSI > c). If not filtered, responses leak
 // through to the shell and appear as visible ?1;2c text (#350).
 const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
+
+/** Max buffered output bytes before oldest chunks are dropped. */
+const OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024; // 1 MB
 
 export class SessionHandle {
   readonly id: string;
@@ -33,17 +37,12 @@ export class SessionHandle {
   private _onDataDisposable: { dispose(): void } | null;
   private _reconnectPromise: Promise<string> | null;
 
-  /** Whether this session's container is currently visible. */
   private _visible: boolean;
-  /** Output buffered while session is not foreground. */
   private _outputBuffer: string[];
-  /** Callback to get externally-managed WS (from _openWebSocket in connection.ts). */
+  private _outputBufferBytes: number;
   private _getExternalWs: (() => WebSocket | null) | null;
-  /** ResizeObserver for container size changes. */
   private _resizeObserver: ResizeObserver | null;
-  /** Debounce timer for resize events. */
   private _resizeTimer: ReturnType<typeof setTimeout> | null;
-  /** Last sent cols/rows — deduplicate resize messages. */
   private _lastSentCols: number;
   private _lastSentRows: number;
 
@@ -63,21 +62,16 @@ export class SessionHandle {
     this._reconnectPromise = null;
     this._visible = true;
     this._outputBuffer = [];
+    this._outputBufferBytes = 0;
     this._getExternalWs = null;
     this._resizeObserver = null;
     this._resizeTimer = null;
     this._lastSentCols = 0;
     this._lastSentRows = 0;
 
-    // Create terminal
     const fontSize = parseFloat(localStorage.getItem('fontSize') ?? '14') || 14;
     const savedFont = localStorage.getItem('termFont') ?? 'monospace';
-    const fontFamilies: Record<string, string> = {
-      monospace: 'ui-monospace, Menlo, "Cascadia Code", Consolas, monospace',
-      jetbrains: '"JetBrains Mono", monospace',
-      firacode: '"Fira Code", monospace',
-    };
-    const fontFamily = fontFamilies[savedFont] ?? fontFamilies['monospace']!;
+    const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES['monospace']!;
 
     this.terminal = new Terminal({
       fontFamily,
@@ -95,7 +89,6 @@ export class SessionHandle {
       this.terminal.loadAddon(new ClipboardAddon.ClipboardAddon());
     }
 
-    // Create per-session container div inside #terminal
     this.container = document.createElement('div');
     this.container.dataset['sessionId'] = id;
     this.container.style.width = '100%';
@@ -104,12 +97,9 @@ export class SessionHandle {
     if (terminalRoot) terminalRoot.appendChild(this.container);
 
     this.terminal.open(this.container);
-    // No fit here — container may not be in a visible panel yet.
-    // fit() runs on first show() when the container has real dimensions.
 
-    // ResizeObserver: when the container is resized by UI actions (keybar
-    // toggle, tab bar, keyboard), debounce + deduplicate, then fit + send
-    // resize to server. Skip if container is hidden (offsetHeight 0).
+    // Debounced ResizeObserver — fires when container is resized by UI
+    // actions (keybar toggle, tab bar, keyboard). Skips hidden containers.
     if (typeof ResizeObserver !== 'undefined') {
       this._resizeObserver = new ResizeObserver(() => {
         if (!this._visible || this.container.offsetHeight <= 0) return;
@@ -125,42 +115,37 @@ export class SessionHandle {
 
   // -- Visibility --
 
-  /** Make this session's container visible. Replays buffered output. */
   show(): void {
     this.container.classList.remove('hidden');
     this._visible = true;
 
-    // Fit to actual container dimensions — only if the container has real
-    // layout (parent panel is visible). If the panel isn't active yet,
-    // offsetHeight will be 0 and fit() is a no-op.
     if (this.container.offsetHeight > 0) {
       this.fit();
     }
 
-    // Replay buffered output verbatim
     if (this._outputBuffer.length > 0) {
-      for (const chunk of this._outputBuffer) {
-        this.terminal.write(chunk);
-      }
+      this.terminal.write(this._outputBuffer.join(''));
       this._outputBuffer = [];
+      this._outputBufferBytes = 0;
     }
   }
 
-  /** Hide this session's container. Starts buffering output. */
   hide(): void {
     this.container.classList.add('hidden');
     this._visible = false;
   }
 
-  /**
-   * Write output to the terminal. If the session is not foreground,
-   * buffer it for replay on show().
-   */
   write(data: string): void {
     if (this._visible) {
       this.terminal.write(data);
     } else {
       this._outputBuffer.push(data);
+      this._outputBufferBytes += data.length;
+      // Cap buffer — drop oldest chunks when over limit
+      while (this._outputBufferBytes > OUTPUT_BUFFER_MAX_BYTES && this._outputBuffer.length > 1) {
+        const dropped = this._outputBuffer.shift()!;
+        this._outputBufferBytes -= dropped.length;
+      }
     }
   }
 
@@ -172,33 +157,23 @@ export class SessionHandle {
     const cols = this.terminal.cols;
     const rows = this.terminal.rows;
 
-    // Deduplicate — don't send resize if dimensions haven't changed
     if (cols === this._lastSentCols && rows === this._lastSentRows) return;
     this._lastSentCols = cols;
     this._lastSentRows = rows;
 
-    // Send resize via handle's ws or the externally-managed ws
     const ws = this.ws ?? this._getExternalWs?.();
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     }
   }
 
-  // Keep fitIfVisible as an alias for backward compat with wiring code
-  fitIfVisible(): void {
-    this.fit();
-  }
-
-  /** Register a callback to look up the externally-managed WebSocket. */
   setExternalWsLookup(fn: () => WebSocket | null): void {
     this._getExternalWs = fn;
   }
 
   // -- Connection lifecycle --
 
-  /** Create WebSocket, send auth. Transitions to 'connecting'. */
   connect(): void {
-    // Abort previous cycle
     this._abortCycle();
 
     const baseUrl = localStorage.getItem('wsUrl') ?? '';
@@ -208,7 +183,6 @@ export class SessionHandle {
 
     this._cycle = { controller: new AbortController(), disposables: [] };
 
-    // Wire terminal.onData (may not exist in test mocks)
     if (typeof this.terminal.onData === 'function') {
       const onDataDisp = this.terminal.onData((data: string) => {
         this.sendInput(data);
@@ -251,9 +225,8 @@ export class SessionHandle {
         this._setState('connected');
         this._reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
       } else if (msg.type === 'output' && msg.data) {
-        this.terminal.write(msg.data);
+        this.write(msg.data);
       } else if (msg.type === 'error') {
-        // Errors during connection are failures
         if (this.state === 'connecting' || this.state === 'authenticating') {
           this._setState('failed');
         }
@@ -276,7 +249,6 @@ export class SessionHandle {
     };
   }
 
-  /** Idempotent reconnect. Returns existing promise if already reconnecting. */
   reconnect(): Promise<string> {
     if (this._reconnectPromise) return this._reconnectPromise;
     if (this.state === 'connected') return Promise.resolve('connected');
@@ -290,7 +262,6 @@ export class SessionHandle {
         resolve('timeout');
       }, 30000);
 
-      // Poll state changes via a simple check interval
       const check = setInterval(() => {
         if (this.state === 'connected' || this.state === 'failed' || this.state === 'disconnected' || this.state === 'closed') {
           clearInterval(check);
@@ -304,7 +275,6 @@ export class SessionHandle {
     return this._reconnectPromise;
   }
 
-  /** Close WebSocket, transition to disconnected. */
   disconnect(): void {
     this._clearReconnectTimer();
     this._clearKeepAlive();
@@ -325,7 +295,6 @@ export class SessionHandle {
     }
   }
 
-  /** Send input data through WebSocket. Filters DA responses. */
   sendInput(data: string): void {
     if (this.state !== 'connected' || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
@@ -337,7 +306,6 @@ export class SessionHandle {
 
   // -- Cleanup --
 
-  /** Dispose terminal, abort cycle, remove container from DOM. */
   close(): void {
     this._abortCycle();
 
@@ -364,6 +332,9 @@ export class SessionHandle {
       this._onDataDisposable = null;
     }
 
+    this._outputBuffer = [];
+    this._outputBufferBytes = 0;
+
     this.terminal.dispose();
     this.container.remove();
     this.state = 'closed';
@@ -371,7 +342,6 @@ export class SessionHandle {
 
   // -- Internal helpers --
 
-  /** Exposed for tests: set state directly. */
   _setState(target: SessionLifecycleState): void {
     this.state = target;
   }

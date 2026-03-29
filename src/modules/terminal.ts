@@ -7,10 +7,9 @@ import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected } from './state.js';
 
 // Late-bound handle lookup to avoid circular import with connection.ts (#374)
-let _getSessionHandle: ((id: string) => { fit(): void; fitIfVisible(): void } | undefined) | null = null;
+let _getSessionHandle: ((id: string) => { fit(): void } | undefined) | null = null;
 
-/** Register the SessionHandle lookup function (called by connection.ts at init). */
-export function setSessionHandleLookup(fn: (id: string) => { fit(): void; fitIfVisible(): void } | undefined): void {
+export function setSessionHandleLookup(fn: (id: string) => { fit(): void } | undefined): void {
   _getSessionHandle = fn;
 }
 
@@ -118,7 +117,7 @@ export function getRootCSS(): RootCSS {
 
 // ── Terminal ─────────────────────────────────────────────────────────────────
 
-const FONT_FAMILIES: Record<string, string> = {
+export const FONT_FAMILIES: Record<string, string> = {
   monospace: 'ui-monospace, Menlo, "Cascadia Code", Consolas, monospace',
   jetbrains: '"JetBrains Mono", monospace',
   firacode: '"Fira Code", monospace',
