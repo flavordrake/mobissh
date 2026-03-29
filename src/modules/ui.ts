@@ -62,11 +62,11 @@ export function navigateToPanel(
   document.getElementById(`panel-${panel}`)?.classList.add('active');
 
   if (panel === 'terminal') {
-    // Single fit path via SessionHandle (#374)
+    // Panel just became visible — fit the active session to real dimensions
     const s = currentSession();
     const handle = s ? getSessionHandle(s.id) : undefined;
     if (handle) {
-      handle.fitIfVisible();
+      handle.fit();
     }
     focusIME();
   }
@@ -320,11 +320,8 @@ export function switchSession(id: string): void {
     }
   }
 
-  // Single fit path via SessionHandle's built-in ResizeObserver (#374)
-  const handle = getSessionHandle(id);
-  if (handle) {
-    handle.fitIfVisible();
-  }
+  // No automatic fit — terminal stays at its current layout size.
+  // show() above replays any buffered output.
 
   // Update session menu button text
   const btn = document.getElementById('sessionMenuBtn');
@@ -1000,9 +997,8 @@ export function initTerminalActions(): void {
   }
 }
 
-// Terminal resize observer removed (#374) — replaced by per-session
-// ResizeObserver in SessionHandle. Each handle's RO fires fitIfVisible()
-// on container size changes, eliminating the global observer.
+// Terminal resize observer removed (#374) — no automatic fitting.
+// Each SessionHandle is a buffered terminal at its creation-time layout size.
 
 // ── Key bar visibility (#1) + Compose/Direct mode (#146) ────────────────────
 

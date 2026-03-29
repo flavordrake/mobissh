@@ -276,11 +276,20 @@ const _writeRafs = new Map<string, number>();
 
 function _flushTerminalWrite(sessionId: string): void {
   _writeRafs.delete(sessionId);
-  const session = appState.sessions.get(sessionId);
   const buf = _writeBufs.get(sessionId) ?? '';
-  if (buf && session?.terminal) {
+  if (!buf) return;
+  _writeBufs.set(sessionId, '');
+
+  // Route through SessionHandle.write() for visibility-aware buffering
+  const handle = _sessionHandles.get(sessionId);
+  if (handle) {
+    handle.write(buf);
+    return;
+  }
+  // Fallback for sessions without a handle
+  const session = appState.sessions.get(sessionId);
+  if (session?.terminal) {
     session.terminal.write(buf);
-    _writeBufs.set(sessionId, '');
   }
 }
 
@@ -458,6 +467,8 @@ export async function connect(profile: SSHProfile): Promise<void> {
   _sessionHandles.set(sessionId, handle);
   session.terminal = handle.terminal;
   session.fitAddon = handle.fitAddon;
+  // Bridge: let handle send resize via the externally-managed WS
+  handle.setExternalWsLookup(() => session.ws);
 
   // terminal.onData is registered in _openWebSocket as part of the connection cycle (#334)
 
@@ -599,21 +610,16 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         _dismissConnectionStatus();
         // Navigate to terminal now that SSH is established (#309).
         // Only for user-initiated connections — reconnects don't navigate.
+        // navigateToPanel triggers fit() on the active session, giving it
+        // real container dimensions before we send resize to the server.
         if (_pendingNavigateSessions.delete(sessionId)) {
           navigateToPanel('terminal');
         }
-        // Sync terminal size to server — if the session's container is visible,
-        // fit first to get accurate dimensions. If hidden (background reconnect),
-        // use the active session's dimensions as a reasonable default rather than
-        // the potentially-zero dimensions from a hidden container. (#312)
-        if (session?.fitAddon) {
-          const container = document.querySelector<HTMLElement>(`#terminal > [data-session-id="${sessionId}"]`);
-          if (container && !container.classList.contains('hidden')) {
-            session.fitAddon.fit();
-          }
-        }
-        const cols = (session?.terminal?.cols && session.terminal.cols > 1) ? session.terminal.cols : 80;
-        const rows = (session?.terminal?.rows && session.terminal.rows > 1) ? session.terminal.rows : 24;
+        // Send terminal dimensions to server — after navigateToPanel so
+        // the session has been fitted to real layout dimensions (#374)
+        const connHandle = _sessionHandles.get(sessionId);
+        const cols = connHandle ? connHandle.terminal.cols : (session?.terminal?.cols && session.terminal.cols > 1) ? session.terminal.cols : 80;
+        const rows = connHandle ? connHandle.terminal.rows : (session?.terminal?.rows && session.terminal.rows > 1) ? session.terminal.rows : 24;
         newWs.send(JSON.stringify({ type: 'resize', cols, rows }));
         // On first connect: collapse nav chrome and switch to terminal (#36).
         // On reconnect: leave the tab bar as-is so user isn't interrupted.
@@ -955,11 +961,8 @@ document.addEventListener('visibilitychange', () => {
     }
     if (reconnected) _toast('Reconnecting sessions…');
 
-    // Re-fit the active terminal after visibility restore via SessionHandle (#374)
-    const activeHandle = _sessionHandles.get(appState.activeSessionId ?? '');
-    if (activeHandle) {
-      activeHandle.fitIfVisible();
-    }
+    // No automatic fit on visibility restore — terminal stays at its current
+    // layout size. Output buffered while hidden replays on next show().
   } else {
     releaseWakeLock();
   }

@@ -1,9 +1,9 @@
 /**
  * modules/session.ts — Self-contained SessionHandle class (#374)
  *
- * Single fit path, self-contained terminal lifecycle. Each SessionHandle owns
- * its Terminal, FitAddon, container div, and ResizeObserver. The class is NOT
- * wired into the app yet — follow-up PRs will migrate existing code.
+ * Buffered terminal — no automatic fit, no ResizeObserver, no timers.
+ * Each session owns its Terminal, FitAddon, and container. Output is
+ * buffered when the session is not foreground and replayed on show().
  */
 
 import type { SSHProfile, ThemeName, SessionLifecycleState, ConnectionCycle } from './types.js';
@@ -30,9 +30,22 @@ export class SessionHandle {
   private _reconnectDelay: number;
   private _keepAliveTimer: ReturnType<typeof setInterval> | null;
   private _wsConsecFailures: number;
-  private _resizeObserver: ResizeObserver | null;
   private _onDataDisposable: { dispose(): void } | null;
   private _reconnectPromise: Promise<string> | null;
+
+  /** Whether this session's container is currently visible. */
+  private _visible: boolean;
+  /** Output buffered while session is not foreground. */
+  private _outputBuffer: string[];
+  /** Callback to get externally-managed WS (from _openWebSocket in connection.ts). */
+  private _getExternalWs: (() => WebSocket | null) | null;
+  /** ResizeObserver for container size changes. */
+  private _resizeObserver: ResizeObserver | null;
+  /** Debounce timer for resize events. */
+  private _resizeTimer: ReturnType<typeof setTimeout> | null;
+  /** Last sent cols/rows — deduplicate resize messages. */
+  private _lastSentCols: number;
+  private _lastSentRows: number;
 
   constructor(id: string, profile: SSHProfile | null) {
     this.id = id;
@@ -46,9 +59,15 @@ export class SessionHandle {
     this._reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
     this._keepAliveTimer = null;
     this._wsConsecFailures = 0;
-    this._resizeObserver = null;
     this._onDataDisposable = null;
     this._reconnectPromise = null;
+    this._visible = true;
+    this._outputBuffer = [];
+    this._getExternalWs = null;
+    this._resizeObserver = null;
+    this._resizeTimer = null;
+    this._lastSentCols = 0;
+    this._lastSentRows = 0;
 
     // Create terminal
     const fontSize = parseFloat(localStorage.getItem('fontSize') ?? '14') || 14;
@@ -85,42 +104,94 @@ export class SessionHandle {
     if (terminalRoot) terminalRoot.appendChild(this.container);
 
     this.terminal.open(this.container);
+    // No fit here — container may not be in a visible panel yet.
+    // fit() runs on first show() when the container has real dimensions.
 
-    // Set up ResizeObserver — calls fitIfVisible on size changes
+    // ResizeObserver: when the container is resized by UI actions (keybar
+    // toggle, tab bar, keyboard), debounce + deduplicate, then fit + send
+    // resize to server. Skip if container is hidden (offsetHeight 0).
     if (typeof ResizeObserver !== 'undefined') {
       this._resizeObserver = new ResizeObserver(() => {
-        this.fitIfVisible();
+        if (!this._visible || this.container.offsetHeight <= 0) return;
+        if (this._resizeTimer != null) clearTimeout(this._resizeTimer);
+        this._resizeTimer = setTimeout(() => {
+          this._resizeTimer = null;
+          this.fit();
+        }, 100);
       });
       this._resizeObserver.observe(this.container);
     }
   }
 
-  // -- Terminal lifecycle: ONE fit path --
+  // -- Visibility --
 
-  /** Remove 'hidden' class; ResizeObserver fires -> fitIfVisible runs. */
+  /** Make this session's container visible. Replays buffered output. */
   show(): void {
     this.container.classList.remove('hidden');
+    this._visible = true;
+
+    // Fit to actual container dimensions — only if the container has real
+    // layout (parent panel is visible). If the panel isn't active yet,
+    // offsetHeight will be 0 and fit() is a no-op.
+    if (this.container.offsetHeight > 0) {
+      this.fit();
+    }
+
+    // Replay buffered output verbatim
+    if (this._outputBuffer.length > 0) {
+      for (const chunk of this._outputBuffer) {
+        this.terminal.write(chunk);
+      }
+      this._outputBuffer = [];
+    }
   }
 
-  /** Add 'hidden' class; container goes to zero height -> fitIfVisible no-ops. */
+  /** Hide this session's container. Starts buffering output. */
   hide(): void {
     this.container.classList.add('hidden');
+    this._visible = false;
   }
 
-  /** ONLY method that calls fitAddon.fit(). Guards on container.offsetHeight > 0. */
-  fitIfVisible(): void {
+  /**
+   * Write output to the terminal. If the session is not foreground,
+   * buffer it for replay on show().
+   */
+  write(data: string): void {
+    if (this._visible) {
+      this.terminal.write(data);
+    } else {
+      this._outputBuffer.push(data);
+    }
+  }
+
+  /** Fit terminal to current container size and send resize if dimensions changed. */
+  fit(): void {
     if (this.container.offsetHeight <= 0) return;
     this.fitAddon.fit();
-    this.terminal.refresh(0, this.terminal.rows - 1);
 
-    // Send resize to server if WS is open
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({
-        type: 'resize',
-        cols: this.terminal.cols,
-        rows: this.terminal.rows,
-      }));
+    const cols = this.terminal.cols;
+    const rows = this.terminal.rows;
+
+    // Deduplicate — don't send resize if dimensions haven't changed
+    if (cols === this._lastSentCols && rows === this._lastSentRows) return;
+    this._lastSentCols = cols;
+    this._lastSentRows = rows;
+
+    // Send resize via handle's ws or the externally-managed ws
+    const ws = this.ws ?? this._getExternalWs?.();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     }
+  }
+
+  // Keep fitIfVisible as an alias for backward compat with wiring code
+  fitIfVisible(): void {
+    this.fit();
+  }
+
+  /** Register a callback to look up the externally-managed WebSocket. */
+  setExternalWsLookup(fn: () => WebSocket | null): void {
+    this._getExternalWs = fn;
   }
 
   // -- Connection lifecycle --
@@ -282,6 +353,10 @@ export class SessionHandle {
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
       this._resizeObserver = null;
+    }
+    if (this._resizeTimer != null) {
+      clearTimeout(this._resizeTimer);
+      this._resizeTimer = null;
     }
 
     if (this._onDataDisposable) {

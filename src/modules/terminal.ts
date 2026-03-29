@@ -7,10 +7,10 @@ import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected } from './state.js';
 
 // Late-bound handle lookup to avoid circular import with connection.ts (#374)
-let _getSessionHandle: ((id: string) => { fitIfVisible(): void } | undefined) | null = null;
+let _getSessionHandle: ((id: string) => { fit(): void; fitIfVisible(): void } | undefined) | null = null;
 
 /** Register the SessionHandle lookup function (called by connection.ts at init). */
-export function setSessionHandleLookup(fn: (id: string) => { fitIfVisible(): void } | undefined): void {
+export function setSessionHandleLookup(fn: (id: string) => { fit(): void; fitIfVisible(): void } | undefined): void {
   _getSessionHandle = fn;
 }
 
@@ -302,27 +302,8 @@ function _renderNotifDrawer(): void {
 }
 
 export function handleResize(): void {
-  const session = currentSession();
-  if (!session) return;
-  // Delegate to SessionHandle's single fit path if available (#374)
-  const handle = _getSessionHandle?.(session.id);
-  if (handle) {
-    handle.fitIfVisible();
-    return;
-  }
-  // Fallback for sessions without a handle
-  const container = document.querySelector<HTMLElement>(
-    `#terminal [data-session-id="${CSS.escape(session.id)}"]`
-  );
-  if (!container || container.offsetHeight === 0) return;
-  session.fitAddon?.fit();
-  if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-    session.ws.send(JSON.stringify({
-      type: 'resize',
-      cols: session.terminal?.cols ?? 80,
-      rows: session.terminal?.rows ?? 24,
-    }));
-  }
+  // No-op — terminals stay at their current layout size.
+  // Each SessionHandle is independent; no automatic refitting.
 }
 
 // ── Keyboard visibility awareness ───────────────────────────────────────────
@@ -360,19 +341,21 @@ export function initKeyboardAwareness(): void {
       document.documentElement.style.setProperty('--viewport-height', `${String(h)}px`);
     }
 
+    // Keyboard show/hide changes available terminal height — fit current
+    // session only and notify server of new dimensions.
     const session = currentSession();
-    // Delegate to SessionHandle's single fit path if available (#374)
-    const viewportHandle = session ? _getSessionHandle?.(session.id) : undefined;
-    if (viewportHandle) {
-      viewportHandle.fitIfVisible();
-    } else if (session) {
-      const c = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(session.id)}"]`);
-      if (c && c.offsetHeight > 0) session.fitAddon?.fit();
-      if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-        session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal?.cols ?? 80, rows: session.terminal?.rows ?? 24 }));
+    if (session) {
+      const kbHandle = _getSessionHandle?.(session.id);
+      if (kbHandle) {
+        kbHandle.fit();
+      } else if (session.fitAddon) {
+        session.fitAddon.fit();
+        if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
+          session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal?.cols ?? 80, rows: session.terminal?.rows ?? 24 }));
+        }
       }
+      session.terminal?.scrollToBottom();
     }
-    session?.terminal?.scrollToBottom();
   }
 
   window.visualViewport.addEventListener('resize', onViewportChange);
@@ -393,9 +376,15 @@ export function applyFontSize(size: number): void {
   const session = currentSession();
   if (session?.terminal) {
     session.terminal.options.fontSize = size;
-    session.fitAddon?.fit();
-    if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal.cols, rows: session.terminal.rows }));
+    // Explicit user action — fit + notify server of new dimensions
+    const handle = _getSessionHandle?.(session.id);
+    if (handle) {
+      handle.fit();
+    } else {
+      session.fitAddon?.fit();
+      if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
+        session.ws.send(JSON.stringify({ type: 'resize', cols: session.terminal.cols, rows: session.terminal.rows }));
+      }
     }
   }
 }
