@@ -22,7 +22,7 @@ import {
   initUI, toast, setStatus, focusIME,
   _applyTabBarVisibility, initSessionMenu, initTabBar,
   initConnectForm, initTerminalActions, initKeyBar,
-  initTerminalResizeObserver, initRouting, navigateToPanel,
+  initRouting, navigateToPanel,
   initFilesPanel, initLongPressTooltips,
 } from './modules/ui.js';
 import {
@@ -52,7 +52,6 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initConnectForm();
     initTerminalActions();
     initKeyBar();
-    initTerminalResizeObserver();
     initFilesPanel();
     initLongPressTooltips();
     initRecording({ toast });

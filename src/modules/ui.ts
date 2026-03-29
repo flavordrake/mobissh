@@ -10,7 +10,7 @@ import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
 import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
-import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel } from './connection.js';
+import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
@@ -62,16 +62,13 @@ export function navigateToPanel(
   document.getElementById(`panel-${panel}`)?.classList.add('active');
 
   if (panel === 'terminal') {
-    // Fit + force canvas repaint. xterm.js canvas doesn't always repaint after fit()
-    // alone — refresh() forces a full redraw. (#316)
-    const fitAndRefresh = (): void => {
-      const s = currentSession();
-      if (!s?.fitAddon || !s.terminal) return;
-      s.fitAddon.fit();
-      s.terminal.refresh(0, s.terminal.rows - 1);
-    };
-    setTimeout(() => { fitAndRefresh(); focusIME(); }, 50);
-    setTimeout(fitAndRefresh, 500);
+    // Single fit path via SessionHandle (#374)
+    const s = currentSession();
+    const handle = s ? getSessionHandle(s.id) : undefined;
+    if (handle) {
+      handle.fitIfVisible();
+    }
+    focusIME();
   }
   if (panel === 'connect') {
     // Only refresh if the form isn't already visible (avoids clobbering edit-in-progress)
@@ -290,9 +287,18 @@ export function switchSession(id: string): void {
 
   appState.activeSessionId = id;
 
-  // Hide all terminal containers, show the active one (scope to #terminal only)
+  // Hide all terminal containers, show the active one via SessionHandle (#374)
+  for (const [sid] of appState.sessions) {
+    const h = getSessionHandle(sid);
+    if (h) {
+      if (sid === id) h.show(); else h.hide();
+    }
+  }
+  // Fallback for sessions without a handle (legacy)
   document.querySelectorAll<HTMLElement>('#terminal > [data-session-id]').forEach((el) => {
-    el.classList.toggle('hidden', el.dataset.sessionId !== id);
+    if (!getSessionHandle(el.dataset.sessionId ?? '')) {
+      el.classList.toggle('hidden', el.dataset.sessionId !== id);
+    }
   });
 
   // Restore per-session theme (#104)
@@ -314,36 +320,10 @@ export function switchSession(id: string): void {
     }
   }
 
-  // Fit the newly visible terminal after layout completes.
-  // Use a one-shot ResizeObserver on the session container — fires exactly when
-  // the browser has laid out the now-visible element with its real dimensions.
-  // Fallback: retry with rAF if ResizeObserver doesn't fire within 500ms. (#316)
-  const sessionContainer = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(session.id)}"]`);
-  const doFit = (): void => {
-    if (!session.fitAddon || !session.terminal) return;
-    session.fitAddon.fit();
-    session.terminal.refresh(0, session.terminal.rows - 1);
-    if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({
-        type: 'resize',
-        cols: session.terminal.cols ?? 80,
-        rows: session.terminal.rows ?? 24,
-      }));
-    }
-  };
-  // Fast path: rAF fit immediately (may get wrong dimensions but shows something)
-  // Reliable path: ResizeObserver fires when container has real dimensions, fits again
-  requestAnimationFrame(doFit);
-  if (sessionContainer) {
-    let fitted = false;
-    const ro = new ResizeObserver(() => {
-      if (fitted) return;
-      fitted = true;
-      ro.disconnect();
-      doFit();
-    });
-    ro.observe(sessionContainer);
-    setTimeout(() => { if (!fitted) { fitted = true; ro.disconnect(); doFit(); } }, 300);
+  // Single fit path via SessionHandle's built-in ResizeObserver (#374)
+  const handle = getSessionHandle(id);
+  if (handle) {
+    handle.fitIfVisible();
   }
 
   // Update session menu button text
@@ -371,13 +351,16 @@ export function closeSession(id: string): void {
     if (!confirm('Disconnect and close this session?')) return;
   }
 
+  // Clean up SessionHandle (disposes terminal, removes container, disconnects RO) (#374)
+  removeSessionHandle(id);
+
   // Transition through state machine — handles WS close, AbortController abort,
   // timer cleanup, terminal dispose via the 'closed' effect (#341)
   if (session.state !== 'closed') {
     transitionSession(id, 'closed');
   }
 
-  // Remove terminal DOM container
+  // Remove terminal DOM container (fallback for sessions without handle)
   const termContainer = document.querySelector<HTMLElement>(`#terminal [data-session-id="${CSS.escape(id)}"]`);
   termContainer?.remove();
 
@@ -1017,32 +1000,9 @@ export function initTerminalActions(): void {
   }
 }
 
-// ── Terminal resize observer ─────────────────────────────────────────────────
-// A single ResizeObserver on #terminal fires fit() after the browser has
-// committed all layout changes (tab bar hide, key bar hide, keyboard, etc.).
-// This replaces per-toggle rAF/timeout hacks — any CSS-driven resize "just works".
-
-let _resizeObserverActive = false;
-
-export function initTerminalResizeObserver(): void {
-  const container = document.getElementById('terminal');
-  if (!container || _resizeObserverActive) return;
-  _resizeObserverActive = true;
-
-  const observer = new ResizeObserver(() => {
-    const session = currentSession();
-    session?.fitAddon?.fit();
-    session?.terminal?.scrollToBottom();
-    if (session && isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({
-        type: 'resize',
-        cols: session.terminal?.cols ?? 80,
-        rows: session.terminal?.rows ?? 24,
-      }));
-    }
-  });
-  observer.observe(container);
-}
+// Terminal resize observer removed (#374) — replaced by per-session
+// ResizeObserver in SessionHandle. Each handle's RO fires fitIfVisible()
+// on container size changes, eliminating the global observer.
 
 // ── Key bar visibility (#1) + Compose/Direct mode (#146) ────────────────────
 

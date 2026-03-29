@@ -239,7 +239,25 @@ export function sendSftpRealpath(requestId: string): void {
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
-import { createSessionTerminal } from './terminal.js';
+import { createSessionTerminal, setSessionHandleLookup } from './terminal.js';
+import { SessionHandle } from './session.js';
+
+// SessionHandle instances stored alongside SessionState for terminal lifecycle (#374)
+const _sessionHandles = new Map<string, SessionHandle>();
+
+/** Get the SessionHandle for a session (if created via SessionHandle). */
+export function getSessionHandle(id: string): SessionHandle | undefined {
+  return _sessionHandles.get(id);
+}
+
+/** Remove a SessionHandle (called on session close). */
+export function removeSessionHandle(id: string): void {
+  const handle = _sessionHandles.get(id);
+  if (handle) {
+    handle.close();
+    _sessionHandles.delete(id);
+  }
+}
 import { rebindSelectionWatcher } from './selection.js';
 import { renderSessionList, closeSession } from './ui.js';
 import { stopAndDownloadRecording } from './recording.js';
@@ -280,6 +298,9 @@ export function initConnection({ toast, setStatus, focusIME, applyTabBarVisibili
   _setStatus = setStatus;
   _focusIME = focusIME;
   _applyTabBarVisibility = applyTabBarVisibility;
+
+  // Wire SessionHandle lookup into terminal.ts to avoid circular import (#374)
+  setSessionHandleLookup((id) => _sessionHandles.get(id));
 }
 
 // In-memory passphrase cache keyed by keyVaultId. Cleared on page unload.
@@ -432,17 +453,19 @@ export async function connect(profile: SSHProfile): Promise<void> {
   session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
   appState.activeSessionId = sessionId;
 
-  // Create per-session terminal instance (#261)
-  const { terminal, fitAddon } = createSessionTerminal(sessionId);
-  session.terminal = terminal;
-  session.fitAddon = fitAddon;
+  // Create SessionHandle for self-contained terminal lifecycle (#374)
+  const handle = new SessionHandle(sessionId, profile);
+  _sessionHandles.set(sessionId, handle);
+  session.terminal = handle.terminal;
+  session.fitAddon = handle.fitAddon;
 
   // terminal.onData is registered in _openWebSocket as part of the connection cycle (#334)
 
-  // Hide all other session containers (including lobby), show the new one
-  document.querySelectorAll<HTMLElement>('#terminal > [data-session-id]').forEach((el) => {
-    el.classList.toggle('hidden', el.dataset.sessionId !== sessionId);
-  });
+  // Hide all other session containers, show the new one via SessionHandle (#374)
+  for (const [sid, h] of _sessionHandles) {
+    if (sid !== sessionId) h.hide();
+  }
+  handle.show();
 
   // Re-bind selection watcher to the new session's terminal (#283)
   rebindSelectionWatcher();
@@ -932,23 +955,11 @@ document.addEventListener('visibilitychange', () => {
     }
     if (reconnected) _toast('Reconnecting sessions…');
 
-    // Re-fit the active terminal after visibility restore — Android's viewport
-    // dimensions are temporarily wrong during the tab restore transition.
-    // Delay to let the viewport settle before measuring. (#316)
-    setTimeout(() => {
-      const active = appState.sessions.get(appState.activeSessionId ?? '');
-      if (active?.fitAddon) {
-        active.fitAddon.fit();
-        active.terminal?.refresh(0, (active.terminal?.rows ?? 24) - 1);
-        if (active.terminal && isSessionConnected(active) && active.ws?.readyState === WebSocket.OPEN) {
-          active.ws.send(JSON.stringify({
-            type: 'resize',
-            cols: active.terminal.cols ?? 80,
-            rows: active.terminal.rows ?? 24,
-          }));
-        }
-      }
-    }, 500);
+    // Re-fit the active terminal after visibility restore via SessionHandle (#374)
+    const activeHandle = _sessionHandles.get(appState.activeSessionId ?? '');
+    if (activeHandle) {
+      activeHandle.fitIfVisible();
+    }
   } else {
     releaseWakeLock();
   }
