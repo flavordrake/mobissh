@@ -903,40 +903,44 @@ function releaseWakeLock(): void {
 
 // Zombie WS probe: after resume, send a ping and wait for any WS activity.
 // If nothing arrives within the timeout, the connection is dead — force-close
-// and let the onclose handler trigger reconnect. (#153)
+// and let the onclose handler trigger reconnect. (#153, #354)
 const ZOMBIE_PROBE_TIMEOUT_MS = 5000;
-let _zombieProbeTimer: ReturnType<typeof setTimeout> | null = null;
+const _zombieProbeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-/** Exported for testing. */
+/** Exported for testing. Probes ALL sessions with open WS, not just current. */
 export function _probeZombieConnection(): void {
-  const sessionWs = currentSession()?.ws;
-  if (!sessionWs || sessionWs.readyState !== WebSocket.OPEN) return;
+  for (const [sid, session] of appState.sessions) {
+    if (!session.profile) continue;
+    const sessionWs = session.ws;
+    if (!sessionWs || sessionWs.readyState !== WebSocket.OPEN) continue;
 
-  // Send an application-layer ping to provoke a response or trigger a close
-  sessionWs.send(JSON.stringify({ type: 'ping' }));
+    // Send an application-layer ping to provoke a response or trigger a close
+    sessionWs.send(JSON.stringify({ type: 'ping' }));
 
-  // Wrap onmessage: any incoming data proves the connection is alive
-  const ws = sessionWs;
-  const origOnMessage = ws.onmessage;
-  const cancelProbe = (): void => {
-    if (_zombieProbeTimer) {
-      clearTimeout(_zombieProbeTimer);
-      _zombieProbeTimer = null;
-    }
-    ws.onmessage = origOnMessage;
-  };
+    // Wrap onmessage: any incoming data proves the connection is alive
+    const ws = sessionWs;
+    const origOnMessage = ws.onmessage;
+    const cancelProbe = (): void => {
+      const timer = _zombieProbeTimers.get(sid);
+      if (timer) {
+        clearTimeout(timer);
+        _zombieProbeTimers.delete(sid);
+      }
+      ws.onmessage = origOnMessage;
+    };
 
-  ws.onmessage = function (this: WebSocket, event: MessageEvent) {
-    cancelProbe();
-    origOnMessage?.call(this, event);
-  };
+    ws.onmessage = function (this: WebSocket, event: MessageEvent) {
+      cancelProbe();
+      origOnMessage?.call(this, event);
+    };
 
-  _zombieProbeTimer = setTimeout(() => {
-    _zombieProbeTimer = null;
-    // Restore original handler before closing so onclose logic runs cleanly
-    ws.onmessage = origOnMessage;
-    ws.close();
-  }, ZOMBIE_PROBE_TIMEOUT_MS);
+    _zombieProbeTimers.set(sid, setTimeout(() => {
+      _zombieProbeTimers.delete(sid);
+      // Restore original handler before closing so onclose logic runs cleanly
+      ws.onmessage = origOnMessage;
+      ws.close();
+    }, ZOMBIE_PROBE_TIMEOUT_MS));
+  }
 }
 
 // visibilitychange: reconnect ALL sessions that dropped while hidden,
@@ -954,12 +958,12 @@ document.addEventListener('visibilitychange', () => {
         cancelReconnect(sid);
         _openWebSocket({ silent: true, sessionId: sid });
         reconnected = true;
-      } else {
-        // WS is open — send a keepalive ping to keep the connection warm
-        try { session.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* ignore */ }
       }
     }
     if (reconnected) _toast('Reconnecting sessions…');
+
+    // Probe all sessions with open WS for zombie connections (#354)
+    _probeZombieConnection();
 
     // No automatic fit on visibility restore — terminal stays at its current
     // layout size. Output buffered while hidden replays on next show().
