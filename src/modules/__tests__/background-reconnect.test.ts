@@ -208,6 +208,8 @@ function makeFakeWs(overrides?: Partial<{ readyState: number }>) {
 
 describe('Background reconnect — behavioral (#354)', () => {
   beforeEach(() => {
+    // Flush pending probe timers so _zombieProbeTimers map is cleaned up
+    vi.runAllTimers();
     storage.clear();
     appState.sessions.clear();
     appState.activeSessionId = null;
