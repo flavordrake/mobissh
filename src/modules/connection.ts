@@ -239,7 +239,7 @@ export function sendSftpRealpath(requestId: string): void {
 }
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
-import { createSessionTerminal, setSessionHandleLookup } from './terminal.js';
+import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
 import { SessionHandle } from './session.js';
 
 // SessionHandle instances stored alongside SessionState for terminal lifecycle (#374)
@@ -608,6 +608,12 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
         // Dismiss any visible overlay (happy path: overlay never appeared)
         _dismissConnectionStatus();
+        // Apply the session's theme now that SSH is established (#364).
+        // Theme was previously applied in connectFromProfile before connection
+        // completed, causing a visible theme flash on the Connect panel.
+        if (session?.activeThemeName) {
+          applyTheme(session.activeThemeName);
+        }
         // Navigate to terminal now that SSH is established (#309).
         // Only for user-initiated connections — reconnects don't navigate.
         // navigateToPanel triggers fit() on the active session, giving it

@@ -160,7 +160,6 @@ export interface RecordingDeps {
 export interface ProfilesDeps {
   toast: (msg: string) => void;
   navigateToConnect: () => void;
-  applyTheme: (name: string, opts?: { persist?: boolean }) => void;
 }
 
 export interface SettingsDeps {

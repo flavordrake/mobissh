@@ -17,12 +17,10 @@ export { escHtml };
 
 let _toast = (_msg: string): void => {};
 let _navigateToConnect = (): void => {};
-let _applyTheme = (_name: string, _opts?: { persist?: boolean }): void => {};
 
-export function initProfiles({ toast, navigateToConnect, applyTheme }: ProfilesDeps): void {
+export function initProfiles({ toast, navigateToConnect }: ProfilesDeps): void {
   _toast = toast;
   _navigateToConnect = navigateToConnect;
-  _applyTheme = applyTheme;
 }
 
 // Profile storage
@@ -320,9 +318,7 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
   }
 
   await connect(sshProfile);
-  if (sshProfile.theme) {
-    _applyTheme(sshProfile.theme, { persist: false });
-  }
+  // Theme is applied when the session reaches 'connected' state (#364)
   return true;
 }
 
