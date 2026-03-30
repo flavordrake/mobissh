@@ -10,7 +10,7 @@ import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
 import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
-import { sendSSHInput, disconnect, reconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
+import { sendSSHInput, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
@@ -304,6 +304,13 @@ export function switchSession(id: string): void {
   // Restore per-session theme (#104)
   applyTheme(session.activeThemeName);
 
+  // Probe switched-to session — detect zombie WS (OPEN but SSH dead) (#354)
+  // If the WS appears open, probe it; the timeout will force-close + reconnect
+  // if the server doesn't respond. This catches the "silently disconnected" case.
+  if (session.ws && session.ws.readyState === WebSocket.OPEN && session.profile) {
+    probeSession(id);
+  }
+
   // Auto-reconnect disconnected sessions on switch (#306)
   const container = document.querySelector<HTMLElement>(`#terminal > [data-session-id="${id}"]`);
   if (container) {
@@ -323,10 +330,18 @@ export function switchSession(id: string): void {
   // No automatic fit — terminal stays at its current layout size.
   // show() above replays any buffered output.
 
-  // Update session menu button text
+  // Update session menu button text + badge dot (no state text — dot is the indicator)
   const btn = document.getElementById('sessionMenuBtn');
-  if (session.profile) {
+  if (btn && session.profile) {
     _setMenuBtnText(`${session.profile.username}@${session.profile.host}`);
+    btn.classList.remove('connected', 'disconnected', 'connecting');
+    if (isSessionConnected(session)) {
+      btn.classList.add('connected');
+    } else if (session.state === 'connecting' || session.state === 'authenticating' || session.state === 'reconnecting') {
+      btn.classList.add('connecting');
+    } else {
+      btn.classList.add('disconnected');
+    }
   }
 
   // Close the menu
@@ -398,11 +413,18 @@ export function initSessionMenu(): void {
   // Subscribe to session state changes to keep UI in sync (#334 — one-time registration)
   onStateChange((session, newState, _oldState) => {
     renderSessionList();
-    loadProfiles(); // Refresh Connect panel active sessions section (#351)
+    loadProfiles();
     const btn = document.getElementById('sessionMenuBtn');
     if (btn && session.id === appState.activeSessionId && session.profile) {
-      const host = `${session.profile.username}@${session.profile.host}`;
-      _setMenuBtnText(isSessionConnected(session) ? host : `${host} (${newState})`);
+      _setMenuBtnText(`${session.profile.username}@${session.profile.host}`);
+      btn.classList.remove('connected', 'disconnected', 'connecting');
+      if (isSessionConnected(session)) {
+        btn.classList.add('connected');
+      } else if (newState === 'connecting' || newState === 'authenticating' || newState === 'reconnecting') {
+        btn.classList.add('connecting');
+      } else {
+        btn.classList.add('disconnected');
+      }
     }
   });
 

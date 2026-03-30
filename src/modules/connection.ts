@@ -908,38 +908,44 @@ const ZOMBIE_PROBE_TIMEOUT_MS = 5000;
 const _zombieProbeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Exported for testing. Probes ALL sessions with open WS, not just current. */
-export function _probeZombieConnection(): void {
-  for (const [sid, session] of appState.sessions) {
-    if (!session.profile) continue;
-    const sessionWs = session.ws;
-    if (!sessionWs || sessionWs.readyState !== WebSocket.OPEN) continue;
+/** Probe a single session's WS — force-close if no response within timeout. */
+export function probeSession(sid: string): void {
+  const session = appState.sessions.get(sid);
+  if (!session?.profile) return;
+  const sessionWs = session.ws;
+  if (!sessionWs || sessionWs.readyState !== WebSocket.OPEN) return;
+  // Already being probed
+  if (_zombieProbeTimers.has(sid)) return;
 
-    // Send an application-layer ping to provoke a response or trigger a close
-    sessionWs.send(JSON.stringify({ type: 'ping' }));
+  sessionWs.send(JSON.stringify({ type: 'ping' }));
 
-    // Wrap onmessage: any incoming data proves the connection is alive
-    const ws = sessionWs;
-    const origOnMessage = ws.onmessage;
-    const cancelProbe = (): void => {
-      const timer = _zombieProbeTimers.get(sid);
-      if (timer) {
-        clearTimeout(timer);
-        _zombieProbeTimers.delete(sid);
-      }
-      ws.onmessage = origOnMessage;
-    };
-
-    ws.onmessage = function (this: WebSocket, event: MessageEvent) {
-      cancelProbe();
-      origOnMessage?.call(this, event);
-    };
-
-    _zombieProbeTimers.set(sid, setTimeout(() => {
+  const ws = sessionWs;
+  const origOnMessage = ws.onmessage;
+  const cancelProbe = (): void => {
+    const timer = _zombieProbeTimers.get(sid);
+    if (timer) {
+      clearTimeout(timer);
       _zombieProbeTimers.delete(sid);
-      // Restore original handler before closing so onclose logic runs cleanly
-      ws.onmessage = origOnMessage;
-      ws.close();
-    }, ZOMBIE_PROBE_TIMEOUT_MS));
+    }
+    ws.onmessage = origOnMessage;
+  };
+
+  ws.onmessage = function (this: WebSocket, event: MessageEvent) {
+    cancelProbe();
+    origOnMessage?.call(this, event);
+  };
+
+  _zombieProbeTimers.set(sid, setTimeout(() => {
+    _zombieProbeTimers.delete(sid);
+    ws.onmessage = origOnMessage;
+    ws.close();
+  }, ZOMBIE_PROBE_TIMEOUT_MS));
+}
+
+/** Probe all sessions with open WS — force-close unresponsive ones. */
+export function _probeZombieConnection(): void {
+  for (const [sid] of appState.sessions) {
+    probeSession(sid);
   }
 }
 
@@ -950,13 +956,20 @@ document.addEventListener('visibilitychange', () => {
     void acquireWakeLock();
     document.getElementById('errorDialogOverlay')?.classList.add('hidden');
 
-    // Reconnect all dropped sessions — each session manages its own reconnect (#362)
+    // Reconnect all dropped sessions — active first, others staggered (#354).
+    // Non-active sessions get a 3s delay so Tailscale tunnels have time to
+    // re-establish after the phone comes back online.
     let reconnected = false;
+    const activeId = appState.activeSessionId ?? '';
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
       if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
         cancelReconnect(sid);
-        _openWebSocket({ silent: true, sessionId: sid });
+        if (sid === activeId) {
+          _openWebSocket({ silent: true, sessionId: sid });
+        } else {
+          setTimeout(() => { _openWebSocket({ silent: true, sessionId: sid }); }, 3000);
+        }
         reconnected = true;
       }
     }

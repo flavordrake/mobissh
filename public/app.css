@@ -355,6 +355,20 @@ html, body {
 }
 
 #sessionMenuBtn.connected { color: var(--text); }
+#sessionMenuBtn.disconnected { color: var(--text-dim); }
+#sessionMenuBtn::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  background: transparent;
+}
+#sessionMenuBtn.connected::before { background: #4c4; }
+#sessionMenuBtn.disconnected::before { background: #e44; }
+#sessionMenuBtn.connecting::before { background: #ea3; }
 #sessionMenuBtn:active { color: var(--accent); }
 
 /* Session menu popover — floats upward above handle strip */
