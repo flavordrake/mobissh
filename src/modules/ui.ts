@@ -304,27 +304,15 @@ export function switchSession(id: string): void {
   // Restore per-session theme (#104)
   applyTheme(session.activeThemeName);
 
-  // Probe switched-to session — detect zombie WS (OPEN but SSH dead) (#354)
-  // If the WS appears open, probe it; the timeout will force-close + reconnect
-  // if the server doesn't respond. This catches the "silently disconnected" case.
-  if (session.ws && session.ws.readyState === WebSocket.OPEN && session.profile) {
-    probeSession(id);
-  }
-
-  // Auto-reconnect disconnected sessions on switch (#306)
-  const container = document.querySelector<HTMLElement>(`#terminal > [data-session-id="${id}"]`);
-  if (container) {
-    if (session.state !== 'connected' && session.state !== 'connecting' && session.state !== 'authenticating' && session.state !== 'reconnecting') {
-      container.classList.add('session-disconnected');
-      if (session.profile) {
-        toast('Reconnecting…');
-        reconnect(id);
-      } else {
-        toast(`Session not connected — ${session.state}`);
-      }
-    } else {
-      container.classList.remove('session-disconnected');
+  // Auto-reconnect on switch: if not connected, reconnect unconditionally (#354)
+  if (!isSessionConnected(session) && session.profile) {
+    // Force-close stale WS if it exists
+    if (session.ws) {
+      try { session.ws.close(); } catch { /* ignore */ }
+      session.ws = null;
     }
+    toast('Reconnecting…');
+    reconnect(id);
   }
 
   // No automatic fit — terminal stays at its current layout size.
