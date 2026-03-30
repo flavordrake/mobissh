@@ -55,7 +55,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initFilesPanel();
     initLongPressTooltips();
     initRecording({ toast });
-    initProfiles({ toast, navigateToConnect: () => { navigateToPanel('connect'); }, applyTheme });
+    initProfiles({ toast, navigateToConnect: () => { navigateToPanel('connect'); } });
     initSettings({ toast, applyFontSize, applyTheme });
     initConnection({ toast, setStatus, focusIME, applyTabBarVisibility: _applyTabBarVisibility });
     initSessionMenu();
