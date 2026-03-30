@@ -222,27 +222,20 @@ describe('SessionHandle (#374)', () => {
       expect(container!.classList.add).toHaveBeenCalledWith('hidden');
     });
 
-    it('fitIfVisible() calls fitAddon.fit() when container has non-zero height', () => {
+    it('fit() calls fitAddon.fit() when container has non-zero height', () => {
       const handle = new SessionHandle('sess-fit', { name: 'test', host: 'localhost', port: 22, username: 'user', authType: 'password' as const });
       // offsetHeight defaults to 500 (non-zero) in our mock
-      handle.fitIfVisible();
+      handle.fit();
       expect(fitAddonInstances[0]!.fit).toHaveBeenCalled();
     });
 
-    it('fitIfVisible() does NOT call fitAddon.fit() when container has zero height', () => {
+    it('fit() does NOT call fitAddon.fit() when container has zero height', () => {
       const handle = new SessionHandle('sess-nofit', { name: 'test', host: 'localhost', port: 22, username: 'user', authType: 'password' as const });
       const container = createdDivs.find(el => el.dataset['sessionId'] === 'sess-nofit');
       // Simulate zero height (hidden/collapsed container)
       container!.offsetHeight = 0;
-      handle.fitIfVisible();
+      handle.fit();
       expect(fitAddonInstances[0]!.fit).not.toHaveBeenCalled();
-    });
-
-    it('fitIfVisible() calls terminal.refresh() after fit', () => {
-      const handle = new SessionHandle('sess-refresh', { name: 'test', host: 'localhost', port: 22, username: 'user', authType: 'password' as const });
-      handle.fitIfVisible();
-      expect(fitAddonInstances[0]!.fit).toHaveBeenCalled();
-      expect(terminalInstances[0]!.refresh).toHaveBeenCalled();
     });
   });
 

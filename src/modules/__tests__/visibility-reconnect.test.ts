@@ -67,6 +67,15 @@ vi.stubGlobal('WebSocket', class {
   url: string;
   close = vi.fn();
   send = vi.fn();
+  private _listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+  addEventListener = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event]!.push(handler);
+  });
+  removeEventListener = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    const list = this._listeners[event];
+    if (list) this._listeners[event] = list.filter(h => h !== handler);
+  });
   static OPEN = 1;
   static CLOSED = 3;
   static CLOSING = 2;
@@ -104,6 +113,7 @@ function _setupSession(opts?: { ws?: unknown; profile?: boolean; connected?: boo
 
 describe('visibility-triggered reconnect (#153)', () => {
   beforeEach(() => {
+    vi.runAllTimers();
     storage.clear();
     appState.sessions.clear();
     appState.activeSessionId = null;
@@ -242,6 +252,7 @@ describe('visibility-triggered reconnect (#153)', () => {
 
 describe('_probeZombieConnection (#153)', () => {
   beforeEach(() => {
+    vi.runAllTimers();
     storage.clear();
     appState.sessions.clear();
     appState.activeSessionId = null;

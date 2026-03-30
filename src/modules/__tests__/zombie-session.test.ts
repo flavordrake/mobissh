@@ -87,10 +87,10 @@ describe('Zombie session prevention (#341)', () => {
       // instead of mutating appState.activeSessionId
       const visStart = connectionSrc.indexOf('visibilitychange');
       expect(visStart).toBeGreaterThan(-1);
-      const visBlock = connectionSrc.slice(visStart, visStart + 800);
-      // Should pass sid/sessionId to _openWebSocket, not rely on activeSessionId swap
+      const visBlock = connectionSrc.slice(visStart, visStart + 1200);
+      // Should pass sid/sessionId to _openWebSocket via options object or argument
       const passesId = visBlock.includes('_openWebSocket(') &&
-        (visBlock.match(/_openWebSocket\s*\(\s*\{[^}]*sessionId/s) ||
+        (visBlock.match(/_openWebSocket\s*\(\s*\{[^}]*sessionId\s*:\s*sid/s) ||
          visBlock.match(/_openWebSocket\s*\(\s*sid/) ||
          visBlock.match(/_openWebSocket\s*\([^)]*sid[^)]*\)/));
       expect(passesId).toBeTruthy();

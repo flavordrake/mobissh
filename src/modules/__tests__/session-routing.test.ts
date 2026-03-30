@@ -203,8 +203,8 @@ describe('session routing (#263)', () => {
     });
   });
 
-  describe('handleResize sends to active session WS', () => {
-    it('sends resize message with correct cols/rows', () => {
+  describe('handleResize is a no-op (terminals resize via ResizeObserver)', () => {
+    it('does not send resize or call fit (no-op)', () => {
       const s1 = createSession('resize-sess');
       const ws1 = makeMockWs();
       const terminal = makeMockTerminal();
@@ -217,13 +217,12 @@ describe('session routing (#263)', () => {
       appState.activeSessionId = 'resize-sess';
       handleResize();
 
-      expect(fitAddon.fit).toHaveBeenCalled();
-      expect(ws1.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: 'resize', cols: 120, rows: 40 }),
-      );
+      // handleResize is now a no-op — ResizeObserver on each SessionHandle handles fit
+      expect(fitAddon.fit).not.toHaveBeenCalled();
+      expect(ws1.send).not.toHaveBeenCalled();
     });
 
-    it('does not send resize to inactive session', () => {
+    it('does not send resize to any session (no-op)', () => {
       const s1 = createSession('sess-a');
       const s2 = createSession('sess-b');
       const ws1 = makeMockWs();
@@ -240,13 +239,13 @@ describe('session routing (#263)', () => {
       appState.activeSessionId = 'sess-a';
       handleResize();
 
-      expect(ws1.send).toHaveBeenCalled();
+      expect(ws1.send).not.toHaveBeenCalled();
       expect(ws2.send).not.toHaveBeenCalled();
     });
   });
 
   describe('switchSession triggers fit on new session', () => {
-    it('calls fitAddon.fit() on the target session', () => {
+    it('sets activeSessionId to target (no explicit fit — handled by show())', () => {
       const s1 = createSession('sw-1');
       const s2 = createSession('sw-2');
       const fit1 = makeMockFitAddon();
@@ -258,7 +257,8 @@ describe('session routing (#263)', () => {
       switchSession('sw-2');
 
       expect(appState.activeSessionId).toBe('sw-2');
-      expect(fit2.fit).toHaveBeenCalled();
+      // switchSession no longer calls fitAddon.fit() explicitly —
+      // fit happens via SessionHandle.show() or ResizeObserver
     });
 
     it('sets activeSessionId so subsequent input routes to the new session', () => {
