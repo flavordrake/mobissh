@@ -954,7 +954,7 @@ export function initIMEInput(): void {
     // Never intercept hardware media/volume keys — let the system handle them (#221)
     if (isMediaKey(e.key)) return;
 
-    // Tab: commit held text and send \t for autocomplete (#295)
+    // Tab: commit any text in textarea and send \t for autocomplete (#295, #379)
     if (e.key === 'Tab') {
       const text = ime.value;
       if (_isHolding() && text) {
@@ -964,7 +964,18 @@ export function initIMEInput(): void {
         _transition('idle');
         e.preventDefault();
         return;
+      } else if (text) {
+        _recordHistory(text);
+        sendSSHInput(text);
+        sendSSHInput('\t');
+        _transition('idle');
+        e.preventDefault();
+        return;
       }
+      sendSSHInput('\t');
+      _transition('idle');
+      e.preventDefault();
+      return;
     }
 
     // Enter: commit held text and send \r
