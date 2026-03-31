@@ -196,20 +196,17 @@ export function currentSession(): SessionState | undefined {
 }
 
 export function createSession(id: string): SessionState {
-  // Dedup guard: if any existing session shares the same profile key
-  // (encoded in the id as host:port:username:*), close it first (#391)
+  // Duplicate detection: error if a session with the same profile already exists.
+  // Caller (connect()) must close the old session before creating a new one.
   const parts = id.split(':');
   if (parts.length >= 3) {
-    const prefix = `${parts[0]}:${parts[1]}:${parts[2]}:`;
     for (const [existingId, existingSession] of appState.sessions) {
       if (existingId === id) continue;
-      if (existingId.startsWith(prefix) || (
-        existingSession.profile
+      if (existingSession.profile
         && existingSession.profile.host === parts[0]
         && String(existingSession.profile.port || 22) === parts[1]
-        && existingSession.profile.username === parts[2]
-      )) {
-        transitionSession(existingId, 'closed');
+        && existingSession.profile.username === parts[2]) {
+        console.error(`[state] createSession: duplicate profile ${parts[0]}:${parts[1]}:${parts[2]} — already exists as ${existingId}. Caller must close old session first.`);
         break;
       }
     }

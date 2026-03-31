@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-issue-374-session-handle-173849/` — SessionHandle class refactor, single fit path
+> **Active TRACE**: `.traces/trace-post-v1-polish-131724/` — post-v1.0 bug fixes, reconnect polish, supply chain
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
