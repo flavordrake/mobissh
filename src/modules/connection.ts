@@ -9,6 +9,7 @@
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 import { vaultLoad } from './vault.js';
 import { showErrorDialog, navigateToPanel } from './ui.js';
+import { saveRecentSession, getProfiles } from './profiles.js';
 
 // Sessions that should navigate to the terminal panel when SSH connects.
 // Populated by _openWebSocket for user-initiated connections (not reconnects).
@@ -633,6 +634,18 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           appState.hasConnected = true;
           appState.tabBarVisible = false;
           _applyTabBarVisibility();
+        }
+        // Save to recent sessions for cold-start reconnect (#385)
+        if (session?.profile) {
+          const profiles = getProfiles();
+          const profileIdx = profiles.findIndex(
+            (p) => p.host === session.profile!.host
+              && String(p.port || 22) === String(session.profile!.port || 22)
+              && p.username === session.profile!.username
+          );
+          if (profileIdx >= 0) {
+            saveRecentSession(session.profile, profileIdx);
+          }
         }
         _focusIME();
         break;

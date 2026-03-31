@@ -130,6 +130,20 @@ registerTransitionEffect('closed', (session) => {
   }
   clearReconnectTimer(session);
   clearKeepAlive(session);
+
+  // Remove from recentSessions on close (#385)
+  if (session.profile) {
+    try {
+      const raw = localStorage.getItem('recentSessions');
+      if (raw) {
+        const recent = JSON.parse(raw) as Array<{ host: string; port: number; username: string; profileIdx: number }>;
+        const filtered = recent.filter(
+          (e) => !(e.host === session.profile!.host && e.port === (session.profile!.port || 22) && e.username === session.profile!.username)
+        );
+        localStorage.setItem('recentSessions', JSON.stringify(filtered));
+      }
+    } catch { /* ignore malformed localStorage */ }
+  }
 });
 
 // -- State-derived accessors --
