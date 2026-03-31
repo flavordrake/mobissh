@@ -15,6 +15,48 @@ import { connect } from './connection.js';
 
 export { escHtml };
 
+// ── Recent sessions persistence (#385) ──────────────────────────────────────
+
+const RECENT_SESSIONS_KEY = 'recentSessions';
+const MAX_RECENT = 5;
+
+interface RecentSessionEntry {
+  host: string;
+  port: number;
+  username: string;
+  profileIdx: number;
+}
+
+/** Save a profile identity to the recent sessions list (newest first, deduplicated). */
+export function saveRecentSession(profile: { host: string; port: number; username: string }, idx: number): void {
+  const recent = getRecentSessions();
+  // Remove duplicate (same host+port+username) — recentSession dedup via filter on host, port, username
+  const deduped = recent.filter((e) => !(e.host === profile.host && e.port === (profile.port || 22) && e.username === profile.username));
+  // Prepend newest, cap at MAX_RECENT
+  deduped.unshift({ host: profile.host, port: profile.port || 22, username: profile.username, profileIdx: idx });
+  localStorage.setItem(RECENT_SESSIONS_KEY, JSON.stringify(deduped.slice(0, MAX_RECENT)));
+}
+
+/** Get the recent sessions list from localStorage. */
+export function getRecentSessions(): RecentSessionEntry[] {
+  try {
+    const raw = localStorage.getItem(RECENT_SESSIONS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as RecentSessionEntry[];
+  } catch {
+    return [];
+  }
+}
+
+/** Remove a session from the recent list by host+port+username. */
+export function removeRecentSession(host: string, port: number, username: string): void {
+  const recent = getRecentSessions();
+  const filtered = recent.filter(
+    (e) => !(e.host === host && e.port === (port || 22) && e.username === username)
+  );
+  localStorage.setItem(RECENT_SESSIONS_KEY, JSON.stringify(filtered));
+}
+
 let _toast = (_msg: string): void => {};
 let _navigateToConnect = (): void => {};
 
@@ -140,6 +182,26 @@ export function loadProfiles(): void {
         + reconnectAllBtn;
     } else {
       sessionList.innerHTML = '';
+    }
+  }
+
+  // Render recent sessions on cold start (#385)
+  const recentSessions = getRecentSessions();
+  if (allSessions.length === 0 && recentSessions.length > 0) {
+    const reconnectAllBtn = recentSessions.length >= 2
+      ? '<button class="item-btn accent reconnect-all-btn" data-action="reconnect-all-recent">Reconnect All</button>'
+      : '';
+    const recentHtml = '<h3 class="section-label">Recent Sessions</h3>'
+      + recentSessions.map((r) => {
+        const label = `${escHtml(r.username)}@${escHtml(r.host)}:${String(r.port)}`;
+        return `<div class="recent-session-item" data-idx="${String(r.profileIdx)}">
+          <span class="session-label">${label}</span>
+          <button class="item-btn accent" data-action="reconnect-recent" data-idx="${String(r.profileIdx)}">Reconnect</button>
+        </div>`;
+      }).join('')
+      + reconnectAllBtn;
+    if (sessionList) {
+      sessionList.innerHTML = recentHtml;
     }
   }
 

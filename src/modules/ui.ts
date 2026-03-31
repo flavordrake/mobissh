@@ -11,7 +11,7 @@ import { appState, currentSession, isSessionConnected, onStateChange, transition
 import { applyTheme } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
-import { saveProfile, connectFromProfile, newConnection, loadProfiles } from './profiles.js';
+import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
 
@@ -349,6 +349,11 @@ export function closeSession(id: string): void {
 
   if (isSessionConnected(session)) {
     if (!confirm('Disconnect and close this session?')) return;
+  }
+
+  // Remove from recent sessions on explicit close (#385)
+  if (session.profile) {
+    removeRecentSession(session.profile.host, session.profile.port || 22, session.profile.username);
   }
 
   // Clean up SessionHandle (disposes terminal, removes container, disconnects RO) (#374)
@@ -785,6 +790,17 @@ export function initConnectForm(): void {
     } else if (action === 'close-session' && sessionId) {
       closeSession(sessionId);
       loadProfiles();
+    } else if (action === 'reconnect-recent') {
+      const idx = parseInt(target.dataset.idx ?? '0', 10);
+      target.classList.add('connecting');
+      target.textContent = 'Connecting…';
+      void connectFromProfile(idx);
+    } else if (action === 'reconnect-all-recent') {
+      const recentItems = document.querySelectorAll<HTMLElement>('[data-action="reconnect-recent"]');
+      for (const btn of recentItems) {
+        const idx = parseInt(btn.dataset.idx ?? '0', 10);
+        void connectFromProfile(idx);
+      }
     } else if (action === 'reconnect-all') {
       target.textContent = 'Reconnecting…';
       target.classList.add('connecting');
