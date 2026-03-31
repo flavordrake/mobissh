@@ -651,7 +651,10 @@ export function _applyTabBarVisibility(): void {
     '--tab-height',
     appState.tabBarVisible ? _ROOT_CSS.tabHeight : '0px'
   );
-  localStorage.setItem('tabBarVisible', String(appState.tabBarVisible));
+  // Only persist when value actually changes (called from 16+ sites)
+  const stored = localStorage.getItem('tabBarVisible');
+  const current = String(appState.tabBarVisible);
+  if (stored !== current) localStorage.setItem('tabBarVisible', current);
 }
 
 function toggleTabBar(): void {
