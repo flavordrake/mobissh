@@ -1174,7 +1174,7 @@ hr {
   letter-spacing: 0.05em;
   margin: 8px 0 4px;
 }
-.active-session-item {
+.active-session-item, .recent-session-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1183,6 +1183,12 @@ hr {
   border: 1px solid var(--border);
   border-radius: 8px;
   margin-bottom: 6px;
+}
+.recent-session-item .session-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .active-session-item .session-dot {
   width: 10px;
