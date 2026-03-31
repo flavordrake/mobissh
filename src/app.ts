@@ -16,6 +16,7 @@ import {
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
+import { appState } from './modules/state.js';
 import { initIME, initIMEInput } from './modules/ime.js';
 import { initSelection } from './modules/selection.js';
 import {
@@ -73,6 +74,14 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     // interaction (first-run only), not a boot failure.
     if (typeof window.__appReady === 'function') window.__appReady();
     await promptVaultSetupOnStartup();
+
+    // Vault is now ready — reload profiles so saved credentials appear (#384)
+    loadProfiles();
+
+    // Cold start: if no active sessions, show Connect panel instead of empty terminal
+    if (appState.sessions.size === 0) {
+      navigateToPanel('connect');
+    }
 
     // Event delegation for profile list
     const profileList = document.getElementById('profileList')!;
