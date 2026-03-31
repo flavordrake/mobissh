@@ -806,6 +806,20 @@ export function initIMEInput(): void {
 
   // ── input event ─────────────────────────────────────────────────────────
   ime.addEventListener('input', () => {
+    // Tab via input event (mobile keyboards send \t as text, not keydown) (#379)
+    // Strip tab and any whitespace the keyboard adds alongside it
+    if (ime.value.includes('\t')) {
+      const text = ime.value.replace(/[\t]/g, '').trimEnd();
+      if (text) {
+        _recordHistory(text);
+        sendSSHInput(text);
+      }
+      sendSSHInput('\t');
+      ime.value = '';
+      _prevInputValue = '';
+      _transition('idle');
+      return;
+    }
     // Ctrl+key: send control char immediately, bypass hold/preview (#170)
     // Must be before 150ms guard — user intent, not stale re-insertion.
     if (appState.ctrlActive && ime.value) {
@@ -954,25 +968,16 @@ export function initIMEInput(): void {
     // Never intercept hardware media/volume keys — let the system handle them (#221)
     if (isMediaKey(e.key)) return;
 
-    // Tab: commit any text in textarea and send \t for autocomplete (#295, #379)
+    // Tab via keydown (hardware keyboards) — commit text + send \t (#295, #379)
     if (e.key === 'Tab') {
-      const text = ime.value;
-      if (_isHolding() && text) {
+      const text = ime.value.trim();
+      if (text) {
         _recordHistory(text);
         sendSSHInput(text);
-        sendSSHInput('\t');
-        _transition('idle');
-        e.preventDefault();
-        return;
-      } else if (text) {
-        _recordHistory(text);
-        sendSSHInput(text);
-        sendSSHInput('\t');
-        _transition('idle');
-        e.preventDefault();
-        return;
       }
       sendSSHInput('\t');
+      ime.value = '';
+      _prevInputValue = '';
       _transition('idle');
       e.preventDefault();
       return;
