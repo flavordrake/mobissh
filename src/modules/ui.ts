@@ -601,6 +601,8 @@ export function initSessionMenu(): void {
 // ── Tab navigation ───────────────────────────────────────────────────────────
 
 export function initTabBar(): void {
+  const storedTabBar = localStorage.getItem('tabBarVisible');
+  if (storedTabBar === 'false') appState.tabBarVisible = false;
   _applyTabBarVisibility();
 
   document.querySelectorAll<HTMLElement>('.tab').forEach((tab) => {
@@ -649,6 +651,7 @@ export function _applyTabBarVisibility(): void {
     '--tab-height',
     appState.tabBarVisible ? _ROOT_CSS.tabHeight : '0px'
   );
+  localStorage.setItem('tabBarVisible', String(appState.tabBarVisible));
 }
 
 function toggleTabBar(): void {
