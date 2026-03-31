@@ -61,13 +61,24 @@ Both reviews independently flagged CSWSH and SSRF as the top actionable issues. 
 | SSRF via allowPrivate client flag | Low/Medium | Accepted: danger zone toggle, Tailscale-only deployment | By design |
 | Git hash in meta tag | Low | Accepted: intentional for version tracking | By design |
 
+### Actions taken (v1.0.0)
+
+| Finding | Severity | Action | Status |
+|---------|----------|--------|--------|
+| Production dependencies | N/A | 0 vulnerabilities (ssh2, ws only). Dev deps (webdriverio, nodemon) excluded via `--omit=dev` | Clean |
+| Dev dependency vulns (undici, fast-xml-parser, minimatch, picomatch, brace-expansion) | High/Moderate | `npm audit fix` applied. All 5 patched. | Fixed |
+| SessionHandle output buffer | Low | Capped at 1MB with oldest-chunk eviction to prevent OOM on background sessions | Fixed |
+| Duplicate session state | Low | `createSession()` errors on duplicate profile (not silent repair). `connect()` explicitly closes old sessions | Fixed (#391) |
+| Modal cancel unresponsive | Medium | AbortController aborted before WS close. `_connectTimeout` moved to module scope. WS error handler calls `disconnect()` | Fixed (#388) |
+| pnpm migration for strict supply chain | Medium | Filed as #389. npm audit clean for now | Open |
+
 ### Positive findings (both reviews)
 
 - AES-GCM vault with PBKDF2 (600k iterations), no plaintext fallback
 - HMAC-SHA256 WS token with timingSafeEqual() comparison
 - escHtml() used consistently on user-supplied DOM content
 - Restrictive CSP: `script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`
-- Small dependency footprint (ssh2, ws, xterm.js) -- all current
+- Small dependency footprint (ssh2, ws, xterm.js) -- all current, 0 production vulnerabilities
 - SFTP paths passed to ssh2 without shell interpretation
 - Cache-Control: no-store on all responses
 

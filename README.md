@@ -16,11 +16,13 @@ You're on your phone. You have an idea, a bug report, a task for your coding age
 
 **Drive coding agents.** Launch `claude`, `opencode`, `gemini`, or `codex` over SSH. Compose long prompts with swipe or voice. Review diffs in the terminal. Approve or reject changes. The full agent TUI renders correctly -- xterm.js is the same engine as VS Code's terminal.
 
-**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Chunked streaming with byte-level progress, cancel, and resume after reconnect. Upload screenshots or logs directly to where your agent can read them.
+**Multi-session.** Connect to multiple SSH hosts simultaneously. Each session has its own per-profile theme for instant visual context switching between dev containers. Swipe the session title to switch. Sessions auto-reconnect on resume -- background sessions that drop are detected and restored when you switch to them.
+
+**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Chunked streaming with byte-level progress, cancel, and resume after reconnect. Quick preview for images, markdown, text, HTML, and video files inline. Upload screenshots or logs directly to where your agent can read them.
 
 **Manage credentials.** Copy a GitHub token from your password manager, paste it into the terminal. Copy a URL from your browser, paste it into a prompt. Vault-encrypted credential storage means your SSH passwords are biometric-locked, not plaintext.
 
-**Navigate the terminal.** Swipe vertically to scroll output. Swipe horizontally to switch tmux windows. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. All designed for one-handed phone use.
+**Navigate the terminal.** Swipe vertically to scroll output. Swipe horizontally to switch sessions. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. Tab commits compose text and sends tab for shell completion. All designed for one-handed phone use.
 
 **Get notified.** Terminal bells and coding agent hooks alert you when your agent needs input. Notifications merge into a single Android notification (no stacking) with actionable content — tool names, file paths, not boilerplate. See [INTEGRATION.md](INTEGRATION.md).
 
@@ -45,6 +47,7 @@ Phone browser --(WSS)--> Node.js bridge --(SSH)--> Target server
 - **`public/app.css`** -- mobile-first styles, CSS custom properties for theming
 - **`public/sw.js`** -- service worker, network-first with offline app shell fallback
 - **`public/recovery.js`** -- boot watchdog + emergency reset (8s timeout, long-press escape hatch)
+- **`src/modules/session.ts`** -- SessionHandle: buffered terminal with debounced ResizeObserver, output buffering, per-session lifecycle
 - **`public/vendor/`** -- vendored @xterm/xterm 6.0.0 and @xterm/addon-fit 0.11.0
 
 ### Input modes
