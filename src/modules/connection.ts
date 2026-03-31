@@ -459,6 +459,31 @@ export async function connect(profile: SSHProfile): Promise<void> {
 
   // Don't cancel other sessions' reconnect timers when creating a new session
 
+  // Dedup: check for an existing session with the same profile (#391)
+  let existingSessionId: string | null = null;
+  for (const [sid, existing] of appState.sessions) {
+    if (existing.profile
+      && existing.profile.host === profile.host
+      && existing.profile.port === (profile.port || 22)
+      && existing.profile.username === profile.username) {
+      existingSessionId = sid;
+      break;
+    }
+  }
+
+  // If a matching session exists, close it before creating the new one
+  if (existingSessionId) {
+    const oldHandle = _sessionHandles.get(existingSessionId);
+    if (oldHandle) {
+      oldHandle.hide();
+      removeSessionHandle(existingSessionId);
+    }
+    const oldSession = appState.sessions.get(existingSessionId);
+    if (oldSession) {
+      transitionSession(existingSessionId, 'closed');
+    }
+  }
+
   // Create a SessionState entry for multi-session infrastructure (#59)
   const sessionId = `${profile.host}:${String(profile.port || 22)}:${profile.username}:${String(Date.now())}`;
   const session = createSession(sessionId);

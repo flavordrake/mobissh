@@ -234,7 +234,15 @@ export function renderSessionList(): void {
   const container = document.getElementById('sessionList');
   if (!container) return;
 
-  const sessions = Array.from(appState.sessions.values());
+  // Dedup safety net: only show one entry per host+port+username (#391)
+  const seen = new Set<string>();
+  const sessions = Array.from(appState.sessions.values()).filter((s) => {
+    if (!s.profile) return true;
+    const key = `${s.profile.host}:${String(s.profile.port || 22)}:${s.profile.username}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   container.classList.remove('hidden');
 
