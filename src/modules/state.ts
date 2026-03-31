@@ -196,6 +196,25 @@ export function currentSession(): SessionState | undefined {
 }
 
 export function createSession(id: string): SessionState {
+  // Dedup guard: if any existing session shares the same profile key
+  // (encoded in the id as host:port:username:*), close it first (#391)
+  const parts = id.split(':');
+  if (parts.length >= 3) {
+    const prefix = `${parts[0]}:${parts[1]}:${parts[2]}:`;
+    for (const [existingId, existingSession] of appState.sessions) {
+      if (existingId === id) continue;
+      if (existingId.startsWith(prefix) || (
+        existingSession.profile
+        && existingSession.profile.host === parts[0]
+        && String(existingSession.profile.port || 22) === parts[1]
+        && existingSession.profile.username === parts[2]
+      )) {
+        transitionSession(existingId, 'closed');
+        break;
+      }
+    }
+  }
+
   let _profile: SessionState['profile'] = null;
   const session: SessionStateWithCompat = Object.create(null);
   Object.defineProperties(session, {
