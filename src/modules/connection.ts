@@ -303,6 +303,9 @@ function _bufferTerminalWrite(sessionId: string, data: string): void {
 let _focusIME = (): void => {};
 let _applyTabBarVisibility = (): void => {};
 
+// Module-level so disconnect() can clear it (#388). Was previously local to _openWebSocket.
+let _connectTimeout: ReturnType<typeof setTimeout> | null = null;
+
 export function initConnection({ toast, setStatus, focusIME, applyTabBarVisibility }: ConnectionDeps): void {
   _toast = toast;
   _setStatus = setStatus;
@@ -517,7 +520,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
   _setStatus('connecting', `Connecting to ${baseUrl}…`);
   // Only show status overlay after 5s timeout — happy path never shows it
-  let _connectTimeout: ReturnType<typeof setTimeout> | null = null;
+  if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
   if (!silent) {
     _connectTimeout = setTimeout(() => {
       _connectTimeout = null;
@@ -771,7 +774,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }, signal ? { signal } : undefined);
 
   newWs.addEventListener('error', () => {
-    if (!silent) showErrorDialog('WebSocket error — check server URL in Settings.');
+    if (!silent) {
+      disconnect(sessionId);
+      showErrorDialog('WebSocket error — check server URL in Settings.');
+    }
   }, signal ? { signal } : undefined);
 }
 
@@ -1011,18 +1017,30 @@ export function disconnect(sessionId?: string): void {
   cancelReconnect(sid);
   stopKeepAlive(sid);
   releaseWakeLock();
+  // Clear pending connect timeout so overlay doesn't reappear after cancel (#388)
+  if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
   if (session) {
-    session.profile = null;
+    // Abort the cycle FIRST — removes all signal-bound listeners so the close
+    // handler doesn't fire and trigger a reconnect loop (#388)
+    if (session._cycle) {
+      session._cycle.controller.abort();
+      if (session._cycle.disposables) {
+        for (const d of session._cycle.disposables) d.dispose();
+      }
+      session._cycle = null;
+    }
     if (session.ws) {
       session.ws.onclose = null;
       try { session.ws.send(JSON.stringify({ type: 'disconnect' })); } catch { /* may already be closed */ }
       session.ws.close();
       session.ws = null;
     }
+    // Transition state BEFORE nulling profile so side-effects can read it (#388)
     if (session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {
       const target = (session.state === 'connecting' || session.state === 'authenticating') ? 'failed' : 'disconnected';
       transitionSession(session.id, target);
     }
+    session.profile = null;
   }
 
   _setStatus('disconnected', 'Disconnected');
