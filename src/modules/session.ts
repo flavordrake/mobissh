@@ -19,135 +19,85 @@ const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
 const OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024; // 1 MB
 
 // Detect Claude Code permission prompts in terminal output.
-// Strip ALL terminal escape sequences + decorative unicode
-const ANSI_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|\([AB012])/g;
-const DECOR_RE = /[─═│┌┐└┘├┤┬┴┼╔╗╚╝║·]/g;
-
-function _cleanTermText(s: string): string {
-  return s.replace(ANSI_RE, '').replace(DECOR_RE, '');
-}
-
-/** Per-session approval state. */
-interface ApprovalState {
-  buffer: string;
-  triggered: boolean;
-  triggerEmitted: boolean; // true after trigger phase sent to UI (emit once)
-  triggeredAt: number;     // timestamp of trigger detection
-  lastFired: number;
-}
-const _approvalState = new Map<string, ApprovalState>();
-const APPROVAL_BUFFER_MAX = 4096;
-const APPROVAL_COOLDOWN_MS = 1500;
-const APPROVAL_TRIGGER_TIMEOUT_MS = 5000; // reset if options don't arrive in 5s
-
-function _getState(id: string): ApprovalState {
-  let s = _approvalState.get(id);
-  if (!s) { s = { buffer: '', triggered: false, triggerEmitted: false, triggeredAt: 0, lastFired: 0 }; _approvalState.set(id, s); }
-  return s;
-}
-
 /**
- * Feed terminal output and detect approval prompts.
- * Returns:
- *  - { phase: 'trigger', description } — prompt detected, show "waiting" UI
- *  - { phase: 'ready', description, options } — options parsed, show buttons
- *  - null — no prompt detected
+ * Detect Claude Code permission prompts by searching for "Do you want to
+ * proceed?" rendered via cursor positioning in the raw terminal data.
+ *
+ * Claude Code renders TUI text character-by-character with escape sequences
+ * between each character. After stripping escapes, the text appears but with
+ * \x1b[C (cursor forward) between characters which become empty after strip.
+ * We need to also collapse whitespace after stripping.
  */
+const ANSI_ALL_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z@`]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|\([AB012]|[=>])/g;
+const APPROVAL_COOLDOWN_MS = 2000;
+const _approvalLastFired = new Map<string, number>();
+const APPROVAL_BUFFER_MAX = 8192;
+const _approvalBufs = new Map<string, string>();
+
 export function parseApprovalPrompt(sessionId: string, raw: string): {
-  phase: 'trigger' | 'ready';
+  phase: 'ready';
   tool: string;
   detail: string;
   description: string;
   options: { key: string; label: string }[];
 } | null {
-  const st = _getState(sessionId);
+  const lastFired = _approvalLastFired.get(sessionId) ?? 0;
+  if (Date.now() - lastFired < APPROVAL_COOLDOWN_MS) return null;
 
-  // Cooldown after firing ready phase
-  if (Date.now() - st.lastFired < APPROVAL_COOLDOWN_MS) return null;
+  // Accumulate raw data and strip escapes
+  const prev = _approvalBufs.get(sessionId) ?? '';
+  const combined = (prev + raw).slice(-APPROVAL_BUFFER_MAX);
+  _approvalBufs.set(sessionId, combined);
 
-  // Timeout: if trigger fired but options never arrived, reset
-  if (st.triggered && Date.now() - st.triggeredAt > APPROVAL_TRIGGER_TIMEOUT_MS) {
-    st.triggered = false;
-    st.triggerEmitted = false;
-    st.buffer = '';
+  // Strip ANSI and collapse to find readable text
+  const stripped = combined.replace(ANSI_ALL_RE, ' ').replace(/\s+/g, ' ');
+
+  // Look for "Do you want to proceed" in the collapsed text
+  if (!stripped.includes('Do you want to proceed')) return null;
+
+  // Extract what we can — look for "N. Label" patterns
+  const options: { key: string; label: string }[] = [];
+  // Match patterns like "1. Yes" "2. No" "3. Yes, and don't ask again"
+  const optRe = /(\d)\.\s+(Yes[^.]*|No[^.]*|Allow[^.]*|Deny[^.]*|Don't[^.]*)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = optRe.exec(stripped)) !== null) {
+    options.push({ key: m[1]!, label: m[2]!.trim() });
   }
 
-  // Accumulate
-  st.buffer = (st.buffer + raw).slice(-APPROVAL_BUFFER_MAX);
-  const text = _cleanTermText(st.buffer);
-  const newClean = _cleanTermText(raw);
-
-  // Phase 1: detect trigger — check both new data and accumulated buffer
-  // "proceed?" can be split across chunks
-  if (!st.triggered) {
-    if (newClean.includes('proceed') || text.includes('Do you want to proceed')) {
-      st.triggered = true;
-      st.triggerEmitted = false;
-      st.triggeredAt = Date.now();
-    } else {
-      return null;
+  // Fallback: look for just "1." and "2." near "proceed"
+  if (options.length === 0) {
+    const proceedIdx = stripped.indexOf('Do you want to proceed');
+    const after = stripped.slice(proceedIdx);
+    if (after.includes('1.') && after.includes('2.')) {
+      options.push({ key: '1', label: 'Yes' });
+      options.push({ key: '2', label: 'No' });
     }
   }
 
-  // Extract context from accumulated text
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (options.length === 0) return null;
 
+  // Extract tool context
   let tool = '';
   let detail = '';
-  const toolMatch = text.match(/(\w+)\(([^)]*)\)/);
+  const toolMatch = stripped.match(/(\w+)\(([^)]+)\)/);
   if (toolMatch) {
     tool = toolMatch[1] ?? '';
     detail = toolMatch[2] ?? '';
   }
 
+  // Extract description (e.g., "Bash command", "Read file")
   let description = '';
-  for (const line of lines) {
-    if (line.includes('Do you want') || line.includes('Esc to cancel') ||
-        line.includes('Permission rule') || line.includes('Tab to amend') ||
-        line.includes('ctrl+e') || line.match(/^\d+\./) || line.match(/^[❯>]\s*\d/)) continue;
-    if (toolMatch && line.includes(toolMatch[0])) continue;
-    if (line.length >= 2 && line.length <= 80 && line.match(/^[A-Z]/) && !description) {
-      description = line;
-      continue;
-    }
-    if (!detail && line.length > 2 && !line.match(/^[A-Z]/) && !line.startsWith('#')) {
-      detail = line.slice(0, 80);
-    }
-  }
+  const descMatch = stripped.match(/(Bash command|Read file|Edit file|Write file|Execute command|Bash|Read|Edit|Write)/i);
+  if (descMatch) description = descMatch[1]!;
 
-  // Parse options: "N. Label", "❯ N. Label", "Yes", "No", "y/n"
-  const options: { key: string; label: string }[] = [];
-  for (const line of lines) {
-    // Numbered: "1. Yes" or "❯ 2. No"
-    const numMatch = line.match(/^[❯>]?\s*(\d+)\.\s+(.+)/);
-    if (numMatch) {
-      const lbl = numMatch[2]!.trim();
-      if (lbl.length > 0 && lbl.length < 80) {
-        options.push({ key: numMatch[1]!, label: lbl });
-      }
-    }
-  }
-
-  if (options.length > 0) {
-    // Ready — clear state and fire
-    st.buffer = '';
-    st.triggered = false;
-    st.triggerEmitted = false;
-    st.lastFired = Date.now();
-    return { phase: 'ready', tool, detail, description, options };
-  }
-
-  // Triggered but no options yet — emit trigger phase ONCE
-  if (!st.triggerEmitted) {
-    st.triggerEmitted = true;
-    return { phase: 'trigger', tool, detail, description, options: [] };
-  }
-  return null;
+  _approvalBufs.set(sessionId, '');
+  _approvalLastFired.set(sessionId, Date.now());
+  return { phase: 'ready', tool, detail, description: description || tool, options };
 }
 
-/** Clear approval state for a session. */
 export function clearApprovalBuffer(sessionId: string): void {
-  _approvalState.delete(sessionId);
+  _approvalBufs.delete(sessionId);
+  _approvalLastFired.delete(sessionId);
 }
 
 export class SessionHandle {
