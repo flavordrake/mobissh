@@ -25,6 +25,9 @@ const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
 /** Recent terminal output ring buffer for cross-chunk pattern matching. */
 const APPROVAL_BUFFER_MAX = 2048;
 const _approvalBuffers = new Map<string, string>();
+/** Debounce: timestamp of last successful detection per session. */
+const _approvalLastFired = new Map<string, number>();
+const APPROVAL_DEBOUNCE_MS = 2000;
 
 /**
  * Parse a Claude Code permission prompt from terminal output.
@@ -38,16 +41,27 @@ const _approvalBuffers = new Map<string, string>();
  * Also matches: "Allow Tool(detail)?" older format.
  */
 export function parseApprovalPrompt(sessionId: string, raw: string): { tool: string; detail: string; description: string; options: { key: string; label: string }[] } | null {
+  // Debounce: don't re-fire within 2s of last detection
+  const lastFired = _approvalLastFired.get(sessionId) ?? 0;
+  if (Date.now() - lastFired < APPROVAL_DEBOUNCE_MS) return null;
+
   const prev = _approvalBuffers.get(sessionId) ?? '';
   const combined = (prev + raw).slice(-APPROVAL_BUFFER_MAX);
   _approvalBuffers.set(sessionId, combined);
 
   const text = combined.replace(ANSI_RE, '');
 
-  // Detect "Do you want to proceed?" — the universal trigger
-  if (!text.includes('Do you want to proceed?')) {
-    // Also try older "Allow Tool?" format
-    if (!text.match(/Allow\s+\w+/)) return null;
+  // Detect "Do you want to proceed?" — the universal trigger.
+  // Must be in the NEW data, not just leftover in the buffer.
+  const rawClean = raw.replace(ANSI_RE, '');
+  const hasTriggerInNew = rawClean.includes('Do you want to proceed?') || rawClean.includes('proceed?');
+  const hasTriggerInBuffer = text.includes('Do you want to proceed?');
+  if (!hasTriggerInNew && !hasTriggerInBuffer) return null;
+  // Only match if the trigger appeared in recent data (not stale buffer)
+  if (!hasTriggerInNew) {
+    // Buffer has it but new data doesn't — check if options are in new data
+    const hasOptionsInNew = rawClean.match(/^\s*[❯>]?\s*\d+\.\s+/m);
+    if (!hasOptionsInNew) return null;
   }
 
   // Extract tool info: "Tool(detail)" or "Tool" line before the prompt
@@ -99,6 +113,7 @@ export function parseApprovalPrompt(sessionId: string, raw: string): { tool: str
   }
 
   _approvalBuffers.set(sessionId, '');
+  _approvalLastFired.set(sessionId, Date.now());
   return { tool, detail, description, options };
 }
 
