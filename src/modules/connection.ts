@@ -241,7 +241,7 @@ export function sendSftpRealpath(requestId: string): void {
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
 import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
-import { SessionHandle } from './session.js';
+import { SessionHandle, parseApprovalPrompt } from './session.js';
 
 // SessionHandle instances stored alongside SessionState for terminal lifecycle (#374)
 const _sessionHandles = new Map<string, SessionHandle>();
@@ -296,6 +296,15 @@ function _flushTerminalWrite(sessionId: string): void {
 
 function _bufferTerminalWrite(sessionId: string, data: string): void {
   _writeBufs.set(sessionId, (_writeBufs.get(sessionId) ?? '') + data);
+  // Check for approval prompts eagerly — don't wait for rAF paint.
+  // rAF is throttled when the user isn't interacting, but approvals need
+  // immediate detection for the countdown timer to start on time.
+  const prompt = parseApprovalPrompt(sessionId, data);
+  if (prompt) {
+    window.dispatchEvent(new CustomEvent('approval-prompt', {
+      detail: { sessionId, ...prompt },
+    }));
+  }
   if (!_writeRafs.has(sessionId)) {
     _writeRafs.set(sessionId, requestAnimationFrame(() => { _flushTerminalWrite(sessionId); }));
   }

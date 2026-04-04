@@ -236,13 +236,8 @@ export class SessionHandle {
       }
     }
 
-    // Detect approval prompts in terminal output
-    const prompt = parseApprovalPrompt(this.id, data);
-    if (prompt) {
-      window.dispatchEvent(new CustomEvent('approval-prompt', {
-        detail: { sessionId: this.id, ...prompt },
-      }));
-    }
+    // Approval detection moved to _bufferTerminalWrite in connection.ts
+    // for eager detection before rAF paint throttling.
   }
 
   /** Fit terminal to current container size and send resize if dimensions changed. */
