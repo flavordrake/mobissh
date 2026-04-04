@@ -8,7 +8,7 @@
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
-import { applyTheme } from './terminal.js';
+import { applyTheme, _addNotification, fireNotification } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession } from './profiles.js';
@@ -1086,11 +1086,16 @@ export function initApprovalBar(): void {
     if (tool) parts.push(detail ? `${tool}(${detail})` : tool);
     label.textContent = parts.join(' — ') || 'Approval required';
 
+    // Notification + haptic on every approval (counts even when not focused)
+    const notifMsg = parts.join(' — ') || 'Approval required';
+    _addNotification(`Approve: ${notifMsg}`);
+    fireNotification('MobiSSH', `Approve: ${notifMsg}`);
+    if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
+
     if (phase === 'trigger') {
       // Show bar immediately with "waiting" state
       buttons.innerHTML = '<span class="approval-waiting">Waiting for options...</span>';
       bar.classList.remove('hidden');
-      if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
       return;
     }
 
@@ -1113,8 +1118,6 @@ export function initApprovalBar(): void {
     }
 
     bar.classList.remove('hidden');
-    // Haptic if not already shown from trigger phase
-    if ('vibrate' in navigator) navigator.vibrate([30, 50, 30]);
   }) as EventListener);
 }
 

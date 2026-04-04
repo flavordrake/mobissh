@@ -77,9 +77,10 @@ export function parseApprovalPrompt(sessionId: string, raw: string): {
   const text = _cleanTermText(st.buffer);
   const newClean = _cleanTermText(raw);
 
-  // Phase 1: detect trigger
+  // Phase 1: detect trigger — check both new data and accumulated buffer
+  // "proceed?" can be split across chunks
   if (!st.triggered) {
-    if (newClean.includes('Do you want to proceed') || newClean.includes('proceed?')) {
+    if (newClean.includes('proceed') || text.includes('Do you want to proceed')) {
       st.triggered = true;
       st.triggerEmitted = false;
       st.triggeredAt = Date.now();
