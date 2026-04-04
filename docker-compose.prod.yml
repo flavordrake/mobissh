@@ -12,6 +12,7 @@ services:
       TS_AUTHKEY: "${TS_AUTHKEY:-}"
       TS_HOSTNAME: "${TS_HOSTNAME:-mobissh}"
       TS_SERVE: "1"
+      TS_SERVE_PORT: "${TS_SERVE_PORT:-443}"
     volumes:
       - tailscale-state:/var/lib/tailscale
     cap_add:

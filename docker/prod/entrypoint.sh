@@ -28,8 +28,10 @@ fi
 
 echo "[entrypoint] Tailscale is up: $(tailscale ip -4)"
 
-# Serve the app via tailscale serve (HTTPS on port 443 -> localhost:PORT)
-tailscale serve --bg http://localhost:${PORT:-8081}
+# Serve the app via tailscale serve (HTTPS -> localhost:PORT)
+# TS_SERVE_PORT: external HTTPS port (default 443). Set to e.g. 8765 to share
+# the tailnet hostname with other services.
+tailscale serve --bg --https "${TS_SERVE_PORT:-443}" http://localhost:${PORT:-8081}
 
 echo "[entrypoint] tailscale serve configured, starting MobiSSH on port ${PORT:-8081}"
 

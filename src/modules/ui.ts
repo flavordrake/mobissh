@@ -77,12 +77,8 @@ export function navigateToPanel(
       loadProfiles();
     }
   }
-  // Tab bar stays visible when switching panels -- user needs to navigate
-  // between terminal and files. The handle bar toggle still hides/shows it.
-  if (!appState.tabBarVisible) {
-    appState.tabBarVisible = true;
-    _applyTabBarVisibility();
-  }
+  // Respect user's explicit tab bar preference (#393). The handle bar toggle
+  // persists to localStorage — don't override it on panel switch.
 
   if (updateHash) {
     const newHash = `#${panel}`;
@@ -1094,7 +1090,7 @@ export function initKeyBar(): void {
   appState.imeMode = localStorage.getItem('imeMode') === 'ime';
 
   _applyKeyBarVisibility();
-  if (appState.keyBarDepth === 3) {
+  if (appState.keyBarDepth === 3 && localStorage.getItem('tabBarVisible') !== 'false') {
     appState.tabBarVisible = true;
     _applyTabBarVisibility();
   }
