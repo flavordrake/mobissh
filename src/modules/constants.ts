@@ -341,20 +341,40 @@ export const THEMES: Record<ThemeName, ThemeEntry> = {
     label: 'Commodore',
     theme: {
       background: '#3a3ac8',
-      foreground: '#a0a0ff',
-      cursor: '#ffffff',
-      selectionBackground: '#ffffff33',
+      foreground: '#ffffff',
+      cursor: '#ffff55',
+      selectionBackground: '#ffffff44',
     },
     app: {
       bgDeep: '#2828a0',
       bgPanel: '#3a3ac8',
       bgCard: '#4848d8',
       bgInput: '#5858e8',
-      text: '#d0d0ff',
-      textDim: '#8888cc',
+      text: '#ffffff',
+      textDim: '#b0b0ff',
       border: '#5050d0',
-      accent: '#ffffff',
-      accentDim: '#c0c0ff',
+      accent: '#ffff55',
+      accentDim: '#cccc44',
+    },
+  },
+  terminal: {
+    label: 'Terminal',
+    theme: {
+      background: '#21388a',
+      foreground: '#ffffff',
+      cursor: '#ffffff',
+      selectionBackground: '#ffffff44',
+    },
+    app: {
+      bgDeep: '#192c70',
+      bgPanel: '#21388a',
+      bgCard: '#2a45a0',
+      bgInput: '#3355b8',
+      text: '#ffffff',
+      textDim: '#a0b8e8',
+      border: '#3050a8',
+      accent: '#ffcc00',
+      accentDim: '#dda800',
     },
   },
   borland: {
@@ -439,7 +459,7 @@ export const THEMES: Record<ThemeName, ThemeEntry> = {
   },
 };
 
-export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast', 'dracula', 'nord', 'gruvboxDark', 'monokai', 'tokyoNight', 'ocean', 'ember', 'forest', 'sunset', 'synthwave', 'commodore', 'borland', 'arctic', 'cobalt', 'matrix'];
+export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast', 'dracula', 'nord', 'gruvboxDark', 'monokai', 'tokyoNight', 'ocean', 'ember', 'forest', 'sunset', 'synthwave', 'commodore', 'terminal', 'borland', 'arctic', 'cobalt', 'matrix'];
 
 // ANSI escape sequences for terminal colouring
 export const ANSI = {
