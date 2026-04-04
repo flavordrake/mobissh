@@ -22,9 +22,18 @@ const OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024; // 1 MB
 // Strips ANSI escapes before matching so color codes don't break detection.
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
 
+/** Recent terminal output ring buffer for cross-chunk pattern matching. */
+const APPROVAL_BUFFER_MAX = 2048;
+const _approvalBuffers = new Map<string, string>();
+
 /** Parse an approval prompt from terminal output. Returns null if not detected. */
-export function parseApprovalPrompt(raw: string): { tool: string; detail: string; options: { key: string; label: string }[] } | null {
-  const text = raw.replace(ANSI_RE, '');
+export function parseApprovalPrompt(sessionId: string, raw: string): { tool: string; detail: string; options: { key: string; label: string }[] } | null {
+  // Accumulate recent output per session for cross-chunk matching
+  const prev = _approvalBuffers.get(sessionId) ?? '';
+  const combined = (prev + raw).slice(-APPROVAL_BUFFER_MAX);
+  _approvalBuffers.set(sessionId, combined);
+
+  const text = combined.replace(ANSI_RE, '');
 
   // Match "Allow Tool(detail)?" or "Allow Tool?"
   const allowMatch = text.match(/Allow\s+(\w+)(?:\(([^)]*)\))?\s*\?/);
@@ -33,21 +42,42 @@ export function parseApprovalPrompt(raw: string): { tool: string; detail: string
   const tool = allowMatch[1] ?? '';
   const detail = allowMatch[2] ?? '';
 
-  // Parse numbered options: (1) Label  (2) Label  (3) Label
+  // Parse options in various formats:
+  //   "Yes (y)  Always (a)  No (n)  Don't ask again (!)"
+  //   "(1) Allow once  (2) Allow always  (3) Deny"
+  //   "(y) Yes  (n) No"
   const options: { key: string; label: string }[] = [];
-  const optRe = /\((\d)\)\s+([A-Za-z][A-Za-z ]*?)(?=\s+\(\d\)|\s*$)/g;
+
+  // Format 1: "Label (key)" — e.g., "Yes (y)", "Always (a)", "Don't ask again (!)"
+  const labelFirstRe = /([A-Za-z][A-Za-z' ]*?)\s+\(([yn!a\d])\)/g;
   let m: RegExpExecArray | null;
-  while ((m = optRe.exec(text)) !== null) {
-    options.push({ key: m[1]!, label: m[2]!.trim() });
+  while ((m = labelFirstRe.exec(text)) !== null) {
+    options.push({ key: m[2]!, label: m[1]!.trim() });
   }
 
-  // If no numbered options found, default to yes/no
+  // Format 2: "(key) Label" — e.g., "(1) Allow once", "(y) Yes"
+  if (options.length === 0) {
+    const keyFirstRe = /\(([yn!a\d])\)\s+([A-Za-z][A-Za-z' ]*?)(?=\s+\([yn!a\d]\)|\s*$)/g;
+    while ((m = keyFirstRe.exec(text)) !== null) {
+      options.push({ key: m[1]!, label: m[2]!.trim() });
+    }
+  }
+
+  // Fallback: default yes/no
   if (options.length === 0) {
     options.push({ key: 'y', label: 'Allow' });
     options.push({ key: 'n', label: 'Deny' });
   }
 
+  // Clear buffer after successful match to avoid re-triggering
+  _approvalBuffers.set(sessionId, '');
+
   return { tool, detail, options };
+}
+
+/** Clear approval buffer for a session (e.g., on close). */
+export function clearApprovalBuffer(sessionId: string): void {
+  _approvalBuffers.delete(sessionId);
 }
 
 export class SessionHandle {
@@ -180,7 +210,7 @@ export class SessionHandle {
     }
 
     // Detect approval prompts in terminal output
-    const prompt = parseApprovalPrompt(data);
+    const prompt = parseApprovalPrompt(this.id, data);
     if (prompt) {
       window.dispatchEvent(new CustomEvent('approval-prompt', {
         detail: { sessionId: this.id, ...prompt },
