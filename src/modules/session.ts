@@ -31,15 +31,18 @@ function _cleanTermText(s: string): string {
 interface ApprovalState {
   buffer: string;
   triggered: boolean;
+  triggerEmitted: boolean; // true after trigger phase sent to UI (emit once)
+  triggeredAt: number;     // timestamp of trigger detection
   lastFired: number;
 }
 const _approvalState = new Map<string, ApprovalState>();
 const APPROVAL_BUFFER_MAX = 4096;
 const APPROVAL_COOLDOWN_MS = 1500;
+const APPROVAL_TRIGGER_TIMEOUT_MS = 5000; // reset if options don't arrive in 5s
 
 function _getState(id: string): ApprovalState {
   let s = _approvalState.get(id);
-  if (!s) { s = { buffer: '', triggered: false, lastFired: 0 }; _approvalState.set(id, s); }
+  if (!s) { s = { buffer: '', triggered: false, triggerEmitted: false, triggeredAt: 0, lastFired: 0 }; _approvalState.set(id, s); }
   return s;
 }
 
@@ -59,8 +62,15 @@ export function parseApprovalPrompt(sessionId: string, raw: string): {
 } | null {
   const st = _getState(sessionId);
 
-  // Cooldown after firing
+  // Cooldown after firing ready phase
   if (Date.now() - st.lastFired < APPROVAL_COOLDOWN_MS) return null;
+
+  // Timeout: if trigger fired but options never arrived, reset
+  if (st.triggered && Date.now() - st.triggeredAt > APPROVAL_TRIGGER_TIMEOUT_MS) {
+    st.triggered = false;
+    st.triggerEmitted = false;
+    st.buffer = '';
+  }
 
   // Accumulate
   st.buffer = (st.buffer + raw).slice(-APPROVAL_BUFFER_MAX);
@@ -69,9 +79,10 @@ export function parseApprovalPrompt(sessionId: string, raw: string): {
 
   // Phase 1: detect trigger
   if (!st.triggered) {
-    if (newClean.includes('Do you want to proceed') || newClean.includes('proceed?') ||
-        text.includes('Do you want to proceed')) {
+    if (newClean.includes('Do you want to proceed') || newClean.includes('proceed?')) {
       st.triggered = true;
+      st.triggerEmitted = false;
+      st.triggeredAt = Date.now();
     } else {
       return null;
     }
@@ -120,12 +131,17 @@ export function parseApprovalPrompt(sessionId: string, raw: string): {
     // Ready — clear state and fire
     st.buffer = '';
     st.triggered = false;
+    st.triggerEmitted = false;
     st.lastFired = Date.now();
     return { phase: 'ready', tool, detail, description, options };
   }
 
-  // Triggered but no options yet — emit trigger phase so UI shows "waiting"
-  return { phase: 'trigger', tool, detail, description, options: [] };
+  // Triggered but no options yet — emit trigger phase ONCE
+  if (!st.triggerEmitted) {
+    st.triggerEmitted = true;
+    return { phase: 'trigger', tool, detail, description, options: [] };
+  }
+  return null;
 }
 
 /** Clear approval state for a session. */
