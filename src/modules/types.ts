@@ -26,7 +26,7 @@ export interface SSHProfile {
   theme?: ThemeName;
 }
 
-export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight';
+export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight' | 'ocean' | 'ember' | 'forest' | 'sunset' | 'synthwave' | 'commodore' | 'borland' | 'arctic' | 'cobalt' | 'matrix';
 
 export type VaultMethod = 'master-pw' | 'master-pw+bio' | null;
 
