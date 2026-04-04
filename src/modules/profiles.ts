@@ -8,7 +8,7 @@
 
 import type { ProfilesDeps, SSHProfile, ThemeName } from './types.js';
 import { appState, isSessionConnected } from './state.js';
-import { escHtml } from './constants.js';
+import { escHtml, THEMES, THEME_ORDER } from './constants.js';
 import { vaultStore, vaultLoad, vaultDelete } from './vault.js';
 import { ensureVaultKeyWithUI } from './vault-ui.js';
 import { connect } from './connection.js';
@@ -63,6 +63,17 @@ let _navigateToConnect = (): void => {};
 export function initProfiles({ toast, navigateToConnect }: ProfilesDeps): void {
   _toast = toast;
   _navigateToConnect = navigateToConnect;
+
+  // Populate profile theme dropdown from THEME_ORDER — single source of truth
+  const profileThemeEl = document.getElementById('profileTheme') as HTMLSelectElement | null;
+  if (profileThemeEl) {
+    for (const name of THEME_ORDER) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = THEMES[name].label;
+      profileThemeEl.appendChild(opt);
+    }
+  }
 }
 
 // Profile storage

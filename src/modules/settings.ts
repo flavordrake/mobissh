@@ -6,7 +6,7 @@
  */
 
 import type { SettingsDeps } from './types.js';
-import { getDefaultWsUrl, THEMES } from './constants.js';
+import { getDefaultWsUrl, THEMES, THEME_ORDER } from './constants.js';
 import { resetKeyBarConfig } from './keybar-config.js';
 import type { ThemeName } from './types.js';
 import { showErrorDialog } from './ui.js';
@@ -274,6 +274,13 @@ export function initSettingsPanel(): void {
 
   const themeSelect = document.getElementById('termThemeSelect') as HTMLSelectElement;
   const themePreview = document.getElementById('themePreview');
+  // Populate theme options from THEME_ORDER — single source of truth
+  for (const name of THEME_ORDER) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = THEMES[name].label;
+    themeSelect.appendChild(opt);
+  }
   themeSelect.value = localStorage.getItem('termTheme') ?? 'dark';
 
   function updateThemePreview(name: string): void {

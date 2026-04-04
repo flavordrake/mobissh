@@ -391,16 +391,7 @@
               <label for="profileTheme">Session theme</label>
               <select id="profileTheme">
                 <option value="">Use default</option>
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-                <option value="solarizedDark">Solarized Dark</option>
-                <option value="solarizedLight">Solarized Light</option>
-                <option value="highContrast">High Contrast</option>
-                <option value="dracula">Dracula</option>
-                <option value="nord">Nord</option>
-                <option value="gruvboxDark">Gruvbox Dark</option>
-                <option value="monokai">Monokai</option>
-                <option value="tokyoNight">Tokyo Night</option>
+                <!-- Populated dynamically from THEME_ORDER in profiles.ts -->
               </select>
             </div>
           </details>
@@ -458,16 +449,7 @@
 
       <label for="termThemeSelect">Default terminal theme</label>
       <select id="termThemeSelect">
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-        <option value="solarizedDark">Solarized Dark</option>
-        <option value="solarizedLight">Solarized Light</option>
-        <option value="highContrast">High Contrast</option>
-        <option value="dracula">Dracula</option>
-        <option value="nord">Nord</option>
-        <option value="gruvboxDark">Gruvbox Dark</option>
-        <option value="monokai">Monokai</option>
-        <option value="tokyoNight">Tokyo Night</option>
+        <!-- Populated dynamically from THEME_ORDER in settings.ts -->
       </select>
       <div id="themePreview">
         <span class="tp-prompt">user@host</span><span class="tp-dim">:</span><span class="tp-path">~/projects</span><span class="tp-dim">$</span> ls -la<br>
