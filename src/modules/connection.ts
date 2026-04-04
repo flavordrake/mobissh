@@ -757,8 +757,9 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       }
 
       case 'approval_prompt': {
-        // Broadcast from hook via /api/approval — show approval bar
+        // Broadcast from hook via /api/hook — show approval bar
         const approvalMsg = msg as unknown as { tool?: string; detail?: string; description?: string };
+        console.log('[hook→ws] approval_prompt:', approvalMsg);
         window.dispatchEvent(new CustomEvent('approval-prompt', {
           detail: {
             phase: 'ready',
@@ -772,6 +773,13 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
             ],
           },
         }));
+        break;
+      }
+
+      case 'hook_event': {
+        // All non-approval hook events — log to debug overlay
+        const hookMsg = msg as unknown as { event?: string; tool?: string; detail?: string; description?: string };
+        console.log('[hook→ws]', hookMsg.event, hookMsg.tool, hookMsg.detail);
         break;
       }
     }

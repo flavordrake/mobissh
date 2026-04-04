@@ -220,7 +220,8 @@ export type ServerMessage =
   | { type: 'sftp_delete_result'; requestId: string; ok: boolean }
   | { type: 'sftp_realpath_result'; requestId: string; path: string }
   | { type: 'sftp_error'; requestId: string; message: string }
-  | { type: 'approval_prompt'; tool?: string; detail?: string; description?: string };
+  | { type: 'approval_prompt'; tool?: string; detail?: string; description?: string }
+  | { type: 'hook_event'; event?: string; tool?: string; detail?: string; description?: string };
 
 export interface ConnectMessage {
   type: 'connect';

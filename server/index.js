@@ -346,18 +346,21 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
-  // POST /api/approval — hook sends structured approval data, broadcast to WS clients
-  if (req.method === 'POST' && req.url === '/api/approval') {
+  // POST /api/hook — all hook events broadcast to WS clients
+  if (req.method === 'POST' && (req.url === '/api/approval' || req.url === '/api/hook')) {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        console.log(`[approval] ${data.tool || 'unknown'}: ${data.detail || ''}`);
+        const event = data.event || 'unknown';
+        console.log(`[hook] ${event}: ${data.tool || ''} ${data.detail || ''} ${data.description || ''}`);
+        // Determine WS message type based on hook event
+        const wsType = event === 'PermissionRequest' ? 'approval_prompt' : 'hook_event';
         // Broadcast to all connected WS clients
         wss.clients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'approval_prompt', ...data }));
+            client.send(JSON.stringify({ type: wsType, ...data }));
           }
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
