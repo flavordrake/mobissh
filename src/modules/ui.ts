@@ -1035,13 +1035,30 @@ export function initTerminalActions(): void {
 
 // ── Approval bar: Claude Code permission prompt responses ──────────────────
 
-let _approvalTimeout: ReturnType<typeof setTimeout> | null = null;
+const APPROVAL_COUNTDOWN_MS = 3000;
+let _approvalTimer: ReturnType<typeof setInterval> | null = null;
+let _approvalStart = 0;
+let _approvalDefaultKey = '';
+
+function _clearApprovalTimer(): void {
+  if (_approvalTimer) { clearInterval(_approvalTimer); _approvalTimer = null; }
+}
 
 export function initApprovalBar(): void {
   const bar = document.getElementById('approvalBar');
   const label = document.getElementById('approvalLabel');
   const buttons = document.getElementById('approvalButtons');
   if (!bar || !label || !buttons) return;
+
+  function dismiss(): void {
+    _clearApprovalTimer();
+    bar!.classList.add('hidden');
+  }
+
+  function sendAndDismiss(key: string): void {
+    sendSSHInput(key);
+    dismiss();
+  }
 
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
     const { tool, detail, description, options } = e.detail as { tool: string; detail: string; description: string; options: { key: string; label: string }[] };
@@ -1053,32 +1070,63 @@ export function initApprovalBar(): void {
     label.textContent = parts.join(' — ') || 'Approval required';
     buttons.innerHTML = '';
 
+    // Two-pulse haptic
+    if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
+
+    // Find the default option (first non-deny, or first option)
+    const defaultOpt = options.find(o => {
+      const l = o.label.toLowerCase();
+      return !l.includes('no') && !l.includes('deny') && !l.includes('reject');
+    }) ?? options[0];
+    _approvalDefaultKey = defaultOpt?.key ?? '';
+
     for (const opt of options) {
       const btn = document.createElement('button');
       btn.className = 'approval-btn';
       btn.setAttribute('tabindex', '-1');
       const lower = opt.label.toLowerCase();
-      if (lower.includes('no') || lower.includes('deny') || lower.includes('reject')) {
-        btn.classList.add('deny');
+      const isDeny = lower.includes('no') || lower.includes('deny') || lower.includes('reject');
+      if (isDeny) btn.classList.add('deny');
+
+      // Default option gets the countdown indicator
+      const isDefault = opt.key === _approvalDefaultKey;
+      if (isDefault) {
+        btn.innerHTML = `<span class="approval-btn-label">(${escHtml(opt.key)}) ${escHtml(opt.label)}</span><span class="approval-countdown">3</span>`;
+        btn.classList.add('approval-default');
+      } else {
+        btn.textContent = `(${opt.key}) ${opt.label}`;
       }
-      btn.textContent = `(${opt.key}) ${opt.label}`;
-      btn.addEventListener('click', () => {
-        sendSSHInput(opt.key);
-        bar.classList.add('hidden');
-        if (_approvalTimeout) { clearTimeout(_approvalTimeout); _approvalTimeout = null; }
-      });
+
+      // Tap: send immediately
+      btn.addEventListener('click', () => { sendAndDismiss(opt.key); });
       btn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
       buttons.appendChild(btn);
     }
 
     bar.classList.remove('hidden');
 
-    // Auto-hide after 30s if no response
-    if (_approvalTimeout) clearTimeout(_approvalTimeout);
-    _approvalTimeout = setTimeout(() => {
-      bar.classList.add('hidden');
-      _approvalTimeout = null;
-    }, 30000);
+    // Start 3-second countdown on default option
+    _clearApprovalTimer();
+    _approvalStart = Date.now();
+    const countdownEl = buttons.querySelector('.approval-countdown') as HTMLElement | null;
+    const defaultBtn = buttons.querySelector('.approval-default') as HTMLElement | null;
+
+    if (countdownEl && defaultBtn) {
+      _approvalTimer = setInterval(() => {
+        const remaining = Math.max(0, APPROVAL_COUNTDOWN_MS - (Date.now() - _approvalStart));
+        countdownEl.textContent = String(Math.ceil(remaining / 1000));
+        // Visual progress: shrink border as timer drains
+        const pct = remaining / APPROVAL_COUNTDOWN_MS;
+        defaultBtn.style.setProperty('--timer-pct', String(pct));
+
+        if (remaining <= 0) {
+          sendAndDismiss(_approvalDefaultKey);
+        }
+      }, 50);
+    }
+
+    // Any tap on the bar (including non-default buttons) cancels the auto-timer
+    // This is handled by sendAndDismiss which calls dismiss()
   }) as EventListener);
 }
 
