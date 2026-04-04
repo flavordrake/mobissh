@@ -1074,72 +1074,47 @@ export function initApprovalBar(): void {
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
     if (localStorage.getItem('approvalBarDisabled') === 'true') return;
 
-    const { tool, detail, description, options } = e.detail as { tool: string; detail: string; description: string; options: { key: string; label: string }[] };
+    const { phase, tool, detail, description, options } = e.detail as {
+      phase: 'trigger' | 'ready';
+      tool: string; detail: string; description: string;
+      options: { key: string; label: string }[];
+    };
 
-    // Show description + tool(detail) for full context
+    // Build label
     const parts: string[] = [];
     if (description) parts.push(description);
     if (tool) parts.push(detail ? `${tool}(${detail})` : tool);
     label.textContent = parts.join(' — ') || 'Approval required';
+
+    if (phase === 'trigger') {
+      // Show bar immediately with "waiting" state
+      buttons.innerHTML = '<span class="approval-waiting">Waiting for options...</span>';
+      bar.classList.remove('hidden');
+      if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
+      return;
+    }
+
+    // Phase: ready — show buttons
+    _clearApprovalTimer();
     buttons.innerHTML = '';
-
-    // Two-pulse haptic
-    if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
-
-    // Find the default option (first non-deny, or first option)
-    const defaultOpt = options.find(o => {
-      const l = o.label.toLowerCase();
-      return !l.includes('no') && !l.includes('deny') && !l.includes('reject');
-    }) ?? options[0];
-    _approvalDefaultKey = defaultOpt?.key ?? '';
 
     for (const opt of options) {
       const btn = document.createElement('button');
       btn.className = 'approval-btn';
       btn.setAttribute('tabindex', '-1');
       const lower = opt.label.toLowerCase();
-      const isDeny = lower.includes('no') || lower.includes('deny') || lower.includes('reject');
-      if (isDeny) btn.classList.add('deny');
-
-      // Default option gets the countdown indicator
-      const isDefault = opt.key === _approvalDefaultKey;
-      if (isDefault) {
-        btn.innerHTML = `<span class="approval-btn-label">(${escHtml(opt.key)}) ${escHtml(opt.label)}</span><span class="approval-countdown">3</span>`;
-        btn.classList.add('approval-default');
-      } else {
-        btn.textContent = `(${opt.key}) ${opt.label}`;
+      if (lower.includes('no') || lower.includes('deny') || lower.includes('reject')) {
+        btn.classList.add('deny');
       }
-
-      // Tap: send immediately
+      btn.textContent = `(${opt.key}) ${opt.label}`;
       btn.addEventListener('click', () => { sendAndDismiss(opt.key); });
       btn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
       buttons.appendChild(btn);
     }
 
     bar.classList.remove('hidden');
-
-    // Start 3-second countdown on default option
-    _clearApprovalTimer();
-    _approvalStart = Date.now();
-    const countdownEl = buttons.querySelector('.approval-countdown') as HTMLElement | null;
-    const defaultBtn = buttons.querySelector('.approval-default') as HTMLElement | null;
-
-    if (countdownEl && defaultBtn) {
-      _approvalTimer = setInterval(() => {
-        const remaining = Math.max(0, APPROVAL_COUNTDOWN_MS - (Date.now() - _approvalStart));
-        countdownEl.textContent = String(Math.ceil(remaining / 1000));
-        // Visual progress: shrink border as timer drains
-        const pct = remaining / APPROVAL_COUNTDOWN_MS;
-        defaultBtn.style.setProperty('--timer-pct', String(pct));
-
-        if (remaining <= 0) {
-          sendAndDismiss(_approvalDefaultKey);
-        }
-      }, 50);
-    }
-
-    // Any tap on the bar (including non-default buttons) cancels the auto-timer
-    // This is handled by sendAndDismiss which calls dismiss()
+    // Haptic if not already shown from trigger phase
+    if ('vibrate' in navigator) navigator.vibrate([30, 50, 30]);
   }) as EventListener);
 }
 

@@ -19,52 +19,67 @@ const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
 const OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024; // 1 MB
 
 // Detect Claude Code permission prompts in terminal output.
-// Strips ANSI escapes before matching so color codes don't break detection.
-const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
+// Strip ALL terminal escape sequences + decorative unicode
+const ANSI_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|\([AB012])/g;
+const DECOR_RE = /[─═│┌┐└┘├┤┬┴┼╔╗╚╝║·]/g;
 
-/** Recent terminal output ring buffer for cross-chunk pattern matching. */
-const APPROVAL_BUFFER_MAX = 2048;
-const _approvalBuffers = new Map<string, string>();
-/** Debounce: timestamp of last successful detection per session. */
-const _approvalLastFired = new Map<string, number>();
-const APPROVAL_DEBOUNCE_MS = 2000;
+function _cleanTermText(s: string): string {
+  return s.replace(ANSI_RE, '').replace(DECOR_RE, '');
+}
+
+/** Per-session approval state. */
+interface ApprovalState {
+  buffer: string;
+  triggered: boolean;
+  lastFired: number;
+}
+const _approvalState = new Map<string, ApprovalState>();
+const APPROVAL_BUFFER_MAX = 4096;
+const APPROVAL_COOLDOWN_MS = 1500;
+
+function _getState(id: string): ApprovalState {
+  let s = _approvalState.get(id);
+  if (!s) { s = { buffer: '', triggered: false, lastFired: 0 }; _approvalState.set(id, s); }
+  return s;
+}
 
 /**
- * Parse a Claude Code permission prompt from terminal output.
- *
- * Actual format (observed 2026-04-04):
- *   Tool(detail)
- *   Do you want to proceed?
- *   ❯ 2. Yes, allow reading from .claude/ during this session
- *     3. No
- *
- * Also matches: "Allow Tool(detail)?" older format.
+ * Feed terminal output and detect approval prompts.
+ * Returns:
+ *  - { phase: 'trigger', description } — prompt detected, show "waiting" UI
+ *  - { phase: 'ready', description, options } — options parsed, show buttons
+ *  - null — no prompt detected
  */
-export function parseApprovalPrompt(sessionId: string, raw: string): { tool: string; detail: string; description: string; options: { key: string; label: string }[] } | null {
-  // Debounce: don't re-fire within 2s of last detection
-  const lastFired = _approvalLastFired.get(sessionId) ?? 0;
-  if (Date.now() - lastFired < APPROVAL_DEBOUNCE_MS) return null;
+export function parseApprovalPrompt(sessionId: string, raw: string): {
+  phase: 'trigger' | 'ready';
+  tool: string;
+  detail: string;
+  description: string;
+  options: { key: string; label: string }[];
+} | null {
+  const st = _getState(sessionId);
 
-  const prev = _approvalBuffers.get(sessionId) ?? '';
-  const combined = (prev + raw).slice(-APPROVAL_BUFFER_MAX);
-  _approvalBuffers.set(sessionId, combined);
+  // Cooldown after firing
+  if (Date.now() - st.lastFired < APPROVAL_COOLDOWN_MS) return null;
 
-  const text = combined.replace(ANSI_RE, '');
+  // Accumulate
+  st.buffer = (st.buffer + raw).slice(-APPROVAL_BUFFER_MAX);
+  const text = _cleanTermText(st.buffer);
+  const newClean = _cleanTermText(raw);
 
-  // Detect "Do you want to proceed?" — the universal trigger.
-  // Must be in the NEW data, not just leftover in the buffer.
-  const rawClean = raw.replace(ANSI_RE, '');
-  const hasTriggerInNew = rawClean.includes('Do you want to proceed?') || rawClean.includes('proceed?');
-  const hasTriggerInBuffer = text.includes('Do you want to proceed?');
-  if (!hasTriggerInNew && !hasTriggerInBuffer) return null;
-  // Only match if the trigger appeared in recent data (not stale buffer)
-  if (!hasTriggerInNew) {
-    // Buffer has it but new data doesn't — check if options are in new data
-    const hasOptionsInNew = rawClean.match(/^\s*[❯>]?\s*\d+\.\s+/m);
-    if (!hasOptionsInNew) return null;
+  // Phase 1: detect trigger
+  if (!st.triggered) {
+    if (newClean.includes('Do you want to proceed') || newClean.includes('proceed?') ||
+        text.includes('Do you want to proceed')) {
+      st.triggered = true;
+    } else {
+      return null;
+    }
   }
 
-  // Extract tool info: "Tool(detail)" or "Tool" line before the prompt
+  // Extract context from accumulated text
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
   let tool = '';
   let detail = '';
   const toolMatch = text.match(/(\w+)\(([^)]*)\)/);
@@ -73,51 +88,49 @@ export function parseApprovalPrompt(sessionId: string, raw: string): { tool: str
     detail = toolMatch[2] ?? '';
   }
 
-  // Extract description and detail from prompt lines
   let description = '';
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   for (const line of lines) {
-    // Skip box-drawing, option lines, empty, prompts, footer
-    if (line.match(/^[─═│┌┐└┘├┤┬┴┼╔╗╚╝║]+$/) || line.match(/^\d+\./) || line.match(/^[❯>]\s*\d/) ||
-        line.includes('Do you want') || line.includes('Esc to cancel') || line.includes('proceed') ||
-        line.includes('Permission rule') || line.includes('Tab to amend') || line.includes('ctrl+e')) continue;
-    // Skip the Tool(detail) line itself
+    if (line.includes('Do you want') || line.includes('Esc to cancel') ||
+        line.includes('Permission rule') || line.includes('Tab to amend') ||
+        line.includes('ctrl+e') || line.match(/^\d+\./) || line.match(/^[❯>]\s*\d/)) continue;
     if (toolMatch && line.includes(toolMatch[0])) continue;
-    // A short descriptive line (2-60 chars, starts with uppercase)
-    if (line.length >= 2 && line.length <= 60 && line.match(/^[A-Z]/) && !description) {
+    if (line.length >= 2 && line.length <= 80 && line.match(/^[A-Z]/) && !description) {
       description = line;
       continue;
     }
-    // If no detail from Tool(detail), grab the indented command/path line as detail
     if (!detail && line.length > 2 && !line.match(/^[A-Z]/) && !line.startsWith('#')) {
       detail = line.slice(0, 80);
     }
   }
 
-  // Parse numbered options: "N. Label" — one per line, may have ❯ prefix
+  // Parse options: "N. Label", "❯ N. Label", "Yes", "No", "y/n"
   const options: { key: string; label: string }[] = [];
   for (const line of lines) {
-    const optMatch = line.match(/^[❯>]?\s*(\d+)\.\s+(.+)/);
-    if (optMatch) {
-      const optLabel = optMatch[2]!.trim();
-      if (optLabel.length > 0 && optLabel.length < 80) {
-        options.push({ key: optMatch[1]!, label: optLabel });
+    // Numbered: "1. Yes" or "❯ 2. No"
+    const numMatch = line.match(/^[❯>]?\s*(\d+)\.\s+(.+)/);
+    if (numMatch) {
+      const lbl = numMatch[2]!.trim();
+      if (lbl.length > 0 && lbl.length < 80) {
+        options.push({ key: numMatch[1]!, label: lbl });
       }
     }
   }
 
-  // Don't fire until we have actual parsed options — trigger and options
-  // often arrive in separate WS chunks. Wait for both.
-  if (options.length === 0) return null;
+  if (options.length > 0) {
+    // Ready — clear state and fire
+    st.buffer = '';
+    st.triggered = false;
+    st.lastFired = Date.now();
+    return { phase: 'ready', tool, detail, description, options };
+  }
 
-  _approvalBuffers.set(sessionId, '');
-  _approvalLastFired.set(sessionId, Date.now());
-  return { tool, detail, description, options };
+  // Triggered but no options yet — emit trigger phase so UI shows "waiting"
+  return { phase: 'trigger', tool, detail, description, options: [] };
 }
 
-/** Clear approval buffer for a session (e.g., on close). */
+/** Clear approval state for a session. */
 export function clearApprovalBuffer(sessionId: string): void {
-  _approvalBuffers.delete(sessionId);
+  _approvalState.delete(sessionId);
 }
 
 export class SessionHandle {

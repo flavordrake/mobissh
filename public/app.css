@@ -855,6 +855,11 @@ html, body {
   font-size: 12px;
   opacity: 0.7;
 }
+.approval-waiting {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+}
 
 /* Editing row (depth 1): scrollable editing keys + right-anchored compose toggle */
 #key-keys-row {
