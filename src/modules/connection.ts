@@ -241,7 +241,7 @@ export function sendSftpRealpath(requestId: string): void {
 import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
 import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
-import { SessionHandle, parseApprovalPrompt } from './session.js';
+import { SessionHandle } from './session.js';
 
 // SessionHandle instances stored alongside SessionState for terminal lifecycle (#374)
 const _sessionHandles = new Map<string, SessionHandle>();
@@ -296,13 +296,8 @@ function _flushTerminalWrite(sessionId: string): void {
 
 function _bufferTerminalWrite(sessionId: string, data: string): void {
   _writeBufs.set(sessionId, (_writeBufs.get(sessionId) ?? '') + data);
-  // Check for approval prompts — detects hook notification "# Appr" in data
-  const prompt = parseApprovalPrompt(sessionId, data);
-  if (prompt) {
-    window.dispatchEvent(new CustomEvent('approval-prompt', {
-      detail: { sessionId, ...prompt },
-    }));
-  }
+  // Approval detection moved to WS message handler — hook POSTs to /api/approval,
+  // server broadcasts as { type: 'approval_prompt' } to all clients.
   if (!_writeRafs.has(sessionId)) {
     _writeRafs.set(sessionId, requestAnimationFrame(() => { _flushTerminalWrite(sessionId); }));
   }
@@ -758,6 +753,25 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
             currentSession()?.ws?.send(JSON.stringify({ type: 'hostkey_response', accepted }));
           });
         }
+        break;
+      }
+
+      case 'approval_prompt': {
+        // Broadcast from hook via /api/approval — show approval bar
+        const approvalMsg = msg as unknown as { tool?: string; detail?: string; description?: string };
+        window.dispatchEvent(new CustomEvent('approval-prompt', {
+          detail: {
+            phase: 'ready',
+            sessionId,
+            tool: approvalMsg.tool ?? '',
+            detail: approvalMsg.detail ?? '',
+            description: approvalMsg.description ?? `Approve: ${approvalMsg.tool ?? ''}`,
+            options: [
+              { key: '1', label: 'Yes' },
+              { key: '2', label: 'No' },
+            ],
+          },
+        }));
         break;
       }
     }

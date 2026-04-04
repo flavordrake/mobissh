@@ -346,6 +346,30 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
+  // POST /api/approval — hook sends structured approval data, broadcast to WS clients
+  if (req.method === 'POST' && req.url === '/api/approval') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        console.log(`[approval] ${data.tool || 'unknown'}: ${data.detail || ''}`);
+        // Broadcast to all connected WS clients
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'approval_prompt', ...data }));
+          }
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"ok":true}');
+      } catch {
+        res.writeHead(400);
+        res.end('{"error":"invalid json"}');
+      }
+    });
+    return;
+  }
+
   // /clear — nuke SW cache + storage so mobile browsers get a fresh start.
   // Visit https://<host>/ssh/clear after a bad SW deploy.
   // Uses JS instead of Clear-Site-Data header (which hangs on some mobile browsers).

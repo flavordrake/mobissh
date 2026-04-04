@@ -20,83 +20,59 @@ const OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024; // 1 MB
 
 // Detect Claude Code permission prompts in terminal output.
 /**
- * Detect Claude Code permission prompts by searching for "Do you want to
- * proceed?" rendered via cursor positioning in the raw terminal data.
+ * Detect approval prompts via the hook's bell character (\x07).
  *
- * Claude Code renders TUI text character-by-character with escape sequences
- * between each character. After stripping escapes, the text appears but with
- * \x1b[C (cursor forward) between characters which become empty after strip.
- * We need to also collapse whitespace after stripping.
+ * The notify-bell.sh hook writes: printf '\r\033[K# MSG\a' to the PTY.
+ * The \a (0x07) bell character arrives in the raw WS data. We detect it
+ * and parse the "# Approve: Tool — detail" message before it.
+ *
+ * This is the ONLY reliable signal — Claude Code's TUI renders text via
+ * cursor positioning which can't be parsed from the raw escape stream.
  */
-const ANSI_ALL_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z@`]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|\([AB012]|[=>])/g;
 const APPROVAL_COOLDOWN_MS = 2000;
 const _approvalLastFired = new Map<string, number>();
-const APPROVAL_BUFFER_MAX = 8192;
-const _approvalBufs = new Map<string, string>();
 
-export function parseApprovalPrompt(sessionId: string, raw: string): {
+export function parseApprovalPrompt(_sessionId: string, raw: string): {
   phase: 'ready';
   tool: string;
   detail: string;
   description: string;
   options: { key: string; label: string }[];
 } | null {
-  const lastFired = _approvalLastFired.get(sessionId) ?? 0;
+  // Look for bell character (0x07) — the hook sends this
+  if (!raw.includes('\x07')) return null;
+
+  const lastFired = _approvalLastFired.get(_sessionId) ?? 0;
   if (Date.now() - lastFired < APPROVAL_COOLDOWN_MS) return null;
 
-  // Accumulate raw data and strip escapes
-  const prev = _approvalBufs.get(sessionId) ?? '';
-  const combined = (prev + raw).slice(-APPROVAL_BUFFER_MAX);
-  _approvalBufs.set(sessionId, combined);
+  // Strip ANSI to find the hook's "# Approve: ..." message
+  const stripped = raw.replace(/\x1b(?:\[[0-9;?]*[a-zA-Z@`]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|\([AB012]|[=>])/g, '');
 
-  // Strip ANSI and collapse to find readable text
-  const stripped = combined.replace(ANSI_ALL_RE, ' ').replace(/\s+/g, ' ');
-
-  // Look for "Do you want to proceed" in the collapsed text
-  if (!stripped.includes('Do you want to proceed')) return null;
-
-  // Extract what we can — look for "N. Label" patterns
-  const options: { key: string; label: string }[] = [];
-  // Match patterns like "1. Yes" "2. No" "3. Yes, and don't ask again"
-  const optRe = /(\d)\.\s+(Yes[^.]*|No[^.]*|Allow[^.]*|Deny[^.]*|Don't[^.]*)/gi;
-  let m: RegExpExecArray | null;
-  while ((m = optRe.exec(stripped)) !== null) {
-    options.push({ key: m[1]!, label: m[2]!.trim() });
+  // Look for hook message: "# Approve: Tool — detail" or "# Appr"
+  const hookMatch = stripped.match(/#\s*(Appr[^\x07\n\r]*)/);
+  if (!hookMatch) {
+    // Bell without approval message — normal terminal bell, ignore
+    return null;
   }
 
-  // Fallback: look for just "1." and "2." near "proceed"
-  if (options.length === 0) {
-    const proceedIdx = stripped.indexOf('Do you want to proceed');
-    const after = stripped.slice(proceedIdx);
-    if (after.includes('1.') && after.includes('2.')) {
-      options.push({ key: '1', label: 'Yes' });
-      options.push({ key: '2', label: 'No' });
-    }
-  }
+  const msg = hookMatch[1]!.trim();
+  // Parse: "Approve: Tool — detail" or "Approve: Tool"
+  const body = msg.replace(/^Approve:\s*/i, '');
+  const dashIdx = body.indexOf(' — ');
+  const tool = dashIdx >= 0 ? body.slice(0, dashIdx).trim() : body.trim();
+  const detail = dashIdx >= 0 ? body.slice(dashIdx + 3).trim() : '';
 
-  if (options.length === 0) return null;
+  // Default numbered options
+  const options = [
+    { key: '1', label: 'Yes' },
+    { key: '2', label: 'No' },
+  ];
 
-  // Extract tool context
-  let tool = '';
-  let detail = '';
-  const toolMatch = stripped.match(/(\w+)\(([^)]+)\)/);
-  if (toolMatch) {
-    tool = toolMatch[1] ?? '';
-    detail = toolMatch[2] ?? '';
-  }
-
-  // Extract description (e.g., "Bash command", "Read file")
-  let description = '';
-  const descMatch = stripped.match(/(Bash command|Read file|Edit file|Write file|Execute command|Bash|Read|Edit|Write)/i);
-  if (descMatch) description = descMatch[1]!;
-
-  _approvalBufs.set(sessionId, '');
-  _approvalLastFired.set(sessionId, Date.now());
-  return { phase: 'ready', tool, detail, description: description || tool, options };
+  _approvalLastFired.set(_sessionId, Date.now());
+  return { phase: 'ready', tool, detail, description: `Approve: ${tool}`, options };
 }
 
 export function clearApprovalBuffer(sessionId: string): void {
-  _approvalBufs.delete(sessionId);
   _approvalLastFired.delete(sessionId);
 }
 
