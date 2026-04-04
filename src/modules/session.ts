@@ -106,11 +106,9 @@ export function parseApprovalPrompt(sessionId: string, raw: string): { tool: str
     }
   }
 
-  // Fallback: yes/no
-  if (options.length === 0) {
-    options.push({ key: 'y', label: 'Allow' });
-    options.push({ key: 'n', label: 'Deny' });
-  }
+  // Don't fire until we have actual parsed options — trigger and options
+  // often arrive in separate WS chunks. Wait for both.
+  if (options.length === 0) return null;
 
   _approvalBuffers.set(sessionId, '');
   _approvalLastFired.set(sessionId, Date.now());
