@@ -1033,6 +1033,52 @@ export function initTerminalActions(): void {
   }
 }
 
+// ── Approval bar: Claude Code permission prompt responses ──────────────────
+
+let _approvalTimeout: ReturnType<typeof setTimeout> | null = null;
+
+export function initApprovalBar(): void {
+  const bar = document.getElementById('approvalBar');
+  const label = document.getElementById('approvalLabel');
+  const buttons = document.getElementById('approvalButtons');
+  if (!bar || !label || !buttons) return;
+
+  window.addEventListener('approval-prompt', ((e: CustomEvent) => {
+    const { tool, detail, options } = e.detail as { tool: string; detail: string; options: { key: string; label: string }[] };
+
+    label.textContent = detail ? `${tool}(${detail})` : tool;
+    buttons.innerHTML = '';
+
+    for (const opt of options) {
+      const btn = document.createElement('button');
+      btn.className = 'approval-btn';
+      btn.setAttribute('tabindex', '-1');
+      if (opt.label.toLowerCase().includes('allow') || opt.label.toLowerCase() === 'yes') {
+        btn.classList.add('approve');
+      } else if (opt.label.toLowerCase().includes('deny') || opt.label.toLowerCase() === 'no') {
+        btn.classList.add('deny');
+      }
+      btn.textContent = `(${opt.key}) ${opt.label}`;
+      btn.addEventListener('click', () => {
+        sendSSHInput(opt.key);
+        bar.classList.add('hidden');
+        if (_approvalTimeout) { clearTimeout(_approvalTimeout); _approvalTimeout = null; }
+      });
+      btn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
+      buttons.appendChild(btn);
+    }
+
+    bar.classList.remove('hidden');
+
+    // Auto-hide after 30s if no response
+    if (_approvalTimeout) clearTimeout(_approvalTimeout);
+    _approvalTimeout = setTimeout(() => {
+      bar.classList.add('hidden');
+      _approvalTimeout = null;
+    }, 30000);
+  }) as EventListener);
+}
+
 // Terminal resize observer removed (#374) — no automatic fitting.
 // Each SessionHandle is a buffered terminal at its creation-time layout size.
 

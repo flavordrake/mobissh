@@ -782,6 +782,43 @@ html, body {
 #key-bar.depth-2,
 #key-bar.depth-3 { height: calc(2 * var(--keybar-row-height) + env(safe-area-inset-bottom)); }
 
+/* Approval bar — Claude Code permission prompt responses */
+.approval-bar {
+  background: var(--bg-card);
+  border-top: 1px solid var(--accent);
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+.approval-bar.hidden { display: none; }
+.approval-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.approval-buttons {
+  display: flex;
+  gap: 6px;
+}
+.approval-btn {
+  flex: 1;
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13px;
+  font-family: monospace;
+  cursor: pointer;
+  touch-action: manipulation;
+  text-align: center;
+}
+.approval-btn:active { background: var(--accent); color: var(--bg-deep); }
+.approval-btn.approve { border-color: var(--accent); color: var(--accent); font-weight: bold; }
+.approval-btn.deny { border-color: #e44; color: #e44; }
+
 /* Editing row (depth 1): scrollable editing keys + right-anchored compose toggle */
 #key-keys-row {
   display: flex;

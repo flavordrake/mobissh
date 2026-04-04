@@ -22,7 +22,7 @@ import { initSelection } from './modules/selection.js';
 import {
   initUI, toast, setStatus, focusIME,
   _applyTabBarVisibility, initSessionMenu, initTabBar,
-  initConnectForm, initTerminalActions, initKeyBar,
+  initConnectForm, initTerminalActions, initApprovalBar, initKeyBar,
   initRouting, navigateToPanel,
   initFilesPanel, initLongPressTooltips,
 } from './modules/ui.js';
@@ -52,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initTabBar();
     initConnectForm();
     initTerminalActions();
+    initApprovalBar();
     initKeyBar();
     initFilesPanel();
     initLongPressTooltips();

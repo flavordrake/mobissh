@@ -18,6 +18,38 @@ const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
 /** Max buffered output bytes before oldest chunks are dropped. */
 const OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024; // 1 MB
 
+// Detect Claude Code permission prompts in terminal output.
+// Strips ANSI escapes before matching so color codes don't break detection.
+const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
+
+/** Parse an approval prompt from terminal output. Returns null if not detected. */
+export function parseApprovalPrompt(raw: string): { tool: string; detail: string; options: { key: string; label: string }[] } | null {
+  const text = raw.replace(ANSI_RE, '');
+
+  // Match "Allow Tool(detail)?" or "Allow Tool?"
+  const allowMatch = text.match(/Allow\s+(\w+)(?:\(([^)]*)\))?\s*\?/);
+  if (!allowMatch) return null;
+
+  const tool = allowMatch[1] ?? '';
+  const detail = allowMatch[2] ?? '';
+
+  // Parse numbered options: (1) Label  (2) Label  (3) Label
+  const options: { key: string; label: string }[] = [];
+  const optRe = /\((\d)\)\s+([A-Za-z][A-Za-z ]*?)(?=\s+\(\d\)|\s*$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = optRe.exec(text)) !== null) {
+    options.push({ key: m[1]!, label: m[2]!.trim() });
+  }
+
+  // If no numbered options found, default to yes/no
+  if (options.length === 0) {
+    options.push({ key: 'y', label: 'Allow' });
+    options.push({ key: 'n', label: 'Deny' });
+  }
+
+  return { tool, detail, options };
+}
+
 export class SessionHandle {
   readonly id: string;
   readonly terminal: Terminal;
@@ -141,11 +173,18 @@ export class SessionHandle {
     } else {
       this._outputBuffer.push(data);
       this._outputBufferBytes += data.length;
-      // Cap buffer — drop oldest chunks when over limit
       while (this._outputBufferBytes > OUTPUT_BUFFER_MAX_BYTES && this._outputBuffer.length > 1) {
         const dropped = this._outputBuffer.shift()!;
         this._outputBufferBytes -= dropped.length;
       }
+    }
+
+    // Detect approval prompts in terminal output
+    const prompt = parseApprovalPrompt(data);
+    if (prompt) {
+      window.dispatchEvent(new CustomEvent('approval-prompt', {
+        detail: { sessionId: this.id, ...prompt },
+      }));
     }
   }
 
