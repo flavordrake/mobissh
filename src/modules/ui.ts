@@ -1044,9 +1044,13 @@ export function initApprovalBar(): void {
   if (!bar || !label || !buttons) return;
 
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
-    const { tool, detail, options } = e.detail as { tool: string; detail: string; options: { key: string; label: string }[] };
+    const { tool, detail, description, options } = e.detail as { tool: string; detail: string; description: string; options: { key: string; label: string }[] };
 
-    label.textContent = detail ? `${tool}(${detail})` : tool;
+    // Show description + tool(detail) for full context
+    const parts: string[] = [];
+    if (description) parts.push(description);
+    if (tool) parts.push(detail ? `${tool}(${detail})` : tool);
+    label.textContent = parts.join(' — ') || 'Approval required';
     buttons.innerHTML = '';
 
     for (const opt of options) {

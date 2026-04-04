@@ -37,7 +37,7 @@ const _approvalBuffers = new Map<string, string>();
  *
  * Also matches: "Allow Tool(detail)?" older format.
  */
-export function parseApprovalPrompt(sessionId: string, raw: string): { tool: string; detail: string; options: { key: string; label: string }[] } | null {
+export function parseApprovalPrompt(sessionId: string, raw: string): { tool: string; detail: string; description: string; options: { key: string; label: string }[] } | null {
   const prev = _approvalBuffers.get(sessionId) ?? '';
   const combined = (prev + raw).slice(-APPROVAL_BUFFER_MAX);
   _approvalBuffers.set(sessionId, combined);
@@ -59,6 +59,23 @@ export function parseApprovalPrompt(sessionId: string, raw: string): { tool: str
     detail = toolMatch[2] ?? '';
   }
 
+  // Extract description: the action line before Tool(detail), e.g., "Read file", "Execute command"
+  // Look for lines with title-case words that aren't options or box chars
+  let description = '';
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  for (const line of lines) {
+    // Skip box-drawing, option lines, empty, "Do you want", "Esc to cancel"
+    if (line.match(/^[─═│┌┐└┘├┤┬┴┼╔╗╚╝║]+$/) || line.match(/^\d+\./) || line.match(/^[❯>]/) ||
+        line.includes('Do you want') || line.includes('Esc to cancel') || line.includes('proceed')) continue;
+    // Skip the Tool(detail) line itself
+    if (toolMatch && line.includes(toolMatch[0])) continue;
+    // A short descriptive line (2-50 chars, starts with uppercase)
+    if (line.length >= 2 && line.length <= 50 && line.match(/^[A-Z]/)) {
+      description = line;
+      break;
+    }
+  }
+
   // Parse numbered options: "N. Label" or "❯ N. Label"
   const options: { key: string; label: string }[] = [];
   const numOptRe = /[❯>]?\s*(\d+)\.\s+(.+?)(?=\s+\d+\.|$)/g;
@@ -77,7 +94,7 @@ export function parseApprovalPrompt(sessionId: string, raw: string): { tool: str
   }
 
   _approvalBuffers.set(sessionId, '');
-  return { tool, detail, options };
+  return { tool, detail, description, options };
 }
 
 /** Clear approval buffer for a session (e.g., on close). */
