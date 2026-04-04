@@ -1048,11 +1048,22 @@ export function initApprovalBar(): void {
   const bar = document.getElementById('approvalBar');
   const label = document.getElementById('approvalLabel');
   const buttons = document.getElementById('approvalButtons');
+  const dismissBtn = document.getElementById('approvalDismiss');
   if (!bar || !label || !buttons) return;
 
   function dismiss(): void {
     _clearApprovalTimer();
     bar!.classList.add('hidden');
+  }
+
+  // Permanent dismiss — disables approval bar until re-enabled in Settings
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => {
+      dismiss();
+      localStorage.setItem('approvalBarDisabled', 'true');
+      toast('Approval bar disabled. Re-enable in Settings.');
+    });
+    dismissBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
   }
 
   function sendAndDismiss(key: string): void {
@@ -1061,6 +1072,8 @@ export function initApprovalBar(): void {
   }
 
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
+    if (localStorage.getItem('approvalBarDisabled') === 'true') return;
+
     const { tool, detail, description, options } = e.detail as { tool: string; detail: string; description: string; options: { key: string; label: string }[] };
 
     // Show description + tool(detail) for full context

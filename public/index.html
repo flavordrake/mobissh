@@ -297,7 +297,10 @@
       </div>
       <!-- Approval bar — full-width buttons for Claude Code permission prompts -->
       <div id="approvalBar" class="approval-bar hidden">
-        <div id="approvalLabel" class="approval-label"></div>
+        <div class="approval-header">
+          <div id="approvalLabel" class="approval-label"></div>
+          <button id="approvalDismiss" class="approval-dismiss" tabindex="-1" title="Dismiss (disable in Settings)">✕</button>
+        </div>
         <div id="approvalButtons" class="approval-buttons"></div>
       </div>
     </div>
@@ -638,6 +641,14 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-label">
+          <input type="checkbox" id="enableApprovalBar" checked />
+          <span>Approval bar</span>
+        </label>
+        <p class="hint">Show buttons for Claude Code permission prompts with auto-accept countdown.</p>
       </div>
 
       <div class="danger-zone">

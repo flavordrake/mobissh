@@ -790,12 +790,27 @@ html, body {
   flex-shrink: 0;
 }
 .approval-bar.hidden { display: none; }
+.approval-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
 .approval-label {
+  flex: 1;
   font-size: 12px;
   color: var(--text);
   font-family: monospace;
-  margin-bottom: 6px;
   word-break: break-all;
+}
+.approval-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  padding: 2px 6px;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 .approval-buttons {
   display: flex;

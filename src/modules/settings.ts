@@ -108,6 +108,20 @@ export function initSettingsPanel(): void {
     });
   }
 
+  const approvalBarEl = document.getElementById('enableApprovalBar') as HTMLInputElement | null;
+  if (approvalBarEl) {
+    approvalBarEl.checked = localStorage.getItem('approvalBarDisabled') !== 'true';
+    approvalBarEl.addEventListener('change', () => {
+      if (approvalBarEl.checked) {
+        localStorage.removeItem('approvalBarDisabled');
+        _toast('Approval bar enabled.');
+      } else {
+        localStorage.setItem('approvalBarDisabled', 'true');
+        _toast('Approval bar disabled.');
+      }
+    });
+  }
+
   const remoteClipEl = document.getElementById('enableRemoteClipboard') as HTMLInputElement | null;
   if (remoteClipEl) {
     remoteClipEl.checked = localStorage.getItem('enableRemoteClipboard') === 'true';
