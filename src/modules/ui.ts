@@ -1053,9 +1053,8 @@ export function initApprovalBar(): void {
       const btn = document.createElement('button');
       btn.className = 'approval-btn';
       btn.setAttribute('tabindex', '-1');
-      if (opt.label.toLowerCase().includes('allow') || opt.label.toLowerCase() === 'yes') {
-        btn.classList.add('approve');
-      } else if (opt.label.toLowerCase().includes('deny') || opt.label.toLowerCase() === 'no') {
+      const lower = opt.label.toLowerCase();
+      if (lower.includes('no') || lower.includes('deny') || lower.includes('reject')) {
         btn.classList.add('deny');
       }
       btn.textContent = `(${opt.key}) ${opt.label}`;

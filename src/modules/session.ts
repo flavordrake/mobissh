@@ -26,52 +26,57 @@ const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
 const APPROVAL_BUFFER_MAX = 2048;
 const _approvalBuffers = new Map<string, string>();
 
-/** Parse an approval prompt from terminal output. Returns null if not detected. */
+/**
+ * Parse a Claude Code permission prompt from terminal output.
+ *
+ * Actual format (observed 2026-04-04):
+ *   Tool(detail)
+ *   Do you want to proceed?
+ *   ❯ 2. Yes, allow reading from .claude/ during this session
+ *     3. No
+ *
+ * Also matches: "Allow Tool(detail)?" older format.
+ */
 export function parseApprovalPrompt(sessionId: string, raw: string): { tool: string; detail: string; options: { key: string; label: string }[] } | null {
-  // Accumulate recent output per session for cross-chunk matching
   const prev = _approvalBuffers.get(sessionId) ?? '';
   const combined = (prev + raw).slice(-APPROVAL_BUFFER_MAX);
   _approvalBuffers.set(sessionId, combined);
 
   const text = combined.replace(ANSI_RE, '');
 
-  // Match "Allow Tool(detail)?" or "Allow Tool?"
-  const allowMatch = text.match(/Allow\s+(\w+)(?:\(([^)]*)\))?\s*\?/);
-  if (!allowMatch) return null;
-
-  const tool = allowMatch[1] ?? '';
-  const detail = allowMatch[2] ?? '';
-
-  // Parse options in various formats:
-  //   "Yes (y)  Always (a)  No (n)  Don't ask again (!)"
-  //   "(1) Allow once  (2) Allow always  (3) Deny"
-  //   "(y) Yes  (n) No"
-  const options: { key: string; label: string }[] = [];
-
-  // Format 1: "Label (key)" — e.g., "Yes (y)", "Always (a)", "Don't ask again (!)"
-  const labelFirstRe = /([A-Za-z][A-Za-z' ]*?)\s+\(([yn!a\d])\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = labelFirstRe.exec(text)) !== null) {
-    options.push({ key: m[2]!, label: m[1]!.trim() });
+  // Detect "Do you want to proceed?" — the universal trigger
+  if (!text.includes('Do you want to proceed?')) {
+    // Also try older "Allow Tool?" format
+    if (!text.match(/Allow\s+\w+/)) return null;
   }
 
-  // Format 2: "(key) Label" — e.g., "(1) Allow once", "(y) Yes"
-  if (options.length === 0) {
-    const keyFirstRe = /\(([yn!a\d])\)\s+([A-Za-z][A-Za-z' ]*?)(?=\s+\([yn!a\d]\)|\s*$)/g;
-    while ((m = keyFirstRe.exec(text)) !== null) {
-      options.push({ key: m[1]!, label: m[2]!.trim() });
+  // Extract tool info: "Tool(detail)" or "Tool" line before the prompt
+  let tool = '';
+  let detail = '';
+  const toolMatch = text.match(/(\w+)\(([^)]*)\)/);
+  if (toolMatch) {
+    tool = toolMatch[1] ?? '';
+    detail = toolMatch[2] ?? '';
+  }
+
+  // Parse numbered options: "N. Label" or "❯ N. Label"
+  const options: { key: string; label: string }[] = [];
+  const numOptRe = /[❯>]?\s*(\d+)\.\s+(.+?)(?=\s+\d+\.|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = numOptRe.exec(text)) !== null) {
+    const label = m[2]!.trim().replace(/\s+/g, ' ');
+    if (label.length > 0 && label.length < 80) {
+      options.push({ key: m[1]!, label });
     }
   }
 
-  // Fallback: default yes/no
+  // Fallback: yes/no
   if (options.length === 0) {
     options.push({ key: 'y', label: 'Allow' });
     options.push({ key: 'n', label: 'Deny' });
   }
 
-  // Clear buffer after successful match to avoid re-triggering
   _approvalBuffers.set(sessionId, '');
-
   return { tool, detail, options };
 }
 
