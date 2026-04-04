@@ -296,9 +296,13 @@ function _flushTerminalWrite(sessionId: string): void {
 
 function _bufferTerminalWrite(sessionId: string, data: string): void {
   _writeBufs.set(sessionId, (_writeBufs.get(sessionId) ?? '') + data);
-  // Check for approval prompts eagerly — don't wait for rAF paint.
-  // rAF is throttled when the user isn't interacting, but approvals need
-  // immediate detection for the countdown timer to start on time.
+  // Debug: log any data that might contain approval prompt keywords
+  const _dbg = data.replace(/\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|\([AB012])/g, '');
+  if (_dbg.includes('proceed') || _dbg.includes('want to') || _dbg.match(/\d+\.\s+Yes/) || _dbg.match(/\d+\.\s+No/)) {
+    console.log('[approval-debug] raw chunk:', JSON.stringify(data.slice(0, 200)));
+    console.log('[approval-debug] clean:', _dbg.slice(0, 200));
+  }
+  // Check for approval prompts eagerly
   const prompt = parseApprovalPrompt(sessionId, data);
   if (prompt) {
     window.dispatchEvent(new CustomEvent('approval-prompt', {
