@@ -59,31 +59,36 @@ export function parseApprovalPrompt(sessionId: string, raw: string): { tool: str
     detail = toolMatch[2] ?? '';
   }
 
-  // Extract description: the action line before Tool(detail), e.g., "Read file", "Execute command"
-  // Look for lines with title-case words that aren't options or box chars
+  // Extract description and detail from prompt lines
   let description = '';
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   for (const line of lines) {
-    // Skip box-drawing, option lines, empty, "Do you want", "Esc to cancel"
-    if (line.match(/^[─═│┌┐└┘├┤┬┴┼╔╗╚╝║]+$/) || line.match(/^\d+\./) || line.match(/^[❯>]/) ||
-        line.includes('Do you want') || line.includes('Esc to cancel') || line.includes('proceed')) continue;
+    // Skip box-drawing, option lines, empty, prompts, footer
+    if (line.match(/^[─═│┌┐└┘├┤┬┴┼╔╗╚╝║]+$/) || line.match(/^\d+\./) || line.match(/^[❯>]\s*\d/) ||
+        line.includes('Do you want') || line.includes('Esc to cancel') || line.includes('proceed') ||
+        line.includes('Permission rule') || line.includes('Tab to amend') || line.includes('ctrl+e')) continue;
     // Skip the Tool(detail) line itself
     if (toolMatch && line.includes(toolMatch[0])) continue;
-    // A short descriptive line (2-50 chars, starts with uppercase)
-    if (line.length >= 2 && line.length <= 50 && line.match(/^[A-Z]/)) {
+    // A short descriptive line (2-60 chars, starts with uppercase)
+    if (line.length >= 2 && line.length <= 60 && line.match(/^[A-Z]/) && !description) {
       description = line;
-      break;
+      continue;
+    }
+    // If no detail from Tool(detail), grab the indented command/path line as detail
+    if (!detail && line.length > 2 && !line.match(/^[A-Z]/) && !line.startsWith('#')) {
+      detail = line.slice(0, 80);
     }
   }
 
-  // Parse numbered options: "N. Label" or "❯ N. Label"
+  // Parse numbered options: "N. Label" — one per line, may have ❯ prefix
   const options: { key: string; label: string }[] = [];
-  const numOptRe = /[❯>]?\s*(\d+)\.\s+(.+?)(?=\s+\d+\.|$)/g;
-  let m: RegExpExecArray | null;
-  while ((m = numOptRe.exec(text)) !== null) {
-    const label = m[2]!.trim().replace(/\s+/g, ' ');
-    if (label.length > 0 && label.length < 80) {
-      options.push({ key: m[1]!, label });
+  for (const line of lines) {
+    const optMatch = line.match(/^[❯>]?\s*(\d+)\.\s+(.+)/);
+    if (optMatch) {
+      const optLabel = optMatch[2]!.trim();
+      if (optLabel.length > 0 && optLabel.length < 80) {
+        options.push({ key: optMatch[1]!, label: optLabel });
+      }
     }
   }
 
