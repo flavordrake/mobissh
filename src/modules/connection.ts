@@ -262,6 +262,7 @@ export function removeSessionHandle(id: string): void {
 import { rebindSelectionWatcher } from './selection.js';
 import { renderSessionList, closeSession } from './ui.js';
 import { stopAndDownloadRecording } from './recording.js';
+import { fireNotification } from './terminal.js';
 
 let _toast = (_msg: string): void => {};
 let _setStatus = (_state: ConnectionStatus, _text: string): void => {};
@@ -555,7 +556,6 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     }, 5000);
   }
 
-  let openedThisAttempt = false;
   let newWs: WebSocket;
 
   try {
@@ -593,8 +593,8 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }
 
   newWs.addEventListener('open', () => {
-    openedThisAttempt = true;
-    if (session) session._wsConsecFailures = 0;
+    // Don't reset _wsConsecFailures here — WS opens fine even when SSH host
+    // is unreachable. Only reset on successful SSH ready (case 'ready' below).
     startKeepAlive(sessionId);
     const profile = session?.profile;
     if (!profile) return;
@@ -624,6 +624,8 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     switch (msg.type) {
       case 'connected':
         if (session) {
+          session._wsConsecFailures = 0;
+          session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
           if (session.state === 'connecting' || session.state === 'reconnecting') transitionSession(sessionId, 'authenticating');
           if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
         }
@@ -692,11 +694,12 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           // Already connected — transient error, don't interrupt with modal
           _toast(`Error: ${msg.message}`);
         } else {
-          // Not yet connected — connection failure. Retry if session has a profile.
+          // Not yet connected — SSH-level failure (e.g. handshake timeout).
+          // Don't reconnect here — let the WS onclose handler manage retries
+          // with its failure counter to prevent infinite loops to dead hosts.
+          console.log(`[error-msg] SSH error pre-connect: ${msg.message}, letting onclose handle retry`);
           _toast(`Connection failed: ${msg.message}`);
-          if (session?.profile) {
-            scheduleReconnect();
-          } else {
+          if (!session?.profile) {
             closeSession(sessionId);
           }
         }
@@ -777,9 +780,22 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       }
 
       case 'hook_event': {
-        // All non-approval hook events — log to debug overlay
+        // All non-approval hook events — log to debug overlay + notify when backgrounded
         const hookMsg = msg as unknown as { event?: string; tool?: string; detail?: string; description?: string };
         console.log('[hook→ws]', hookMsg.event, hookMsg.tool, hookMsg.detail);
+
+        // Fire PWA notification for significant events when app is backgrounded.
+        // Unlike terminal bell notifications, hook events bypass the termNotifications
+        // setting — they're infrastructure events, always worth knowing about.
+        const event = hookMsg.event ?? '';
+        const isSignificant = event === 'SubagentStart' || event === 'commit' || event === 'push'
+          || event === 'deploy' || event === 'pr-create' || event === 'integrate';
+        const isBackgrounded = !document.hasFocus() || document.visibilityState === 'hidden';
+        if (isSignificant && isBackgrounded && Notification.permission === 'granted') {
+          const title = `MobiSSH: ${event}`;
+          const body = [hookMsg.tool, hookMsg.detail, hookMsg.description].filter(Boolean).join(' — ');
+          fireNotification(title, body || event);
+        }
         break;
       }
     }
@@ -798,33 +814,22 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
     _setStatus('disconnected', 'Disconnected');
 
-    // If SSH never connected, this session is dead — clean up, don't reconnect
-    // Never close a session that has a profile — always retry or show as disconnected.
-    // closeSession permanently destroys the session, losing the user's connection intent.
+    // No profile = ephemeral session, safe to close
     if (!session?.profile) {
-      // No profile = ephemeral session, safe to close
       closeSession(sessionId);
       return;
     }
 
-    if (!wasSshConnected && !openedThisAttempt && session) {
-      session._wsConsecFailures++;
-      if (session._wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
-        session._wsConsecFailures = 0;
-        _dismissConnectionStatus();
-        showErrorDialog('Connection rejected repeatedly.\n\nYour session token may have expired — reload the page to get a fresh one.');
-        return; // Don't close — let user decide from the Connect panel
-      }
+    // All reconnect attempts go through scheduleReconnect which has its own
+    // failure counter. Previously-connected sessions get a first free reconnect,
+    // then the counter applies to prevent infinite loops to dead hosts.
+    if (session) {
+      console.log(`[onclose] session=${sessionId} wasSsh=${wasSshConnected} failures=${session._wsConsecFailures} state=${session.state}`);
     }
-
-    // Always reconnect for sessions with profiles
-    if (session) session._wsConsecFailures = 0;
-    if (document.visibilityState === 'visible') {
+    if (wasSshConnected) {
       _toast('Reconnecting…');
-      _openWebSocket({ silent: true, sessionId });
-    } else {
-      scheduleReconnect();
     }
+    scheduleReconnect(sessionId);
   }, signal ? { signal } : undefined);
 
   newWs.addEventListener('error', () => {
@@ -839,6 +844,21 @@ export function scheduleReconnect(sessionId?: string): void {
   const sid = sessionId ?? appState.activeSessionId ?? '';
   const session = appState.sessions.get(sid);
   if (!session?.profile) return;
+
+  // Guard: stop reconnecting after repeated failures to unreachable hosts
+  const wasConnected = session.state === 'connected' || session.state === 'soft_disconnected';
+  if (!wasConnected) {
+    session._wsConsecFailures++;
+    console.log(`[scheduleReconnect] sid=${sid} failures=${session._wsConsecFailures}/${WS_MAX_AUTH_FAILURES} state=${session.state}`);
+    if (session._wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
+      console.log(`[scheduleReconnect] HALT — giving up on session=${sid}`);
+      session._wsConsecFailures = 0;
+      transitionSession(sid, 'failed');
+      _dismissConnectionStatus();
+      showErrorDialog(`Host unreachable after ${WS_MAX_AUTH_FAILURES} attempts.\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
+      return;
+    }
+  }
 
   const delaySec = Math.round(session.reconnectDelay / 1000);
   _toast(`Reconnecting in ${String(delaySec)}s…`);

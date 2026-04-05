@@ -451,11 +451,70 @@ export async function importBackup(file: File): Promise<void> {
 
 export function registerServiceWorker(): void {
   if (!('serviceWorker' in navigator)) return;
+
+  // Detect when a new SW takes control (update activated).
+  // Log for debug overlay telemetry — the new SW is already active at this point.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    console.log('[sw] controllerchange — new service worker activated');
+  });
+
   navigator.serviceWorker.register('sw.js').then((reg) => {
     setInterval(() => { void reg.update(); }, 60_000);
+
+    // Log SW state for telemetry
+    if (reg.active) console.log(`[sw] active: ${reg.active.scriptURL}`);
+    if (reg.waiting) console.log('[sw] waiting worker detected — will activate on next navigation');
+    if (reg.installing) console.log('[sw] installing worker detected');
+
+    reg.addEventListener('updatefound', () => {
+      console.log('[sw] updatefound — new version downloading');
+      const newWorker = reg.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', () => {
+          console.log(`[sw] new worker state: ${newWorker.state}`);
+        });
+      }
+    });
   }).catch((err: unknown) => {
     console.warn('Service worker registration failed:', err);
   });
+}
+
+/** Check running code version against server. Logs mismatch to console (visible in debug overlay). */
+export async function checkVersionFreshness(): Promise<void> {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="app-version"]');
+  if (!meta?.content) {
+    console.warn('[version] no app-version meta tag — running from cache?');
+    return;
+  }
+  const [localVersion, localHash] = meta.content.split(':');
+
+  try {
+    const res = await fetch('version', { cache: 'no-store' });
+    if (!res.ok) {
+      console.warn(`[version] /version returned ${String(res.status)}`);
+      return;
+    }
+    const data = await res.json() as { version: string; hash: string };
+    const serverVersion = data.version;
+    const serverHash = data.hash;
+
+    if (localHash === serverHash) {
+      console.log(`[version] fresh — ${localVersion}:${localHash}`);
+      return;
+    }
+
+    console.warn(`[version] STALE — running ${localVersion}:${localHash}, server has ${serverVersion}:${serverHash}`);
+    console.warn('[version] cached content is outdated — reload to get latest');
+
+    // Dispatch event so UI can show a non-intrusive banner
+    window.dispatchEvent(new CustomEvent('version-stale', {
+      detail: { local: { version: localVersion, hash: localHash }, server: { version: serverVersion, hash: serverHash } },
+    }));
+  } catch {
+    // Network error — probably offline, cache serving is expected
+    console.log('[version] offline — skipping freshness check');
+  }
 }
 
 export async function clearCacheAndReload(): Promise<void> {

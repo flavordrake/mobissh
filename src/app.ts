@@ -14,7 +14,7 @@ import {
   loadProfileIntoForm, deleteProfile,
   loadKeys, importKey, useKey, deleteKey, renameKey, populateKeyDropdown,
 } from './modules/profiles.js';
-import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings } from './modules/settings.js';
+import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, checkVersionFreshness } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
 import { appState } from './modules/state.js';
 import { initIME, initIMEInput } from './modules/ime.js';
@@ -42,6 +42,7 @@ declare global {
 
 document.addEventListener('DOMContentLoaded', () => void (async () => {
   try {
+    console.log('[boot] code version: 2026-04-04T2350-reconnect-guard-v3');
     migrateSettings();
     initDebugOverlay();
     initTerminal();
@@ -66,6 +67,28 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     loadKeys();
     populateKeyDropdown();
     registerServiceWorker();
+
+    // Cache telemetry: log what caches exist and their sizes at boot
+    if ('caches' in window) {
+      void caches.keys().then(async (keys) => {
+        console.log(`[cache] ${String(keys.length)} cache(s): ${keys.join(', ') || '(none)'}`);
+        for (const key of keys) {
+          const cache = await caches.open(key);
+          const entries = await cache.keys();
+          console.log(`[cache] ${key}: ${String(entries.length)} entries`);
+        }
+      });
+    }
+
+    // Version freshness: compare running code vs server after boot
+    void checkVersionFreshness();
+
+    // Version stale event: toast + notification so user knows to reload
+    window.addEventListener('version-stale', ((e: CustomEvent) => {
+      const { local, server } = e.detail as { local: { version: string; hash: string }; server: { version: string; hash: string } };
+      toast(`Update available: ${server.version}:${server.hash} (running ${local.version}:${local.hash}). Long-press Settings to reload.`);
+    }) as EventListener);
+
     initVaultUI({ toast });
     await initVault();
     initKeyboardAwareness();

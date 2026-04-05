@@ -36,11 +36,12 @@ const SHELL_FILES = [
 
 // Install: cache the app shell
 self.addEventListener('install', (event) => {
+  console.log(`[sw] installing ${CACHE_NAME}`);
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(SHELL_FILES).catch((err) => {
         // Non-fatal: offline caching is best-effort
-        console.warn('[sw] Cache addAll failed:', err);
+        console.warn('[sw] cache addAll failed:', err);
       });
     })
   );
@@ -49,14 +50,13 @@ self.addEventListener('install', (event) => {
 
 // Activate: clean up old caches
 self.addEventListener('activate', (event) => {
+  console.log(`[sw] activating ${CACHE_NAME}`);
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      )
-    )
+    caches.keys().then((keys) => {
+      const stale = keys.filter((key) => key !== CACHE_NAME);
+      if (stale.length > 0) console.log(`[sw] purging stale caches: ${stale.join(', ')}`);
+      return Promise.all(stale.map((key) => caches.delete(key)));
+    })
   );
   self.clients.claim();
 });
@@ -122,8 +122,14 @@ self.addEventListener('fetch', (event) => {
       .catch(() => {
         // Network failed — serve from cache (offline)
         return caches.match(event.request).then((cached) => {
-          if (cached) return cached;
-          if (event.request.mode === 'navigate') return caches.match('./index.html');
+          if (cached) {
+            console.log(`[sw] serving from cache (offline): ${event.request.url}`);
+            return cached;
+          }
+          if (event.request.mode === 'navigate') {
+            console.log('[sw] serving cached index.html (offline fallback)');
+            return caches.match('./index.html');
+          }
         });
       })
   );

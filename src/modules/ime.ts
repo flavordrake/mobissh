@@ -109,13 +109,10 @@ let _previewStyle: PreviewStyle = (() => {
 })();
 
 // ── Dock position cycling (#255) ──────────────────────────────────────────────
-export type DockPosition = 'hover-top' | 'hover-bottom' | 'cursor-follow' | 'dock-above' | 'dock-below';
+export type DockPosition = 'hover-top' | 'hover-bottom';
 export const DOCK_POSITIONS: readonly DockPosition[] = [
   'hover-top',
   'hover-bottom',
-  'cursor-follow',
-  'dock-above',
-  'dock-below',
 ] as const;
 
 /** Read persisted dock position, defaulting to hover-top. */
@@ -360,7 +357,6 @@ export function initIMEInput(): void {
   const historyDown = document.getElementById('imeHistoryDown');
   const dockToggle = document.getElementById('imeDockToggle');
 
-  let _cursorFollowTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Return the current dock position from the module-level persisted state. */
   function _effectiveDock(): DockPosition {
@@ -393,59 +389,11 @@ export function initIMEInput(): void {
         imeActions.style.bottom = `${String(bottom)}px`;
         imeActions.style.top = 'auto';
       }
-    } else if (dock === 'cursor-follow') {
-      // Follow terminal cursor position, debounced at 200ms
-      const term = currentSession()?.terminal;
-      if (term) {
-        const cursorY = term.buffer.active.cursorY;
-        const termEl = document.getElementById('terminal');
-        const termRect = termEl ? termEl.getBoundingClientRect() : null;
-        const rowH = termRect ? termRect.height / term.rows : 20;
-        const top = (termRect ? termRect.top : viewTop) + cursorY * rowH + rowH + 4;
-        ime.style.top = `${String(top)}px`;
-        ime.style.bottom = 'auto';
-        if (imeActions) {
-          imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
-          imeActions.style.bottom = 'auto';
-        }
-      }
-    } else if (dock === 'dock-above') {
-      // Dock above the #terminal element
-      const termEl = document.getElementById('terminal');
-      const termRect = termEl ? termEl.getBoundingClientRect() : null;
-      if (termRect) {
-        const bottom = window.innerHeight - termRect.top + 4;
-        ime.style.bottom = `${String(bottom + actionH)}px`;
-        ime.style.top = 'auto';
-        if (imeActions) {
-          imeActions.style.bottom = `${String(bottom)}px`;
-          imeActions.style.top = 'auto';
-        }
-      }
-    } else if (dock === 'dock-below') {
-      // Dock below the #terminal element
-      const termEl = document.getElementById('terminal');
-      const termRect = termEl ? termEl.getBoundingClientRect() : null;
-      if (termRect) {
-        const top = termRect.bottom + 4;
-        ime.style.top = `${String(top)}px`;
-        ime.style.bottom = 'auto';
-        if (imeActions) {
-          imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
-          imeActions.style.bottom = 'auto';
-        }
-      }
     }
   }
 
-  /** Debounced _positionIME for cursor-follow mode (200ms). */
   function _positionIMEDebounced(): void {
-    if (getDockPosition() !== 'cursor-follow') {
-      _positionIME();
-      return;
-    }
-    if (_cursorFollowTimer) clearTimeout(_cursorFollowTimer);
-    _cursorFollowTimer = setTimeout(() => { _positionIME(); }, 200);
+    _positionIME();
   }
 
   // Re-position when viewport changes (keyboard open/close)

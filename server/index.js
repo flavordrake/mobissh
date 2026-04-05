@@ -373,6 +373,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // /version — lightweight JSON endpoint for client-side freshness checks.
+  // Cache-Control: no-store ensures the SW network-first fetch always hits the server.
+  if (req.url === '/version') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify({ version: APP_VERSION, hash: GIT_HASH }));
+    return;
+  }
+
   // /clear — nuke SW cache + storage so mobile browsers get a fresh start.
   // Visit https://<host>/ssh/clear after a bad SW deploy.
   // Uses JS instead of Clear-Site-Data header (which hangs on some mobile browsers).
@@ -843,7 +854,7 @@ wss.on('connection', (ws, req) => {
       host: resolvedIp,
       port: parseInt(cfg.port) || 22,
       username: cfg.username,
-      readyTimeout: 30000,  // 30s — Tailscale relay can be slow on reconnect
+      readyTimeout: 10000,  // 10s — fail fast, client retries 3x
       keepaliveInterval: 15000,  // SSH-layer keepalive every 15s
       keepaliveCountMax: 10,      // drop after 10 unanswered (~150s) — mobile needs longer grace
       hostVerifier(keyBuffer, verify) {
