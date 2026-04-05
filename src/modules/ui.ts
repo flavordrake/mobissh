@@ -806,11 +806,26 @@ export function initConnectForm(): void {
       target.textContent = 'Connecting…';
       void connectFromProfile(idx);
     } else if (action === 'reconnect-all-recent') {
+      // Snapshot indices and buttons before any async work — connectFromProfile
+      // may trigger DOM updates that shift indices or remove buttons (#398).
       const recentItems = document.querySelectorAll<HTMLElement>('[data-action="reconnect-recent"]');
+      const entries: Array<{ idx: number; btn: HTMLElement }> = [];
       for (const btn of recentItems) {
-        const idx = parseInt(btn.dataset.idx ?? '0', 10);
-        void connectFromProfile(idx);
+        entries.push({ idx: parseInt(btn.dataset.idx ?? '0', 10), btn });
+        btn.classList.add('connecting');
+        btn.textContent = 'Connecting…';
       }
+      // Connect sequentially with a small stagger to avoid WS race conditions.
+      void (async () => {
+        for (const entry of entries) {
+          await connectFromProfile(entry.idx);
+          // Small delay between connections to let WS handshakes settle.
+          if (entries.length > 1) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+        }
+        loadProfiles();
+      })();
     } else if (action === 'reconnect-all') {
       target.textContent = 'Reconnecting…';
       target.classList.add('connecting');
