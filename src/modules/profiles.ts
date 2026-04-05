@@ -332,6 +332,7 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
 export async function connectFromProfile(idx: number): Promise<boolean> {
   const profile = getProfiles()[idx];
   if (!profile) return false;
+  console.log(`[connect] connectFromProfile(${String(idx)}): ${profile.username}@${profile.host} vaultId=${profile.vaultId ?? 'none'} hasVaultCreds=${String(!!profile.hasVaultCreds)} vaultKey=${String(!!appState.vaultKey)}`);
 
   const sshProfile: SSHProfile = {
     name: profile.name,

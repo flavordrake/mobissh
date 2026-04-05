@@ -373,20 +373,27 @@ export async function promptVaultSetupOnStartup(): Promise<void> {
  */
 export async function ensureVaultKeyWithUI(): Promise<boolean> {
   // Already unlocked
-  if (appState.vaultKey) return true;
+  if (appState.vaultKey) {
+    console.log('[vault] ensureKey: already unlocked');
+    return true;
+  }
 
   // No vault exists — show setup modal
   if (!vaultExists()) {
+    console.log('[vault] ensureKey: no vault, showing setup');
     return showVaultSetup();
   }
 
   // Vault exists but is locked — try biometric first
+  console.log('[vault] ensureKey: locked, trying biometric (required)');
   const bioUnlocked = await tryUnlockVault('required');
   if (bioUnlocked) {
+    console.log('[vault] ensureKey: biometric succeeded');
     updateVaultSettingsUI();
     return true;
   }
 
   // Biometric failed or not enrolled — show password prompt
+  console.log('[vault] ensureKey: biometric failed, showing password bar');
   return showUnlockBar();
 }

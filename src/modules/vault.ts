@@ -215,17 +215,19 @@ export function isVaultLocked(): boolean {
 export async function initVault(): Promise<void> {
   const meta = _loadMeta();
   if (!meta) {
-    // Check for legacy PasswordCredential vault (migration path)
+    console.log('[vault] init: no meta — vault not set up');
     if (localStorage.getItem('sshVault') && !localStorage.getItem(VAULT_META_KEY)) {
-      appState.vaultMethod = null; // Will need migration
+      appState.vaultMethod = null;
     }
     return;
   }
   appState.vaultMethod = meta.dekBio ? 'master-pw+bio' : 'master-pw';
+  console.log(`[vault] init: method=${appState.vaultMethod} hasData=${String(vaultHasData())} hasBio=${String(!!meta.dekBio)}`);
 
-  // If there's encrypted data, try silent biometric unlock
   if (vaultHasData() && meta.dekBio) {
-    await _unlockViaBiometric('silent');
+    console.log('[vault] init: trying silent biometric');
+    const ok = await _unlockViaBiometric('silent');
+    console.log(`[vault] init: silent biometric ${ok ? 'succeeded' : 'failed'}`);
   }
 }
 
