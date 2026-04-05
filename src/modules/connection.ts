@@ -760,16 +760,22 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       }
 
       case 'approval_prompt': {
-        // Broadcast from hook via /api/hook — show approval bar
-        const approvalMsg = msg as unknown as { tool?: string; detail?: string; description?: string };
-        console.log('[hook→ws] approval_prompt:', approvalMsg);
+        // Broadcast from hook via /api/hook — show approval bar.
+        // Raw hook JSON uses tool_name + tool_input; legacy uses tool + detail.
+        const raw = msg as unknown as Record<string, unknown>;
+        const toolName = (raw.tool_name ?? raw.tool ?? '') as string;
+        const toolInput = raw.tool_input as Record<string, string> | undefined;
+        const command = toolInput?.command ?? toolInput?.file_path ?? toolInput?.pattern ?? (raw.detail as string) ?? '';
+        const desc = (toolInput?.description ?? raw.description ?? '') as string;
+        const label = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
+        console.log('[hook→ws] approval_prompt:', JSON.stringify(raw));
         window.dispatchEvent(new CustomEvent('approval-prompt', {
           detail: {
             phase: 'ready',
             sessionId,
-            tool: approvalMsg.tool ?? '',
-            detail: approvalMsg.detail ?? '',
-            description: approvalMsg.description ?? `Approve: ${approvalMsg.tool ?? ''}`,
+            tool: toolName,
+            detail: command,
+            description: label,
             options: [
               { key: '1', label: 'Yes' },
               { key: '2', label: 'No' },

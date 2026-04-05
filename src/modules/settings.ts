@@ -531,15 +531,20 @@ export function connectSSE(): void {
   es.addEventListener('approval', (e: Event) => {
     const me = e as MessageEvent;
     try {
-      const data = JSON.parse(me.data) as { tool?: string; detail?: string; description?: string };
-      console.log('[sse] approval:', data.tool, data.detail);
+      const raw = JSON.parse(me.data) as Record<string, unknown>;
+      const toolName = (raw.tool_name ?? raw.tool ?? '') as string;
+      const toolInput = raw.tool_input as Record<string, string> | undefined;
+      const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string) ?? '';
+      const desc = (toolInput?.description ?? raw.description ?? '') as string;
+      const label = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
+      console.log(`[sse] approval: ${label}`);
       window.dispatchEvent(new CustomEvent('approval-prompt', {
         detail: {
           phase: 'ready',
           sessionId: '',
-          tool: data.tool ?? '',
-          detail: data.detail ?? '',
-          description: data.description ?? `Approve: ${data.tool ?? ''}`,
+          tool: toolName,
+          detail: command,
+          description: label,
           options: [
             { key: '1', label: 'Yes' },
             { key: '2', label: 'No' },
