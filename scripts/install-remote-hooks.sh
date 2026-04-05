@@ -104,5 +104,45 @@ while [[ "$DIR" != "/" ]]; do
   DIR="$(dirname "$DIR")"
 done
 
+# End-to-end verification: simulate a PermissionRequest through the gate
 echo ""
-echo "Restart Claude Code sessions for hooks to take effect."
+echo "Verifying approval gate end-to-end..."
+TEST_JSON='{"event":"PermissionRequest","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"echo install-verify","description":"Install verification test"}}'
+GATE_RESP=$(curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
+  -d "$TEST_JSON" "${BRIDGE}/api/approval-gate" 2>/dev/null) || {
+  echo -e "$FAIL approval-gate unreachable"
+  exit 1
+}
+GATE_ID=$(echo "$GATE_RESP" | jq -r '.requestId // empty' 2>/dev/null)
+GATE_AUTO=$(echo "$GATE_RESP" | jq -r '.decision // empty' 2>/dev/null)
+if [[ -n "$GATE_AUTO" ]]; then
+  echo -e "$OK gate: auto-${GATE_AUTO} (no clients connected — default mode)"
+elif [[ -n "$GATE_ID" ]]; then
+  echo -e "$OK gate: registered #${GATE_ID} (clients connected, awaiting response)"
+  # Clean up: auto-respond so it doesn't linger
+  curl -sS --max-time 5 -X POST -H 'Content-Type: application/json' \
+    -d "{\"requestId\":\"${GATE_ID}\",\"decision\":\"allow\"}" \
+    "${BRIDGE}/api/approval-respond" &>/dev/null
+  echo -e "$OK gate: test response sent"
+else
+  echo -e "$FAIL gate: unexpected response: ${GATE_RESP}"
+fi
+
+# Verify the hook script itself works (simulate what Claude Code does)
+echo ""
+echo "Verifying hook script locally..."
+HOOK_OUT=$(echo "$TEST_JSON" | timeout 15 "${HOOK_FILE}" 2>/dev/null) || {
+  echo -e "$FAIL hook script failed to execute"
+  echo "  Check: chmod +x ${HOOK_FILE} && cat ${HOOK_FILE}"
+  exit 1
+}
+HOOK_DECISION=$(echo "$HOOK_OUT" | jq -r '.hookSpecificOutput.decision.behavior // empty' 2>/dev/null)
+if [[ -n "$HOOK_DECISION" ]]; then
+  echo -e "$OK hook: returned {behavior: ${HOOK_DECISION}}"
+else
+  echo -e "$FAIL hook: no valid decision in output"
+  echo "  Output was: ${HOOK_OUT}"
+fi
+
+echo ""
+echo "Done. Restart Claude Code sessions for hooks to take effect."
