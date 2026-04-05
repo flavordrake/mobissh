@@ -365,9 +365,11 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         const event = data.event || 'unknown';
-        console.log(`[hook] ${event}: ${data.tool || ''} ${data.detail || ''} ${data.description || ''}`);
+        console.log(`[hook] event="${event}" tool="${data.tool || ''}" detail="${data.detail || ''}" desc="${data.description || ''}"`);
         // Determine message type based on hook event
-        const sseEvent = event === 'PermissionRequest' ? 'approval' : 'hook';
+        const isApproval = event === 'PermissionRequest';
+        const sseEvent = isApproval ? 'approval' : 'hook';
+        console.log(`[hook] → SSE event="${sseEvent}" (isApproval=${isApproval}, clients=${sseClients.size})`);
         const wsType = event === 'PermissionRequest' ? 'approval_prompt' : 'hook_event';
         // Broadcast to SSE clients (primary channel — works without WS connection)
         sseBroadcast(sseEvent, data);

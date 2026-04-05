@@ -1072,7 +1072,11 @@ export function initApprovalBar(): void {
   }
 
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
-    if (localStorage.getItem('approvalBarDisabled') === 'true') return;
+    console.log('[approval] event received:', JSON.stringify(e.detail));
+    if (localStorage.getItem('approvalBarDisabled') === 'true') {
+      console.log('[approval] BLOCKED — approvalBarDisabled is true');
+      return;
+    }
 
     const { phase, tool, detail, description, options } = e.detail as {
       phase: 'trigger' | 'ready';
