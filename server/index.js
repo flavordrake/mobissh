@@ -119,10 +119,12 @@ try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).tr
 // SSE clients for real-time telemetry push
 const sseClients = new Set();
 
-// Pending approval gates: requestId → { res, timer }
-// Hook script holds HTTP connection open; client POSTs decision to /api/approval-respond.
+// Pending approval gates: requestId → { status, decision, timer }
 let _approvalCounter = 0;
 const pendingApprovals = new Map();
+
+// Default approval mode: 'allow' or 'deny'. User-settable via /api/approval-mode.
+let _approvalDefaultMode = 'allow';
 
 /** Broadcast an SSE event to all connected clients. */
 function sseBroadcast(event, data) {
@@ -379,11 +381,11 @@ const server = http.createServer((req, res) => {
 
         console.log(`[approval-gate] #${requestId}: "${label}" (SSE clients: ${sseClients.size})`);
 
-        // If no clients connected, auto-approve immediately — don't block Claude Code
+        // If no clients connected, use the default mode — don't block Claude Code
         if (sseClients.size === 0) {
-          console.log(`[approval-gate] #${requestId}: no clients → auto-approve`);
+          console.log(`[approval-gate] #${requestId}: no clients → default ${_approvalDefaultMode}`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ requestId, decision: 'allow', auto: true }));
+          res.end(JSON.stringify({ requestId, decision: _approvalDefaultMode, auto: true }));
           return;
         }
 
@@ -401,8 +403,8 @@ const server = http.createServer((req, res) => {
         // Default to auto-approve on timeout — user chose not to deny.
         const timer = setTimeout(() => {
           if (pendingApprovals.has(requestId)) {
-            console.log(`[approval-gate] #${requestId}: timeout → auto-approve`);
-            pendingApprovals.set(requestId, { decision: 'allow', status: 'timeout' });
+            console.log(`[approval-gate] #${requestId}: timeout → default ${_approvalDefaultMode}`);
+            pendingApprovals.set(requestId, { decision: _approvalDefaultMode, status: 'timeout' });
           }
         }, 120000);
 
@@ -440,6 +442,37 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ status: 'decided', decision }));
     }
     return;
+  }
+
+  // GET/POST /api/approval-mode — get or set the default approval mode.
+  if (req.url === '/api/approval-mode') {
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ mode: _approvalDefaultMode }));
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { mode } = JSON.parse(body);
+          if (mode === 'allow' || mode === 'deny') {
+            _approvalDefaultMode = mode;
+            console.log(`[approval-mode] set to: ${mode}`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, mode }));
+          } else {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end('{"error":"mode must be allow or deny"}');
+          }
+        } catch {
+          res.writeHead(400);
+          res.end('{"error":"invalid json"}');
+        }
+      });
+      return;
+    }
   }
 
   // POST /api/approval-respond — client sends user's decision for a pending gate.

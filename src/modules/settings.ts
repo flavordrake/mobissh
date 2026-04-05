@@ -122,6 +122,27 @@ export function initSettingsPanel(): void {
     });
   }
 
+  // Default approval mode — syncs with server
+  const approvalModeEl = document.getElementById('approvalDefaultMode') as HTMLSelectElement | null;
+  if (approvalModeEl) {
+    // Load current mode from server
+    void fetch('api/approval-mode').then((r) => r.json()).then((data: { mode?: string }) => {
+      if (data.mode) approvalModeEl.value = data.mode;
+    }).catch(() => { /* offline */ });
+
+    approvalModeEl.addEventListener('change', () => {
+      void fetch('api/approval-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: approvalModeEl.value }),
+      }).then(() => {
+        _toast(`Default approval: ${approvalModeEl.value}`);
+      }).catch(() => {
+        _toast('Failed to update approval mode');
+      });
+    });
+  }
+
   const approvalCountdownEl = document.getElementById('approvalCountdown') as HTMLSelectElement | null;
   if (approvalCountdownEl) {
     approvalCountdownEl.value = localStorage.getItem('approvalCountdown') ?? '0';

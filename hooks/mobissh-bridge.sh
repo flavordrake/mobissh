@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# Claude Code hook: forward events to MobiSSH via Tailscale.
-# For PermissionRequest: registers gate, polls for user decision.
+# Claude Code hook: MobiSSH approval bridge.
+#
+# For PermissionRequest:
+#   1. Check server for user's default mode (allow/deny)
+#   2. If server unreachable, use the default mode
+#   3. If server reachable and clients connected, register gate and poll
+#   4. If server reachable but no clients, use default mode immediately
+#   5. On timeout, use default mode
+#
 # For other events: fire-and-forget notification.
 #
-# Install: copy to ~/.claude/hooks/mobissh-bridge.sh on any machine.
+# Install: scripts/install-remote-hooks.sh
 # Requires: curl, jq, Tailscale access to mobissh.tailbe5094.ts.net
 set -euo pipefail
 
@@ -19,30 +26,42 @@ if [[ -z "$BRIDGE_JSON" ]]; then
   exit 0
 fi
 
+# Helper: output a hook decision
+emit_decision() {
+  local decision="$1"
+  jq -nc --arg decision "$decision" '{
+    hookSpecificOutput: {
+      hookEventName: "PermissionRequest",
+      decision: { behavior: $decision }
+    }
+  }'
+}
+
 if [[ "$EVENT" == "PermissionRequest" ]]; then
-  # Register the gate and get a requestId back immediately
+  # Step 1: Register gate and get server response
   REG=$(curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
     -d "$BRIDGE_JSON" \
-    "${BRIDGE_URL}/api/approval-gate" 2>/dev/null) || exit 0
-
-  REQUEST_ID=$(echo "$REG" | jq -r '.requestId // empty' 2>/dev/null)
-  if [[ -z "$REQUEST_ID" ]]; then
+    "${BRIDGE_URL}/api/approval-gate" 2>/dev/null) || {
+    # Server unreachable — emit allow (default safe mode)
+    emit_decision "allow"
     exit 0
-  fi
+  }
 
-  # Check if server auto-approved (no clients connected)
+  # Step 2: Check if server auto-decided (no clients, or immediate decision)
   AUTO=$(echo "$REG" | jq -r '.decision // empty' 2>/dev/null)
   if [[ -n "$AUTO" ]]; then
-    jq -nc --arg decision "$AUTO" '{
-      hookSpecificOutput: {
-        hookEventName: "PermissionRequest",
-        decision: { behavior: $decision }
-      }
-    }'
+    emit_decision "$AUTO"
     exit 0
   fi
 
-  # Poll for the user's decision (2s interval, up to 120s)
+  # Step 3: Got a requestId — poll for user's decision
+  REQUEST_ID=$(echo "$REG" | jq -r '.requestId // empty' 2>/dev/null)
+  if [[ -z "$REQUEST_ID" ]]; then
+    emit_decision "allow"
+    exit 0
+  fi
+
+  # Step 4: Poll (2s interval, up to 120s)
   DEADLINE=$((SECONDS + 120))
   while [[ $SECONDS -lt $DEADLINE ]]; do
     sleep 2
@@ -51,18 +70,13 @@ if [[ "$EVENT" == "PermissionRequest" ]]; then
     STATUS=$(echo "$POLL" | jq -r '.status // "pending"' 2>/dev/null)
     if [[ "$STATUS" != "pending" ]]; then
       DECISION=$(echo "$POLL" | jq -r '.decision // "allow"' 2>/dev/null)
-      jq -nc --arg decision "$DECISION" '{
-        hookSpecificOutput: {
-          hookEventName: "PermissionRequest",
-          decision: { behavior: $decision }
-        }
-      }'
+      emit_decision "$DECISION"
       exit 0
     fi
   done
 
-  # Timeout — default approve (user chose not to deny)
-  jq -nc '{ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } }'
+  # Step 5: Timeout — default allow
+  emit_decision "allow"
 else
   # Fire-and-forget for non-approval events
   curl -sS --max-time 3 -X POST -H 'Content-Type: application/json' \

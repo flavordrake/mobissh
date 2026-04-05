@@ -674,6 +674,17 @@
 
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Default approval mode</span>
+            <p class="hint">When you're not connected or don't respond: <strong>Allow</strong> auto-approves, <strong>Deny</strong> blocks Claude Code.</p>
+          </div>
+          <select id="approvalDefaultMode">
+            <option value="allow">Allow</option>
+            <option value="deny">Deny</option>
+          </select>
+        </div>
+
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Allow <code>ws://</code> (unencrypted)</span>
             <p class="hint">By default, <code>ws://</code> URLs are rejected at save time. Enable to allow them with a warning only. Browsers block <code>ws://</code> on HTTPS pages regardless.</p>
           </div>
