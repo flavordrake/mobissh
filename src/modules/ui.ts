@@ -1096,7 +1096,16 @@ export function initApprovalBar(): void {
       options: { key: string; label: string }[];
     };
 
-    _approvalSessionId = sessionId || null;
+    // Deduplicate: if the bar is already showing the same approval, skip.
+    // Multiple sessions receive the same broadcast — only show once.
+    const approvalKey = `${tool}:${detail}:${description}`;
+    if (!bar.classList.contains('hidden') && bar.dataset.approvalKey === approvalKey) {
+      return;
+    }
+    bar.dataset.approvalKey = approvalKey;
+
+    // Prefer the session that originated the approval; SSE has no session.
+    _approvalSessionId = sessionId || _approvalSessionId || null;
 
     // Build label — prefer description, fall back to tool(detail)
     let labelText = '';
