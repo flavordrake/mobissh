@@ -833,6 +833,10 @@ html, body {
   font-weight: 700;
   font-family: monospace;
   cursor: pointer;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
   touch-action: manipulation;
   text-align: center;
 }

@@ -1158,19 +1158,32 @@ export function initApprovalBar(): void {
       btn.addEventListener('click', () => { sendAndDismiss(opt.key); });
       btn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
 
-      // Long-press (800ms): enable auto-press for this key
+      // Long-press (800ms): enable auto-press for this key.
+      // preventDefault blocks browser context menu / text selection that
+      // dismisses the keyboard and shifts the UI on mobile.
       let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-      btn.addEventListener('touchstart', () => {
+      let longPressFired = false;
+      btn.addEventListener('touchstart', (ev) => {
+        longPressFired = false;
+        ev.preventDefault();
         longPressTimer = setTimeout(() => {
           longPressTimer = null;
+          longPressFired = true;
           localStorage.setItem('approvalAutoKey', opt.key);
           console.log(`[approval] auto-press enabled: "${opt.key}"`);
           toast(`Auto-${opt.label.toLowerCase()} enabled`);
           _startCountdown(opt.key, COUNTDOWN_SEC);
+          if ('vibrate' in navigator) navigator.vibrate(30);
         }, 800);
-      }, { passive: true });
-      btn.addEventListener('touchend', () => {
-        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      }, { passive: false });
+      btn.addEventListener('touchend', (ev) => {
+        if (longPressTimer) {
+          // Short tap — fire the click manually since we prevented default
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+          if (!longPressFired) sendAndDismiss(opt.key);
+        }
+        ev.preventDefault();
       });
       btn.addEventListener('touchmove', () => {
         if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
