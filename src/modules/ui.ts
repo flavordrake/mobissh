@@ -12,7 +12,7 @@ import { applyTheme, _addNotification, fireNotification } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession } from './profiles.js';
-import { clearIMEPreview } from './ime.js';
+import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
 
 /** Update session menu button text without clobbering child elements like badges (#355). */
@@ -69,6 +69,8 @@ export function navigateToPanel(
       handle.fit();
     }
     focusIME();
+    // Restore IME preview overlay if it was active before panel switch (#395)
+    restoreIMEOverlay();
   }
   if (panel === 'connect') {
     // Only refresh if the form isn't already visible (avoids clobbering edit-in-progress)
