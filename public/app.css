@@ -788,6 +788,8 @@ html, body {
   border-top: 1px solid var(--accent);
   padding: 6px 8px;
   flex-shrink: 0;
+  max-height: 50vh;
+  overflow-y: auto;
 }
 .approval-bar.hidden { display: none; }
 .approval-header {
@@ -800,6 +802,10 @@ html, body {
   flex: 1;
   font-size: 12px;
   color: var(--text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
   font-family: monospace;
   word-break: break-all;
 }

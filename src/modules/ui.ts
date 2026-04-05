@@ -1105,15 +1105,13 @@ export function initApprovalBar(): void {
     if (requestId) _pendingRequestId = requestId;
 
     // Deduplicate: SSE + WS both broadcast the same approval.
-    // Skip everything (notification, vibrate, bar) if already showing this one.
     const approvalKey = `${tool}:${detail}:${description}`;
     if (!bar.classList.contains('hidden') && bar.dataset.approvalKey === approvalKey) {
       return;
     }
     bar.dataset.approvalKey = approvalKey;
 
-
-    // Build label — prefer description, fall back to tool(detail)
+    // Build label
     let labelText = '';
     if (description) {
       labelText = description;
@@ -1122,7 +1120,6 @@ export function initApprovalBar(): void {
     }
     label.textContent = labelText || 'Approval required';
 
-    // Single notification + haptic (dedup above prevents double-fire)
     const notifMsg = labelText || 'Approval required';
     _addNotification(`Approve: ${notifMsg}`);
     fireNotification('MobiSSH', `Approve: ${notifMsg}`);
@@ -1131,7 +1128,6 @@ export function initApprovalBar(): void {
     console.log(`[approval] showing: "${notifMsg}"`);
 
     if (phase === 'trigger') {
-      // Show bar immediately with "waiting" state
       buttons.innerHTML = '<span class="approval-waiting">Waiting for options...</span>';
       bar.classList.remove('hidden');
       return;
