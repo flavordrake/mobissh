@@ -1084,14 +1084,17 @@ export function initApprovalBar(): void {
       options: { key: string; label: string }[];
     };
 
-    // Build label
-    const parts: string[] = [];
-    if (description) parts.push(description);
-    if (tool) parts.push(detail ? `${tool}(${detail})` : tool);
-    label.textContent = parts.join(' — ') || 'Approval required';
+    // Build label — prefer description, fall back to tool(detail)
+    let labelText = '';
+    if (description) {
+      labelText = description;
+    } else if (tool) {
+      labelText = detail ? `${tool}: ${detail}` : tool;
+    }
+    label.textContent = labelText || 'Approval required';
 
     // Notification + haptic on every approval (counts even when not focused)
-    const notifMsg = parts.join(' — ') || 'Approval required';
+    const notifMsg = labelText || 'Approval required';
     _addNotification(`Approve: ${notifMsg}`);
     fireNotification('MobiSSH', `Approve: ${notifMsg}`);
     if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
