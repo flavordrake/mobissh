@@ -37,10 +37,6 @@ vi.stubGlobal('window', {
   dispatchEvent: (e: CustomEvent) => { _dispatchedEvents.push(e); },
 });
 
-// Mock fetch
-const _fetchMock = vi.fn();
-vi.stubGlobal('fetch', _fetchMock);
-
 // Mock Notification
 vi.stubGlobal('Notification', { permission: 'granted' });
 
@@ -55,39 +51,57 @@ vi.stubGlobal('navigator', {
   clipboard: { writeText: vi.fn() },
 });
 
-const { checkVersionFreshness } = await import('../settings.js');
+// Mock EventSource — captures listeners so we can simulate server messages
+type ESListener = (e: { data: string }) => void;
+const _esListeners = new Map<string, ESListener>();
 
-describe('checkVersionFreshness', () => {
+class MockEventSource {
+  constructor(public url: string) {}
+  addEventListener(event: string, fn: ESListener): void {
+    _esListeners.set(event, fn);
+  }
+  close(): void {}
+}
+
+vi.stubGlobal('EventSource', MockEventSource);
+
+const { connectSSE } = await import('../settings.js');
+
+/** Simulate a server SSE version event. */
+function simulateVersionEvent(data: { version: string; hash: string; uptime: number }): void {
+  const listener = _esListeners.get('version');
+  if (listener) listener({ data: JSON.stringify(data) });
+}
+
+describe('connectSSE', () => {
   beforeEach(() => {
-    _fetchMock.mockReset();
+    _esListeners.clear();
     _dispatchedEvents.length = 0;
     _metaContent = '1.0.0:abc123';
   });
 
-  it('logs fresh when server hash matches local hash', async () => {
+  it('creates EventSource pointing to events endpoint', () => {
+    connectSSE();
+    // EventSource is a class mock — verify listener was registered for 'version'
+    expect(_esListeners.has('version')).toBe(true);
+  });
+
+  it('logs fresh when server hash matches local hash', () => {
     const logSpy = vi.spyOn(console, 'log');
-    _fetchMock.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ version: '1.0.0', hash: 'abc123' }),
-    });
+    connectSSE();
+    simulateVersionEvent({ version: '1.0.0', hash: 'abc123', uptime: 10 });
 
-    await checkVersionFreshness();
-
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[version] fresh'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[sse] fresh'));
     expect(_dispatchedEvents).toHaveLength(0);
     logSpy.mockRestore();
   });
 
-  it('warns and dispatches version-stale when hashes differ', async () => {
+  it('warns and dispatches version-stale when hashes differ', () => {
     const warnSpy = vi.spyOn(console, 'warn');
-    _fetchMock.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ version: '1.1.0', hash: 'def456' }),
-    });
+    connectSSE();
+    simulateVersionEvent({ version: '1.1.0', hash: 'def456', uptime: 5 });
 
-    await checkVersionFreshness();
-
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[version] STALE'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[sse] STALE'));
     expect(_dispatchedEvents).toHaveLength(1);
     expect(_dispatchedEvents[0]!.type).toBe('version-stale');
 
@@ -97,36 +111,21 @@ describe('checkVersionFreshness', () => {
     warnSpy.mockRestore();
   });
 
-  it('handles network failure gracefully (offline)', async () => {
+  it('logs server version and uptime on every version event', () => {
     const logSpy = vi.spyOn(console, 'log');
-    _fetchMock.mockRejectedValue(new Error('network error'));
+    connectSSE();
+    simulateVersionEvent({ version: '1.0.0', hash: 'abc123', uptime: 42 });
 
-    await checkVersionFreshness();
-
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[version] offline'));
-    expect(_dispatchedEvents).toHaveLength(0);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('uptime 42s'));
     logSpy.mockRestore();
   });
 
-  it('handles non-200 response', async () => {
-    const warnSpy = vi.spyOn(console, 'warn');
-    _fetchMock.mockResolvedValue({ ok: false, status: 500 });
-
-    await checkVersionFreshness();
-
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('/version returned 500'));
-    expect(_dispatchedEvents).toHaveLength(0);
-    warnSpy.mockRestore();
-  });
-
-  it('warns when app-version meta tag is missing', async () => {
+  it('handles missing meta tag gracefully', () => {
     _metaContent = '';
-    // querySelector returns { content: '' } which is falsy for ?.content check
     const warnSpy = vi.spyOn(console, 'warn');
+    connectSSE();
 
-    await checkVersionFreshness();
-
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no app-version meta'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[sse] no app-version meta'));
     warnSpy.mockRestore();
   });
 });

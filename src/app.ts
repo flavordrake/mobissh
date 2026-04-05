@@ -14,7 +14,7 @@ import {
   loadProfileIntoForm, deleteProfile,
   loadKeys, importKey, useKey, deleteKey, renameKey, populateKeyDropdown,
 } from './modules/profiles.js';
-import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, checkVersionFreshness } from './modules/settings.js';
+import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
 import { appState } from './modules/state.js';
 import { initIME, initIMEInput } from './modules/ime.js';
@@ -80,8 +80,11 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
       });
     }
 
-    // Version freshness: compare running code vs server after boot
-    void checkVersionFreshness();
+    // SSE channel: real-time version staleness detection.
+    // Server pushes its version on connect. After a container restart,
+    // EventSource auto-reconnects and the new server version triggers
+    // a stale warning if the running code is outdated.
+    connectSSE();
 
     // Version stale event: toast + notification so user knows to reload
     window.addEventListener('version-stale', ((e: CustomEvent) => {

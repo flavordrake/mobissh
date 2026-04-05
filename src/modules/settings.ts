@@ -480,41 +480,96 @@ export function registerServiceWorker(): void {
   });
 }
 
-/** Check running code version against server. Logs mismatch to console (visible in debug overlay). */
-export async function checkVersionFreshness(): Promise<void> {
+/**
+ * Connect to the server's SSE channel for real-time push events.
+ *
+ * Events:
+ *   - version: server version on connect (staleness detection on reconnect)
+ *   - approval: permission request from Claude Code hooks (shows approval bar)
+ *   - hook: non-approval hook events (log + background notifications)
+ *
+ * EventSource auto-reconnects, so after a container restart the client
+ * re-establishes, gets the new version, and detects stale code immediately.
+ */
+export function connectSSE(): void {
   const meta = document.querySelector<HTMLMetaElement>('meta[name="app-version"]');
-  if (!meta?.content) {
-    console.warn('[version] no app-version meta tag — running from cache?');
-    return;
+  const localContent = meta?.content ?? '';
+  const [localVersion, localHash] = localContent.split(':');
+
+  if (!localContent) {
+    console.warn('[sse] no app-version meta tag — running from cache?');
   }
-  const [localVersion, localHash] = meta.content.split(':');
 
-  try {
-    const res = await fetch('version', { cache: 'no-store' });
-    if (!res.ok) {
-      console.warn(`[version] /version returned ${String(res.status)}`);
-      return;
+  const es = new EventSource('events');
+
+  // ── Version staleness detection ──
+  es.addEventListener('version', (e: Event) => {
+    const me = e as MessageEvent;
+    try {
+      const data = JSON.parse(me.data) as { version: string; hash: string; uptime: number };
+      console.log(`[sse] server version: ${data.version}:${data.hash} (uptime ${String(Math.round(data.uptime))}s)`);
+
+      if (!localHash) return;
+
+      if (localHash === data.hash) {
+        console.log(`[sse] fresh — ${localVersion ?? '?'}:${localHash}`);
+      } else {
+        console.warn(`[sse] STALE — running ${localVersion ?? '?'}:${localHash}, server has ${data.version}:${data.hash}`);
+        window.dispatchEvent(new CustomEvent('version-stale', {
+          detail: {
+            local: { version: localVersion, hash: localHash },
+            server: { version: data.version, hash: data.hash },
+          },
+        }));
+      }
+    } catch {
+      console.warn('[sse] failed to parse version event');
     }
-    const data = await res.json() as { version: string; hash: string };
-    const serverVersion = data.version;
-    const serverHash = data.hash;
+  });
 
-    if (localHash === serverHash) {
-      console.log(`[version] fresh — ${localVersion}:${localHash}`);
-      return;
+  // ── Approval prompts from Claude Code hooks ──
+  es.addEventListener('approval', (e: Event) => {
+    const me = e as MessageEvent;
+    try {
+      const data = JSON.parse(me.data) as { tool?: string; detail?: string; description?: string };
+      console.log('[sse] approval:', data.tool, data.detail);
+      window.dispatchEvent(new CustomEvent('approval-prompt', {
+        detail: {
+          phase: 'ready',
+          sessionId: '',
+          tool: data.tool ?? '',
+          detail: data.detail ?? '',
+          description: data.description ?? `Approve: ${data.tool ?? ''}`,
+          options: [
+            { key: '1', label: 'Yes' },
+            { key: '2', label: 'No' },
+          ],
+        },
+      }));
+    } catch {
+      console.warn('[sse] failed to parse approval event');
     }
+  });
 
-    console.warn(`[version] STALE — running ${localVersion}:${localHash}, server has ${serverVersion}:${serverHash}`);
-    console.warn('[version] cached content is outdated — reload to get latest');
+  // ── Hook events (non-approval) ──
+  es.addEventListener('hook', (e: Event) => {
+    const me = e as MessageEvent;
+    try {
+      const data = JSON.parse(me.data) as { event?: string; tool?: string; detail?: string; description?: string };
+      console.log('[sse]', data.event, data.tool, data.detail);
+    } catch {
+      console.warn('[sse] failed to parse hook event');
+    }
+  });
 
-    // Dispatch event so UI can show a non-intrusive banner
-    window.dispatchEvent(new CustomEvent('version-stale', {
-      detail: { local: { version: localVersion, hash: localHash }, server: { version: serverVersion, hash: serverHash } },
-    }));
-  } catch {
-    // Network error — probably offline, cache serving is expected
-    console.log('[version] offline — skipping freshness check');
-  }
+  es.addEventListener('open', () => {
+    console.log('[sse] connected');
+  });
+
+  es.addEventListener('error', () => {
+    // EventSource auto-reconnects — just log for telemetry
+    console.log('[sse] disconnected (will auto-reconnect)');
+  });
 }
 
 export async function clearCacheAndReload(): Promise<void> {

@@ -116,6 +116,17 @@ try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).tr
   try { GIT_HASH = fs.readFileSync(path.join(__dirname, '..', '.git-hash'), 'utf8').trim(); } catch (_2) {}
 }
 
+// SSE clients for real-time telemetry push
+const sseClients = new Set();
+
+/** Broadcast an SSE event to all connected clients. */
+function sseBroadcast(event, data) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    client.write(msg);
+  }
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'application/javascript; charset=utf-8',
@@ -346,7 +357,7 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
-  // POST /api/hook — all hook events broadcast to WS clients
+  // POST /api/hook — broadcast hook events to WS + SSE clients
   if (req.method === 'POST' && (req.url === '/api/approval' || req.url === '/api/hook')) {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -355,9 +366,12 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const event = data.event || 'unknown';
         console.log(`[hook] ${event}: ${data.tool || ''} ${data.detail || ''} ${data.description || ''}`);
-        // Determine WS message type based on hook event
+        // Determine message type based on hook event
+        const sseEvent = event === 'PermissionRequest' ? 'approval' : 'hook';
         const wsType = event === 'PermissionRequest' ? 'approval_prompt' : 'hook_event';
-        // Broadcast to all connected WS clients
+        // Broadcast to SSE clients (primary channel — works without WS connection)
+        sseBroadcast(sseEvent, data);
+        // Broadcast to WS clients (legacy — for sessions already connected)
         wss.clients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({ type: wsType, ...data }));
@@ -373,14 +387,38 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // /version — lightweight JSON endpoint for client-side freshness checks.
-  // Cache-Control: no-store ensures the SW network-first fetch always hits the server.
+  // /version — lightweight JSON endpoint (kept for curl / scripted checks).
   if (req.url === '/version') {
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
     });
     res.end(JSON.stringify({ version: APP_VERSION, hash: GIT_HASH }));
+    return;
+  }
+
+  // /events — SSE channel for real-time client telemetry.
+  // Sends server version on connect so clients detect staleness immediately
+  // after a container restart (SSE auto-reconnects via EventSource).
+  if (req.url === '/events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    // Send version immediately on connect
+    res.write(`event: version\ndata: ${JSON.stringify({ version: APP_VERSION, hash: GIT_HASH, uptime: process.uptime() })}\n\n`);
+    // Heartbeat every 30s to keep the connection alive through proxies
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 30000);
+    // Track this client for broadcast
+    sseClients.add(res);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    });
     return;
   }
 
