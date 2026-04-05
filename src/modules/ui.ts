@@ -1071,12 +1071,13 @@ export function initApprovalBar(): void {
   let _approvalSessionId: string | null = null;
 
   function sendAndDismiss(key: string): void {
+    console.log(`[approval] button pressed: "${key}" target=${_approvalSessionId ?? 'all'}`);
+    // Send key + Enter — Claude Code's permission prompt may need both
+    const input = key + '\r';
     if (_approvalSessionId) {
-      // Send to the specific session that originated the approval
-      sendSSHInputToSession(_approvalSessionId, key);
+      sendSSHInputToSession(_approvalSessionId, input);
     } else {
-      // Fallback: send to all connected sessions (SSE path — we don't know which session)
-      sendSSHInputToAll(key);
+      sendSSHInputToAll(input);
     }
     _approvalSessionId = null;
     dismiss();
