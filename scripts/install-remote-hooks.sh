@@ -36,21 +36,24 @@ else
   exit 1
 fi
 
-# 3. Install hook script
+# 3. Install hook script — download from repo (single source of truth)
 mkdir -p "${HOOK_DIR}"
-cat > "${HOOK_FILE}" << 'HOOKSCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-INPUT=$(cat)
-EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)
-[[ -z "$EVENT" ]] && exit 0
-BRIDGE_JSON=$(echo "$INPUT" | jq -c --arg event "$EVENT" '. + {event: $event}' 2>/dev/null)
-[[ -z "$BRIDGE_JSON" ]] && exit 0
-curl -sS --max-time 3 -X POST -H 'Content-Type: application/json' \
-  -d "$BRIDGE_JSON" "https://mobissh.tailbe5094.ts.net/api/hook" 2>/dev/null || true
-HOOKSCRIPT
-chmod +x "${HOOK_FILE}"
-echo "[ok] Hook script: ${HOOK_FILE}"
+HOOK_URL="https://raw.githubusercontent.com/flavordrake/mobissh/main/hooks/mobissh-bridge.sh"
+if curl -sS --max-time 10 -o "${HOOK_FILE}" "${HOOK_URL}"; then
+  chmod +x "${HOOK_FILE}"
+  echo "[ok] Hook script downloaded: ${HOOK_FILE}"
+else
+  echo "ERROR: Failed to download hook script from ${HOOK_URL}"
+  exit 1
+fi
+
+# Verify the hook uses the gate endpoint (not the old fire-and-forget path)
+if grep -q "approval-gate" "${HOOK_FILE}"; then
+  echo "[ok] Hook uses synchronous approval gate"
+else
+  echo "WARNING: Hook does NOT use approval-gate — approvals will be fire-and-forget"
+  echo "  Check ${HOOK_URL} for the latest version"
+fi
 
 # 4. Scan config chain for existing hooks that might override
 GLOBAL_SETTINGS="${HOME}/.claude/settings.json"
