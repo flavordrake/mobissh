@@ -15,6 +15,7 @@ services:
       TS_SERVE_PORT: "${TS_SERVE_PORT:-443}"
     volumes:
       - tailscale-state:/var/lib/tailscale
+      - /home/dev/workspace/mobissh/test-results/uploads:/app/test-results/uploads
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
