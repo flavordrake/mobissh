@@ -37,7 +37,7 @@ else
 fi
 
 # Show hook content summary
-echo "   endpoints: $(grep -oP 'https://[^ "]+' "${HOOK_FILE}" | sort -u | tr '\n' ' ')"
+echo "   endpoints: $(grep -o 'https://[^ "]*' "${HOOK_FILE}" | sort -u | tr '\n' ' ')"
 
 # Install hooks into settings files
 HOOK_ENTRY=$(jq -nc --arg cmd "$HOOK_CMD" '[{"matcher":"","hooks":[{"type":"command","command":$cmd}]}]')
