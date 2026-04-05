@@ -123,8 +123,12 @@ const sseClients = new Set();
 let _approvalCounter = 0;
 const pendingApprovals = new Map();
 
-// Default approval mode: 'allow' or 'deny'. User-settable via /api/approval-mode.
-let _approvalDefaultMode = 'allow';
+// Default approval mode: 'allow' or 'deny'. Persisted to disk so it survives restarts.
+const APPROVAL_MODE_FILE = path.join(__dirname, '..', '.approval-mode');
+let _approvalDefaultMode = (() => {
+  try { return fs.readFileSync(APPROVAL_MODE_FILE, 'utf8').trim() || 'allow'; }
+  catch { return 'allow'; }
+})();
 
 /** Broadcast an SSE event to all connected clients. */
 function sseBroadcast(event, data) {
@@ -405,6 +409,8 @@ const server = http.createServer((req, res) => {
           if (pendingApprovals.has(requestId)) {
             console.log(`[approval-gate] #${requestId}: timeout → default ${_approvalDefaultMode}`);
             pendingApprovals.set(requestId, { decision: _approvalDefaultMode, status: 'timeout' });
+            // Cleanup after grace period for final poll
+            setTimeout(() => { pendingApprovals.delete(requestId); }, 15000);
           }
         }, 120000);
 
@@ -459,6 +465,7 @@ const server = http.createServer((req, res) => {
           const { mode } = JSON.parse(body);
           if (mode === 'allow' || mode === 'deny') {
             _approvalDefaultMode = mode;
+            try { fs.writeFileSync(APPROVAL_MODE_FILE, mode); } catch { /* best effort */ }
             console.log(`[approval-mode] set to: ${mode}`);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, mode }));

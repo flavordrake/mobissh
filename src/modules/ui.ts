@@ -1161,12 +1161,12 @@ export function initApprovalBar(): void {
     const autoCheck = document.createElement('input');
     autoCheck.type = 'checkbox';
     autoCheck.id = 'approvalAutoToggle';
-    autoCheck.checked = localStorage.getItem('approvalCountdown') !== '0'
-      && localStorage.getItem('approvalCountdown') !== null;
+    const storedCountdown = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
+    autoCheck.checked = storedCountdown > 0;
     const autoLabel = document.createElement('label');
     autoLabel.htmlFor = 'approvalAutoToggle';
     autoLabel.className = 'approval-auto-label';
-    autoLabel.textContent = 'Auto-accept (10s)';
+    autoLabel.textContent = storedCountdown > 0 ? `Auto-accept (${String(storedCountdown)}s)` : 'Auto-accept';
     autoRow.appendChild(autoCheck);
     autoRow.appendChild(autoLabel);
     buttons!.appendChild(autoRow);
@@ -1178,7 +1178,7 @@ export function initApprovalBar(): void {
 
     function startCountdown(): void {
       if (!yesKey) return;
-      const sec = 10;
+      const sec = parseInt(localStorage.getItem('approvalCountdown') ?? '10', 10) || 10;
       _clearApprovalTimer();
 
       targetBtn = Array.from(buttons!.querySelectorAll<HTMLButtonElement>('.approval-btn'))
@@ -1234,7 +1234,9 @@ export function initApprovalBar(): void {
 
     autoCheck.addEventListener('change', () => {
       if (autoCheck.checked) {
-        localStorage.setItem('approvalCountdown', '10');
+        // Use stored value or default to 10s
+        const val = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
+        localStorage.setItem('approvalCountdown', val > 0 ? String(val) : '10');
         startCountdown();
       } else {
         localStorage.setItem('approvalCountdown', '0');

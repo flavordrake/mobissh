@@ -238,7 +238,7 @@ export function sendSftpRealpath(requestId: string): void {
   if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
 }
-import { getDefaultWsUrl, RECONNECT, escHtml } from './constants.js';
+import { getDefaultWsUrl, RECONNECT, escHtml, parseApprovalPayload } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
 import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
 import { SessionHandle } from './session.js';
@@ -761,29 +761,19 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
       case 'approval_prompt': {
         // WS fallback for approvals — SSE is primary but may be disconnected
-        // during container restarts. Parse and dispatch same as SSE path.
         const raw = msg as unknown as Record<string, unknown>;
-        const toolName = (raw.tool_name ?? raw.tool ?? '') as string;
-        const toolInput = raw.tool_input as Record<string, string> | undefined;
-        const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string) ?? '';
-        const desc = (toolInput?.description ?? raw.description ?? '') as string;
-        const cwd = (raw.cwd as string) ?? '';
-        const source = cwd ? cwd.split('/').slice(-1)[0] ?? cwd : '';
-        const label = source ? `[${source}] ${desc || (command ? `${toolName}: ${command}` : toolName)}` : (desc || (command ? `${toolName}: ${command}` : toolName)) || 'Approval required';
-        console.log('[hook→ws] approval_prompt:', label);
+        const ap = parseApprovalPayload(raw);
+        console.log('[hook→ws] approval_prompt:', ap.label);
         window.dispatchEvent(new CustomEvent('approval-prompt', {
           detail: {
             phase: 'ready',
             sessionId,
-            requestId: (raw.requestId as string) ?? '',
-            tool: toolName,
-            detail: command,
-            description: label,
-            source,
-            options: [
-              { key: '1', label: 'Yes' },
-              { key: '2', label: 'No' },
-            ],
+            requestId: ap.requestId,
+            tool: ap.toolName,
+            detail: ap.command,
+            description: ap.label,
+            source: ap.source,
+            options: [{ key: '1', label: 'Yes' }, { key: '2', label: 'No' }],
           },
         }));
         break;

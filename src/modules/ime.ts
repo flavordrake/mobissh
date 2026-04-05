@@ -399,9 +399,6 @@ export function initIMEInput(): void {
     }
   }
 
-  function _positionIMEDebounced(): void {
-    _positionIME();
-  }
 
   // Re-position when viewport changes (keyboard open/close)
   if (window.visualViewport) {

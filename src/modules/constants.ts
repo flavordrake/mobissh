@@ -509,3 +509,19 @@ export function escHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/** Parse raw hook/approval JSON into a label and metadata for the approval bar. */
+export function parseApprovalPayload(raw: Record<string, unknown>): {
+  toolName: string; command: string; label: string; source: string; requestId: string;
+} {
+  const toolName = (raw.tool_name ?? raw.tool ?? '') as string;
+  const toolInput = raw.tool_input as Record<string, string> | undefined;
+  const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string) ?? '';
+  const desc = (toolInput?.description ?? raw.description ?? '') as string;
+  const cwd = (raw.cwd as string) ?? '';
+  const source = cwd ? cwd.split('/').slice(-1)[0] ?? cwd : '';
+  const base = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
+  const label = source ? `[${source}] ${base}` : base;
+  const requestId = (raw.requestId as string) ?? '';
+  return { toolName, command, label, source, requestId };
+}
+

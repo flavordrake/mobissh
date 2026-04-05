@@ -6,7 +6,7 @@
  */
 
 import type { SettingsDeps } from './types.js';
-import { getDefaultWsUrl, THEMES, THEME_ORDER } from './constants.js';
+import { getDefaultWsUrl, THEMES, THEME_ORDER, parseApprovalPayload } from './constants.js';
 import { resetKeyBarConfig } from './keybar-config.js';
 import type { ThemeName } from './types.js';
 import { showErrorDialog } from './ui.js';
@@ -563,25 +563,17 @@ export function connectSSE(): void {
     const me = e as MessageEvent;
     try {
       const raw = JSON.parse(me.data) as Record<string, unknown>;
-      const toolName = (raw.tool_name ?? raw.tool ?? '') as string;
-      const toolInput = raw.tool_input as Record<string, string> | undefined;
-      const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string) ?? '';
-      const desc = (toolInput?.description ?? raw.description ?? '') as string;
-      const label = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
-      // Extract source info so UI can show which machine the approval is from
-      const cwd = (raw.cwd as string) ?? '';
-      const source = cwd ? cwd.split('/').slice(-1)[0] ?? cwd : '';
-      const displayLabel = source ? `[${source}] ${label}` : label;
-      console.log(`[sse] approval: ${displayLabel}`);
+      const ap = parseApprovalPayload(raw);
+      console.log(`[sse] approval: ${ap.label}`);
       window.dispatchEvent(new CustomEvent('approval-prompt', {
         detail: {
           phase: 'ready',
           sessionId: '',
-          requestId: (raw.requestId as string) ?? '',
-          tool: toolName,
-          detail: command,
-          description: displayLabel,
-          source,
+          requestId: ap.requestId,
+          tool: ap.toolName,
+          detail: ap.command,
+          description: ap.label,
+          source: ap.source,
           options: [
             { key: '1', label: 'Yes' },
             { key: '2', label: 'No' },

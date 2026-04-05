@@ -61,8 +61,8 @@ if [[ "$EVENT" == "PermissionRequest" ]]; then
     exit 0
   fi
 
-  # Step 4: Poll (2s interval, up to 120s)
-  DEADLINE=$((SECONDS + 120))
+  # Step 4: Poll (2s interval, 115s — shorter than server's 120s to avoid race)
+  DEADLINE=$((SECONDS + 115))
   while [[ $SECONDS -lt $DEADLINE ]]; do
     sleep 2
     POLL=$(curl -sS --max-time 5 \
