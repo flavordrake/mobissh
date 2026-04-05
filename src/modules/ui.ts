@@ -1063,29 +1063,41 @@ export function initApprovalBar(): void {
     dismissBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
   }
 
-  function sendAndDismiss(key: string): void {
-    // Clear any pending IME input so it doesn't leak into the terminal
-    // alongside the approval keystroke. Claude Code reads the next raw key.
-    const ime = document.getElementById('imeInput') as HTMLTextAreaElement | null;
-    if (ime) { ime.value = ''; ime.blur(); }
+  // Track the current approval's requestId for the gate response
+  let _pendingRequestId: string | null = null;
 
-    // Send to ALL connected sessions — we can't reliably determine which
-    // SSH session has the Claude Code prompt. The keystroke is harmless to
-    // sessions without an active prompt (just types "1" in the terminal).
-    console.log(`[approval] button pressed: "${key}" → all sessions`);
-    sendSSHInputToAll(key);
+  function sendAndDismiss(key: string): void {
+    const decision = key === '1' ? 'allow' : 'deny';
+    console.log(`[approval] button pressed: "${key}" → decision=${decision} requestId=${_pendingRequestId ?? 'none'}`);
+
+    if (_pendingRequestId) {
+      // Respond via HTTP to the approval gate — this unblocks the hook script
+      void fetch('api/approval-respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: _pendingRequestId, decision }),
+      }).catch(() => { /* network error — gate will timeout */ });
+      _pendingRequestId = null;
+    } else {
+      // Fallback: no gate pending, send keystroke directly (legacy path)
+      sendSSHInputToAll(key);
+    }
     dismiss();
   }
 
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
     if (localStorage.getItem('approvalBarDisabled') === 'true') return;
 
-    const { phase, sessionId, tool, detail, description, options } = e.detail as {
+    const { phase, sessionId, tool, detail, description, options, requestId } = e.detail as {
       phase: 'trigger' | 'ready';
       sessionId: string;
+      requestId?: string;
       tool: string; detail: string; description: string;
       options: { key: string; label: string }[];
     };
+
+    // Capture requestId for the gate response
+    if (requestId) _pendingRequestId = requestId;
 
     // Deduplicate: SSE + WS both broadcast the same approval.
     // Skip everything (notification, vibrate, bar) if already showing this one.

@@ -119,6 +119,11 @@ try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).tr
 // SSE clients for real-time telemetry push
 const sseClients = new Set();
 
+// Pending approval gates: requestId → { res, timer }
+// Hook script holds HTTP connection open; client POSTs decision to /api/approval-respond.
+let _approvalCounter = 0;
+const pendingApprovals = new Map();
+
 /** Broadcast an SSE event to all connected clients. */
 function sseBroadcast(event, data) {
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -357,6 +362,87 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
+  // POST /api/approval-gate — synchronous approval gate.
+  // Hook script blocks here until user responds on phone.
+  if (req.method === 'POST' && req.url === '/api/approval-gate') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const requestId = String(++_approvalCounter);
+        const toolName = data.tool_name || data.tool || '';
+        const toolInput = data.tool_input || {};
+        const command = toolInput.command || toolInput.file_path || '';
+        const desc = toolInput.description || '';
+        const label = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
+
+        console.log(`[approval-gate] #${requestId}: "${label}"`);
+
+        // Broadcast to SSE + WS so the phone shows the approval bar
+        const approvalData = { ...data, requestId, label };
+        sseBroadcast('approval', approvalData);
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'approval_prompt', ...approvalData }));
+          }
+        });
+
+        // Hold the connection open — respond when user decides or timeout
+        const timer = setTimeout(() => {
+          if (pendingApprovals.has(requestId)) {
+            pendingApprovals.delete(requestId);
+            console.log(`[approval-gate] #${requestId}: timeout → deny`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ decision: 'deny', reason: 'timeout' }));
+          }
+        }, 120000);
+
+        pendingApprovals.set(requestId, { res, timer });
+
+        req.on('close', () => {
+          if (pendingApprovals.has(requestId)) {
+            clearTimeout(timer);
+            pendingApprovals.delete(requestId);
+          }
+        });
+      } catch {
+        res.writeHead(400);
+        res.end('{"error":"invalid json"}');
+      }
+    });
+    return;
+  }
+
+  // POST /api/approval-respond — client sends user's decision for a pending gate.
+  if (req.method === 'POST' && req.url === '/api/approval-respond') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { requestId, decision } = JSON.parse(body);
+        const pending = pendingApprovals.get(String(requestId));
+        if (!pending) {
+          console.log(`[approval-respond] #${requestId}: no pending gate (expired or already responded)`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, reason: 'no pending gate' }));
+          return;
+        }
+        clearTimeout(pending.timer);
+        pendingApprovals.delete(String(requestId));
+        console.log(`[approval-gate] #${requestId}: user decided → ${decision}`);
+        pending.res.writeHead(200, { 'Content-Type': 'application/json' });
+        pending.res.end(JSON.stringify({ decision: decision || 'deny' }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400);
+        res.end('{"error":"invalid json"}');
+      }
+    });
+    return;
+  }
+
   // POST /api/hook — broadcast hook events to WS + SSE clients
   if (req.method === 'POST' && (req.url === '/api/approval' || req.url === '/api/hook')) {
     let body = '';

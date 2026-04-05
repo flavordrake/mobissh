@@ -552,6 +552,7 @@ export function connectSSE(): void {
         detail: {
           phase: 'ready',
           sessionId: '',
+          requestId: (raw.requestId as string) ?? '',
           tool: toolName,
           detail: command,
           description: label,
