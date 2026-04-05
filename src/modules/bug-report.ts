@@ -25,9 +25,23 @@ export function initBugReport(deps: { getDebugLines: () => string[]; toast: (msg
 }
 
 async function submitBugReport(): Promise<void> {
+  // Collect logs BEFORE hiding debug panel (so the log includes recent context)
+  const lines = _getDebugLines ? _getDebugLines() : [];
+  const logs = lines.join('\n');
+
+  // Collapse debug panel so it doesn't appear in the screenshot
+  const debugPanel = document.getElementById('debugOverlayPanel');
+  const debugFab = document.getElementById('debugFab');
+  const wasVisible = debugPanel && !debugPanel.classList.contains('hidden');
+  if (debugPanel) debugPanel.classList.add('hidden');
+  if (debugFab) debugFab.classList.add('hidden');
+
   _toast('Capturing bug report...');
 
-  // Capture screenshot
+  // Small delay for panel to hide and toast to render
+  await new Promise((r) => { setTimeout(r, 300); });
+
+  // Capture screenshot (without debug overlay)
   let screenshot = '';
   try {
     const app = document.getElementById('app');
@@ -44,9 +58,9 @@ async function submitBugReport(): Promise<void> {
     console.warn('[bug-report] screenshot failed:', err);
   }
 
-  // Collect logs
-  const lines = _getDebugLines ? _getDebugLines() : [];
-  const logs = lines.join('\n');
+  // Restore debug panel
+  if (wasVisible && debugPanel) debugPanel.classList.remove('hidden');
+  if (debugFab) debugFab.classList.remove('hidden');
 
   // Collect metadata
   const meta = document.querySelector<HTMLMetaElement>('meta[name="app-version"]');
