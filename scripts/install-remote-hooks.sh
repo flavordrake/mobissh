@@ -133,7 +133,7 @@ install_hooks_jq() {
       continue
     fi
     # Add our hook entry (append to existing array or create)
-    jq --argjson entry "$HOOK_ENTRY" ".hooks.${ev} = (\$.hooks.${ev} // []) + \$entry" "$file" > "$tmp"
+    jq --argjson entry "$HOOK_ENTRY" ".hooks.${ev} = ((.hooks.${ev} // []) + \$entry)" "$file" > "$tmp"
     mv "$tmp" "$file"
     echo "  ${label}: ${ev} added"
   done
