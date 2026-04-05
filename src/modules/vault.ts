@@ -173,26 +173,34 @@ async function _deriveKekFromPrf(
       { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode('MobiSSH Vault KEK') },
       hkdfKey, 256
     );
+    console.log(`[vault] prf(${mediation}): derivation succeeded`);
     return await crypto.subtle.importKey('raw', bits, { name: 'AES-GCM' }, false, ['wrapKey', 'unwrapKey']);
-  } catch { return null; }
+  } catch (err) {
+    console.log(`[vault] prf(${mediation}): failed — ${err instanceof Error ? err.message : 'unknown'}`);
+    return null;
+  }
 }
 
 async function _unlockViaBiometric(mediation: CredentialMediationRequirement): Promise<boolean> {
   const meta = _loadMeta();
-  if (!meta?.dekBio) return false;
+  if (!meta?.dekBio) { console.log(`[vault] bio(${mediation}): no dekBio in meta`); return false; }
   const credIdB64 = localStorage.getItem('webauthnCredId');
   const saltB64 = localStorage.getItem('webauthnPrfSalt');
-  if (!credIdB64 || !saltB64) return false;
+  if (!credIdB64 || !saltB64) { console.log(`[vault] bio(${mediation}): missing credId or salt`); return false; }
 
   const kekBio = await _deriveKekFromPrf(_bytes(saltB64), _bytes(credIdB64).buffer, mediation);
-  if (!kekBio) return false;
+  if (!kekBio) { console.log(`[vault] bio(${mediation}): PRF derivation returned null`); return false; }
 
   try {
     appState.vaultKey = await _unwrapDek(kekBio, meta.dekBio);
     appState.vaultMethod = 'master-pw+bio';
     _resetIdleTimer();
+    console.log(`[vault] bio(${mediation}): unwrap succeeded`);
     return true;
-  } catch { return false; }
+  } catch (err) {
+    console.log(`[vault] bio(${mediation}): unwrap failed — ${err instanceof Error ? err.message : 'unknown'}`);
+    return false;
+  }
 }
 
 // Public vault lifecycle
@@ -226,8 +234,15 @@ export async function initVault(): Promise<void> {
 
   if (vaultHasData() && meta.dekBio) {
     console.log('[vault] init: trying silent biometric');
-    const ok = await _unlockViaBiometric('silent');
-    console.log(`[vault] init: silent biometric ${ok ? 'succeeded' : 'failed'}`);
+    let ok = await _unlockViaBiometric('silent');
+    if (!ok) {
+      // Silent fails on fresh page load (no prior gesture). Try optional —
+      // shows the fingerprint prompt immediately so user doesn't have to
+      // type their password.
+      console.log('[vault] init: silent failed, trying optional biometric');
+      ok = await _unlockViaBiometric('optional');
+    }
+    console.log(`[vault] init: biometric ${ok ? 'succeeded' : 'failed'}`);
   }
 }
 
