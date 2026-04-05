@@ -1083,11 +1083,7 @@ export function initApprovalBar(): void {
   }
 
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
-    console.log('[approval] event received:', JSON.stringify(e.detail));
-    if (localStorage.getItem('approvalBarDisabled') === 'true') {
-      console.log('[approval] BLOCKED — approvalBarDisabled is true');
-      return;
-    }
+    if (localStorage.getItem('approvalBarDisabled') === 'true') return;
 
     const { phase, sessionId, tool, detail, description, options } = e.detail as {
       phase: 'trigger' | 'ready';
@@ -1096,16 +1092,17 @@ export function initApprovalBar(): void {
       options: { key: string; label: string }[];
     };
 
-    // Deduplicate: if the bar is already showing the same approval, skip.
-    // Multiple sessions receive the same broadcast — only show once.
+    // Always capture a real sessionId for routing, even from duplicate events.
+    // WS events carry the SSH sessionId; SSE events have empty sessionId.
+    if (sessionId) _approvalSessionId = sessionId;
+
+    // Deduplicate: SSE + WS both broadcast the same approval.
+    // Skip everything (notification, vibrate, bar) if already showing this one.
     const approvalKey = `${tool}:${detail}:${description}`;
     if (!bar.classList.contains('hidden') && bar.dataset.approvalKey === approvalKey) {
       return;
     }
     bar.dataset.approvalKey = approvalKey;
-
-    // Prefer the session that originated the approval; SSE has no session.
-    _approvalSessionId = sessionId || _approvalSessionId || null;
 
     // Build label — prefer description, fall back to tool(detail)
     let labelText = '';
@@ -1116,11 +1113,13 @@ export function initApprovalBar(): void {
     }
     label.textContent = labelText || 'Approval required';
 
-    // Notification + haptic on every approval (counts even when not focused)
+    // Single notification + haptic (dedup above prevents double-fire)
     const notifMsg = labelText || 'Approval required';
     _addNotification(`Approve: ${notifMsg}`);
     fireNotification('MobiSSH', `Approve: ${notifMsg}`);
     if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
+
+    console.log(`[approval] showing: "${notifMsg}" target=${_approvalSessionId ?? 'all'}`);
 
     if (phase === 'trigger') {
       // Show bar immediately with "waiting" state
