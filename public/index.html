@@ -650,7 +650,22 @@
           <input type="checkbox" id="enableApprovalBar" checked />
           <span>Approval bar</span>
         </label>
-        <p class="hint">Show buttons for Claude Code permission prompts with auto-accept countdown.</p>
+        <p class="hint">Show buttons for Claude Code permission prompts.</p>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-row-info">
+          <span class="setting-row-label">Auto-accept countdown</span>
+          <p class="hint">Auto-press Yes after a countdown. Tap the bar to cancel.</p>
+        </div>
+        <select id="approvalCountdown">
+          <option value="0">Off</option>
+          <option value="3">3s</option>
+          <option value="5">5s</option>
+          <option value="10">10s</option>
+          <option value="15">15s</option>
+          <option value="30">30s</option>
+        </select>
       </div>
 
       <div class="danger-zone">

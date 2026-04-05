@@ -1035,10 +1035,7 @@ export function initTerminalActions(): void {
 
 // ── Approval bar: Claude Code permission prompt responses ──────────────────
 
-const APPROVAL_COUNTDOWN_MS = 3000;
 let _approvalTimer: ReturnType<typeof setInterval> | null = null;
-let _approvalStart = 0;
-let _approvalDefaultKey = '';
 
 function _clearApprovalTimer(): void {
   if (_approvalTimer) { clearInterval(_approvalTimer); _approvalTimer = null; }
@@ -1132,6 +1129,7 @@ export function initApprovalBar(): void {
     _clearApprovalTimer();
     buttons.innerHTML = '';
 
+    let yesKey = '';
     for (const opt of options) {
       const btn = document.createElement('button');
       btn.className = 'approval-btn';
@@ -1139,6 +1137,8 @@ export function initApprovalBar(): void {
       const lower = opt.label.toLowerCase();
       if (lower.includes('no') || lower.includes('deny') || lower.includes('reject')) {
         btn.classList.add('deny');
+      } else if (!yesKey) {
+        yesKey = opt.key; // first non-deny option is the auto-accept target
       }
       btn.textContent = `(${opt.key}) ${opt.label}`;
       btn.addEventListener('click', () => { sendAndDismiss(opt.key); });
@@ -1147,6 +1147,34 @@ export function initApprovalBar(): void {
     }
 
     bar.classList.remove('hidden');
+
+    // Auto-accept countdown — reads from Settings dropdown
+    const countdownSec = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
+    if (countdownSec > 0 && yesKey) {
+      let remaining = countdownSec;
+      const countdownEl = document.createElement('span');
+      countdownEl.className = 'approval-countdown';
+      countdownEl.textContent = `  (${String(remaining)}s)`;
+      label.appendChild(countdownEl);
+
+      _approvalTimer = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+          console.log(`[approval] auto-accept: "${yesKey}" after ${String(countdownSec)}s`);
+          sendAndDismiss(yesKey);
+        } else {
+          countdownEl.textContent = `  (${String(remaining)}s)`;
+        }
+      }, 1000);
+
+      // Tap the bar to cancel countdown
+      const cancelCountdown = (): void => {
+        _clearApprovalTimer();
+        countdownEl.textContent = '';
+        bar!.removeEventListener('click', cancelCountdown);
+      };
+      bar.addEventListener('click', cancelCountdown);
+    }
   }) as EventListener);
 }
 

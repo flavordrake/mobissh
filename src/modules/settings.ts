@@ -122,6 +122,16 @@ export function initSettingsPanel(): void {
     });
   }
 
+  const approvalCountdownEl = document.getElementById('approvalCountdown') as HTMLSelectElement | null;
+  if (approvalCountdownEl) {
+    approvalCountdownEl.value = localStorage.getItem('approvalCountdown') ?? '0';
+    approvalCountdownEl.addEventListener('change', () => {
+      localStorage.setItem('approvalCountdown', approvalCountdownEl.value);
+      const sec = parseInt(approvalCountdownEl.value, 10);
+      _toast(sec > 0 ? `Auto-accept: ${String(sec)}s` : 'Auto-accept disabled');
+    });
+  }
+
   const remoteClipEl = document.getElementById('enableRemoteClipboard') as HTMLInputElement | null;
   if (remoteClipEl) {
     remoteClipEl.checked = localStorage.getItem('enableRemoteClipboard') === 'true';
