@@ -760,11 +760,32 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       }
 
       case 'approval_prompt': {
-        // Approvals are handled by the SSE path + /api/approval-gate now.
-        // WS broadcasts are noise — log but don't dispatch to avoid duplicates
-        // and wrong-session keystroke injection.
+        // WS fallback for approvals — SSE is primary but may be disconnected
+        // during container restarts. Parse and dispatch same as SSE path.
         const raw = msg as unknown as Record<string, unknown>;
-        console.log('[hook→ws] approval_prompt (ignored, SSE handles):', raw.tool_name ?? raw.tool ?? '');
+        const toolName = (raw.tool_name ?? raw.tool ?? '') as string;
+        const toolInput = raw.tool_input as Record<string, string> | undefined;
+        const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string) ?? '';
+        const desc = (toolInput?.description ?? raw.description ?? '') as string;
+        const cwd = (raw.cwd as string) ?? '';
+        const source = cwd ? cwd.split('/').slice(-1)[0] ?? cwd : '';
+        const label = source ? `[${source}] ${desc || (command ? `${toolName}: ${command}` : toolName)}` : (desc || (command ? `${toolName}: ${command}` : toolName)) || 'Approval required';
+        console.log('[hook→ws] approval_prompt:', label);
+        window.dispatchEvent(new CustomEvent('approval-prompt', {
+          detail: {
+            phase: 'ready',
+            sessionId,
+            requestId: (raw.requestId as string) ?? '',
+            tool: toolName,
+            detail: command,
+            description: label,
+            source,
+            options: [
+              { key: '1', label: 'Yes' },
+              { key: '2', label: 'No' },
+            ],
+          },
+        }));
         break;
       }
 
