@@ -1155,35 +1155,57 @@ export function initApprovalBar(): void {
       buttons.appendChild(btn);
     }
 
+    // Auto-accept toggle — inline in the approval bar
+    const autoRow = document.createElement('div');
+    autoRow.className = 'approval-auto-row';
+    const autoCheck = document.createElement('input');
+    autoCheck.type = 'checkbox';
+    autoCheck.id = 'approvalAutoToggle';
+    autoCheck.checked = localStorage.getItem('approvalCountdown') !== '0'
+      && localStorage.getItem('approvalCountdown') !== null;
+    const autoLabel = document.createElement('label');
+    autoLabel.htmlFor = 'approvalAutoToggle';
+    autoLabel.className = 'approval-auto-label';
+    autoLabel.textContent = 'Auto-accept (10s)';
+    autoRow.appendChild(autoCheck);
+    autoRow.appendChild(autoLabel);
+    buttons!.appendChild(autoRow);
+
     bar.classList.remove('hidden');
 
-    // Auto-accept countdown from Settings dropdown
-    const countdownSec = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
-    if (countdownSec > 0 && yesKey) {
-      // Find the Yes button and add a visual ring
-      const targetBtn = Array.from(buttons!.querySelectorAll<HTMLButtonElement>('.approval-btn'))
-        .find((b) => b.textContent?.includes(`(${yesKey})`));
+    let countdownEl: HTMLSpanElement | null = null;
+    let targetBtn: HTMLButtonElement | null = null;
+
+    function startCountdown(): void {
+      if (!yesKey) return;
+      const sec = 10;
+      _clearApprovalTimer();
+
+      targetBtn = Array.from(buttons!.querySelectorAll<HTMLButtonElement>('.approval-btn'))
+        .find((b) => b.textContent?.includes(`(${yesKey})`)) ?? null;
 
       if (targetBtn) {
         targetBtn.classList.add('countdown-active');
-        targetBtn.insertAdjacentHTML('beforeend',
-          '<svg class="approval-ring" viewBox="0 0 36 36">' +
-          '<circle class="approval-ring-track" cx="18" cy="18" r="16" />' +
-          '<circle class="approval-ring-progress" cx="18" cy="18" r="16" />' +
-          '</svg>');
+        if (!targetBtn.querySelector('.approval-ring')) {
+          targetBtn.insertAdjacentHTML('beforeend',
+            '<svg class="approval-ring" viewBox="0 0 36 36">' +
+            '<circle class="approval-ring-track" cx="18" cy="18" r="16" />' +
+            '<circle class="approval-ring-progress" cx="18" cy="18" r="16" />' +
+            '</svg>');
+        }
         const progress = targetBtn.querySelector('.approval-ring-progress') as SVGCircleElement | null;
         const circumference = 2 * Math.PI * 16;
         if (progress) {
           progress.style.strokeDasharray = String(circumference);
           progress.style.strokeDashoffset = '0';
-          progress.style.transition = `stroke-dashoffset ${String(countdownSec)}s linear`;
+          progress.style.transition = `stroke-dashoffset ${String(sec)}s linear`;
           void progress.getBoundingClientRect();
           progress.style.strokeDashoffset = String(circumference);
         }
       }
 
-      let remaining = countdownSec;
-      const countdownEl = document.createElement('span');
+      let remaining = sec;
+      countdownEl = document.createElement('span');
       countdownEl.className = 'approval-countdown';
       countdownEl.textContent = `  (${String(remaining)}s)`;
       label!.appendChild(countdownEl);
@@ -1191,25 +1213,38 @@ export function initApprovalBar(): void {
       _approvalTimer = setInterval(() => {
         remaining--;
         if (remaining <= 0) {
-          console.log(`[approval] auto-accept: "${yesKey}" after ${String(countdownSec)}s`);
+          console.log(`[approval] auto-accept: "${yesKey}" after ${String(sec)}s`);
           sendAndDismiss(yesKey);
-        } else {
+        } else if (countdownEl) {
           countdownEl.textContent = `  (${String(remaining)}s)`;
         }
       }, 1000);
+    }
 
-      // Tap the bar to cancel countdown
-      const cancelCountdown = (): void => {
-        _clearApprovalTimer();
-        countdownEl.textContent = '';
-        if (targetBtn) {
-          targetBtn.classList.remove('countdown-active');
-          const ring = targetBtn.querySelector('.approval-ring');
-          if (ring) ring.remove();
-        }
-        bar!.removeEventListener('click', cancelCountdown);
-      };
-      bar!.addEventListener('click', cancelCountdown);
+    function stopCountdown(): void {
+      _clearApprovalTimer();
+      if (countdownEl) { countdownEl.textContent = ''; countdownEl = null; }
+      if (targetBtn) {
+        targetBtn.classList.remove('countdown-active');
+        const ring = targetBtn.querySelector('.approval-ring');
+        if (ring) ring.remove();
+        targetBtn = null;
+      }
+    }
+
+    autoCheck.addEventListener('change', () => {
+      if (autoCheck.checked) {
+        localStorage.setItem('approvalCountdown', '10');
+        startCountdown();
+      } else {
+        localStorage.setItem('approvalCountdown', '0');
+        stopCountdown();
+      }
+    });
+
+    // Start countdown if auto-accept is already enabled
+    if (autoCheck.checked && yesKey) {
+      startCountdown();
     }
   }) as EventListener);
 }
