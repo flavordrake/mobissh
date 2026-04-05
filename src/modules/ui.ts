@@ -1072,12 +1072,11 @@ export function initApprovalBar(): void {
 
   function sendAndDismiss(key: string): void {
     console.log(`[approval] button pressed: "${key}" target=${_approvalSessionId ?? 'all'}`);
-    // Send key + Enter — Claude Code's permission prompt may need both
-    const input = key + '\r';
+    // Send just the key — Claude Code's TUI reads single keystrokes, no Enter needed
     if (_approvalSessionId) {
-      sendSSHInputToSession(_approvalSessionId, input);
+      sendSSHInputToSession(_approvalSessionId, key);
     } else {
-      sendSSHInputToAll(input);
+      sendSSHInputToAll(key);
     }
     _approvalSessionId = null;
     dismiss();
