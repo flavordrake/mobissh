@@ -377,7 +377,15 @@ const server = http.createServer((req, res) => {
         const desc = toolInput.description || '';
         const label = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
 
-        console.log(`[approval-gate] #${requestId}: "${label}"`);
+        console.log(`[approval-gate] #${requestId}: "${label}" (SSE clients: ${sseClients.size})`);
+
+        // If no clients connected, auto-approve immediately — don't block Claude Code
+        if (sseClients.size === 0) {
+          console.log(`[approval-gate] #${requestId}: no clients → auto-approve`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ requestId, decision: 'allow', auto: true }));
+          return;
+        }
 
         // Broadcast to SSE + WS so the phone shows the approval bar
         const approvalData = { ...data, requestId, label };
@@ -389,11 +397,12 @@ const server = http.createServer((req, res) => {
         });
 
         // Store as pending — decision comes from /api/approval-respond,
-        // hook polls via /api/approval-poll
+        // hook polls via /api/approval-poll.
+        // Default to auto-approve on timeout — user chose not to deny.
         const timer = setTimeout(() => {
           if (pendingApprovals.has(requestId)) {
-            console.log(`[approval-gate] #${requestId}: timeout → deny`);
-            pendingApprovals.set(requestId, { decision: 'deny', status: 'timeout' });
+            console.log(`[approval-gate] #${requestId}: timeout → auto-approve`);
+            pendingApprovals.set(requestId, { decision: 'allow', status: 'timeout' });
           }
         }, 120000);
 

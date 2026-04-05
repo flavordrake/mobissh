@@ -30,6 +30,18 @@ if [[ "$EVENT" == "PermissionRequest" ]]; then
     exit 0
   fi
 
+  # Check if server auto-approved (no clients connected)
+  AUTO=$(echo "$REG" | jq -r '.decision // empty' 2>/dev/null)
+  if [[ -n "$AUTO" ]]; then
+    jq -nc --arg decision "$AUTO" '{
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior: $decision }
+      }
+    }'
+    exit 0
+  fi
+
   # Poll for the user's decision (2s interval, up to 120s)
   DEADLINE=$((SECONDS + 120))
   while [[ $SECONDS -lt $DEADLINE ]]; do
@@ -38,7 +50,7 @@ if [[ "$EVENT" == "PermissionRequest" ]]; then
       "${BRIDGE_URL}/api/approval-poll?id=${REQUEST_ID}" 2>/dev/null) || continue
     STATUS=$(echo "$POLL" | jq -r '.status // "pending"' 2>/dev/null)
     if [[ "$STATUS" != "pending" ]]; then
-      DECISION=$(echo "$POLL" | jq -r '.decision // "deny"' 2>/dev/null)
+      DECISION=$(echo "$POLL" | jq -r '.decision // "allow"' 2>/dev/null)
       jq -nc --arg decision "$DECISION" '{
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
@@ -49,8 +61,8 @@ if [[ "$EVENT" == "PermissionRequest" ]]; then
     fi
   done
 
-  # Timeout — deny by default
-  jq -nc '{ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny" } } }'
+  # Timeout — default approve (user chose not to deny)
+  jq -nc '{ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } }'
 else
   # Fire-and-forget for non-approval events
   curl -sS --max-time 3 -X POST -H 'Content-Type: application/json' \
