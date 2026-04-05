@@ -1138,6 +1138,10 @@ export function initApprovalBar(): void {
     buttons.innerHTML = '';
 
     let yesKey = '';
+    // Track which key is set to auto-press (persisted across approvals)
+    const autoKey = localStorage.getItem('approvalAutoKey') ?? '';
+    const COUNTDOWN_SEC = 10;
+
     for (const opt of options) {
       const btn = document.createElement('button');
       btn.className = 'approval-btn';
@@ -1146,42 +1150,72 @@ export function initApprovalBar(): void {
       if (lower.includes('no') || lower.includes('deny') || lower.includes('reject')) {
         btn.classList.add('deny');
       } else if (!yesKey) {
-        yesKey = opt.key; // first non-deny option is the auto-accept target
+        yesKey = opt.key;
       }
       btn.textContent = `(${opt.key}) ${opt.label}`;
+
+      // Tap: send immediately
       btn.addEventListener('click', () => { sendAndDismiss(opt.key); });
       btn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
+
+      // Long-press (800ms): enable auto-press for this key
+      let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+      btn.addEventListener('touchstart', () => {
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          localStorage.setItem('approvalAutoKey', opt.key);
+          console.log(`[approval] auto-press enabled: "${opt.key}"`);
+          toast(`Auto-${opt.label.toLowerCase()} enabled`);
+          _startCountdown(opt.key, COUNTDOWN_SEC);
+        }, 800);
+      }, { passive: true });
+      btn.addEventListener('touchend', () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      });
+      btn.addEventListener('touchmove', () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      });
+
       buttons.appendChild(btn);
     }
 
     bar.classList.remove('hidden');
 
-    // Auto-accept countdown — reads from Settings dropdown
-    const countdownSec = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
-    if (countdownSec > 0 && yesKey) {
-      let remaining = countdownSec;
-      const countdownEl = document.createElement('span');
+    /** Start or restart the auto-press countdown. */
+    function _startCountdown(key: string, sec: number): void {
+      _clearApprovalTimer();
+      let remaining = sec;
+      const countdownEl = bar!.querySelector('.approval-countdown') as HTMLElement
+        ?? document.createElement('span');
       countdownEl.className = 'approval-countdown';
       countdownEl.textContent = `  (${String(remaining)}s)`;
-      label.appendChild(countdownEl);
+      if (!countdownEl.parentElement) label!.appendChild(countdownEl);
 
       _approvalTimer = setInterval(() => {
         remaining--;
         if (remaining <= 0) {
-          console.log(`[approval] auto-accept: "${yesKey}" after ${String(countdownSec)}s`);
-          sendAndDismiss(yesKey);
+          console.log(`[approval] auto-press: "${key}" after ${String(sec)}s`);
+          sendAndDismiss(key);
         } else {
           countdownEl.textContent = `  (${String(remaining)}s)`;
         }
       }, 1000);
 
-      // Tap the bar to cancel countdown
-      const cancelCountdown = (): void => {
+      // Tap bar (not a button) to cancel auto-press
+      const cancelAuto = (): void => {
         _clearApprovalTimer();
+        localStorage.removeItem('approvalAutoKey');
         countdownEl.textContent = '';
-        bar!.removeEventListener('click', cancelCountdown);
+        console.log('[approval] auto-press cancelled');
+        toast('Auto-press cancelled');
+        bar!.removeEventListener('click', cancelAuto);
       };
-      bar.addEventListener('click', cancelCountdown);
+      bar!.addEventListener('click', cancelAuto);
+    }
+
+    // If auto-press is enabled from a previous long-press, start countdown
+    if (autoKey) {
+      _startCountdown(autoKey, COUNTDOWN_SEC);
     }
   }) as EventListener);
 }
