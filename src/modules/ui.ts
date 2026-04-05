@@ -1181,9 +1181,37 @@ export function initApprovalBar(): void {
 
     bar.classList.remove('hidden');
 
-    /** Start or restart the auto-press countdown. */
+    /** Start or restart the auto-press countdown with visual ring. */
     function _startCountdown(key: string, sec: number): void {
       _clearApprovalTimer();
+
+      // Find the target button and add a countdown ring
+      const targetBtn = Array.from(buttons!.querySelectorAll<HTMLButtonElement>('.approval-btn'))
+        .find((b) => b.textContent?.includes(`(${key})`));
+
+      if (targetBtn) {
+        targetBtn.style.position = 'relative';
+        targetBtn.classList.add('countdown-active');
+        // Inject SVG ring if not already present
+        if (!targetBtn.querySelector('.approval-ring')) {
+          targetBtn.insertAdjacentHTML('beforeend',
+            '<svg class="approval-ring" viewBox="0 0 36 36">' +
+            '<circle class="approval-ring-track" cx="18" cy="18" r="16" />' +
+            '<circle class="approval-ring-progress" cx="18" cy="18" r="16" />' +
+            '</svg>');
+        }
+        const progress = targetBtn.querySelector('.approval-ring-progress') as SVGCircleElement | null;
+        const circumference = 2 * Math.PI * 16; // ~100.53
+        if (progress) {
+          progress.style.strokeDasharray = String(circumference);
+          progress.style.strokeDashoffset = '0';
+          progress.style.transition = `stroke-dash-offset ${String(sec)}s linear`;
+          // Force reflow then animate
+          void progress.getBoundingClientRect();
+          progress.style.strokeDashoffset = String(circumference);
+        }
+      }
+
       let remaining = sec;
       const countdownEl = bar!.querySelector('.approval-countdown') as HTMLElement
         ?? document.createElement('span');
@@ -1206,6 +1234,11 @@ export function initApprovalBar(): void {
         _clearApprovalTimer();
         localStorage.removeItem('approvalAutoKey');
         countdownEl.textContent = '';
+        if (targetBtn) {
+          targetBtn.classList.remove('countdown-active');
+          const ring = targetBtn.querySelector('.approval-ring');
+          if (ring) ring.remove();
+        }
         console.log('[approval] auto-press cancelled');
         toast('Auto-press cancelled');
         bar!.removeEventListener('click', cancelAuto);
