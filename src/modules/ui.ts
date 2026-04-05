@@ -10,7 +10,7 @@ import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
 import { applyTheme, _addNotification, fireNotification } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
-import { sendSSHInput, sendSSHInputToSession, sendSSHInputToAll, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
+import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
@@ -1063,19 +1063,17 @@ export function initApprovalBar(): void {
     dismissBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
   }
 
-  // Track which session the current approval targets so the response
-  // goes to the right SSH session, not whichever is focused.
-  let _approvalSessionId: string | null = null;
-
   function sendAndDismiss(key: string): void {
-    console.log(`[approval] button pressed: "${key}" target=${_approvalSessionId ?? 'all'}`);
-    // Send just the key — Claude Code's TUI reads single keystrokes, no Enter needed
-    if (_approvalSessionId) {
-      sendSSHInputToSession(_approvalSessionId, key);
-    } else {
-      sendSSHInputToAll(key);
-    }
-    _approvalSessionId = null;
+    // Clear any pending IME input so it doesn't leak into the terminal
+    // alongside the approval keystroke. Claude Code reads the next raw key.
+    const ime = document.getElementById('imeInput') as HTMLTextAreaElement | null;
+    if (ime) { ime.value = ''; ime.blur(); }
+
+    // Send to ALL connected sessions — we can't reliably determine which
+    // SSH session has the Claude Code prompt. The keystroke is harmless to
+    // sessions without an active prompt (just types "1" in the terminal).
+    console.log(`[approval] button pressed: "${key}" → all sessions`);
+    sendSSHInputToAll(key);
     dismiss();
   }
 
@@ -1089,10 +1087,6 @@ export function initApprovalBar(): void {
       options: { key: string; label: string }[];
     };
 
-    // Always capture a real sessionId for routing, even from duplicate events.
-    // WS events carry the SSH sessionId; SSE events have empty sessionId.
-    if (sessionId) _approvalSessionId = sessionId;
-
     // Deduplicate: SSE + WS both broadcast the same approval.
     // Skip everything (notification, vibrate, bar) if already showing this one.
     const approvalKey = `${tool}:${detail}:${description}`;
@@ -1100,6 +1094,7 @@ export function initApprovalBar(): void {
       return;
     }
     bar.dataset.approvalKey = approvalKey;
+
 
     // Build label — prefer description, fall back to tool(detail)
     let labelText = '';
@@ -1116,7 +1111,7 @@ export function initApprovalBar(): void {
     fireNotification('MobiSSH', `Approve: ${notifMsg}`);
     if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
 
-    console.log(`[approval] showing: "${notifMsg}" target=${_approvalSessionId ?? 'all'}`);
+    console.log(`[approval] showing: "${notifMsg}"`);
 
     if (phase === 'trigger') {
       // Show bar immediately with "waiting" state
