@@ -17,6 +17,7 @@
   <script src="vendor/xterm.min.js"></script>
   <script src="vendor/xterm-addon-fit.min.js"></script>
   <script src="vendor/xterm-addon-clipboard.min.js"></script>
+  <script src="vendor/html2canvas.min.js"></script>
 </head>
 <body>
   <!-- Recovery overlay — displayed by the boot watchdog when the app fails to init.
@@ -178,6 +179,7 @@
     <div id="debugOverlayPanel" class="debug-panel hidden">
       <div class="debug-panel-header">
         <span>Debug Log</span>
+        <button id="debugReportBtn" class="debug-panel-btn debug-report-btn">Report</button>
         <button id="debugCopyBtn" class="debug-panel-btn">Copy</button>
         <button id="debugClearBtn" class="debug-panel-btn">Clear</button>
         <button id="debugCollapseBtn" class="debug-panel-btn debug-panel-close" aria-label="Collapse debug panel">&#x2715;</button>

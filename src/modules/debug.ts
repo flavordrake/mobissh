@@ -23,6 +23,10 @@ export function isDebugEnabled(): boolean {
   return _enabled;
 }
 
+export function getDebugLines(): string[] {
+  return [..._lines];
+}
+
 function _appendLine(level: string, args: unknown[]): void {
   const text = args.map(a =>
     typeof a === 'string' ? a : JSON.stringify(a)

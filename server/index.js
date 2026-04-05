@@ -389,6 +389,86 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /api/bug-report — receive screenshot + logs from client, save and create GitHub issue.
+  if (req.method === 'POST' && req.url === '/api/bug-report') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const { screenshot, logs, title, userAgent, url, version } = data;
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
+        fs.mkdirSync(reportDir, { recursive: true });
+
+        // Save screenshot
+        let screenshotPath = '';
+        if (screenshot) {
+          const imgData = screenshot.replace(/^data:image\/\w+;base64,/, '');
+          const filename = `${ts}-bug-report.png`;
+          screenshotPath = path.join(reportDir, filename);
+          fs.writeFileSync(screenshotPath, Buffer.from(imgData, 'base64'));
+          console.log(`[bug-report] screenshot saved: ${screenshotPath}`);
+        }
+
+        // Save logs
+        let logsPath = '';
+        if (logs) {
+          const filename = `${ts}-bug-report.log`;
+          logsPath = path.join(reportDir, filename);
+          fs.writeFileSync(logsPath, logs);
+          console.log(`[bug-report] logs saved: ${logsPath}`);
+        }
+
+        // Create GitHub issue via gh CLI (if available)
+        const issueTitle = title || `Bug report ${ts}`;
+        const logsTruncated = (logs || '').split('\n').slice(-50).join('\n');
+        const issueBody = [
+          `## Bug Report (from device)`,
+          ``,
+          `**Version:** ${version || 'unknown'}`,
+          `**URL:** ${url || 'unknown'}`,
+          `**User Agent:** ${userAgent || 'unknown'}`,
+          `**Time:** ${new Date().toISOString()}`,
+          ``,
+          `### Debug Log (last 50 lines)`,
+          '```',
+          logsTruncated,
+          '```',
+          ``,
+          screenshotPath ? `Screenshot saved: \`${screenshotPath}\`` : '(no screenshot)',
+        ].join('\n');
+
+        const bodyFile = path.join(reportDir, `${ts}-issue-body.md`);
+        fs.writeFileSync(bodyFile, issueBody);
+
+        const { execSync: execSyncLocal } = require('child_process');
+        try {
+          const result = execSyncLocal(
+            `gh issue create --repo flavordrake/mobissh --title "${issueTitle.replace(/"/g, '\\"')}" --body-file "${bodyFile}" --label bug 2>&1`,
+            { encoding: 'utf8', timeout: 15000 }
+          );
+          const issueUrl = result.trim().split('\n').pop();
+          console.log(`[bug-report] issue created: ${issueUrl}`);
+          // Notify SSE clients
+          sseBroadcast('bug-report', { issueUrl, title: issueTitle });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, issueUrl }));
+        } catch (ghErr) {
+          console.warn(`[bug-report] gh issue create failed: ${ghErr.message}`);
+          // Still return success — the files are saved
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, saved: true, issueUrl: null }));
+        }
+      } catch (err) {
+        console.error('[bug-report] parse error:', err.message);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"error":"invalid json"}');
+      }
+    });
+    return;
+  }
+
   // /version — lightweight JSON endpoint (kept for curl / scripted checks).
   if (req.url === '/version') {
     res.writeHead(200, {

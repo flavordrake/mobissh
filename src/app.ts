@@ -5,7 +5,8 @@
  * and sets up event delegation. No business logic lives here.
  */
 
-import { initDebugOverlay } from './modules/debug.js';
+import { initDebugOverlay, getDebugLines } from './modules/debug.js';
+import { initBugReport } from './modules/bug-report.js';
 import { initRecording } from './modules/recording.js';
 import { initVault } from './modules/vault.js';
 import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
@@ -58,6 +59,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initFilesPanel();
     initLongPressTooltips();
     initRecording({ toast });
+    initBugReport({ getDebugLines, toast });
     initProfiles({ toast, navigateToConnect: () => { navigateToPanel('connect'); } });
     initSettings({ toast, applyFontSize, applyTheme });
     initConnection({ toast, setStatus, focusIME, applyTabBarVisibility: _applyTabBarVisibility });

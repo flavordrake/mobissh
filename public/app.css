@@ -2023,6 +2023,11 @@ hr {
   font-size: 12px;
 }
 
+.debug-report-btn {
+  border-color: #ff4444;
+  color: #ff4444;
+}
+
 .debug-panel-log {
   overflow-y: auto;
   padding: 4px 8px;
