@@ -362,8 +362,8 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
-  // POST /api/approval-gate — synchronous approval gate.
-  // Hook script blocks here until user responds on phone.
+  // POST /api/approval-gate — register a pending approval, return requestId immediately.
+  // Hook script polls /api/approval-poll?id=N for the decision.
   if (req.method === 'POST' && req.url === '/api/approval-gate') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -388,26 +388,20 @@ const server = http.createServer((req, res) => {
           }
         });
 
-        // Hold the connection open — respond when user decides or timeout
+        // Store as pending — decision comes from /api/approval-respond,
+        // hook polls via /api/approval-poll
         const timer = setTimeout(() => {
           if (pendingApprovals.has(requestId)) {
-            pendingApprovals.delete(requestId);
             console.log(`[approval-gate] #${requestId}: timeout → deny`);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ decision: 'deny', reason: 'timeout' }));
+            pendingApprovals.set(requestId, { decision: 'deny', status: 'timeout' });
           }
         }, 120000);
 
-        pendingApprovals.set(requestId, { res, timer });
+        pendingApprovals.set(requestId, { status: 'pending', timer });
 
-        req.on('close', () => {
-          if (pendingApprovals.has(requestId)) {
-            console.log(`[approval-gate] #${requestId}: hook connection closed (keeping gate alive for late response)`);
-            // DON'T delete the gate — user may still respond.
-            // The HTTP response can't be sent back, but the decision
-            // is still useful (hook script can poll or just timeout).
-          }
-        });
+        // Return requestId immediately — hook polls for result
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ requestId }));
       } catch {
         res.writeHead(400);
         res.end('{"error":"invalid json"}');
@@ -416,7 +410,31 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // GET /api/approval-poll?id=N — hook polls for decision
+  if (req.method === 'GET' && req.url?.startsWith('/api/approval-poll')) {
+    const url = new URL(req.url, 'http://localhost');
+    const requestId = url.searchParams.get('id');
+    const pending = requestId ? pendingApprovals.get(requestId) : null;
+    if (!pending) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'expired' }));
+      return;
+    }
+    if (pending.status === 'pending') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'pending' }));
+    } else {
+      // Decision made — return it and clean up
+      const decision = pending.decision || 'deny';
+      pendingApprovals.delete(requestId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'decided', decision }));
+    }
+    return;
+  }
+
   // POST /api/approval-respond — client sends user's decision for a pending gate.
+  // Stores the decision; hook picks it up via /api/approval-poll.
   if (req.method === 'POST' && req.url === '/api/approval-respond') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -425,25 +443,15 @@ const server = http.createServer((req, res) => {
         const { requestId, decision } = JSON.parse(body);
         const pending = pendingApprovals.get(String(requestId));
         if (!pending) {
-          console.log(`[approval-respond] #${requestId}: no pending gate (expired or already responded)`);
+          console.log(`[approval-respond] #${requestId}: no pending gate`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, reason: 'no pending gate' }));
           return;
         }
         clearTimeout(pending.timer);
-        pendingApprovals.delete(String(requestId));
         console.log(`[approval-gate] #${requestId}: user decided → ${decision}`);
-        // Try to send response to the hook — may fail if connection already closed
-        try {
-          if (!pending.res.writableEnded) {
-            pending.res.writeHead(200, { 'Content-Type': 'application/json' });
-            pending.res.end(JSON.stringify({ decision: decision || 'deny' }));
-          } else {
-            console.log(`[approval-gate] #${requestId}: hook connection already closed, decision recorded but not delivered`);
-          }
-        } catch (writeErr) {
-          console.log(`[approval-gate] #${requestId}: failed to write response — ${writeErr instanceof Error ? writeErr.message : 'unknown'}`);
-        }
+        // Store decision — hook will pick it up on next poll
+        pendingApprovals.set(String(requestId), { decision: decision || 'deny', status: 'decided' });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch {

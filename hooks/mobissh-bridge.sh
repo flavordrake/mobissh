@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code hook: forward events to MobiSSH via Tailscale.
-# For PermissionRequest: blocks until user responds on phone (synchronous gate).
+# For PermissionRequest: registers gate, polls for user decision.
 # For other events: fire-and-forget notification.
 #
 # Install: copy to ~/.claude/hooks/mobissh-bridge.sh on any machine.
@@ -20,21 +20,37 @@ if [[ -z "$BRIDGE_JSON" ]]; then
 fi
 
 if [[ "$EVENT" == "PermissionRequest" ]]; then
-  # Synchronous gate: POST and wait for user decision (long-poll, up to 120s).
-  # Server holds the connection open until user taps Yes/No on phone.
-  RESPONSE=$(curl -sS --max-time 120 -X POST -H 'Content-Type: application/json' \
+  # Register the gate and get a requestId back immediately
+  REG=$(curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
     -d "$BRIDGE_JSON" \
     "${BRIDGE_URL}/api/approval-gate" 2>/dev/null) || exit 0
 
-  DECISION=$(echo "$RESPONSE" | jq -r '.decision // "deny"' 2>/dev/null)
+  REQUEST_ID=$(echo "$REG" | jq -r '.requestId // empty' 2>/dev/null)
+  if [[ -z "$REQUEST_ID" ]]; then
+    exit 0
+  fi
 
-  # Return hook output that Claude Code understands
-  jq -nc --arg decision "$DECISION" '{
-    hookSpecificOutput: {
-      hookEventName: "PermissionRequest",
-      decision: { behavior: $decision }
-    }
-  }'
+  # Poll for the user's decision (2s interval, up to 120s)
+  DEADLINE=$((SECONDS + 120))
+  while [[ $SECONDS -lt $DEADLINE ]]; do
+    sleep 2
+    POLL=$(curl -sS --max-time 5 \
+      "${BRIDGE_URL}/api/approval-poll?id=${REQUEST_ID}" 2>/dev/null) || continue
+    STATUS=$(echo "$POLL" | jq -r '.status // "pending"' 2>/dev/null)
+    if [[ "$STATUS" != "pending" ]]; then
+      DECISION=$(echo "$POLL" | jq -r '.decision // "deny"' 2>/dev/null)
+      jq -nc --arg decision "$DECISION" '{
+        hookSpecificOutput: {
+          hookEventName: "PermissionRequest",
+          decision: { behavior: $decision }
+        }
+      }'
+      exit 0
+    fi
+  done
+
+  # Timeout — deny by default
+  jq -nc '{ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny" } } }'
 else
   # Fire-and-forget for non-approval events
   curl -sS --max-time 3 -X POST -H 'Content-Type: application/json' \
