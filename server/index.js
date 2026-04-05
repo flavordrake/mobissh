@@ -402,8 +402,10 @@ const server = http.createServer((req, res) => {
 
         req.on('close', () => {
           if (pendingApprovals.has(requestId)) {
-            clearTimeout(timer);
-            pendingApprovals.delete(requestId);
+            console.log(`[approval-gate] #${requestId}: hook connection closed (keeping gate alive for late response)`);
+            // DON'T delete the gate — user may still respond.
+            // The HTTP response can't be sent back, but the decision
+            // is still useful (hook script can poll or just timeout).
           }
         });
       } catch {
@@ -431,8 +433,17 @@ const server = http.createServer((req, res) => {
         clearTimeout(pending.timer);
         pendingApprovals.delete(String(requestId));
         console.log(`[approval-gate] #${requestId}: user decided → ${decision}`);
-        pending.res.writeHead(200, { 'Content-Type': 'application/json' });
-        pending.res.end(JSON.stringify({ decision: decision || 'deny' }));
+        // Try to send response to the hook — may fail if connection already closed
+        try {
+          if (!pending.res.writableEnded) {
+            pending.res.writeHead(200, { 'Content-Type': 'application/json' });
+            pending.res.end(JSON.stringify({ decision: decision || 'deny' }));
+          } else {
+            console.log(`[approval-gate] #${requestId}: hook connection already closed, decision recorded but not delivered`);
+          }
+        } catch (writeErr) {
+          console.log(`[approval-gate] #${requestId}: failed to write response — ${writeErr instanceof Error ? writeErr.message : 'unknown'}`);
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch {

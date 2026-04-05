@@ -547,7 +547,11 @@ export function connectSSE(): void {
       const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string) ?? '';
       const desc = (toolInput?.description ?? raw.description ?? '') as string;
       const label = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
-      console.log(`[sse] approval: ${label}`);
+      // Extract source info so UI can show which machine the approval is from
+      const cwd = (raw.cwd as string) ?? '';
+      const source = cwd ? cwd.split('/').slice(-1)[0] ?? cwd : '';
+      const displayLabel = source ? `[${source}] ${label}` : label;
+      console.log(`[sse] approval: ${displayLabel}`);
       window.dispatchEvent(new CustomEvent('approval-prompt', {
         detail: {
           phase: 'ready',
@@ -555,7 +559,8 @@ export function connectSSE(): void {
           requestId: (raw.requestId as string) ?? '',
           tool: toolName,
           detail: command,
-          description: label,
+          description: displayLabel,
+          source,
           options: [
             { key: '1', label: 'Yes' },
             { key: '2', label: 'No' },
