@@ -11,7 +11,7 @@ import { appState, currentSession, isSessionConnected, onStateChange, transition
 import { applyTheme, _addNotification, fireNotification } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
-import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession } from './profiles.js';
+import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
 
@@ -806,11 +806,15 @@ export function initConnectForm(): void {
       target.textContent = 'Connecting…';
       void connectFromProfile(idx);
     } else if (action === 'reconnect-all-recent') {
-      const recentItems = document.querySelectorAll<HTMLElement>('[data-action="reconnect-recent"]');
-      for (const btn of recentItems) {
-        const idx = parseInt(btn.dataset.idx ?? '0', 10);
-        void connectFromProfile(idx);
-      }
+      target.textContent = 'Connecting…';
+      target.classList.add('connecting');
+      const recent = getRecentSessions();
+      void (async () => {
+        for (const entry of recent) {
+          await connectFromProfile(entry.profileIdx);
+        }
+        loadProfiles();
+      })();
     } else if (action === 'reconnect-all') {
       target.textContent = 'Reconnecting…';
       target.classList.add('connecting');
