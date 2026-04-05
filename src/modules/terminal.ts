@@ -339,14 +339,15 @@ export function initKeyboardAwareness(): void {
       if (keyboardVisible) {
         // Keyboard open: set explicit pixel height to shrink below keyboard
         app!.style.height = `${String(h)}px`;
-        document.documentElement.style.setProperty('--viewport-height', `${String(h)}px`);
       } else {
         // Keyboard closed: clear inline height so CSS 100dvh takes over.
-        // Setting a pixel value here can leave #app stuck at a stale height
-        // if the resize event fires with an intermediate value during dismiss.
+        // Setting a pixel value here leaves #app stuck at a stale height
+        // if the resize event fires with intermediate values during dismiss.
         app!.style.height = '';
-        document.documentElement.style.removeProperty('--viewport-height');
       }
+      // Always update --viewport-height — other elements (keybar, dialogs)
+      // use it for max-height calculations regardless of keyboard state.
+      document.documentElement.style.setProperty('--viewport-height', `${String(h)}px`);
     }
 
     // Keyboard show/hide changes available terminal height — fit current
