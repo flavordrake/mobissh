@@ -139,6 +139,8 @@ export function cycleDockPosition(): DockPosition {
 export function isPreviewMode(): boolean { return _previewMode; }
 /** Callback set by initIMEInput to clear preview state (commits text). */
 let _clearPreviewCallback: (() => void) | null = null;
+/** Callback set by initIMEInput to restore overlay after panel navigation (#395). */
+let _restoreOverlayCallback: (() => void) | null = null;
 
 // ── Preview commit history ring buffer (#254) ────────────────────────────────
 const HISTORY_MAX = 20;
@@ -201,6 +203,11 @@ export function togglePreviewMode(): void {
 /** Clear any active preview — called when compose mode is toggled off. */
 export function clearIMEPreview(): void {
   if (_clearPreviewCallback) _clearPreviewCallback();
+}
+
+/** Restore IME overlay after returning to the terminal panel (#395). */
+export function restoreIMEOverlay(): void {
+  if (_restoreOverlayCallback) _restoreOverlayCallback();
 }
 
 /** Query the current IME state (for tests and debugging). */
@@ -469,6 +476,7 @@ export function initIMEInput(): void {
   _onAction(dockToggle, () => {
     cycleDockPosition();
     _positionIME();
+    if (_imeState === 'previewing') _scheduleClear();
     focusIME();
   });
 
@@ -685,6 +693,13 @@ export function initIMEInput(): void {
     _transition('idle');
   };
 
+  // Register callback so panel navigation can restore the overlay (#395)
+  _restoreOverlayCallback = () => {
+    if (_imeState === 'previewing' || _imeState === 'editing') {
+      _showIMEOverlay();
+      if (_imeState === 'previewing') _scheduleClear();
+    }
+  };
 
   /** Send text to SSH with Ctrl modifier handling. */
   function _sendIMEText(text: string): void {
