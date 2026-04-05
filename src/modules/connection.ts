@@ -1139,6 +1139,29 @@ export function sendSSHInput(data: string): void {
   session.ws.send(JSON.stringify({ type: 'input', data: filtered }));
 }
 
+/** Send input to a specific session by ID (for approval responses). */
+export function sendSSHInputToSession(sessionId: string, data: string): void {
+  const session = appState.sessions.get(sessionId);
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) {
+    console.log(`[approval] target session ${sessionId} not connected, falling back to all`);
+    sendSSHInputToAll(data);
+    return;
+  }
+  session.ws.send(JSON.stringify({ type: 'input', data }));
+}
+
+/** Send input to ALL connected sessions (SSE approval fallback — unknown origin session). */
+export function sendSSHInputToAll(data: string): void {
+  let sent = 0;
+  for (const session of appState.sessions.values()) {
+    if (isSessionConnected(session) && session.ws?.readyState === WebSocket.OPEN) {
+      session.ws.send(JSON.stringify({ type: 'input', data }));
+      sent++;
+    }
+  }
+  console.log(`[approval] sent "${data}" to ${String(sent)} session(s)`);
+}
+
 // ── Connection status overlay (#172) ─────────────────────────────────────────
 
 let _currentOverlay: HTMLDivElement | null = null;

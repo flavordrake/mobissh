@@ -10,7 +10,7 @@ import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
 import { applyTheme, _addNotification, fireNotification } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
-import { sendSSHInput, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
+import { sendSSHInput, sendSSHInputToSession, sendSSHInputToAll, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession } from './profiles.js';
 import { clearIMEPreview } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
@@ -1066,8 +1066,19 @@ export function initApprovalBar(): void {
     dismissBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
   }
 
+  // Track which session the current approval targets so the response
+  // goes to the right SSH session, not whichever is focused.
+  let _approvalSessionId: string | null = null;
+
   function sendAndDismiss(key: string): void {
-    sendSSHInput(key);
+    if (_approvalSessionId) {
+      // Send to the specific session that originated the approval
+      sendSSHInputToSession(_approvalSessionId, key);
+    } else {
+      // Fallback: send to all connected sessions (SSE path — we don't know which session)
+      sendSSHInputToAll(key);
+    }
+    _approvalSessionId = null;
     dismiss();
   }
 
@@ -1078,11 +1089,14 @@ export function initApprovalBar(): void {
       return;
     }
 
-    const { phase, tool, detail, description, options } = e.detail as {
+    const { phase, sessionId, tool, detail, description, options } = e.detail as {
       phase: 'trigger' | 'ready';
+      sessionId: string;
       tool: string; detail: string; description: string;
       options: { key: string; label: string }[];
     };
+
+    _approvalSessionId = sessionId || null;
 
     // Build label — prefer description, fall back to tool(detail)
     let labelText = '';
