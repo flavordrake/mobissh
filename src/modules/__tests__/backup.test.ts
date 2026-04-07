@@ -175,7 +175,82 @@ describe('backup import (#337)', () => {
     await importBackup(file);
 
     expect(storage.get('sshVault')).toBe(vaultBlob);
-    expect(storage.get('vaultMeta')).toBe(vaultMeta);
+    // Meta is rewritten (dekBio stripped) but the password-wrap survives unchanged
+    const importedMeta = JSON.parse(storage.get('vaultMeta')!);
+    expect(importedMeta.salt).toBe('xyz');
+    expect(importedMeta.dekPw).toEqual({ iv: 'a', ct: 'b' });
+  });
+
+  // Regression: vault-import-reprompt
+  // dekBio is device-specific (wrapped with KEK from THIS device's WebAuthn PRF).
+  // Importing it from another device produces a wrap that cannot be unwrapped here,
+  // causing every fingerprint touch to silently fail and fall through to a manual
+  // password prompt. The fix strips dekBio at import time and clears any stale
+  // local WebAuthn handles so the unlock path skips bio entirely.
+  it('strips dekBio from imported vaultMeta to prevent broken bio prompts', async () => {
+    storage.set('webauthnCredId', 'stale-cred-from-previous-enrollment');
+    storage.set('webauthnPrfSalt', 'stale-salt');
+
+    const vaultMeta = JSON.stringify({
+      salt: 'xyz',
+      dekPw: { iv: 'a', ct: 'b' },
+      dekBio: { iv: 'OLD-DEVICE-IV', ct: 'OLD-DEVICE-CT' },
+    });
+    const backup = {
+      version: 1,
+      exported: '2026-03-27T00:00:00Z',
+      profiles: [],
+      vault: { encrypted: '{"v1":{"iv":"abc","ct":"def"}}', meta: vaultMeta },
+    };
+    const file = { text: () => Promise.resolve(JSON.stringify(backup)) } as unknown as File;
+
+    await importBackup(file);
+
+    const importedMeta = JSON.parse(storage.get('vaultMeta')!);
+    expect(importedMeta.dekBio).toBeUndefined();
+    expect(importedMeta.dekPw).toEqual({ iv: 'a', ct: 'b' });
+    expect(importedMeta.salt).toBe('xyz');
+    // Stale local WebAuthn handles cleared so tryUnlockVault doesn't attempt bio
+    expect(storage.get('webauthnCredId')).toBeUndefined();
+    expect(storage.get('webauthnPrfSalt')).toBeUndefined();
+  });
+
+  it('toast tells the user to re-enable Touch ID after importing a bio-enrolled backup', async () => {
+    const vaultMeta = JSON.stringify({
+      salt: 'xyz',
+      dekPw: { iv: 'a', ct: 'b' },
+      dekBio: { iv: 'old', ct: 'wrap' },
+    });
+    const backup = {
+      version: 1,
+      exported: '2026-03-27T00:00:00Z',
+      profiles: [],
+      vault: { encrypted: '{"v1":{"iv":"abc","ct":"def"}}', meta: vaultMeta },
+    };
+    const file = { text: () => Promise.resolve(JSON.stringify(backup)) } as unknown as File;
+
+    await importBackup(file);
+
+    expect(toastMessages[0]).toMatch(/re-enable Touch ID/);
+  });
+
+  it('imports vault meta without dekBio unchanged (no spurious "Touch ID" message)', async () => {
+    const vaultMeta = JSON.stringify({
+      salt: 'xyz',
+      dekPw: { iv: 'a', ct: 'b' },
+    });
+    const backup = {
+      version: 1,
+      exported: '2026-03-27T00:00:00Z',
+      profiles: [],
+      vault: { encrypted: '{"v1":{"iv":"abc","ct":"def"}}', meta: vaultMeta },
+    };
+    const file = { text: () => Promise.resolve(JSON.stringify(backup)) } as unknown as File;
+
+    await importBackup(file);
+
+    expect(toastMessages[0]).not.toMatch(/Touch ID/);
+    expect(toastMessages[0]).toMatch(/credentials imported \(enter vault passphrase/);
   });
 
   it('shows summary toast with profile count', async () => {

@@ -466,17 +466,48 @@ export async function importBackup(file: File): Promise<void> {
   }
   localStorage.setItem('sshProfiles', JSON.stringify(existing));
 
-  // Import vault data (encrypted blob — stays encrypted)
+  // Import vault data (encrypted blob — stays encrypted).
+  //
+  // Bio enrollment is device-specific: dekBio in vaultMeta is the DEK wrapped
+  // by a KEK derived from THIS DEVICE's WebAuthn PRF output. The imported
+  // dekBio was wrapped on a different device with a different credential, so
+  // it cannot be unwrapped here — every fingerprint touch would fail silently
+  // and leak through to a manual password prompt (issue: vault-import-reprompt).
+  //
+  // Strip dekBio from imported meta and clear any local WebAuthn handles.
+  // After unlocking with the master password once, the user can re-enroll
+  // bio in Settings, which re-wraps the live DEK with this device's KEK.
   let credsImported = false;
   if (backup.vault?.encrypted) {
     localStorage.setItem('sshVault', backup.vault.encrypted);
     credsImported = true;
   }
+  let bioStripped = false;
   if (backup.vault?.meta) {
-    localStorage.setItem('vaultMeta', backup.vault.meta);
+    let meta: { dekBio?: unknown } = {};
+    try {
+      meta = JSON.parse(backup.vault.meta) as { dekBio?: unknown };
+    } catch {
+      meta = {};
+    }
+    if (meta.dekBio !== undefined) {
+      delete meta.dekBio;
+      bioStripped = true;
+    }
+    localStorage.setItem('vaultMeta', JSON.stringify(meta));
+    // The imported credId/salt would point to a non-existent credential on
+    // this device (or worse, a stale enrollment for a different vault).
+    // Clear them so tryUnlockVault doesn't even attempt biometric.
+    localStorage.removeItem('webauthnCredId');
+    localStorage.removeItem('webauthnPrfSalt');
   }
 
-  const credMsg = credsImported ? ', credentials imported (enter vault passphrase to unlock)' : '';
+  let credMsg = '';
+  if (credsImported) {
+    credMsg = bioStripped
+      ? ', credentials imported (enter password; re-enable Touch ID in Settings)'
+      : ', credentials imported (enter vault passphrase to unlock)';
+  }
   _toast(`Imported ${String(imported)} profiles${credMsg}`);
 }
 
