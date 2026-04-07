@@ -234,6 +234,49 @@ describe('backup import (#337)', () => {
     expect(toastMessages[0]).toMatch(/re-enable Touch ID/);
   });
 
+  // Regression: import doesn't refresh Connect panel
+  // After importBackup writes new profiles to localStorage, the Connect panel
+  // must re-render — otherwise the user sees the cold-start "Add Connection"
+  // empty state until they fully kill and restart the app.
+  it('re-renders the Connect panel (calls loadProfiles) after a successful import', async () => {
+    // Stand up minimal DOM elements that loadProfiles() touches.
+    // It early-returns when #profileList is missing, so providing it forces
+    // the side effect to run.
+    const fakeProfileList: Record<string, unknown> = { innerHTML: '__PRE__' };
+    const fakeSessionList: Record<string, unknown> = { innerHTML: '' };
+    const fakeFormSection: Record<string, unknown> = { classList: { add: vi.fn(), remove: vi.fn() } };
+    const fakeNewConnBtn: Record<string, unknown> = { classList: { add: vi.fn(), remove: vi.fn() } };
+
+    const realDoc = (globalThis as { document: { getElementById: (id: string) => unknown } }).document;
+    const origGetElementById = realDoc.getElementById;
+    realDoc.getElementById = (id: string): unknown => {
+      if (id === 'profileList') return fakeProfileList;
+      if (id === 'activeSessionList') return fakeSessionList;
+      if (id === 'connect-form-section') return fakeFormSection;
+      if (id === 'newConnBtn') return fakeNewConnBtn;
+      return null;
+    };
+
+    try {
+      const backup = {
+        version: 1,
+        exported: '2026-04-07T00:00:00Z',
+        profiles: [
+          { name: 'imported', host: 'imported.example.com', port: 22, username: 'me', authType: 'password', vaultId: 'v1', initialCommand: '' },
+        ],
+        vault: { encrypted: null, meta: null },
+      };
+      const file = { text: () => Promise.resolve(JSON.stringify(backup)) } as unknown as File;
+
+      await importBackup(file);
+
+      // loadProfiles wrote new HTML — proves the re-render fired
+      expect(fakeProfileList.innerHTML).not.toBe('__PRE__');
+    } finally {
+      realDoc.getElementById = origGetElementById;
+    }
+  });
+
   it('imports vault meta without dekBio unchanged (no spurious "Touch ID" message)', async () => {
     const vaultMeta = JSON.stringify({
       salt: 'xyz',

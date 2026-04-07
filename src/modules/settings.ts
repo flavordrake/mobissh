@@ -11,7 +11,7 @@ import { resetKeyBarConfig } from './keybar-config.js';
 import type { ThemeName } from './types.js';
 import { showErrorDialog } from './ui.js';
 import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewIdleDelay } from './ime.js';
-import { getProfiles } from './profiles.js';
+import { getProfiles, loadProfiles } from './profiles.js';
 
 
 /** Declarative schema for validatable localStorage keys. */
@@ -509,6 +509,12 @@ export async function importBackup(file: File): Promise<void> {
       : ', credentials imported (enter vault passphrase to unlock)';
   }
   _toast(`Imported ${String(imported)} profiles${credMsg}`);
+
+  // Re-render the Connect panel so the imported profiles appear immediately.
+  // Without this, the panel keeps showing whatever was rendered at cold start
+  // (often the empty "Add Connection" UI), and the user has to fully kill the
+  // app to see imported profiles.
+  loadProfiles();
 }
 
 export function registerServiceWorker(): void {
