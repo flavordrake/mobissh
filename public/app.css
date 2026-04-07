@@ -1920,17 +1920,25 @@ hr {
 
 .vault-btn-create:active { background: var(--accent-dim); }
 
-/* Inline vault unlock bar — slides into active panel when vault is locked */
+/* Vault unlock bar — pinned to top of viewport so it overlays whatever panel
+ * is active. Required because the bar is a top-level body sibling rather than
+ * nested in a panel — without fixed positioning it falls below the 100vh #app
+ * and is invisible. Sits above panels but below the vault setup modal (10001+).
+ */
 .vault-unlock-bar {
+  position: fixed;
+  top: env(safe-area-inset-top, 0);
+  left: 0;
+  right: 0;
+  z-index: 9999;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
+  border-bottom: 1px solid var(--accent);
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 
