@@ -101,12 +101,71 @@ instruction into one of three buckets:
 Output this classification as a table per skill. This IS the audit
 report — if `dry-run`, the skill stops here.
 
-### Phase 2: Mine TRACE data for fixtures
+### Phase 2: Discover existing deterministic tools
 
-For each B-bucket operation, walk `trace-source` and find TRACEs where
-the target skill was actually invoked. Extract the inputs the skill
-received (from `specs/`, `logs/`, `artifacts/`, TRACE.md decisions
-section). These become the fixtures for the script's test suite.
+**Runs BEFORE fixture mining and BEFORE drafting any new script.**
+The highest-leverage finds are tools that already exist in the repo
+but no skill knows about them — work that was done once, used once,
+never advertised. Crystallizing those is free: zero new code, just
+wiring.
+
+Walk every directory that could hold a usable tool:
+
+- `scripts/` — top-level intent-named scripts. Note the CLI shape from
+  each header comment. Cross-reference: which scripts are invoked by
+  some SKILL.md? Which are not?
+- `scripts/lib/` — sourced helpers. Note any function with a clear
+  single-purpose contract that could be wrapped in a CLI script.
+- `tools/` — non-`scripts/` utility programs (review server, JSON
+  parsers, frame extractors). Same audit.
+- `.traces/*/artifacts/` — one-off scripts written inside a TRACE arc
+  while solving a problem. **These are the highest-value finds:**
+  someone built a deterministic tool to solve a real problem, used it
+  once, and never promoted it. Promote it to `scripts/` if it has reuse.
+- TRACE `logs/` and `strategy/pivot_*.md` — search for shell snippets
+  the agent ran during the arc that should have been scripts. If a
+  pivot says "we discovered we needed to compute X, so we ran <bash
+  one-liner>", that one-liner is a candidate to formalize.
+
+For every tool found, classify:
+
+- **invoked** — at least one current SKILL.md or script calls it. Note
+  which one(s).
+- **orphaned** — nothing currently calls it, but the contract is clear
+  and it solves a real problem. **High-value crystallization candidate.**
+- **half-built** — started in a TRACE arc, abandoned or scoped to that
+  arc only. Either promote or delete (don't leave undead).
+- **dead** — contract unclear, no real use case, or duplicates a better
+  tool. Mark for removal.
+
+The output of this phase is a **tool registry** at
+`.claude/tool-registry.md` (or appended to it on subsequent runs). The
+registry is durable across crystallize passes and discoverable by every
+other skill — it's the catalog of "deterministic tools available in
+this repo, what they do, what they take, what they return".
+
+**Then** cross-reference the tool registry with the B-bucket from
+phase 1: for each operation that should be scripted, is there ALREADY
+a tool that does it? If yes, skip the draft step entirely — go to
+phase 5 and wire it up. This is the cheap-win path.
+
+Rationale: rebuilding a tool that already exists is the worst possible
+crystallize outcome. Worse than rewriting a SKILL.md to be longer,
+worse than missing a B-bucket entry. The user's instruction was
+explicit: prioritize finding tools that already emerged during
+problem-solving, even if no instruction asks for them. Those are the
+proof-of-need finds and they're already paid for.
+
+### Phase 3: Mine TRACE data for fixtures
+
+**Only runs for B-bucket operations that phase 2 did not find an
+existing tool for.** This is the new-script path.
+
+For each remaining B-bucket operation, walk `trace-source` and find
+TRACEs where the target skill was actually invoked. Extract the inputs
+the skill received (from `specs/`, `logs/`, `artifacts/`, TRACE.md
+decisions section). These become the fixtures for the script's test
+suite.
 
 If no TRACE data exists for the operation, generate a minimal synthetic
 fixture that covers the known edge cases (empty input, single item,
@@ -117,27 +176,28 @@ later pass can replace them with real data.
 fixtures that happen to cover the happy path don't prove correctness —
 real-world TRACE data does.
 
-### Phase 3: Extract / draft script
+### Phase 4: Extract / draft script
 
-For each B-bucket operation:
+For each B-bucket operation NOT covered by an existing tool from
+phase 2:
 
-1. Check if the needed script already exists under `scripts/`. If yes,
-   the operation just needs the SKILL.md to invoke it — skip to phase 5.
-2. If not, draft `scripts/<verb>-<noun>.sh` (or `.py` / `.js` if the
-   operation needs structured data libraries bash lacks). Use the
-   existing scripts in this repo as the style reference — intent-named,
+1. Draft `scripts/<verb>-<noun>.sh` (or `.py` / `.js` if the operation
+   needs structured-data libraries bash lacks). Use the existing
+   scripts in this repo as the style reference — intent-named,
    `set -euo pipefail`, MOBISSH_TMPDIR convention, explicit flags.
-3. The script's CLI must be stable and documented in its header. The
+2. The script's CLI must be stable and documented in its header. The
    SKILL.md will call it by name, so breaking the CLI breaks every
    dependent skill.
-4. Add a test file adjacent to the script. Unit-test style: each known
-   fixture from phase 2 → expected output. The test should fail loudly
+3. Add a test file adjacent to the script. Unit-test style: each known
+   fixture from phase 3 → expected output. The test should fail loudly
    if the script's behavior drifts.
+4. Register the new script in `.claude/tool-registry.md` so the next
+   crystallize pass on a different skill finds it in phase 2.
 
 **Keep scripts single-purpose.** Resist "while I'm here, let me also
 handle X". One script per operation. Composition happens in the SKILL.md.
 
-### Phase 4: Verify
+### Phase 5: Verify
 
 Run the drafted script against every fixture. It must produce the
 same output every run. If the output depends on wall-clock time, the
@@ -151,7 +211,7 @@ produced in that TRACE. They should match. If they don't:
 - The LLM was wrong in the TRACE → this is the value proof; note it
   in the audit report under "LLM was inconsistent: replaced"
 
-### Phase 5: Rewrite the SKILL.md
+### Phase 6: Rewrite the SKILL.md
 
 This is the compacting step. For every B-bucket operation now covered
 by a script, replace the prose with a script invocation.
@@ -192,7 +252,7 @@ Rules for the rewrite:
 - **Remove section headings that no longer have content.** Compaction
   is literal: the final SKILL.md should be shorter than the input.
 
-### Phase 6: Write the report
+### Phase 7: Write the report
 
 Append a block to the rewritten SKILL.md (or a sibling
 `crystallize-report.md`) listing:
