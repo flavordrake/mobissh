@@ -368,10 +368,40 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
 // ─── HTTP server (static files) ───────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
-  // POST /api/approval-gate — register a pending approval, return requestId immediately.
-  // Hook script polls /api/approval-poll?id=N for the decision.
-  if (req.method === 'POST' && req.url === '/api/approval-gate') {
+  // POST /api/approval-gate — register a pending approval.
+  //
+  // Two protocols supported on the same endpoint, distinguished by the
+  // `hookVersion` query param so deployed-but-stale hook scripts don't
+  // silently break:
+  //
+  //   v1 (no hookVersion or hookVersion=1): legacy synchronous gate.
+  //     Server holds the response open until a decision arrives or 120s
+  //     elapses, then returns {decision: "allow"|"deny"}. This matches
+  //     what the old hook script (≤4f1bcb-era) reads via `.decision //
+  //     "deny"`. Slower but bw-compat-correct for any deployed copy of
+  //     the old hook out in the wild.
+  //
+  //   v2+ (hookVersion>=2): poll-based. Returns {requestId} immediately,
+  //     hook polls /api/approval-poll?id=N for the decision. Avoids
+  //     long-held connections that Tailscale + cell radios sometimes
+  //     drop. The current repo hook (hooks/mobissh-bridge.sh) is v2.
+  //
+  // The bug this guards against: in 2026-04-09 we shipped v2 server-side
+  // without bumping the hook version negotiation. Any host where the
+  // hook hadn't been re-installed kept reading `.decision` from a
+  // response that no longer had it, falling through to "deny" on every
+  // call as soon as a phone (SSE client) was connected. Symptom: every
+  // tool call denied even though the user was tapping Allow on the
+  // phone — the deny had already gone out before the user's tap could
+  // possibly reach the server. Found 2026-04-09 in trace
+  // boot-splash-telemetry-210808 after a long debug session.
+  if (req.method === 'POST' && req.url?.startsWith('/api/approval-gate')) {
     let body = '';
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    const hookVersionRaw = parsedUrl.searchParams.get('hookVersion');
+    const hookVersion = hookVersionRaw ? parseInt(hookVersionRaw, 10) : 1;
+    const isV2 = !Number.isNaN(hookVersion) && hookVersion >= 2;
+
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
@@ -383,9 +413,10 @@ const server = http.createServer((req, res) => {
         const desc = toolInput.description || '';
         const label = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
 
-        console.log(`[approval-gate] #${requestId}: "${label}" (SSE clients: ${sseClients.size})`);
+        console.log(`[approval-gate] #${requestId}: "${label}" (SSE clients: ${sseClients.size}, hookVersion: ${isV2 ? '2+' : '1'})`);
 
-        // If no clients connected, use the default mode — don't block Claude Code
+        // If no clients connected, use the default mode — don't block Claude Code.
+        // This shape works for both v1 and v2 hooks because both read .decision.
         if (sseClients.size === 0) {
           console.log(`[approval-gate] #${requestId}: no clients → default ${_approvalDefaultMode}`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -402,23 +433,50 @@ const server = http.createServer((req, res) => {
           }
         });
 
-        // Store as pending — decision comes from /api/approval-respond,
-        // hook polls via /api/approval-poll.
-        // Default to auto-approve on timeout — user chose not to deny.
         const timer = setTimeout(() => {
           if (pendingApprovals.has(requestId)) {
             console.log(`[approval-gate] #${requestId}: timeout → default ${_approvalDefaultMode}`);
+            const entry = pendingApprovals.get(requestId);
+            const v1Resolver = entry && entry.v1Resolve;
             pendingApprovals.set(requestId, { decision: _approvalDefaultMode, status: 'timeout' });
+            if (v1Resolver) v1Resolver(_approvalDefaultMode);
             // Cleanup after grace period for final poll
             setTimeout(() => { pendingApprovals.delete(requestId); }, 15000);
           }
         }, 120000);
 
-        pendingApprovals.set(requestId, { status: 'pending', timer });
-
-        // Return requestId immediately — hook polls for result
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ requestId }));
+        if (isV2) {
+          // v2: return requestId immediately, hook polls
+          pendingApprovals.set(requestId, { status: 'pending', timer });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ requestId }));
+        } else {
+          // v1: hold the response open until /api/approval-respond fires
+          // (or the timer above hits the timeout). Store a resolver in the
+          // pending entry so respond can wake us up.
+          pendingApprovals.set(requestId, {
+            status: 'pending',
+            timer,
+            v1Resolve: (decision) => {
+              try {
+                if (!res.writableEnded) {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ requestId, decision }));
+                }
+              } catch (writeErr) {
+                console.log(`[approval-gate] #${requestId}: v1 write failed — ${writeErr instanceof Error ? writeErr.message : 'unknown'}`);
+              }
+            },
+          });
+          // If the client disconnects before we resolve, drop the resolver
+          // so a later respond doesn't try to write to a closed socket.
+          req.on('close', () => {
+            const entry = pendingApprovals.get(requestId);
+            if (entry && entry.v1Resolve) {
+              entry.v1Resolve = null;
+            }
+          });
+        }
       } catch {
         res.writeHead(400);
         res.end('{"error":"invalid json"}');
@@ -483,7 +541,8 @@ const server = http.createServer((req, res) => {
   }
 
   // POST /api/approval-respond — client sends user's decision for a pending gate.
-  // Stores the decision; hook picks it up via /api/approval-poll.
+  // For v2 hooks: stores the decision so the next poll picks it up.
+  // For v1 hooks: also wakes the held HTTP response on /api/approval-gate.
   if (req.method === 'POST' && req.url === '/api/approval-respond') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -498,9 +557,13 @@ const server = http.createServer((req, res) => {
           return;
         }
         clearTimeout(pending.timer);
-        console.log(`[approval-gate] #${requestId}: user decided → ${decision}`);
-        // Store decision — hook will pick it up on next poll
-        pendingApprovals.set(String(requestId), { decision: decision || 'deny', status: 'decided' });
+        const safeDecision = decision || 'deny';
+        console.log(`[approval-gate] #${requestId}: user decided → ${safeDecision}`);
+        // If a v1 hook is holding the gate response open, wake it now.
+        // Capture the resolver before overwriting the entry.
+        const v1Resolve = pending.v1Resolve;
+        pendingApprovals.set(String(requestId), { decision: safeDecision, status: 'decided' });
+        if (v1Resolve) v1Resolve(safeDecision);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch {

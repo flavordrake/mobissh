@@ -38,10 +38,14 @@ emit_decision() {
 }
 
 if [[ "$EVENT" == "PermissionRequest" ]]; then
-  # Step 1: Register gate and get server response
+  # Step 1: Register gate and get server response.
+  # `hookVersion=2` selects the poll-based protocol; servers without
+  # version detection will ignore the query param and respond with the
+  # legacy synchronous shape, which the v2 hook also handles correctly
+  # in step 2.
   REG=$(curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
     -d "$BRIDGE_JSON" \
-    "${BRIDGE_URL}/api/approval-gate" 2>/dev/null) || {
+    "${BRIDGE_URL}/api/approval-gate?hookVersion=2" 2>/dev/null) || {
     # Server unreachable — emit allow (default safe mode)
     emit_decision "allow"
     exit 0
