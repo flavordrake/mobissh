@@ -263,6 +263,7 @@ import { rebindSelectionWatcher } from './selection.js';
 import { renderSessionList, closeSession } from './ui.js';
 import { stopAndDownloadRecording } from './recording.js';
 import { fireNotification } from './terminal.js';
+import { probeConnectLayers } from './connect-probe.js';
 
 let _toast = (_msg: string): void => {};
 let _setStatus = (_state: ConnectionStatus, _text: string): void => {};
@@ -547,14 +548,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   const wsUrl = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
 
   _setStatus('connecting', `Connecting to ${baseUrl}…`);
-  // Only show status overlay after 5s timeout — happy path never shows it
   if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
-  if (!silent) {
-    _connectTimeout = setTimeout(() => {
-      _connectTimeout = null;
-      _showConnectionStatus(`Connecting to ${baseUrl}…`);
-    }, 5000);
-  }
 
   let newWs: WebSocket;
 
@@ -565,6 +559,31 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     _showConnectionStatus(`WebSocket error: ${message}`, { error: true });
     scheduleReconnect();
     return;
+  }
+
+  // Happy path never shows the overlay: the WS opens in a few hundred ms and
+  // _dismissConnectionStatus is called from the onopen/onconnected handlers.
+  // Slow path: after 5s, show the overlay AND run the layered probe so the
+  // user can tell which layer is blocking (radio / HTTP / WebSocket handshake).
+  if (!silent) {
+    const probeWs = newWs; // capture so the closure inspects *this* attempt
+    _connectTimeout = setTimeout(() => {
+      _connectTimeout = null;
+      _showConnectionStatus(`Connecting to ${baseUrl}…`);
+      _showConnectionStatus('Running diagnostic…');
+      void probeConnectLayers({
+        onLine: typeof navigator !== 'undefined' ? navigator.onLine : true,
+        fetchImpl: (url, init) => fetch(url, init),
+        ws: probeWs,
+      }).then((lines) => {
+        for (const line of lines) {
+          _showConnectionStatus(`[${line.layer}] ${line.message}`, { error: !line.ok });
+        }
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        _showConnectionStatus(`Diagnostic failed: ${msg}`, { error: true });
+      });
+    }, 5000);
   }
 
   // Transition BEFORE assigning session.ws so the 'connecting'/'reconnecting'
