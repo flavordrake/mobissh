@@ -75,21 +75,24 @@ The selection overlay feature (#55) went through 6+ commits, was feature-flagged
 
 ### Always verify server version before asking user to test
 
-```
-scripts/verify-test-ready.sh [--url https://mobissh.tailbe5094.ts.net]
-```
-
-Checks server currency, HTTP endpoint hash match, and prints the
-`?reset=1` URL for SW cache busting. Exit 1 = not ready.
+The server caches git hash at startup. A stale server process serves stale code even after commits. Before ANY manual or emulator testing:
+1. Run `server-ctl.sh ensure` (checks HEAD matches running server)
+2. Verify via `curl` that the production endpoint returns the expected version
+3. Suggest `?reset=1` to the user to bust service worker cache
 
 ## Critical Pitfalls (learned the hard way)
 
 ### Chrome DevTools socket requires `set-debug-app`
 
-Handled automatically by `scripts/run-emulator-tests.sh` and
-`scripts/run-appium-tests.sh`. If running manually:
-`adb shell am set-debug-app --persistent com.android.chrome`
-then force-stop and relaunch Chrome.
+Play Store Chrome ships as a release build. It does NOT expose the `@chrome_devtools_remote` Unix socket by default, even with USB debugging enabled. You must run:
+
+```bash
+adb shell am set-debug-app --persistent com.android.chrome
+adb shell am force-stop com.android.chrome
+# then relaunch Chrome
+```
+
+Without this, `adb forward tcp:9222 localabstract:chrome_devtools_remote` connects to nothing. The `run-emulator-tests.sh` script handles this automatically.
 
 ### No `browser.newContext()` on Android Chrome
 
@@ -215,12 +218,25 @@ cdpBrowser: [async ({}, use) => {
 
 ### Chrome nag modals block test visibility on first launch
 
-Handled by `scripts/run-appium-tests.sh` (pre-grants notifications,
-sets Chrome flags) and the Appium fixture's modal-dismiss step. If
-writing a new test runner, replicate the three-layer defense:
-1. `adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS`
-2. Chrome `--disable-fre --no-first-run --no-default-browser-check` flags
-3. Fixture-level modal dismiss with 2s timeout fallback
+Default emulator Chrome shows a full-screen "Turn on notifications" dialog (and sometimes sign-in or default-browser prompts) on first use. These cover your app's UI and make test screenshots useless. Three-layer defense:
+
+1. **Pre-grant POST_NOTIFICATIONS** in the test runner script (prevents the notification modal entirely):
+```bash
+adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+```
+
+2. **Chrome command-line flags** to suppress first-run experience:
+```bash
+adb shell "echo '_ --disable-fre --no-first-run --no-default-browser-check' > /data/local/tmp/chrome-command-line" 2>/dev/null || true
+```
+
+3. **Dismiss any remaining modals** in the Playwright fixture before navigating to your app:
+```javascript
+try {
+  const nagBtn = page.locator('button:has-text("No thanks"), button:has-text("Not now"), button:has-text("Skip"), [id*="negative"], [id*="dismiss"]');
+  await nagBtn.first().click({ timeout: 2000 });
+} catch { /* no nag modal -- normal after first run */ }
+```
 
 ### KVM group membership requires session reload
 
@@ -424,6 +440,13 @@ test-results/
 Playwright's failure screenshots only show the DOM state at timeout -- after the problem has already manifested. The screen recording captures everything, but a 3-minute video is useless for debugging without timestamps.
 
 `scripts/extract-test-frames.sh` bridges this gap: it reads the JSON test report, correlates each test's wall-clock timing with the video timeline, and extracts PNG frames at critical moments via ffmpeg. This gives the AI (or a human) a visual timeline of what was actually on screen when each test ran.
+
+**How it works:**
+1. Reads `test-results/emulator/report.json` for test names, start times, durations, and pass/fail status
+2. Calculates video offset: `test_startTime - earliest_startTime` maps wall-clock to video position
+3. Extracts frames at: 2s before test start, midpoint, 1s before end
+4. For failed tests: extracts additional quarter-point and three-quarter-point frames
+5. Filenames encode the test name, moment, and status for easy scanning
 
 **Usage:**
 ```bash
