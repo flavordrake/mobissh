@@ -21,9 +21,9 @@ describe('issue-217: slim session menu', () => {
     storage.clear();
   });
 
-  describe('key bar has Ctrl+C and Ctrl+Z in row-nav (at end)', () => {
-    it('row-nav contains keyCtrlC with correct sequence', () => {
-      const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
+  describe('key bar has Ctrl+C and Ctrl+Z in row-keys (#250 moved from row-nav)', () => {
+    it('row-keys contains keyCtrlC with correct sequence', () => {
+      const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-keys');
       expect(row).toBeDefined();
       const ctrlC = row!.buttons.find((b) => b.id === 'keyCtrlC');
       expect(ctrlC).toBeDefined();
@@ -31,8 +31,8 @@ describe('issue-217: slim session menu', () => {
       expect(ctrlC!.label).toBe('^C');
     });
 
-    it('row-nav contains keyCtrlZ with correct sequence', () => {
-      const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
+    it('row-keys contains keyCtrlZ with correct sequence', () => {
+      const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-keys');
       expect(row).toBeDefined();
       const ctrlZ = row!.buttons.find((b) => b.id === 'keyCtrlZ');
       expect(ctrlZ).toBeDefined();

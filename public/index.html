@@ -264,12 +264,15 @@
             <button id="keySlash" class="key-btn" title="/">/</button>
             <button id="keyDash"  class="key-btn" title="-">-</button>
             <button id="keyPipe"  class="key-btn" title="|">|</button>
-            <!-- Nav key subset shown inline at depth-1; hidden at depth-2 -->
-            <div class="key-nav-subset">
+            <!-- Arrow keys shown inline at depth-1; hidden at depth-2 (T-layout in row 2) -->
+            <div class="key-arrow-subset">
               <button id="keyLeftM"  class="key-btn" title="Left">◀</button>
               <button id="keyRightM" class="key-btn" title="Right">▶</button>
               <button id="keyUpM"    class="key-btn" title="Up">▲</button>
               <button id="keyDownM"  class="key-btn" title="Down">▼</button>
+            </div>
+            <!-- Nav + control keys shown inline at depth-1 and depth-2 -->
+            <div class="key-ctrl-subset">
               <button id="keyHomeM"  class="key-btn" title="Home">Home</button>
               <button id="keyEndM"   class="key-btn" title="End">End</button>
               <button id="keyPgUpM"  class="key-btn" title="Page Up">PgUp</button>
@@ -281,19 +284,19 @@
             </div>
           </div>
         </div>
-        <!-- Depth 2 row: navigation keys (visible only when depth = 2) -->
+        <!-- Depth 2 row: T-arrow cluster + navigation keys -->
         <div id="key-nav-row">
+          <div class="arrow-t-cluster">
+            <button id="keyLeft"  class="key-btn arrow-t-left" title="Left">◀</button>
+            <button id="keyUp"    class="key-btn arrow-t-up" title="Up">▲</button>
+            <button id="keyDown"  class="key-btn arrow-t-down" title="Down">▼</button>
+            <button id="keyRight" class="key-btn arrow-t-right" title="Right">▶</button>
+          </div>
           <div id="key-scroll-nav">
-            <button id="keyLeft"  class="key-btn" title="Left">◀</button>
-            <button id="keyRight" class="key-btn" title="Right">▶</button>
-            <button id="keyUp"    class="key-btn" title="Up">▲</button>
-            <button id="keyDown"  class="key-btn" title="Down">▼</button>
             <button id="keyHome"  class="key-btn" title="Home">Home</button>
             <button id="keyEnd"   class="key-btn" title="End">End</button>
             <button id="keyPgUp"  class="key-btn" title="Page Up">PgUp</button>
             <button id="keyPgDn"  class="key-btn" title="Page Down">PgDn</button>
-            <button id="keyCtrlB" class="key-btn" title="^B">^B</button>
-            <button id="keyCtrlD" class="key-btn" title="^D">^D</button>
           </div>
         </div>
       </div>

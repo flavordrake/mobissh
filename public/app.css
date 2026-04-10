@@ -1032,15 +1032,48 @@ html, body {
   padding: 0 5px;
 }
 
-/* Merged nav key subset — shown inline at depth-1, hidden at depth-2 */
-.key-nav-subset {
+/* Arrow subset — shown inline at depth-1, hidden at depth-2 (T-layout in row 2) */
+.key-arrow-subset {
   display: none;
 }
 
-#key-bar.depth-1 .key-nav-subset {
+#key-bar.depth-1 .key-arrow-subset {
   display: flex;
   gap: 4px;
 }
+
+/* Control + nav keys — shown inline at depth-1 and depth-2 */
+.key-ctrl-subset {
+  display: none;
+}
+
+#key-bar.depth-1 .key-ctrl-subset,
+#key-bar.depth-2 .key-ctrl-subset,
+#key-bar.depth-3 .key-ctrl-subset {
+  display: flex;
+  gap: 4px;
+}
+
+/* T-arrow cluster — 2x3 grid: left up right on top, down centered below */
+.arrow-t-cluster {
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  grid-template-rows: repeat(2, 14px);
+  gap: 1px;
+  flex-shrink: 0;
+  padding: 1px 4px;
+  align-self: center;
+}
+.arrow-t-cluster .key-btn {
+  height: 14px;
+  min-width: 28px;
+  padding: 0;
+  font-size: 10px;
+}
+.arrow-t-left  { grid-column: 1; grid-row: 1; }
+.arrow-t-up    { grid-column: 2; grid-row: 1; }
+.arrow-t-right { grid-column: 3; grid-row: 1; }
+.arrow-t-down  { grid-column: 2; grid-row: 2; }
 
 /* At depth-1, single scrollable row -- no wrapping */
 #key-bar.depth-1 #key-keys-row {

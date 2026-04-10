@@ -39,7 +39,7 @@ describe('keybar-config', () => {
       expect(ids).toContain('keyDash');
     });
 
-    it('row-nav contains arrow, navigation, and control keys', () => {
+    it('row-nav contains arrow and navigation keys (no control keys)', () => {
       const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
       expect(row).toBeDefined();
       const ids = row!.buttons.map((b) => b.id);
@@ -51,6 +51,14 @@ describe('keybar-config', () => {
       expect(ids).toContain('keyEnd');
       expect(ids).toContain('keyPgUp');
       expect(ids).toContain('keyPgDn');
+    });
+
+    it('row-keys contains control keys (^C ^Z ^B ^D)', () => {
+      const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-keys');
+      expect(row).toBeDefined();
+      const ids = row!.buttons.map((b) => b.id);
+      expect(ids).toContain('keyCtrlC');
+      expect(ids).toContain('keyCtrlZ');
       expect(ids).toContain('keyCtrlB');
       expect(ids).toContain('keyCtrlD');
     });
