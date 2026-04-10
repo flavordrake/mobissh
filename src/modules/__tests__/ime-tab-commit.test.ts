@@ -24,7 +24,7 @@ describe('Tab commits text in all IME states (#379)', () => {
     // The Tab block must have a path that commits text WITHOUT requiring _isHolding()
     // This is the fix for #379: text in textarea during idle/composing gets committed
     const tabBlock = imeSrc.match(
-      /if\s*\(e\.key\s*===\s*'Tab'\)\s*\{([\s\S]*?)\n    \}/,
+      /if\s*\(e\.key\s*===\s*'Tab'\)\s*\{([\s\S]*?)\n {4}\}/,
     );
     expect(tabBlock, 'Tab handler block should exist').toBeTruthy();
 
@@ -44,7 +44,7 @@ describe('Tab commits text in all IME states (#379)', () => {
 
   it('Tab always calls preventDefault to stop browser focus change', () => {
     const tabBlock = imeSrc.match(
-      /if\s*\(e\.key\s*===\s*'Tab'\)\s*\{([\s\S]*?)\n    \}/,
+      /if\s*\(e\.key\s*===\s*'Tab'\)\s*\{([\s\S]*?)\n {4}\}/,
     );
     expect(tabBlock, 'Tab handler block should exist').toBeTruthy();
     const block = tabBlock![1]!;
@@ -59,7 +59,7 @@ describe('Tab commits text in all IME states (#379)', () => {
 
   it('Tab sends \\t even when textarea is empty', () => {
     const tabBlock = imeSrc.match(
-      /if\s*\(e\.key\s*===\s*'Tab'\)\s*\{([\s\S]*?)\n    \}/,
+      /if\s*\(e\.key\s*===\s*'Tab'\)\s*\{([\s\S]*?)\n {4}\}/,
     );
     expect(tabBlock, 'Tab handler block should exist').toBeTruthy();
     const block = tabBlock![1]!;
@@ -80,7 +80,7 @@ describe('Tab in previewing/editing state still works (#295)', () => {
     );
     expect(
       tabHolding,
-      "Tab handler should check _isHolding() for the held-text path",
+      'Tab handler should check _isHolding() for the held-text path',
     ).toBeTruthy();
   });
 
