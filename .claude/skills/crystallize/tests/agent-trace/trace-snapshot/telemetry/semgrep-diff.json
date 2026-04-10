@@ -1,0 +1,1 @@
+{"finding": "path-join-resolve-traversal in trace-scripts.test.ts:9", "severity": "WARNING", "status": "accepted — false positive: script name is hardcoded test data, not user input", "cwe": "CWE-22"}

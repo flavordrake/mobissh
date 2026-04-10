@@ -1,0 +1,4 @@
+vitest: 7.28s (transform 1.83s, setup 0ms, import 2.99s, tests 8.09s, environment 4ms)
+Test Files: 2 failed | 18 passed (20)
+Tests: 6 failed | 200 passed (206)
+Note: 2 pre-existing failures, not related to this change

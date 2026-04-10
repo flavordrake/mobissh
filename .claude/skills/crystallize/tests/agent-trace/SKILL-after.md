@@ -1,0 +1,269 @@
+---
+name: agent-trace
+description: Protocol for capturing a complete development arc (TRACE). Includes telemetry, strategy pivots, logs, and performance metadata. Use this to record the "how and why" of an objective, especially for performance-critical or non-deterministic tasks.
+license: Apache-2.0
+metadata:
+  version: "1.0.0"
+  purpose: AI-Training-Data-Generation
+---
+
+# Agent TRACE (Trajectory & Runtime Artifact Collection Environment)
+
+The `agent-trace` skill transforms a standard execution into a **Software Artifact Corpus**.
+It captures not just the final code, but the "Mechanical Sympathy" between the agent's
+intent, the hardware's response (telemetry), and the resulting strategy shifts.
+
+## 1. Directory Structure
+
+When this skill is activated, the agent MUST initialize the following structure in a
+unique directory named `trace-[objective-slug]-[timestamp]/`:
+
+```text
+trace-dir/
+├── TRACE.md           # Executive summary, metadata, and final outcomes
+├── specs/             # Original requirements and identified ambiguities
+├── strategy/          # Log of hypotheses and pivots (The "Decision Chain")
+├── logs/              # Agent reasoning logs and build/compiler output
+├── telemetry/         # NCU/NSYS reports, profiling data, or runtime traces
+└── artifacts/         # Success/Failure code snapshots and sanitizer reports
+```
+
+## 2. The TRACE.md Specification
+
+The `TRACE.md` file is the entry point for the "Harvesting Agent." It must include
+multidimensional cost data.
+
+### Frontmatter Template
+
+```yaml
+id: [unique-id]
+objective: [high-level-goal]
+status: [success | failure | partial]
+skills-used: [list-of-skills]
+resources:
+  tokens: [total-token-count]
+  compute_footprint:
+    cpu_time: [format: 00m:00s]
+    gpu_time: [format: 00m:00s]
+metrics:
+  target: [e.g., 900 TFLOPS]
+  achieved: [actual-result]
+```
+
+## 3. Instructions for Agents
+
+### Step 1: Initial Hypothesis
+
+Record the starting point in `strategy/initial_plan.md` — but don't duplicate
+the issue body. The initial plan is a **pointer**, not a rewrite:
+
+```markdown
+# Initial Strategy
+Issue: #165 — fix: test 5.1 uses relative URL that CDP rejects
+Approach: as described in issue body
+Assumptions that might be wrong: [list only non-obvious assumptions]
+```
+
+The value of the TRACE is in the **delta** — what changed from the plan.
+If nothing changed, the trace is trivially short and that's fine.
+For HPC/performance tasks: also record tiling sizes, register budgets,
+memory alignment expectations — things not in the issue.
+
+### Step 2: Telemetry Ingestion (before/after snapshots)
+
+Capture performance data **before** and **after** implementation so deltas are
+visible during harvest. The agent does NOT analyze — just captures. Significant
+regressions or improvements are discovered at harvest time.
+
+**Principle: aspect-oriented, zero-effort instrumentation.** Use tools that don't
+require code changes or special setup. Capture raw output to `telemetry/`.
+
+#### HPC/CUDA tasks
+Run Nsight Compute, Nsight Systems, or compute-sanitizer. Save raw output to
+`telemetry/` and bottleneck summary to `logs/`.
+
+#### Web/PWA tasks (MobiSSH)
+
+| File | What to capture | Tool |
+|------|----------------|------|
+| `telemetry/perf-before.txt` | Test suite duration before changes | `scripts/test-unit.sh` duration line |
+| `telemetry/perf-after.txt` | Test suite duration after changes | `scripts/test-unit.sh` duration line |
+| `telemetry/bundle-size.txt` | Compiled JS sizes | `ls -la public/modules/*.js` |
+| `telemetry/page-metrics.json` | Layout count, style recalcs, heap | Playwright `page.metrics()` |
+| `telemetry/transfer-trace.log` | Chunk timing, ack latency | App's built-in transfer tracing |
+
+**When to capture more than just test duration:**
+- Terminal rendering changes → page metrics (layout thrashing)
+- SFTP/WebSocket changes → transfer tracing (throughput, ack-wait %)
+- UI changes → bundle size + page metrics
+- All changes → test suite duration (always)
+
+### Step 3: The Pivot (The Delta)
+
+Whenever the telemetry contradicts the hypothesis:
+
+1. Create `strategy/pivot_N.md`
+2. Document the **Triggering Evidence** (e.g., "High Register Pressure",
+   "ack-wait 85% of upload time", "59 headless test failures")
+3. Document the **Structural Change** (e.g., "Reduced Block Size",
+   "batched terminal writes per rAF", "reverted preview-OFF hide")
+4. **Quantify the Delta** in performance or correctness
+
+### Step 4: Final Summarization (The Learning Step)
+
+The agent has the best context to summarize — it just lived through the arc.
+The harvester should not have to re-derive what the agent already knows.
+The agent writes concise summaries; the harvester scans them at scale.
+
+The final act of a TRACE agent is to populate the body of `TRACE.md` with:
+
+- **The "Why"**: A post-mortem on why the final strategy succeeded or failed.
+- **The "Ambiguity Gap"**: How specs were clarified during execution.
+  What was assumed vs. what was explicitly stated. What the user corrected.
+- **The "Knowledge Seed"**: A one-sentence heuristic for future agents
+  (e.g., "On sm_90, favor TMA over manual SMem loads for 10% gain",
+  "Never bump localStorage keys — migrate the value schema instead",
+  "touchstart preventDefault on a scroll container blocks horizontal scroll").
+- **Performance Delta**: One-line summary of before/after performance impact.
+  Reference `telemetry/perf-before.txt` and `telemetry/perf-after.txt`.
+  (e.g., "Test suite: 7.5s → 7.9s (+5%, from new 14 Playwright tests)",
+  "Bundle: connection.js 12KB → 14KB (+2KB, transfer tracing instrumentation)",
+  "No measurable impact" is a valid and valuable result.)
+- **Security Summary**: One-line summary of static analysis findings.
+  Reference `logs/security-findings.md`.
+  (e.g., "semgrep: 0 new findings on changed files",
+  "1 innerHTML usage in _renderTransferList — uses escHtml, accepted",
+  "No security-relevant changes".)
+- **Outcome Classification**: `success` | `failure` | `partial` — and a shade:
+  - `success` — tests pass, no regressions, no security concerns
+  - `success-with-caveats` — works but performance regressed or security finding deferred
+  - `partial` — some goals met, others need follow-up (file issues for remainder)
+  - `failure-informative` — didn't work but TRACE documents why, code+tests on branch
+  - `failure` — didn't work, no useful artifacts
+
+These one-line summaries are designed for **scale discovery** — a harvester scanning
+hundreds of TRACEs can grep for performance regressions, security patterns, or
+failure modes without reading the full trace content.
+
+## 4. Embedded Logic (For Non-Skill Agents)
+
+If you are an agent without a filesystem-tooling layer, you must output your
+response in a `[TRACE_SNAPSHOT]` block containing the YAML and Markdown
+structures defined above so a supervisor can persist them.
+
+```
+[TRACE_SNAPSHOT]
+id: trace-keybar-scroll-20260321
+objective: Fix keybar scroll vs tap disambiguation
+status: partial
+...
+[/TRACE_SNAPSHOT]
+```
+
+## 5. Integration with MobiSSH SDLC
+
+### Where TRACEs live
+
+```text
+.traces/
+├── trace-sftp-upload-20260316/
+├── trace-preview-countdown-20260315/
+├── trace-keybar-scroll-20260321/
+└── ...
+```
+
+`.traces/` is the default local directory (gitignored, project-local, like `.claude/worktrees/`).
+TRACEs are local development artifacts, not committed to the repo. They inform memory
+updates and process improvements.
+
+### When to generate a TRACE
+
+- **Always**: for performance-critical work (upload throughput, terminal rendering,
+  network resilience)
+- **On pivot**: when a strategy changes significantly mid-execution
+- **On failure**: when an agent aborts — the TRACE documents why and what was tried
+- **On request**: `/trace` generates a TRACE for the current or most recent work
+
+### Harvesting: TRACE → Memory
+
+After a TRACE is complete, the orchestrator (main session) extracts:
+
+1. **Knowledge Seeds** → project memory (`feedback_*.md`)
+2. **Process improvements** → skill/rule updates
+3. **Heuristics** → `.claude/rules/` scoped files
+4. **Bug patterns** → issue filing
+
+This is the feedback loop: agents generate TRACEs → orchestrator harvests insights →
+future agents benefit from accumulated knowledge.
+
+## 6. Scripts and Tools
+
+### scripts/trace-init.sh
+
+Initialize a new TRACE directory with boilerplate:
+
+```bash
+scripts/trace-init.sh "objective-slug"
+# Creates: .traces/trace-{slug}-{timestamp}/
+# With: TRACE.md, specs/, strategy/, logs/, telemetry/, artifacts/
+```
+
+### scripts/trace-validate.sh
+
+Validate that a TRACE is complete:
+
+- `TRACE.md` has frontmatter with status
+- `strategy/initial_plan.md` exists
+- If pivots exist, each has triggering evidence and delta
+- If telemetry exists, it has corresponding strategy references
+
+## 7. Fractal TRACE Architecture
+
+TRACEs operate at multiple levels:
+
+### Level 1: Agent TRACE
+Single agent, single issue. `.traces/trace-issue-N-*/`.
+Captures the agent's decision chain for one task.
+
+### Level 2: Session TRACE
+The orchestrator session generates a TRACE covering the full session arc —
+multiple cycles, multiple agents, user corrections, strategy pivots.
+`.traces/trace-session-*/`. Key content:
+- Issues worked on and outcomes
+- **User corrections** (the most valuable data — "no, that's wrong" moments)
+- Process improvements discovered and where captured
+- Cross-agent dependencies and sequencing decisions
+
+### Level 3: Project TRACE (future)
+Aggregation across sessions. How a feature evolved from issue filing through
+multiple sessions to release.
+
+### Prior-run enrichment
+
+When an agent is spawned, the orchestrator checks `.traces/` for prior runs
+on the same issue and includes a distilled summary in the agent prompt:
+
+```
+## Prior TRACE context
+- trace-issue-N-20260315: FAIL — "touchstart preventDefault blocks scroll"
+- trace-issue-N-20260316: PARTIAL — "tabindex=-1 prevents focus but not on all Android"
+
+Session learnings: "User correction: ^keys go at end, not interspersed"
+```
+
+This gives the agent accumulated intelligence without loading full trace files.
+
+### Context exhaustion
+
+Before context compaction (or on session end), the orchestrator should:
+1. Write session learnings to the session TRACE
+2. The compaction summary references the TRACE for full details
+3. New context window starts with TRACE pointers, not raw history
+
+## Outcome Goal
+
+Every TRACE directory should be a self-contained training sample for a
+"Performance Architect" or "Software Intelligence" model. The combination of
+intent (specs), strategy (hypotheses + pivots), evidence (telemetry), and
+outcome (artifacts + TRACE.md) creates a complete decision trajectory that
+captures not just *what* was done but *why* each choice was made.

@@ -1,0 +1,4 @@
+vitest (trace-scripts only): 5.81s (transform 30ms, setup 0ms, import 42ms, tests 5.66s)
+Test Files: 1 passed (1)
+Tests: 11 passed (11)
+Note: full suite perf unchanged — new tests are additive, no existing code modified
