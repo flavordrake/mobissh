@@ -2763,11 +2763,31 @@ hr {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 13px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
 .preview-rendered code {
   color: var(--text);
   font-size: 13px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.preview-rendered table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+
+.preview-rendered th,
+.preview-rendered td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.preview-rendered th {
+  background: var(--bg-card);
+  font-weight: 600;
 }
 
 .source-view {
