@@ -1186,23 +1186,20 @@ export function initApprovalBar(): void {
 
       if (targetBtn) {
         targetBtn.classList.add('countdown-active');
-        if (!targetBtn.querySelector('.approval-ring')) {
-          targetBtn.insertAdjacentHTML('beforeend',
-            '<svg class="approval-ring" viewBox="0 0 36 36">' +
-            '<circle class="approval-ring-track" cx="18" cy="18" r="16" />' +
-            '<circle class="approval-ring-progress" cx="18" cy="18" r="16" />' +
-            '</svg>');
-        }
-        const progress = targetBtn.querySelector('.approval-ring-progress') as SVGCircleElement | null;
-        const circumference = 2 * Math.PI * 16;
-        if (progress) {
-          progress.style.strokeDasharray = String(circumference);
-          progress.style.strokeDashoffset = '0';
-          progress.style.transition = `stroke-dashoffset ${String(sec)}s linear`;
-          void progress.getBoundingClientRect();
-          progress.style.strokeDashoffset = String(circumference);
-        }
       }
+
+      // Insert VU-meter bar at bottom of approval bar
+      let vuBar = bar!.querySelector('.approval-vu-bar') as HTMLDivElement | null;
+      if (!vuBar) {
+        vuBar = document.createElement('div');
+        vuBar.className = 'approval-vu-bar';
+        bar!.appendChild(vuBar);
+      }
+      vuBar.style.width = '100%';
+      vuBar.style.transition = 'none';
+      void vuBar.getBoundingClientRect();
+      vuBar.style.transition = `width ${String(sec)}s linear`;
+      vuBar.style.width = '0%';
 
       let remaining = sec;
       countdownEl = document.createElement('span');
@@ -1226,10 +1223,10 @@ export function initApprovalBar(): void {
       if (countdownEl) { countdownEl.textContent = ''; countdownEl = null; }
       if (targetBtn) {
         targetBtn.classList.remove('countdown-active');
-        const ring = targetBtn.querySelector('.approval-ring');
-        if (ring) ring.remove();
         targetBtn = null;
       }
+      const vuBar = bar!.querySelector('.approval-vu-bar');
+      if (vuBar) vuBar.remove();
     }
 
     autoCheck.addEventListener('change', () => {
