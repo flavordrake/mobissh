@@ -300,3 +300,56 @@ describe('Security constraints', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalled();
   });
 });
+
+// --- 5. Issue #410 regression tests ---
+
+describe('renderMarkdown — issue #410 regressions', () => {
+  it('fenced code blocks produce <pre><code> with content intact', () => {
+    const md = '```\nconst x = 1;\nlet y = 2;\n```';
+    const html = renderPreview('test.md', md);
+    expect(html).toContain('<pre><code>');
+    expect(html).toContain('const x = 1;');
+    expect(html).toContain('let y = 2;');
+  });
+
+  it('inline backtick does not corrupt fenced code block content', () => {
+    const md = '```\nconst `x` = 1;\n```\n\nUse `foo` inline.';
+    const html = renderPreview('test.md', md);
+    // The fenced block should NOT have <code> injected inside <pre><code>
+    // Count <code> occurrences: one from <pre><code> and one from inline `foo`
+    const codeMatches = html.match(/<code>/g);
+    expect(codeMatches).toBeTruthy();
+    // The inline `foo` should become <code>foo</code>
+    expect(html).toContain('<code>foo</code>');
+    // The fenced block content should not have nested <code> tags
+    const preBlock = html.match(/<pre><code>([\s\S]*?)<\/code><\/pre>/);
+    expect(preBlock).toBeTruthy();
+    // Inside the pre block, backtick-wrapped text should remain as literal backticks
+    expect(preBlock![1]).toContain('`x`');
+  });
+
+  it('renders pipe-delimited tables as <table> HTML', () => {
+    const md = '| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |';
+    const html = renderPreview('test.md', md);
+    expect(html).toContain('<table>');
+    expect(html).toContain('<th>');
+    expect(html).toContain('Name');
+    expect(html).toContain('Age');
+    expect(html).toContain('<td>');
+    expect(html).toContain('Alice');
+    expect(html).toContain('30');
+    expect(html).toContain('Bob');
+  });
+
+  it('table without separator line is not rendered as table', () => {
+    const md = '| not | a | table |\n\nJust text.';
+    const html = renderPreview('test.md', md);
+    expect(html).not.toContain('<table>');
+  });
+
+  it('bold text inside paragraphs renders as <strong>', () => {
+    const md = 'This is **bold** text.';
+    const html = renderPreview('test.md', md);
+    expect(html).toContain('<strong>bold</strong>');
+  });
+});
