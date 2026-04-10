@@ -533,9 +533,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   // where the old onclose handler fires and triggers a duplicate reconnect.
   if (session?._cycle) {
     session._cycle.controller.abort();
-    if (session._cycle.disposables) {
-      for (const d of session._cycle.disposables) d.dispose();
-    }
+    for (const d of session._cycle.disposables) d.dispose();
     session._cycle = null;
   }
   if (session?.ws) {
@@ -641,7 +639,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     try { msg = JSON.parse(event.data as string) as ServerMessage; } catch { return; }
 
     switch (msg.type) {
-      case 'connected':
+      case 'connected': {
         if (session) {
           session._wsConsecFailures = 0;
           session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
@@ -700,6 +698,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         }
         _focusIME();
         break;
+      }
 
       case 'output':
         _bufferTerminalWrite(sessionId, msg.data);
@@ -833,18 +832,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
     _setStatus('disconnected', 'Disconnected');
 
-    // No profile = ephemeral session, safe to close
-    if (!session?.profile) {
-      closeSession(sessionId);
-      return;
-    }
-
     // All reconnect attempts go through scheduleReconnect which has its own
     // failure counter. Previously-connected sessions get a first free reconnect,
     // then the counter applies to prevent infinite loops to dead hosts.
-    if (session) {
-      console.log(`[onclose] session=${sessionId} wasSsh=${wasSshConnected} failures=${session._wsConsecFailures} state=${session.state}`);
-    }
+    console.log(`[onclose] session=${sessionId} wasSsh=${String(wasSshConnected)} failures=${String(session._wsConsecFailures)} state=${session.state}`);
     if (wasSshConnected) {
       _toast('Reconnecting…');
     }
@@ -868,7 +859,7 @@ export function scheduleReconnect(sessionId?: string): void {
   const wasConnected = session.state === 'connected' || session.state === 'soft_disconnected';
   if (!wasConnected) {
     session._wsConsecFailures++;
-    console.log(`[scheduleReconnect] sid=${sid} failures=${session._wsConsecFailures}/${WS_MAX_AUTH_FAILURES} state=${session.state}`);
+    console.log(`[scheduleReconnect] sid=${sid} failures=${String(session._wsConsecFailures)}/${String(WS_MAX_AUTH_FAILURES)} state=${session.state}`);
     if (session._wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
       console.log(`[scheduleReconnect] HALT — giving up on session=${sid}`);
       session._wsConsecFailures = 0;
@@ -1117,9 +1108,7 @@ export function disconnect(sessionId?: string): void {
     // handler doesn't fire and trigger a reconnect loop (#388)
     if (session._cycle) {
       session._cycle.controller.abort();
-      if (session._cycle.disposables) {
-        for (const d of session._cycle.disposables) d.dispose();
-      }
+      for (const d of session._cycle.disposables) d.dispose();
       session._cycle = null;
     }
     if (session.ws) {

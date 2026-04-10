@@ -87,9 +87,7 @@ function clearReconnectTimer(session: SessionState): void {
 function abortCycle(session: SessionState): void {
   if (session._cycle) {
     session._cycle.controller.abort();
-    if (session._cycle.disposables) {
-      for (const d of session._cycle.disposables) d.dispose();
-    }
+    for (const d of session._cycle.disposables) d.dispose();
     session._cycle = null;
   }
 }
