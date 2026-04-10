@@ -177,7 +177,15 @@ export class SessionHandle {
     this.container.classList.remove('hidden');
     this._visible = true;
 
-    if (this.container.offsetHeight > 0) {
+    // Clear cached dimensions so the upcoming fit (either from here or from
+    // ResizeObserver) is never suppressed by stale values from a previous
+    // layout. This is the key fix for #369: without this reset, a fit() that
+    // ran at wrong container width would cache bad cols/rows, and all
+    // subsequent corrective fits would no-op because dimensions "matched".
+    this._lastSentCols = 0;
+    this._lastSentRows = 0;
+
+    if (this.container.offsetHeight > 0 && this.container.offsetWidth > 0) {
       this.fit();
     }
 
@@ -211,7 +219,17 @@ export class SessionHandle {
 
   /** Fit terminal to current container size and send resize if dimensions changed. */
   fit(): void {
-    if (this.container.offsetHeight <= 0) return;
+    if (this.container.offsetHeight <= 0 || this.container.offsetWidth <= 0) return;
+
+    // Guard against fitting during CSS transitions or partial layout.
+    // The terminal parent (#panel-terminal) has the authoritative width.
+    // If the container's width is significantly smaller than the parent,
+    // layout hasn't settled — skip this fit and let ResizeObserver retry.
+    const parent = this.container.parentElement;
+    if (parent && parent.offsetWidth > 0 && this.container.offsetWidth < parent.offsetWidth * 0.5) {
+      return;
+    }
+
     this.fitAddon.fit();
 
     const cols = this.terminal.cols;

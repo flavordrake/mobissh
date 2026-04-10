@@ -24,7 +24,7 @@ const uiSrc = readFileSync(resolve(__dirname, '../ui.ts'), 'utf-8');
 
 // Extract the keybar handler block (the for...of loop over keys entries)
 const handlerBlock = uiSrc.match(
-  /for\s*\(const\s*\[id,\s*seq\]\s*of\s*Object\.entries\(keys\)\)[\s\S]*?_attachRepeat\([\s\S]*?\n  \}/,
+  /for\s*\(const\s*\[id,\s*seq\]\s*of\s*Object\.entries\(keys\)\)[\s\S]*?_attachRepeat\([\s\S]*?\n {2}\}/,
 )?.[0] ?? '';
 
 describe('Arrow keys move cursor in textarea, do not insert escape sequences (#274)', () => {

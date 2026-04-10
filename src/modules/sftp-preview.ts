@@ -93,12 +93,31 @@ function renderMarkdown(raw: string): string {
     }
   };
 
-  for (const line of lines) {
+  let inTable = false;
+  let tableHeader: string[] = [];
+  let tableRows: string[][] = [];
+
+  const flushTable = (): void => {
+    if (!inTable) return;
+    const headerHtml = tableHeader.map(h => `<th>${h}</th>`).join('');
+    const rowsHtml = tableRows.map(
+      row => `<tr>${row.map(c => `<td>${c}</td>`).join('')}</tr>`
+    ).join('\n');
+    out.push(`<table>\n<thead><tr>${headerHtml}</tr></thead>\n<tbody>\n${rowsHtml}\n</tbody>\n</table>`);
+    inTable = false;
+    tableHeader = [];
+    tableRows = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+
     // Fenced code blocks
     if (line.match(/^```/)) {
       if (!inCode) {
         flushParagraph();
         flushList();
+        flushTable();
         inCode = true;
         codeLines = [];
       } else {
@@ -110,6 +129,26 @@ function renderMarkdown(raw: string): string {
     if (inCode) {
       codeLines.push(line);
       continue;
+    }
+
+    // Table detection: pipe-delimited line followed by separator line (e.g. | --- | --- |)
+    if (!inTable && line.match(/^\|.+\|$/) && i + 1 < lines.length && lines[i + 1]!.match(/^\|[\s|:-]+$/)) {
+      flushParagraph();
+      flushList();
+      inTable = true;
+      tableHeader = line.split('|').slice(1, -1).map(c => c.trim());
+      // Skip the separator line
+      i++;
+      continue;
+    }
+    if (inTable) {
+      if (line.match(/^\|.+\|$/)) {
+        tableRows.push(line.split('|').slice(1, -1).map(c => c.trim()));
+        continue;
+      } else {
+        flushTable();
+        // Fall through to process this line normally
+      }
     }
 
     // Headers
@@ -146,12 +185,25 @@ function renderMarkdown(raw: string): string {
     out.push(`<pre><code>${codeLines.join('\n')}</code></pre>`);
   }
   flushList();
+  flushTable();
   flushParagraph();
 
-  // Inline formatting on the assembled HTML
+  // Inline formatting — but skip content inside <pre><code>...</code></pre>
   let html = out.join('\n');
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(
+    /(<pre><code>[\s\S]*?<\/code><\/pre>)|`([^`]+)`/g,
+    (_match, preBlock?: string, inlineCode?: string) => {
+      if (preBlock) return preBlock; // preserve fenced blocks as-is
+      return `<code>${inlineCode ?? ''}</code>`;
+    }
+  );
+  html = html.replace(
+    /(<pre><code>[\s\S]*?<\/code><\/pre>)|\*\*([^*]+)\*\*/g,
+    (_match, preBlock?: string, boldText?: string) => {
+      if (preBlock) return preBlock;
+      return `<strong>${boldText ?? ''}</strong>`;
+    }
+  );
   return html;
 }
 
