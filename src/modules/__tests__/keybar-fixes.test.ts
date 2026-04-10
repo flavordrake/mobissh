@@ -20,23 +20,23 @@ describe('issues #225/#226: keybar fixes', () => {
   });
 
   describe('#226: key order and label format', () => {
-    it('row-keys order: Esc Tab / - | (no ctrl keys)', () => {
+    it('row-keys order: Esc Tab / - | ^C ^Z ^B ^D (editing + control)', () => {
       const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-keys');
       expect(row).toBeDefined();
       const ids = row!.buttons.map((b) => b.id);
       expect(ids).toEqual([
         'keyEsc', 'keyTab', 'keySlash', 'keyDash', 'keyPipe',
+        'keyCtrlC', 'keyCtrlZ', 'keyCtrlB', 'keyCtrlD',
       ]);
     });
 
-    it('row-nav order: arrows Home End PgUp PgDn then all ^keys at end', () => {
+    it('row-nav order: arrows in T order (left up down right) then Home End PgUp PgDn', () => {
       const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
       expect(row).toBeDefined();
       const ids = row!.buttons.map((b) => b.id);
       expect(ids).toEqual([
-        'keyLeft', 'keyRight', 'keyUp', 'keyDown',
+        'keyLeft', 'keyUp', 'keyDown', 'keyRight',
         'keyHome', 'keyEnd', 'keyPgUp', 'keyPgDn',
-        'keyCtrlC', 'keyCtrlZ', 'keyCtrlB', 'keyCtrlD',
       ]);
     });
 
@@ -72,6 +72,57 @@ describe('issues #225/#226: keybar fixes', () => {
       expect(rowKeys!.buttons[0].id).toBe('keyEsc');
       const navIds = rowNav!.buttons.map((b) => b.id);
       expect(navIds).not.toContain('keyEsc');
+    });
+  });
+
+  describe('#250: depth-2 has all buttons with T-arrow layout', () => {
+    it('no buttons lost between depth 1 and depth 2 — all button IDs present across both rows', () => {
+      const allIds = DEFAULT_KEY_BAR_CONFIG.flatMap((r) => r.buttons.map((b) => b.id));
+      // All editing keys present
+      expect(allIds).toContain('keyEsc');
+      expect(allIds).toContain('keyTab');
+      expect(allIds).toContain('keySlash');
+      expect(allIds).toContain('keyDash');
+      expect(allIds).toContain('keyPipe');
+      // All control keys present
+      expect(allIds).toContain('keyCtrlC');
+      expect(allIds).toContain('keyCtrlZ');
+      expect(allIds).toContain('keyCtrlB');
+      expect(allIds).toContain('keyCtrlD');
+      // All arrow keys present
+      expect(allIds).toContain('keyLeft');
+      expect(allIds).toContain('keyRight');
+      expect(allIds).toContain('keyUp');
+      expect(allIds).toContain('keyDown');
+      // All navigation keys present
+      expect(allIds).toContain('keyHome');
+      expect(allIds).toContain('keyEnd');
+      expect(allIds).toContain('keyPgUp');
+      expect(allIds).toContain('keyPgDn');
+    });
+
+    it('row-nav arrows in T order: left up down right', () => {
+      const row = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
+      expect(row).toBeDefined();
+      const arrowIds = row!.buttons.filter((b) =>
+        ['keyLeft', 'keyUp', 'keyDown', 'keyRight'].includes(b.id)
+      ).map((b) => b.id);
+      expect(arrowIds).toEqual(['keyLeft', 'keyUp', 'keyDown', 'keyRight']);
+    });
+
+    it('control keys are in row-keys (row 1), not row-nav (row 2)', () => {
+      const rowKeys = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-keys');
+      const rowNav = DEFAULT_KEY_BAR_CONFIG.find((r) => r.id === 'row-nav');
+      const rowKeyIds = rowKeys!.buttons.map((b) => b.id);
+      const rowNavIds = rowNav!.buttons.map((b) => b.id);
+      expect(rowKeyIds).toContain('keyCtrlC');
+      expect(rowKeyIds).toContain('keyCtrlZ');
+      expect(rowKeyIds).toContain('keyCtrlB');
+      expect(rowKeyIds).toContain('keyCtrlD');
+      expect(rowNavIds).not.toContain('keyCtrlC');
+      expect(rowNavIds).not.toContain('keyCtrlZ');
+      expect(rowNavIds).not.toContain('keyCtrlB');
+      expect(rowNavIds).not.toContain('keyCtrlD');
     });
   });
 });
