@@ -62,6 +62,8 @@ const createdDivs: Array<{
   appendChild: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
   offsetHeight: number;
+  offsetWidth: number;
+  parentElement: unknown;
 }> = [];
 
 const terminalContainer = {
@@ -70,6 +72,8 @@ const terminalContainer = {
   dataset: {} as Record<string, string>,
   appendChild: vi.fn((child: unknown) => child),
   querySelector: vi.fn(() => null),
+  offsetWidth: 800,
+  offsetHeight: 500,
 };
 
 const elementsById: Record<string, unknown> = {
@@ -98,6 +102,8 @@ vi.stubGlobal('document', {
       }),
       remove: vi.fn(),
       offsetHeight: 500,
+      offsetWidth: 800,
+      parentElement: terminalContainer,
     };
     createdDivs.push(el);
     return el;
@@ -236,6 +242,50 @@ describe('SessionHandle (#374)', () => {
       container!.offsetHeight = 0;
       handle.fit();
       expect(fitAddonInstances[0]!.fit).not.toHaveBeenCalled();
+    });
+
+    it('fit() does NOT call fitAddon.fit() when container has zero width (#369)', () => {
+      const handle = new SessionHandle('sess-nowidth', { name: 'test', host: 'localhost', port: 22, username: 'user', authType: 'password' as const });
+      const container = createdDivs.find(el => el.dataset['sessionId'] === 'sess-nowidth');
+      container!.offsetWidth = 0;
+      handle.fit();
+      expect(fitAddonInstances[0]!.fit).not.toHaveBeenCalled();
+    });
+
+    it('fit() skips when container width is less than half of parent width (#369)', () => {
+      const handle = new SessionHandle('sess-narrow', { name: 'test', host: 'localhost', port: 22, username: 'user', authType: 'password' as const });
+      const container = createdDivs.find(el => el.dataset['sessionId'] === 'sess-narrow');
+      // Parent is 800px, container is 100px (< 50% of parent) — transitional layout
+      container!.offsetWidth = 100;
+      handle.fit();
+      expect(fitAddonInstances[0]!.fit).not.toHaveBeenCalled();
+    });
+
+    it('show() clears cached dimensions so corrective fit is not suppressed (#369)', () => {
+      const handle = new SessionHandle('sess-cache', { name: 'test', host: 'localhost', port: 22, username: 'user', authType: 'password' as const });
+      // First fit sends resize
+      handle.fit();
+      expect(wsSendSpy).not.toHaveBeenCalled(); // no WS yet
+
+      // Connect and fit again — dimensions get cached
+      handle.connect();
+      const ws = wsInstances[0]!;
+      ws.onopen!();
+      ws.onmessage!({ data: JSON.stringify({ type: 'connected' }) });
+      wsSendSpy.mockClear();
+
+      handle.fit();
+      const firstCallCount = wsSendSpy.mock.calls.length;
+
+      // Second fit with same dimensions — should be suppressed
+      handle.fit();
+      expect(wsSendSpy.mock.calls.length).toBe(firstCallCount);
+
+      // show() clears cache — next fit should send resize even with same dimensions
+      handle.show();
+      // show() itself calls fit(), which should send resize
+      const afterShowCalls = wsSendSpy.mock.calls.length;
+      expect(afterShowCalls).toBeGreaterThan(firstCallCount);
     });
   });
 
