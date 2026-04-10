@@ -827,7 +827,7 @@ html, body {
 }
 .approval-btn {
   flex: 1;
-  padding: 12px 8px;
+  padding: 6px 8px;
   border: 2px solid var(--accent);
   border-radius: 6px;
   background: var(--accent);
@@ -868,36 +868,12 @@ html, body {
   font-size: 12px;
   opacity: 0.7;
 }
-.approval-ring {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 36px;
-  height: 36px;
-  transform: translate(-50%, -50%) rotate(-90deg);
-  pointer-events: none;
-}
-.approval-ring-track,
-.approval-ring-progress {
-  fill: none;
-  stroke-width: 3;
-}
-.approval-ring-track {
-  stroke: transparent;
-}
-.approval-ring-progress {
-  stroke: transparent;
-  stroke-linecap: round;
-}
-.approval-btn.countdown-active {
-  position: relative;
-  overflow: visible;
-}
-.approval-btn.countdown-active .approval-ring-track {
-  stroke: rgba(255, 255, 255, 0.15);
-}
-.approval-btn.countdown-active .approval-ring-progress {
-  stroke: var(--bg-deep);
+.approval-vu-bar {
+  height: 3px;
+  background: var(--bg-deep);
+  opacity: 0.5;
+  width: 100%;
+  border-radius: 0 0 4px 4px;
 }
 .approval-auto-row {
   display: flex;

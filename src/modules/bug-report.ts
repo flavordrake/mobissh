@@ -59,7 +59,7 @@ async function submitBugReport(): Promise<void> {
   }
 
   // Restore debug panel
-  if (wasVisible && debugPanel) debugPanel.classList.remove('hidden');
+  if (wasVisible) debugPanel!.classList.remove('hidden');
   if (debugFab) debugFab.classList.remove('hidden');
 
   // Collect metadata
@@ -72,7 +72,7 @@ async function submitBugReport(): Promise<void> {
   const payload = {
     screenshot,
     logs,
-    title: title || `Bug report from device`,
+    title: title || 'Bug report from device',
     userAgent: navigator.userAgent,
     url: location.href,
     version,
