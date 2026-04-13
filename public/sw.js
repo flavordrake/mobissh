@@ -113,10 +113,13 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Update cache with fresh response
+        // Update cache with fresh response (skip no-store — may contain sensitive data)
         if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          const cc = response.headers.get('Cache-Control') || '';
+          if (!cc.includes('no-store')) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
         }
         return response;
       })
