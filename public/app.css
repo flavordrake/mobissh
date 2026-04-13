@@ -1437,6 +1437,59 @@ hr {
 
 .item-btn.danger { color: var(--danger); }
 
+/* Panel header with Done/back button (#432) */
+.panel-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.panel-header-row h2 { margin: 0; }
+.panel-done-btn {
+  padding: 6px 16px;
+  font-size: 14px;
+}
+
+/* Key info row: date + passphrase indicator (#432) */
+.key-info-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.key-passphrase-badge {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+/* Inline key edit form (#432) */
+.key-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.key-edit-form label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.key-edit-form input {
+  padding: 6px 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+}
+.key-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* Connecting animation on profile Connect button (#318) */
 .item-btn.connecting {
   background: linear-gradient(90deg, var(--bg-input) 0%, var(--accent) 50%, var(--bg-input) 100%);

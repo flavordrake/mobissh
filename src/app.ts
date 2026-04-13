@@ -13,7 +13,7 @@ import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
 import {
   initProfiles, getProfiles, loadProfiles,
   loadProfileIntoForm, deleteProfile,
-  loadKeys, importKey, useKey, deleteKey, renameKey, populateKeyDropdown,
+  loadKeys, importKey, useKey, deleteKey, renameKey, editKey, saveKeyEdit, cancelKeyEdit, populateKeyDropdown,
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
@@ -141,11 +141,14 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
       const idx = parseInt(btn.dataset.idx ?? '0');
       if (btn.dataset.action === 'use') useKey(idx);
       else if (btn.dataset.action === 'delete') deleteKey(idx);
-      else if (btn.dataset.action === 'rename') {
-        const currentName = btn.closest('.key-item')?.querySelector('.key-name')?.textContent ?? '';
-        const newName = prompt('Rename key to:', currentName);
-        if (newName !== null) renameKey(idx, newName);
-      }
+      else if (btn.dataset.action === 'edit') void editKey(idx);
+      else if (btn.dataset.action === 'save-edit') void saveKeyEdit(idx);
+      else if (btn.dataset.action === 'cancel-edit') cancelKeyEdit(idx);
+    });
+
+    // Done button on keys panel (#432)
+    document.getElementById('keysDoneBtn')!.addEventListener('click', () => {
+      navigateToPanel('connect', { pushHistory: true });
     });
 
     // Import key button
