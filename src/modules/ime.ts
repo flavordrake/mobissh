@@ -387,8 +387,8 @@ export function initIMEInput(): void {
         imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
         imeActions.style.bottom = 'auto';
       }
-    } else if (dock === 'hover-bottom') {
-      // Bottom: above the keyboard
+    } else {
+      // Bottom (hover-bottom): above the keyboard
       const bottom = window.innerHeight - (viewTop + viewH) + 8;
       ime.style.bottom = `${String(bottom + actionH)}px`;
       ime.style.top = 'auto';

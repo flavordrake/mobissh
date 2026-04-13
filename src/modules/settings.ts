@@ -574,7 +574,7 @@ export function connectSSE(): void {
   es.addEventListener('version', (e: Event) => {
     const me = e as MessageEvent;
     try {
-      const data = JSON.parse(me.data) as { version: string; hash: string; uptime: number };
+      const data = JSON.parse(me.data as string) as { version: string; hash: string; uptime: number };
       console.log(`[sse] server version: ${data.version}:${data.hash} (uptime ${String(Math.round(data.uptime))}s)`);
 
       if (!localHash) return;
@@ -599,7 +599,7 @@ export function connectSSE(): void {
   es.addEventListener('approval', (e: Event) => {
     const me = e as MessageEvent;
     try {
-      const raw = JSON.parse(me.data) as Record<string, unknown>;
+      const raw = JSON.parse(me.data as string) as Record<string, unknown>;
       const ap = parseApprovalPayload(raw);
       console.log(`[sse] approval: ${ap.label}`);
       window.dispatchEvent(new CustomEvent('approval-prompt', {
@@ -626,7 +626,7 @@ export function connectSSE(): void {
   es.addEventListener('hook', (e: Event) => {
     const me = e as MessageEvent;
     try {
-      const data = JSON.parse(me.data) as { event?: string; tool?: string; detail?: string; description?: string };
+      const data = JSON.parse(me.data as string) as { event?: string; tool?: string; detail?: string; description?: string };
       console.log('[sse]', data.event, data.tool, data.detail);
     } catch {
       console.warn('[sse] failed to parse hook event');
