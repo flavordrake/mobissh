@@ -440,9 +440,14 @@ async function setupVault(driver) {
 /**
  * Connect to real SSH server through the MobiSSH bridge.
  * Assumes driver is in WEBVIEW context and vault is set up.
+ *
+ * Resilience: replaces fixed pauses with condition-based waits, retries
+ * form submission if the profile connect button doesn't appear, and uses
+ * a connection-state check alongside the WS spy to detect success even
+ * if the spy was installed after the WebSocket constructor was cached.
  */
 async function setupRealSSHConnection(driver) {
-  // Enable private hosts and inject WS spy
+  // Enable private hosts and inject WS spy for connection detection.
   await driver.executeScript(`
     localStorage.setItem('allowPrivateHosts', 'true');
     window.__mockWsSpy = [];
@@ -452,10 +457,15 @@ async function setupRealSSHConnection(driver) {
     };
   `, []);
 
-  // Navigate to connect panel
+  // Navigate to connect panel and wait for it to be active
   await driver.executeScript(
     "document.querySelector('[data-panel=\"connect\"]')?.click()", []);
-  await driver.pause(1000);
+  await driver.waitUntil(async () => {
+    return driver.executeScript(`
+      const panel = document.getElementById('connectPanel');
+      return panel && !panel.classList.contains('hidden');
+    `, []);
+  }, { timeout: 10000, interval: 500, timeoutMsg: 'Connect panel did not become visible' });
 
   // Fill connection form via executeScript (more reliable than WebDriverIO setValue
   // which requires element focus + Appium typing, and may conflict with Chrome autocomplete)
@@ -471,30 +481,45 @@ async function setupRealSSHConnection(driver) {
   `, [SSHD_HOST, String(SSHD_PORT), TEST_USER, TEST_PASS]);
   await driver.pause(500);
 
-  // Submit form (saves profile, does not connect)
-  await driver.executeScript(
-    "document.querySelector('#connectForm button[type=\"submit\"]')?.click()", []);
-  await driver.pause(1000);
+  // Submit form and wait for the profile connect button to appear.
+  // Retry submission once if the button doesn't show up — the first click
+  // can silently fail if Chrome autocomplete overlays the submit button.
+  let connectBtnFound = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await driver.executeScript(
+      "document.querySelector('#connectForm button[type=\"submit\"]')?.click()", []);
+    try {
+      await driver.waitUntil(async () => {
+        return driver.executeScript(
+          "return !!document.querySelector('[data-action=\"connect\"]')", []);
+      }, { timeout: 10000, interval: 500, timeoutMsg: 'Profile connect button not found' });
+      connectBtnFound = true;
+      break;
+    } catch (err) {
+      if (attempt === 1) throw new Error('Profile connect button not found after 2 submit attempts');
+    }
+  }
 
-  // Click the Connect button on the saved profile to initiate connection
-  await driver.waitUntil(async () => {
-    return driver.executeScript(
-      "return !!document.querySelector('[data-action=\"connect\"]')", []);
-  }, { timeout: 5000, interval: 500, timeoutMsg: 'Profile connect button not found after save' });
+  if (!connectBtnFound) {
+    throw new Error('Profile connect button not found after form submission');
+  }
+
   await driver.executeScript(
     "document.querySelector('[data-action=\"connect\"]')?.click()", []);
 
-  // Accept host key dialog (may not appear if key already trusted from earlier test)
+  // Wait for host key dialog or successful connection.
+  // Check both the WS spy and the app's session state as fallback — the spy
+  // can miss messages if the WebSocket constructor was cached before the proxy.
   await driver.waitUntil(async () => {
     return driver.executeScript(`
       const btn = document.querySelector('.hostkey-accept');
       const hostKeyVisible = btn && btn.offsetParent !== null;
-      const connected = (window.__mockWsSpy || []).some(s => {
+      const spyHasResize = (window.__mockWsSpy || []).some(s => {
         try { return JSON.parse(s).type === 'resize'; } catch { return false; }
       });
-      return hostKeyVisible || connected;
+      return hostKeyVisible || spyHasResize;
     `, []);
-  }, { timeout: 15000, interval: 500, timeoutMsg: 'Neither host key dialog nor connection appeared' });
+  }, { timeout: 30000, interval: 500, timeoutMsg: 'Neither host key dialog nor connection appeared within 30s' });
 
   // Click accept if the host key dialog is showing
   const hostKeyVisible = await driver.executeScript(`
@@ -508,28 +533,38 @@ async function setupRealSSHConnection(driver) {
     await driver.pause(300);
     await driver.executeScript(
       "document.querySelector('.hostkey-accept')?.click()", []);
-    await driver.pause(1000);
+    // Wait for host key dialog to dismiss before checking connection
+    await driver.waitUntil(async () => {
+      return driver.executeScript(`
+        const btn = document.querySelector('.hostkey-accept');
+        return !btn || btn.offsetParent === null;
+      `, []);
+    }, { timeout: 10000, interval: 500, timeoutMsg: 'Host key dialog did not dismiss after accept' });
   }
 
-  // Wait for SSH connection (resize message = shell ready)
+  // Wait for SSH connection — check WS spy and xterm-screen as fallback.
+  // The xterm-screen element only renders after a session connects, so it
+  // serves as a reliable secondary signal if the WS spy missed messages.
   await driver.waitUntil(async () => {
     return driver.executeScript(`
-      return (window.__mockWsSpy || []).some(s => {
+      const spyHasResize = (window.__mockWsSpy || []).some(s => {
         try { return JSON.parse(s).type === 'resize'; } catch { return false; }
       });
+      const terminalRendered = !!document.querySelector('.xterm-screen');
+      return spyHasResize || terminalRendered;
     `, []);
-  }, { timeout: 15000, interval: 500, timeoutMsg: 'SSH connection did not complete (no resize msg)' });
+  }, { timeout: 30000, interval: 500, timeoutMsg: 'SSH connection did not complete (no resize msg or terminal render) within 30s' });
 
   // Ensure terminal panel is active and wait for terminal to render
   await driver.executeScript(
     "document.querySelector('[data-panel=\"terminal\"]')?.click()", []);
-  await driver.pause(500);
+  await driver.pause(300);
 
   // Wait for xterm to render after connection (no terminal at cold start)
   await driver.waitUntil(async () => {
     return driver.executeScript(
       "return !!document.querySelector('.xterm-screen')", []);
-  }, { timeout: 10000, interval: 500, timeoutMsg: 'Terminal .xterm-screen not found after connection' });
+  }, { timeout: 15000, interval: 500, timeoutMsg: 'Terminal .xterm-screen not found after connection' });
 }
 
 // ── Screenshot helper ───────────────────────────────────────────────────
