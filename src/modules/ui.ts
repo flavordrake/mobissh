@@ -74,9 +74,9 @@ export function navigateToPanel(
     restoreIMEOverlay();
   }
   if (panel === 'connect') {
-    // Only refresh if the form isn't already visible (avoids clobbering edit-in-progress)
-    const form = document.getElementById('connect-form-section');
-    if (form?.classList.contains('connect-form-hidden')) {
+    // Only refresh if the form isn't already open (avoids clobbering edit-in-progress)
+    const form = document.getElementById('connect-form-section') as HTMLDetailsElement | null;
+    if (!form?.open) {
       loadProfiles();
     }
   }
@@ -738,16 +738,10 @@ export function initConnectForm(): void {
     if (remotePpEl) remotePpEl.value = '';
 
     void saveProfile(profile).then(() => {
-      // Hide form after save, show profile list
-      const formSection = document.getElementById('connect-form-section');
-      if (formSection) formSection.classList.add('connect-form-hidden');
-      const newBtn = document.getElementById('newConnBtn');
-      if (newBtn) newBtn.classList.remove('hidden');
+      // Collapse form after save
+      const formSection = document.getElementById('connect-form-section') as HTMLDetailsElement | null;
+      if (formSection) formSection.open = false;
     });
-  });
-
-  document.getElementById('newConnBtn')!.addEventListener('click', () => {
-    newConnection();
   });
 
   // Connect panel bottom navbar (#419)
