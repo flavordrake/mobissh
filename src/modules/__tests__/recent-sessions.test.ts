@@ -143,7 +143,7 @@ function getRecentSessions(): RecentSessionEntry[] {
 
 // ── Helper: seed profiles ───────────────────────────────────────────────────
 
-function seedProfiles(profiles: Array<{ name: string; host: string; port: number; username: string; authType: string }>): void {
+function seedProfiles(profiles: Array<{ title: string; host: string; port: number; username: string; authType: string }>): void {
   storage.set('sshProfiles', JSON.stringify(profiles));
 }
 
@@ -242,7 +242,7 @@ describe('recent sessions persistence (#385)', () => {
         { host: 'server1.example.com', port: 22, username: 'admin', profileIdx: 0 },
       ]);
       seedProfiles([
-        { name: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' },
+        { title: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' },
       ]);
 
       // Import and call loadProfiles
@@ -326,7 +326,7 @@ describe('recent sessions persistence (#385)', () => {
 
       // Create and then close a session matching server1
       const session = createSession('test-close');
-      session.profile = { name: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' as const };
+      session.profile = { title: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' as const };
       appState.activeSessionId = 'test-close';
       transitionSession('test-close', 'connecting');
       transitionSession('test-close', 'authenticating');
@@ -351,12 +351,12 @@ describe('recent sessions persistence (#385)', () => {
         { host: 'server1.example.com', port: 22, username: 'admin', profileIdx: 0 },
       ]);
       seedProfiles([
-        { name: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' },
+        { title: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' },
       ]);
 
       // Create an active session
       const session = createSession('active-sess');
-      session.profile = { name: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' as const };
+      session.profile = { title: 'Server 1', host: 'server1.example.com', port: 22, username: 'admin', authType: 'password' as const };
       appState.activeSessionId = 'active-sess';
 
       // Structural test: loadProfiles should conditionally skip recent when sessions exist

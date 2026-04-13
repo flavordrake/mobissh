@@ -99,7 +99,7 @@ const { appState, createSession, transitionSession } = await import('../state.js
 
 /** Helper: create a session with profile and optional WS */
 function _setupSession(opts?: { ws?: unknown; profile?: boolean; connected?: boolean }): void {
-  const profile = { name: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
+  const profile = { title: 'test', host: 'test', port: 22, username: 'test', authType: 'password' as const };
   const session = createSession('test-session');
   appState.activeSessionId = 'test-session';
   if (opts?.profile !== false) session.profile = profile;

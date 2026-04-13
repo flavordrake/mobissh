@@ -663,7 +663,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
       newWs.send(JSON.stringify(authMsg));
       // Status overlay only shows if the 5s timeout already fired
-      if (!silent && _currentOverlay) _showConnectionStatus(`SSH → ${profile.username}@${profile.host}:${String(profile.port || 22)}…`);
+      if (!silent && _currentOverlay) _showConnectionStatus(`SSH → ${profile.title || `${profile.username}@${profile.host}:${String(profile.port || 22)}`}…`);
     });
   }, signal ? { signal } : undefined);
 
@@ -685,7 +685,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         // is an issue (#81), the fix should be server-side or via a dedicated
         // reset-modes message, not terminal.write/reset.
         if (session?.profile) {
-          _setStatus('connected', `${session.profile.username}@${session.profile.host}`);
+          _setStatus('connected', session.profile.title || `${session.profile.username}@${session.profile.host}`);
         }
         // Cancel the 5s timeout if it hasn't fired yet
         if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }

@@ -247,7 +247,7 @@ export function renderSessionList(): void {
 
   const items = sessions.map((s) => {
     const label = s.profile
-      ? escHtml(`${s.profile.username}@${s.profile.host}`)
+      ? escHtml(s.profile.title || `${s.profile.username}@${s.profile.host}`)
       : escHtml(s.id);
     const isActive = s.id === appState.activeSessionId;
     const activeClass = isActive ? ' active' : '';
@@ -328,7 +328,7 @@ export function switchSession(id: string): void {
   // Update session menu button text + badge dot (no state text — dot is the indicator)
   const btn = document.getElementById('sessionMenuBtn');
   if (btn && session.profile) {
-    _setMenuBtnText(`${session.profile.username}@${session.profile.host}`);
+    _setMenuBtnText(session.profile.title || `${session.profile.username}@${session.profile.host}`);
     btn.classList.remove('connected', 'disconnected', 'connecting');
     if (isSessionConnected(session)) {
       btn.classList.add('connected');
@@ -416,7 +416,7 @@ export function initSessionMenu(): void {
     loadProfiles();
     const btn = document.getElementById('sessionMenuBtn');
     if (btn && session.id === appState.activeSessionId && session.profile) {
-      _setMenuBtnText(`${session.profile.username}@${session.profile.host}`);
+      _setMenuBtnText(session.profile.title || `${session.profile.username}@${session.profile.host}`);
       btn.classList.remove('connected', 'disconnected', 'connecting');
       if (isSessionConnected(session)) {
         btn.classList.add('connected');
@@ -485,7 +485,7 @@ export function initSessionMenu(): void {
       const targetIdx = (idx + (dx > 0 ? -1 : 1) + keys.length) % keys.length;
       const target = appState.sessions.get(keys[targetIdx]!);
       if (target?.profile) {
-        menuBtn.textContent = `→ ${target.profile.username}@${target.profile.host}`;
+        menuBtn.textContent = `→ ${target.profile.title || `${target.profile.username}@${target.profile.host}`}`;
         menuBtn.style.opacity = '0.6';
       }
     }
@@ -721,7 +721,7 @@ export function initConnectForm(): void {
     const remotePpEl = document.getElementById('remote_pp') as HTMLInputElement | null;
 
     const profile = {
-      name: (document.getElementById('profileName') as HTMLInputElement).value.trim() || 'Server',
+      title: (document.getElementById('profileName') as HTMLInputElement).value.trim() || 'Server',
       host: (document.getElementById('host') as HTMLInputElement).value.trim(),
       port: parseInt((document.getElementById('port') as HTMLInputElement).value) || 22,
       username: (document.getElementById('remote_a') as HTMLInputElement).value.trim(),
