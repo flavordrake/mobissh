@@ -41,17 +41,9 @@ async function waitForAppReady(page, timeout = 8000) {
   ]);
 }
 
-/** Open the Advanced section in the connect form (port, name, command are inside <details>). */
-async function openConnectAdvanced(page) {
-  const details = page.locator('#connectAdvanced');
-  if (await details.count() > 0) {
-    // Use el.open (boolean property) not getAttribute('open') -- getAttribute returns ''
-    // (falsy) for an open <details>, causing the check to incorrectly click again and close it.
-    const isOpen = await details.evaluate(el => el.open);
-    if (!isOpen) {
-      await details.locator('summary').click();
-    }
-  }
+/** No-op: Advanced section was removed in #439. Fields are always visible. Kept for call-site compat. */
+async function openConnectAdvanced(_page) {
+  // All fields are now inline in the main form — nothing to expand.
 }
 
 /** Return the active IME input element ID based on current mode. */
