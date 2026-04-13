@@ -13,7 +13,7 @@ import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
 import {
   initProfiles, getProfiles, loadProfiles,
   loadProfileIntoForm, deleteProfile,
-  loadKeys, importKey, useKey, deleteKey, renameKey, editKey, saveKeyEdit, cancelKeyEdit, populateKeyDropdown,
+  loadKeys, importKey, deleteKey, renameKey, editKey, saveKeyEdit, cancelKeyEdit, populateKeyDropdown,
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
@@ -134,21 +134,15 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
       (e.target as HTMLElement).closest('.profile-item')?.classList.remove('tapped');
     }, { passive: true });
 
-    // Event delegation for key list
+    // Event delegation for key list (inline in Connect panel, #441)
     document.getElementById('keyList')!.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
       if (!btn) return;
       const idx = parseInt(btn.dataset.idx ?? '0');
-      if (btn.dataset.action === 'use') useKey(idx);
-      else if (btn.dataset.action === 'delete') deleteKey(idx);
+      if (btn.dataset.action === 'delete') deleteKey(idx);
       else if (btn.dataset.action === 'edit') void editKey(idx);
       else if (btn.dataset.action === 'save-edit') void saveKeyEdit(idx);
       else if (btn.dataset.action === 'cancel-edit') cancelKeyEdit(idx);
-    });
-
-    // Done button on keys panel (#432)
-    document.getElementById('keysDoneBtn')!.addEventListener('click', () => {
-      navigateToPanel('connect', { pushHistory: true });
     });
 
     // Import key button
