@@ -439,6 +439,195 @@ export function deleteProfile(idx: number): void {
   loadProfiles();
 }
 
+// ── Inline per-profile editing (#446) ────────────────────────────────────────
+
+let _lastUndo: { idx: number; field: string; oldValue: string | number } | null = null;
+let _undoTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Close any open inline profile edit form. */
+export function closeProfileEdit(): void {
+  const existing = document.querySelector('.profile-edit-form');
+  if (!existing) return;
+  existing.remove();
+  const editingItem = document.querySelector('.profile-editing');
+  if (editingItem) editingItem.classList.remove('profile-editing');
+}
+
+/** Open an inline edit form inside the profile item at the given index. */
+export function editProfile(idx: number): void {
+  closeProfileEdit();
+
+  const profiles = getProfiles();
+  const profile = profiles[idx];
+  if (!profile) return;
+
+  const item = document.querySelector(`.profile-item[data-idx="${String(idx)}"]`);
+  if (!item) return;
+
+  item.classList.add('profile-editing');
+
+  const form = document.createElement('div');
+  form.className = 'profile-edit-form';
+
+  const authIsKey = profile.authType === 'key';
+  const pwGroupClass = authIsKey ? 'hidden' : '';
+  const keyGroupClass = authIsKey ? '' : 'hidden';
+
+  form.innerHTML = `
+    <label for="editTitle-${String(idx)}">Name</label>
+    <input type="text" id="editTitle-${String(idx)}" value="${escHtml(profile.title || '')}" data-field="title" placeholder="Auto: user@host" />
+    <div class="form-row">
+      <div class="form-field form-field-grow">
+        <label for="editHost-${String(idx)}">Host</label>
+        <input type="text" id="editHost-${String(idx)}" value="${escHtml(profile.host || '')}" data-field="host" inputmode="url" />
+      </div>
+      <div class="form-field form-field-port">
+        <label for="editPort-${String(idx)}">Port</label>
+        <input type="number" id="editPort-${String(idx)}" value="${String(profile.port || 22)}" data-field="port" min="1" max="65535" inputmode="numeric" />
+      </div>
+    </div>
+    <label for="editUsername-${String(idx)}">User</label>
+    <input type="text" id="editUsername-${String(idx)}" value="${escHtml(profile.username || '')}" data-field="username" autocapitalize="none" />
+    <label for="editAuthType-${String(idx)}">Auth</label>
+    <select id="editAuthType-${String(idx)}" data-field="authType">
+      <option value="password"${!authIsKey ? ' selected' : ''}>Password</option>
+      <option value="key"${authIsKey ? ' selected' : ''}>Private key</option>
+    </select>
+    <div class="edit-pw-group ${pwGroupClass}" id="editPwGroup-${String(idx)}">
+      <label for="editPassword-${String(idx)}">Password</label>
+      <input type="text" id="editPassword-${String(idx)}" data-field="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="(vault-encrypted)" />
+    </div>
+    <div class="edit-key-group ${keyGroupClass}" id="editKeyGroup-${String(idx)}">
+      <label>Key</label>
+      <span class="text-dim">Managed via Stored Keys section</span>
+    </div>
+    <label for="editCommand-${String(idx)}">Command</label>
+    <input type="text" id="editCommand-${String(idx)}" value="${escHtml(profile.initialCommand || '')}" data-field="initialCommand" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Optional initial command" />
+    <label for="editTheme-${String(idx)}">Session theme</label>
+    <select id="editTheme-${String(idx)}" data-field="theme">
+      <option value="">Use default</option>
+      ${THEME_ORDER.map((name) => `<option value="${name}"${profile.theme === name ? ' selected' : ''}>${escHtml(THEMES[name].label)}</option>`).join('')}
+    </select>
+    <div class="profile-edit-actions">
+      <button class="item-btn" data-action="close-edit">Done</button>
+    </div>
+  `;
+  item.appendChild(form);
+  form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Auth type toggle: show/hide password vs key groups
+  const authSelect = form.querySelector(`#editAuthType-${String(idx)}`) as HTMLSelectElement;
+  authSelect.addEventListener('change', () => {
+    const pwGroup = form.querySelector(`#editPwGroup-${String(idx)}`);
+    const keyGroup = form.querySelector(`#editKeyGroup-${String(idx)}`);
+    if (authSelect.value === 'key') {
+      pwGroup?.classList.add('hidden');
+      keyGroup?.classList.remove('hidden');
+    } else {
+      pwGroup?.classList.remove('hidden');
+      keyGroup?.classList.add('hidden');
+    }
+    autoSaveField(idx, 'authType', authSelect.value);
+  });
+
+  // Auto-save on change/blur for all inputs and selects (except password — handled separately)
+  const inputs = form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[data-field], select[data-field]');
+  for (const input of inputs) {
+    const field = input.dataset.field;
+    if (!field || field === 'authType' || field === 'password') continue;
+    input.addEventListener('change', () => {
+      const value = field === 'port' ? parseInt(input.value, 10) || 22 : input.value;
+      autoSaveField(idx, field, value);
+    });
+  }
+
+  // Password field: save to vault on blur, not to localStorage
+  const pwInput = form.querySelector(`#editPassword-${String(idx)}`) as HTMLInputElement | null;
+  if (pwInput) {
+    pwInput.addEventListener('change', () => {
+      void _savePasswordToVault(idx, pwInput.value);
+    });
+  }
+
+  // Close button
+  form.querySelector('[data-action="close-edit"]')?.addEventListener('click', () => {
+    closeProfileEdit();
+    loadProfiles();
+  });
+}
+
+/** Auto-save a single profile field to localStorage and show undo toast. */
+export function autoSaveField(idx: number, field: string, value: string | number): void {
+  const profiles = getProfiles();
+  const profile = profiles[idx];
+  if (!profile) return;
+  const oldValue = (profile as unknown as Record<string, string | number>)[field] ?? '';
+  (profile as unknown as Record<string, string | number>)[field] = value;
+  localStorage.setItem('sshProfiles', JSON.stringify(profiles));
+  _showUndoToast(idx, field, oldValue);
+}
+
+/** Save password to vault (never to localStorage). */
+async function _savePasswordToVault(idx: number, password: string): Promise<void> {
+  const profiles = getProfiles();
+  const profile = profiles[idx];
+  if (!profile) return;
+
+  if (!profile.vaultId) profile.vaultId = crypto.randomUUID();
+
+  const hasVault = await ensureVaultKeyWithUI();
+  if (!hasVault) {
+    _toast('Password not saved — vault setup cancelled.');
+    return;
+  }
+
+  const creds: Record<string, string> = {};
+  if (password) creds.password = password;
+  await vaultStore(profile.vaultId, creds);
+  profile.hasVaultCreds = Object.keys(creds).length > 0;
+  localStorage.setItem('sshProfiles', JSON.stringify(profiles));
+  _toast('Password saved to vault.');
+}
+
+/** Show an undo toast with a clickable undo action. */
+function _showUndoToast(idx: number, field: string, oldValue: string | number): void {
+  _lastUndo = { idx, field, oldValue };
+  if (_undoTimer) clearTimeout(_undoTimer);
+
+  let el = document.getElementById('undoToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'undoToast';
+    el.className = 'undo-toast';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = 'Saved. <button class="undo-action">Undo</button>';
+  el.classList.add('show');
+
+  const undoBtn = el.querySelector('.undo-action');
+  const handler = (): void => {
+    if (!_lastUndo) return;
+    const profiles = getProfiles();
+    const profile = profiles[_lastUndo.idx];
+    if (profile) {
+      (profile as unknown as Record<string, string | number>)[_lastUndo.field] = _lastUndo.oldValue;
+      localStorage.setItem('sshProfiles', JSON.stringify(profiles));
+      // Update the inline form field if still open
+      const input = document.querySelector(`[data-field="${_lastUndo.field}"]`) as HTMLInputElement | null;
+      if (input) input.value = String(_lastUndo.oldValue);
+      _toast('Undone.');
+    }
+    _lastUndo = null;
+    el!.classList.remove('show');
+  };
+  undoBtn?.addEventListener('click', handler, { once: true });
+
+  _undoTimer = setTimeout(() => {
+    el!.classList.remove('show');
+    _lastUndo = null;
+  }, 5000);
+}
+
 /** Populate the key dropdown in the connect form with current stored keys. */
 export function populateKeyDropdown(): void {
   const select = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
