@@ -79,7 +79,7 @@ export function initProfiles({ toast, navigateToConnect }: ProfilesDeps): void {
 // Profile storage
 
 interface StoredProfile {
-  name: string;
+  title: string;
   host: string;
   port: number;
   username: string;
@@ -92,7 +92,19 @@ interface StoredProfile {
 }
 
 export function getProfiles(): StoredProfile[] {
-  return JSON.parse(localStorage.getItem('sshProfiles') || '[]') as StoredProfile[];
+  const raw = JSON.parse(localStorage.getItem('sshProfiles') || '[]') as StoredProfile[];
+  let migrated = false;
+  for (const p of raw) {
+    // Migrate name → title for profiles saved before #425
+    const rec = p as unknown as Record<string, unknown>;
+    if ('name' in rec && !('title' in rec)) {
+      rec.title = rec.name ?? '';
+      delete rec.name;
+      migrated = true;
+    }
+  }
+  if (migrated) localStorage.setItem('sshProfiles', JSON.stringify(raw));
+  return raw;
 }
 
 function _generateId(): string {
@@ -121,7 +133,7 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
   const profileTheme = profile.theme ?? (profileThemeEl?.value || undefined);
 
   const saved: StoredProfile = {
-    name: profile.name,
+    title: profile.title,
     host: profile.host,
     port: profile.port,
     username: profile.username,
@@ -179,7 +191,9 @@ export function loadProfiles(): void {
         + allSessions.map((s) => {
           const stateClass = `session-state-${s.state}`;
           const dotColor = isSessionConnected(s) ? 'dot-connected' : s.state === 'reconnecting' || s.state === 'connecting' ? 'dot-connecting' : 'dot-dropped';
-          const label = s.profile ? `${escHtml(s.profile.username)}@${escHtml(s.profile.host)}` : escHtml(s.id);
+          const label = s.profile
+            ? escHtml(s.profile.title || `${s.profile.username}@${s.profile.host}`)
+            : escHtml(s.id);
           const actionBtn = isSessionConnected(s)
             ? `<button class="item-btn accent" data-action="switch" data-session-id="${escHtml(s.id)}">Switch</button>`
             : `<button class="item-btn accent" data-action="reconnect" data-session-id="${escHtml(s.id)}">Reconnect</button>`;
@@ -236,7 +250,7 @@ export function loadProfiles(): void {
       const connectBtnClass = isConnecting ? 'item-btn connecting' : 'item-btn';
       const connectBtnText = isConnecting ? 'Connecting…' : 'Connect';
       return `<div class="profile-item${connClass}" data-idx="${String(i)}">
-        <span class="profile-name">${escHtml(p.name)}</span>
+        <span class="profile-name">${escHtml(p.title || `${p.username}@${p.host}`)}</span>
         <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
         <div class="item-actions">
           <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
@@ -273,7 +287,7 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
   const profile = getProfiles()[idx];
   if (!profile) return;
 
-  (document.getElementById('profileName') as HTMLInputElement).value = profile.name || '';
+  (document.getElementById('profileName') as HTMLInputElement).value = profile.title || '';
   (document.getElementById('host') as HTMLInputElement).value = profile.host || '';
   (document.getElementById('port') as HTMLInputElement).value = String(profile.port || 22);
   (document.getElementById('remote_a') as HTMLInputElement).value = profile.username || '';
@@ -335,7 +349,7 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
   console.log(`[connect] connectFromProfile(${String(idx)}): ${profile.username}@${profile.host} vaultId=${profile.vaultId} hasVaultCreds=${String(!!profile.hasVaultCreds)} vaultKey=${String(!!appState.vaultKey)}`);
 
   const sshProfile: SSHProfile = {
-    name: profile.name,
+    title: profile.title,
     host: profile.host,
     port: profile.port,
     username: profile.username,

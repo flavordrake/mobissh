@@ -137,32 +137,32 @@ describe('_resolvePassphrase (#418)', () => {
   });
 
   it('returns ok immediately for password auth profiles', async () => {
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'password' as const, password: 'pw' };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'password' as const, password: 'pw' };
     expect(await _resolvePassphrase(profile)).toBe('ok');
   });
 
   it('returns ok for key auth with unencrypted key', async () => {
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: unencryptedKey };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: unencryptedKey };
     expect(await _resolvePassphrase(profile)).toBe('ok');
   });
 
   it('resolves passphrase from cache for encrypted key', async () => {
     _getPassphraseCache().set('vault-1', 'cached-pass');
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-1' };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-1' };
     expect(await _resolvePassphrase(profile)).toBe('ok');
     expect(profile.passphrase).toBe('cached-pass');
   });
 
   it('loads key from vault when privateKey is missing', async () => {
     vaultLoadMock.mockResolvedValue({ data: unencryptedKey });
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-1' };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-1' };
     expect(await _resolvePassphrase(profile)).toBe('ok');
     expect(profile.privateKey).toBe(unencryptedKey);
   });
 
   it('returns no-key when vault load fails', async () => {
     vaultLoadMock.mockResolvedValue(null);
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-1' };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-1' };
     expect(await _resolvePassphrase(profile)).toBe('no-key');
   });
 
@@ -173,7 +173,7 @@ describe('_resolvePassphrase (#418)', () => {
       setTimeout(handler, 0);
     });
 
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-2' };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-2' };
     const result = await _resolvePassphrase(profile);
     expect(result).toBe('ok');
     expect(profile.passphrase).toBe('user-entered-pass');
@@ -190,7 +190,7 @@ describe('_resolvePassphrase (#418)', () => {
       setTimeout(handler, 0);
     });
 
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-3' };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-3' };
     const result = await _resolvePassphrase(profile);
     expect(result).toBe('cancelled');
 
@@ -199,7 +199,7 @@ describe('_resolvePassphrase (#418)', () => {
   });
 
   it('skips resolution when passphrase is already set on profile', async () => {
-    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, passphrase: 'already-set' };
+    const profile = { title: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, passphrase: 'already-set' };
     expect(await _resolvePassphrase(profile)).toBe('ok');
     expect(profile.passphrase).toBe('already-set');
   });
