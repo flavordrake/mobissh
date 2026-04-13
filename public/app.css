@@ -1475,6 +1475,36 @@ hr {
   cursor: pointer;
 }
 
+/* Connect panel bottom navbar (#419) */
+.connect-navbar {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding: 10px 0;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+}
+
+.connect-nav-btn {
+  flex: 1;
+  min-height: 44px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.connect-nav-btn:active {
+  background: var(--accent-dim);
+}
+
 /* Compact form: labels to left of inputs */
 .compact-form {
   display: grid;
