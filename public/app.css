@@ -1489,6 +1489,85 @@ hr {
   margin-top: 4px;
 }
 
+/* Inline profile edit form (#446) */
+.profile-editing > .profile-name,
+.profile-editing > .profile-host,
+.profile-editing > .item-actions {
+  display: none;
+}
+
+.profile-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.profile-edit-form label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.profile-edit-form input,
+.profile-edit-form select {
+  padding: 6px 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  min-height: 44px;
+}
+.profile-edit-form .form-row {
+  display: flex;
+  gap: 8px;
+}
+.profile-edit-form .form-field-grow { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.profile-edit-form .form-field-port { width: 80px; display: flex; flex-direction: column; gap: 4px; }
+.profile-edit-form .text-dim { font-size: 13px; color: var(--text-dim); }
+.profile-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* Undo toast (#446) */
+.undo-toast {
+  position: fixed;
+  bottom: calc(var(--tab-height) + var(--keybar-height) + var(--keybar-handle-height) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.undo-toast.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+.undo-action {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  min-height: 44px;
+}
+
 /* Connecting animation on profile Connect button (#318) */
 .item-btn.connecting {
   background: linear-gradient(90deg, var(--bg-input) 0%, var(--accent) 50%, var(--bg-input) 100%);

@@ -12,7 +12,7 @@ import { initVault } from './modules/vault.js';
 import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
 import {
   initProfiles, getProfiles, loadProfiles,
-  loadProfileIntoForm, deleteProfile,
+  deleteProfile, editProfile, closeProfileEdit,
   loadKeys, importKey, deleteKey, renameKey, editKey, saveKeyEdit, cancelKeyEdit, populateKeyDropdown,
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE } from './modules/settings.js';
@@ -120,12 +120,11 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
       if (btn) {
         e.stopPropagation();
         const idx = parseInt(btn.dataset.idx ?? '0');
-        if (btn.dataset.action === 'edit') void loadProfileIntoForm(idx);
+        if (btn.dataset.action === 'edit') editProfile(idx);
         else if (btn.dataset.action === 'delete') deleteProfile(idx);
+        else if (btn.dataset.action === 'close-edit') { closeProfileEdit(); loadProfiles(); }
         return;
       }
-      const item = target.closest<HTMLElement>('.profile-item');
-      if (item) void loadProfileIntoForm(parseInt(item.dataset.idx ?? '0'));
     });
     profileList.addEventListener('touchstart', (e) => {
       (e.target as HTMLElement).closest('.profile-item')?.classList.add('tapped');
