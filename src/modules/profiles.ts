@@ -392,6 +392,10 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
     const keyCreds = await vaultLoad(profile.keyVaultId);
     if (keyCreds?.data) {
       sshProfile.privateKey = keyCreds.data as string;
+      if (keyCreds.passphrase) {
+        sshProfile.passphrase = keyCreds.passphrase as string;
+      }
+      sshProfile.keyVaultId = profile.keyVaultId;
     } else {
       _toast('Could not load stored key from vault.');
       _navigateToConnect();
