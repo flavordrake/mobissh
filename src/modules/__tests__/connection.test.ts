@@ -65,7 +65,20 @@ vi.stubGlobal('window', {
   },
 });
 
-const { _getPassphraseCache, _isKeyEncrypted } = await import('../connection.js');
+// Mock vault module for _resolvePassphrase tests
+vi.mock('../vault.js', () => ({
+  vaultLoad: vi.fn(),
+  createVault: vi.fn(),
+  unlockVault: vi.fn(),
+  vaultStore: vi.fn(),
+  vaultDelete: vi.fn(),
+  isVaultUnlocked: vi.fn(() => false),
+}));
+
+const { vaultLoad } = await import('../vault.js');
+const vaultLoadMock = vi.mocked(vaultLoad);
+
+const { _getPassphraseCache, _isKeyEncrypted, _resolvePassphrase } = await import('../connection.js');
 
 describe('Key passphrase cache (#54)', () => {
   beforeEach(() => {
@@ -99,6 +112,95 @@ describe('Key passphrase cache (#54)', () => {
     cache.set('key-2', 'pass-2');
     expect(cache.get('key-1')).toBe('pass-1');
     expect(cache.get('key-2')).toBe('pass-2');
+  });
+});
+
+describe('_resolvePassphrase (#418)', () => {
+  const encryptedKey = [
+    '-----BEGIN RSA PRIVATE KEY-----',
+    'Proc-Type: 4,ENCRYPTED',
+    'DEK-Info: AES-128-CBC,AABBCCDD',
+    'dGVzdGRhdGE=',
+    '-----END RSA PRIVATE KEY-----',
+  ].join('\n');
+
+  const unencryptedKey = [
+    '-----BEGIN RSA PRIVATE KEY-----',
+    'dGVzdGRhdGE=',
+    '-----END RSA PRIVATE KEY-----',
+  ].join('\n');
+
+  beforeEach(() => {
+    _getPassphraseCache().clear();
+    vaultLoadMock.mockReset();
+  });
+
+  it('returns ok immediately for password auth profiles', async () => {
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'password' as const, password: 'pw' };
+    expect(await _resolvePassphrase(profile)).toBe('ok');
+  });
+
+  it('returns ok for key auth with unencrypted key', async () => {
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: unencryptedKey };
+    expect(await _resolvePassphrase(profile)).toBe('ok');
+  });
+
+  it('resolves passphrase from cache for encrypted key', async () => {
+    _getPassphraseCache().set('vault-1', 'cached-pass');
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-1' };
+    expect(await _resolvePassphrase(profile)).toBe('ok');
+    expect(profile.passphrase).toBe('cached-pass');
+  });
+
+  it('loads key from vault when privateKey is missing', async () => {
+    vaultLoadMock.mockResolvedValue({ data: unencryptedKey });
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-1' };
+    expect(await _resolvePassphrase(profile)).toBe('ok');
+    expect(profile.privateKey).toBe(unencryptedKey);
+  });
+
+  it('returns no-key when vault load fails', async () => {
+    vaultLoadMock.mockResolvedValue(null);
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-1' };
+    expect(await _resolvePassphrase(profile)).toBe('no-key');
+  });
+
+  it('prompts user when encrypted key has no cached passphrase', async () => {
+    // Simulate user clicking OK with a passphrase
+    mockOkBtn.addEventListener.mockImplementation((_event: string, handler: () => void) => {
+      mockInput.value = 'user-entered-pass';
+      setTimeout(handler, 0);
+    });
+
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-2' };
+    const result = await _resolvePassphrase(profile);
+    expect(result).toBe('ok');
+    expect(profile.passphrase).toBe('user-entered-pass');
+    // Passphrase should be cached
+    expect(_getPassphraseCache().get('vault-2')).toBe('user-entered-pass');
+
+    // Clean up mock
+    mockOkBtn.addEventListener.mockReset();
+  });
+
+  it('returns cancelled when user dismisses passphrase prompt', async () => {
+    // Simulate user clicking Cancel
+    mockCancelBtn.addEventListener.mockImplementation((_event: string, handler: () => void) => {
+      setTimeout(handler, 0);
+    });
+
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-3' };
+    const result = await _resolvePassphrase(profile);
+    expect(result).toBe('cancelled');
+
+    // Clean up mock
+    mockCancelBtn.addEventListener.mockReset();
+  });
+
+  it('skips resolution when passphrase is already set on profile', async () => {
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, passphrase: 'already-set' };
+    expect(await _resolvePassphrase(profile)).toBe('ok');
+    expect(profile.passphrase).toBe('already-set');
   });
 });
 
