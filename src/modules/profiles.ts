@@ -266,7 +266,9 @@ export function loadProfiles(): void {
 
 /** Reveal the connect form section. */
 export function revealConnectForm(): void {
-  document.getElementById('connect-form-section')?.classList.remove('connect-form-hidden');
+  const section = document.getElementById('connect-form-section');
+  section?.classList.remove('connect-form-hidden');
+  section?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   const newConnBtn = document.getElementById('newConnBtn') as HTMLButtonElement | null;
   if (newConnBtn) newConnBtn.hidden = true;
 }
@@ -528,6 +530,7 @@ export async function editKey(idx: number): Promise<void> {
     </div>
   `;
   item.appendChild(form);
+  form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 export async function saveKeyEdit(idx: number): Promise<void> {
