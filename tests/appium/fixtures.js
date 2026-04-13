@@ -321,14 +321,29 @@ async function warmupSwipes(driver, bounds) {
 // ── Terminal helpers ─────────────────────────────────────────────────────
 
 /**
- * Expose appState.terminal as window.__testTerminal for buffer assertions.
+ * Expose a terminal as window.__testTerminal for buffer assertions.
+ * Tries currentSession().terminal first. If no session exists (e.g. selection
+ * tests that write directly via terminal.write()), creates a standalone
+ * xterm.js Terminal and attaches it to the #terminal DOM element.
  */
 async function exposeTerminal(driver) {
   await driver.executeScript(`
     (async () => {
       const { currentSession } = await import('./modules/state.js');
       const session = currentSession();
-      window.__testTerminal = session ? session.terminal : null;
+      if (session && session.terminal) {
+        window.__testTerminal = session.terminal;
+        return;
+      }
+      // No active session — create a standalone terminal for test use
+      const term = new Terminal({ cols: 80, rows: 24 });
+      const container = document.getElementById('terminal');
+      if (container) {
+        const div = document.createElement('div');
+        container.appendChild(div);
+        term.open(div);
+      }
+      window.__testTerminal = term;
     })();
   `, []);
   await driver.waitUntil(async () => {
