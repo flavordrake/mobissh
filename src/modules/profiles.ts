@@ -217,7 +217,10 @@ export function loadProfiles(): void {
       : '';
     const recentHtml = '<h3 class="section-label">Recent Sessions</h3>'
       + recentSessions.map((r) => {
-        const label = `${escHtml(r.username)}@${escHtml(r.host)}:${String(r.port)}`;
+        const profile = profiles[r.profileIdx];
+        const label = profile?.title
+          ? escHtml(profile.title)
+          : `${escHtml(r.username)}@${escHtml(r.host)}:${String(r.port)}`;
         return `<div class="recent-session-item" data-idx="${String(r.profileIdx)}">
           <span class="session-label">${label}</span>
           <button class="item-btn accent" data-action="reconnect-recent" data-idx="${String(r.profileIdx)}">Reconnect</button>
