@@ -457,16 +457,114 @@ export function loadKeys(): void {
   }
 
   list.innerHTML = keys.map((k, i) => `
-    <div class="key-item">
+    <div class="key-item" data-key-idx="${String(i)}">
       <span class="key-name">${escHtml(k.name)}</span>
-      <span class="key-created">Added ${new Date(k.created).toLocaleDateString()}</span>
+      <div class="key-info-row">
+        <span class="key-created">Added ${new Date(k.created).toLocaleDateString()}</span>
+        <span class="key-passphrase-badge" data-vault-id="${escHtml(k.vaultId)}"></span>
+      </div>
       <div class="item-actions">
-        <button class="item-btn" data-action="rename" data-idx="${String(i)}">Rename</button>
+        <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
         <button class="item-btn" data-action="use" data-idx="${String(i)}">Use in form</button>
         <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
       </div>
     </div>
   `).join('');
+
+  // Async: check vault for passphrase badges
+  void _updatePassphraseBadges(keys);
+}
+
+async function _updatePassphraseBadges(keys: StoredKey[]): Promise<void> {
+  for (const k of keys) {
+    try {
+      const record = await vaultLoad(k.vaultId) as Record<string, unknown> | null;
+      const badge = document.querySelector(`.key-passphrase-badge[data-vault-id="${CSS.escape(k.vaultId)}"]`);
+      if (badge && record && typeof record.passphrase === 'string' && record.passphrase.length > 0) {
+        badge.textContent = '\u{1F512} Passphrase set';
+      }
+    } catch { /* vault locked or missing — skip badge */ }
+  }
+}
+
+export async function editKey(idx: number): Promise<void> {
+  const keys = getKeys();
+  const key = keys[idx];
+  if (!key) return;
+
+  const item = document.querySelector(`.key-item[data-key-idx="${String(idx)}"]`);
+  if (!item) return;
+
+  // Don't open a second edit form
+  if (item.querySelector('.key-edit-form')) return;
+
+  // Hide action buttons while editing
+  const actions = item.querySelector('.item-actions') as HTMLElement | null;
+  if (actions) actions.style.display = 'none';
+
+  // Load existing passphrase from vault
+  let existingPassphrase = '';
+  try {
+    const record = await vaultLoad(key.vaultId) as Record<string, unknown> | null;
+    if (record && typeof record.passphrase === 'string') {
+      existingPassphrase = record.passphrase;
+    }
+  } catch { /* vault locked — leave empty */ }
+
+  const form = document.createElement('div');
+  form.className = 'key-edit-form';
+  form.innerHTML = `
+    <label for="editKeyName-${String(idx)}">Name</label>
+    <input type="text" id="editKeyName-${String(idx)}" value="${escHtml(key.name)}" />
+    <label for="editKeyPass-${String(idx)}">Passphrase</label>
+    <input type="password" id="editKeyPass-${String(idx)}" value="${escHtml(existingPassphrase)}" placeholder="(none)" autocomplete="off" />
+    <div class="key-edit-actions">
+      <button class="item-btn accent" data-action="save-edit" data-idx="${String(idx)}">Save</button>
+      <button class="item-btn" data-action="cancel-edit" data-idx="${String(idx)}">Cancel</button>
+    </div>
+  `;
+  item.appendChild(form);
+}
+
+export async function saveKeyEdit(idx: number): Promise<void> {
+  const nameInput = document.getElementById(`editKeyName-${String(idx)}`) as HTMLInputElement | null;
+  const passInput = document.getElementById(`editKeyPass-${String(idx)}`) as HTMLInputElement | null;
+  if (!nameInput || !passInput) return;
+
+  const newName = nameInput.value.trim();
+  if (!newName) { _toast('Key name cannot be empty.'); return; }
+
+  const keys = getKeys();
+  const key = keys[idx];
+  if (!key) return;
+
+  // Update name
+  key.name = newName;
+  localStorage.setItem('sshKeys', JSON.stringify(keys));
+
+  // Update passphrase in vault
+  try {
+    const record = await vaultLoad(key.vaultId) as Record<string, unknown> | null;
+    if (record) {
+      record.passphrase = passInput.value;
+      await vaultStore(key.vaultId, record);
+    }
+  } catch { _toast('Could not save passphrase — vault may be locked.'); }
+
+  loadKeys();
+  populateKeyDropdown();
+  _toast(`Key "${key.name}" updated.`);
+}
+
+export function cancelKeyEdit(idx: number): void {
+  const item = document.querySelector(`.key-item[data-key-idx="${String(idx)}"]`);
+  if (!item) return;
+
+  const form = item.querySelector('.key-edit-form');
+  if (form) form.remove();
+
+  const actions = item.querySelector('.item-actions') as HTMLElement | null;
+  if (actions) actions.style.display = '';
 }
 
 export async function importKey(name: string, data: string): Promise<boolean> {
