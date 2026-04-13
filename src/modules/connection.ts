@@ -420,6 +420,42 @@ function _promptPassphrase(): Promise<string | null> {
   });
 }
 
+/**
+ * Resolve the passphrase for an SSH key profile. Loads the key from vault if
+ * needed, checks the in-memory cache, and prompts the user if necessary.
+ * Returns 'ok' if the profile is ready to connect, 'cancelled' if the user
+ * dismissed the prompt, or 'no-key' if the vault key could not be loaded.
+ */
+export async function _resolvePassphrase(profile: SSHProfile): Promise<'ok' | 'cancelled' | 'no-key'> {
+  // Load key data from vault if not already present
+  if (profile.authType === 'key' && profile.keyVaultId && !profile.privateKey) {
+    const keyCreds = await vaultLoad(profile.keyVaultId);
+    if (keyCreds?.data) {
+      profile.privateKey = keyCreds.data as string;
+    } else {
+      return 'no-key';
+    }
+  }
+
+  // If the key is encrypted and no passphrase is set, check cache or prompt
+  if (profile.authType === 'key' && profile.privateKey && _isKeyEncrypted(profile.privateKey) && !profile.passphrase) {
+    const cacheKey = profile.keyVaultId ?? '';
+    const cached = cacheKey ? _keyPassphraseCache.get(cacheKey) : undefined;
+    if (cached !== undefined) {
+      profile.passphrase = cached;
+    } else {
+      const passphrase = await _promptPassphrase();
+      if (passphrase === null) {
+        return 'cancelled';
+      }
+      profile.passphrase = passphrase;
+      if (cacheKey) _keyPassphraseCache.set(cacheKey, passphrase);
+    }
+  }
+
+  return 'ok';
+}
+
 // ── WebSocket / SSH connection ────────────────────────────────────────────────
 
 // Max consecutive pre-open WS close events before halting the reconnect loop.
@@ -433,32 +469,15 @@ function _getWsToken(): string {
 }
 
 export async function connect(profile: SSHProfile): Promise<void> {
-  // If the profile references a stored key, load the key data from vault
-  if (profile.authType === 'key' && profile.keyVaultId && !profile.privateKey) {
-    const keyCreds = await vaultLoad(profile.keyVaultId);
-    if (keyCreds?.data) {
-      profile.privateKey = keyCreds.data as string;
-    } else {
-      _toast('Could not load stored key from vault.');
-      return;
-    }
+  // Resolve key data and passphrase (vault load + cache + prompt)
+  const result = await _resolvePassphrase(profile);
+  if (result === 'no-key') {
+    _toast('Could not load stored key from vault.');
+    return;
   }
-
-  // If the key is encrypted and no passphrase is set, check cache or prompt
-  if (profile.authType === 'key' && profile.privateKey && _isKeyEncrypted(profile.privateKey) && !profile.passphrase) {
-    const cacheKey = profile.keyVaultId ?? '';
-    const cached = cacheKey ? _keyPassphraseCache.get(cacheKey) : undefined;
-    if (cached !== undefined) {
-      profile.passphrase = cached;
-    } else {
-      const passphrase = await _promptPassphrase();
-      if (passphrase === null) {
-        _toast('Connection cancelled.');
-        return;
-      }
-      profile.passphrase = passphrase;
-      if (cacheKey) _keyPassphraseCache.set(cacheKey, passphrase);
-    }
+  if (result === 'cancelled') {
+    _toast('Connection cancelled.');
+    return;
   }
 
   // Don't cancel other sessions' reconnect timers when creating a new session
@@ -615,23 +634,37 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     startKeepAlive(sessionId);
     const profile = session?.profile;
     if (!profile) return;
-    const authMsg: ConnectMessage = {
-      type: 'connect',
-      host: profile.host,
-      port: profile.port || 22,
-      username: profile.username,
-    };
-    if (profile.authType === 'key' && profile.privateKey) {
-      authMsg.privateKey = profile.privateKey;
-      if (profile.passphrase) authMsg.passphrase = profile.passphrase;
-    } else {
-      authMsg.password = profile.password ?? '';
-    }
-    if (profile.initialCommand) authMsg.initialCommand = profile.initialCommand;
-    if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
-    newWs.send(JSON.stringify(authMsg));
-    // Status overlay only shows if the 5s timeout already fired
-    if (!silent && _currentOverlay) _showConnectionStatus(`SSH → ${profile.username}@${profile.host}:${String(profile.port || 22)}…`);
+
+    // Resolve passphrase before building auth message (#418).
+    // On reconnect, the in-memory cache may be empty (e.g. after page reload),
+    // so we must re-resolve from vault/cache/prompt before sending credentials.
+    void _resolvePassphrase(profile).then((result) => {
+      if (result !== 'ok') {
+        // User cancelled or vault unavailable — close WS, don't send credentials
+        newWs.close();
+        if (result === 'cancelled') _toast('Reconnect cancelled — passphrase required.');
+        else _toast('Could not load stored key from vault.');
+        return;
+      }
+
+      const authMsg: ConnectMessage = {
+        type: 'connect',
+        host: profile.host,
+        port: profile.port || 22,
+        username: profile.username,
+      };
+      if (profile.authType === 'key' && profile.privateKey) {
+        authMsg.privateKey = profile.privateKey;
+        if (profile.passphrase) authMsg.passphrase = profile.passphrase;
+      } else {
+        authMsg.password = profile.password ?? '';
+      }
+      if (profile.initialCommand) authMsg.initialCommand = profile.initialCommand;
+      if (localStorage.getItem('allowPrivateHosts') === 'true') authMsg.allowPrivate = true;
+      newWs.send(JSON.stringify(authMsg));
+      // Status overlay only shows if the 5s timeout already fired
+      if (!silent && _currentOverlay) _showConnectionStatus(`SSH → ${profile.username}@${profile.host}:${String(profile.port || 22)}…`);
+    });
   }, signal ? { signal } : undefined);
 
   newWs.addEventListener('message', (event: MessageEvent) => {
@@ -865,7 +898,7 @@ export function scheduleReconnect(sessionId?: string): void {
       session._wsConsecFailures = 0;
       transitionSession(sid, 'failed');
       _dismissConnectionStatus();
-      showErrorDialog(`Host unreachable after ${WS_MAX_AUTH_FAILURES} attempts.\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
+      showErrorDialog(`Host unreachable after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
       return;
     }
   }
@@ -1132,6 +1165,7 @@ export function disconnect(sessionId?: string): void {
 // Filter DA1/DA2/DA3 responses — xterm.js auto-responds to terminal capability
 // queries from the remote (CSI c, CSI > c). If not filtered, responses leak
 // through to the shell and appear as visible ?1;2c text (#350).
+// eslint-disable-next-line no-control-regex
 const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
 
 export function sendSSHInput(data: string): void {

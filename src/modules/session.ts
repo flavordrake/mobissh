@@ -13,6 +13,7 @@ import { FONT_FAMILIES } from './terminal.js';
 // Filter DA1/DA2/DA3 responses — xterm.js auto-responds to terminal capability
 // queries from the remote (CSI c, CSI > c). If not filtered, responses leak
 // through to the shell and appear as visible ?1;2c text (#350).
+// eslint-disable-next-line no-control-regex
 const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
 
 /** Max buffered output bytes before oldest chunks are dropped. */
@@ -46,9 +47,11 @@ export function parseApprovalPrompt(_sessionId: string, raw: string): {
   if (Date.now() - lastFired < APPROVAL_COOLDOWN_MS) return null;
 
   // Strip ANSI to find the hook's "# Approve: ..." message
+  // eslint-disable-next-line no-control-regex
   const stripped = raw.replace(/\x1b(?:\[[0-9;?]*[a-zA-Z@`]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|\([AB012]|[=>])/g, '');
 
   // Look for hook message: "# Approve: Tool — detail" or "# Appr"
+  // eslint-disable-next-line no-control-regex
   const hookMatch = stripped.match(/#\s*(Appr[^\x07\n\r]*)/);
   if (!hookMatch) {
     // Bell without approval message — normal terminal bell, ignore

@@ -515,13 +515,13 @@ export function parseApprovalPayload(raw: Record<string, unknown>): {
 } {
   const toolName = (raw.tool_name ?? raw.tool ?? '') as string;
   const toolInput = raw.tool_input as Record<string, string> | undefined;
-  const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string) ?? '';
+  const command = toolInput?.command ?? toolInput?.file_path ?? (raw.detail as string | undefined) ?? '';
   const desc = (toolInput?.description ?? raw.description ?? '') as string;
-  const cwd = (raw.cwd as string) ?? '';
+  const cwd = (raw.cwd as string | undefined) ?? '';
   const source = cwd ? cwd.split('/').slice(-1)[0] ?? cwd : '';
   const base = desc || (command ? `${toolName}: ${command}` : toolName) || 'Approval required';
   const label = source ? `[${source}] ${base}` : base;
-  const requestId = (raw.requestId as string) ?? '';
+  const requestId = (raw.requestId as string | undefined) ?? '';
   return { toolName, command, label, source, requestId };
 }
 

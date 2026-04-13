@@ -59,7 +59,7 @@ async function submitBugReport(): Promise<void> {
   }
 
   // Restore debug panel
-  if (wasVisible) debugPanel!.classList.remove('hidden');
+  if (wasVisible) debugPanel.classList.remove('hidden');
   if (debugFab) debugFab.classList.remove('hidden');
 
   // Collect metadata
