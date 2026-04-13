@@ -44,7 +44,7 @@ async function _downloadCastFile(): Promise<void> {
     height: session?.terminal ? session.terminal.rows : 50,
     timestamp: Math.floor((appState.recordingStartTime ?? 0) / 1000),
     title: session?.profile
-      ? `${session.profile.username}@${session.profile.host}:${String(session.profile.port || 22)}`
+      ? (session.profile.title || `${session.profile.username}@${session.profile.host}:${String(session.profile.port || 22)}`)
       : 'MobiSSH Session',
   };
   const lines = [JSON.stringify(header), ...appState.recordingEvents.map((e) => JSON.stringify(e))].join('\n');

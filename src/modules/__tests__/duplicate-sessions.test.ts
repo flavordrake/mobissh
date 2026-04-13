@@ -48,7 +48,7 @@ function extractFnBody(src: string, fnName: string): string {
 
 /** Create a profile-like object for testing. */
 function makeProfile(host = 'raserver.tailbe5094.ts.net', port = 22, username = 'user') {
-  return { name: 'test', host, port, username, authType: 'password' as const };
+  return { title: 'test', host, port, username, authType: 'password' as const };
 }
 
 const consoleErrors: string[] = [];

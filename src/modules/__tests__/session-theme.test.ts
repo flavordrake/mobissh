@@ -115,7 +115,7 @@ function makeMockFitAddon(): { fit: ReturnType<typeof vi.fn> } {
 
 function makeProfile(overrides: Partial<SSHProfile> = {}): SSHProfile {
   return {
-    name: 'Test Server',
+    title: 'Test Server',
     host: '10.0.0.1',
     port: 22,
     username: 'testuser',

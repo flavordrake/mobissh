@@ -11,7 +11,7 @@ import type { KeyBarConfig } from './keybar-config.js';
 // ── Domain types ────────────────────────────────────────────────────────────
 
 export interface SSHProfile {
-  name: string;
+  title: string;
   host: string;
   port: number;
   username: string;
