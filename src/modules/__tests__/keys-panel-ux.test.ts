@@ -1,14 +1,20 @@
 /**
- * Tests for keys panel UX improvements (#432)
+ * Tests for keys section UX (#432, updated #441)
+ *
+ * After #441, key management is an inline <details> section in the Connect
+ * panel. The separate #panel-keys no longer exists.
  *
  * Verifies:
- * 1. Done/back button exists in keys panel HTML
+ * 1. Inline keysSection exists in Connect panel HTML
  * 2. loadKeys() renders "Edit" button (not "Rename")
  * 3. loadKeys() renders passphrase badge placeholder
- * 4. editKey() function exists and handles vault passphrase read
- * 5. saveKeyEdit() function exists and writes passphrase to vault
- * 6. cancelKeyEdit() function exists
- * 7. app.ts wires edit/save-edit/cancel-edit actions
+ * 4. loadKeys() does NOT render "Use in form" button (#440)
+ * 5. editKey() function exists and handles vault passphrase read
+ * 6. saveKeyEdit() function exists and writes passphrase to vault
+ * 7. cancelKeyEdit() function exists
+ * 8. app.ts wires edit/save-edit/cancel-edit actions (no "use" action)
+ * 9. #panel-keys is removed from HTML
+ * 10. #keys hash redirects to connect in routing
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -17,32 +23,64 @@ import { resolve } from 'node:path';
 const profilesSrc = readFileSync(resolve(__dirname, '../profiles.ts'), 'utf-8');
 const appSrc = readFileSync(resolve(__dirname, '../../app.ts'), 'utf-8');
 const indexHtml = readFileSync(resolve(__dirname, '../../../public/index.html'), 'utf-8');
+const uiSrc = readFileSync(resolve(__dirname, '../ui.ts'), 'utf-8');
 
-describe('Keys panel UX (#432)', () => {
+describe('Keys section UX (#441)', () => {
 
-  describe('Done/back button', () => {
-    it('keys panel contains a Done button in HTML', () => {
-      expect(indexHtml).toContain('id="keysDoneBtn"');
-      expect(indexHtml).toContain('panel-done-btn');
+  describe('Inline keys section in Connect panel', () => {
+    it('Connect panel contains a keysSection details element', () => {
+      expect(indexHtml).toContain('id="keysSection"');
+      expect(indexHtml).toContain('connect-keys-section');
     });
 
-    it('app.ts wires keysDoneBtn to navigateToPanel connect', () => {
-      expect(appSrc).toContain('keysDoneBtn');
-      expect(appSrc).toContain("navigateToPanel('connect'");
+    it('keysSection is inside panel-connect', () => {
+      const connectStart = indexHtml.indexOf('id="panel-connect"');
+      const connectEnd = indexHtml.indexOf('</div>', indexHtml.indexOf('id="connectNavbar"'));
+      const keysPos = indexHtml.indexOf('id="keysSection"');
+      expect(keysPos).toBeGreaterThan(connectStart);
+      expect(keysPos).toBeLessThan(connectEnd);
+    });
+
+    it('separate #panel-keys is removed from HTML', () => {
+      expect(indexHtml).not.toContain('id="panel-keys"');
+    });
+
+    it('Keys tab is removed from tab bar', () => {
+      expect(indexHtml).not.toContain('data-panel="keys"');
+    });
+
+    it('keysDoneBtn is removed from HTML', () => {
+      expect(indexHtml).not.toContain('id="keysDoneBtn"');
     });
   });
 
   describe('Edit button replaces Rename', () => {
     it('loadKeys renders Edit button instead of Rename', () => {
-      // The loadKeys function should produce buttons with data-action="edit"
       expect(profilesSrc).toContain('data-action="edit"');
-      // Should NOT contain data-action="rename" in the loadKeys HTML template
       const loadKeysStart = profilesSrc.indexOf('export function loadKeys');
       const loadKeysEnd = profilesSrc.indexOf('\n}', loadKeysStart + 10);
       const loadKeysBody = profilesSrc.slice(loadKeysStart, loadKeysEnd);
       expect(loadKeysBody).not.toContain('data-action="rename"');
       expect(loadKeysBody).toContain('data-action="edit"');
       expect(loadKeysBody).toContain('>Edit<');
+    });
+  });
+
+  describe('Use in form button removed (#440)', () => {
+    it('loadKeys does NOT render Use in form button', () => {
+      const loadKeysStart = profilesSrc.indexOf('export function loadKeys');
+      const loadKeysEnd = profilesSrc.indexOf('\n}', loadKeysStart + 10);
+      const loadKeysBody = profilesSrc.slice(loadKeysStart, loadKeysEnd);
+      expect(loadKeysBody).not.toContain('Use in form');
+      expect(loadKeysBody).not.toContain('data-action="use"');
+    });
+
+    it('useKey is not exported from profiles.ts', () => {
+      expect(profilesSrc).not.toContain('export function useKey');
+    });
+
+    it('app.ts does not import useKey', () => {
+      expect(appSrc).not.toContain('useKey');
     });
   });
 
@@ -110,6 +148,28 @@ describe('Keys panel UX (#432)', () => {
       expect(appSrc).toContain("'edit'");
       expect(appSrc).toContain("'save-edit'");
       expect(appSrc).toContain("'cancel-edit'");
+    });
+
+    it('does NOT handle "use" action in keyList handler', () => {
+      // Find the keyList event handler section
+      const keyListStart = appSrc.indexOf("getElementById('keyList')");
+      const keyListEnd = appSrc.indexOf('});', keyListStart);
+      const keyListHandler = appSrc.slice(keyListStart, keyListEnd);
+      expect(keyListHandler).not.toContain("'use'");
+    });
+  });
+
+  describe('Routing', () => {
+    it('#keys hash redirects to connect in ui.ts', () => {
+      expect(uiSrc).toContain("raw === 'keys'");
+      expect(uiSrc).toContain("return 'connect'");
+    });
+
+    it('keys is not in VALID_PANELS', () => {
+      // The PanelName type should not include 'keys'
+      const panelLine = uiSrc.match(/type PanelName = .+/);
+      expect(panelLine).toBeTruthy();
+      expect(panelLine![0]).not.toContain("'keys'");
     });
   });
 });

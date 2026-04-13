@@ -200,10 +200,6 @@
         <span class="tab-icon">⚡</span>
         <span class="tab-label">Connect</span>
       </button>
-      <button class="tab" data-panel="keys" aria-label="Keys">
-        <span class="tab-icon">🔑</span>
-        <span class="tab-label">Keys</span>
-      </button>
       <button class="tab" data-panel="settings" aria-label="Settings">
         <span class="tab-icon">⚙</span>
         <span class="tab-label">Settings</span>
@@ -416,37 +412,25 @@
 
       <button type="button" id="newConnBtn" class="secondary-btn" hidden>+ New connection</button>
 
+      <details id="keysSection" class="connect-keys-section">
+        <summary>Stored Keys</summary>
+        <div id="keyList" class="item-list">
+          <p class="empty-hint">No keys stored.</p>
+        </div>
+        <div class="key-add-form">
+          <label for="keyName">Key name</label>
+          <input type="text" id="keyName" placeholder="my-key" />
+          <label for="keyData">Private key (PEM)</label>
+          <textarea id="keyData" rows="4" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea>
+          <button id="importKeyBtn" class="primary-btn">Save key</button>
+        </div>
+      </details>
+
       <nav id="connectNavbar" class="connect-navbar">
         <button type="button" class="connect-nav-btn" data-action="new">New</button>
         <button type="button" class="connect-nav-btn" data-action="import">Import</button>
         <button type="button" class="connect-nav-btn" data-action="export">Export</button>
-        <button type="button" class="connect-nav-btn" data-action="keys">Keys</button>
       </nav>
-    </div>
-
-    <!-- Keys panel -->
-    <div id="panel-keys" class="panel">
-      <div class="panel-header-row">
-        <h2>SSH Keys</h2>
-        <button id="keysDoneBtn" class="secondary-btn panel-done-btn">Done</button>
-      </div>
-      <p class="hint">Import your private keys here. They are stored in your browser's localStorage.
-         Do not use this on a shared device.</p>
-
-      <div class="form-section">
-        <label for="keyName">Key name</label>
-        <input type="text" id="keyName" placeholder="my-key" />
-
-        <label for="keyData">Private key (PEM)</label>
-        <textarea id="keyData" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea>
-
-        <button id="importKeyBtn" class="primary-btn">Save key</button>
-      </div>
-
-      <h3>Stored keys</h3>
-      <div id="keyList" class="item-list">
-        <p class="empty-hint">No keys stored.</p>
-      </div>
     </div>
 
     <!-- Settings panel -->

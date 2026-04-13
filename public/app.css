@@ -1098,7 +1098,6 @@ html, body {
 
 /* Scrollable panels */
 #panel-connect,
-#panel-keys,
 #panel-settings {
   padding: 16px;
   gap: 12px;
@@ -1526,6 +1525,40 @@ hr {
   padding: 10px;
   font-size: 14px;
   cursor: pointer;
+}
+
+/* Inline keys section in Connect panel (#441) */
+.connect-keys-section {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0;
+}
+
+.connect-keys-section summary {
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.connect-keys-section[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.connect-keys-section .item-list,
+.connect-keys-section .key-add-form {
+  padding: 10px 14px;
+}
+
+.connect-keys-section .key-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
 }
 
 /* Connect panel bottom navbar (#419) */

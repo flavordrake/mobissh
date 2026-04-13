@@ -25,9 +25,9 @@ function _setMenuBtnText(text: string): void {
 
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
 
-type PanelName = 'terminal' | 'connect' | 'files' | 'keys' | 'settings';
+type PanelName = 'terminal' | 'connect' | 'files' | 'settings';
 
-const VALID_PANELS: ReadonlySet<string> = new Set<PanelName>(['terminal', 'connect', 'files', 'keys', 'settings']);
+const VALID_PANELS: ReadonlySet<string> = new Set<PanelName>(['terminal', 'connect', 'files', 'settings']);
 
 function _isValidPanel(hash: string): hash is PanelName {
   return VALID_PANELS.has(hash);
@@ -36,6 +36,8 @@ function _isValidPanel(hash: string): hash is PanelName {
 function _panelFromHash(): PanelName | null {
   const raw = location.hash.replace(/^#/, '');
   if (raw.startsWith('files/') || raw.startsWith('files%2F') || raw === 'files') return 'files';
+  // Redirect legacy #keys to connect panel (#441)
+  if (raw === 'keys') return 'connect';
   return _isValidPanel(raw) ? raw : null;
 }
 
@@ -756,7 +758,7 @@ export function initConnectForm(): void {
     if (action === 'new') newConnection();
     else if (action === 'import') triggerProfileImport();
     else if (action === 'export') downloadProfilesExport();
-    else if (action === 'keys') navigateToPanel('keys', { pushHistory: true });
+    // Keys button removed — key management is now inline in Connect panel (#441)
   });
 
   document.getElementById('profileList')!.addEventListener('click', (e) => {

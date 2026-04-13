@@ -471,7 +471,6 @@ export function loadKeys(): void {
       </div>
       <div class="item-actions">
         <button class="item-btn" data-action="edit" data-idx="${String(i)}">Edit</button>
-        <button class="item-btn" data-action="use" data-idx="${String(i)}">Use in form</button>
         <button class="item-btn danger" data-action="delete" data-idx="${String(i)}">Delete</button>
       </div>
     </div>
@@ -591,18 +590,6 @@ export async function importKey(name: string, data: string): Promise<boolean> {
   populateKeyDropdown();
   _toast(`Key "${name}" saved.`);
   return true;
-}
-
-export function useKey(idx: number): void {
-  const key = getKeys()[idx];
-  if (!key) return;
-  (document.getElementById('authType') as HTMLSelectElement).value = 'key';
-  (document.getElementById('authType') as HTMLSelectElement).dispatchEvent(new Event('change'));
-  const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
-  if (keySelect) {
-    keySelect.value = key.vaultId;
-  }
-  _toast(`Key "${key.name}" selected in form.`);
 }
 
 export function renameKey(idx: number, newName: string): void {
