@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-sw-cache-instrumentation-000041/` — SW cache freshness instrumentation, version telemetry, hook->notification pipeline
+> **Active TRACE**: `.traces/trace-cycle-ux-bugs-2-023735/` — UX bug cycle 2
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.

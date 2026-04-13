@@ -898,7 +898,7 @@ export function scheduleReconnect(sessionId?: string): void {
       session._wsConsecFailures = 0;
       transitionSession(sid, 'failed');
       _dismissConnectionStatus();
-      showErrorDialog(`Host unreachable after ${WS_MAX_AUTH_FAILURES} attempts.\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
+      showErrorDialog(`Host unreachable after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
       return;
     }
   }
@@ -1165,6 +1165,7 @@ export function disconnect(sessionId?: string): void {
 // Filter DA1/DA2/DA3 responses — xterm.js auto-responds to terminal capability
 // queries from the remote (CSI c, CSI > c). If not filtered, responses leak
 // through to the shell and appear as visible ?1;2c text (#350).
+// eslint-disable-next-line no-control-regex
 const DA_RESPONSE_RE = /\x1b\[\??[>]?[\d;]*c/g;
 
 export function sendSSHInput(data: string): void {

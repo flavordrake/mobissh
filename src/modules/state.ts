@@ -123,7 +123,7 @@ registerTransitionEffect('closed', (session) => {
   abortCycle(session);
   cleanupWebSocket(session);
   if (session.terminal) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     (session.terminal as any).dispose();
   }
   clearReconnectTimer(session);
@@ -211,6 +211,7 @@ export function createSession(id: string): SessionState {
   }
 
   let _profile: SessionState['profile'] = null;
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const session: SessionStateWithCompat = Object.create(null);
   Object.defineProperties(session, {
     id: { value: id, writable: true, enumerable: true, configurable: true },

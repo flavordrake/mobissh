@@ -317,7 +317,7 @@ export function switchSession(id: string): void {
       session.ws = null;
     }
     toast('Reconnecting…');
-    reconnect(id);
+    void reconnect(id);
   }
 
   // No automatic fit — terminal stays at its current layout size.
@@ -569,7 +569,7 @@ export function initSessionMenu(): void {
 
   document.getElementById('sessionReconnectBtn')!.addEventListener('click', () => {
     closeMenu();
-    if (appState.activeSessionId) reconnect(appState.activeSessionId);
+    if (appState.activeSessionId) void reconnect(appState.activeSessionId);
   });
 
   document.getElementById('sessionNavBarBtn')!.addEventListener('click', () => {
@@ -788,7 +788,7 @@ export function initConnectForm(): void {
       switchSession(sessionId);
       navigateToPanel('terminal');
     } else if (action === 'reconnect' && sessionId) {
-      reconnect(sessionId);
+      void reconnect(sessionId);
       target.classList.add('connecting');
       target.textContent = 'Reconnecting…';
       onStateChange((_sess, newState) => {
@@ -1169,7 +1169,7 @@ export function initApprovalBar(): void {
     autoLabel.textContent = storedCountdown > 0 ? `Auto-accept (${String(storedCountdown)}s)` : 'Auto-accept';
     autoRow.appendChild(autoCheck);
     autoRow.appendChild(autoLabel);
-    buttons!.appendChild(autoRow);
+    buttons.appendChild(autoRow);
 
     bar.classList.remove('hidden');
 
@@ -1182,14 +1182,14 @@ export function initApprovalBar(): void {
       _clearApprovalTimer();
 
       targetBtn = Array.from(buttons!.querySelectorAll<HTMLButtonElement>('.approval-btn'))
-        .find((b) => b.textContent?.includes(`(${yesKey})`)) ?? null;
+        .find((b) => b.textContent?.includes(`(${yesKey})`)) ?? null; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
       if (targetBtn) {
         targetBtn.classList.add('countdown-active');
       }
 
       // Insert VU-meter bar at bottom of approval bar
-      let vuBar = bar!.querySelector('.approval-vu-bar') as HTMLDivElement | null;
+      let vuBar = bar!.querySelector<HTMLDivElement>('.approval-vu-bar');
       if (!vuBar) {
         vuBar = document.createElement('div');
         vuBar.className = 'approval-vu-bar';

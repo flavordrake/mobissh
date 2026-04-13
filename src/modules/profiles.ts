@@ -175,7 +175,7 @@ export function loadProfiles(): void {
       const reconnectAllBtn = hasDropped
         ? '<button class="item-btn accent reconnect-all-btn" data-action="reconnect-all">Reconnect all</button>'
         : '';
-      sessionList.innerHTML = `<h3 class="section-label">Active Sessions</h3>`
+      sessionList.innerHTML = '<h3 class="section-label">Active Sessions</h3>'
         + allSessions.map((s) => {
           const stateClass = `session-state-${s.state}`;
           const dotColor = isSessionConnected(s) ? 'dot-connected' : s.state === 'reconnecting' || s.state === 'connecting' ? 'dot-connecting' : 'dot-dropped';
@@ -332,7 +332,7 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
 export async function connectFromProfile(idx: number): Promise<boolean> {
   const profile = getProfiles()[idx];
   if (!profile) return false;
-  console.log(`[connect] connectFromProfile(${String(idx)}): ${profile.username}@${profile.host} vaultId=${profile.vaultId ?? 'none'} hasVaultCreds=${String(!!profile.hasVaultCreds)} vaultKey=${String(!!appState.vaultKey)}`);
+  console.log(`[connect] connectFromProfile(${String(idx)}): ${profile.username}@${profile.host} vaultId=${profile.vaultId} hasVaultCreds=${String(!!profile.hasVaultCreds)} vaultKey=${String(!!appState.vaultKey)}`);
 
   const sshProfile: SSHProfile = {
     name: profile.name,
