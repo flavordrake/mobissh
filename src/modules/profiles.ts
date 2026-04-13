@@ -521,3 +521,133 @@ export function deleteKey(idx: number): void {
   loadKeys();
   populateKeyDropdown();
 }
+
+// ── Export / Import (#419) ─────────────────────────────────────────────────
+
+/** Safe metadata fields included in export. Everything else is stripped. */
+const EXPORT_FIELDS = ['title', 'host', 'port', 'username', 'authType'] as const;
+
+/** Serialize saved profiles to JSON string containing ONLY non-sensitive metadata. */
+export function exportProfilesJSON(): string {
+  const profiles = getProfiles();
+  const safe = profiles.map((p) => {
+    const out: Record<string, unknown> = {};
+    for (const field of EXPORT_FIELDS) {
+      out[field] = p[field];
+    }
+    return out;
+  });
+  return JSON.stringify(safe, null, 2);
+}
+
+/** Trigger a browser download of exported profiles. */
+export function downloadProfilesExport(): void {
+  const json = exportProfilesJSON();
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'mobissh-profiles.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+interface ImportResult {
+  added: number;
+  skipped: number;
+  errors: string[];
+}
+
+/** Parse and import profiles from JSON string. Deduplicates by host+port+username. */
+export function importProfilesFromJSON(json: string): ImportResult {
+  const result: ImportResult = { added: 0, skipped: 0, errors: [] };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    result.errors.push('Invalid JSON format');
+    return result;
+  }
+
+  if (!Array.isArray(parsed)) {
+    result.errors.push('Invalid format: expected an array of profiles');
+    return result;
+  }
+
+  const existing = getProfiles();
+
+  for (const entry of parsed) {
+    if (typeof entry !== 'object' || entry === null) {
+      result.errors.push('Invalid entry: not an object');
+      continue;
+    }
+    const rec = entry as Record<string, unknown>;
+
+    // Validate required fields
+    if (!rec.host || typeof rec.host !== 'string') {
+      result.errors.push('Invalid entry: missing or invalid host');
+      continue;
+    }
+    if (!rec.username || typeof rec.username !== 'string') {
+      result.errors.push('Invalid entry: missing or invalid username');
+      continue;
+    }
+
+    const port = typeof rec.port === 'number' ? rec.port : 22;
+    const host = rec.host;
+    const username = rec.username;
+
+    // Dedup: skip if host+port+username already exists
+    const isDup = existing.some(
+      (p) => p.host === host && (p.port || 22) === port && p.username === username
+    );
+    if (isDup) {
+      result.skipped++;
+      continue;
+    }
+
+    // Build a clean profile with only safe fields + fresh vaultId
+    const imported: StoredProfile = {
+      title: typeof rec.title === 'string' ? rec.title : `${username}@${host}`,
+      host,
+      port,
+      username,
+      authType: rec.authType === 'key' ? 'key' : 'password',
+      initialCommand: '',
+      vaultId: _generateId(),
+    };
+
+    existing.push(imported);
+    result.added++;
+  }
+
+  localStorage.setItem('sshProfiles', JSON.stringify(existing));
+  loadProfiles();
+  return result;
+}
+
+/** Open a file picker and import profiles from the selected JSON file. */
+export function triggerProfileImport(): void {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      const result = importProfilesFromJSON(text);
+      if (result.errors.length > 0) {
+        _toast(`Import: ${String(result.added)} added, ${String(result.skipped)} skipped, ${String(result.errors.length)} errors`);
+      } else {
+        _toast(`Imported ${String(result.added)} profile${result.added !== 1 ? 's' : ''}${result.skipped > 0 ? `, ${String(result.skipped)} skipped (duplicates)` : ''}`);
+      }
+    };
+    reader.readAsText(file);
+  });
+  input.click();
+}

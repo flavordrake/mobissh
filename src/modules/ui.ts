@@ -11,7 +11,7 @@ import { appState, currentSession, isSessionConnected, onStateChange, transition
 import { applyTheme, _addNotification, fireNotification } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
-import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions } from './profiles.js';
+import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
 
@@ -746,6 +746,17 @@ export function initConnectForm(): void {
 
   document.getElementById('newConnBtn')!.addEventListener('click', () => {
     newConnection();
+  });
+
+  // Connect panel bottom navbar (#419)
+  document.getElementById('connectNavbar')?.addEventListener('click', (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+    if (action === 'new') newConnection();
+    else if (action === 'import') triggerProfileImport();
+    else if (action === 'export') downloadProfilesExport();
+    else if (action === 'keys') navigateToPanel('keys', { pushHistory: true });
   });
 
   document.getElementById('profileList')!.addEventListener('click', (e) => {
