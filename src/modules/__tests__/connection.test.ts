@@ -75,8 +75,9 @@ vi.mock('../vault.js', () => ({
   isVaultUnlocked: vi.fn(() => false),
 }));
 
-const { vaultLoad } = await import('../vault.js');
+const { vaultLoad, vaultStore } = await import('../vault.js');
 const vaultLoadMock = vi.mocked(vaultLoad);
+const vaultStoreMock = vi.mocked(vaultStore);
 
 const { _getPassphraseCache, _isKeyEncrypted, _resolvePassphrase } = await import('../connection.js');
 
@@ -201,6 +202,68 @@ describe('_resolvePassphrase (#418)', () => {
     const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, passphrase: 'already-set' };
     expect(await _resolvePassphrase(profile)).toBe('ok');
     expect(profile.passphrase).toBe('already-set');
+  });
+});
+
+describe('Vault passphrase persistence (#426)', () => {
+  const encryptedKey = [
+    '-----BEGIN RSA PRIVATE KEY-----',
+    'Proc-Type: 4,ENCRYPTED',
+    'DEK-Info: AES-128-CBC,AABBCCDD',
+    'dGVzdGRhdGE=',
+    '-----END RSA PRIVATE KEY-----',
+  ].join('\n');
+
+  beforeEach(() => {
+    _getPassphraseCache().clear();
+    vaultLoadMock.mockReset();
+    vaultStoreMock.mockReset();
+  });
+
+  it('loads passphrase from vault when not in memory cache', async () => {
+    // Vault has both key data and passphrase stored
+    vaultLoadMock.mockResolvedValue({ data: encryptedKey, passphrase: 'vault-pass' });
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-1' };
+    const result = await _resolvePassphrase(profile);
+    expect(result).toBe('ok');
+    expect(profile.passphrase).toBe('vault-pass');
+    // Should also populate in-memory cache
+    expect(_getPassphraseCache().get('vault-1')).toBe('vault-pass');
+  });
+
+  it('stores passphrase to vault after user prompt', async () => {
+    // First call: load key data (no passphrase stored yet)
+    vaultLoadMock.mockResolvedValueOnce({ data: encryptedKey });
+    // Second call: check vault for persisted passphrase (none yet)
+    vaultLoadMock.mockResolvedValueOnce({ data: encryptedKey });
+    // Third call: load existing vault entry for storing passphrase alongside key
+    vaultLoadMock.mockResolvedValueOnce({ data: encryptedKey });
+    vaultStoreMock.mockResolvedValue(undefined);
+
+    // Simulate user clicking OK with a passphrase
+    mockOkBtn.addEventListener.mockImplementation((_event: string, handler: () => void) => {
+      mockInput.value = 'new-pass';
+      setTimeout(handler, 0);
+    });
+
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, keyVaultId: 'vault-2' };
+    const result = await _resolvePassphrase(profile);
+    expect(result).toBe('ok');
+    expect(profile.passphrase).toBe('new-pass');
+    // Should have stored passphrase in vault
+    expect(vaultStoreMock).toHaveBeenCalledWith('vault-2', { data: encryptedKey, passphrase: 'new-pass' });
+
+    mockOkBtn.addEventListener.mockReset();
+  });
+
+  it('uses in-memory cache without vault lookup when cached', async () => {
+    _getPassphraseCache().set('vault-3', 'mem-pass');
+    const profile = { name: 'test', host: 'h', port: 22, username: 'u', authType: 'key' as const, privateKey: encryptedKey, keyVaultId: 'vault-3' };
+    const result = await _resolvePassphrase(profile);
+    expect(result).toBe('ok');
+    expect(profile.passphrase).toBe('mem-pass');
+    // vaultLoad should not have been called (key already on profile, passphrase from cache)
+    expect(vaultLoadMock).not.toHaveBeenCalled();
   });
 });
 

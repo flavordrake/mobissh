@@ -7,7 +7,7 @@
  */
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
-import { vaultLoad } from './vault.js';
+import { vaultLoad, vaultStore } from './vault.js';
 import { showErrorDialog, navigateToPanel } from './ui.js';
 import { saveRecentSession, getProfiles } from './profiles.js';
 
@@ -437,19 +437,37 @@ export async function _resolvePassphrase(profile: SSHProfile): Promise<'ok' | 'c
     }
   }
 
-  // If the key is encrypted and no passphrase is set, check cache or prompt
+  // If the key is encrypted and no passphrase is set, check cache/vault or prompt
   if (profile.authType === 'key' && profile.privateKey && _isKeyEncrypted(profile.privateKey) && !profile.passphrase) {
     const cacheKey = profile.keyVaultId ?? '';
     const cached = cacheKey ? _keyPassphraseCache.get(cacheKey) : undefined;
     if (cached !== undefined) {
       profile.passphrase = cached;
     } else {
+      // Check vault for persisted passphrase before prompting
+      if (cacheKey) {
+        const stored = await vaultLoad(cacheKey);
+        if (stored?.passphrase) {
+          profile.passphrase = stored.passphrase as string;
+          _keyPassphraseCache.set(cacheKey, stored.passphrase as string);
+          return 'ok';
+        }
+      }
+
       const passphrase = await _promptPassphrase();
       if (passphrase === null) {
         return 'cancelled';
       }
       profile.passphrase = passphrase;
-      if (cacheKey) _keyPassphraseCache.set(cacheKey, passphrase);
+      if (cacheKey) {
+        _keyPassphraseCache.set(cacheKey, passphrase);
+        // Persist passphrase to vault alongside the key data
+        const existing = await vaultLoad(cacheKey);
+        if (existing) {
+          existing.passphrase = passphrase;
+          await vaultStore(cacheKey, existing);
+        }
+      }
     }
   }
 
