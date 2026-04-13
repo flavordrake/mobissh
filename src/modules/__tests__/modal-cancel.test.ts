@@ -207,4 +207,41 @@ describe('Modal cancel button responsiveness (#388)', () => {
       expect(callsDisconnect || abortsCycle || cancelsReconnect).toBe(true);
     });
   });
+
+  // ── 8. Cancel button passes sessionId to disconnect (#417) ──────────
+
+  describe('cancel button targets correct session (#417)', () => {
+    it('_showConnectionStatus accepts sessionId option', () => {
+      const fnBody = extractFnBody(connectionSrc, 'function _showConnectionStatus');
+      expect(fnBody.length).toBeGreaterThan(50);
+      // Signature should accept sessionId in opts
+      expect(fnBody).toContain('sessionId');
+    });
+
+    it('cancel button passes sessionId to disconnect', () => {
+      const fnBody = extractFnBody(connectionSrc, 'function _showConnectionStatus');
+      expect(fnBody.length).toBeGreaterThan(50);
+      // The cancel handler should call disconnect with a captured sessionId,
+      // not disconnect() with no args which falls back to activeSessionId
+      expect(fnBody).toContain('disconnect(sid');
+    });
+
+    it('_openWebSocket passes sessionId when creating the overlay', () => {
+      const fnBody = extractFnBody(connectionSrc, 'function _openWebSocket');
+      expect(fnBody.length).toBeGreaterThan(50);
+      // At least one _showConnectionStatus call should include sessionId
+      expect(fnBody).toContain('sessionId');
+      expect(fnBody).toContain('_showConnectionStatus');
+    });
+  });
+
+  // ── 9. Error dialog dismiss calls cancelReconnect (#417) ────────────
+
+  describe('error dialog dismiss cancels reconnect (#417)', () => {
+    it('showErrorDialog dismiss handler calls cancelReconnect', () => {
+      const fnBody = extractFnBody(uiSrc, 'function showErrorDialog');
+      expect(fnBody.length).toBeGreaterThan(50);
+      expect(fnBody).toContain('cancelReconnect');
+    });
+  });
 });

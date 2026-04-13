@@ -573,7 +573,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     newWs = new WebSocket(wsUrl);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    _showConnectionStatus(`WebSocket error: ${message}`, { error: true });
+    _showConnectionStatus(`WebSocket error: ${message}`, { error: true, sessionId });
     scheduleReconnect();
     return;
   }
@@ -586,7 +586,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     const probeWs = newWs; // capture so the closure inspects *this* attempt
     _connectTimeout = setTimeout(() => {
       _connectTimeout = null;
-      _showConnectionStatus(`Connecting to ${baseUrl}…`);
+      _showConnectionStatus(`Connecting to ${baseUrl}…`, { sessionId });
       _showConnectionStatus('Running diagnostic…');
       void probeConnectLayers({
         onLine: typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -1208,7 +1208,7 @@ export function sendSSHInputToAll(data: string): void {
 
 let _currentOverlay: HTMLDivElement | null = null;
 
-function _showConnectionStatus(message: string, opts?: { error?: boolean }): void {
+function _showConnectionStatus(message: string, opts?: { error?: boolean; sessionId?: string }): void {
   // Reuse existing overlay — append message to scrollable log
   if (_currentOverlay) {
     const log = _currentOverlay.querySelector('.conn-status-log');
@@ -1227,6 +1227,9 @@ function _showConnectionStatus(message: string, opts?: { error?: boolean }): voi
     return;
   }
 
+  // Capture sessionId for the cancel button closure (#417)
+  const sid = opts?.sessionId;
+
   const overlay = document.createElement('div');
   overlay.id = 'connectionStatusOverlay';
   overlay.className = 'conn-status-overlay';
@@ -1243,11 +1246,12 @@ function _showConnectionStatus(message: string, opts?: { error?: boolean }): voi
   dialog.appendChild(log);
 
   // Cancel button is always present — calls disconnect() for full cleanup (#105)
+  // Pass captured sessionId so disconnect targets the correct session (#417)
   const btn = document.createElement('button');
   btn.className = 'conn-status-cancel';
   btn.textContent = 'Cancel';
   btn.addEventListener('click', () => {
-    disconnect();
+    disconnect(sid);
     _dismissConnectionStatus();
   });
   dialog.appendChild(btn);

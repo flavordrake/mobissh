@@ -10,7 +10,7 @@ import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
 import { applyTheme, _addNotification, fireNotification } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
-import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
+import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
@@ -202,6 +202,8 @@ export function showErrorDialog(message: string): void {
   overlay.classList.remove('hidden');
   dismiss?.addEventListener('click', () => {
     overlay.classList.add('hidden');
+    // Cancel any background reconnect loop so it doesn't re-show the dialog (#417)
+    cancelReconnect();
   }, { once: true });
 }
 
