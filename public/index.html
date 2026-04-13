@@ -335,8 +335,19 @@
 
       <div id="connect-form-section">
         <form id="connectForm" class="compact-form" autocomplete="off">
-          <label for="host">Host</label>
-          <input type="text" id="host" placeholder="192.168.1.100" required inputmode="url" />
+          <label for="profileName">Name</label>
+          <input type="text" id="profileName" placeholder="Auto: user@host" />
+
+          <div class="compact-form-span form-row">
+            <div class="form-field form-field-grow">
+              <label for="host">Host</label>
+              <input type="text" id="host" placeholder="192.168.1.100" required inputmode="url" />
+            </div>
+            <div class="form-field form-field-port">
+              <label for="port">Port</label>
+              <input type="number" id="port" value="22" min="1" max="65535" inputmode="numeric" />
+            </div>
+          </div>
 
           <label for="remote_a">User</label>
           <input type="text" id="remote_a" placeholder="root" required autocapitalize="none"
@@ -345,8 +356,7 @@
             data-1p-ignore="true"
             data-form-type="other" />
 
-          <label for="authType">Auth</label>
-          <select id="authType">
+          <select id="authType" class="compact-form-span">
             <option value="password">Password</option>
             <option value="key">Private key</option>
           </select>
@@ -384,30 +394,19 @@
             </div>
           </div>
 
-          <details id="connectAdvanced" class="compact-form-span">
-            <summary>Advanced</summary>
-            <div class="compact-form-advanced">
-              <label for="profileName">Name</label>
-              <input type="text" id="profileName" placeholder="Auto: user@host" />
+          <label for="initialCommand">Command</label>
+          <input type="text" id="initialCommand"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            placeholder="Optional initial command" />
 
-              <label for="port">Port</label>
-              <input type="number" id="port" value="22" min="1" max="65535" inputmode="numeric" />
-
-              <label for="initialCommand">Command</label>
-              <input type="text" id="initialCommand"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="none"
-                spellcheck="false"
-                placeholder="Optional initial command" />
-
-              <label for="profileTheme">Session theme</label>
-              <select id="profileTheme">
-                <option value="">Use default</option>
-                <!-- Populated dynamically from THEME_ORDER in profiles.ts -->
-              </select>
-            </div>
-          </details>
+          <label for="profileTheme">Session theme</label>
+          <select id="profileTheme">
+            <option value="">Use default</option>
+            <!-- Populated dynamically from THEME_ORDER in profiles.ts -->
+          </select>
 
           <div class="compact-form-span">
             <button type="submit" class="primary-btn">Save</button>

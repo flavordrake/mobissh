@@ -187,14 +187,44 @@ test.describe('Connect form', { tag: '@headless-adequate' }, () => {
     await expect(page.locator('#host')).toBeVisible();
     await expect(page.locator('#remote_a')).toBeVisible();
     await expect(page.locator('#authType')).toBeVisible();
-    // Port is inside collapsed Advanced section
-    await openConnectAdvanced(page);
     await expect(page.locator('#port')).toBeVisible();
   });
 
   test('port field defaults to 22', async ({ page }) => {
-    await openConnectAdvanced(page);
     await expect(page.locator('#port')).toHaveValue('22');
+  });
+
+  test('host and port are on the same row (#439)', async ({ page }) => {
+    const hostBox = await page.locator('#host').boundingBox();
+    const portBox = await page.locator('#port').boundingBox();
+    expect(hostBox).toBeTruthy();
+    expect(portBox).toBeTruthy();
+    // Same vertical position (within 5px tolerance for label alignment)
+    expect(Math.abs(hostBox.y - portBox.y)).toBeLessThan(5);
+    // Host is wider than port
+    expect(hostBox.width).toBeGreaterThan(portBox.width);
+  });
+
+  test('form fields are in compact order (#439)', async ({ page }) => {
+    const nameBox = await page.locator('#profileName').boundingBox();
+    const hostBox = await page.locator('#host').boundingBox();
+    const userBox = await page.locator('#remote_a').boundingBox();
+    const authBox = await page.locator('#authType').boundingBox();
+    const pwBox = await page.locator('#remote_c').boundingBox();
+    expect(nameBox.y).toBeLessThan(hostBox.y);
+    expect(hostBox.y).toBeLessThan(userBox.y);
+    expect(userBox.y).toBeLessThan(authBox.y);
+    expect(authBox.y).toBeLessThan(pwBox.y);
+  });
+
+  test('no Advanced details section in form (#439)', async ({ page }) => {
+    await expect(page.locator('#connectAdvanced')).toHaveCount(0);
+  });
+
+  test('auth type has no label (#439)', async ({ page }) => {
+    // The authType select should not have a preceding label element
+    const labelCount = await page.locator('label[for="authType"]').count();
+    expect(labelCount).toBe(0);
   });
 
   test('auth type selector has password and key options', async ({ page }) => {
@@ -251,7 +281,6 @@ test.describe('Connect form', { tag: '@headless-adequate' }, () => {
       await createVault('test', false);
     });
 
-    await openConnectAdvanced(page);
     await page.locator('#profileName').fill('Test Server');
     await page.locator('#host').fill('192.168.1.100');
     await page.locator('#remote_a').fill('admin');

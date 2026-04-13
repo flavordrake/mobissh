@@ -25,7 +25,6 @@ async function revealConnectForm(page) {
   if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
     await btn.click();
   }
-  await openConnectAdvanced(page);
 }
 
 // Inject mock PasswordCredential so vault operations work in headless Chromium

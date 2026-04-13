@@ -1585,34 +1585,33 @@ hr {
   margin-top: 8px;
 }
 
-#connectAdvanced {
-  margin-top: 4px;
+/* Form row: side-by-side fields (e.g. host + port) */
+.form-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
 }
 
-#connectAdvanced summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 0.9em;
-  padding: 4px 0;
-  user-select: none;
-}
-
-.compact-form-advanced {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px 12px;
-  align-items: center;
-  margin-top: 8px;
-}
-
-.compact-form-advanced label {
-  margin: 0;
-  text-align: right;
+.form-field label {
+  display: block;
+  margin-bottom: 4px;
+  text-align: left;
   white-space: nowrap;
 }
 
-.compact-form-advanced input {
-  margin: 0;
+.form-field input,
+.form-field select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-field-grow {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.form-field-port {
+  flex: 0 0 5em;
 }
 
 /* Advanced section */
