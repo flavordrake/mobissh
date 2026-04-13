@@ -264,6 +264,15 @@ describe('recent sessions persistence (#385)', () => {
       const profilesSrc = readSource('profiles.ts');
       expect(profilesSrc).toContain('Recent Sessions');
     });
+
+    it('recent session label uses profile title instead of username@host:port (#445)', () => {
+      const profilesSrc = readSource('profiles.ts');
+      // The recent sessions rendering should look up the profile by profileIdx
+      // and use its title field for the label, falling back to username@host:port
+      const usesProfileTitle = /profiles\[.*profileIdx\]/.test(profilesSrc)
+        && /\.title/.test(profilesSrc);
+      expect(usesProfileTitle).toBe(true);
+    });
   });
 
   // ── 4. Each recent session has a Reconnect button ───────────────────────
