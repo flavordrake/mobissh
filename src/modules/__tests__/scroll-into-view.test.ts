@@ -1,9 +1,10 @@
 /**
  * Tests for scrollIntoView on inline edit forms (#434)
+ * Updated for details-based form toggle
  *
  * Verifies:
  * 1. editKey() calls scrollIntoView after appending the form
- * 2. revealConnectForm() calls scrollIntoView on the form section
+ * 2. revealConnectForm() uses details.open and calls scrollIntoView
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -36,6 +37,14 @@ describe('scrollIntoView on form expand (#434)', () => {
   });
 
   describe('revealConnectForm', () => {
+    it('sets details.open = true on the form section', () => {
+      const fnStart = profilesSrc.indexOf('export function revealConnectForm');
+      const fnEnd = profilesSrc.indexOf('\n}', fnStart + 10);
+      const fnBody = profilesSrc.slice(fnStart, fnEnd);
+
+      expect(fnBody).toContain('section.open = true');
+    });
+
     it('calls scrollIntoView on the form section', () => {
       const fnStart = profilesSrc.indexOf('export function revealConnectForm');
       const fnEnd = profilesSrc.indexOf('\n}', fnStart + 10);

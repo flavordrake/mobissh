@@ -329,7 +329,8 @@
         <p class="empty-hint">No saved profiles yet.</p>
       </div>
 
-      <div id="connect-form-section">
+      <details id="connect-form-section">
+        <summary>New Connection</summary>
         <form id="connectForm" class="compact-form" autocomplete="off">
           <label for="profileName">Name</label>
           <input type="text" id="profileName" placeholder="Auto: user@host" />
@@ -408,9 +409,7 @@
             <button type="submit" class="primary-btn">Save</button>
           </div>
         </form>
-      </div>
-
-      <button type="button" id="newConnBtn" class="secondary-btn" hidden>+ New connection</button>
+      </details>
 
       <details id="keysSection" class="connect-keys-section">
         <summary>Stored Keys</summary>

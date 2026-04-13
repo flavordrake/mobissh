@@ -176,8 +176,7 @@ export function loadProfiles(): void {
   const sessionList = document.getElementById('activeSessionList');
   if (!list) return;
 
-  const formSection = document.getElementById('connect-form-section');
-  const newConnBtn = document.getElementById('newConnBtn') as HTMLButtonElement | null;
+  const formSection = document.getElementById('connect-form-section') as HTMLDetailsElement | null;
 
   // Render active sessions section (#306)
   const allSessions = Array.from(appState.sessions.values()).filter((s) => s.profile);
@@ -232,8 +231,10 @@ export function loadProfiles(): void {
 
   if (!profiles.length) {
     list.innerHTML = '<p class="empty-hint">No saved profiles yet.</p>';
-    formSection?.classList.remove('connect-form-hidden');
-    if (newConnBtn) newConnBtn.hidden = true;
+    if (formSection) {
+      formSection.open = true;
+      _updateFormSummary('New Connection');
+    }
     return;
   }
 
@@ -260,17 +261,25 @@ export function loadProfiles(): void {
       </div>`;
     }).join('');
 
-  formSection?.classList.add('connect-form-hidden');
-  if (newConnBtn) newConnBtn.hidden = false;
+  if (formSection) {
+    formSection.open = false;
+    _updateFormSummary('New Connection');
+  }
+}
+
+/** Update the summary text of the connect form details element. */
+function _updateFormSummary(text: string): void {
+  const summary = document.querySelector('#connect-form-section > summary');
+  if (summary) summary.textContent = text;
 }
 
 /** Reveal the connect form section. */
 export function revealConnectForm(): void {
-  const section = document.getElementById('connect-form-section');
-  section?.classList.remove('connect-form-hidden');
-  section?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  const newConnBtn = document.getElementById('newConnBtn') as HTMLButtonElement | null;
-  if (newConnBtn) newConnBtn.hidden = true;
+  const section = document.getElementById('connect-form-section') as HTMLDetailsElement | null;
+  if (section) {
+    section.open = true;
+    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 /** Reset form for a brand-new connection and reveal it. */
@@ -281,6 +290,7 @@ export function newConnection(): void {
   const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
   if (keySelect) keySelect.value = '';
   document.getElementById('manualKeyGroup')?.classList.add('hidden');
+  _updateFormSummary('New Connection');
   revealConnectForm();
   (document.getElementById('host') as HTMLInputElement).focus();
 }
@@ -341,6 +351,7 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
     _toast('Enter credentials — not saved on this browser.');
   }
 
+  _updateFormSummary('Edit Profile');
   revealConnectForm();
   _navigateToConnect();
 }
