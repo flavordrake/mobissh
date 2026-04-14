@@ -80,6 +80,10 @@ export function navigateToPanel(
       loadProfiles();
     }
   }
+  if (panel === 'files') {
+    // Render the active session's files state whenever the panel is shown (#409)
+    _activateFilesForCurrentSession();
+  }
   // Respect user's explicit tab bar preference (#393). The handle bar toggle
   // persists to localStorage — don't override it on panel switch.
 
@@ -101,7 +105,7 @@ export function initRouting(hasProfiles: boolean): void {
   if (fromHash) {
     // Store deep link path for files panel — SFTP not ready yet at cold start
     if (fromHash === 'files') {
-      _filesDeepLinkPath = _filePathFromHash();
+      _activeFilesState().deepLinkPath = _filePathFromHash();
     }
     navigateToPanel(fromHash);
   } else {
@@ -350,6 +354,12 @@ export function switchSession(id: string): void {
 
   // Restore IME focus so keyboard input reaches the session (#341)
   focusIME();
+
+  // If the files panel is active, re-render to reflect the new session's
+  // files state (path, cached listing, or trigger first-activation) (#409)
+  if (document.getElementById('panel-files')?.classList.contains('active')) {
+    _activateFilesForCurrentSession();
+  }
 }
 
 export function closeSession(id: string): void {
@@ -367,6 +377,9 @@ export function closeSession(id: string): void {
 
   // Clean up SessionHandle (disposes terminal, removes container, disconnects RO) (#374)
   removeSessionHandle(id);
+
+  // Drop per-session files state (#409)
+  _dropFilesState(id);
 
   // Transition through state machine — handles WS close, AbortController abort,
   // timer cleanup, terminal dispose via the 'closed' effect (#341)
@@ -1375,12 +1388,66 @@ function _applyComposeModeUI(): void {
   if (previewBtn) previewBtn.classList.toggle('hidden', !appState.imeMode);
 }
 
-// ── Files panel (#174, #175) ─────────────────────────────────────────────────
+// ── Files panel (#174, #175, #409) ───────────────────────────────────────────
 
-let _filesPath = '/';
-let _filesDeepLinkPath: string | null = null;
-let _filesRealpathReqId: string | null = null; // pending sftp_realpath request
-const _filesCache = new Map<string, SftpEntry[]>();
+/** Per-session files panel state (#409). One instance per active SSH session
+ *  plus a synthetic "__default__" bucket used at cold start before any session
+ *  exists (e.g., when a deep-link URL is opened but no connection is yet active). */
+export interface FilesState {
+  path: string;
+  deepLinkPath: string | null;
+  realpathReqId: string | null;
+  firstActivated: boolean;
+  cache: Map<string, SftpEntry[]>;
+}
+
+const _filesStateBySession = new Map<string, FilesState>();
+const FILES_DEFAULT_KEY = '__default__';
+
+function _makeFilesState(): FilesState {
+  return {
+    path: '/',
+    deepLinkPath: null,
+    realpathReqId: null,
+    firstActivated: false,
+    cache: new Map<string, SftpEntry[]>(),
+  };
+}
+
+/** Return the per-session files state, creating it lazily on first access. */
+export function _filesStateFor(sessionId: string): FilesState {
+  let s = _filesStateBySession.get(sessionId);
+  if (!s) { s = _makeFilesState(); _filesStateBySession.set(sessionId, s); }
+  return s;
+}
+
+/** Return the files state for the currently active session, or a default
+ *  bucket if no session is active (cold start / deep-link path). */
+export function _activeFilesState(): FilesState {
+  const id = appState.activeSessionId ?? FILES_DEFAULT_KEY;
+  return _filesStateFor(id);
+}
+
+/** Drop a session's files state (called on close). */
+export function _dropFilesState(sessionId: string): void {
+  _filesStateBySession.delete(sessionId);
+}
+
+/** Maps outstanding files-panel requestIds to the sessionId that issued them,
+ *  so the single SFTP handler can route results back to the right session's
+ *  FilesState (#409). */
+const _filesReqToSession = new Map<string, string>();
+
+function _tagReq(reqId: string): void {
+  const sid = appState.activeSessionId ?? FILES_DEFAULT_KEY;
+  _filesReqToSession.set(reqId, sid);
+}
+
+function _stateForReq(reqId: string): FilesState | null {
+  const sid = _filesReqToSession.get(reqId);
+  if (sid === undefined) return null;
+  return _filesStateFor(sid);
+}
 // Maps requestId -> path so SFTP ls responses can be matched to their requests
 const _filesPending = new Map<string, string>();
 // Maps requestId -> filename for pending downloads
@@ -1603,7 +1670,8 @@ async function _startUpload(files: FileList): Promise<void> {
   const newEntries: Array<{ file: File; remotePath: string; reqId: string }> = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!;
-    const remotePath = _filesPath === '/' ? `/${file.name}` : `${_filesPath}/${file.name}`;
+    const activePath = _activeFilesState().path;
+    const remotePath = activePath === '/' ? `/${file.name}` : `${activePath}/${file.name}`;
     const reqId = `up-${String(Date.now())}-${String(i)}`;
     _transferRecords.set(reqId, { name: file.name, size: file.size, sent: 0, status: 'active', direction: 'upload', startTime: Date.now() });
     newEntries.push({ file, remotePath, reqId });
@@ -1657,8 +1725,9 @@ async function _startUpload(files: FileList): Promise<void> {
   _activeUploadRequestId = null;
   _uploadActive = false;
   _setTransferStatus('');
-  _filesCache.delete(_filesPath);
-  _filesNavigateTo(_filesPath);
+  const afs = _activeFilesState();
+  afs.cache.delete(afs.path);
+  _filesNavigateTo(afs.path);
 
   // Process queued uploads (files added while this batch was in progress)
   if (_uploadQueue.length > 0) {
@@ -1844,7 +1913,8 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
 }
 
 function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): void {
-  _filesPath = path;
+  const state = _activeFilesState();
+  state.path = path;
 
   // Update URL hash for history (#90, #188)
   // Encode each path segment individually so '/' stays literal in the hash.
@@ -1856,7 +1926,7 @@ function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): v
     }
   }
 
-  const cached = _filesCache.get(path);
+  const cached = state.cache.get(path);
   if (cached) {
     _renderFilesList(path, cached);
     return;
@@ -1864,6 +1934,7 @@ function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): v
   _renderFilesPanel(path, '<div class="files-loading">Loading...</div>');
   const reqId = `ls-${String(Date.now())}`;
   _filesPending.set(reqId, path);
+  _tagReq(reqId);
   sendSftpLs(path, reqId);
 }
 
@@ -1894,11 +1965,13 @@ function _renderFilesList(path: string, entries: SftpEntry[]): void {
 
   // Pre-cache visible subdirectories (up to 5)
   const dirs = sorted.filter((e) => e.isDir).slice(0, 5);
+  const state = _activeFilesState();
   for (const dir of dirs) {
     const dirPath = path === '/' ? `/${dir.name}` : `${path}/${dir.name}`;
-    if (!_filesCache.has(dirPath)) {
+    if (!state.cache.has(dirPath)) {
       const preReqId = `pre-${String(Date.now())}-${dir.name}`;
       _filesPending.set(preReqId, dirPath);
+      _tagReq(preReqId);
       sendSftpLs(dirPath, preReqId);
     }
   }
@@ -2079,6 +2152,7 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
         const newPath = dir === '/' ? `/${newName}` : `${dir}/${newName}`;
         const reqId = `ren-${String(Date.now())}`;
         _renamePending.set(reqId, dir);
+        _tagReq(reqId);
         sendSftpRename(path, newPath, reqId);
         break;
       }
@@ -2086,13 +2160,14 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
         const name = path.split('/').pop() ?? path;
         if (!confirm(`Delete "${name}"?`)) return;
         const reqId = `del-${String(Date.now())}`;
-        _deletePending.set(reqId, _filesPath);
+        _deletePending.set(reqId, _activeFilesState().path);
+        _tagReq(reqId);
         sendSftpDelete(path, reqId);
         break;
       }
       case 'details': {
         const name = path.split('/').pop() ?? path;
-        const entries = _filesCache.get(_filesPath) ?? [];
+        const entries = _activeFilesState().cache.get(_activeFilesState().path) ?? [];
         const entry = entries.find(e => e.name === name);
         if (entry) {
           _showDetailsPanel(entry, path);
@@ -2113,8 +2188,12 @@ export function initFilesPanel(): void {
     if (msg.type === 'sftp_ls_result') {
       const path = _filesPending.get(msg.requestId);
       _filesPending.delete(msg.requestId);
-      if (path) _filesCache.set(path, msg.entries);
-      if (path === _filesPath) _renderFilesList(path, msg.entries);
+      const targetState = _stateForReq(msg.requestId);
+      _filesReqToSession.delete(msg.requestId);
+      if (path && targetState) targetState.cache.set(path, msg.entries);
+      // Only render if this response matches the currently-active session's current path
+      const active = _activeFilesState();
+      if (path === active.path && targetState === active) _renderFilesList(path, msg.entries);
     } else if (msg.type === 'sftp_download_result') {
       const filename = _downloadPending.get(msg.requestId);
       _downloadPending.delete(msg.requestId);
@@ -2141,27 +2220,40 @@ export function initFilesPanel(): void {
     } else if (msg.type === 'sftp_rename_result') {
       const dir = _renamePending.get(msg.requestId);
       _renamePending.delete(msg.requestId);
-      if (msg.ok && dir !== undefined) {
-        _filesCache.delete(dir);
-        if (dir === _filesPath) _filesNavigateTo(dir);
+      const tState = _stateForReq(msg.requestId);
+      _filesReqToSession.delete(msg.requestId);
+      if (msg.ok && dir !== undefined && tState) {
+        tState.cache.delete(dir);
+        const active = _activeFilesState();
+        if (dir === active.path && tState === active) _filesNavigateTo(dir);
       }
     } else if (msg.type === 'sftp_delete_result') {
       const dir = _deletePending.get(msg.requestId);
       _deletePending.delete(msg.requestId);
-      if (msg.ok && dir !== undefined) {
-        _filesCache.delete(dir);
-        if (dir === _filesPath) _filesNavigateTo(dir);
+      const tState = _stateForReq(msg.requestId);
+      _filesReqToSession.delete(msg.requestId);
+      if (msg.ok && dir !== undefined && tState) {
+        tState.cache.delete(dir);
+        const active = _activeFilesState();
+        if (dir === active.path && tState === active) _filesNavigateTo(dir);
       }
     } else if (msg.type === 'sftp_realpath_result') {
-      if (msg.requestId === _filesRealpathReqId) {
-        _filesRealpathReqId = null;
+      const tState = _stateForReq(msg.requestId);
+      if (tState && msg.requestId === tState.realpathReqId) {
+        tState.realpathReqId = null;
+        _filesReqToSession.delete(msg.requestId);
+        tState.firstActivated = true;
         // Deep link path takes priority over home dir (#90)
-        if (_filesDeepLinkPath) {
-          const deepPath = _filesDeepLinkPath;
-          _filesDeepLinkPath = null;
-          _filesNavigateTo(deepPath);
+        if (tState.deepLinkPath) {
+          const deepPath = tState.deepLinkPath;
+          tState.deepLinkPath = null;
+          // Only navigate if this session is still the active one
+          if (tState === _activeFilesState()) _filesNavigateTo(deepPath);
+          else tState.path = deepPath;
         } else {
-          _filesNavigateTo(msg.path || '/');
+          const resolvedPath = msg.path || '/';
+          if (tState === _activeFilesState()) _filesNavigateTo(resolvedPath);
+          else tState.path = resolvedPath;
         }
       }
     } else if (msg.type === 'sftp_error') {
@@ -2169,8 +2261,11 @@ export function initFilesPanel(): void {
       if (_filesPending.has(msg.requestId)) {
         const path = _filesPending.get(msg.requestId);
         _filesPending.delete(msg.requestId);
-        if (path === _filesPath) {
-          _renderFilesPanel(_filesPath, `<div class="files-error">${escHtml(msg.message)}</div>`);
+        const tState = _stateForReq(msg.requestId);
+        _filesReqToSession.delete(msg.requestId);
+        const active = _activeFilesState();
+        if (path === active.path && tState === active) {
+          _renderFilesPanel(active.path, `<div class="files-error">${escHtml(msg.message)}</div>`);
         }
       } else if (_downloadPending.has(msg.requestId)) {
         _downloadPending.delete(msg.requestId);
@@ -2186,13 +2281,20 @@ export function initFilesPanel(): void {
         toast(`Upload failed: ${msg.message}`);
       } else if (_renamePending.has(msg.requestId)) {
         _renamePending.delete(msg.requestId);
+        _filesReqToSession.delete(msg.requestId);
         toast(`Rename failed: ${msg.message}`);
       } else if (_deletePending.has(msg.requestId)) {
         _deletePending.delete(msg.requestId);
+        _filesReqToSession.delete(msg.requestId);
         toast(`Delete failed: ${msg.message}`);
-      } else if (msg.requestId === _filesRealpathReqId) {
-        _filesRealpathReqId = null;
-        _filesNavigateTo('/');
+      } else {
+        // Possibly a realpath error for some session
+        const tState = _stateForReq(msg.requestId);
+        if (tState && msg.requestId === tState.realpathReqId) {
+          tState.realpathReqId = null;
+          _filesReqToSession.delete(msg.requestId);
+          if (tState === _activeFilesState()) _filesNavigateTo('/');
+        }
       }
     }
   });
@@ -2226,13 +2328,40 @@ export function initFilesPanel(): void {
     fileInput?.click();
   });
 
-  // On first Files tab activation, resolve home dir via sftp_realpath then navigate
+  // On first Files tab activation *per session*, resolve home dir via
+  // sftp_realpath then navigate (#409).
   const filesTab = document.querySelector<HTMLElement>('[data-panel="files"]');
   filesTab?.addEventListener('click', () => {
-    if (!document.getElementById('filesExplore')?.querySelector('.files-body')) {
-      _filesRealpathReqId = `rp-${String(Date.now())}`;
-      sendSftpRealpath(_filesRealpathReqId);
-      _renderFilesPanel(_filesPath, '<div class="files-loading">Loading...</div>');
-    }
+    _activateFilesForCurrentSession();
   });
+
+  // Session menu: Files entry — opens the files panel for the active session (#409)
+  document.getElementById('sessionFilesBtn')?.addEventListener('click', () => {
+    document.getElementById('sessionMenu')?.classList.add('hidden');
+    document.getElementById('menuBackdrop')?.classList.add('hidden');
+    navigateToPanel('files');
+  });
+
+  // Back-to-terminal button inside the files panel (#409)
+  document.getElementById('filesBackToTerminalBtn')?.addEventListener('click', () => {
+    navigateToPanel('terminal');
+  });
+}
+
+/** Resolve and render the files panel for the currently active session,
+ *  issuing an sftp_realpath on first activation for that session (#409). */
+function _activateFilesForCurrentSession(): void {
+  const state = _activeFilesState();
+  if (!state.firstActivated && state.realpathReqId === null) {
+    const reqId = `rp-${String(Date.now())}`;
+    state.realpathReqId = reqId;
+    _tagReq(reqId);
+    sendSftpRealpath(reqId);
+    _renderFilesPanel(state.path, '<div class="files-loading">Loading...</div>');
+  } else {
+    // Session already activated — render its current path (from cache if available)
+    const cached = state.cache.get(state.path);
+    if (cached) _renderFilesList(state.path, cached);
+    else _renderFilesPanel(state.path, '<div class="files-loading">Loading...</div>');
+  }
 }

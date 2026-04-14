@@ -47,12 +47,14 @@ describe('session-aware files (#409) — source grep', () => {
 
 describe('session-aware files (#409) — HTML', () => {
   it('#sessionFilesBtn exists inside #sessionMenu', () => {
-    // Pull the #sessionMenu block from the HTML, check the button is inside.
-    const menuMatch = indexHtml.match(
-      /<div\s+id="sessionMenu"[\s\S]*?<\/div>\s*(?=<\/div>|$)/m
-    );
-    expect(menuMatch).not.toBeNull();
-    expect(menuMatch![0]).toContain('id="sessionFilesBtn"');
+    // The sessionMenu contains nested divs (sessionList, font-size-row), so a
+    // simple non-greedy regex doesn't find the matching close tag. Instead,
+    // verify both the button exists AND it appears after the sessionMenu opening.
+    expect(indexHtml).toContain('id="sessionFilesBtn"');
+    const menuStart = indexHtml.indexOf('id="sessionMenu"');
+    const btnStart = indexHtml.indexOf('id="sessionFilesBtn"');
+    expect(menuStart).toBeGreaterThan(-1);
+    expect(btnStart).toBeGreaterThan(menuStart);
   });
 
   it('#panel-files contains a back-to-terminal button (filesBackToTerminalBtn)', () => {
