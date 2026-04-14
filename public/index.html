@@ -303,11 +303,11 @@
       </div>
     </div>
 
-    <!-- Files panel -->
+    <!-- Files panel — overlays the terminal area when active (#452).
+         The session chrome (handle strip + key bar) in #panel-terminal stays
+         rendered beneath this overlay, so the ≡ session menu is always
+         reachable from Files. The back-to-terminal button was removed. -->
     <div id="panel-files" class="panel">
-      <div class="panel-header">
-        <button id="filesBackToTerminalBtn" class="panel-back-btn" aria-label="Back to terminal">← Terminal</button>
-      </div>
       <div id="filePreview" class="hidden"></div>
       <div id="filesExplore" class="files-subview active"></div>
       <div id="filesTransfer" class="files-subview hidden">
