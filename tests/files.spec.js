@@ -27,15 +27,15 @@ const MOCK_DOCS_ENTRIES = [
  * Show the tab bar (hidden after setupConnected) and navigate to Files tab.
  * The mock server must handle sftp_realpath and sftp_ls messages.
  */
-async function showTabBar(page) {
-  // After setupConnected, the tab bar is hidden (#36). Click the menu button to reveal it.
+async function openSessionMenu(page) {
+  // Files is now reached via the session menu (#449). Hamburger opens the menu.
   await page.locator('#handleMenuBtn').click();
-  await expect(page.locator('#tabBar')).not.toHaveClass(/hidden/, { timeout: 3000 });
+  await expect(page.locator('#sessionMenu')).not.toHaveClass(/hidden/, { timeout: 3000 });
 }
 
 async function navigateToFiles(page) {
-  await showTabBar(page);
-  await page.locator('[data-panel="files"]').click();
+  await openSessionMenu(page);
+  await page.locator('#sessionFilesBtn').click();
   await expect(page.locator('#panel-files')).toHaveClass(/active/);
   // Wait for the files panel to render breadcrumb (from sftp_ls_result)
   await expect(page.locator('.files-breadcrumb')).toBeVisible({ timeout: 5000 });
@@ -99,8 +99,8 @@ test.describe('Files panel Explore tab (#209)', () => {
     installSftpHandlers(mockSshServer);
 
     // Show tab bar (hidden after connect) and navigate to Files tab
-    await showTabBar(page);
-    await page.locator('[data-panel="files"]').click();
+    await openSessionMenu(page);
+    await page.locator('#sessionFilesBtn').click();
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     // Sub-tabs should be visible
@@ -238,8 +238,8 @@ test.describe('Files panel Transfer tab (#209)', () => {
     await setupConnected(page, mockSshServer);
     installSftpHandlers(mockSshServer);
 
-    await showTabBar(page);
-    await page.locator('[data-panel="files"]').click();
+    await openSessionMenu(page);
+    await page.locator('#sessionFilesBtn').click();
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     // Click Transfer sub-tab
@@ -258,8 +258,8 @@ test.describe('Files panel Transfer tab (#209)', () => {
     await setupConnected(page, mockSshServer);
     installSftpHandlers(mockSshServer);
 
-    await showTabBar(page);
-    await page.locator('[data-panel="files"]').click();
+    await openSessionMenu(page);
+    await page.locator('#sessionFilesBtn').click();
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     // Switch to Transfer tab

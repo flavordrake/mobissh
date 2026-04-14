@@ -520,9 +520,19 @@ export function initSessionMenu(): void {
     if ('vibrate' in navigator) navigator.vibrate(10);
   });
 
-  // Hamburger ≡ button — toggles tab bar as fallback for non-swipe users.
-  document.getElementById('handleMenuBtn')!.addEventListener('click', () => {
-    toggleTabBar();
+  // Hamburger ≡ button — opens the session menu (single entry point for
+  // per-session controls, including Files) (#449).
+  document.getElementById('handleMenuBtn')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasHidden = menu.classList.toggle('hidden');
+    backdrop.classList.toggle('hidden', wasHidden);
+    if (!wasHidden) {
+      const hb = document.getElementById('key-bar-handle');
+      if (hb) {
+        const handleTop = hb.getBoundingClientRect().top;
+        menu.style.bottom = `${String(window.innerHeight - handleTop + 4)}px`;
+      }
+    }
   });
 
   // Swipe up on handle → show tab bar; swipe down → hide tab bar (#149).
@@ -550,12 +560,42 @@ export function initSessionMenu(): void {
     if (!touch) return;
     _swipeTouchId = -1;
     const deltaY = _swipeStartY - touch.clientY;
-    if (deltaY > 30 && appState.keyBarDepth < 3) {
-      setKeyBarDepth((appState.keyBarDepth + 1) as 0 | 1 | 2 | 3);
+    // Upward swipe (deltaY > 30): reveal navbar first if hidden, else cycle depth (#449).
+    if (deltaY > 30) {
+      if (!appState.tabBarVisible) {
+        appState.tabBarVisible = true;
+        _applyTabBarVisibility();
+      } else if (appState.keyBarDepth < 3) {
+        setKeyBarDepth((appState.keyBarDepth + 1) as 0 | 1 | 2 | 3);
+      }
     } else if (deltaY < -30 && appState.keyBarDepth > 0) {
       setKeyBarDepth((appState.keyBarDepth - 1) as 0 | 1 | 2 | 3);
     }
   }, { passive: true });
+
+  // Down-swipe on the tab bar hides it (#449).
+  const tabBarEl = document.getElementById('tabBar');
+  if (tabBarEl) {
+    let _tabSwipeTouchId = -1;
+    let _tabSwipeStartY = 0;
+    tabBarEl.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      if (e.touches.length === 1 && t) {
+        _tabSwipeTouchId = t.identifier;
+        _tabSwipeStartY = t.clientY;
+      }
+    }, { passive: true });
+    tabBarEl.addEventListener('touchend', (e) => {
+      const touch = Array.from(e.changedTouches).find((t) => t.identifier === _tabSwipeTouchId);
+      if (!touch) return;
+      _tabSwipeTouchId = -1;
+      const deltaY = touch.clientY - _tabSwipeStartY;
+      if (deltaY > 30 && appState.tabBarVisible) {
+        appState.tabBarVisible = false;
+        _applyTabBarVisibility();
+      }
+    }, { passive: true });
+  }
 
   backdrop.addEventListener('mousedown', (e) => { if (_keyboardVisible()) e.preventDefault(); });
   backdrop.addEventListener('click', closeMenu);
@@ -2326,13 +2366,6 @@ export function initFilesPanel(): void {
   document.getElementById('transferUploadBtn')?.addEventListener('click', () => {
     const fileInput = document.querySelector<HTMLInputElement>('#filesExplore .files-upload-input');
     fileInput?.click();
-  });
-
-  // On first Files tab activation *per session*, resolve home dir via
-  // sftp_realpath then navigate (#409).
-  const filesTab = document.querySelector<HTMLElement>('[data-panel="files"]');
-  filesTab?.addEventListener('click', () => {
-    _activateFilesForCurrentSession();
   });
 
   // Session menu: Files entry — opens the files panel for the active session (#409)

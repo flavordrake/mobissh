@@ -25,6 +25,12 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
+// Navigate to the Files panel via the session menu (Files tab removed in #449).
+async function openFilesFromMenu(page) {
+  await page.locator('#sessionMenuBtn').click();
+  await page.locator('#sessionFilesBtn').click();
+}
+
 test.describe('Panel navigation smoke', { tag: '@headless-adequate' }, () => {
 
   test('all tabs render their panel without console errors (no connection)', async ({ page }) => {
@@ -48,12 +54,8 @@ test.describe('Panel navigation smoke', { tag: '@headless-adequate' }, () => {
     await page.locator('[data-panel="settings"]').click();
     await expect(page.locator('#panel-settings')).toHaveClass(/active/);
 
-    // Keys tab
-    await page.locator('[data-panel="keys"]').click();
-    await expect(page.locator('#panel-keys')).toHaveClass(/active/);
-
-    // Files tab — panel activates; sftp_realpath is silently dropped (not connected)
-    await page.locator('[data-panel="files"]').click();
+    // Files — reached via session menu entry (#449: no top-level Files tab)
+    await openFilesFromMenu(page);
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     // Terminal tab
@@ -78,7 +80,7 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    await page.locator('[data-panel="files"]').click();
+    await openFilesFromMenu(page);
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     // sendSftpRealpath guard returns early when not connected — no WS traffic, no errors
@@ -99,7 +101,7 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
     await showTabBar(page);
 
     // Navigate to Files tab
-    await page.locator('[data-panel="files"]').click();
+    await openFilesFromMenu(page);
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     // Wait for the app to send sftp_realpath to the mock server
@@ -162,7 +164,7 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
     await showTabBar(page);
 
     // Navigate to Files tab
-    await page.locator('[data-panel="files"]').click();
+    await openFilesFromMenu(page);
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     // Drive realpath + ls to get to a directory listing
@@ -256,7 +258,7 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
     await setupConnected(page, mockSshServer);
     await showTabBar(page);
 
-    await page.locator('[data-panel="files"]').click();
+    await openFilesFromMenu(page);
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
     await page.waitForFunction(
