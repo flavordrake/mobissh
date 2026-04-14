@@ -237,6 +237,7 @@
         </div>
         <div id="sessionMenu" class="hidden" role="menu">
           <div id="sessionList" class="session-list hidden" role="group" aria-label="Active sessions"></div>
+          <button id="sessionFilesBtn"      class="session-menu-item" role="menuitem">📁 Files</button>
           <div class="session-menu-item font-size-row" role="menuitem">
             <button id="fontDecBtn"   class="font-adj-btn" title="Decrease font size">A−</button>
             <span   id="fontSizeLabel">14px</span>
@@ -308,6 +309,9 @@
 
     <!-- Files panel -->
     <div id="panel-files" class="panel">
+      <div class="panel-header">
+        <button id="filesBackToTerminalBtn" class="panel-back-btn" aria-label="Back to terminal">← Terminal</button>
+      </div>
       <div id="filePreview" class="hidden"></div>
       <div id="filesExplore" class="files-subview active"></div>
       <div id="filesTransfer" class="files-subview hidden">
