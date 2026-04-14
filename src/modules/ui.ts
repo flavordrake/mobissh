@@ -63,6 +63,12 @@ export function navigateToPanel(
   document.querySelector<HTMLElement>(`[data-panel="${panel}"]`)?.classList.add('active');
   document.getElementById(`panel-${panel}`)?.classList.add('active');
 
+  // Persistent session chrome (handle strip, key bar, approval bar) is visible
+  // on session-level panels (terminal, files) and hidden on app-level panels
+  // (connect, settings). #452
+  const isSessionLevel = panel === 'terminal' || panel === 'files';
+  document.body.classList.toggle('session-chrome-hidden', !isSessionLevel);
+
   if (panel === 'terminal') {
     // Panel just became visible — fit the active session to real dimensions
     const s = currentSession();
@@ -2373,11 +2379,6 @@ export function initFilesPanel(): void {
     document.getElementById('sessionMenu')?.classList.add('hidden');
     document.getElementById('menuBackdrop')?.classList.add('hidden');
     navigateToPanel('files');
-  });
-
-  // Back-to-terminal button inside the files panel (#409)
-  document.getElementById('filesBackToTerminalBtn')?.addEventListener('click', () => {
-    navigateToPanel('terminal');
   });
 }
 

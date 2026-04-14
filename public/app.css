@@ -2713,31 +2713,11 @@ hr {
   display: flex;
 }
 
-/* Panel header with back-to-terminal button (#409) */
-.panel-header {
-  display: flex;
-  align-items: center;
-  padding: 6px 8px;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.panel-back-btn {
-  min-height: 44px;
-  min-width: 44px;
-  padding: 8px 14px;
-  background: transparent;
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-.panel-back-btn:active {
-  opacity: 0.7;
+/* Persistent session chrome hidden on app-level panels (Connect, Settings). #452 */
+body.session-chrome-hidden #key-bar-handle,
+body.session-chrome-hidden #key-bar,
+body.session-chrome-hidden #approvalBar {
+  display: none;
 }
 
 .files-subview {

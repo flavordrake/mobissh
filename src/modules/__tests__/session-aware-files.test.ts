@@ -57,20 +57,10 @@ describe('session-aware files (#409) — HTML', () => {
     expect(btnStart).toBeGreaterThan(menuStart);
   });
 
-  it('#panel-files contains a back-to-terminal button (filesBackToTerminalBtn)', () => {
-    const panelMatch = indexHtml.match(
-      /<div\s+id="panel-files"[\s\S]*?<\/div>\s*<!--/m
-    );
-    // Fallback: just check the whole file if the regex above fails, but anchor
-    // to an id that must be inside the files panel.
-    const haystack = panelMatch ? panelMatch[0] : indexHtml;
-    expect(haystack).toContain('id="filesBackToTerminalBtn"');
-  });
-
-  it('filesBackToTerminalBtn has panel-back-btn class', () => {
-    expect(indexHtml).toMatch(
-      /id="filesBackToTerminalBtn"[^>]*class="[^"]*panel-back-btn/
-    );
+  it('#panel-files no longer contains a back-to-terminal button (#452)', () => {
+    // The persistent session handle strip now provides navigation across panels,
+    // so the per-panel back button was removed. See #452.
+    expect(indexHtml).not.toContain('id="filesBackToTerminalBtn"');
   });
 });
 

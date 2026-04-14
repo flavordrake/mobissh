@@ -214,8 +214,27 @@
         <button id="selectionDismissBtn" class="selection-chip-btn selection-chip-dismiss" aria-label="Dismiss">✕</button>
       </div>
       <!-- IME preview element removed — actions are now on #imeContainer (#106) -->
-      <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
-      <div id="key-bar-handle" aria-label="Terminal controls">
+    </div>
+
+    <!-- Files panel -->
+    <div id="panel-files" class="panel">
+      <div id="filePreview" class="hidden"></div>
+      <div id="filesExplore" class="files-subview active"></div>
+      <div id="filesTransfer" class="files-subview hidden">
+        <div id="transferList" class="transfer-list"></div>
+        <button id="transferUploadBtn" class="files-upload-btn">Upload Files</button>
+      </div>
+      <div class="files-subtabs">
+        <button class="files-subtab active" data-subtab="explore">Explore</button>
+        <button class="files-subtab" data-subtab="transfer">Transfer</button>
+      </div>
+    </div>
+
+    <!-- Persistent session chrome — handle strip, key bar, approval bar.
+         Visible on Terminal and Files panels; hidden on Connect/Settings via
+         body.session-chrome-hidden. #452 -->
+    <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
+    <div id="key-bar-handle" aria-label="Terminal controls">
         <button id="handleMenuBtn" class="handle-btn handle-menu-btn" title="Show tabs" aria-label="Show tabs" data-tooltip="Show tabs">≡</button>
         <button id="handlePasteBtn" class="handle-paste-btn hidden" title="Paste clipboard" aria-label="Paste clipboard">Paste</button>
         <button id="sessionMenuBtn" title="Session menu" aria-label="Session menu" data-tooltip="Session menu">MobiSSH</button>
@@ -301,24 +320,6 @@
         </div>
         <div id="approvalButtons" class="approval-buttons"></div>
       </div>
-    </div>
-
-    <!-- Files panel -->
-    <div id="panel-files" class="panel">
-      <div class="panel-header">
-        <button id="filesBackToTerminalBtn" class="panel-back-btn" aria-label="Back to terminal">← Terminal</button>
-      </div>
-      <div id="filePreview" class="hidden"></div>
-      <div id="filesExplore" class="files-subview active"></div>
-      <div id="filesTransfer" class="files-subview hidden">
-        <div id="transferList" class="transfer-list"></div>
-        <button id="transferUploadBtn" class="files-upload-btn">Upload Files</button>
-      </div>
-      <div class="files-subtabs">
-        <button class="files-subtab active" data-subtab="explore">Explore</button>
-        <button class="files-subtab" data-subtab="transfer">Transfer</button>
-      </div>
-    </div>
 
     <!-- Connect panel -->
     <div id="panel-connect" class="panel">
