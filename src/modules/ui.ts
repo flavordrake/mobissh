@@ -2383,6 +2383,11 @@ export function initFilesPanel(): void {
     }
   });
 
+  // Close button (#459) — return to terminal
+  document.getElementById('filesCloseBtn')?.addEventListener('click', () => {
+    navigateToPanel('terminal');
+  });
+
   // Sub-tab switching
   document.querySelectorAll<HTMLElement>('.files-subtab').forEach((btn) => {
     btn.addEventListener('click', () => {
