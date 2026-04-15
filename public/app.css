@@ -2713,6 +2713,37 @@ hr {
   display: flex;
 }
 
+/* Persistent session bar (#452): when Files is active, #panel-terminal stays
+ * structurally "active" so its chrome (handle strip + key bar) keeps rendering.
+ * The Files panel is positioned as an overlay above the terminal content area
+ * only, leaving the chrome visible at the bottom. The terminal itself is
+ * hidden with `visibility: hidden` so layout is preserved and xterm.js does
+ * not re-fit. */
+body.files-overlay #panel-files {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  left: 0;
+  right: 0;
+  /* Leave room for the handle strip, key bar, and bottom nav.
+   * Values fall back if the custom properties are not yet set. */
+  bottom: calc(
+    var(--tab-height, 56px)
+    + var(--keybar-height, 0px)
+    + var(--keybar-handle-height, 22px)
+    + env(safe-area-inset-bottom)
+  );
+  z-index: 5;
+}
+
+body.files-overlay #terminal {
+  visibility: hidden;
+}
+
+/* Approval bar stays above the files overlay so it remains actionable. */
+body.files-overlay #approvalBar {
+  z-index: 6;
+}
+
 /* Panel header with back-to-terminal button (#409) */
 .panel-header {
   display: flex;

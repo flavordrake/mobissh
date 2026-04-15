@@ -63,6 +63,15 @@ export function navigateToPanel(
   document.querySelector<HTMLElement>(`[data-panel="${panel}"]`)?.classList.add('active');
   document.getElementById(`panel-${panel}`)?.classList.add('active');
 
+  // Persistent session bar (#452): keep panel-terminal structurally "active"
+  // when Files is showing so the chrome (handle strip + key bar) keeps
+  // rendering beneath the overlay. DO NOT MOVE any DOM elements — xterm.js
+  // and the ResizeObserver are coupled to the current structure.
+  if (panel === 'files') {
+    document.getElementById('panel-terminal')?.classList.add('active');
+  }
+  document.body.classList.toggle('files-overlay', panel === 'files');
+
   if (panel === 'terminal') {
     // Panel just became visible — fit the active session to real dimensions
     const s = currentSession();
@@ -2375,10 +2384,8 @@ export function initFilesPanel(): void {
     navigateToPanel('files');
   });
 
-  // Back-to-terminal button inside the files panel (#409)
-  document.getElementById('filesBackToTerminalBtn')?.addEventListener('click', () => {
-    navigateToPanel('terminal');
-  });
+  // Back-to-terminal button removed with the persistent session bar (#452).
+  // The ≡ session menu in the handle strip is always reachable.
 }
 
 /** Resolve and render the files panel for the currently active session,

@@ -542,7 +542,7 @@ export function editProfile(idx: number): void {
   }
 
   // Password field: save to vault on blur, not to localStorage
-  const pwInput = form.querySelector(`#editPassword-${String(idx)}`) as HTMLInputElement | null;
+  const pwInput = form.querySelector<HTMLInputElement>(`#editPassword-${String(idx)}`);
   if (pwInput) {
     pwInput.addEventListener('change', () => {
       void _savePasswordToVault(idx, pwInput.value);
@@ -613,17 +613,17 @@ function _showUndoToast(idx: number, field: string, oldValue: string | number): 
       (profile as unknown as Record<string, string | number>)[_lastUndo.field] = _lastUndo.oldValue;
       localStorage.setItem('sshProfiles', JSON.stringify(profiles));
       // Update the inline form field if still open
-      const input = document.querySelector(`[data-field="${_lastUndo.field}"]`) as HTMLInputElement | null;
+      const input = document.querySelector<HTMLInputElement>(`[data-field="${_lastUndo.field}"]`);
       if (input) input.value = String(_lastUndo.oldValue);
       _toast('Undone.');
     }
     _lastUndo = null;
-    el!.classList.remove('show');
+    el.classList.remove('show');
   };
   undoBtn?.addEventListener('click', handler, { once: true });
 
   _undoTimer = setTimeout(() => {
-    el!.classList.remove('show');
+    el.classList.remove('show');
     _lastUndo = null;
   }, 5000);
 }
@@ -686,7 +686,7 @@ export function loadKeys(): void {
 async function _updatePassphraseBadges(keys: StoredKey[]): Promise<void> {
   for (const k of keys) {
     try {
-      const record = await vaultLoad(k.vaultId) as Record<string, unknown> | null;
+      const record = await vaultLoad(k.vaultId);
       const badge = document.querySelector(`.key-passphrase-badge[data-vault-id="${CSS.escape(k.vaultId)}"]`);
       if (badge && record && typeof record.passphrase === 'string' && record.passphrase.length > 0) {
         badge.textContent = '\u{1F512} Passphrase set';
@@ -707,13 +707,13 @@ export async function editKey(idx: number): Promise<void> {
   if (item.querySelector('.key-edit-form')) return;
 
   // Hide action buttons while editing
-  const actions = item.querySelector('.item-actions') as HTMLElement | null;
+  const actions = item.querySelector<HTMLElement>('.item-actions');
   if (actions) actions.style.display = 'none';
 
   // Load existing passphrase from vault
   let existingPassphrase = '';
   try {
-    const record = await vaultLoad(key.vaultId) as Record<string, unknown> | null;
+    const record = await vaultLoad(key.vaultId);
     if (record && typeof record.passphrase === 'string') {
       existingPassphrase = record.passphrase;
     }
@@ -753,7 +753,7 @@ export async function saveKeyEdit(idx: number): Promise<void> {
 
   // Update passphrase in vault
   try {
-    const record = await vaultLoad(key.vaultId) as Record<string, unknown> | null;
+    const record = await vaultLoad(key.vaultId);
     if (record) {
       record.passphrase = passInput.value;
       await vaultStore(key.vaultId, record);
@@ -772,7 +772,7 @@ export function cancelKeyEdit(idx: number): void {
   const form = item.querySelector('.key-edit-form');
   if (form) form.remove();
 
-  const actions = item.querySelector('.item-actions') as HTMLElement | null;
+  const actions = item.querySelector<HTMLElement>('.item-actions');
   if (actions) actions.style.display = '';
 }
 
