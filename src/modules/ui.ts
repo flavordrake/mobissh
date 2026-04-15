@@ -504,7 +504,17 @@ export function initSessionMenu(): void {
     });
   }
 
+  // Flag set by swipe touchend to suppress the synthesized click that follows
+  // (prevents menu from opening when user swipes to switch sessions).
+  let _suppressNextClick = false;
+
   menuBtn.addEventListener('click', (e) => {
+    if (_suppressNextClick) {
+      _suppressNextClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+      return;
+    }
     e.stopPropagation();
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
@@ -552,9 +562,11 @@ export function initSessionMenu(): void {
 
   menuBtn.addEventListener('touchend', (e) => {
     if (!_swipeClaimed) { _swipeX0 = null; return; }
-    // No swipe guard — the menu should NEVER be blocked
+    // Swipe was claimed — suppress the click that will follow so the menu doesn't open
+    _suppressNextClick = true;
     const dx = (e.changedTouches[0]?.clientX ?? _swipeX0 ?? 0) - (_swipeX0 ?? 0);
     _swipeX0 = null;
+    _swipeClaimed = false;
     menuBtn.style.opacity = '';
 
     const keys = Array.from(appState.sessions.keys());
