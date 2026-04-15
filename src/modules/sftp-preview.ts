@@ -234,10 +234,11 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
     }
     case 'text': {
       const text = toText(data);
+      const copyBtn = buildCopyAllBtn(text);
       if (extOf(filename) === '.md') {
-        return renderMarkdown(text);
+        return `<div class="preview-with-copy">${copyBtn}${renderMarkdown(text)}</div>`;
       }
-      return `<pre>${escapeHtml(text)}</pre>`;
+      return `<div class="preview-with-copy">${copyBtn}<pre>${escapeHtml(text)}</pre></div>`;
     }
     case 'html': {
       const html = toText(data);
@@ -251,7 +252,15 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
 
 function renderSource(data: Uint8Array | string): string {
   const text = toText(data);
-  return `<pre class="source-view">${escapeHtml(text)}</pre>`;
+  const copyBtn = buildCopyAllBtn(text);
+  return `<div class="preview-with-copy">${copyBtn}<pre class="source-view">${escapeHtml(text)}</pre></div>`;
+}
+
+/** Build a Copy All button carrying the raw source text as a base64 data attribute.
+ *  Base64 (UTF-8 safe) avoids HTML-attribute escaping concerns for multi-line/quoted text. */
+function buildCopyAllBtn(rawText: string): string {
+  const encoded = btoa(unescape(encodeURIComponent(rawText)));
+  return `<button class="preview-copy-all-btn" aria-label="Copy all" data-source="${encoded}" title="Copy all">Copy All</button>`;
 }
 
 // ── Preview panel with source/rendered toggle ────────────────────────────────
