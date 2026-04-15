@@ -14,6 +14,7 @@ import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, c
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
+import { attachPinchZoom, type PinchZoomController } from './pinch-zoom.js';
 
 /** Update session menu button text without clobbering child elements like badges (#355). */
 function _setMenuBtnText(text: string): void {
@@ -1832,9 +1833,23 @@ function _showFilePreview(filename: string, data: Uint8Array): void {
 
   history.pushState({ type: 'preview' }, '');
 
-  _activePreviewCleanup = (): void => { panel.cleanup(); };
+  // Attach pinch-zoom to any image preview viewports inside the panel
+  const zoomControllers: PinchZoomController[] = [];
+  const viewports = panel.querySelectorAll<HTMLElement>('.preview-zoom-viewport');
+  viewports.forEach((vp) => {
+    const tgt = vp.querySelector<HTMLElement>('.preview-zoom-target');
+    if (tgt) {
+      zoomControllers.push(attachPinchZoom(vp, tgt));
+    }
+  });
+
+  _activePreviewCleanup = (): void => {
+    for (const c of zoomControllers) c.destroy();
+    panel.cleanup();
+  };
 
   function closePreview(): void {
+    for (const c of zoomControllers) c.destroy();
     panel.cleanup();
     _activePreviewCleanup = null;
     container.classList.add('hidden');

@@ -221,7 +221,7 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
       const blob = new Blob([bytes as BlobPart], { type: mime });
       const url = URL.createObjectURL(blob);
       _lastBlobUrls.push(url);
-      return `<img src="${url}" alt="${escapeHtml(filename)}" style="max-width:100%;max-height:80vh;">`;
+      return `<div class="preview-zoom-viewport"><img class="preview-zoom-target" src="${url}" alt="${escapeHtml(filename)}"></div>`;
     }
     case 'video': {
       const ext = extOf(filename);

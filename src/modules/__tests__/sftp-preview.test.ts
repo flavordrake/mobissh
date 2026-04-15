@@ -130,6 +130,20 @@ describe('renderPreview', () => {
     expect(html).toContain('blob:');
   });
 
+  it('wraps image in .preview-zoom-viewport and uses .preview-zoom-target class on <img>', () => {
+    const data = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const html = renderPreview('photo.png', data);
+    expect(html).toContain('preview-zoom-viewport');
+    expect(html).toContain('preview-zoom-target');
+  });
+
+  it('wraps SVG image in zoom viewport (same image path)', () => {
+    const data = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    const html = renderPreview('icon.svg', data);
+    expect(html).toContain('preview-zoom-viewport');
+    expect(html).toContain('preview-zoom-target');
+  });
+
   it('returns rendered HTML for markdown files (headers)', () => {
     const md = new TextEncoder().encode('# Hello World\n\nSome text');
     const html = renderPreview('README.md', md);

@@ -3071,3 +3071,25 @@ body.files-overlay #approvalBar {
   font-size: 13px;
   line-height: 1.6;
 }
+
+/* Pinch-zoom image preview (#456) */
+.preview-zoom-viewport {
+  max-width: 100%;
+  max-height: 80vh;
+  overflow: hidden;
+  touch-action: none;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.preview-zoom-target {
+  transform-origin: center center;
+  transform: translate(0, 0) scale(1);
+  transition: none;
+  max-width: 100%;
+  max-height: 80vh;
+  user-select: none;
+  pointer-events: none;
+}
