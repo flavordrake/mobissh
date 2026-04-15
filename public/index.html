@@ -156,6 +156,20 @@
     </div>
   </div>
 
+  <!-- Notifications review modal (#458) -->
+  <div id="notifModal" class="notif-modal hidden" role="dialog" aria-label="Notifications">
+    <div class="notif-modal-content">
+      <div class="notif-modal-header">
+        <h3 class="notif-modal-title">Notifications</h3>
+        <button id="notifCloseBtn" class="notif-modal-close" aria-label="Close">✕</button>
+      </div>
+      <div id="notifModalList" class="notif-modal-list"></div>
+      <div class="notif-modal-footer">
+        <button id="notifClearAllModal" class="notif-modal-btn danger">Clear All</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Key passphrase prompt — shown at connect time for encrypted keys (#54) -->
   <div id="keyPassphraseOverlay" class="vault-overlay hidden" role="dialog" aria-label="Key passphrase">
     <div class="vault-dialog">
@@ -234,6 +248,7 @@
         <div id="sessionMenu" class="hidden" role="menu">
           <div id="sessionList" class="session-list hidden" role="group" aria-label="Active sessions"></div>
           <button id="sessionFilesBtn"      class="session-menu-item" role="menuitem">📁 Files</button>
+          <button id="sessionNotifBtn"      class="session-menu-item" role="menuitem">🔔 Notifications</button>
           <div class="session-menu-item font-size-row" role="menuitem">
             <button id="fontDecBtn"   class="font-adj-btn" title="Decrease font size">A−</button>
             <span   id="fontSizeLabel">14px</span>
