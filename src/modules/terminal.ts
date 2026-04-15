@@ -83,22 +83,50 @@ function _updateBellBadge(): void {
     badge.textContent = '0';
   }
 
-  // Update session title with notification count badge
+  // Update session title with a structured badge span (#458).
+  // Legacy format was `${base} (${count})` via textContent.
+  // New format: <span class="session-title-text">base</span><span class="session-title-badge">N</span>
   const sessionBtn = document.getElementById('sessionMenuBtn');
   if (!sessionBtn) return;
   const count = _notifications.length;
 
-  // Capture base name — strip badge span if present, or strip parens for compat
-  const current = sessionBtn.textContent || '';
-  const baseMatch = current.replace(/\s*\(\d+\)$/, '').replace(/\s*\d+$/, '');
-  if (baseMatch && baseMatch !== _sessionTitleBase) _sessionTitleBase = baseMatch;
-  if (!_sessionTitleBase) _sessionTitleBase = current;
-
-  if (count > 0) {
-    sessionBtn.textContent = `${_sessionTitleBase} (${String(count)})`;
+  // Capture base: prefer .session-title-text span; else strip legacy "(N)" suffix.
+  const textSpan = sessionBtn.querySelector('.session-title-text');
+  let base: string;
+  if (textSpan?.textContent) {
+    base = textSpan.textContent;
   } else {
-    sessionBtn.textContent = _sessionTitleBase;
+    const current = sessionBtn.textContent || '';
+    base = current.replace(/\s*\(\d+\)$/, '');
   }
+  if (base && base !== _sessionTitleBase) _sessionTitleBase = base;
+  if (!_sessionTitleBase) _sessionTitleBase = base;
+
+  setSessionTitleDOM(sessionBtn, _sessionTitleBase, count);
+}
+
+/** Render the session-menu button's label with an optional count badge (#458). */
+export function setSessionTitleDOM(btn: Element, base: string, count: number): void {
+  const safeBase = escHtml(base);
+  if (count > 0) {
+    btn.innerHTML =
+      `<span class="session-title-text">${safeBase}</span>` +
+      `<span class="session-title-badge">${escHtml(String(count))}</span>`;
+  } else {
+    btn.innerHTML = `<span class="session-title-text">${safeBase}</span>`;
+  }
+}
+
+/** Update the session title base while preserving the notification badge count (#458). */
+export function setSessionTitleBase(text: string): void {
+  _sessionTitleBase = text;
+  const btn = document.getElementById('sessionMenuBtn');
+  if (btn) setSessionTitleDOM(btn, text, _notifications.length);
+}
+
+/** Read the currently-rendered session title base (for tests / #458). */
+export function getSessionTitleBase(): string {
+  return _sessionTitleBase;
 }
 
 // ── CSS layout constants (read from :root on first access; JS never hardcodes px values) ─

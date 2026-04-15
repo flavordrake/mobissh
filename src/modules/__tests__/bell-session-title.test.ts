@@ -43,10 +43,14 @@ function makeMockElement(opts: {
   children?: Record<string, { text?: string; classes?: Set<string> }>;
 }): Record<string, unknown> {
   const el: Record<string, unknown> = {
-    get textContent() { return opts.text ?? ''; },
-    set textContent(v: string) { if (opts.text !== undefined) { /* stored externally */ } opts.text = v; },
+    get textContent() {
+      // If innerHTML is set with spans, derive text from it (#458).
+      if (opts.innerHTML) return opts.innerHTML.replace(/<[^>]+>/g, '');
+      return opts.text ?? '';
+    },
+    set textContent(v: string) { opts.text = v; opts.innerHTML = v; },
     get innerHTML() { return opts.innerHTML ?? ''; },
-    set innerHTML(v: string) { if (opts.innerHTML !== undefined) opts.innerHTML = v; },
+    set innerHTML(v: string) { opts.innerHTML = v; opts.text = v.replace(/<[^>]+>/g, ''); },
     get className() { return Array.from(opts.classes ?? []).join(' '); },
     classList: {
       add: (...names: string[]) => { for (const n of names) opts.classes?.add(n); },
@@ -78,6 +82,18 @@ function makeMockElement(opts: {
               return shouldHave;
             },
           },
+        };
+      }
+      // Parse .session-title-text / .session-title-badge spans from innerHTML (#458)
+      if (sel === '.session-title-badge' || sel === '.session-title-text') {
+        const cls = sel.slice(1);
+        const html = String(opts.innerHTML ?? '');
+        const re = new RegExp(`<span\\s+class="([^"]*\\b${cls}\\b[^"]*)"[^>]*>([^<]*)</span>`);
+        const m = re.exec(html);
+        if (!m) return null;
+        return {
+          get textContent() { return m[2] ?? ''; },
+          get className() { return m[1] ?? ''; },
         };
       }
       // For notification entries inside the session menu
@@ -204,32 +220,36 @@ describe('#251: notification count in session title', () => {
   });
 
   describe('session title shows notification count', () => {
-    it('includes count in parens when notifications exist, e.g. "user@host (3)"', () => {
-      // After adding 3 notifications, the session menu button text should
-      // include the count appended to the session title.
+    it('renders .session-title-badge span when notifications exist (#458)', () => {
       _addNotification('build started');
       _addNotification('build step 2');
       _addNotification('build complete');
 
-      // The feature should update #sessionMenuBtn text to include the count.
-      // We re-query the element to get the updated text.
-      const btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
+      const btn = getElementById('sessionMenuBtn') as {
+        querySelector: (s: string) => { textContent: string } | null;
+      } | null;
       expect(btn).not.toBeNull();
-      // Expected format: "user@host (3)" — the count in parentheses
-      expect(btn!.textContent).toMatch(/\(3\)/);
+      const badge = btn!.querySelector('.session-title-badge');
+      expect(badge).not.toBeNull();
+      expect(badge!.textContent).toBe('3');
     });
 
-    it('shows no count when zero notifications', () => {
-      // With zero notifications, the session title should be plain (no parens).
-      const btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
+    it('shows no badge span when zero notifications (#458)', () => {
+      const btn = getElementById('sessionMenuBtn') as {
+        querySelector: (s: string) => { textContent: string } | null;
+      } | null;
       expect(btn).not.toBeNull();
-      expect(btn!.textContent).not.toMatch(/\(\d+\)/);
+      expect(btn!.querySelector('.session-title-badge')).toBeNull();
     });
 
-    it('shows count of 1 after a single notification', () => {
+    it('badge textContent is "1" after a single notification (#458)', () => {
       _addNotification('single alert');
-      const btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
-      expect(btn!.textContent).toMatch(/\(1\)/);
+      const btn = getElementById('sessionMenuBtn') as {
+        querySelector: (s: string) => { textContent: string } | null;
+      } | null;
+      const badge = btn!.querySelector('.session-title-badge');
+      expect(badge).not.toBeNull();
+      expect(badge!.textContent).toBe('1');
     });
   });
 
@@ -275,42 +295,48 @@ describe('#251: notification count in session title', () => {
   });
 
   describe('count updates on new notification', () => {
-    it('session title count increments after _addNotification()', () => {
+    it('badge textContent tracks notification count (#458)', () => {
+      const q = (): { textContent: string } | null => {
+        const b = getElementById('sessionMenuBtn') as {
+          querySelector: (s: string) => { textContent: string } | null;
+        } | null;
+        return b?.querySelector('.session-title-badge') ?? null;
+      };
       _addNotification('first');
-      let btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
-      expect(btn!.textContent).toMatch(/\(1\)/);
-
+      expect(q()!.textContent).toBe('1');
       _addNotification('second');
-      btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
-      expect(btn!.textContent).toMatch(/\(2\)/);
-
+      expect(q()!.textContent).toBe('2');
       _addNotification('third');
-      btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
-      expect(btn!.textContent).toMatch(/\(3\)/);
+      expect(q()!.textContent).toBe('3');
     });
   });
 
   describe('count clears on clearNotifications', () => {
-    it('session title shows no count after clearNotifications()', () => {
+    it('badge span disappears after clearNotifications() (#458)', () => {
       _addNotification('alert one');
       _addNotification('alert two');
 
-      // Verify count is shown
-      let btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
-      expect(btn!.textContent).toMatch(/\(2\)/);
-
-      // Clear and verify count disappears
+      const q = (): unknown => {
+        const b = getElementById('sessionMenuBtn') as {
+          querySelector: (s: string) => unknown;
+        } | null;
+        return b?.querySelector('.session-title-badge') ?? null;
+      };
+      expect(q()).not.toBeNull();
       clearNotifications();
-      btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
-      expect(btn!.textContent).not.toMatch(/\(\d+\)/);
+      expect(q()).toBeNull();
     });
 
-    it('session title reverts to plain text after clearing', () => {
+    it('.session-title-text reverts to base label after clearing (#458)', () => {
       _addNotification('some alert');
       clearNotifications();
-      const btn = getElementById('sessionMenuBtn') as { textContent: string } | null;
-      // Should be just the session label, no parenthetical count
-      expect(btn!.textContent).toBe('user@host');
+      const btn = getElementById('sessionMenuBtn') as {
+        querySelector: (s: string) => { textContent: string } | null;
+        textContent: string;
+      } | null;
+      const txt = btn!.querySelector('.session-title-text');
+      const val = txt ? txt.textContent : btn!.textContent;
+      expect(val).toBe('user@host');
     });
   });
 });

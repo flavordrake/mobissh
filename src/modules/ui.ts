@@ -8,19 +8,54 @@
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
-import { applyTheme, _addNotification, fireNotification } from './terminal.js';
+import { applyTheme, _addNotification, fireNotification, setSessionTitleBase, clearNotifications, getNotifications } from './terminal.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
 
-/** Update session menu button text without clobbering child elements like badges (#355). */
+/** Update session menu button text without clobbering the notification badge (#458).
+ * Delegates to setSessionTitleBase which preserves the current notification count. */
 function _setMenuBtnText(text: string): void {
-  const btn = document.getElementById('sessionMenuBtn');
-  if (!btn) return;
-  const textNode = Array.from(btn.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
-  if (textNode) { textNode.textContent = text; } else { btn.prepend(document.createTextNode(text)); }
+  setSessionTitleBase(text);
+}
+
+// ── Notifications review modal (#458) ───────────────────────────────────────
+
+function _formatRelativeTime(ts: number): string {
+  const delta = Date.now() - ts;
+  const mins = Math.floor(delta / 60000);
+  if (mins < 1) return 'just now';
+  if (mins === 1) return '1 min ago';
+  if (mins < 60) return `${String(mins)} mins ago`;
+  const hours = Math.floor(mins / 60);
+  return hours === 1 ? '1 hour ago' : `${String(hours)} hours ago`;
+}
+
+function _renderNotifModalList(): void {
+  const list = document.getElementById('notifModalList');
+  if (!list) return;
+  const notifs = getNotifications();
+  if (notifs.length === 0) {
+    list.innerHTML = '<p class="notif-modal-empty">No notifications</p>';
+    return;
+  }
+  list.innerHTML = notifs.slice().reverse().map((n) => {
+    const age = _formatRelativeTime(n.time);
+    return `<div class="notif-modal-item">`
+      + `<div class="notif-modal-item-time">${escHtml(age)}</div>`
+      + `<div class="notif-modal-item-message">${escHtml(n.message)}</div>`
+      + `</div>`;
+  }).join('');
+}
+
+/** Open the notifications review modal (#458). */
+export function showNotifModal(): void {
+  const modal = document.getElementById('notifModal');
+  if (!modal) return;
+  _renderNotifModalList();
+  modal.classList.remove('hidden');
 }
 
 // ── Hash routing (#137) ─────────────────────────────────────────────────────
@@ -2382,6 +2417,29 @@ export function initFilesPanel(): void {
     document.getElementById('sessionMenu')?.classList.add('hidden');
     document.getElementById('menuBackdrop')?.classList.add('hidden');
     navigateToPanel('files');
+  });
+
+  // Session menu: Notifications entry — opens the review modal (#458)
+  document.getElementById('sessionNotifBtn')?.addEventListener('click', () => {
+    document.getElementById('sessionMenu')?.classList.add('hidden');
+    document.getElementById('menuBackdrop')?.classList.add('hidden');
+    showNotifModal();
+  });
+
+  document.getElementById('notifCloseBtn')?.addEventListener('click', () => {
+    document.getElementById('notifModal')?.classList.add('hidden');
+  });
+
+  document.getElementById('notifClearAllModal')?.addEventListener('click', () => {
+    clearNotifications();
+    document.getElementById('notifModal')?.classList.add('hidden');
+  });
+
+  // Dismiss modal on backdrop click (but not when clicking modal content)
+  document.getElementById('notifModal')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+      (e.currentTarget as HTMLElement).classList.add('hidden');
+    }
   });
 
   // Back-to-terminal button removed with the persistent session bar (#452).
