@@ -1102,10 +1102,8 @@ html, body {
   transition: background 0.2s ease, opacity 0.2s ease;
 }
 
-/* Connected: solid accent (overrides compose's same color — visually identical) */
-body[data-session-state="connected"] #key-bar::before {
-  background: var(--accent);
-}
+/* Connected: no status overlay — let compose mode's border-top show through
+ * (bar is hidden when compose is off, solid accent when compose is on). */
 
 /* Connecting / reconnecting / authenticating: shimmer gradient sweep */
 body[data-session-state="connecting"] #key-bar::before,
