@@ -327,64 +327,13 @@ html, body {
   align-items: center;
   height: var(--keybar-handle-height);
   background: var(--bg-panel);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
   user-select: none;
   -webkit-user-select: none;
   position: relative; /* anchor for #sessionMenu */
 }
 #key-bar-handle:active { background: rgba(255,255,255,0.05); }
-
-/* Session connection status bar — replaces the ::before dot indicator (#458 follow-up).
- * 3px animated bar on top edge of the handle strip. State is driven by
- * body data-session-state attribute set by JS. */
-#key-bar-handle::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--border);
-  pointer-events: none;
-}
-
-/* Connected: solid accent color across the bar */
-body[data-session-state="connected"] #key-bar-handle::before {
-  background: var(--accent, #4a9eff);
-}
-
-/* Reconnecting / connecting: shimmer — animated gradient sweep */
-body[data-session-state="connecting"] #key-bar-handle::before,
-body[data-session-state="reconnecting"] #key-bar-handle::before,
-body[data-session-state="authenticating"] #key-bar-handle::before {
-  background: linear-gradient(
-    90deg,
-    var(--accent-dim, rgba(74, 158, 255, 0.35)) 0%,
-    var(--accent, #4a9eff) 50%,
-    var(--accent-dim, rgba(74, 158, 255, 0.35)) 100%
-  );
-  background-size: 200% 100%;
-  animation: sessionStatusShimmer 1.5s linear infinite;
-}
-
-@keyframes sessionStatusShimmer {
-  0%   { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
-}
-
-/* Disconnected / failed: dimmed, dark in the middle */
-body[data-session-state="disconnected"] #key-bar-handle::before,
-body[data-session-state="soft_disconnected"] #key-bar-handle::before,
-body[data-session-state="failed"] #key-bar-handle::before,
-body[data-session-state="closed"] #key-bar-handle::before {
-  background: linear-gradient(
-    90deg,
-    var(--accent-dim, rgba(74, 158, 255, 0.25)) 0%,
-    transparent 50%,
-    var(--accent-dim, rgba(74, 158, 255, 0.25)) 100%
-  );
-  opacity: 0.5;
-}
 
 /* Center zone: current session identity */
 #sessionMenuBtn {
@@ -1126,14 +1075,69 @@ body[data-session-state="closed"] #key-bar-handle::before {
   border-color: var(--accent);
 }
 
-/* Mode indicator line between terminal and key bar */
+/* Mode + session-status indicator line between handle strip and key bar.
+ * Compose-active uses border-top color; session state uses a background gradient
+ * on the top edge via ::before, so both signals can coexist. */
 #key-bar {
   border-top: 2px solid transparent;
   transition: border-top-color 0.15s ease;
+  position: relative;
 }
 
 #key-bar.compose-active {
   border-top-color: var(--accent);
+}
+
+/* Session status: thin overlay on the same 2px top edge.
+ * Driven by body[data-session-state]. */
+#key-bar::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  pointer-events: none;
+  background: transparent;
+  transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+/* Connected: solid accent (overrides compose's same color — visually identical) */
+body[data-session-state="connected"] #key-bar::before {
+  background: var(--accent);
+}
+
+/* Connecting / reconnecting / authenticating: shimmer gradient sweep */
+body[data-session-state="connecting"] #key-bar::before,
+body[data-session-state="reconnecting"] #key-bar::before,
+body[data-session-state="authenticating"] #key-bar::before {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: sessionStatusShimmer 1.4s linear infinite;
+}
+
+@keyframes sessionStatusShimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Disconnected / failed: dim, darker at center */
+body[data-session-state="disconnected"] #key-bar::before,
+body[data-session-state="soft_disconnected"] #key-bar::before,
+body[data-session-state="failed"] #key-bar::before,
+body[data-session-state="closed"] #key-bar::before {
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    transparent 50%,
+    var(--accent) 100%
+  );
+  opacity: 0.35;
 }
 
 .key-btn {
