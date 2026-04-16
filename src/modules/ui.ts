@@ -263,13 +263,22 @@ export function setStatus(state: ConnectionStatus, text: string): void {
   if (state === 'connected') {
     _setMenuBtnText(text);
   } else {
-    // Only reset to 'MobiSSH' if NO session is connected — a background session
-    // disconnecting shouldn't clobber the active connected session's name (#362)
-    const anyConnected = Array.from(appState.sessions.values()).some(s => isSessionConnected(s));
-    if (!anyConnected) _setMenuBtnText('MobiSSH');
+    // Preserve the active session's title even when disconnected — losing
+    // the title loses context of what session you were in. Only fall back
+    // to "MobiSSH" if there is no active session at all.
+    const active = appState.activeSessionId ? appState.sessions.get(appState.activeSessionId) : null;
+    if (!active?.profile) {
+      _setMenuBtnText('MobiSSH');
+    }
   }
   const btn = document.getElementById('sessionMenuBtn');
   if (btn) btn.classList.toggle('connected', state === 'connected');
+
+  // Drive the separator-bar status indicator via body data-attribute
+  const active = appState.activeSessionId ? appState.sessions.get(appState.activeSessionId) : null;
+  const stateAttr = active ? active.state : '';
+  document.body.dataset.sessionState = stateAttr;
+
   // Enable/disable upload buttons based on connection state
   const connected = state === 'connected';
   document.querySelectorAll<HTMLButtonElement>('.files-upload-btn, #transferUploadBtn').forEach(b => {
@@ -388,6 +397,8 @@ export function switchSession(id: string): void {
       btn.classList.add('disconnected');
     }
   }
+  // Drive the separator-bar status indicator
+  document.body.dataset.sessionState = session.state;
 
   // Close the menu
   document.getElementById('sessionMenu')?.classList.add('hidden');
@@ -445,6 +456,7 @@ export function closeSession(id: string): void {
       _setMenuBtnText('MobiSSH');
       const btn = document.getElementById('sessionMenuBtn');
       if (btn) btn.classList.remove('connected');
+      document.body.dataset.sessionState = '';
       // Restore default theme from localStorage
       const defaultTheme = localStorage.getItem('termTheme') ?? 'dark';
       _applyTheme(defaultTheme);
@@ -484,6 +496,8 @@ export function initSessionMenu(): void {
       } else {
         btn.classList.add('disconnected');
       }
+      // Drive the separator-bar status indicator for the active session
+      document.body.dataset.sessionState = newState;
     }
   });
 

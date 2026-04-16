@@ -327,13 +327,64 @@ html, body {
   align-items: center;
   height: var(--keybar-handle-height);
   background: var(--bg-panel);
-  border-top: 1px solid var(--border);
   flex-shrink: 0;
   user-select: none;
   -webkit-user-select: none;
   position: relative; /* anchor for #sessionMenu */
 }
 #key-bar-handle:active { background: rgba(255,255,255,0.05); }
+
+/* Session connection status bar — replaces the ::before dot indicator (#458 follow-up).
+ * 3px animated bar on top edge of the handle strip. State is driven by
+ * body data-session-state attribute set by JS. */
+#key-bar-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+/* Connected: solid accent color across the bar */
+body[data-session-state="connected"] #key-bar-handle::before {
+  background: var(--accent, #4a9eff);
+}
+
+/* Reconnecting / connecting: shimmer — animated gradient sweep */
+body[data-session-state="connecting"] #key-bar-handle::before,
+body[data-session-state="reconnecting"] #key-bar-handle::before,
+body[data-session-state="authenticating"] #key-bar-handle::before {
+  background: linear-gradient(
+    90deg,
+    var(--accent-dim, rgba(74, 158, 255, 0.35)) 0%,
+    var(--accent, #4a9eff) 50%,
+    var(--accent-dim, rgba(74, 158, 255, 0.35)) 100%
+  );
+  background-size: 200% 100%;
+  animation: sessionStatusShimmer 1.5s linear infinite;
+}
+
+@keyframes sessionStatusShimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Disconnected / failed: dimmed, dark in the middle */
+body[data-session-state="disconnected"] #key-bar-handle::before,
+body[data-session-state="soft_disconnected"] #key-bar-handle::before,
+body[data-session-state="failed"] #key-bar-handle::before,
+body[data-session-state="closed"] #key-bar-handle::before {
+  background: linear-gradient(
+    90deg,
+    var(--accent-dim, rgba(74, 158, 255, 0.25)) 0%,
+    transparent 50%,
+    var(--accent-dim, rgba(74, 158, 255, 0.25)) 100%
+  );
+  opacity: 0.5;
+}
 
 /* Center zone: current session identity */
 #sessionMenuBtn {
@@ -356,19 +407,6 @@ html, body {
 
 #sessionMenuBtn.connected { color: var(--text); }
 #sessionMenuBtn.disconnected { color: var(--text-dim); }
-#sessionMenuBtn::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-right: 4px;
-  vertical-align: middle;
-  background: transparent;
-}
-#sessionMenuBtn.connected::before { background: #4c4; }
-#sessionMenuBtn.disconnected::before { background: #e44; }
-#sessionMenuBtn.connecting::before { background: #ea3; }
 #sessionMenuBtn:active { color: var(--accent); }
 
 /* Session menu popover — floats upward above handle strip */
