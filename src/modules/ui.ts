@@ -533,13 +533,11 @@ export function initSessionMenu(): void {
   // ── Swipe left/right on session title to switch sessions ──────────────
   let _swipeX0: number | null = null;
   let _swipeClaimed = false;
-  const _origText = { value: '' };
 
   menuBtn.addEventListener('touchstart', (e) => {
     if (appState.sessions.size <= 1) return;
     _swipeX0 = e.touches[0]!.clientX;
     _swipeClaimed = false;
-    _origText.value = menuBtn.textContent || '';
   }, { passive: true });
 
   menuBtn.addEventListener('touchmove', (e) => {
@@ -548,15 +546,10 @@ export function initSessionMenu(): void {
     if (!_swipeClaimed && Math.abs(dx) > 30) {
       _swipeClaimed = true;
       e.preventDefault();
-      // Peek: show next/prev session name
-      const keys = Array.from(appState.sessions.keys());
-      const idx = keys.indexOf(appState.activeSessionId ?? '');
-      const targetIdx = (idx + (dx > 0 ? -1 : 1) + keys.length) % keys.length;
-      const target = appState.sessions.get(keys[targetIdx]!);
-      if (target?.profile) {
-        menuBtn.textContent = `→ ${target.profile.title || `${target.profile.username}@${target.profile.host}`}`;
-        menuBtn.style.opacity = '0.6';
-      }
+      // Optimistic preview (peek) was removed — it was causing confusion where
+      // the first swipe appeared to preview but not commit. Touchend now does
+      // the work; visual feedback via opacity only.
+      menuBtn.style.opacity = '0.6';
     }
   }, { passive: false });
 
