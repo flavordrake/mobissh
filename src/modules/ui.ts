@@ -1067,10 +1067,6 @@ export function initTerminalActions(): void {
   const keyBar = document.getElementById('key-bar');
   if (keyBar) {
     keyBar.addEventListener('mousedown', (e) => { e.preventDefault(); });
-    keyBar.addEventListener('touchstart', (e) => {
-      const target = e.target as Element | null;
-      if (target?.closest('.key-btn')) e.preventDefault();
-    }, { passive: false });
     keyBar.querySelectorAll<HTMLElement>('.key-btn').forEach((btn) => {
       btn.setAttribute('tabindex', '-1');
     });
