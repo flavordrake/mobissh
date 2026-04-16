@@ -1108,25 +1108,23 @@ html, body {
   border-color: var(--accent);
 }
 
-/* Mode + session-status indicator line between handle strip and key bar.
- * Compose-active uses border-top color; session state uses a background gradient
- * on the top edge via ::before, so both signals can coexist. */
+/* Mode indicator line between terminal and key bar */
 #key-bar {
   border-top: 2px solid transparent;
   transition: border-top-color 0.15s ease;
-  position: relative;
 }
 
 #key-bar.compose-active {
   border-top-color: var(--accent);
 }
 
-/* Session status: thin overlay on the same 2px top edge.
- * Driven by body[data-session-state]. */
-#key-bar::before {
+/* Session status indicator — 2px bar on the BOTTOM of the handle strip.
+ * key-bar has overflow:hidden so we can't use ::before there.
+ * Handle strip's ::after sits on its bottom edge, visually between handle and key-bar. */
+#key-bar-handle::after {
   content: '';
   position: absolute;
-  top: -2px;
+  bottom: 0;
   left: 0;
   right: 0;
   height: 2px;
@@ -1135,13 +1133,12 @@ html, body {
   transition: background 0.2s ease, opacity 0.2s ease;
 }
 
-/* Connected: no status overlay — let compose mode's border-top show through
- * (bar is hidden when compose is off, solid accent when compose is on). */
+/* Connected: no status overlay — compose's border-top shows through when active */
 
 /* Connecting / reconnecting / authenticating: shimmer gradient sweep */
-body[data-session-state="connecting"] #key-bar::before,
-body[data-session-state="reconnecting"] #key-bar::before,
-body[data-session-state="authenticating"] #key-bar::before {
+body[data-session-state="connecting"] #key-bar-handle::after,
+body[data-session-state="reconnecting"] #key-bar-handle::after,
+body[data-session-state="authenticating"] #key-bar-handle::after {
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -1158,10 +1155,10 @@ body[data-session-state="authenticating"] #key-bar::before {
 }
 
 /* Disconnected / failed: dim, darker at center */
-body[data-session-state="disconnected"] #key-bar::before,
-body[data-session-state="soft_disconnected"] #key-bar::before,
-body[data-session-state="failed"] #key-bar::before,
-body[data-session-state="closed"] #key-bar::before {
+body[data-session-state="disconnected"] #key-bar-handle::after,
+body[data-session-state="soft_disconnected"] #key-bar-handle::after,
+body[data-session-state="failed"] #key-bar-handle::after,
+body[data-session-state="closed"] #key-bar-handle::after {
   background: linear-gradient(
     90deg,
     var(--accent) 0%,
