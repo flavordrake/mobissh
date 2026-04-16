@@ -1184,8 +1184,11 @@ body[data-session-state="closed"] #key-bar-handle::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  touch-action: manipulation; /* prevent 300ms tap delay on mobile */
+  touch-action: manipulation;
   transition: background 0.08s, transform 0.08s, border-color 0.08s;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .key-btn:active {
