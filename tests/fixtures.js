@@ -265,8 +265,9 @@ async function setupConnected(page, mockSshServer) {
     localStorage.setItem('wsUrl', `ws://localhost:${port}`);
   }, mockSshServer.port);
 
-  // Navigate to Connect tab and fill the form
-  await page.locator('[data-panel="connect"]').click();
+  // Navigate to Connect tab and fill the form. Anchor to the tab bar —
+  // a nav menu item (added in #449) also has data-panel="connect".
+  await page.locator('#tabBar [data-panel="connect"]').click();
   await page.locator('#host').fill('mock-host');
   // Port defaults to 22 and is inside a collapsed <details> — skip filling it
   await page.locator('#remote_a').fill('testuser');

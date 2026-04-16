@@ -240,15 +240,15 @@ export const THEMES: Record<ThemeName, ThemeEntry> = {
   ocean: {
     label: 'Ocean',
     theme: {
-      background: '#0a1929',
+      background: '#050d18',
       foreground: '#b2d8f0',
       cursor: '#00bcd4',
       selectionBackground: '#00bcd444',
     },
     app: {
-      bgDeep: '#061220',
-      bgPanel: '#0a1929',
-      bgCard: '#0d2137',
+      bgDeep: '#030812',
+      bgPanel: '#050d18',
+      bgCard: '#081726',
       bgInput: '#133b5c',
       text: '#b2d8f0',
       textDim: '#5e8aab',
