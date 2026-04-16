@@ -16,15 +16,15 @@ You're on your phone. You have an idea, a bug report, a task for your coding age
 
 **Drive coding agents.** Launch `claude`, `opencode`, `gemini`, or `codex` over SSH. Compose long prompts with swipe or voice. Review diffs in the terminal. Approve or reject changes. The full agent TUI renders correctly -- xterm.js is the same engine as VS Code's terminal.
 
-**Multi-session.** Connect to multiple SSH hosts simultaneously. Each session has its own per-profile theme for instant visual context switching between dev containers. Swipe the session title to switch. Sessions auto-reconnect on resume -- background sessions that drop are detected and restored when you switch to them.
+**Multi-session.** Connect to multiple SSH hosts simultaneously. Each session has its own per-profile theme for instant visual context switching between dev containers. Swipe the session title to switch. Sessions auto-reconnect on resume -- background sessions that drop are detected and restored when you switch to them. Animated status bar shows connection state (solid when connected, shimmering during reconnect, dimmed when disconnected).
 
-**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Chunked streaming with byte-level progress, cancel, and resume after reconnect. Quick preview for images, markdown, text, HTML, and video files inline. Upload screenshots or logs directly to where your agent can read them.
+**Transfer files.** Browse, upload, download, and rename files on the remote machine via the SFTP panel. Chunked streaming with byte-level progress, cancel, and resume after reconnect. Quick preview for images (with pinch-zoom), SVG, markdown, text, HTML, and video files inline. Upload screenshots or logs directly to where your agent can read them. Per-session file browsing — each session has its own SFTP state.
 
-**Manage credentials.** Copy a GitHub token from your password manager, paste it into the terminal. Copy a URL from your browser, paste it into a prompt. Vault-encrypted credential storage means your SSH passwords are biometric-locked, not plaintext.
+**Manage credentials.** Vault-encrypted credential storage (AES-GCM, PBKDF2 600k iterations) with biometric unlock. SSH key passphrases persist in the vault across page reloads — no re-entry needed. Export/import profiles for device migration (metadata only, no secrets). Inline per-profile editing with auto-save and undo.
 
-**Navigate the terminal.** Swipe vertically to scroll output. Swipe horizontally to switch sessions. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. Tab commits compose text and sends tab for shell completion. All designed for one-handed phone use.
+**Navigate the terminal.** Hamburger menu opens top-level navigation (Terminal, Connect, Settings). Session controls (theme, reset, files, notifications, disconnect) accessible via the session title button. Swipe vertically to scroll output. Swipe the session title horizontally to switch sessions. Pinch to zoom the font. One-tap key bar for Ctrl, Esc, Tab, arrows, PgUp/PgDn. All designed for one-handed phone use.
 
-**Get notified.** Terminal bells and coding agent hooks alert you when your agent needs input. Notifications merge into a single Android notification (no stacking) with actionable content — tool names, file paths, not boilerplate. See [INTEGRATION.md](INTEGRATION.md).
+**Get notified.** Terminal bells and coding agent hooks alert you when your agent needs input. Notification badge on the session title with a reviewable notifications modal (tap 🔔 in session menu). Notifications merge into a single Android notification (no stacking) with actionable content — tool names, file paths, not boilerplate. See [INTEGRATION.md](INTEGRATION.md).
 
 ## Security
 

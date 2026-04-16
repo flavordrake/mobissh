@@ -72,6 +72,18 @@ Both reviews independently flagged CSWSH and SSRF as the top actionable issues. 
 | Modal cancel unresponsive | Medium | AbortController aborted before WS close. `_connectTimeout` moved to module scope. WS error handler calls `disconnect()` | Fixed (#388) |
 | pnpm migration for strict supply chain | Medium | Filed as #389. npm audit clean for now | Open |
 
+### Actions taken (v1.1.0)
+
+| Finding | Severity | Action | Status |
+|---------|----------|--------|--------|
+| SW ignores Cache-Control: no-store | Low | SW fetch handler now checks `no-store` before `cache.put()` | Fixed (#243, PR #420) |
+| Modal cancel/close non-functional on device | Medium | Thread sessionId to cancel, cancelReconnect on error dismiss | Fixed (#417, PR #421) |
+| Key passphrase not persisted in vault | Medium | Passphrase encrypted alongside key in vault via vaultStore/vaultLoad | Fixed (#426, PR #429) |
+| Dependency vulns (basic-ftp CRLF injection, lodash prototype pollution) | High | `npm audit fix` applied. Both patched | Fixed |
+| IPv6 SSRF bypass in `isPrivateIp()` | High | Expanded IPv6 forms bypass private-address block. Filed for fix | Open |
+| Backup import persists plaintext credentials | Medium | `importBackup()` doesn't filter sensitive fields. Filed for fix | Open |
+| Profile export allowlist | N/A | `exportProfilesJSON()` uses strict allowlist (title, host, port, username, authType only) — no credentials in export | Verified (#419, PR #431) |
+
 ### Positive findings (both reviews)
 
 - AES-GCM vault with PBKDF2 (600k iterations), no plaintext fallback
