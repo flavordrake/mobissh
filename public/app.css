@@ -386,6 +386,39 @@ html, body {
   animation: sessionMenuSlideUp 0.15s ease-out;
 }
 
+/* Nav menu — opened by the hamburger ≡ button, anchored to the left side */
+#navMenu {
+  position: fixed;
+  left: 8px;
+  width: max-content;
+  min-width: 160px;
+  max-width: min(220px, 90vw);
+  z-index: 200;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  animation: sessionMenuSlideUp 0.15s ease-out;
+}
+.nav-menu-item {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.nav-menu-item:hover,
+.nav-menu-item:active {
+  background: var(--bg-hover, rgba(255,255,255,0.05));
+  color: var(--accent);
+}
+
 
 /* Session list — visible when 2+ active sessions (#60) */
 .session-list {

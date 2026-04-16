@@ -542,7 +542,11 @@ export function initSessionMenu(): void {
     }
   });
 
-  function closeMenu(): void { menu.classList.add('hidden'); backdrop.classList.add('hidden'); }
+  function closeMenu(): void {
+    menu.classList.add('hidden');
+    document.getElementById('navMenu')?.classList.add('hidden');
+    backdrop.classList.add('hidden');
+  }
 
   // ── Swipe left/right on session title to switch sessions ──────────────
   let _swipeX0: number | null = null;
@@ -583,19 +587,33 @@ export function initSessionMenu(): void {
     if ('vibrate' in navigator) navigator.vibrate(10);
   });
 
-  // Hamburger ≡ button — opens the session menu (single entry point for
-  // per-session controls, including Files) (#449).
+  // Hamburger ≡ button — opens the top-level nav menu (Terminal/Connect/Settings).
+  // Session-specific controls live on the MobiSSH button (#sessionMenuBtn).
+  const navMenu = document.getElementById('navMenu');
   document.getElementById('handleMenuBtn')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    const wasHidden = menu.classList.toggle('hidden');
+    if (!navMenu) return;
+    // Close session menu if open
+    menu.classList.add('hidden');
+    const wasHidden = navMenu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
     if (!wasHidden) {
       const hb = document.getElementById('key-bar-handle');
       if (hb) {
         const handleTop = hb.getBoundingClientRect().top;
-        menu.style.bottom = `${String(window.innerHeight - handleTop + 4)}px`;
+        navMenu.style.bottom = `${String(window.innerHeight - handleTop + 4)}px`;
       }
     }
+  });
+
+  // Wire nav menu items
+  document.querySelectorAll<HTMLElement>('#navMenu .nav-menu-item').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const panel = btn.dataset.panel as 'terminal' | 'connect' | 'settings' | undefined;
+      navMenu?.classList.add('hidden');
+      backdrop.classList.add('hidden');
+      if (panel) navigateToPanel(panel, { pushHistory: true });
+    });
   });
 
   // Swipe up on handle → show tab bar; swipe down → hide tab bar (#149).
