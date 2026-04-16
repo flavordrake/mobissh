@@ -115,6 +115,26 @@ test.describe('Error dialog Dismiss button', { tag: ['@smoke', '@device-critical
     await expect(page.locator('#errorDialogOverlay')).toHaveClass(/hidden/);
   });
 
+  test('Dismiss responds to touch tap (not just mouse click)', async ({ page, isMobile }) => {
+    await page.goto('./');
+    await page.waitForSelector('#connectForm', { timeout: 8000 });
+
+    await page.evaluate(async () => {
+      const mod = await import('./modules/ui.js');
+      mod.showErrorDialog('Touch test');
+    });
+    await expect(page.locator('#errorDialogOverlay')).not.toHaveClass(/hidden/);
+
+    // Use touch tap on mobile projects; fall back to click on desktop
+    if (isMobile) {
+      await page.locator('#errorDialogDismiss').tap();
+    } else {
+      await page.locator('#errorDialogDismiss').click();
+    }
+
+    await expect(page.locator('#errorDialogOverlay')).toHaveClass(/hidden/);
+  });
+
   test('Double-show without dismiss between — both dismisses should hide the overlay', async ({ page }) => {
     await page.goto('./');
     await page.waitForSelector('#connectForm', { timeout: 8000 });
