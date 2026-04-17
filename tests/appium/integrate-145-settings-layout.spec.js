@@ -2,14 +2,25 @@
  * tests/appium/integrate-145-settings-layout.spec.js
  *
  * Integration test for issue #145: settings layout restructure.
- * Debug overlay and pinch-to-zoom move to "Advanced" section.
+ * Debug overlay in "Advanced" collapsible section, pinch-to-zoom in "Gestures".
  * Separate clear-data/clear-cache buttons merged into single "Reset app".
  *
- * BEFORE merge: no .advanced-section, #clearDataBtn and #clearCacheBtn exist → tests FAIL.
- * AFTER merge: .advanced-section exists, #resetAppBtn replaces old buttons → tests PASS.
+ * Settings panel uses <details class="settings-section"> collapsible sections.
  */
 
 const { test, expect, setupVault } = require('./fixtures');
+
+/** Find a <details class="settings-section"> by its <summary> text. */
+function findSection(name) {
+  return `
+    const sections = document.querySelectorAll('details.settings-section');
+    for (const s of sections) {
+      const sum = s.querySelector('summary');
+      if (sum && sum.textContent.trim().toLowerCase() === '${name.toLowerCase()}') return s;
+    }
+    return null;
+  `;
+}
 
 test.describe('Issue #145: settings layout restructure', () => {
 
@@ -21,36 +32,46 @@ test.describe('Issue #145: settings layout restructure', () => {
     await driver.pause(1000);
 
     const advancedExists = await driver.executeScript(
-      "return !!document.querySelector('.advanced-section')", []);
-    expect(advancedExists).toBe(true);
-
-    const titleText = await driver.executeScript(`
-      const el = document.querySelector('.advanced-section-title');
-      return el ? el.textContent.trim() : null;
+      `${findSection('Advanced')} return !!s || false;`.replace('return s;', 'var s2 = s; return !!s2;'),
+      []);
+    // Simpler check:
+    const exists = await driver.executeScript(`
+      const sections = document.querySelectorAll('details.settings-section');
+      for (const s of sections) {
+        const sum = s.querySelector('summary');
+        if (sum && sum.textContent.trim() === 'Advanced') return true;
+      }
+      return false;
     `, []);
-    expect(titleText).toBeTruthy();
-    expect(titleText.toLowerCase()).toContain('advanced');
+    expect(exists).toBe(true);
   });
 
-  test('debug overlay and pinch-to-zoom are in Advanced section', async ({ driver }) => {
+  test('debug overlay is in Advanced section, pinch-to-zoom is in Gestures', async ({ driver }) => {
     await setupVault(driver);
 
     await driver.executeScript(
       "document.querySelector('[data-panel=\"settings\"]')?.click()", []);
     await driver.pause(1000);
 
-    // #debugOverlay should be inside .advanced-section, not .danger-zone
     const debugInAdvanced = await driver.executeScript(`
-      const section = document.querySelector('.advanced-section');
-      return section ? !!section.querySelector('#debugOverlay') : false;
+      const sections = document.querySelectorAll('details.settings-section');
+      for (const s of sections) {
+        const sum = s.querySelector('summary');
+        if (sum && sum.textContent.trim() === 'Advanced') return !!s.querySelector('#debugOverlay');
+      }
+      return false;
     `, []);
     expect(debugInAdvanced).toBe(true);
 
-    const pinchInAdvanced = await driver.executeScript(`
-      const section = document.querySelector('.advanced-section');
-      return section ? !!section.querySelector('#enablePinchZoom') : false;
+    const pinchInGestures = await driver.executeScript(`
+      const sections = document.querySelectorAll('details.settings-section');
+      for (const s of sections) {
+        const sum = s.querySelector('summary');
+        if (sum && sum.textContent.trim() === 'Gestures') return !!s.querySelector('#enablePinchZoom');
+      }
+      return false;
     `, []);
-    expect(pinchInAdvanced).toBe(true);
+    expect(pinchInGestures).toBe(true);
   });
 
   test('single Reset button replaces old clear buttons', async ({ driver }) => {

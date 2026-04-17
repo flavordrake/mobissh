@@ -456,176 +456,110 @@
     <div id="panel-settings" class="panel">
       <h2>Settings</h2>
 
-      <label for="wsUrl">WebSocket server URL</label>
-      <input type="url" id="wsUrl" placeholder="wss://your-server:8080" inputmode="url" />
-      <p class="hint">The URL of your ssh-bridge server. Only <code>wss://</code> (TLS) is accepted.
-         When running in a Codespace, set this to the forwarded port URL for port 8080 with <code>wss://</code>.</p>
-      <p id="wsWarnInsecure" class="hint hidden" style="color: var(--danger);">⚠ ws:// is unencrypted. Use wss:// for connections over any untrusted network.</p>
-      <p id="wsWarnHostMismatch" class="hint warn hidden">⚠ WSS host differs from page origin — connection may fail.</p>
-      <button id="saveSettingsBtn" class="primary-btn">Save</button>
+      <details class="settings-section" open>
+        <summary>Server</summary>
+        <label for="wsUrl">WebSocket server URL</label>
+        <input type="url" id="wsUrl" placeholder="wss://your-server:8080" inputmode="url" />
+        <p class="hint">The URL of your ssh-bridge server. Only <code>wss://</code> (TLS) is accepted.
+           When running in a Codespace, set this to the forwarded port URL for port 8080 with <code>wss://</code>.</p>
+        <p id="wsWarnInsecure" class="hint hidden" style="color: var(--danger);">⚠ ws:// is unencrypted. Use wss:// for connections over any untrusted network.</p>
+        <p id="wsWarnHostMismatch" class="hint warn hidden">⚠ WSS host differs from page origin — connection may fail.</p>
+        <button id="saveSettingsBtn" class="primary-btn">Save</button>
+      </details>
 
-      <hr />
+      <details class="settings-section">
+        <summary>Terminal</summary>
+        <label for="fontSize">Terminal font size</label>
+        <input type="range" id="fontSize" min="8" max="32" step="0.5" value="14" />
+        <span id="fontSizeValue">14px</span>
 
-      <label for="fontSize">Terminal font size</label>
-      <input type="range" id="fontSize" min="8" max="32" step="0.5" value="14" />
-      <span id="fontSizeValue">14px</span>
-
-      <hr />
-
-      <label for="termThemeSelect">Default terminal theme</label>
-      <select id="termThemeSelect">
-        <!-- Populated dynamically from THEME_ORDER in settings.ts -->
-      </select>
-      <div id="themePreview">
-        <span class="tp-prompt">user@host</span><span class="tp-dim">:</span><span class="tp-path">~/projects</span><span class="tp-dim">$</span> ls -la<br>
-        <span class="tp-dim">total 48</span><br>
-        <span class="tp-accent">drwxr-xr-x</span> 5 user user 4096 Mar  5 01:00 <span class="tp-path">.</span><br>
-        <span class="tp-cursor"> </span>
-      </div>
-      <p class="hint">Persisted across sessions. Use the session menu to switch themes temporarily during a session.</p>
-
-      <hr />
-
-      <label for="termFontSelect">Terminal font</label>
-      <select id="termFontSelect">
-        <option value="monospace">System monospace</option>
-        <option value="jetbrains">JetBrains Mono</option>
-        <option value="firacode">Fira Code</option>
-      </select>
-      <p class="hint">Requires page reload to take effect.</p>
-
-      <hr />
-
-      <h3>Key Bar</h3>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Reset to defaults</span>
-        </div>
-        <button id="resetKeyBarBtn" class="danger-btn">Reset</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Dock controls on left</span>
-          <p class="hint">Move the compose toggle and key bar chevron to the left side.</p>
-        </div>
-        <label class="toggle" aria-label="Dock key controls on left side">
-          <input type="checkbox" id="keyControlsDockLeft" />
-          <span class="toggle-slider toggle-slider-accent"></span>
-        </label>
-      </div>
-
-      <hr />
-
-      <h3>Compose Preview</h3>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Countdown duration</span>
-          <p class="hint">How long the countdown ring runs before auto-committing text.</p>
-        </div>
-        <select id="previewCountdownDuration">
-          <option value="3000">3s</option>
-          <option value="5000">5s</option>
-          <option value="10000">10s</option>
-          <option value="Infinity">Never</option>
+        <label for="termThemeSelect">Default terminal theme</label>
+        <select id="termThemeSelect">
+          <!-- Populated dynamically from THEME_ORDER in settings.ts -->
         </select>
-      </div>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Idle timeout</span>
-          <p class="hint">Grace period before the countdown ring starts after you stop typing.</p>
+        <div id="themePreview">
+          <span class="tp-prompt">user@host</span><span class="tp-dim">:</span><span class="tp-path">~/projects</span><span class="tp-dim">$</span> ls -la<br>
+          <span class="tp-dim">total 48</span><br>
+          <span class="tp-accent">drwxr-xr-x</span> 5 user user 4096 Mar  5 01:00 <span class="tp-path">.</span><br>
+          <span class="tp-cursor"> </span>
         </div>
-        <select id="previewIdleTimeout">
-          <option value="1000">1s</option>
-          <option value="1500">1.5s</option>
-          <option value="2000">2s</option>
-          <option value="3000">3s</option>
+        <p class="hint">Persisted across sessions. Use the session menu to switch themes temporarily during a session.</p>
+
+        <label for="termFontSelect">Terminal font</label>
+        <select id="termFontSelect">
+          <option value="monospace">System monospace</option>
+          <option value="jetbrains">JetBrains Mono</option>
+          <option value="firacode">Fira Code</option>
         </select>
-      </div>
+        <p class="hint">Requires page reload to take effect.</p>
+      </details>
 
-      <hr />
-
-      <h3>Gestures</h3>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Natural vertical scroll</span>
-          <p class="hint">Content follows finger direction (like iOS). Off = traditional scrollbar style.</p>
+      <details class="settings-section">
+        <summary>Input</summary>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Reset key bar to defaults</span>
+          </div>
+          <button id="resetKeyBarBtn" class="danger-btn">Reset</button>
         </div>
-        <label class="toggle" aria-label="Natural vertical scroll">
-          <input type="checkbox" id="naturalVerticalScroll" checked />
-          <span class="toggle-slider toggle-slider-accent"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Natural horizontal swipe</span>
-          <p class="hint">Swipe left = previous tmux window. Off = swipe left = next window.</p>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Dock controls on left</span>
+            <p class="hint">Move the compose toggle and key bar chevron to the left side.</p>
+          </div>
+          <label class="toggle" aria-label="Dock key controls on left side">
+            <input type="checkbox" id="keyControlsDockLeft" />
+            <span class="toggle-slider toggle-slider-accent"></span>
+          </label>
         </div>
-        <label class="toggle" aria-label="Natural horizontal swipe">
-          <input type="checkbox" id="naturalHorizontalScroll" checked />
-          <span class="toggle-slider toggle-slider-accent"></span>
-        </label>
-      </div>
-      <h3>Notifications</h3>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Terminal notifications</span>
-          <p class="hint">Show browser notifications for BEL and OSC alert sequences.</p>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Countdown duration</span>
+            <p class="hint">How long the countdown ring runs before auto-committing text.</p>
+          </div>
+          <select id="previewCountdownDuration">
+            <option value="3000">3s</option>
+            <option value="5000">5s</option>
+            <option value="10000">10s</option>
+            <option value="Infinity">Never</option>
+          </select>
         </div>
-        <label class="toggle" aria-label="Terminal notifications">
-          <input type="checkbox" id="termNotifications" />
-          <span class="toggle-slider toggle-slider-accent"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Background only</span>
-          <p class="hint">Only notify when MobiSSH is not in the foreground.</p>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Idle timeout</span>
+            <p class="hint">Grace period before the countdown ring starts after you stop typing.</p>
+          </div>
+          <select id="previewIdleTimeout">
+            <option value="1000">1s</option>
+            <option value="1500">1.5s</option>
+            <option value="2000">2s</option>
+            <option value="3000">3s</option>
+          </select>
         </div>
-        <label class="toggle" aria-label="Background only notifications">
-          <input type="checkbox" id="notifBackgroundOnly" />
-          <span class="toggle-slider toggle-slider-accent"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Cooldown</span>
-          <p class="hint">Suppress repeated notifications within this period.</p>
+      </details>
+
+      <details class="settings-section">
+        <summary>Gestures</summary>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Natural vertical scroll</span>
+            <p class="hint">Content follows finger direction (like iOS). Off = traditional scrollbar style.</p>
+          </div>
+          <label class="toggle" aria-label="Natural vertical scroll">
+            <input type="checkbox" id="naturalVerticalScroll" checked />
+            <span class="toggle-slider toggle-slider-accent"></span>
+          </label>
         </div>
-        <select id="notifCooldown">
-          <option value="5000">5s</option>
-          <option value="15000">15s</option>
-          <option value="30000">30s</option>
-          <option value="60000">60s</option>
-        </select>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Test</span>
-          <p class="hint">Fire a test notification to verify your device settings.</p>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Natural horizontal swipe</span>
+            <p class="hint">Swipe left = previous tmux window. Off = swipe left = next window.</p>
+          </div>
+          <label class="toggle" aria-label="Natural horizontal swipe">
+            <input type="checkbox" id="naturalHorizontalScroll" checked />
+            <span class="toggle-slider toggle-slider-accent"></span>
+          </label>
         </div>
-        <button id="testNotifBtn" class="secondary-btn">Test notification</button>
-      </div>
-
-      <hr />
-
-      <div class="vault-settings">
-        <h3 class="vault-settings-title">Vault</h3>
-        <p id="vaultStatus" class="vault-status">Not set up</p>
-        <div id="vaultActions" class="vault-actions">
-          <button id="vaultLockBtn" class="secondary-btn hidden">Lock Now</button>
-          <button id="vaultChangePwBtn" class="secondary-btn hidden">Change Master Password</button>
-          <button id="vaultEnableBioBtn" class="secondary-btn hidden">Enable Fingerprint Unlock</button>
-          <button id="vaultDisableBioBtn" class="secondary-btn hidden">Disable Fingerprint Unlock</button>
-          <button id="vaultResetBtn" class="danger-btn hidden">Reset Vault</button>
-        </div>
-      </div>
-
-      <hr />
-
-      <div class="advanced-section">
-        <h3 class="advanced-section-title">Advanced</h3>
-
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Pinch-to-zoom</span>
@@ -636,57 +570,88 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
+      </details>
 
-        <div class="danger-zone-item">
-          <div class="danger-zone-item-info">
-            <span class="danger-zone-item-label">Debug overlay</span>
-            <p class="hint">Shows touch/scroll event logs on screen. Tap log to copy.</p>
+      <details class="settings-section">
+        <summary>Notifications</summary>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Terminal notifications</span>
+            <p class="hint">Show browser notifications for BEL and OSC alert sequences.</p>
           </div>
-          <label class="toggle" aria-label="Enable debug overlay">
-            <input type="checkbox" id="debugOverlay" />
-            <span class="toggle-slider"></span>
+          <label class="toggle" aria-label="Terminal notifications">
+            <input type="checkbox" id="termNotifications" />
+            <span class="toggle-slider toggle-slider-accent"></span>
           </label>
         </div>
-
-        <div class="danger-zone-item">
-          <div class="danger-zone-item-info">
-            <span class="danger-zone-item-label">Show IME textarea</span>
-            <p class="hint">Makes the hidden IME input visible for debugging compose/correction behavior.</p>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Background only</span>
+            <p class="hint">Only notify when MobiSSH is not in the foreground.</p>
           </div>
-          <label class="toggle" aria-label="Show IME textarea">
-            <input type="checkbox" id="debugIME" />
-            <span class="toggle-slider"></span>
+          <label class="toggle" aria-label="Background only notifications">
+            <input type="checkbox" id="notifBackgroundOnly" />
+            <span class="toggle-slider toggle-slider-accent"></span>
           </label>
         </div>
-      </div>
-
-      <div class="setting-group">
-        <label class="toggle-label">
-          <input type="checkbox" id="enableApprovalBar" checked />
-          <span>Approval bar</span>
-        </label>
-        <p class="hint">Show buttons for Claude Code permission prompts.</p>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-row-info">
-          <span class="setting-row-label">Auto-accept countdown</span>
-          <p class="hint">Auto-press Yes after a countdown. Tap the bar to cancel.</p>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Cooldown</span>
+            <p class="hint">Suppress repeated notifications within this period.</p>
+          </div>
+          <select id="notifCooldown">
+            <option value="5000">5s</option>
+            <option value="15000">15s</option>
+            <option value="30000">30s</option>
+            <option value="60000">60s</option>
+          </select>
         </div>
-        <select id="approvalCountdown">
-          <option value="0">Off</option>
-          <option value="3">3s</option>
-          <option value="5">5s</option>
-          <option value="10">10s</option>
-          <option value="15">15s</option>
-          <option value="30">30s</option>
-        </select>
-      </div>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Test</span>
+            <p class="hint">Fire a test notification to verify your device settings.</p>
+          </div>
+          <button id="testNotifBtn" class="secondary-btn">Test notification</button>
+        </div>
+      </details>
 
-      <div class="danger-zone">
-        <h3 class="danger-zone-title">Danger Zone</h3>
-        <p class="hint">These settings weaken security protections. Only change them if you understand the risks.</p>
+      <details class="settings-section">
+        <summary>Vault</summary>
+        <div class="vault-settings">
+          <p id="vaultStatus" class="vault-status">Not set up</p>
+          <div id="vaultActions" class="vault-actions">
+            <button id="vaultLockBtn" class="secondary-btn hidden">Lock Now</button>
+            <button id="vaultChangePwBtn" class="secondary-btn hidden">Change Master Password</button>
+            <button id="vaultEnableBioBtn" class="secondary-btn hidden">Enable Fingerprint Unlock</button>
+            <button id="vaultDisableBioBtn" class="secondary-btn hidden">Disable Fingerprint Unlock</button>
+            <button id="vaultResetBtn" class="danger-btn hidden">Reset Vault</button>
+          </div>
+        </div>
+      </details>
 
+      <details class="settings-section">
+        <summary>Agent Integration</summary>
+        <div class="setting-group">
+          <label class="toggle-label">
+            <input type="checkbox" id="enableApprovalBar" checked />
+            <span>Approval bar</span>
+          </label>
+          <p class="hint">Show buttons for Claude Code permission prompts.</p>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-info">
+            <span class="setting-row-label">Auto-accept countdown</span>
+            <p class="hint">Auto-press Yes after a countdown. Tap the bar to cancel.</p>
+          </div>
+          <select id="approvalCountdown">
+            <option value="0">Off</option>
+            <option value="3">3s</option>
+            <option value="5">5s</option>
+            <option value="10">10s</option>
+            <option value="15">15s</option>
+            <option value="30">30s</option>
+          </select>
+        </div>
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Default approval mode</span>
@@ -697,7 +662,30 @@
             <option value="deny">Deny</option>
           </select>
         </div>
+      </details>
 
+      <details class="settings-section">
+        <summary>Advanced</summary>
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Debug overlay</span>
+            <p class="hint">Shows touch/scroll event logs on screen. Tap log to copy.</p>
+          </div>
+          <label class="toggle" aria-label="Enable debug overlay">
+            <input type="checkbox" id="debugOverlay" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="danger-zone-item">
+          <div class="danger-zone-item-info">
+            <span class="danger-zone-item-label">Show IME textarea</span>
+            <p class="hint">Makes the hidden IME input visible for debugging compose/correction behavior.</p>
+          </div>
+          <label class="toggle" aria-label="Show IME textarea">
+            <input type="checkbox" id="debugIME" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Allow <code>ws://</code> (unencrypted)</span>
@@ -708,7 +696,6 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
-
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Allow private/loopback addresses</span>
@@ -719,7 +706,6 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
-
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Remote clipboard access</span>
@@ -730,16 +716,15 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
-
         <button id="resetAppBtn" class="danger-btn">Reset app (clears all data &amp; cache)</button>
-      </div>
+      </details>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">Backup</h3>
+      <details class="settings-section">
+        <summary>Backup</summary>
         <button id="exportBackupBtn" class="secondary-btn">Download Backup</button>
         <button id="importBackupBtn" class="secondary-btn">Import Backup</button>
         <input type="file" id="importBackupFile" accept=".json" hidden>
-      </div>
+      </details>
 
       <p id="versionInfo" class="version-info"></p>
     </div>

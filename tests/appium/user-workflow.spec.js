@@ -572,32 +572,29 @@ test.describe('User workflow (Appium)', () => {
     expect(vaultSection.changePwBtn).toBe(true);
     expect(vaultSection.resetBtn).toBe(true);
 
-    // Advanced section
+    // Advanced section (collapsible <details>)
     const advancedSection = await driver.executeScript(`
-      const section = document.querySelector('.advanced-section');
-      return {
-        exists: !!section,
-        debugOverlay: section ? !!section.querySelector('#debugOverlay') : false,
-      };
+      const sections = document.querySelectorAll('details.settings-section');
+      for (const s of sections) {
+        const sum = s.querySelector('summary');
+        if (sum && sum.textContent.trim() === 'Advanced') {
+          return {
+            exists: true,
+            debugOverlay: !!s.querySelector('#debugOverlay'),
+            allowWs: !!s.querySelector('#dangerAllowWs'),
+            allowPrivate: !!s.querySelector('#allowPrivateHosts'),
+            resetApp: !!s.querySelector('#resetAppBtn'),
+          };
+        }
+      }
+      return { exists: false, debugOverlay: false, allowWs: false, allowPrivate: false, resetApp: false };
     `, []);
     expect(advancedSection.exists).toBe(true);
     expect(advancedSection.debugOverlay).toBe(true);
-
-    // Danger zone
-    const dangerZone = await driver.executeScript(`
-      const zone = document.querySelector('.danger-zone');
-      return {
-        exists: !!zone,
-        allowWs: zone ? !!zone.querySelector('#dangerAllowWs') : false,
-        allowPrivate: zone ? !!zone.querySelector('#allowPrivateHosts') : false,
-        resetApp: zone ? !!zone.querySelector('#resetAppBtn') : false,
-      };
-    `, []);
-    expect(dangerZone.exists).toBe(true);
-    expect(dangerZone.allowWs).toBe(true);
-    expect(dangerZone.allowPrivate).toBe(true);
-    expect(dangerZone.resetApp).toBe(true);
-    await attachScreenshot(driver, testInfo, 'settings-danger-zone');
+    expect(advancedSection.allowWs).toBe(true);
+    expect(advancedSection.allowPrivate).toBe(true);
+    expect(advancedSection.resetApp).toBe(true);
+    await attachScreenshot(driver, testInfo, 'settings-advanced');
 
     // Version info
     const versionInfo = await driver.executeScript(
