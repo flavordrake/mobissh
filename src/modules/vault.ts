@@ -14,7 +14,7 @@ import type { VaultMeta, WrappedKey } from './types.js';
 import { appState } from './state.js';
 
 const PBKDF2_ITERATIONS = 600_000;
-const VAULT_IDLE_MS = 5 * 60 * 1000; // 5 minutes
+const VAULT_IDLE_MS = 30 * 60 * 1000; // 30 minutes (was 5 — too aggressive for mobile)
 const VAULT_META_KEY = 'vaultMeta';
 const VAULT_DATA_KEY = 'sshVault';
 

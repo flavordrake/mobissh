@@ -7,7 +7,7 @@
  */
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
-import { vaultLoad, vaultStore } from './vault.js';
+import { vaultLoad, vaultStore, tryUnlockVault } from './vault.js';
 import { showErrorDialog, navigateToPanel } from './ui.js';
 import { saveRecentSession, getProfiles } from './profiles.js';
 
@@ -1115,6 +1115,12 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     void acquireWakeLock();
     document.getElementById('errorDialogOverlay')?.classList.add('hidden');
+
+    // Auto-unlock vault on resume if biometric is enrolled — avoids password
+    // prompt on every reconnect after the idle timer locked the vault.
+    if (!appState.vaultKey) {
+      void tryUnlockVault('silent').catch(() => {});
+    }
 
     // Reconnect all dropped sessions — active first, others staggered (#354).
     // Non-active sessions get a 3s delay so Tailscale tunnels have time to
