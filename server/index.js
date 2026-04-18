@@ -427,6 +427,7 @@ const server = http.createServer((req, res) => {
         // Broadcast to SSE + WS so the phone shows the approval bar
         const approvalData = { ...data, requestId, label };
         sseBroadcast('approval', approvalData);
+        // eslint-disable-next-line no-use-before-define -- wss defined below; this callback fires after server boot
         wss.clients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({ type: 'approval_prompt', ...approvalData }));
@@ -591,6 +592,7 @@ const server = http.createServer((req, res) => {
         // Broadcast to SSE clients (primary channel — works without WS connection)
         sseBroadcast(sseEvent, data);
         // Broadcast to WS clients (legacy — for sessions already connected)
+        // eslint-disable-next-line no-use-before-define -- wss defined below; this callback fires after server boot
         wss.clients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({ type: wsType, ...data }));

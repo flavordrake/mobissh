@@ -115,6 +115,23 @@ cmd_build() {
   local hash
   hash=$(head_hash)
 
+  # Pre-build static checks — catches JS errors (use-before-define, etc.) and
+  # TS errors BEFORE baking a broken image. Set SKIP_GATE=1 to bypass in emergencies.
+  if [[ "${SKIP_GATE:-0}" != "1" ]]; then
+    log "Pre-build gate: tsc + eslint..."
+    if ! npx tsc --noEmit; then
+      err "tsc failed — aborting build. Set SKIP_GATE=1 to override."
+      exit 1
+    fi
+    if ! npx eslint server/ src/ public/app.js 2>&1; then
+      err "eslint failed — aborting build. Set SKIP_GATE=1 to override."
+      exit 1
+    fi
+    ok "Pre-build gate passed."
+  else
+    log "Pre-build gate: SKIPPED (SKIP_GATE=1)"
+  fi
+
   # SW cache name: content hash of cached files, not a monotonic counter.
   # The browser re-triggers SW update when sw.js changes byte-for-byte.
   # Network-first + no-store means the cache is offline-fallback only —
