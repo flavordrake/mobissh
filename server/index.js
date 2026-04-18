@@ -992,6 +992,7 @@ wss.on('connection', (ws, req) => {
 
   track.active++;
   ws._clientIP = clientIP; // Store for sibling-alive check in keepalive
+  const connectionId = randomBytes(16).toString('hex'); // unique per WS session
   let _sshTarget = '(not yet connecting)';
   console.log(`[ssh-bridge] WS connected: ${clientIP} cid=${connectionId.slice(0,8)} (active: ${track.active})`);
 
@@ -1001,7 +1002,6 @@ wss.on('connection', (ws, req) => {
   let sftpPending = null; // pending callbacks while SFTP channel is being opened
   let connecting = false;
   let pendingVerify = null; // hostVerifier callback waiting for client response (#5)
-  const connectionId = randomBytes(16).toString('hex'); // unique per WS session
   const openUploads = new Map(); // requestId → { stream, offset, path } for chunked uploads
 
   function send(obj) {
