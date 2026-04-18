@@ -992,7 +992,8 @@ wss.on('connection', (ws, req) => {
 
   track.active++;
   ws._clientIP = clientIP; // Store for sibling-alive check in keepalive
-  console.log(`[ssh-bridge] Client connected: ${clientIP} (active: ${track.active})`);
+  let _sshTarget = '(not yet connecting)';
+  console.log(`[ssh-bridge] WS connected: ${clientIP} cid=${connectionId.slice(0,8)} (active: ${track.active})`);
 
   let sshClient = null;
   let sshStream = null;
@@ -1063,7 +1064,7 @@ wss.on('connection', (ws, req) => {
     connecting = false;
     if (reason) {
       send({ type: 'disconnected', reason });
-      console.log(`[ssh-bridge] Session ended (${clientIP}): ${reason}`);
+      console.log(`[ssh-bridge] Session ended (${clientIP} cid=${connectionId.slice(0,8)} → ${_sshTarget}): ${reason}`);
     }
   }
 
@@ -1104,10 +1105,12 @@ wss.on('connection', (ws, req) => {
   }
 
   function connectAfterDns(cfg, resolvedIp) {
+    _sshTarget = `${cfg.username}@${cfg.host}:${cfg.port || 22}`;
+    console.log(`[ssh-bridge] SSH connecting: ${_sshTarget} (resolved: ${resolvedIp}) cid=${connectionId.slice(0,8)}`);
     sshClient = new Client();
 
     sshClient.on('ready', () => {
-      console.log(`[ssh-bridge] SSH ready: ${cfg.username}@${cfg.host}:${cfg.port || 22}`);
+      console.log(`[ssh-bridge] SSH ready: ${_sshTarget} cid=${connectionId.slice(0,8)}`);
       sshClient.shell(
         { term: 'xterm-256color', cols: 80, rows: 24 },
         (err, stream) => {
@@ -1248,7 +1251,7 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     const t = connTracker.get(clientIP);
     if (t) t.active = Math.max(0, t.active - 1);
-    console.log(`[ssh-bridge] WebSocket closed: ${clientIP}`);
+    console.log(`[ssh-bridge] WS closed: ${clientIP} cid=${connectionId.slice(0,8)} → ${_sshTarget} (active: ${t ? t.active : '?'})`);
     cleanup(null);
   });
   ws.on('error', (err) => {
