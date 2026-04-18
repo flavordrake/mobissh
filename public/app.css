@@ -1963,7 +1963,7 @@ hr {
   transition: transform 0.15s ease;
 }
 .settings-section[open] > summary::before { transform: rotate(90deg); }
-.settings-section > :not(summary) {
+.settings-section-body {
   padding: 8px 16px 16px;
 }
 

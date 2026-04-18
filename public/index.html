@@ -458,6 +458,7 @@
 
       <details class="settings-section" open>
         <summary>Server</summary>
+        <div class="settings-section-body">
         <label for="wsUrl">WebSocket server URL</label>
         <input type="url" id="wsUrl" placeholder="wss://your-server:8080" inputmode="url" />
         <p class="hint">The URL of your ssh-bridge server. Only <code>wss://</code> (TLS) is accepted.
@@ -465,10 +466,12 @@
         <p id="wsWarnInsecure" class="hint hidden" style="color: var(--danger);">⚠ ws:// is unencrypted. Use wss:// for connections over any untrusted network.</p>
         <p id="wsWarnHostMismatch" class="hint warn hidden">⚠ WSS host differs from page origin — connection may fail.</p>
         <button id="saveSettingsBtn" class="primary-btn">Save</button>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Terminal</summary>
+        <div class="settings-section-body">
         <label for="fontSize">Terminal font size</label>
         <input type="range" id="fontSize" min="8" max="32" step="0.5" value="14" />
         <span id="fontSizeValue">14px</span>
@@ -492,10 +495,12 @@
           <option value="firacode">Fira Code</option>
         </select>
         <p class="hint">Requires page reload to take effect.</p>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Input</summary>
+        <div class="settings-section-body">
         <div class="setting-row">
           <div class="setting-row-info">
             <span class="setting-row-label">Reset key bar to defaults</span>
@@ -536,10 +541,12 @@
             <option value="3000">3s</option>
           </select>
         </div>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Gestures</summary>
+        <div class="settings-section-body">
         <div class="setting-row">
           <div class="setting-row-info">
             <span class="setting-row-label">Natural vertical scroll</span>
@@ -570,10 +577,12 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Notifications</summary>
+        <div class="settings-section-body">
         <div class="setting-row">
           <div class="setting-row-info">
             <span class="setting-row-label">Terminal notifications</span>
@@ -613,10 +622,12 @@
           </div>
           <button id="testNotifBtn" class="secondary-btn">Test notification</button>
         </div>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Vault</summary>
+        <div class="settings-section-body">
         <div class="vault-settings">
           <p id="vaultStatus" class="vault-status">Not set up</p>
           <div id="vaultActions" class="vault-actions">
@@ -627,10 +638,12 @@
             <button id="vaultResetBtn" class="danger-btn hidden">Reset Vault</button>
           </div>
         </div>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Agent Integration</summary>
+        <div class="settings-section-body">
         <div class="setting-group">
           <label class="toggle-label">
             <input type="checkbox" id="enableApprovalBar" checked />
@@ -662,10 +675,12 @@
             <option value="deny">Deny</option>
           </select>
         </div>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Advanced</summary>
+        <div class="settings-section-body">
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Debug overlay</span>
@@ -717,13 +732,16 @@
           </label>
         </div>
         <button id="resetAppBtn" class="danger-btn">Reset app (clears all data &amp; cache)</button>
+        </div>
       </details>
 
       <details class="settings-section">
         <summary>Backup</summary>
+        <div class="settings-section-body">
         <button id="exportBackupBtn" class="secondary-btn">Download Backup</button>
         <button id="importBackupBtn" class="secondary-btn">Import Backup</button>
         <input type="file" id="importBackupFile" accept=".json" hidden>
+        </div>
       </details>
 
       <p id="versionInfo" class="version-info"></p>
