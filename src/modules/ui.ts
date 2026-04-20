@@ -115,6 +115,20 @@ export function navigateToPanel(
     if (s) s.activePanel = panel;
   }
 
+  // Theme is a pure function of (panel, active session):
+  //   session-bound panel + active session → session's theme
+  //   otherwise → default theme from localStorage
+  // Previously `switchSession` alone drove theme changes, so navigating to
+  // Connect/Settings left the session's theme painted on app chrome.
+  const sessionBoundPanel = panel === 'terminal' || panel === 'files';
+  const themeSession = sessionBoundPanel ? currentSession() : null;
+  const targetTheme = themeSession?.activeThemeName
+    ?? localStorage.getItem('termTheme')
+    ?? 'dark';
+  if (appState.activeThemeName !== targetTheme) {
+    applyTheme(targetTheme);
+  }
+
   if (panel === 'terminal') {
     // Panel just became visible — fit the active session to real dimensions
     const s = currentSession();
@@ -388,7 +402,9 @@ export function switchSession(id: string): void {
     }
   });
 
-  // Restore per-session theme (#104)
+  // Apply the session's theme. navigateToPanel also resolves theme based on
+  // active panel, but same-panel swipes (e.g., terminal → terminal via swipe)
+  // don't go through it — this covers that path.
   applyTheme(session.activeThemeName);
 
   // Auto-reconnect on switch: if not connected, reconnect unconditionally (#354)
