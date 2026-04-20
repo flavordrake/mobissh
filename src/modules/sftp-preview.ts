@@ -13,12 +13,6 @@ const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.m4v']);
 const TEXT_EXTS = new Set(['.md', '.txt', '.log']);
 const HTML_EXTS = new Set(['.html', '.htm']);
 
-function extOf(filename: string): string {
-  const dot = filename.lastIndexOf('.');
-  if (dot === -1) return '';
-  return filename.slice(dot).toLowerCase();
-}
-
 // ── File type detection ──────────────────────────────────────────────────────
 
 export function isPreviewable(filename: string): boolean {
@@ -52,7 +46,7 @@ function toText(data: Uint8Array | string): string {
   return new TextDecoder().decode(data);
 }
 
-const MIME_MAP: Record<string, string> = {
+export const MIME_MAP: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -64,6 +58,17 @@ const MIME_MAP: Record<string, string> = {
   '.mov': 'video/quicktime',
   '.m4v': 'video/mp4',
 };
+
+/** Extension of a filename including the leading dot, lowercased. Empty if none. */
+export function extOf(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  if (dot === -1) return '';
+  return filename.slice(dot).toLowerCase();
+}
+
+/** Attribute markers emitted by renderMarkdown for the preview panel to wire up. */
+export const SFTP_INLINE_IMG_ATTR = 'data-sftp-src';
+export const SFTP_RELATIVE_LINK_ATTR = 'data-sftp-relative';
 
 /** Track blob URLs created during rendering so cleanup can revoke them. */
 let _lastBlobUrls: string[] = [];

@@ -3198,6 +3198,16 @@ body.files-overlay #approvalBar {
   margin: 0 auto;
 }
 
+.preview-rendered .sftp-inline-img-failed {
+  display: inline-block;
+  padding: 0.25em 0.5em;
+  border: 1px dashed var(--border);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 0.85em;
+  font-style: italic;
+}
+
 .preview-rendered video {
   max-width: 100%;
   height: auto;

@@ -13,7 +13,7 @@ import { applyTheme, _addNotification, fireNotification, setSessionTitleBase, cl
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
-import { isPreviewable, createPreviewPanel } from './sftp-preview.js';
+import { isPreviewable, createPreviewPanel, MIME_MAP, extOf, SFTP_INLINE_IMG_ATTR, SFTP_RELATIVE_LINK_ATTR } from './sftp-preview.js';
 
 /** Update session menu button text without clobbering the notification badge (#458).
  * Delegates to setSessionTitleBase which preserves the current notification count. */
@@ -518,10 +518,9 @@ export function initSessionMenu(): void {
       // Drive the separator-bar status indicator for the active session
       document.body.dataset.sessionState = newState;
     }
-    // Any successful connection dismisses a stale "Host unreachable" dialog.
-    // Prevents the dialog from lingering when a background reconnect/visibility
-    // change succeeds after HALT (showErrorDialog in scheduleReconnect).
-    if (newState === 'connected') {
+    // On the transition INTO 'connected', dismiss any stale "Host unreachable"
+    // dialog. Gating on the transition avoids a DOM write on every state change.
+    if (newState === 'connected' && _oldState !== 'connected') {
       document.getElementById('errorDialogOverlay')?.classList.add('hidden');
     }
   });
@@ -1598,14 +1597,13 @@ function _stateForReq(reqId: string): FilesState | null {
 const _filesPending = new Map<string, string>();
 // Maps requestId -> filename for pending downloads
 const _downloadPending = new Map<string, string>();
-// Set of requestIds that are preview downloads (not browser-save downloads)
-const _previewPending = new Set<string>();
-// Maps previewId -> full remote path so markdown relative-link clicks can resolve.
+// reqId -> full remote path for preview downloads. Presence = preview; absence = browser-save download.
 const _previewPathPending = new Map<string, string>();
 // Pending inline image fetches for markdown <img data-sftp-src>; reqId -> <img>
 const _inlineImagePending = new Map<string, HTMLImageElement>();
 // Blob URLs created for the currently-mounted preview's inline images (revoked on close).
 let _activeInlineImageBlobs: string[] = [];
+const _INLINE_IMG_TIMEOUT_MS = 15_000;
 // Maps requestId -> remotePath for pending uploads
 const _uploadPending = new Map<string, string>();
 // Maps requestId -> parent dir for pending renames/deletes
@@ -1895,12 +1893,19 @@ function _requestFilePreview(filePath: string): void {
   const filename = filePath.split('/').pop() ?? filePath;
   const reqId = `preview-${String(Date.now())}-${filename.slice(0, 8)}`;
   _downloadPending.set(reqId, filename);
-  _previewPending.add(reqId);
   _previewPathPending.set(reqId, filePath);
   _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
   _setTransferStatus('Loading preview...');
   _renderTransferList();
   sendSftpDownload(filePath, reqId);
+}
+
+/** Decode base64 (from the SFTP bridge) to Uint8Array. */
+function _b64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!;
+  return bytes;
 }
 
 /** Resolve a relative path against a base file path (the currently-previewing file).
@@ -1922,27 +1927,30 @@ function _resolveRelativePath(baseFilePath: string, relative: string): string {
 /** Path of the file currently shown in the preview panel — for resolving relative links. */
 let _activePreviewPath: string | null = null;
 
-const _INLINE_IMG_MIME: Record<string, string> = {
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-};
-function _inlineImgMime(path: string): string {
-  const dot = path.lastIndexOf('.');
-  if (dot === -1) return 'application/octet-stream';
-  return _INLINE_IMG_MIME[path.slice(dot).toLowerCase()] ?? 'application/octet-stream';
+/** Replace an unloadable inline image with a visible placeholder. `<img>` is a
+ *  replaced element so CSS ::after can't show the alt text — swap the tag instead. */
+function _markInlineImgFailed(img: HTMLImageElement): void {
+  const placeholder = document.createElement('span');
+  placeholder.className = 'sftp-inline-img-failed';
+  placeholder.textContent = `${img.alt || 'image'} (unavailable)`;
+  img.replaceWith(placeholder);
 }
 
-/** Kick off SFTP downloads for each <img data-sftp-src> inside the preview panel,
- *  resolving the src against the preview's full path. Blob URLs replace the
- *  placeholder src when the bytes arrive. */
+/** Kick off SFTP downloads for each inline image in the preview panel.
+ *  Each request has a timeout so the <img> doesn't sit blank forever if the bridge stalls. */
+let _inlineImgCounter = 0;
 function _fetchInlineImages(panel: HTMLElement, basePath: string): void {
-  const imgs = panel.querySelectorAll<HTMLImageElement>('img[data-sftp-src]');
-  imgs.forEach((img, idx) => {
+  const imgs = panel.querySelectorAll<HTMLImageElement>(`img[${SFTP_INLINE_IMG_ATTR}]`);
+  imgs.forEach((img) => {
     const rel = img.dataset.sftpSrc ?? '';
     if (!rel) return;
     const resolved = _resolveRelativePath(basePath, rel);
-    const reqId = `inline-img-${String(Date.now())}-${String(idx)}`;
+    _inlineImgCounter++;
+    const reqId = `inline-img-${String(_inlineImgCounter)}`;
     _inlineImagePending.set(reqId, img);
+    setTimeout(() => {
+      if (_inlineImagePending.delete(reqId)) _markInlineImgFailed(img);
+    }, _INLINE_IMG_TIMEOUT_MS);
     sendSftpDownload(resolved, reqId);
   });
 }
@@ -1992,6 +2000,14 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
     panel.cleanup();
     for (const url of _activeInlineImageBlobs) URL.revokeObjectURL(url);
     _activeInlineImageBlobs = [];
+    // Drop any in-flight preview / inline-image requests so a late response
+    // doesn't resurrect the panel or mutate a detached <img>.
+    for (const reqId of _previewPathPending.keys()) {
+      _downloadPending.delete(reqId);
+      _transferRecords.delete(reqId);
+    }
+    _previewPathPending.clear();
+    _inlineImagePending.clear();
     _activePreviewCleanup = null;
     _activePreviewPath = null;
     container.classList.add('hidden');
@@ -2014,11 +2030,16 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
   // Wire tab switching + relative-link intercept (event delegation on the panel)
   panel.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
-    const relLink = target.closest<HTMLAnchorElement>('a[data-sftp-relative="true"]');
+    const relLink = target.closest<HTMLAnchorElement>(`a[${SFTP_RELATIVE_LINK_ATTR}="true"]`);
     if (relLink) {
       e.preventDefault();
       const href = relLink.getAttribute('href') ?? '';
       if (href && _activePreviewPath) {
+        const activeWs = currentSession()?.ws;
+        if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
+          toast('Not connected — can\'t fetch file');
+          return;
+        }
         const resolved = _resolveRelativePath(_activePreviewPath, href);
         closePreview();
         _requestFilePreview(resolved);
@@ -2418,15 +2439,15 @@ export function initFilesPanel(): void {
       if (inlineImg) {
         _inlineImagePending.delete(msg.requestId);
         if (msg.data) {
-          const binary = atob(msg.data);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!;
           const rel = inlineImg.dataset.sftpSrc ?? '';
-          const blob = new Blob([bytes as BlobPart], { type: _inlineImgMime(rel) });
+          const mime = MIME_MAP[extOf(rel)] ?? 'application/octet-stream';
+          const blob = new Blob([_b64ToBytes(msg.data) as BlobPart], { type: mime });
           const url = URL.createObjectURL(blob);
           _activeInlineImageBlobs.push(url);
           inlineImg.src = url;
-          inlineImg.removeAttribute('data-sftp-src');
+          inlineImg.removeAttribute(SFTP_INLINE_IMG_ATTR);
+        } else {
+          _markInlineImgFailed(inlineImg);
         }
         return;
       }
@@ -2435,12 +2456,8 @@ export function initFilesPanel(): void {
       const previewPath = _previewPathPending.get(msg.requestId);
       _previewPathPending.delete(msg.requestId);
       _setTransferStatus('');
-      if (filename && msg.data && _previewPending.has(msg.requestId)) {
-        _previewPending.delete(msg.requestId);
-        const binary = atob(msg.data);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!;
-        _showFilePreview(filename, bytes, previewPath);
+      if (filename && msg.data && previewPath) {
+        _showFilePreview(filename, _b64ToBytes(msg.data), previewPath);
       } else if (filename && msg.data) {
         _triggerBlobDownload(filename, msg.data);
       }
@@ -2508,15 +2525,15 @@ export function initFilesPanel(): void {
         _downloadPending.delete(msg.requestId);
         const attemptedPath = _previewPathPending.get(msg.requestId);
         _previewPathPending.delete(msg.requestId);
-        _previewPending.delete(msg.requestId);
         _setTransferStatus('');
         const dlErrRec = _transferRecords.get(msg.requestId);
         if (dlErrRec) { dlErrRec.status = 'failed'; dlErrRec.error = msg.message; _renderTransferList(); }
         const pathSuffix = attemptedPath ? ` (${attemptedPath})` : '';
         toast(`Download failed${pathSuffix}: ${msg.message}`);
       } else if (_inlineImagePending.has(msg.requestId)) {
-        // Inline markdown image failed — leave the <img> sourceless (alt shows).
+        const failedImg = _inlineImagePending.get(msg.requestId)!;
         _inlineImagePending.delete(msg.requestId);
+        _markInlineImgFailed(failedImg);
       } else if (_uploadPending.has(msg.requestId)) {
         _uploadPending.delete(msg.requestId);
         _uploadActive = false;
