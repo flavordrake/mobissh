@@ -107,6 +107,12 @@ export function navigateToPanel(
   }
   document.body.classList.toggle('files-overlay', panel === 'files');
 
+  // Per-session panel memory (#468): each session remembers which panel it was in.
+  if (panel === 'terminal' || panel === 'files') {
+    const s = currentSession();
+    if (s) s.activePanel = panel;
+  }
+
   if (panel === 'terminal') {
     // Panel just became visible — fit the active session to real dimensions
     const s = currentSession();
@@ -352,6 +358,19 @@ export function switchSession(id: string): void {
   if (!session) return;
 
   appState.activeSessionId = id;
+
+  // Restore the session's last-active panel (#468). Without this, the files
+  // overlay and panel state from the previous session leaks across the swipe.
+  const targetPanel = session.activePanel ?? 'terminal';
+  const bodyInFiles = document.body.classList?.contains('files-overlay') ?? false;
+  if (targetPanel === 'files' && !bodyInFiles) {
+    navigateToPanel('files', { updateHash: false });
+  } else if (targetPanel === 'terminal' && bodyInFiles) {
+    navigateToPanel('terminal', { updateHash: false });
+  } else if (targetPanel === 'files' && bodyInFiles) {
+    // Still in files, but the active session changed — re-render its files state.
+    _activateFilesForCurrentSession();
+  }
 
   // Hide all terminal containers, show the active one via SessionHandle (#374)
   for (const [sid] of appState.sessions) {
@@ -2481,10 +2500,17 @@ export function initFilesPanel(): void {
         }
       } else if (_downloadPending.has(msg.requestId)) {
         _downloadPending.delete(msg.requestId);
+        const attemptedPath = _previewPathPending.get(msg.requestId);
+        _previewPathPending.delete(msg.requestId);
+        _previewPending.delete(msg.requestId);
         _setTransferStatus('');
         const dlErrRec = _transferRecords.get(msg.requestId);
         if (dlErrRec) { dlErrRec.status = 'failed'; dlErrRec.error = msg.message; _renderTransferList(); }
-        toast(`Download failed: ${msg.message}`);
+        const pathSuffix = attemptedPath ? ` (${attemptedPath})` : '';
+        toast(`Download failed${pathSuffix}: ${msg.message}`);
+      } else if (_inlineImagePending.has(msg.requestId)) {
+        // Inline markdown image failed — leave the <img> sourceless (alt shows).
+        _inlineImagePending.delete(msg.requestId);
       } else if (_uploadPending.has(msg.requestId)) {
         _uploadPending.delete(msg.requestId);
         _uploadActive = false;

@@ -233,6 +233,7 @@ export function createSession(id: string): SessionState {
     keepAliveTimer: { value: null, writable: true, enumerable: true, configurable: true },
     keepAliveWorker: { value: null, writable: true, enumerable: true, configurable: true },
     activeThemeName: { value: appState.activeThemeName, writable: true, enumerable: true, configurable: true },
+    activePanel: { value: 'terminal' as 'terminal' | 'files', writable: true, enumerable: true, configurable: true },
     _onDataDisposable: { value: null, writable: true, enumerable: true, configurable: true },
     _wsConsecFailures: { value: 0, writable: true, enumerable: true, configurable: true },
     _cycle: { value: null, writable: true, enumerable: true, configurable: true },

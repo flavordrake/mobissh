@@ -101,6 +101,8 @@ export interface SessionState {
   keepAliveTimer: ReturnType<typeof setInterval> | null;
   keepAliveWorker: Worker | null;
   activeThemeName: ThemeName;
+  /** Which panel this session was last in — restored on session switch (#468). */
+  activePanel: 'terminal' | 'files';
   _onDataDisposable: { dispose: () => void } | null;
   _wsConsecFailures: number;
   _cycle: ConnectionCycle | null;
