@@ -2503,15 +2503,30 @@ function _showFavoritesSubmenu(touchX: number, touchY: number): void {
     if (!btn) return;
     const favPath = btn.dataset.path ?? '';
     const isFile = btn.dataset.isFile === 'true';
+    // Dismiss the submenu (and its popstate listener) before navigating.
+    // Do NOT call history.back() — its async popstate races with the
+    // subsequent navigateToPanel/_filesNavigateTo and can re-route away from
+    // the target. Leaving the favMenu pushState in history is harmless.
     dismiss();
-    history.back();
     document.getElementById('sessionMenu')?.classList.add('hidden');
     document.getElementById('menuBackdrop')?.classList.add('hidden');
-    navigateToPanel('files');
+
     if (isFile) {
+      navigateToPanel('files');
       _requestFilePreview(favPath);
-    } else {
+      return;
+    }
+    // For directories: if the session hasn't been activated yet, the realpath
+    // request fires on navigateToPanel and its response would overwrite our
+    // target path with the resolved home dir. Stash favPath as deepLinkPath
+    // so the realpath handler routes to the favorite instead.
+    const state = _activeFilesState();
+    if (state.firstActivated) {
+      navigateToPanel('files');
       _filesNavigateTo(favPath);
+    } else {
+      state.deepLinkPath = favPath;
+      navigateToPanel('files');
     }
   });
 }
