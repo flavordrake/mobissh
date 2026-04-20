@@ -87,12 +87,13 @@ test.describe('Markdown preview — link and image rendering', () => {
     await expect(rendered.locator('a', { hasText: 'permission-transport.md' }))
       .toHaveAttribute('href', 'docs/architecture/permission-transport.md');
 
-    // Anchor safety attrs on all links
-    for (const attr of ['target', 'rel']) {
-      const values = await links.evaluateAll((nodes, a) =>
-        nodes.map(n => n.getAttribute(a)), attr);
-      expect(values.every(v => v !== null && v !== '')).toBe(true);
-    }
+    // Only ABSOLUTE links (https://...) open in a new tab; relative links are
+    // click-intercepted and should NOT have target/rel.
+    const externalLink = rendered.locator('a', { hasText: 'external' });
+    await expect(externalLink).toHaveAttribute('target', '_blank');
+    await expect(externalLink).toHaveAttribute('rel', /noopener/);
+    const relLink = rendered.locator('a', { hasText: 'docs/architecture/' });
+    await expect(relLink).toHaveAttribute('data-sftp-relative', 'true');
   });
 
   test('renders ![alt](url) as <img> tag', async ({ page, mockSshServer }) => {
@@ -128,6 +129,53 @@ test.describe('Markdown preview — link and image rendering', () => {
 
     // And no anchor was created for "not a link"
     await expect(rendered.locator('a', { hasText: 'not a link' })).toHaveCount(0);
+  });
+
+  test('clicking a relative link re-enters SFTP preview for the resolved path', async ({ page, mockSshServer }) => {
+    const parentMd = '# Parent\n\nSee [the child](./child.md).';
+    const childMd = '# Child\n\nLeaf content.';
+    const downloadRequests = [];
+
+    // Install handler that records requested paths and serves different content per path.
+    mockSshServer.onMessage = (ws, msg) => {
+      if (msg.type === 'sftp_realpath') {
+        ws.send(JSON.stringify({ type: 'sftp_realpath_result', requestId: msg.requestId, path: '/docs' }));
+      } else if (msg.type === 'sftp_ls') {
+        ws.send(JSON.stringify({
+          type: 'sftp_ls_result',
+          requestId: msg.requestId,
+          entries: [
+            { name: 'README.md', isDir: false, size: parentMd.length, mtime: 1710000000 },
+            { name: 'child.md', isDir: false, size: childMd.length, mtime: 1710100000 },
+          ],
+        }));
+      } else if (msg.type === 'sftp_download') {
+        downloadRequests.push(msg.path);
+        const body = msg.path.endsWith('/child.md') ? childMd : parentMd;
+        ws.send(JSON.stringify({
+          type: 'sftp_download_result',
+          requestId: msg.requestId,
+          data: Buffer.from(body).toString('base64'),
+          ok: true,
+        }));
+      }
+    };
+
+    await setupConnected(page, mockSshServer);
+    await openFilesPanel(page);
+
+    // Open parent
+    await page.locator('.files-entry[data-dir="false"]', { hasText: 'README.md' }).click();
+    const rendered = page.locator('.sftp-preview-panel .preview-rendered');
+    await expect(rendered).toBeVisible({ timeout: 5000 });
+    await expect(rendered.locator('h1', { hasText: 'Parent' })).toBeVisible();
+
+    // Click the relative link
+    await rendered.locator('a[data-sftp-relative="true"]', { hasText: 'the child' }).click();
+
+    // Should re-download for resolved path and show child content
+    await expect(rendered.locator('h1', { hasText: 'Child' })).toBeVisible({ timeout: 5000 });
+    expect(downloadRequests).toEqual(['/docs/README.md', '/docs/child.md']);
   });
 
   test('javascript: href is NOT created (stripped to literal text)', async ({ page, mockSshServer }) => {

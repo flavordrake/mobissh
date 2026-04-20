@@ -214,17 +214,27 @@ function renderMarkdown(raw: string): string {
       return `<img src="${url}" alt="${alt ?? ''}">`;
     }
   );
-  // Links.
+  // Links. Absolute URLs (http/https/mailto/etc) open in a new tab; relative
+  // paths are tagged so the preview panel's click handler can intercept them
+  // and re-enter the SFTP download flow with a resolved path.
   html = html.replace(
     /(<pre><code>[\s\S]*?<\/code><\/pre>)|(<code>[^<]*<\/code>)|\[([^\]]+)\]\(([^)]+)\)/g,
     (_match, preBlock?: string, inlineCode?: string, text?: string, href?: string) => {
       if (preBlock || inlineCode) return _match;
       const url = (href ?? '').trim();
       if (!isSafeMdUrl(url)) return _match;
-      return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text ?? ''}</a>`;
+      if (isAbsoluteUrl(url)) {
+        return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text ?? ''}</a>`;
+      }
+      return `<a href="${url}" data-sftp-relative="true">${text ?? ''}</a>`;
     }
   );
   return html;
+}
+
+/** True if the URL has a scheme (http:, https:, mailto:, etc) — browser handles it natively. */
+function isAbsoluteUrl(url: string): boolean {
+  return /^[a-z][a-z0-9+\-.]*:/i.test(url);
 }
 
 /** Scheme-safety check for markdown link/image URLs.

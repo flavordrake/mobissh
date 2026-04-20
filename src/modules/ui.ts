@@ -1575,6 +1575,8 @@ const _filesPending = new Map<string, string>();
 const _downloadPending = new Map<string, string>();
 // Set of requestIds that are preview downloads (not browser-save downloads)
 const _previewPending = new Set<string>();
+// Maps previewId -> full remote path so markdown relative-link clicks can resolve.
+const _previewPathPending = new Map<string, string>();
 // Maps requestId -> remotePath for pending uploads
 const _uploadPending = new Map<string, string>();
 // Maps requestId -> parent dir for pending renames/deletes
@@ -1865,17 +1867,38 @@ function _requestFilePreview(filePath: string): void {
   const reqId = `preview-${String(Date.now())}-${filename.slice(0, 8)}`;
   _downloadPending.set(reqId, filename);
   _previewPending.add(reqId);
+  _previewPathPending.set(reqId, filePath);
   _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
   _setTransferStatus('Loading preview...');
   _renderTransferList();
   sendSftpDownload(filePath, reqId);
 }
 
+/** Resolve a relative path against a base file path (the currently-previewing file).
+ *  Supports `./`, `../`, bare relative (`foo/bar`), and absolute (`/path`). */
+function _resolveRelativePath(baseFilePath: string, relative: string): string {
+  if (relative.startsWith('/')) return relative;
+  const baseDir = baseFilePath.includes('/')
+    ? baseFilePath.slice(0, baseFilePath.lastIndexOf('/'))
+    : '';
+  const parts = (baseDir ? baseDir.split('/') : []).filter(Boolean);
+  for (const seg of relative.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { parts.pop(); continue; }
+    parts.push(seg);
+  }
+  return '/' + parts.join('/');
+}
+
+/** Path of the file currently shown in the preview panel — for resolving relative links. */
+let _activePreviewPath: string | null = null;
+
 /** Active preview panel cleanup handle. */
 let _activePreviewCleanup: (() => void) | null = null;
 
 /** Show a file preview in the filePreview container. */
-function _showFilePreview(filename: string, data: Uint8Array): void {
+function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string): void {
+  _activePreviewPath = fullPath ?? filename;
   const containerEl = document.getElementById('filePreview');
   const exploreEl = document.getElementById('filesExplore');
   if (!containerEl || !exploreEl) return;
@@ -1909,6 +1932,7 @@ function _showFilePreview(filename: string, data: Uint8Array): void {
   function closePreview(): void {
     panel.cleanup();
     _activePreviewCleanup = null;
+    _activePreviewPath = null;
     container.classList.add('hidden');
     container.innerHTML = '';
     explore.classList.remove('hidden');
@@ -1926,15 +1950,27 @@ function _showFilePreview(filename: string, data: Uint8Array): void {
 
   window.addEventListener('popstate', onPopstate);
 
-  // Wire tab switching (event delegation on the panel)
+  // Wire tab switching + relative-link intercept (event delegation on the panel)
   panel.addEventListener('click', (e) => {
-    const tab = (e.target as HTMLElement).closest<HTMLElement>('.preview-tab');
+    const target = e.target as HTMLElement;
+    const relLink = target.closest<HTMLAnchorElement>('a[data-sftp-relative="true"]');
+    if (relLink) {
+      e.preventDefault();
+      const href = relLink.getAttribute('href') ?? '';
+      if (href && _activePreviewPath) {
+        const resolved = _resolveRelativePath(_activePreviewPath, href);
+        closePreview();
+        _requestFilePreview(resolved);
+      }
+      return;
+    }
+    const tab = target.closest<HTMLElement>('.preview-tab');
     if (!tab) return;
-    const target = tab.dataset.tab;
+    const tabKey = tab.dataset.tab;
     panel.querySelectorAll('.preview-tab').forEach((t) => t.classList.toggle('active', t === tab));
     const srcView = panel.querySelector<HTMLElement>('.preview-source');
     const renView = panel.querySelector<HTMLElement>('.preview-rendered');
-    if (target === 'source') {
+    if (tabKey === 'source') {
       if (srcView) srcView.style.display = '';
       if (renView) renView.style.display = 'none';
     } else {
@@ -2318,13 +2354,15 @@ export function initFilesPanel(): void {
     } else if (msg.type === 'sftp_download_result') {
       const filename = _downloadPending.get(msg.requestId);
       _downloadPending.delete(msg.requestId);
+      const previewPath = _previewPathPending.get(msg.requestId);
+      _previewPathPending.delete(msg.requestId);
       _setTransferStatus('');
       if (filename && msg.data && _previewPending.has(msg.requestId)) {
         _previewPending.delete(msg.requestId);
         const binary = atob(msg.data);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!;
-        _showFilePreview(filename, bytes);
+        _showFilePreview(filename, bytes, previewPath);
       } else if (filename && msg.data) {
         _triggerBlobDownload(filename, msg.data);
       }

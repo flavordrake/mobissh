@@ -70,6 +70,29 @@ describe('markdown links — relative URLs (SFTP-served)', () => {
     const html = md('[x](/var/log/app.log)');
     expect(html).toContain('href="/var/log/app.log"');
   });
+
+  it('relative links are tagged with data-sftp-relative (intercepted by preview panel)', () => {
+    const html = md('[x](./file.md)');
+    expect(html).toMatch(/<a[^>]*data-sftp-relative="true"/);
+  });
+
+  it('relative links do NOT get target=_blank (click is intercepted)', () => {
+    const html = md('[x](./file.md)');
+    const anchorMatch = html.match(/<a[^>]*>x<\/a>/);
+    expect(anchorMatch).toBeTruthy();
+    expect(anchorMatch![0]).not.toContain('target="_blank"');
+  });
+
+  it('absolute URLs do NOT get data-sftp-relative (browser handles them)', () => {
+    const html = md('[x](https://example.com)');
+    expect(html).not.toMatch(/data-sftp-relative/);
+    expect(html).toContain('target="_blank"');
+  });
+
+  it('mailto: is treated as absolute (no data-sftp-relative)', () => {
+    const html = md('[x](mailto:a@b.com)');
+    expect(html).not.toMatch(/data-sftp-relative/);
+  });
 });
 
 describe('markdown links — security', () => {
