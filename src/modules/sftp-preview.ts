@@ -198,13 +198,45 @@ function renderMarkdown(raw: string): string {
     }
   );
   html = html.replace(
-    /(<pre><code>[\s\S]*?<\/code><\/pre>)|\*\*([^*]+)\*\*/g,
-    (_match, preBlock?: string, boldText?: string) => {
-      if (preBlock) return preBlock;
+    /(<pre><code>[\s\S]*?<\/code><\/pre>)|(<code>[^<]*<\/code>)|\*\*([^*]+)\*\*/g,
+    (_match, preBlock?: string, inlineCode?: string, boldText?: string) => {
+      if (preBlock || inlineCode) return _match;
       return `<strong>${boldText ?? ''}</strong>`;
     }
   );
+  // Images first (so `!` isn't stripped by the link pass leaving a stray `!`).
+  html = html.replace(
+    /(<pre><code>[\s\S]*?<\/code><\/pre>)|(<code>[^<]*<\/code>)|!\[([^\]]*)\]\(([^)]+)\)/g,
+    (_match, preBlock?: string, inlineCode?: string, alt?: string, src?: string) => {
+      if (preBlock || inlineCode) return _match;
+      const url = (src ?? '').trim();
+      if (!isSafeMdUrl(url)) return _match;
+      return `<img src="${url}" alt="${alt ?? ''}">`;
+    }
+  );
+  // Links.
+  html = html.replace(
+    /(<pre><code>[\s\S]*?<\/code><\/pre>)|(<code>[^<]*<\/code>)|\[([^\]]+)\]\(([^)]+)\)/g,
+    (_match, preBlock?: string, inlineCode?: string, text?: string, href?: string) => {
+      if (preBlock || inlineCode) return _match;
+      const url = (href ?? '').trim();
+      if (!isSafeMdUrl(url)) return _match;
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text ?? ''}</a>`;
+    }
+  );
   return html;
+}
+
+/** Scheme-safety check for markdown link/image URLs.
+ *  Input is already HTML-escaped; scheme characters (a-z0-9+-.) and ':' pass through unchanged.
+ *  Blocks javascript:, vbscript:, data:, file:. Allows everything else (http, https, mailto,
+ *  relative paths, absolute paths). */
+function isSafeMdUrl(url: string): boolean {
+  if (!url) return false;
+  const scheme = url.match(/^([a-z][a-z0-9+\-.]*):/i);
+  if (!scheme) return true; // no scheme → relative/absolute path, safe
+  const blocked = new Set(['javascript', 'vbscript', 'data', 'file']);
+  return !blocked.has(scheme[1]!.toLowerCase());
 }
 
 // ── Preview rendering ────────────────────────────────────────────────────────
