@@ -1125,7 +1125,10 @@ html, body {
   transition: background 0.2s ease, opacity 0.2s ease;
 }
 
-/* Connected: no status overlay — compose's border-top shows through when active */
+/* Connected: solid accent bar (no animation, full opacity) */
+body[data-session-state="connected"] #key-bar-handle::after {
+  background: var(--accent);
+}
 
 /* Connecting / reconnecting / authenticating: shimmer gradient sweep */
 body[data-session-state="connecting"] #key-bar-handle::after,
