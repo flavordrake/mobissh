@@ -975,6 +975,14 @@ export function initConnectForm(): void {
       target.classList.add('connecting');
       target.textContent = 'Connecting…';
       void connectFromProfile(idx);
+    } else if (action === 'remove-recent') {
+      const host = target.dataset.host ?? '';
+      const port = parseInt(target.dataset.port ?? '22', 10);
+      const username = target.dataset.username ?? '';
+      if (host && username) {
+        removeRecentSession(host, port, username);
+        loadProfiles();
+      }
     } else if (action === 'reconnect-all-recent') {
       target.textContent = 'Connecting…';
       target.classList.add('connecting');

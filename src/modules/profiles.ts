@@ -224,6 +224,7 @@ export function loadProfiles(): void {
         return `<div class="recent-session-item" data-idx="${String(r.profileIdx)}">
           <span class="session-label">${label}</span>
           <button class="item-btn accent" data-action="reconnect-recent" data-idx="${String(r.profileIdx)}">Reconnect</button>
+          <button class="item-btn danger" data-action="remove-recent" data-host="${escHtml(r.host)}" data-port="${String(r.port)}" data-username="${escHtml(r.username)}" aria-label="Remove from recent">✕</button>
         </div>`;
       }).join('')
       + reconnectAllBtn;
