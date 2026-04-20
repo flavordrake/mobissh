@@ -44,6 +44,14 @@ export interface VaultMeta {
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
+// ── Files favorites (#470) ──────────────────────────────────────────────────
+
+export interface Favorite {
+  path: string;
+  isFile: boolean;
+  label?: string;
+}
+
 export type SessionLifecycleState =
   | 'idle'
   | 'connecting'
