@@ -518,6 +518,12 @@ export function initSessionMenu(): void {
       // Drive the separator-bar status indicator for the active session
       document.body.dataset.sessionState = newState;
     }
+    // Any successful connection dismisses a stale "Host unreachable" dialog.
+    // Prevents the dialog from lingering when a background reconnect/visibility
+    // change succeeds after HALT (showErrorDialog in scheduleReconnect).
+    if (newState === 'connected') {
+      document.getElementById('errorDialogOverlay')?.classList.add('hidden');
+    }
   });
 
   // Stop touch events from leaking through the menu to parent gesture handlers
