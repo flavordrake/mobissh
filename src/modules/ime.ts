@@ -446,6 +446,15 @@ export function initIMEInput(): void {
     });
   }
 
+  // ── Textarea diffing state (handles post-composition corrections) ──────
+  let _lastSentValue = '';
+  let _prevInputValue = '';  // tracks ime.value before each input event (#172)
+  let _replacementHandled = false;
+  let _clearTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Timestamp of most recent transition to idle — used to reject late browser
+   *  re-insertion events that fire within a short window after compositionend. */
+  let _idleTransitionTime = 0;
+
   _onAction(clearBtn, () => {
     // Save text before clearing — so user can recover discarded input
     _recordHistory(ime.value);
@@ -486,15 +495,6 @@ export function initIMEInput(): void {
     _loadHistoryEntry(1);
     focusIME();
   });
-
-  // ── Textarea diffing state (handles post-composition corrections) ──────
-  let _lastSentValue = '';
-  let _prevInputValue = '';  // tracks ime.value before each input event (#172)
-  let _replacementHandled = false;
-  let _clearTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Timestamp of most recent transition to idle — used to reject late browser
-   *  re-insertion events that fire within a short window after compositionend. */
-  let _idleTransitionTime = 0;
 
   // ── Preview countdown ring on commit button (#169) ─────────────────────
   const commitCountdown = commitBtn?.querySelector('.commit-countdown') as HTMLElement | null;

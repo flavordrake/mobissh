@@ -10,6 +10,10 @@ import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, S
 import { vaultLoad, vaultStore, tryUnlockVault } from './vault.js';
 import { showErrorDialog, navigateToPanel } from './ui.js';
 import { saveRecentSession, getProfiles } from './profiles.js';
+import { getDefaultWsUrl, RECONNECT, escHtml, parseApprovalPayload } from './constants.js';
+import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
+import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
+import { SessionHandle } from './session.js';
 
 // Sessions that should navigate to the terminal panel when SSH connects.
 // Populated by _openWebSocket for user-initiated connections (not reconnects).
@@ -238,10 +242,14 @@ export function sendSftpRealpath(requestId: string): void {
   if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_realpath', requestId }));
 }
-import { getDefaultWsUrl, RECONNECT, escHtml, parseApprovalPayload } from './constants.js';
-import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
-import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
-import { SessionHandle } from './session.js';
+
+let _currentOverlay: HTMLDivElement | null = null;
+
+interface KnownHost {
+  fingerprint: string;
+  keyType: string;
+  addedAt: string;
+}
 
 // SessionHandle instances stored alongside SessionState for terminal lifecycle (#374)
 const _sessionHandles = new Map<string, SessionHandle>();
@@ -1230,8 +1238,6 @@ export function sendSSHInputToAll(data: string): void {
 
 // ── Connection status overlay (#172) ─────────────────────────────────────────
 
-let _currentOverlay: HTMLDivElement | null = null;
-
 function _showConnectionStatus(message: string, opts?: { error?: boolean; sessionId?: string }): void {
   // Reuse existing overlay — append message to scrollable log
   if (_currentOverlay) {
@@ -1297,12 +1303,6 @@ function _dismissConnectionStatus(delayMs = 0): void {
 }
 
 // ── Host key verification prompt (#5) ─────────────────────────────────────────
-
-interface KnownHost {
-  fingerprint: string;
-  keyType: string;
-  addedAt: string;
-}
 
 interface HostKeyMsg {
   host: string;

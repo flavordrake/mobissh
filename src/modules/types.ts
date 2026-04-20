@@ -10,6 +10,8 @@ import type { KeyBarConfig } from './keybar-config.js';
 
 // ── Domain types ────────────────────────────────────────────────────────────
 
+export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight' | 'ocean' | 'ember' | 'forest' | 'sunset' | 'synthwave' | 'commodore' | 'terminal' | 'borland' | 'arctic' | 'cobalt' | 'matrix';
+
 export interface SSHProfile {
   title: string;
   host: string;
@@ -25,8 +27,6 @@ export interface SSHProfile {
   keyVaultId?: string;
   theme?: ThemeName;
 }
-
-export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight' | 'ocean' | 'ember' | 'forest' | 'sunset' | 'synthwave' | 'commodore' | 'terminal' | 'borland' | 'arctic' | 'cobalt' | 'matrix';
 
 export type VaultMethod = 'master-pw' | 'master-pw+bio' | null;
 

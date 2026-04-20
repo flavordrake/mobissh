@@ -39,7 +39,7 @@ export function listFavorites(profileId: string): Favorite[] {
   const map = _readMap();
   const entries = map[profileId];
   if (!Array.isArray(entries)) return [];
-  return entries.filter((e) => e && typeof e.path === 'string' && typeof e.isFile === 'boolean');
+  return entries.filter((e) => typeof e.path === 'string' && typeof e.isFile === 'boolean');
 }
 
 /** True when the given path is favorited for the given profile. */
@@ -50,7 +50,8 @@ export function isFavorited(profileId: string, path: string): boolean {
 /** Toggle favorite state. Returns the NEW isFavorited state (true = added, false = removed). */
 export function toggleFavorite(profileId: string, fav: Favorite): boolean {
   const map = _readMap();
-  const list = Array.isArray(map[profileId]) ? map[profileId]! : [];
+  const existing = map[profileId];
+  const list = Array.isArray(existing) ? existing : [];
   const idx = list.findIndex((f) => f.path === fav.path);
   if (idx >= 0) {
     list.splice(idx, 1);

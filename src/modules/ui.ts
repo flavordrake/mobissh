@@ -45,10 +45,10 @@ function _renderNotifModalList(): void {
   }
   list.innerHTML = notifs.slice().reverse().map((n) => {
     const age = _formatRelativeTime(n.time);
-    return `<div class="notif-modal-item">`
+    return '<div class="notif-modal-item">'
       + `<div class="notif-modal-item-time">${escHtml(age)}</div>`
       + `<div class="notif-modal-item-message">${escHtml(n.message)}</div>`
-      + `</div>`;
+      + '</div>';
   }).join('');
 }
 
@@ -363,8 +363,8 @@ export function switchSession(id: string): void {
 
   // Restore the session's last-active panel (#468). Without this, the files
   // overlay and panel state from the previous session leaks across the swipe.
-  const targetPanel = session.activePanel ?? 'terminal';
-  const bodyInFiles = document.body.classList?.contains('files-overlay') ?? false;
+  const targetPanel = session.activePanel;
+  const bodyInFiles = document.body.classList.contains('files-overlay');
   if (targetPanel === 'files' && !bodyInFiles) {
     navigateToPanel('files', { updateHash: false });
   } else if (targetPanel === 'terminal' && bodyInFiles) {
