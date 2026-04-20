@@ -14,6 +14,8 @@ import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, c
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel, MIME_MAP, extOf, SFTP_INLINE_IMG_ATTR, SFTP_RELATIVE_LINK_ATTR } from './sftp-preview.js';
+import { listFavorites, toggleFavorite, isFavorited, profileIdOf } from './favorites.js';
+import type { Favorite } from './types.js';
 
 /** Update session menu button text without clobbering the notification badge (#458).
  * Delegates to setSessionTitleBase which preserves the current notification count. */
@@ -2075,11 +2077,16 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
   }).join('');
   const breadcrumbHtml = rootCrumb + partCrumbs;
   const statusHidden = _transferStatus ? '' : ' hidden';
+  const bookmarked = _isCurrentPathFavorited(path);
+  const bookmarkClass = bookmarked ? 'files-bookmark-btn filled' : 'files-bookmark-btn';
+  const bookmarkLabel = bookmarked ? 'Remove from favorites' : 'Add to favorites';
 
   panel.innerHTML = `
-    <div class="files-breadcrumb">${breadcrumbHtml}</div>
+    <div class="files-breadcrumb">
+      <div class="files-breadcrumb-crumbs">${breadcrumbHtml}</div>
+      <button class="${bookmarkClass}" aria-label="${bookmarkLabel}" title="${bookmarkLabel}" data-path="${escHtml(path)}">★</button>
+    </div>
     <div class="files-toolbar">
-      <button class="files-upload-btn">Upload</button>
       <button class="files-download-btn hidden">Download</button>
       <input type="file" class="files-upload-input" multiple />
       <span class="files-transfer-status${statusHidden}">${escHtml(_transferStatus)}</span>
@@ -2136,9 +2143,7 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
     });
   });
 
-  const uploadBtn = panel.querySelector<HTMLElement>('.files-upload-btn');
   const fileInput = panel.querySelector<HTMLInputElement>('.files-upload-input');
-  uploadBtn?.addEventListener('click', () => { fileInput?.click(); });
   fileInput?.addEventListener('change', () => {
     if (fileInput.files?.length) {
       void _startUpload(fileInput.files);
@@ -2149,6 +2154,30 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
   dlBtn?.addEventListener('click', () => { _downloadSelectedFiles(panel); });
   const cancelBtn = panel.querySelector<HTMLElement>('.files-upload-cancel');
   cancelBtn?.addEventListener('click', () => { _cancelActiveUpload(); });
+
+  // Bookmark star in breadcrumb (#470)
+  const bookmarkBtn = panel.querySelector<HTMLElement>('.files-bookmark-btn');
+  bookmarkBtn?.addEventListener('click', () => {
+    const profId = _activeProfileId();
+    if (!profId) { toast('Connect a session to bookmark paths'); return; }
+    const fav: Favorite = { path, isFile: false };
+    toggleFavorite(profId, fav);
+    _renderFilesPanel(path, bodyHtml);
+  });
+}
+
+/** Resolve the active session's profile id for favorites keying, or null. */
+function _activeProfileId(): string | null {
+  const session = currentSession();
+  if (!session?.profile) return null;
+  return profileIdOf(session.profile);
+}
+
+/** True if the current files path is favorited for the active profile. */
+function _isCurrentPathFavorited(path: string): boolean {
+  const profId = _activeProfileId();
+  if (!profId) return false;
+  return isFavorited(profId, path);
 }
 
 function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): void {
@@ -2422,6 +2451,71 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
   });
 }
 
+/** Render the favorites submenu anchored near the Files menu item. (#470) */
+function _showFavoritesSubmenu(touchX: number, touchY: number): void {
+  _dismissContextMenu();
+  const profId = _activeProfileId();
+  if (!profId) return;
+  const favs = listFavorites(profId);
+  if (favs.length === 0) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'filesFavOverlay';
+  overlay.className = 'ctx-overlay';
+
+  const menu = document.createElement('div');
+  menu.id = 'filesFavMenu';
+  menu.className = 'ctx-menu files-fav-menu';
+  menu.innerHTML = favs.map((f) => {
+    const label = f.label ?? f.path;
+    const icon = f.isFile ? 'F' : 'D';
+    return `<button class="ctx-menu-item files-fav-item" data-path="${escHtml(f.path)}" data-is-file="${String(f.isFile)}"><span class="files-fav-icon">${icon}</span>${escHtml(label)}</button>`;
+  }).join('');
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const menuH = Math.min(favs.length * 44, vh - 16);
+  const left = Math.max(8, Math.min(touchX, vw - 220));
+  const top = Math.max(8, Math.min(touchY, vh - menuH - 8));
+  menu.style.setProperty('--ctx-x', `${String(left)}px`);
+  menu.style.setProperty('--ctx-y', `${String(top)}px`);
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(menu);
+  history.pushState({ favMenu: true }, '');
+
+  let dismissed = false;
+  function dismiss(): void {
+    if (dismissed) return;
+    dismissed = true;
+    overlay.remove();
+    menu.remove();
+    window.removeEventListener('popstate', onPopstate);
+    _ctxMenuDismiss = null;
+  }
+  function onPopstate(): void { dismiss(); }
+  _ctxMenuDismiss = dismiss;
+  overlay.addEventListener('click', () => { dismiss(); history.back(); });
+  window.addEventListener('popstate', onPopstate);
+
+  menu.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-path]');
+    if (!btn) return;
+    const favPath = btn.dataset.path ?? '';
+    const isFile = btn.dataset.isFile === 'true';
+    dismiss();
+    history.back();
+    document.getElementById('sessionMenu')?.classList.add('hidden');
+    document.getElementById('menuBackdrop')?.classList.add('hidden');
+    navigateToPanel('files');
+    if (isFile) {
+      _requestFilePreview(favPath);
+    } else {
+      _filesNavigateTo(favPath);
+    }
+  });
+}
+
 export function initFilesPanel(): void {
   setSftpHandler((msg) => {
     if (msg.type === 'sftp_ls_result') {
@@ -2565,6 +2659,33 @@ export function initFilesPanel(): void {
     navigateToPanel('terminal');
   });
 
+  // Docs menu (#470) — top-right dropdown holding actions such as Upload
+  const docsMenuBtn = document.getElementById('filesDocsMenuBtn');
+  const docsMenu = document.getElementById('filesDocsMenu');
+  docsMenuBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!docsMenu) return;
+    const willHide = docsMenu.classList.toggle('hidden');
+    docsMenuBtn.setAttribute('aria-expanded', willHide ? 'false' : 'true');
+  });
+  document.addEventListener('click', (e) => {
+    if (!docsMenu || docsMenu.classList.contains('hidden')) return;
+    if (e.target instanceof Node && (docsMenu.contains(e.target) || docsMenuBtn?.contains(e.target))) return;
+    docsMenu.classList.add('hidden');
+    docsMenuBtn?.setAttribute('aria-expanded', 'false');
+  });
+  docsMenu?.querySelectorAll<HTMLElement>('.files-docs-menu-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      const action = item.dataset.action;
+      docsMenu.classList.add('hidden');
+      docsMenuBtn?.setAttribute('aria-expanded', 'false');
+      if (action === 'upload') {
+        const fileInput = document.querySelector<HTMLInputElement>('#filesExplore .files-upload-input');
+        fileInput?.click();
+      }
+    });
+  });
+
   // Sub-tab switching
   document.querySelectorAll<HTMLElement>('.files-subtab').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2594,12 +2715,28 @@ export function initFilesPanel(): void {
     fileInput?.click();
   });
 
-  // Session menu: Files entry — opens the files panel for the active session (#409)
-  document.getElementById('sessionFilesBtn')?.addEventListener('click', () => {
+  // Session menu: Files entry — opens the files panel (#409) / favorites on long-press (#470)
+  const sessionFilesBtn = document.getElementById('sessionFilesBtn');
+  let filesLongPressFired = false;
+  let filesPressTimer: ReturnType<typeof setTimeout> | null = null;
+  sessionFilesBtn?.addEventListener('click', () => {
+    if (filesLongPressFired) { filesLongPressFired = false; return; }
+    navigateToPanel('files');
     document.getElementById('sessionMenu')?.classList.add('hidden');
     document.getElementById('menuBackdrop')?.classList.add('hidden');
-    navigateToPanel('files');
   });
+  sessionFilesBtn?.addEventListener('touchstart', (e) => {
+    filesPressTimer = setTimeout(() => {
+      filesPressTimer = null;
+      filesLongPressFired = true;
+      const touch = e.touches[0];
+      _showFavoritesSubmenu(touch ? touch.clientX : 0, touch ? touch.clientY : 0);
+    }, 500);
+  }, { passive: true });
+  const filesCancelPress = (): void => { if (filesPressTimer) { clearTimeout(filesPressTimer); filesPressTimer = null; } };
+  sessionFilesBtn?.addEventListener('touchend', filesCancelPress);
+  sessionFilesBtn?.addEventListener('touchmove', filesCancelPress);
+  sessionFilesBtn?.addEventListener('touchcancel', () => { filesCancelPress(); filesLongPressFired = false; });
 
   // Session menu: Notifications entry — opens the review modal (#458)
   document.getElementById('sessionNotifBtn')?.addEventListener('click', () => {
