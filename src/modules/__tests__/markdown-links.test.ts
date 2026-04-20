@@ -136,10 +136,10 @@ describe('markdown images', () => {
     expect(html).toContain('alt="logo"');
   });
 
-  it('renders ![alt](./pic.png) with relative src (SFTP-served)', () => {
+  it('renders ![alt](./pic.png) with data-sftp-src for async blob replacement', () => {
     const html = md('![screenshot](./screenshot.png)');
     expect(html).toContain('<img ');
-    expect(html).toContain('src="./screenshot.png"');
+    expect(html).toContain('data-sftp-src="./screenshot.png"');
     expect(html).toContain('alt="screenshot"');
   });
 
@@ -163,10 +163,27 @@ describe('markdown images', () => {
   it('image before a regular link does not trip link detection', () => {
     const html = md('![pic](./a.png) and [text](./b.md)');
     expect(html).toContain('<img ');
-    expect(html).toContain('src="./a.png"');
     // The link after the image should still render
     expect(html).toContain('<a ');
     expect(html).toContain('href="./b.md"');
+  });
+
+  it('relative image src becomes data-sftp-src (no src until blob resolves)', () => {
+    const html = md('![logo](./logo.png)');
+    expect(html).toContain('data-sftp-src="./logo.png"');
+    // No plain src attribute — the browser would 404 on the relative path
+    expect(html).not.toMatch(/<img[^>]*\ssrc="\.\/logo\.png"/);
+  });
+
+  it('absolute image src stays as src (browser fetches directly)', () => {
+    const html = md('![logo](https://example.com/logo.png)');
+    expect(html).toContain('src="https://example.com/logo.png"');
+    expect(html).not.toContain('data-sftp-src');
+  });
+
+  it('absolute-path relative image (/foo.png) also gets data-sftp-src', () => {
+    const html = md('![x](/var/img/chart.png)');
+    expect(html).toContain('data-sftp-src="/var/img/chart.png"');
   });
 });
 

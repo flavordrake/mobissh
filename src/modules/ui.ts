@@ -1577,6 +1577,10 @@ const _downloadPending = new Map<string, string>();
 const _previewPending = new Set<string>();
 // Maps previewId -> full remote path so markdown relative-link clicks can resolve.
 const _previewPathPending = new Map<string, string>();
+// Pending inline image fetches for markdown <img data-sftp-src>; reqId -> <img>
+const _inlineImagePending = new Map<string, HTMLImageElement>();
+// Blob URLs created for the currently-mounted preview's inline images (revoked on close).
+let _activeInlineImageBlobs: string[] = [];
 // Maps requestId -> remotePath for pending uploads
 const _uploadPending = new Map<string, string>();
 // Maps requestId -> parent dir for pending renames/deletes
@@ -1893,6 +1897,31 @@ function _resolveRelativePath(baseFilePath: string, relative: string): string {
 /** Path of the file currently shown in the preview panel — for resolving relative links. */
 let _activePreviewPath: string | null = null;
 
+const _INLINE_IMG_MIME: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+};
+function _inlineImgMime(path: string): string {
+  const dot = path.lastIndexOf('.');
+  if (dot === -1) return 'application/octet-stream';
+  return _INLINE_IMG_MIME[path.slice(dot).toLowerCase()] ?? 'application/octet-stream';
+}
+
+/** Kick off SFTP downloads for each <img data-sftp-src> inside the preview panel,
+ *  resolving the src against the preview's full path. Blob URLs replace the
+ *  placeholder src when the bytes arrive. */
+function _fetchInlineImages(panel: HTMLElement, basePath: string): void {
+  const imgs = panel.querySelectorAll<HTMLImageElement>('img[data-sftp-src]');
+  imgs.forEach((img, idx) => {
+    const rel = img.dataset.sftpSrc ?? '';
+    if (!rel) return;
+    const resolved = _resolveRelativePath(basePath, rel);
+    const reqId = `inline-img-${String(Date.now())}-${String(idx)}`;
+    _inlineImagePending.set(reqId, img);
+    sendSftpDownload(resolved, reqId);
+  });
+}
+
 /** Active preview panel cleanup handle. */
 let _activePreviewCleanup: (() => void) | null = null;
 
@@ -1911,6 +1940,8 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
     _activePreviewCleanup();
     _activePreviewCleanup = null;
   }
+  for (const url of _activeInlineImageBlobs) URL.revokeObjectURL(url);
+  _activeInlineImageBlobs = [];
 
   const panel = createPreviewPanel(filename, data);
 
@@ -1929,8 +1960,13 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
 
   _activePreviewCleanup = (): void => { panel.cleanup(); };
 
+  // Kick off async SFTP fetches for any relative <img data-sftp-src>.
+  _fetchInlineImages(panel, _activePreviewPath);
+
   function closePreview(): void {
     panel.cleanup();
+    for (const url of _activeInlineImageBlobs) URL.revokeObjectURL(url);
+    _activeInlineImageBlobs = [];
     _activePreviewCleanup = null;
     _activePreviewPath = null;
     container.classList.add('hidden');
@@ -2352,6 +2388,23 @@ export function initFilesPanel(): void {
       const active = _activeFilesState();
       if (path === active.path && targetState === active) _renderFilesList(path, msg.entries);
     } else if (msg.type === 'sftp_download_result') {
+      // Inline markdown image fetch — decode to blob URL and swap <img src>.
+      const inlineImg = _inlineImagePending.get(msg.requestId);
+      if (inlineImg) {
+        _inlineImagePending.delete(msg.requestId);
+        if (msg.data) {
+          const binary = atob(msg.data);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!;
+          const rel = inlineImg.dataset.sftpSrc ?? '';
+          const blob = new Blob([bytes as BlobPart], { type: _inlineImgMime(rel) });
+          const url = URL.createObjectURL(blob);
+          _activeInlineImageBlobs.push(url);
+          inlineImg.src = url;
+          inlineImg.removeAttribute('data-sftp-src');
+        }
+        return;
+      }
       const filename = _downloadPending.get(msg.requestId);
       _downloadPending.delete(msg.requestId);
       const previewPath = _previewPathPending.get(msg.requestId);

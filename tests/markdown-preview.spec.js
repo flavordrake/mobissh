@@ -96,7 +96,7 @@ test.describe('Markdown preview — link and image rendering', () => {
     await expect(relLink).toHaveAttribute('data-sftp-relative', 'true');
   });
 
-  test('renders ![alt](url) as <img> tag', async ({ page, mockSshServer }) => {
+  test('renders ![alt](url) as <img> tag with correct alt', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
     installSftpHandlersForPreview(mockSshServer, MARKDOWN_WITH_LINKS);
     await openFilesPanel(page);
@@ -107,10 +107,8 @@ test.describe('Markdown preview — link and image rendering', () => {
 
     const img = rendered.locator('img');
     await expect(img).toHaveCount(1);
-    await expect(img).toHaveAttribute('src', './logo.png');
     await expect(img).toHaveAttribute('alt', 'logo');
-
-    // Literal markdown source for the image should not appear as text
+    // The literal markdown source for the image should not appear as text.
     await expect(rendered).not.toContainText('![logo](./logo.png)');
   });
 
@@ -129,6 +127,52 @@ test.describe('Markdown preview — link and image rendering', () => {
 
     // And no anchor was created for "not a link"
     await expect(rendered.locator('a', { hasText: 'not a link' })).toHaveCount(0);
+  });
+
+  test('relative <img data-sftp-src> becomes blob: URL after SFTP fetch', async ({ page, mockSshServer }) => {
+    const parentMd = '# With image\n\n![diagram](./diagram.png)';
+    // 10-byte PNG header; enough for Blob creation. Browser won't decode but src swap is testable.
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
+    const downloads = [];
+
+    mockSshServer.onMessage = (ws, msg) => {
+      if (msg.type === 'sftp_realpath') {
+        ws.send(JSON.stringify({ type: 'sftp_realpath_result', requestId: msg.requestId, path: '/pics' }));
+      } else if (msg.type === 'sftp_ls') {
+        ws.send(JSON.stringify({
+          type: 'sftp_ls_result',
+          requestId: msg.requestId,
+          entries: [{ name: 'README.md', isDir: false, size: parentMd.length, mtime: 1710000000 }],
+        }));
+      } else if (msg.type === 'sftp_download') {
+        downloads.push(msg.path);
+        const body = msg.path.endsWith('.md') ? Buffer.from(parentMd) : pngBytes;
+        ws.send(JSON.stringify({
+          type: 'sftp_download_result',
+          requestId: msg.requestId,
+          data: body.toString('base64'),
+          ok: true,
+        }));
+      }
+    };
+
+    await setupConnected(page, mockSshServer);
+    await openFilesPanel(page);
+
+    await page.locator('.files-entry[data-dir="false"]', { hasText: 'README.md' }).click();
+    const rendered = page.locator('.sftp-preview-panel .preview-rendered');
+    await expect(rendered).toBeVisible({ timeout: 5000 });
+
+    const img = rendered.locator('img');
+    await expect(img).toHaveCount(1);
+
+    // After SFTP fetch completes, src should be a blob: URL and data-sftp-src stripped.
+    await expect(img).toHaveAttribute('src', /^blob:/, { timeout: 5000 });
+    await expect(img).not.toHaveAttribute('data-sftp-src', /.+/);
+
+    // Downloaded the md AND the resolved image path.
+    expect(downloads).toContain('/pics/README.md');
+    expect(downloads).toContain('/pics/diagram.png');
   });
 
   test('clicking a relative link re-enters SFTP preview for the resolved path', async ({ page, mockSshServer }) => {

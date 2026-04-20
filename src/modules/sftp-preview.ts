@@ -205,13 +205,18 @@ function renderMarkdown(raw: string): string {
     }
   );
   // Images first (so `!` isn't stripped by the link pass leaving a stray `!`).
+  // Absolute image URLs keep `src` (browser fetches); relative paths become
+  // `data-sftp-src` and the preview panel mounts a blob URL after async fetch.
   html = html.replace(
     /(<pre><code>[\s\S]*?<\/code><\/pre>)|(<code>[^<]*<\/code>)|!\[([^\]]*)\]\(([^)]+)\)/g,
     (_match, preBlock?: string, inlineCode?: string, alt?: string, src?: string) => {
       if (preBlock || inlineCode) return _match;
       const url = (src ?? '').trim();
       if (!isSafeMdUrl(url)) return _match;
-      return `<img src="${url}" alt="${alt ?? ''}">`;
+      if (isAbsoluteUrl(url)) {
+        return `<img src="${url}" alt="${alt ?? ''}">`;
+      }
+      return `<img data-sftp-src="${url}" alt="${alt ?? ''}">`;
     }
   );
   // Links. Absolute URLs (http/https/mailto/etc) open in a new tab; relative
