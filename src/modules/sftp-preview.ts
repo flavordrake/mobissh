@@ -10,7 +10,17 @@
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.m4v']);
-const TEXT_EXTS = new Set(['.md', '.txt', '.log']);
+const TEXT_EXTS = new Set([
+  '.md', '.txt', '.log',
+  // Shell / interpreter scripts — preview as plain text
+  '.sh', '.bash', '.zsh', '.fish',
+  '.bat', '.cmd', '.ps1', '.psm1', '.psd1',
+  '.py', '.rb', '.pl', '.lua', '.awk', '.sed',
+  // Common config / data text formats
+  '.json', '.yaml', '.yml', '.toml', '.ini', '.conf', '.cfg', '.env',
+  // Source files that are useful to peek
+  '.js', '.ts', '.jsx', '.tsx', '.css', '.scss', '.xml',
+]);
 const HTML_EXTS = new Set(['.html', '.htm']);
 
 // ── File type detection ──────────────────────────────────────────────────────
@@ -311,7 +321,10 @@ function renderSource(data: Uint8Array | string): string {
 /** Build a Copy All button carrying the raw source text as a base64 data attribute.
  *  Base64 (UTF-8 safe) avoids HTML-attribute escaping concerns for multi-line/quoted text. */
 function buildCopyAllBtn(rawText: string): string {
-  const encoded = btoa(unescape(encodeURIComponent(rawText)));
+  const bytes = new TextEncoder().encode(rawText);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+  const encoded = btoa(binary);
   return `<button class="preview-copy-all-btn" aria-label="Copy all" data-source="${encoded}" title="Copy all">Copy All</button>`;
 }
 
