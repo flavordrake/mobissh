@@ -1108,17 +1108,9 @@ html, body {
   border-color: var(--accent);
 }
 
-/* Mode indicator line between terminal and key bar */
-#key-bar {
-  border-top: 2px solid transparent;
-  transition: border-top-color 0.15s ease;
-}
-
-#key-bar.compose-active {
-  border-top-color: var(--accent);
-}
-
 /* Session status indicator — 2px bar on the BOTTOM of the handle strip.
+ * The filled accent `.mode-btn.compose-active` button already signals compose
+ * mode; the ::after alone carries session lifecycle state (#472).
  * key-bar has overflow:hidden so we can't use ::before there.
  * Handle strip's ::after sits on its bottom edge, visually between handle and key-bar. */
 #key-bar-handle::after {
