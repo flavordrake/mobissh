@@ -267,6 +267,15 @@ export function initSelection(): void {
     _selectionActive = true;
     _keyboardWasVisible = getKeyboardVisible();
     try { navigator.vibrate(30); } catch { /* vibrate not available */ }
+    // Blur the focused IME input. If the user had dismissed the keyboard,
+    // the textarea still held focus — touching the terminal would re-summon
+    // the keyboard mid-selection, resize the viewport, and invalidate the
+    // drag anchor. Blur decouples the touch from the keyboard.
+    // _dismissSelection restores focus via focusIME() only when the keyboard
+    // was visible at start — so blur here is reversible.
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     _showPasteIfClipboard();
     chip.classList.remove('hidden');
     // Push history entry so Android back gesture dismisses the chip
