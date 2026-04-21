@@ -591,6 +591,9 @@ export function initSessionMenu(): void {
         const handleTop = handleBar.getBoundingClientRect().top;
         menu.style.bottom = `${String(window.innerHeight - handleTop + 4)}px`;
       }
+      // Session-switch list is at the bottom of the menu (thumb-reach). Scroll
+      // to it on open so the user doesn't have to scroll down to switch.
+      menu.scrollTop = menu.scrollHeight;
     }
   });
 
