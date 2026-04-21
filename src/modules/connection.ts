@@ -918,13 +918,11 @@ function _connectionDiagnostic(profile: SSHProfile): string {
   lines.push(`Target: ${profile.username}@${profile.host}:${String(port)}`);
   if (profile.authType === 'password') {
     lines.push('Auth: password');
-  } else if (profile.authType === 'key') {
-    if (profile.keyVaultId) {
-      const key = getKeys().find((k) => k.vaultId === profile.keyVaultId);
-      lines.push(`Auth: key (${key?.name ?? 'unknown key'})`);
-    } else {
-      lines.push('Auth: key (inline)');
-    }
+  } else if (profile.keyVaultId) {
+    const key = getKeys().find((k) => k.vaultId === profile.keyVaultId);
+    lines.push(`Auth: key (${key?.name ?? 'unknown key'})`);
+  } else {
+    lines.push('Auth: key (inline)');
   }
   return lines.join('\n');
 }
