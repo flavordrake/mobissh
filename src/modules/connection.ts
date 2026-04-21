@@ -9,7 +9,7 @@
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 import { vaultLoad, vaultStore, tryUnlockVault } from './vault.js';
 import { showErrorDialog, navigateToPanel } from './ui.js';
-import { saveRecentSession, getProfiles } from './profiles.js';
+import { saveRecentSession, getProfiles, getKeys } from './profiles.js';
 import { getDefaultWsUrl, RECONNECT, escHtml, parseApprovalPayload } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
 import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
@@ -904,9 +904,29 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   newWs.addEventListener('error', () => {
     if (!silent) {
       disconnect(sessionId);
-      showErrorDialog('WebSocket error — check server URL in Settings.');
+      const diag = session?.profile ? `\n\n${_connectionDiagnostic(session.profile)}` : '';
+      showErrorDialog(`WebSocket error — check server URL in Settings.${diag}`);
     }
   }, signal ? { signal } : undefined);
+}
+
+/** Build a short diagnostic block for connection error dialogs/toasts.
+ *  Includes target (user@host:port), auth type, and key name when applicable. */
+function _connectionDiagnostic(profile: SSHProfile): string {
+  const lines: string[] = [];
+  const port = profile.port || 22;
+  lines.push(`Target: ${profile.username}@${profile.host}:${String(port)}`);
+  if (profile.authType === 'password') {
+    lines.push('Auth: password');
+  } else if (profile.authType === 'key') {
+    if (profile.keyVaultId) {
+      const key = getKeys().find((k) => k.vaultId === profile.keyVaultId);
+      lines.push(`Auth: key (${key?.name ?? 'unknown key'})`);
+    } else {
+      lines.push('Auth: key (inline)');
+    }
+  }
+  return lines.join('\n');
 }
 
 export function scheduleReconnect(sessionId?: string): void {
@@ -924,7 +944,7 @@ export function scheduleReconnect(sessionId?: string): void {
       session._wsConsecFailures = 0;
       transitionSession(sid, 'failed');
       _dismissConnectionStatus();
-      showErrorDialog(`Host unreachable after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
+      showErrorDialog(`Host unreachable after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\n${_connectionDiagnostic(session.profile)}\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
       return;
     }
   }
