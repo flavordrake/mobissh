@@ -9,6 +9,7 @@ import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
 import { applyTheme, _addNotification, fireNotification, setSessionTitleBase, clearNotifications, getNotifications } from './terminal.js';
+import { showSettingsOverview, showSettingsSection } from './settings.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
@@ -73,6 +74,7 @@ function _isValidPanel(hash: string): hash is PanelName {
 function _panelFromHash(): PanelName | null {
   const raw = location.hash.replace(/^#/, '');
   if (raw.startsWith('files/') || raw.startsWith('files%2F') || raw === 'files') return 'files';
+  if (raw.startsWith('settings/') || raw === 'settings') return 'settings';
   // Redirect legacy #keys to connect panel (#441)
   if (raw === 'keys') return 'connect';
   return _isValidPanel(raw) ? raw : null;
@@ -85,6 +87,13 @@ function _filePathFromHash(): string | null {
     try { return decodeURIComponent(encoded); } catch { return null; }
   }
   return null;
+}
+
+function _settingsSectionFromHash(): string | null {
+  const raw = location.hash.replace(/^#/, '');
+  if (!raw.startsWith('settings/')) return null;
+  const section = raw.slice('settings/'.length);
+  return section || null;
 }
 
 export function navigateToPanel(
@@ -160,6 +169,13 @@ export function navigateToPanel(
     // Render the active session's files state whenever the panel is shown (#409)
     _activateFilesForCurrentSession();
   }
+  if (panel === 'settings') {
+    // Sync overview/detail to hash on every (re-)entry so tab-bar navigation
+    // and deep links both land on the right subview.
+    const section = _settingsSectionFromHash();
+    if (section) showSettingsSection(section);
+    else showSettingsOverview();
+  }
   // Respect user's explicit tab bar preference (#393). The handle bar toggle
   // persists to localStorage — don't override it on panel switch.
 
@@ -184,6 +200,11 @@ export function initRouting(hasProfiles: boolean): void {
       _activeFilesState().deepLinkPath = _filePathFromHash();
     }
     navigateToPanel(fromHash);
+    // Settings deep link: land on the specified detail section (#473 follow-up)
+    if (fromHash === 'settings') {
+      const section = _settingsSectionFromHash();
+      if (section) showSettingsSection(section);
+    }
   } else {
     // No hash — start on Connect panel (no lobby terminal)
     navigateToPanel('connect');
@@ -830,6 +851,12 @@ export function initTabBar(): void {
         if (filePath) {
           _filesNavigateTo(filePath, { fromPopstate: true });
         }
+      } else if (panel === 'settings') {
+        // Back from a detail lands on #settings (no section) → show overview.
+        // Deep-link forward to #settings/<x> → show that section.
+        const section = _settingsSectionFromHash();
+        if (section) showSettingsSection(section);
+        else showSettingsOverview();
       }
     }
   });

@@ -43,7 +43,8 @@ export function initSettings({ toast, applyFontSize, applyTheme }: SettingsDeps)
   _applyTheme = applyTheme;
 }
 
-/** Show the Settings overview (category list). */
+/** Show the Settings overview (category list). Does not touch history — the
+ *  caller is responsible for hash state. */
 export function showSettingsOverview(): void {
   document.getElementById('settingsOverview')?.classList.remove('hidden');
   document.querySelectorAll<HTMLElement>('.settings-detail').forEach((el) => {
@@ -51,11 +52,24 @@ export function showSettingsOverview(): void {
   });
 }
 
-function _showSettingsDetail(name: string): void {
+/** Show a specific Settings detail page. Does not touch history — for
+ *  popstate / deep-link entry use this directly, for user-taps use
+ *  `_navigateToSettingsDetail` which pushes state. */
+export function showSettingsSection(name: string): void {
   document.getElementById('settingsOverview')?.classList.add('hidden');
   document.querySelectorAll<HTMLElement>('.settings-detail').forEach((el) => {
     el.classList.toggle('active', el.dataset.section === name);
   });
+}
+
+/** User-driven detail navigation: show + push `#settings/<name>` so the
+ *  browser back button / popstate handler can return to the overview. */
+function _navigateToSettingsDetail(name: string): void {
+  showSettingsSection(name);
+  const targetHash = `#settings/${name}`;
+  if (location.hash !== targetHash) {
+    history.pushState({ settingsSection: name }, '', targetHash);
+  }
 }
 
 export function initSettingsPanel(): void {
@@ -64,11 +78,19 @@ export function initSettingsPanel(): void {
     btn.addEventListener('click', () => {
       const name = btn.dataset.section;
       if (!name) return;
-      _showSettingsDetail(name);
+      _navigateToSettingsDetail(name);
     });
   });
+  // Back button pops the pushed settings-detail entry, which triggers the
+  // routing popstate handler to show the overview.
   document.querySelectorAll<HTMLElement>('.settings-detail-back').forEach((btn) => {
-    btn.addEventListener('click', () => { showSettingsOverview(); });
+    btn.addEventListener('click', () => {
+      if (location.hash.startsWith('#settings/')) {
+        history.back();
+      } else {
+        showSettingsOverview();
+      }
+    });
   });
 
   const wsInput = document.getElementById('wsUrl') as HTMLInputElement;
