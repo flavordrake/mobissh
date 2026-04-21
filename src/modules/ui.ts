@@ -94,6 +94,11 @@ export function navigateToPanel(
   const pushHistory = options?.pushHistory ?? false;
   const updateHash = options?.updateHash ?? true;
 
+  // Capture whether the target panel was already active BEFORE the re-render
+  // pass below strips .active. A true panel CHANGE warrants side effects like
+  // focusIME; a re-entry (e.g. popstate after selection dismiss) should not.
+  const panelAlreadyActive = document.getElementById(`panel-${panel}`)?.classList.contains('active') ?? false;
+
   document.querySelectorAll('.tab').forEach((t) => { t.classList.remove('active'); });
   document.querySelectorAll('.panel').forEach((p) => { p.classList.remove('active'); });
 
@@ -136,8 +141,13 @@ export function navigateToPanel(
     if (handle) {
       handle.fit();
     }
-    focusIME();
-    restoreIMEOverlay();
+    // Only re-focus the IME when the terminal panel actually became active.
+    // Skipping on re-entry prevents popstate artifacts (e.g. selection-dismiss
+    // history.back()) from surprise-popping the keyboard.
+    if (!panelAlreadyActive) {
+      focusIME();
+      restoreIMEOverlay();
+    }
   }
   if (panel === 'connect') {
     // Only refresh if the form isn't already open (avoids clobbering edit-in-progress)
