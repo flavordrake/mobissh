@@ -2220,9 +2220,24 @@ function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): v
 
   const cached = state.cache.get(path);
   if (cached) {
+    // Show cached immediately for snappy UX, but still fire an ls so the
+    // view reflects any filesystem changes since last browse.
     _renderFilesList(path, cached);
-    return;
+  } else {
+    _renderFilesPanel(path, '<div class="files-loading">Loading...</div>');
   }
+  const reqId = `ls-${String(Date.now())}`;
+  _filesPending.set(reqId, path);
+  _tagReq(reqId);
+  sendSftpLs(path, reqId);
+}
+
+/** Force a fresh ls of the current directory, bypassing cache. Used by the
+ *  docs menu Refresh action. */
+function _refreshFiles(): void {
+  const state = _activeFilesState();
+  const path = state.path;
+  state.cache.delete(path);
   _renderFilesPanel(path, '<div class="files-loading">Loading...</div>');
   const reqId = `ls-${String(Date.now())}`;
   _filesPending.set(reqId, path);
@@ -2721,6 +2736,8 @@ export function initFilesPanel(): void {
       if (action === 'upload') {
         const fileInput = document.querySelector<HTMLInputElement>('#filesExplore .files-upload-input');
         fileInput?.click();
+      } else if (action === 'refresh') {
+        _refreshFiles();
       }
     });
   });
