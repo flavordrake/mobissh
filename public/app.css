@@ -2744,6 +2744,38 @@ hr {
   text-align: right;
 }
 
+/* Per-row transfer progress overlay — replaces the F/D icon while a
+ * download/upload is active for that path. */
+.files-entry-progress {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.files-progress-svg {
+  width: 16px;
+  height: 16px;
+}
+.files-progress-track {
+  stroke: var(--border);
+  stroke-width: 2;
+}
+.files-progress-fill {
+  stroke: var(--accent);
+  stroke-width: 2;
+  transition: stroke-dashoffset 0.2s ease;
+}
+.files-entry-rate {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  min-width: 56px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .files-loading,
 .files-empty,
 .files-error {

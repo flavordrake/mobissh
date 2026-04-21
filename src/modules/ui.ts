@@ -1688,6 +1688,8 @@ let _activeUploadRequestId: string | null = null;
 
 interface TransferRecord {
   name: string;
+  /** Full remote path — used to overlay progress on the matching file-explorer row. */
+  path: string;
   size: number;
   sent: number;
   status: 'active' | 'done' | 'failed';
@@ -1760,6 +1762,68 @@ function _renderTransferListNow(): void {
   });
   list.innerHTML = items.join('');
   _updateTransferBadge();
+  _updateFilesEntryProgress();
+}
+
+const _PROGRESS_CIRCUMFERENCE = 2 * Math.PI * 8; // r=8
+
+/** Overlay a circular progress indicator + rate on each file-explorer row whose
+ *  full path matches an active transfer. Remove overlay rows that have finished. */
+function _updateFilesEntryProgress(): void {
+  const explore = document.getElementById('filesExplore');
+  if (!explore) return;
+
+  const activeByPath = new Map<string, TransferRecord>();
+  _transferRecords.forEach((rec) => {
+    if (rec.status === 'active') activeByPath.set(rec.path, rec);
+  });
+
+  explore.querySelectorAll<HTMLElement>('.files-entry').forEach((row) => {
+    const path = row.dataset.path ?? '';
+    const rec = activeByPath.get(path);
+    const existing = row.querySelector<HTMLElement>('.files-entry-progress');
+
+    if (!rec) {
+      // No active transfer for this row — strip any stale overlay.
+      if (existing) {
+        const icon = document.createElement('span');
+        icon.className = 'files-entry-icon';
+        icon.textContent = row.dataset.dir === 'true' ? 'D' : 'F';
+        existing.replaceWith(icon);
+      }
+      row.querySelector<HTMLElement>('.files-entry-rate')?.remove();
+      return;
+    }
+
+    // Ensure progress overlay exists in place of the icon.
+    let progress = existing;
+    if (!progress) {
+      progress = document.createElement('span');
+      progress.className = 'files-entry-progress';
+      progress.innerHTML = '<svg viewBox="0 0 20 20" class="files-progress-svg" aria-hidden="true">'
+        + '<circle class="files-progress-track" cx="10" cy="10" r="8" fill="none"></circle>'
+        + '<circle class="files-progress-fill" cx="10" cy="10" r="8" fill="none" transform="rotate(-90 10 10)"></circle>'
+        + '</svg>';
+      row.querySelector('.files-entry-icon')?.replaceWith(progress);
+    }
+    const pct = rec.size > 0 ? rec.sent / rec.size : 0;
+    const fill = progress.querySelector<SVGCircleElement>('.files-progress-fill');
+    if (fill) {
+      fill.style.strokeDasharray = String(_PROGRESS_CIRCUMFERENCE);
+      fill.style.strokeDashoffset = String(_PROGRESS_CIRCUMFERENCE * (1 - pct));
+    }
+
+    // Rate label (appended; replaces nothing else).
+    const elapsed = (Date.now() - rec.startTime) / 1000;
+    const rate = elapsed > 0 ? rec.sent / elapsed : 0;
+    let rateEl = row.querySelector<HTMLElement>('.files-entry-rate');
+    if (!rateEl) {
+      rateEl = document.createElement('span');
+      rateEl.className = 'files-entry-rate';
+      row.appendChild(rateEl);
+    }
+    rateEl.textContent = `${_formatBytes(rate)}/s`;
+  });
 }
 
 function _updateTransferBadge(): void {
@@ -1806,7 +1870,7 @@ function _downloadSelectedFiles(panel: HTMLElement): void {
     const filename = filePath.split('/').pop() ?? filePath;
     const reqId = `dl-${String(Date.now())}-${filename.slice(0, 8)}`;
     _downloadPending.set(reqId, filename);
-    _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
+    _transferRecords.set(reqId, { name: filename, path: filePath, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
     sendSftpDownload(filePath, reqId);
     row.classList.remove('files-selected');
   });
@@ -1889,7 +1953,7 @@ async function _startUpload(files: FileList): Promise<void> {
     const activePath = _activeFilesState().path;
     const remotePath = activePath === '/' ? `/${file.name}` : `${activePath}/${file.name}`;
     const reqId = `up-${String(Date.now())}-${String(i)}`;
-    _transferRecords.set(reqId, { name: file.name, size: file.size, sent: 0, status: 'active', direction: 'upload', startTime: Date.now() });
+    _transferRecords.set(reqId, { name: file.name, path: remotePath, size: file.size, sent: 0, status: 'active', direction: 'upload', startTime: Date.now() });
     newEntries.push({ file, remotePath, reqId });
   }
   _renderTransferList();
@@ -1960,7 +2024,7 @@ function _requestFilePreview(filePath: string): void {
   const reqId = `preview-${String(Date.now())}-${filename.slice(0, 8)}`;
   _downloadPending.set(reqId, filename);
   _previewPathPending.set(reqId, filePath);
-  _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
+  _transferRecords.set(reqId, { name: filename, path: filePath, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
   _setTransferStatus('Loading preview...');
   _renderTransferList();
   sendSftpDownload(filePath, reqId);
@@ -2309,6 +2373,8 @@ function _renderFilesList(path: string, entries: SftpEntry[]): void {
   }).join('');
 
   _renderFilesPanel(path, `<div class="files-list">${rows}</div>`);
+  // Re-apply progress overlays after the list DOM was rebuilt.
+  _updateFilesEntryProgress();
 
   // Pre-cache visible subdirectories (up to 5)
   const dirs = sorted.filter((e) => e.isDir).slice(0, 5);
@@ -2486,7 +2552,7 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
         _setTransferStatus('Downloading...');
         const reqId = `dl-${String(Date.now())}`;
         _downloadPending.set(reqId, filename);
-        _transferRecords.set(reqId, { name: filename, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
+        _transferRecords.set(reqId, { name: filename, path, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
         _renderTransferList();
         sendSftpDownload(path, reqId);
         break;
