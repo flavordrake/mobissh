@@ -43,7 +43,34 @@ export function initSettings({ toast, applyFontSize, applyTheme }: SettingsDeps)
   _applyTheme = applyTheme;
 }
 
+/** Show the Settings overview (category list). */
+export function showSettingsOverview(): void {
+  document.getElementById('settingsOverview')?.classList.remove('hidden');
+  document.querySelectorAll<HTMLElement>('.settings-detail').forEach((el) => {
+    el.classList.remove('active');
+  });
+}
+
+function _showSettingsDetail(name: string): void {
+  document.getElementById('settingsOverview')?.classList.add('hidden');
+  document.querySelectorAll<HTMLElement>('.settings-detail').forEach((el) => {
+    el.classList.toggle('active', el.dataset.section === name);
+  });
+}
+
 export function initSettingsPanel(): void {
+  // Overview / detail routing
+  document.querySelectorAll<HTMLElement>('.settings-category').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.section;
+      if (!name) return;
+      _showSettingsDetail(name);
+    });
+  });
+  document.querySelectorAll<HTMLElement>('.settings-detail-back').forEach((btn) => {
+    btn.addEventListener('click', () => { showSettingsOverview(); });
+  });
+
   const wsInput = document.getElementById('wsUrl') as HTMLInputElement;
   wsInput.value = localStorage.getItem('wsUrl') ?? getDefaultWsUrl();
 

@@ -1932,36 +1932,68 @@ hr {
   flex: 0 0 5em;
 }
 
-/* Collapsible settings sections */
-.settings-section {
-  margin-bottom: 4px;
-  border-radius: 4px;
-  overflow: hidden;
+/* Settings overview — list of category rows, iOS-style */
+.settings-overview.hidden { display: none; }
+.settings-overview h2 {
+  padding: 0 12px;
+  margin: 0 0 12px;
 }
-.settings-section > summary {
-  padding: 10px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
-  cursor: pointer;
-  background: none;
-  list-style: none;
+.settings-category {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 16px 16px;
+  background: var(--bg-card);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
   min-height: 44px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
-.settings-section > summary::-webkit-details-marker { display: none; }
-.settings-section > summary::before {
-  content: '\25B8';
-  margin-right: 8px;
-  font-size: 10px;
-  transition: transform 0.15s ease;
+.settings-category:first-of-type {
+  border-top: 1px solid var(--border);
 }
-.settings-section[open] > summary::before { transform: rotate(90deg); }
-.settings-section-body {
-  padding: 4px 12px 12px;
+.settings-category:active {
+  background: var(--bg-input);
+}
+.settings-category-chevron {
+  color: var(--text-dim);
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* Settings detail pages — hidden until activated */
+.settings-detail { display: none; }
+.settings-detail.active { display: block; }
+.settings-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.settings-detail-header h2 {
+  margin: 0;
+  flex: 1;
+}
+.settings-detail-back {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 8px 4px;
+  min-height: 44px;
+}
+.settings-detail-back:active {
+  opacity: 0.6;
+}
+.settings-detail-body {
+  padding: 0 12px 12px;
 }
 
 .danger-zone-item {

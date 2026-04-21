@@ -462,11 +462,27 @@
 
     <!-- Settings panel -->
     <div id="panel-settings" class="panel">
-      <h2>Settings</h2>
+      <!-- Overview (default): list of categories -->
+      <div id="settingsOverview" class="settings-overview">
+        <h2>Settings</h2>
+        <button class="settings-category" data-section="server">Server<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="terminal">Terminal<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="input">Input<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="gestures">Gestures<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="notifications">Notifications<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="vault">Vault<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="agent">Agent Integration<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="advanced">Advanced<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="backup">Backup<span class="settings-category-chevron">›</span></button>
+        <p id="versionInfo" class="version-info"></p>
+      </div>
 
-      <details class="settings-section" open>
-        <summary>Server</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="server">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Server</h2>
+        </div>
+        <div class="settings-detail-body">
         <label for="wsUrl">WebSocket server URL</label>
         <input type="url" id="wsUrl" placeholder="wss://your-server:8080" inputmode="url" />
         <p class="hint">The URL of your ssh-bridge server. Only <code>wss://</code> (TLS) is accepted.
@@ -475,11 +491,14 @@
         <p id="wsWarnHostMismatch" class="hint warn hidden">⚠ WSS host differs from page origin — connection may fail.</p>
         <button id="saveSettingsBtn" class="primary-btn">Save</button>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Terminal</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="terminal">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Terminal</h2>
+        </div>
+        <div class="settings-detail-body">
         <div class="setting-row">
           <label for="fontSize" class="setting-row-label">Font size</label>
           <span id="fontSizeValue">14px</span>
@@ -506,11 +525,14 @@
         </select>
         <p class="hint">Requires page reload to take effect.</p>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Input</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="input">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Input</h2>
+        </div>
+        <div class="settings-detail-body">
         <div class="setting-row">
           <div class="setting-row-info">
             <span class="setting-row-label">Reset key bar to defaults</span>
@@ -552,11 +574,14 @@
           </select>
         </div>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Gestures</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="gestures">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Gestures</h2>
+        </div>
+        <div class="settings-detail-body">
         <div class="setting-row">
           <div class="setting-row-info">
             <span class="setting-row-label">Natural vertical scroll</span>
@@ -588,11 +613,14 @@
           </label>
         </div>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Notifications</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="notifications">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Notifications</h2>
+        </div>
+        <div class="settings-detail-body">
         <div class="setting-row">
           <div class="setting-row-info">
             <span class="setting-row-label">Terminal notifications</span>
@@ -633,11 +661,14 @@
           <button id="testNotifBtn" class="secondary-btn">Test notification</button>
         </div>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Vault</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="vault">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Vault</h2>
+        </div>
+        <div class="settings-detail-body">
         <div class="vault-settings">
           <p id="vaultStatus" class="vault-status">Not set up</p>
           <div id="vaultActions" class="vault-actions">
@@ -649,11 +680,14 @@
           </div>
         </div>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Agent Integration</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="agent">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Agent Integration</h2>
+        </div>
+        <div class="settings-detail-body">
         <div class="setting-group">
           <label class="toggle-label">
             <input type="checkbox" id="enableApprovalBar" checked />
@@ -686,11 +720,14 @@
           </select>
         </div>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Advanced</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="advanced">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Advanced</h2>
+        </div>
+        <div class="settings-detail-body">
         <div class="danger-zone-item">
           <div class="danger-zone-item-info">
             <span class="danger-zone-item-label">Debug overlay</span>
@@ -743,18 +780,19 @@
         </div>
         <button id="resetAppBtn" class="danger-btn">Reset app (clears all data &amp; cache)</button>
         </div>
-      </details>
+      </section>
 
-      <details class="settings-section">
-        <summary>Backup</summary>
-        <div class="settings-section-body">
+      <section class="settings-detail" data-section="backup">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Backup</h2>
+        </div>
+        <div class="settings-detail-body">
         <button id="exportBackupBtn" class="secondary-btn">Download Backup</button>
         <button id="importBackupBtn" class="secondary-btn">Import Backup</button>
         <input type="file" id="importBackupFile" accept=".json" hidden>
         </div>
-      </details>
-
-      <p id="versionInfo" class="version-info"></p>
+      </section>
     </div>
   </div>
 
