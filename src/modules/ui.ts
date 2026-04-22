@@ -2393,11 +2393,18 @@ function _renderFilesList(path: string, entries: SftpEntry[]): void {
     const fullPath = path === '/' ? `/${e.name}` : `${path}/${e.name}`;
     const sizeStr = e.isDir ? '' : _formatSize(e.size);
     const dateStr = _formatDate(e.mtime);
+    const relStr = _formatRelative(e.mtime);
+    const dateHtml = dateStr
+      ? `<span class="files-entry-date">`
+        + `<span class="files-entry-date-abs">${escHtml(dateStr)}</span>`
+        + (relStr ? `<span class="files-entry-date-rel">${escHtml(relStr)}</span>` : '')
+        + `</span>`
+      : '';
     return `<div class="files-entry" data-dir="${String(e.isDir)}" data-path="${escHtml(fullPath)}" data-name="${escHtml(e.name.toLowerCase())}">
       <span class="files-entry-icon">${e.isDir ? 'D' : 'F'}</span>
       <span class="files-entry-name">${escHtml(e.name)}</span>
       ${sizeStr ? `<span class="files-entry-size">${escHtml(sizeStr)}</span>` : ''}
-      ${dateStr ? `<span class="files-entry-date">${escHtml(dateStr)}</span>` : ''}
+      ${dateHtml}
     </div>`;
   }).join('');
 
@@ -2434,6 +2441,31 @@ function _formatDate(mtime: string): string {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
   return d.toISOString().slice(0, 10);
+}
+
+/** Short relative time for a parsed mtime. "10s ago", "3m ago", "2h ago",
+ *  "yesterday", "3d ago", "2w ago", "5mo ago", "1y ago". */
+function _formatRelative(mtime: string): string {
+  const ts = Number(mtime);
+  const d = isNaN(ts) ? new Date(mtime) : new Date(ts * 1000);
+  if (isNaN(d.getTime())) return '';
+  const delta = Date.now() - d.getTime();
+  if (delta < 0) return 'just now';
+  const secs = Math.floor(delta / 1000);
+  if (secs < 60) return `${String(secs)}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${String(mins)}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${String(hours)}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${String(days)}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${String(weeks)}w ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${String(months)}mo ago`;
+  const years = Math.floor(days / 365);
+  return `${String(years)}y ago`;
 }
 
 function _formatDateFull(ts: string): string {

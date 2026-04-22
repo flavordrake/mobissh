@@ -2737,12 +2737,18 @@ hr {
 }
 
 .files-entry-date {
-  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
   color: var(--text-dim);
   flex-shrink: 0;
-  min-width: 48px;
+  min-width: 56px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
+.files-entry-date-abs { font-size: 11px; }
+.files-entry-date-rel { font-size: 10px; opacity: 0.75; }
 
 /* Per-row transfer progress overlay — replaces the F/D icon while a
  * download/upload is active for that path. */
