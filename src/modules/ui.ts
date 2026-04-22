@@ -2126,6 +2126,22 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
   // Kick off async SFTP fetches for any relative <img data-sftp-src>.
   _fetchInlineImages(panel, _activePreviewPath);
 
+  // Video preview: when the <video> can't render (unsupported codec, moov
+  // atom at the end of the file, etc.), swap the element for a fallback
+  // message so the Save button is the obvious next action.
+  panel.querySelectorAll<HTMLVideoElement>('.preview-video').forEach((video) => {
+    const markFailed = (): void => {
+      video.closest('.preview-video-wrap')?.classList.add('video-failed');
+    };
+    video.addEventListener('error', markFailed);
+    // Some browsers don't fire error on load failure for blob URLs — fall
+    // back to a timeout that trips if metadata never arrives.
+    const metadataTimeout = setTimeout(() => {
+      if (video.readyState === 0) markFailed();
+    }, 6000);
+    video.addEventListener('loadedmetadata', () => { clearTimeout(metadataTimeout); });
+  });
+
   function closePreview(): void {
     panel.cleanup();
     for (const url of _activeInlineImageBlobs) URL.revokeObjectURL(url);

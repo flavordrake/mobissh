@@ -301,6 +301,7 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
       // real video app as a fallback.
       return '<div class="preview-video-wrap">'
         + `<video class="preview-video" controls playsinline webkit-playsinline preload="auto" src="${url}"></video>`
+        + '<div class="preview-video-fallback">In-browser playback not supported for this video. Save it to your device to view in your media app.</div>'
         + `<a class="preview-video-save" href="${url}" download="${escapeHtml(filename)}">Save to device</a>`
         + '</div>';
     }
