@@ -2395,10 +2395,10 @@ function _renderFilesList(path: string, entries: SftpEntry[]): void {
     const dateStr = _formatDate(e.mtime);
     const relStr = _formatRelative(e.mtime);
     const dateHtml = dateStr
-      ? `<span class="files-entry-date">`
+      ? '<span class="files-entry-date">'
         + `<span class="files-entry-date-abs">${escHtml(dateStr)}</span>`
         + (relStr ? `<span class="files-entry-date-rel">${escHtml(relStr)}</span>` : '')
-        + `</span>`
+        + '</span>'
       : '';
     return `<div class="files-entry" data-dir="${String(e.isDir)}" data-path="${escHtml(fullPath)}" data-name="${escHtml(e.name.toLowerCase())}">
       <span class="files-entry-icon">${e.isDir ? 'D' : 'F'}</span>

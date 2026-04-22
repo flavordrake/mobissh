@@ -299,10 +299,10 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
       // (ffmpeg default without -movflags faststart) — browsers can't stream
       // those from a blob URL; the save-to-device link lets the user play in a
       // real video app as a fallback.
-      return `<div class="preview-video-wrap">`
+      return '<div class="preview-video-wrap">'
         + `<video class="preview-video" controls playsinline webkit-playsinline preload="auto" src="${url}"></video>`
         + `<a class="preview-video-save" href="${url}" download="${escapeHtml(filename)}">Save to device</a>`
-        + `</div>`;
+        + '</div>';
     }
     case 'text': {
       const text = toText(data);
