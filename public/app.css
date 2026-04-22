@@ -2996,6 +2996,32 @@ hr {
   font-weight: 700;
 }
 
+.files-filter-input {
+  position: absolute;
+  left: 56px;
+  right: 56px;
+  top: 4px;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 14px;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.files-filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.files-filter-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.files-entry.filter-hidden { display: none; }
+
 .files-close-btn:active,
 .files-docs-menu-btn:active {
   opacity: 0.7;
@@ -3034,8 +3060,7 @@ hr {
 /* Push the breadcrumb in from under the chrome buttons (44px + margins) */
 #panel-files > .files-subview > .files-breadcrumb:first-child,
 #panel-files > #filesExplore > .files-breadcrumb {
-  padding-left: 60px;
-  padding-right: 60px;
+  padding-top: 56px;
 }
 
 .files-breadcrumb {
@@ -3073,11 +3098,15 @@ hr {
   opacity: 0.7;
 }
 
-/* Favorites submenu (#470) — re-uses .ctx-menu positioning */
+/* Favorites submenu (#470) — fills horizontally; `--ctx-x` is ignored. */
 .files-fav-menu {
+  left: 8px;
+  right: 8px;
+  width: auto;
+  max-width: none;
+  min-width: 0;
   max-height: 60vh;
   overflow-y: auto;
-  min-width: 200px;
 }
 
 .files-fav-item {

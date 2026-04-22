@@ -2192,6 +2192,10 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
   });
 }
 
+/** Per-path scroll position for `.files-body` so navigating back from a
+ *  preview or a re-render doesn't lose the user's place. */
+const _scrollByPath = new Map<string, number>();
+
 function _renderFilesPanel(path: string, bodyHtml: string): void {
   _dismissContextMenu();
   const panel = document.getElementById('filesExplore');
@@ -2222,6 +2226,19 @@ function _renderFilesPanel(path: string, bodyHtml: string): void {
     </div>
     <div class="files-body">${bodyHtml}</div>
   `;
+
+  // Scroll retention: restore saved position and track future scrolls.
+  const body = panel.querySelector<HTMLElement>('.files-body');
+  if (body) {
+    const saved = _scrollByPath.get(path);
+    if (saved !== undefined) body.scrollTop = saved;
+    body.addEventListener('scroll', () => {
+      _scrollByPath.set(path, body.scrollTop);
+    }, { passive: true });
+  }
+
+  // Re-apply any filter the user has typed in the persistent top-bar input.
+  _applyFilesFilter();
 
   panel.querySelectorAll<HTMLElement>('.files-crumb').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2336,6 +2353,18 @@ function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): v
   sendSftpLs(path, reqId);
 }
 
+/** Apply the current filter-input value to visible file-entry rows.
+ *  Case-insensitive substring match on `data-name`. Safe to call any time. */
+function _applyFilesFilter(): void {
+  const input = document.getElementById('filesFilterInput') as HTMLInputElement | null;
+  const q = input?.value.toLowerCase().trim() ?? '';
+  document.querySelectorAll<HTMLElement>('#filesExplore .files-entry').forEach((row) => {
+    if (!q) { row.classList.remove('filter-hidden'); return; }
+    const name = row.dataset.name ?? '';
+    row.classList.toggle('filter-hidden', !name.includes(q));
+  });
+}
+
 /** Force a fresh ls of the current directory, bypassing cache. Used by the
  *  docs menu Refresh action. */
 function _refreshFiles(): void {
@@ -2364,7 +2393,7 @@ function _renderFilesList(path: string, entries: SftpEntry[]): void {
     const fullPath = path === '/' ? `/${e.name}` : `${path}/${e.name}`;
     const sizeStr = e.isDir ? '' : _formatSize(e.size);
     const dateStr = _formatDate(e.mtime);
-    return `<div class="files-entry" data-dir="${String(e.isDir)}" data-path="${escHtml(fullPath)}">
+    return `<div class="files-entry" data-dir="${String(e.isDir)}" data-path="${escHtml(fullPath)}" data-name="${escHtml(e.name.toLowerCase())}">
       <span class="files-entry-icon">${e.isDir ? 'D' : 'F'}</span>
       <span class="files-entry-name">${escHtml(e.name)}</span>
       ${sizeStr ? `<span class="files-entry-size">${escHtml(sizeStr)}</span>` : ''}
@@ -2597,11 +2626,17 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
 }
 
 /** Render the favorites submenu anchored near the Files menu item. (#470) */
-function _showFavoritesSubmenu(touchX: number, touchY: number): void {
+function _showFavoritesSubmenu(_touchX: number, touchY: number): void {
   _dismissContextMenu();
   const profId = _activeProfileId();
   if (!profId) return;
-  const favs = listFavorites(profId);
+  // Dedupe on path — multiple entries with the same path are redundant.
+  const seen = new Set<string>();
+  const favs = listFavorites(profId).filter((f) => {
+    if (seen.has(f.path)) return false;
+    seen.add(f.path);
+    return true;
+  });
   if (favs.length === 0) return;
 
   const overlay = document.createElement('div');
@@ -2617,12 +2652,10 @@ function _showFavoritesSubmenu(touchX: number, touchY: number): void {
     return `<button class="ctx-menu-item files-fav-item" data-path="${escHtml(f.path)}" data-is-file="${String(f.isFile)}"><span class="files-fav-icon">${icon}</span>${escHtml(label)}</button>`;
   }).join('');
 
-  const vw = window.innerWidth;
+  // Fill horizontally: 8px inset on each side; only vertical position varies.
   const vh = window.innerHeight;
   const menuH = Math.min(favs.length * 44, vh - 16);
-  const left = Math.max(8, Math.min(touchX, vw - 220));
   const top = Math.max(8, Math.min(touchY, vh - menuH - 8));
-  menu.style.setProperty('--ctx-x', `${String(left)}px`);
   menu.style.setProperty('--ctx-y', `${String(top)}px`);
 
   document.body.appendChild(overlay);
@@ -2817,6 +2850,23 @@ export function initFilesPanel(): void {
   // Close button (#459) — return to terminal
   document.getElementById('filesCloseBtn')?.addEventListener('click', () => {
     navigateToPanel('terminal');
+  });
+
+  // Filter input in the top bar — live-filters visible entries; Enter on a
+  // single remaining match triggers its default action (nav to dir / preview
+  // file) via a synthetic click.
+  const filterInput = document.getElementById('filesFilterInput') as HTMLInputElement | null;
+  filterInput?.addEventListener('input', _applyFilesFilter);
+  filterInput?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const visible = Array.from(
+      document.querySelectorAll<HTMLElement>('#filesExplore .files-entry'),
+    ).filter((r) => !r.classList.contains('filter-hidden'));
+    if (visible.length !== 1) return;
+    e.preventDefault();
+    filterInput.value = '';
+    _applyFilesFilter();
+    visible[0]!.click();
   });
 
   // Docs menu (#470) — top-right dropdown holding actions such as Upload
