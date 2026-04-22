@@ -292,7 +292,17 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
       const blob = new Blob([bytes as BlobPart], { type: mime });
       const url = URL.createObjectURL(blob);
       _lastBlobUrls.push(url);
-      return `<video controls src="${url}" style="max-width:100%;max-height:80vh;"></video>`;
+      // `playsinline` keeps iOS from fullscreen-hijacking. `preload="auto"`
+      // nudges Android Chrome to load metadata on mount rather than waiting for
+      // a user gesture (blob URLs otherwise stay idle until first tap).
+      // Download fallback: many MP4s have the moov atom at the end of the file
+      // (ffmpeg default without -movflags faststart) — browsers can't stream
+      // those from a blob URL; the save-to-device link lets the user play in a
+      // real video app as a fallback.
+      return `<div class="preview-video-wrap">`
+        + `<video class="preview-video" controls playsinline webkit-playsinline preload="auto" src="${url}"></video>`
+        + `<a class="preview-video-save" href="${url}" download="${escapeHtml(filename)}">Save to device</a>`
+        + `</div>`;
     }
     case 'text': {
       const text = toText(data);
