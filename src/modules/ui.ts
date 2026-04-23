@@ -2420,6 +2420,54 @@ function _applyFilesFilter(): void {
   });
 }
 
+/** Prompt the user for an absolute path and navigate there. Used by the
+ *  docs menu "Go to path…" action. */
+function _showFilesGotoPrompt(): void {
+  const overlay = document.getElementById('filesGotoOverlay');
+  const input = document.getElementById('filesGotoInput') as HTMLInputElement | null;
+  const okBtn = document.getElementById('filesGotoOk');
+  const cancelBtn = document.getElementById('filesGotoCancel');
+  if (!overlay || !input || !okBtn || !cancelBtn) return;
+
+  const current = _activeFilesState().path;
+  input.value = current === '/' ? '/' : current;
+  overlay.classList.remove('hidden');
+  // Select everything so pasted text replaces the prefill; fall back to focus on old iOS.
+  setTimeout(() => {
+    input.focus();
+    try { input.setSelectionRange(0, input.value.length); } catch (_) { /* ignore */ }
+  }, 50);
+
+  function cleanup(): void {
+    overlay!.classList.add('hidden');
+    okBtn!.removeEventListener('click', onOk);
+    cancelBtn!.removeEventListener('click', onCancel);
+    input!.removeEventListener('keydown', onKeydown);
+  }
+
+  function onOk(): void {
+    const raw = input!.value.trim();
+    if (!raw) { cleanup(); return; }
+    // Normalize: must start with /, collapse double slashes, strip trailing / (except root).
+    let target = raw.startsWith('/') ? raw : `/${raw}`;
+    target = target.replace(/\/+/g, '/');
+    if (target.length > 1 && target.endsWith('/')) target = target.slice(0, -1);
+    cleanup();
+    _filesNavigateTo(target);
+  }
+
+  function onCancel(): void { cleanup(); }
+
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+    else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+  }
+
+  okBtn.addEventListener('click', onOk);
+  cancelBtn.addEventListener('click', onCancel);
+  input.addEventListener('keydown', onKeydown);
+}
+
 /** Force a fresh ls of the current directory, bypassing cache. Used by the
  *  docs menu Refresh action. */
 function _refreshFiles(): void {
@@ -3003,6 +3051,8 @@ export function initFilesPanel(): void {
         fileInput?.click();
       } else if (action === 'refresh') {
         _refreshFiles();
+      } else if (action === 'goto') {
+        _showFilesGotoPrompt();
       }
     });
   });

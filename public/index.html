@@ -187,6 +187,21 @@
     </div>
   </div>
 
+  <div id="filesGotoOverlay" class="vault-overlay hidden" role="dialog" aria-label="Go to path">
+    <div class="vault-dialog">
+      <h3 class="vault-title">Go to path</h3>
+      <p class="vault-desc">Paste or type an absolute path.</p>
+      <label for="filesGotoInput" class="vault-label">Path</label>
+      <input type="text" id="filesGotoInput"
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        placeholder="/home/user/docs" />
+      <div class="vault-buttons">
+        <button id="filesGotoCancel" class="vault-btn vault-btn-cancel">Cancel</button>
+        <button id="filesGotoOk" class="vault-btn vault-btn-create">Go</button>
+      </div>
+    </div>
+  </div>
+
   <div id="menuBackdrop" class="hidden"></div>
   <div id="app">
     <!-- Debug panel — collapsible top panel, pushes content down (#208) -->
@@ -334,6 +349,7 @@
         <button id="filesDocsMenuBtn" class="files-docs-menu-btn" aria-label="Files actions" title="More actions" aria-haspopup="true" aria-expanded="false">⋯</button>
         <div id="filesDocsMenu" class="files-docs-menu hidden" role="menu" aria-label="Files actions">
           <button class="files-docs-menu-item" data-action="refresh" role="menuitem">Refresh</button>
+          <button class="files-docs-menu-item" data-action="goto" role="menuitem">Go to path…</button>
           <button class="files-docs-menu-item" data-action="upload" role="menuitem">Upload</button>
         </div>
       </div>
