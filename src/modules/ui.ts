@@ -2914,7 +2914,11 @@ export function initFilesPanel(): void {
       // internally so per-chunk calls don't thrash the DOM.
       const chunks = _downloadChunks.get(msg.requestId);
       if (!chunks) return;
-      const bytes = _b64ToBytes(msg.data);
+      // connection.ts attaches pre-decoded bytes when the chunk arrived as a
+      // binary WS frame (sftp_download_chunk_bin path). Otherwise fall back
+      // to decoding the base64 `data` field for backwards-compat.
+      const binPayload = (msg as unknown as { payload?: Uint8Array }).payload;
+      const bytes = binPayload ?? _b64ToBytes(msg.data);
       chunks.push(bytes);
       const rec = _transferRecords.get(msg.requestId);
       if (rec) {

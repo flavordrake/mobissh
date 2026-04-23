@@ -39,7 +39,8 @@
  *     { type: 'sftp_ls_result', requestId, entries: [{name, isDir, isSymlink, size, mtime, atime, permissions, uid, gid}] }
  *     { type: 'sftp_download_result', requestId, data: string }  (base64)
  *     { type: 'sftp_download_meta', requestId, size: number }
- *     { type: 'sftp_download_chunk', requestId, offset: number, data: string }  (base64)
+ *     { type: 'sftp_download_chunk', requestId, offset: number, data: string }  (base64, legacy)
+ *     { type: 'sftp_download_chunk_bin', requestId, offset: number, size: number }  (binary frame follows)
  *     { type: 'sftp_download_end', requestId }
  *     { type: 'sftp_upload_ack', requestId, offset: number }
  *     { type: 'sftp_upload_result', requestId, ok: boolean, error?: string }
@@ -201,22 +202,49 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
     case 'sftp_download_start': {
       sftp.stat(filePath, (err, stats) => {
         if (err) { sftpErr(err.message); return; }
+        const rid6 = requestId ? String(requestId).slice(-6) : '------';
+        console.log(`[sftp-download:${rid6}] start path=${filePath} size=${stats.size}`);
         send({ type: 'sftp_download_meta', requestId, size: stats.size });
-        const rs = sftp.createReadStream(filePath);
+        // 256KB chunks give a much better ratio of WS framing overhead to
+        // payload than the ssh2 32KB default.
+        const rs = sftp.createReadStream(filePath, { highWaterMark: 256 * 1024 });
         let offset = 0;
+        // Backpressure threshold: only pause the SFTP stream when the WS
+        // outbound buffer exceeds 8MB. That keeps the pipe full but caps
+        // memory. Previously the stream was paused *per chunk* waiting on
+        // ws.send's callback, which capped throughput at ~1 chunk per RTT.
+        const WS_BUFFER_HIGH = 8 * 1024 * 1024;
+        const WS_BUFFER_LOW = 2 * 1024 * 1024;
+
         rs.on('data', (chunk) => {
-          const data = chunk.toString('base64');
           const currentOffset = offset;
           offset += chunk.length;
-          rs.pause();
-          ws.send(JSON.stringify({ type: 'sftp_download_chunk', requestId, offset: currentOffset, data }), () => {
-            rs.resume();
-          });
+          // Binary framing: JSON header + raw binary frame back-to-back.
+          // Kills the ~33% base64 bloat and the atob() CPU cost on mobile.
+          // Message order on a single WS is preserved, so the pairing is safe.
+          send({ type: 'sftp_download_chunk_bin', requestId, offset: currentOffset, size: chunk.length });
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(chunk);
+          }
+          if (ws.bufferedAmount > WS_BUFFER_HIGH) {
+            rs.pause();
+            const drain = () => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              if (ws.bufferedAmount < WS_BUFFER_LOW) {
+                rs.resume();
+              } else {
+                setTimeout(drain, 40);
+              }
+            };
+            drain();
+          }
         });
         rs.on('end', () => {
+          console.log(`[sftp-download:${rid6}] done path=${filePath} bytes=${offset}`);
           send({ type: 'sftp_download_end', requestId });
         });
         rs.on('error', (e) => {
+          console.log(`[sftp-download:${rid6}] error: ${e.message}`);
           send({ type: 'sftp_download_result', requestId, ok: false, error: e.message });
         });
       });

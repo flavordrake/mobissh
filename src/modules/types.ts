@@ -222,6 +222,7 @@ export type ServerMessage =
   | { type: 'sftp_download_result'; requestId: string; data?: string; ok?: boolean; error?: string }
   | { type: 'sftp_download_meta'; requestId: string; size: number }
   | { type: 'sftp_download_chunk'; requestId: string; offset: number; data: string }
+  | { type: 'sftp_download_chunk_bin'; requestId: string; offset: number; size: number }
   | { type: 'sftp_download_end'; requestId: string }
   | { type: 'sftp_upload_ack'; requestId: string; offset: number }
   | { type: 'sftp_upload_result'; requestId: string; ok: boolean }

@@ -20,7 +20,7 @@ import { SessionHandle } from './session.js';
 const _pendingNavigateSessions = new Set<string>();
 
 // [SFTP_MSG] -- keep in sync with types.ts SERVER_MESSAGE sftp types and WS router below
-type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_download_meta' | 'sftp_download_chunk' | 'sftp_download_end' | 'sftp_upload_result' | 'sftp_upload_ack' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
+type SftpMsg = Extract<ServerMessage, { type: 'sftp_ls_result' | 'sftp_error' | 'sftp_download_result' | 'sftp_download_meta' | 'sftp_download_chunk' | 'sftp_download_chunk_bin' | 'sftp_download_end' | 'sftp_upload_result' | 'sftp_upload_ack' | 'sftp_stat_result' | 'sftp_rename_result' | 'sftp_delete_result' | 'sftp_realpath_result' }>;
 let _sftpHandler: ((msg: SftpMsg) => void) | null = null;
 export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler = fn; }
 
@@ -636,6 +636,9 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
   try {
     newWs = new WebSocket(wsUrl);
+    // Use ArrayBuffer for binary frames (sftp_download_chunk_bin payloads).
+    // Default is Blob; ArrayBuffer is synchronous and cheaper for our hot path.
+    newWs.binaryType = 'arraybuffer';
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     _showConnectionStatus(`WebSocket error: ${message}`, { error: true, sessionId });
@@ -732,7 +735,30 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     });
   }, signal ? { signal } : undefined);
 
+  // Pending binary-header: when a sftp_download_chunk_bin text message arrives,
+  // the *next* binary frame on this WS carries its payload. Message order on
+  // a single WS is preserved so the pairing is race-free.
+  let pendingBinHeader: { requestId: string; offset: number; size: number } | null = null;
+
   newWs.addEventListener('message', (event: MessageEvent) => {
+    // Binary frame path: consume bytes with the last-seen binary header.
+    if (event.data instanceof ArrayBuffer) {
+      if (!pendingBinHeader) return;
+      const header = pendingBinHeader;
+      pendingBinHeader = null;
+      // Forward as a pseudo-message that carries bytes via a hidden payload field
+      // on a sftp_download_chunk-shaped record. ui.ts reads payload when present.
+      const binMsg = {
+        type: 'sftp_download_chunk',
+        requestId: header.requestId,
+        offset: header.offset,
+        data: '',
+        payload: new Uint8Array(event.data),
+      } as unknown as ServerMessage;
+      _sftpHandler?.(binMsg as SftpMsg);
+      return;
+    }
+
     let msg: ServerMessage;
     try { msg = JSON.parse(event.data as string) as ServerMessage; } catch { return; }
 
@@ -829,6 +855,11 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         break;
 
       // [SFTP_CLIENT_ROUTER] -- every type in SFTP_MSG must be listed here
+      case 'sftp_download_chunk_bin':
+        // Stash the header; the next binary WS frame on this connection carries
+        // its payload. Per-WS message order is preserved so pairing is safe.
+        pendingBinHeader = { requestId: msg.requestId, offset: msg.offset, size: msg.size };
+        break;
       case 'sftp_ls_result':
       case 'sftp_error':
       case 'sftp_download_result':
