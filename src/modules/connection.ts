@@ -253,6 +253,14 @@ export function sendSftpDownload(path: string, requestId: string): void {
   if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_download', path, requestId }));
 }
+/** Start a chunked download. The server emits sftp_download_meta, then
+ *  sftp_download_chunk (one per chunk, with offset), then sftp_download_end.
+ *  Caller must buffer chunks and track progress — see #474. */
+export function sendSftpDownloadStart(path: string, requestId: string): void {
+  const session = currentSession();
+  if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  session.ws.send(JSON.stringify({ type: 'sftp_download_start', path, requestId }));
+}
 export function sendSftpUpload(path: string, data: string, requestId: string): void {
   const session = currentSession();
   if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;

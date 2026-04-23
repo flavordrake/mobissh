@@ -11,7 +11,7 @@ import { appState, currentSession, isSessionConnected, onStateChange, transition
 import { applyTheme, _addNotification, fireNotification, setSessionTitleBase, clearNotifications, getNotifications } from './terminal.js';
 import { showSettingsOverview, showSettingsSection } from './settings.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
-import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
+import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpDownloadStart, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel, MIME_MAP, extOf, SFTP_INLINE_IMG_ATTR, SFTP_RELATIVE_LINK_ATTR } from './sftp-preview.js';
@@ -1696,6 +1696,9 @@ const _downloadPending = new Map<string, string>();
 const _previewPathPending = new Map<string, string>();
 // Pending inline image fetches for markdown <img data-sftp-src>; reqId -> <img>
 const _inlineImagePending = new Map<string, HTMLImageElement>();
+// Chunk buffer for streaming sftp_download_start transfers. reqId -> accumulated
+// Uint8Array pieces; assembled into a single blob on sftp_download_end (#474).
+const _downloadChunks = new Map<string, Uint8Array[]>();
 // Blob URLs created for the currently-mounted preview's inline images (revoked on close).
 let _activeInlineImageBlobs: string[] = [];
 const _INLINE_IMG_TIMEOUT_MS = 15_000;
@@ -2060,9 +2063,10 @@ function _requestFilePreview(filePath: string): void {
   _downloadPending.set(reqId, filename);
   _previewPathPending.set(reqId, filePath);
   _transferRecords.set(reqId, { name: filename, path: filePath, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
+  _downloadChunks.set(reqId, []);
   _setTransferStatus('Loading preview...');
   _renderTransferList();
-  sendSftpDownload(filePath, reqId);
+  sendSftpDownloadStart(filePath, reqId);
 }
 
 /** Decode base64 (from the SFTP bridge) to Uint8Array. */
@@ -2739,8 +2743,9 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
         const reqId = `dl-${String(Date.now())}`;
         _downloadPending.set(reqId, filename);
         _transferRecords.set(reqId, { name: filename, path, size: 0, sent: 0, status: 'active', direction: 'download', startTime: Date.now() });
+        _downloadChunks.set(reqId, []);
         _renderTransferList();
-        sendSftpDownload(path, reqId);
+        sendSftpDownloadStart(path, reqId);
         break;
       }
       case 'rename': {
@@ -2877,6 +2882,54 @@ export function initFilesPanel(): void {
       // Only render if this response matches the currently-active session's current path
       const active = _activeFilesState();
       if (path === active.path && targetState === active) _renderFilesList(path, msg.entries);
+    } else if (msg.type === 'sftp_download_meta') {
+      // Server declared total size — update record so the circle can animate.
+      const rec = _transferRecords.get(msg.requestId);
+      if (rec) { rec.size = msg.size; _renderTransferList(); }
+    } else if (msg.type === 'sftp_download_chunk') {
+      // Buffer bytes and advance progress. _renderTransferList() is rAF-batched
+      // internally so per-chunk calls don't thrash the DOM.
+      const chunks = _downloadChunks.get(msg.requestId);
+      if (!chunks) return;
+      const bytes = _b64ToBytes(msg.data);
+      chunks.push(bytes);
+      const rec = _transferRecords.get(msg.requestId);
+      if (rec) {
+        rec.sent = msg.offset + bytes.length;
+        _renderTransferList();
+      }
+    } else if (msg.type === 'sftp_download_end') {
+      // All chunks received — concatenate and route as a single blob through
+      // the same preview/save path the single-shot download already uses.
+      const chunks = _downloadChunks.get(msg.requestId);
+      _downloadChunks.delete(msg.requestId);
+      const filename = _downloadPending.get(msg.requestId);
+      _downloadPending.delete(msg.requestId);
+      const previewPath = _previewPathPending.get(msg.requestId);
+      _previewPathPending.delete(msg.requestId);
+      _setTransferStatus('');
+      if (chunks && filename) {
+        let total = 0;
+        for (const c of chunks) total += c.length;
+        const merged = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { merged.set(c, off); off += c.length; }
+        if (previewPath) {
+          _showFilePreview(filename, merged, previewPath);
+        } else {
+          // Browser-save path still uses base64 via an <a download>; build it here
+          // so the server can keep streaming chunks rather than sending a mega-blob.
+          let binary = '';
+          const BLOCK = 0x8000;
+          for (let i = 0; i < merged.length; i += BLOCK) {
+            const slice = merged.subarray(i, Math.min(i + BLOCK, merged.length));
+            binary += String.fromCharCode.apply(null, slice as unknown as number[]);
+          }
+          _triggerBlobDownload(filename, btoa(binary));
+        }
+      }
+      const dlRec = _transferRecords.get(msg.requestId);
+      if (dlRec) { dlRec.status = 'done'; dlRec.sent = dlRec.size; _renderTransferList(); }
     } else if (msg.type === 'sftp_download_result') {
       // Inline markdown image fetch — decode to blob URL and swap <img src>.
       const inlineImg = _inlineImagePending.get(msg.requestId);
@@ -2899,14 +2952,23 @@ export function initFilesPanel(): void {
       _downloadPending.delete(msg.requestId);
       const previewPath = _previewPathPending.get(msg.requestId);
       _previewPathPending.delete(msg.requestId);
+      // Clean up any streaming buffer if the chunked flow errored mid-stream
+      // (server sends sftp_download_result with ok:false on read errors).
+      const hadChunks = _downloadChunks.delete(msg.requestId);
       _setTransferStatus('');
       if (filename && msg.data && previewPath) {
         _showFilePreview(filename, _b64ToBytes(msg.data), previewPath);
       } else if (filename && msg.data) {
         _triggerBlobDownload(filename, msg.data);
+      } else if (filename && hadChunks) {
+        toast(`Download failed: ${filename}${msg.error ? ` — ${msg.error}` : ''}`);
       }
       const dlRec = _transferRecords.get(msg.requestId);
-      if (dlRec) { dlRec.status = 'done'; _renderTransferList(); }
+      if (dlRec) {
+        dlRec.status = msg.ok === false ? 'failed' : 'done';
+        if (msg.ok === false && msg.error) dlRec.error = msg.error;
+        _renderTransferList();
+      }
     } else if (msg.type === 'sftp_upload_result') {
       _uploadPending.delete(msg.requestId);
       if (!msg.ok) {
@@ -2969,6 +3031,7 @@ export function initFilesPanel(): void {
         _downloadPending.delete(msg.requestId);
         const attemptedPath = _previewPathPending.get(msg.requestId);
         _previewPathPending.delete(msg.requestId);
+        _downloadChunks.delete(msg.requestId);
         _setTransferStatus('');
         const dlErrRec = _transferRecords.get(msg.requestId);
         if (dlErrRec) { dlErrRec.status = 'failed'; dlErrRec.error = msg.message; _renderTransferList(); }
