@@ -347,6 +347,13 @@ export function newConnection(): void {
   const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
   if (keySelect) keySelect.value = '';
   document.getElementById('manualKeyGroup')?.classList.add('hidden');
+  // Seed color swatch to the default theme accent (instead of black from
+  // form.reset()) so the field shows a sensible color for new profiles.
+  const profileColorEl = document.getElementById('profileColor') as HTMLInputElement | null;
+  if (profileColorEl) {
+    profileColorEl.value = THEMES.dark.app.accent;
+    profileColorEl.dataset.explicit = '';
+  }
   _updateFormSummary('New Connection');
   revealConnectForm();
   (document.getElementById('host') as HTMLInputElement).focus();

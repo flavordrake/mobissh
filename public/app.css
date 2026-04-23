@@ -1927,17 +1927,26 @@ hr {
 .profile-color-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-height: 40px;
 }
+/* Let the native color picker render its own swatch as the button face —
+ * Android Chrome draws a transparent/empty rectangle if we override the
+ * background, which is why earlier attempts showed "no swatch". */
 .profile-color-input {
-  width: 48px;
-  height: 32px;
-  padding: 0;
+  appearance: auto;
+  -webkit-appearance: auto;
+  width: 56px;
+  height: 36px;
+  padding: 2px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: transparent;
   cursor: pointer;
+  flex-shrink: 0;
 }
+.profile-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.profile-color-input::-webkit-color-swatch { border: none; border-radius: 4px; }
+.profile-color-input::-moz-color-swatch { border: none; border-radius: 4px; }
 
 /* Connect panel header row — title on the left, settings shortcut on the right. */
 .connect-header {
