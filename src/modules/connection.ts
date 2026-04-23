@@ -975,8 +975,14 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     // All reconnect attempts go through scheduleReconnect which has its own
     // failure counter. Previously-connected sessions get a first free reconnect,
     // then the counter applies to prevent infinite loops to dead hosts.
-    console.log(`[onclose] session=${sessionId} wasSsh=${String(wasSshConnected)} failures=${String(session._wsConsecFailures)} state=${session.state}`);
-    if (wasSshConnected) {
+    console.log(`[onclose] session=${sessionId} wasSsh=${String(wasSshConnected)} failures=${String(session._wsConsecFailures)} state=${session.state} code=${String(event.code)} reason=${event.reason}`);
+    // Server rejected the upgrade due to rate-limit or concurrency cap (1008).
+    // Back off hard — retrying immediately just compounds the cap pressure and
+    // drops the user into a spinning-reconnect loop across every session.
+    if (event.code === 1008) {
+      _toast(`Server busy: ${event.reason || 'too many connections'} — slowing reconnect`);
+      session.reconnectDelay = Math.min(session.reconnectDelay * 2, RECONNECT.MAX_DELAY_MS);
+    } else if (wasSshConnected) {
       _toast('Reconnecting…');
     }
     scheduleReconnect(sessionId);

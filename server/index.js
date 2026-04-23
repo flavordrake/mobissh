@@ -827,9 +827,14 @@ const MAX_MESSAGE_SIZE = 4 * 1024 * 1024;
 const WS_PING_INTERVAL_MS = 25_000;
 
 // ─── Rate limiting / concurrency guard (issue #92) ────────────────────────────
-const MAX_CONNS_PER_IP    = 10;       // max new connection attempts per window
+// Every SSH session uses 2 WS (main + keepalive worker), so 4 profiles = 8 WS
+// baseline. Add a reconnect storm after a mobile network flap and the old
+// caps (8 active / 10 in 10s) trip immediately, locking the user out with
+// "Too many connections" closes that the client just retries into another
+// reject.
+const MAX_CONNS_PER_IP    = 40;       // max new connection attempts per window
 const THROTTLE_WINDOW_MS  = 10_000;   // sliding window duration (ms)
-const MAX_ACTIVE_PER_IP   = 8;        // max concurrent WS/SSH sessions per IP (multi-session + reconnect overlap)
+const MAX_ACTIVE_PER_IP   = 32;       // max concurrent WS/SSH sessions per IP (multi-session + reconnect overlap + transfers)
 
 // ip → { attempts: number, windowStart: number, active: number }
 const connTracker = new Map();
