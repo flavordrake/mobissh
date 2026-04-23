@@ -15,6 +15,16 @@ import { connect } from './connection.js';
 
 export { escHtml };
 
+/** Effective accent color for a profile. Uses the explicit `color` when set,
+ *  otherwise falls back to the chosen theme's accent, otherwise the default
+ *  theme's accent. Accepts both SSHProfile and StoredProfile-shaped inputs —
+ *  the theme field may be a loose string loaded from localStorage. */
+export function profileColor(profile: { color?: string; theme?: string }): string {
+  if (profile.color) return profile.color;
+  const theme = profile.theme && profile.theme in THEMES ? (profile.theme as ThemeName) : 'dark';
+  return THEMES[theme].app.accent;
+}
+
 // ── Recent sessions persistence (#385) ──────────────────────────────────────
 
 const RECENT_SESSIONS_KEY = 'recentSessions';
@@ -74,6 +84,32 @@ export function initProfiles({ toast, navigateToConnect }: ProfilesDeps): void {
       profileThemeEl.appendChild(opt);
     }
   }
+
+  // Profile color input wiring. When the user changes the theme, auto-update
+  // the color to the new theme's accent unless they've explicitly chosen a
+  // color. When the user picks a color, mark it explicit so a later theme
+  // change doesn't clobber it. Reset returns control to the theme.
+  const profileColorEl = document.getElementById('profileColor') as HTMLInputElement | null;
+  const profileColorResetBtn = document.getElementById('profileColorReset');
+  if (profileColorEl) {
+    profileColorEl.addEventListener('input', () => {
+      profileColorEl.dataset.explicit = '1';
+    });
+  }
+  if (profileThemeEl && profileColorEl) {
+    profileThemeEl.addEventListener('change', () => {
+      if (profileColorEl.dataset.explicit === '1') return;
+      const name = (profileThemeEl.value || 'dark') as ThemeName;
+      profileColorEl.value = THEMES[name].app.accent;
+    });
+  }
+  if (profileColorResetBtn && profileColorEl && profileThemeEl) {
+    profileColorResetBtn.addEventListener('click', () => {
+      const name = (profileThemeEl.value || 'dark') as ThemeName;
+      profileColorEl.value = THEMES[name].app.accent;
+      profileColorEl.dataset.explicit = '';
+    });
+  }
 }
 
 // Profile storage
@@ -89,6 +125,7 @@ interface StoredProfile {
   hasVaultCreds?: boolean;
   keyVaultId?: string;
   theme?: string;
+  color?: string;
 }
 
 export function getProfiles(): StoredProfile[] {
@@ -132,6 +169,14 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
   const profileThemeEl = document.getElementById('profileTheme') as HTMLSelectElement | null;
   const profileTheme = profile.theme ?? (profileThemeEl?.value || undefined);
 
+  // Per-profile color. When the form input equals the theme accent, treat as
+  // "unset" so changing the theme later still auto-updates the color. The
+  // reset button also clears it explicitly (see the form wiring below).
+  const profileColorEl = document.getElementById('profileColor') as HTMLInputElement | null;
+  const colorRaw = profile.color ?? (profileColorEl?.dataset.explicit === '1' ? profileColorEl.value : undefined);
+  const themeAccent = profileTheme ? THEMES[profileTheme as ThemeName].app.accent : THEMES.dark.app.accent;
+  const profileColor = colorRaw && colorRaw.toLowerCase() !== themeAccent.toLowerCase() ? colorRaw : undefined;
+
   const saved: StoredProfile = {
     title: profile.title,
     host: profile.host,
@@ -141,6 +186,7 @@ export async function saveProfile(profile: SSHProfile): Promise<void> {
     initialCommand: profile.initialCommand ?? '',
     vaultId,
     ...(profileTheme ? { theme: profileTheme } : {}),
+    ...(profileColor ? { color: profileColor } : {}),
   };
 
   if (usingStoredKey) {
@@ -189,15 +235,19 @@ export function loadProfiles(): void {
       sessionList.innerHTML = '<h3 class="section-label">Active Sessions</h3>'
         + allSessions.map((s) => {
           const stateClass = `session-state-${s.state}`;
-          const dotColor = isSessionConnected(s) ? 'dot-connected' : s.state === 'reconnecting' || s.state === 'connecting' ? 'dot-connecting' : 'dot-dropped';
+          // State class drives visual treatment (solid when connected, pulse
+          // when connecting, desaturated when dropped). Color comes from the
+          // profile so the same color = same profile wherever it appears.
+          const stateDot = isSessionConnected(s) ? 'dot-connected' : s.state === 'reconnecting' || s.state === 'connecting' ? 'dot-connecting' : 'dot-dropped';
+          const color = s.profile ? profileColor(s.profile) : 'var(--accent)';
           const label = s.profile
             ? escHtml(s.profile.title || `${s.profile.username}@${s.profile.host}`)
             : escHtml(s.id);
           const actionBtn = isSessionConnected(s)
             ? `<button class="item-btn accent" data-action="switch" data-session-id="${escHtml(s.id)}">Switch</button>`
             : `<button class="item-btn accent" data-action="reconnect" data-session-id="${escHtml(s.id)}">Reconnect</button>`;
-          return `<div class="active-session-item ${stateClass}" data-session-id="${escHtml(s.id)}">
-            <span class="session-dot ${dotColor}"></span>
+          return `<div class="active-session-item ${stateClass}" data-session-id="${escHtml(s.id)}" style="--profile-color:${escHtml(color)}">
+            <span class="session-dot ${stateDot}" style="background:${escHtml(color)}"></span>
             <span class="session-label">${label}</span>
             ${actionBtn}
             <button class="item-btn danger" data-action="close-session" data-session-id="${escHtml(s.id)}">✕</button>
@@ -221,7 +271,9 @@ export function loadProfiles(): void {
         const label = profile?.title
           ? escHtml(profile.title)
           : `${escHtml(r.username)}@${escHtml(r.host)}:${String(r.port)}`;
-        return `<div class="recent-session-item" data-idx="${String(r.profileIdx)}">
+        const color = profile ? profileColor(profile) : 'var(--accent)';
+        return `<div class="recent-session-item" data-idx="${String(r.profileIdx)}" style="--profile-color:${escHtml(color)}">
+          <span class="session-dot" style="background:${escHtml(color)}"></span>
           <span class="session-label">${label}</span>
           <button class="item-btn accent" data-action="reconnect-recent" data-idx="${String(r.profileIdx)}">Reconnect</button>
           <button class="item-btn danger" data-action="remove-recent" data-host="${escHtml(r.host)}" data-port="${String(r.port)}" data-username="${escHtml(r.username)}" aria-label="Remove from recent">✕</button>
@@ -254,7 +306,8 @@ export function loadProfiles(): void {
       const connClass = hasSession ? ' profile-connected' : '';
       const connectBtnClass = isConnecting ? 'item-btn connecting' : 'item-btn';
       const connectBtnText = isConnecting ? 'Connecting…' : 'Connect';
-      return `<div class="profile-item${connClass}" data-idx="${String(i)}">
+      const color = profileColor(p);
+      return `<div class="profile-item${connClass}" data-idx="${String(i)}" style="--profile-color:${escHtml(color)}">
         <span class="profile-name">${escHtml(p.title || `${p.username}@${p.host}`)}</span>
         <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
         <div class="item-actions">
@@ -322,6 +375,17 @@ export async function loadProfileIntoForm(idx: number): Promise<void> {
   const profileThemeEl = document.getElementById('profileTheme') as HTMLSelectElement | null;
   if (profileThemeEl) profileThemeEl.value = profile.theme ?? '';
 
+  // Seed the color picker. If the profile has an explicit color we show it
+  // and mark the input as "explicit" so save() preserves it. Otherwise we
+  // mirror the theme accent and leave it non-explicit so editing the theme
+  // auto-advances the color.
+  const profileColorEl = document.getElementById('profileColor') as HTMLInputElement | null;
+  if (profileColorEl) {
+    const themeAccent = THEMES[(profile.theme as ThemeName | undefined) ?? 'dark'].app.accent;
+    profileColorEl.value = profile.color ?? themeAccent;
+    profileColorEl.dataset.explicit = profile.color ? '1' : '';
+  }
+
   // Select the stored key in the dropdown if profile references one
   const keySelect = document.getElementById('selectedKeyId') as HTMLSelectElement | null;
   const manualKeyGroup = document.getElementById('manualKeyGroup');
@@ -373,6 +437,7 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
     authType: profile.authType as 'password' | 'key',
     initialCommand: profile.initialCommand,
     ...(profile.theme ? { theme: profile.theme as ThemeName } : {}),
+    ...(profile.color ? { color: profile.color } : {}),
   };
 
   if (profile.vaultId && profile.hasVaultCreds) {

@@ -26,6 +26,10 @@ export interface SSHProfile {
   hasVaultCreds?: boolean;
   keyVaultId?: string;
   theme?: ThemeName;
+  /** Visual accent color for this profile as a CSS color (hex). Used as the
+   *  dot color in session menus and as the left-border accent in profile /
+   *  recent-session lists. Falls back to the theme's accent when unset. */
+  color?: string;
 }
 
 export type VaultMethod = 'master-pw' | 'master-pw+bio' | null;

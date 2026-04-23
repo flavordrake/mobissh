@@ -12,7 +12,7 @@ import { applyTheme, _addNotification, fireNotification, setSessionTitleBase, cl
 import { showSettingsOverview, showSettingsSection } from './settings.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpDownloadStart, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
-import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport } from './profiles.js';
+import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport, profileColor } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel, MIME_MAP, extOf, SFTP_INLINE_IMG_ATTR, SFTP_RELATIVE_LINK_ATTR } from './sftp-preview.js';
 import { listFavorites, toggleFavorite, isFavorited, profileIdOf } from './favorites.js';
@@ -388,8 +388,11 @@ export function renderSessionList(): void {
     const dotClass = isSessionConnected(s) ? ' session-item-dot-connected' : '';
     // State-derived CSS class for session lifecycle (#324): session-connected, session-disconnected, etc.
     const stateClass = `session-${s.state}`;
-    return `<div class="session-item${activeClass}" data-session-id="${escHtml(s.id)}" data-state="${s.state}" role="menuitem">
-      <span class="session-item-dot ${stateClass}${dotClass}" aria-hidden="true"></span>
+    // Profile color replaces the generic connected-green dot. State still
+    // drives opacity/pulse via CSS classes; the hue identifies which profile.
+    const color = s.profile ? profileColor(s.profile) : 'var(--accent)';
+    return `<div class="session-item${activeClass}" data-session-id="${escHtml(s.id)}" data-state="${s.state}" role="menuitem" style="--profile-color:${escHtml(color)}">
+      <span class="session-item-dot ${stateClass}${dotClass}" style="background:${escHtml(color)}" aria-hidden="true"></span>
       <span class="session-item-label">${label}</span>
       <button class="session-item-close" data-close-id="${escHtml(s.id)}" aria-label="Close session">✕</button>
     </div>`;

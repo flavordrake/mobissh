@@ -475,12 +475,20 @@ html, body {
 
 .session-item-close:active { color: var(--danger); }
 
-.session-item-dot-connected { background: var(--accent); }
-.session-item.session-connected .session-item-dot { border-color: var(--accent); }
-.session-item.session-disconnected .session-item-dot { border-color: var(--danger); background: var(--danger); }
+/* Session-menu dot: background color comes from inline style (profile color).
+ * State is expressed via opacity + pulse + border instead of hue so the same
+ * profile reads the same color across connected / connecting / dropped. */
+.session-item-dot {
+  border-color: var(--profile-color, var(--accent));
+}
+.session-item.session-connected .session-item-dot { opacity: 1; }
+.session-item.session-disconnected .session-item-dot,
+.session-item.session-failed .session-item-dot { opacity: 0.4; }
 .session-item.session-connecting .session-item-dot,
-.session-item.session-reconnecting .session-item-dot { border-color: var(--warning, #e6a700); background: var(--warning, #e6a700); }
-.session-item.session-failed .session-item-dot { border-color: var(--danger); }
+.session-item.session-reconnecting .session-item-dot {
+  opacity: 0.85;
+  animation: pulse-dot 1s infinite;
+}
 
 .session-disconnected { opacity: 0.7; }
 
@@ -1531,16 +1539,33 @@ hr {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.active-session-item .session-dot {
+.active-session-item .session-dot,
+.recent-session-item .session-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
 }
-.session-dot.dot-connected { background: var(--accent); }
-.session-dot.dot-connecting { background: var(--warning); animation: pulse-dot 1s infinite; }
-.session-dot.dot-dropped { background: var(--danger); }
+/* Dot color comes from inline style (profile color). State is expressed by
+ * opacity + pulse animation rather than hue, so the profile remains visually
+ * identifiable across connected / connecting / dropped states. */
+.session-dot.dot-connected { opacity: 1; }
+.session-dot.dot-connecting { opacity: 0.9; animation: pulse-dot 1s infinite; }
+.session-dot.dot-dropped   { opacity: 0.45; }
 @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+/* Recent sessions dot is informational (profile identity), always solid. */
+.recent-session-item .session-dot { opacity: 0.85; }
+/* Profile list: left-edge color accent so the profile reads the same color
+ * in the list, in selection, and in the session dot. */
+.profile-item {
+  border-left: 3px solid var(--profile-color, transparent);
+  padding-left: 10px;
+}
+.active-session-item,
+.recent-session-item {
+  border-left: 2px solid var(--profile-color, transparent);
+  padding-left: 8px;
+}
 .active-session-item .session-label {
   flex: 1;
   font-size: 14px;
@@ -1897,6 +1922,21 @@ hr {
 
 .compact-form .compact-form-span {
   grid-column: 1 / -1;
+}
+
+.profile-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.profile-color-input {
+  width: 48px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
 }
 
 .compact-form .primary-btn {
