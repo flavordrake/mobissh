@@ -8,11 +8,11 @@
 
 import type { ConnectionDeps, ConnectionStatus, ServerMessage, ConnectMessage, SSHProfile } from './types.js';
 import { vaultLoad, vaultStore, tryUnlockVault } from './vault.js';
-import { showErrorDialog, navigateToPanel } from './ui.js';
+import { showErrorDialog, navigateToPanel, applySessionThemeIfVisible } from './ui.js';
 import { saveRecentSession, getProfiles, getKeys } from './profiles.js';
 import { getDefaultWsUrl, RECONNECT, escHtml, parseApprovalPayload } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
-import { createSessionTerminal, setSessionHandleLookup, applyTheme } from './terminal.js';
+import { createSessionTerminal, setSessionHandleLookup } from './terminal.js';
 import { SessionHandle } from './session.js';
 
 // Sessions that should navigate to the terminal panel when SSH connects.
@@ -717,12 +717,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
         // Dismiss any visible overlay (happy path: overlay never appeared)
         _dismissConnectionStatus();
-        // Apply the session's theme now that SSH is established (#364).
-        // Theme was previously applied in connectFromProfile before connection
-        // completed, causing a visible theme flash on the Connect panel.
-        if (session?.activeThemeName) {
-          applyTheme(session.activeThemeName);
-        }
+        // Apply the session's theme — but only if the user is looking at
+        // a session-bound panel. Background reconnects / approval events
+        // shouldn't repaint Settings or Connect. (#364 / theme-in-settings)
+        if (session) applySessionThemeIfVisible(session);
         // Navigate to terminal now that SSH is established (#309).
         // Only for user-initiated connections — reconnects don't navigate.
         // navigateToPanel triggers fit() on the active session, giving it

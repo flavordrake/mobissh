@@ -191,6 +191,28 @@ export function navigateToPanel(
   }
 }
 
+/** Apply a session's theme to `:root` only if the currently-visible panel
+ *  paints with session scope (terminal/files). Non-session views (connect,
+ *  settings) should keep the default theme even when a background session
+ *  connects or the user swipes among sessions. */
+export function applySessionThemeIfVisible(session: { activeThemeName: ThemeName }): void {
+  const panelTerminal = document.getElementById('panel-terminal');
+  const panelFiles = document.getElementById('panel-files');
+  const sessionBoundVisible = (panelTerminal?.classList.contains('active') ?? false)
+    || (panelFiles?.classList.contains('active') ?? false);
+  // #panel-terminal is kept structurally active under the Files overlay
+  // (#452); here we want the actual user-facing panel. When Settings or
+  // Connect is the active panel, neither session-bound panel will have it.
+  const panelConnect = document.getElementById('panel-connect');
+  const panelSettings = document.getElementById('panel-settings');
+  const nonSessionVisible = (panelConnect?.classList.contains('active') ?? false)
+    || (panelSettings?.classList.contains('active') ?? false);
+  if (nonSessionVisible || !sessionBoundVisible) return;
+  if (appState.activeThemeName !== session.activeThemeName) {
+    applyTheme(session.activeThemeName);
+  }
+}
+
 /** Resolve the initial panel on cold start (#137, #90). */
 export function initRouting(hasProfiles: boolean): void {
   const fromHash = _panelFromHash();
@@ -433,10 +455,11 @@ export function switchSession(id: string): void {
     }
   });
 
-  // Apply the session's theme. navigateToPanel also resolves theme based on
-  // active panel, but same-panel swipes (e.g., terminal → terminal via swipe)
-  // don't go through it — this covers that path.
-  applyTheme(session.activeThemeName);
+  // Apply the session's theme only if the user is actually looking at a
+  // session-bound view. If they're in Settings/Connect, the default theme
+  // should stick — background session activity (reconnect, approval events)
+  // shouldn't repaint app chrome.
+  applySessionThemeIfVisible(session);
 
   // Auto-reconnect on switch: if not connected, reconnect unconditionally (#354)
   if (!isSessionConnected(session) && session.profile) {
