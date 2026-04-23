@@ -2108,10 +2108,14 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
 
   const panel = createPreviewPanel(filename, data);
 
-  // Build back button
+  // Build back button — large triangular left arrow (filename shown in the
+  // file list page behind the preview, no need to repeat it here).
   const backBtn = document.createElement('button');
   backBtn.className = 'preview-back-btn';
-  backBtn.textContent = '\u2190 ' + filename;
+  backBtn.setAttribute('aria-label', `Back to ${filename}`);
+  backBtn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">'
+    + '<polygon points="16,4 6,12 16,20" fill="currentColor"></polygon>'
+    + '</svg>';
 
   container.innerHTML = '';
   container.appendChild(backBtn);
