@@ -65,7 +65,11 @@ export const MIME_MAP: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
-  '.mov': 'video/quicktime',
+  // Android Chrome does not play video/quicktime blobs; the majority of .mov
+  // files are H.264+AAC inside a QuickTime container that the browser will
+  // happily decode if we advertise the blob as video/mp4. If decode still
+  // fails the fallback UI kicks in.
+  '.mov': 'video/mp4',
   '.m4v': 'video/mp4',
 };
 
@@ -299,9 +303,15 @@ export function renderPreview(filename: string, data: Uint8Array | string): stri
       // (ffmpeg default without -movflags faststart) — browsers can't stream
       // those from a blob URL; the save-to-device link lets the user play in a
       // real video app as a fallback.
+      // data-blob-url lets the ui.ts video handler rebuild the Blob with an
+      // alternate MIME type (e.g. retrying a .mov that refused to load at
+      // video/quicktime by re-wrapping as video/mp4) without re-downloading.
       return '<div class="preview-video-wrap">'
         + `<video class="preview-video" controls playsinline webkit-playsinline preload="auto" src="${url}"></video>`
-        + '<div class="preview-video-fallback">In-browser playback not supported for this video. Save it to your device to view in your media app.</div>'
+        + '<div class="preview-video-fallback">'
+        +   '<div class="preview-video-fallback-msg">In-browser playback failed for this video.</div>'
+        +   '<div class="preview-video-fallback-detail"></div>'
+        + '</div>'
         + `<a class="preview-video-save" href="${url}" download="${escapeHtml(filename)}">Save to device</a>`
         + '</div>';
     }

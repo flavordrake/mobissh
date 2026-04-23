@@ -2171,18 +2171,41 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
 
   // Video preview: when the <video> can't render (unsupported codec, moov
   // atom at the end of the file, etc.), swap the element for a fallback
-  // message so the Save button is the obvious next action.
+  // message so the Save button is the obvious next action. On mobile, the
+  // silent-fail path is real: some browsers never fire 'error' for a blob
+  // whose MIME they don't support — metadata simply never loads.
   panel.querySelectorAll<HTMLVideoElement>('.preview-video').forEach((video) => {
-    const markFailed = (): void => {
-      video.closest('.preview-video-wrap')?.classList.add('video-failed');
+    const wrap = video.closest('.preview-video-wrap');
+    const detailEl = wrap?.querySelector<HTMLElement>('.preview-video-fallback-detail') ?? null;
+    const markFailed = (detail: string): void => {
+      if (detailEl) detailEl.textContent = detail;
+      wrap?.classList.add('video-failed');
     };
-    video.addEventListener('error', markFailed);
-    // Some browsers don't fire error on load failure for blob URLs — fall
-    // back to a timeout that trips if metadata never arrives.
+    video.addEventListener('error', () => {
+      const err = video.error;
+      const codeNames: Record<number, string> = {
+        1: 'aborted',
+        2: 'network error',
+        3: 'decode error',
+        4: 'source not supported',
+      };
+      const label = err ? (codeNames[err.code] ?? `code ${String(err.code)}`) : 'unknown';
+      const msg = err?.message ? `${label}: ${err.message}` : label;
+      markFailed(`Reason: ${msg}. Save it to your device to view in your media app.`);
+    });
+    // Extended watchdog: mobile browsers can take ~10s to parse metadata for
+    // a large file and not fire any events. 20s with readyState still 0 is a
+    // strong signal the browser silently refused.
     const metadataTimeout = setTimeout(() => {
-      if (video.readyState === 0) markFailed();
-    }, 6000);
+      if (video.readyState === 0) {
+        markFailed('The browser did not load video metadata within 20 seconds — likely an unsupported codec.');
+      }
+    }, 20000);
     video.addEventListener('loadedmetadata', () => { clearTimeout(metadataTimeout); });
+    // Hide the save link proactively once playback works — keeps the UI clean.
+    video.addEventListener('playing', () => {
+      wrap?.querySelector<HTMLElement>('.preview-video-save')?.classList.add('hidden');
+    });
   });
 
   function closePreview(): void {
