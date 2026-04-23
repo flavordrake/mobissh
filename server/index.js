@@ -809,6 +809,10 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
         "font-src 'self' https://fonts.gstatic.com",
         "connect-src 'self' wss: ws:",
         "img-src 'self' data: blob:",
+        // Allow blob: URLs for SFTP video/audio previews. Without this the
+        // browser rejects <video src="blob:…"> with "Media load rejected by
+        // URL safety check" even though the bytes are local.
+        "media-src 'self' blob:",
         "worker-src 'self'",
         "frame-ancestors 'none'",
       ].join('; '),
