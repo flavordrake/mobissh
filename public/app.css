@@ -2699,6 +2699,14 @@ hr {
   border-left: 3px solid var(--accent);
 }
 
+/* Ghost row shown while an upload is in flight to this directory.
+ * Reuses .files-entry-progress for the filling circle (same as downloads). */
+.files-entry.files-entry-upload {
+  opacity: 0.7;
+  font-style: italic;
+  pointer-events: none;
+}
+
 .files-download-btn {
   background: #44aaff;
   color: #fff;

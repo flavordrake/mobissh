@@ -1066,12 +1066,18 @@ export function initConnectForm(): void {
       target.textContent = 'Connecting…';
       target.classList.add('connecting');
       const recent = getRecentSessions();
-      void (async () => {
-        for (const entry of recent) {
-          await connectFromProfile(entry.profileIdx);
-        }
+      // Parallel with allSettled: one blocking/failing host must not block others (#478).
+      // The earlier `for await` loop stalled the whole queue if any single host stuck on
+      // a vault prompt, passphrase prompt, or any other await inside connectFromProfile.
+      const attempts = recent.map((entry) => connectFromProfile(entry.profileIdx));
+      void Promise.allSettled(attempts).then((results) => {
         loadProfiles();
-      })();
+        const started = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+        const skipped = results.length - started;
+        if (started > 0 && skipped === 0) toast(`${String(started)} session(s) reconnecting`);
+        else if (started > 0) toast(`${String(started)} reconnecting, ${String(skipped)} skipped`);
+        else toast('No sessions reconnected');
+      });
     } else if (action === 'reconnect-all') {
       target.textContent = 'Reconnecting…';
       target.classList.add('connecting');
@@ -1980,6 +1986,12 @@ async function _startUpload(files: FileList): Promise<void> {
     newEntries.push({ file, remotePath, reqId });
   }
   _renderTransferList();
+  // Re-render the current file list so ghost upload rows show immediately.
+  {
+    const state = _activeFilesState();
+    const cached = state.cache.get(state.path);
+    if (cached) _renderFilesList(state.path, cached);
+  }
 
   if (_uploadActive) {
     console.log('[upload] queuing', newEntries.length, 'files — upload already active');
@@ -2422,7 +2434,29 @@ function _refreshFiles(): void {
 }
 
 function _renderFilesList(path: string, entries: SftpEntry[]): void {
-  if (entries.length === 0) {
+  // Ghost rows for in-flight uploads landing directly in this directory.
+  // The ghost's data-path matches the destination path, so
+  // _updateFilesEntryProgress populates the same filling circle used for downloads.
+  const ghostRows: string[] = [];
+  _transferRecords.forEach((rec) => {
+    if (rec.direction !== 'upload' || rec.status !== 'active') return;
+    const lastSlash = rec.path.lastIndexOf('/');
+    if (lastSlash < 0) return;
+    const parent = lastSlash === 0 ? '/' : rec.path.slice(0, lastSlash);
+    if (parent !== path) return;
+    // Skip if a real entry with the same name already exists (post-completion
+    // refresh race) — real entry will naturally replace the ghost.
+    const name = rec.path.slice(lastSlash + 1);
+    if (entries.some((e) => e.name === name)) return;
+    const sizeStr = _formatSize(rec.size);
+    ghostRows.push(`<div class="files-entry files-entry-upload" data-dir="false" data-path="${escHtml(rec.path)}" data-name="${escHtml(name.toLowerCase())}">
+      <span class="files-entry-icon">F</span>
+      <span class="files-entry-name">${escHtml(name)}</span>
+      <span class="files-entry-size">${escHtml(sizeStr)}</span>
+    </div>`);
+  });
+
+  if (entries.length === 0 && ghostRows.length === 0) {
     _renderFilesPanel(path, '<div class="files-empty">Directory is empty</div>');
     return;
   }
@@ -2451,7 +2485,7 @@ function _renderFilesList(path: string, entries: SftpEntry[]): void {
     </div>`;
   }).join('');
 
-  _renderFilesPanel(path, `<div class="files-list">${rows}</div>`);
+  _renderFilesPanel(path, `<div class="files-list">${ghostRows.join('')}${rows}</div>`);
   // Re-apply progress overlays after the list DOM was rebuilt.
   _updateFilesEntryProgress();
 

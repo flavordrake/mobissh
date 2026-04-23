@@ -26,8 +26,28 @@ export function setSftpHandler(fn: (msg: SftpMsg) => void): void { _sftpHandler 
 
 export const CHUNK_SIZE = 192 * 1024; // 192 KB per chunk
 
-// Pending ack resolvers: requestId -> resolve function
-const _ackResolvers = new Map<string, (offset: number) => void>();
+// Pending ack handlers: requestId -> { resolve, reject, timer }
+// Rejection fires on WS close or per-ack timeout so the upload loop fails
+// loudly instead of hanging forever on a stuck server (#478 simplify).
+interface _AckHandler {
+  resolve: (offset: number) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+const _ackResolvers = new Map<string, _AckHandler>();
+
+/** 30s ack timeout. Upload chunks should ack in <1s; longer means the server is
+ *  unresponsive and we'd rather surface a failure than spin forever. */
+const _ACK_TIMEOUT_MS = 30_000;
+
+/** Fail every pending ack — called when the WS closes so uploads don't hang. */
+export function _rejectAllPendingAcks(reason: string): void {
+  for (const [rid, h] of _ackResolvers) {
+    clearTimeout(h.timer);
+    h.reject(new Error(reason));
+    _ackResolvers.delete(rid);
+  }
+}
 
 /** Base64-encode a Uint8Array without btoa+fromCharCode (which fails on large arrays). */
 export function _uint8ToBase64(bytes: Uint8Array): string {
@@ -40,10 +60,15 @@ export function _uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** Wait for a server ack for the given requestId. Returns the acked offset. */
+/** Wait for a server ack for the given requestId. Returns the acked offset.
+ *  Rejects on WS close (via _rejectAllPendingAcks) or after _ACK_TIMEOUT_MS. */
 function _waitForAck(requestId: string): Promise<number> {
-  return new Promise((resolve) => {
-    _ackResolvers.set(requestId, resolve);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      _ackResolvers.delete(requestId);
+      reject(new Error(`Upload ack timeout after ${String(_ACK_TIMEOUT_MS / 1000)}s`));
+    }, _ACK_TIMEOUT_MS);
+    _ackResolvers.set(requestId, { resolve, reject, timer });
   });
 }
 
@@ -198,7 +223,12 @@ export async function uploadFileChunked(
 
 export function sendSftpUploadCancel(requestId: string): void {
   // Reject any pending ack so the upload loop throws
-  _ackResolvers.delete(requestId);
+  const h = _ackResolvers.get(requestId);
+  if (h) {
+    clearTimeout(h.timer);
+    _ackResolvers.delete(requestId);
+    h.reject(new Error('Upload cancelled'));
+  }
   const session = currentSession();
   if (!session || !isSessionConnected(session) || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   session.ws.send(JSON.stringify({ type: 'sftp_upload_cancel', requestId }));
@@ -206,10 +236,11 @@ export function sendSftpUploadCancel(requestId: string): void {
 
 /** Resolve a pending ack. Called from the WS message handler. */
 export function _resolveAck(requestId: string, offset: number): void {
-  const resolve = _ackResolvers.get(requestId);
-  if (resolve) {
+  const h = _ackResolvers.get(requestId);
+  if (h) {
+    clearTimeout(h.timer);
     _ackResolvers.delete(requestId);
-    resolve(offset);
+    h.resolve(offset);
   }
 }
 export function sendSftpLs(path: string, requestId: string): void {
@@ -803,6 +834,16 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       case 'sftp_delete_result':
       case 'sftp_realpath_result':
         if (msg.type === 'sftp_upload_ack') _resolveAck(msg.requestId, msg.offset);
+        // Reject any pending ack tied to this requestId — upload loop throws
+        // instead of spinning after a server-side SFTP failure.
+        if (msg.type === 'sftp_error') {
+          const h = _ackResolvers.get(msg.requestId);
+          if (h) {
+            clearTimeout(h.timer);
+            _ackResolvers.delete(msg.requestId);
+            h.reject(new Error(msg.message));
+          }
+        }
         _sftpHandler?.(msg);
         break;
 
@@ -877,6 +918,9 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }, signal ? { signal } : undefined);
 
   newWs.addEventListener('close', (event: CloseEvent) => {
+    // Fail any in-flight upload acks immediately so uploadFileChunked throws
+    // instead of hanging forever on a WS that's gone.
+    _rejectAllPendingAcks('WebSocket closed');
     // Capture BEFORE transition — needed to distinguish "was connected" from "never connected"
     const wasSshConnected = session ? (session.state === 'connected' || session.state === 'soft_disconnected') : false;
     if (session && session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {

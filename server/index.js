@@ -235,6 +235,7 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
 
     case 'sftp_upload_start': {
       const fingerprint = msg.fingerprint || '';
+      const rid6 = requestId ? String(requestId).slice(-6) : '------';
       // Check for a resumable entry from a previous connection
       const existing = fingerprint ? resumableUploads.get(fingerprint) : null;
       if (existing && existing.stream && !existing.stream.destroyed && existing.connectionId === connectionId) {
@@ -243,12 +244,18 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
         // Re-register under the new requestId in the per-connection map
         openUploads.set(requestId, { stream: existing.stream, offset: existing.offset, path: existing.path });
         existing.requestId = requestId;
+        console.log(`[sftp-upload:${rid6}] resume path=${filePath} offset=${existing.offset} size=${msg.size ?? '?'}`);
         send({ type: 'sftp_upload_ack', requestId, offset: existing.offset });
       } else {
         // No resumable entry (or TTL expired) — create fresh
-        if (openUploads.has(requestId)) { sftpErr('Upload already in progress for this requestId'); return; }
+        if (openUploads.has(requestId)) {
+          console.log(`[sftp-upload:${rid6}] duplicate start rejected path=${filePath}`);
+          sftpErr('Upload already in progress for this requestId');
+          return;
+        }
         const ws = sftp.createWriteStream(filePath);
         ws.on('error', err => {
+          console.log(`[sftp-upload:${rid6}] stream error: ${err.message}`);
           openUploads.delete(requestId);
           if (fingerprint) resumableUploads.delete(fingerprint);
           sftpErr(err.message);
@@ -256,6 +263,7 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
         const entry = { stream: ws, offset: 0, path: filePath, fingerprint, requestId, sftp, ttlTimer: null, connectionId };
         openUploads.set(requestId, { stream: ws, offset: 0, path: filePath });
         if (fingerprint) resumableUploads.set(fingerprint, entry);
+        console.log(`[sftp-upload:${rid6}] start path=${filePath} size=${msg.size ?? '?'}`);
         send({ type: 'sftp_upload_ack', requestId, offset: 0 });
       }
       break;
@@ -290,14 +298,20 @@ function handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId) {
     }
 
     case 'sftp_upload_end': {
+      const rid6End = requestId ? String(requestId).slice(-6) : '------';
       const upload = openUploads.get(requestId);
-      if (!upload) { sftpErr('No upload in progress for this requestId'); return; }
+      if (!upload) {
+        console.log(`[sftp-upload:${rid6End}] end without open upload`);
+        sftpErr('No upload in progress for this requestId');
+        return;
+      }
       openUploads.delete(requestId);
       // Clean up resumable entry
       for (const [fp, re] of resumableUploads) {
         if (re.requestId === requestId) { resumableUploads.delete(fp); break; }
       }
       upload.stream.end(() => {
+        console.log(`[sftp-upload:${rid6End}] done path=${upload.path} bytes=${upload.offset}`);
         send({ type: 'sftp_upload_result', requestId, ok: true });
       });
       break;
@@ -1109,11 +1123,20 @@ wss.on('connection', (ws, req) => {
   function connectAfterDns(cfg, resolvedIp) {
     _sshTarget = `${cfg.username}@${cfg.host}:${cfg.port || 22}`;
     console.log(`[ssh-bridge] SSH connecting: ${_sshTarget} (resolved: ${resolvedIp}) cid=${connectionId.slice(0,8)}`);
-    sshClient = new Client();
+    // Capture locally so the 'ready' callback can't null-deref if cleanup()
+    // sets the outer `sshClient = null` between handshake and ready (crash seen
+    // in prod: "Cannot read properties of null (reading 'shell')").
+    const client = new Client();
+    sshClient = client;
 
-    sshClient.on('ready', () => {
+    client.on('ready', () => {
       console.log(`[ssh-bridge] SSH ready: ${_sshTarget} cid=${connectionId.slice(0,8)}`);
-      sshClient.shell(
+      if (sshClient !== client) {
+        console.log(`[ssh-bridge] ready fired after cleanup — ignoring cid=${connectionId.slice(0,8)}`);
+        try { client.end(); } catch (_) {}
+        return;
+      }
+      client.shell(
         { term: 'xterm-256color', cols: 80, rows: 24 },
         (err, stream) => {
           if (err) {
@@ -1150,12 +1173,12 @@ wss.on('connection', (ws, req) => {
       cleanup(reason);
     }
 
-    sshClient.on('error', (err) => {
+    client.on('error', (err) => {
       send({ type: 'error', message: err.message });
       sshCleanup(err.message);
     });
-    sshClient.on('end', () => { sshCleanup('SSH connection ended'); });
-    sshClient.on('close', () => { sshCleanup('SSH connection closed'); });
+    client.on('end', () => { sshCleanup('SSH connection ended'); });
+    client.on('close', () => { sshCleanup('SSH connection closed'); });
 
     const sshConfig = {
       host: resolvedIp,
@@ -1195,7 +1218,7 @@ wss.on('connection', (ws, req) => {
     }
 
     try {
-      sshClient.connect(sshConfig);
+      client.connect(sshConfig);
     } catch (err) {
       send({ type: 'error', message: `Connect failed: ${err.message}` });
       cleanup(err.message);
