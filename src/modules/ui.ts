@@ -757,6 +757,12 @@ export function initSessionMenu(): void {
   }, { passive: true });
 
   // Down-swipe on the tab bar hides it (#449).
+  // Connect panel: settings shortcut in the top-right of the header — same
+  // behavior as tapping the Settings tab.
+  document.getElementById('connectSettingsBtn')?.addEventListener('click', () => {
+    navigateToPanel('settings');
+  });
+
   const tabBarEl = document.getElementById('tabBar');
   if (tabBarEl) {
     let _tabSwipeTouchId = -1;

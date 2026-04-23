@@ -1939,6 +1939,35 @@ hr {
   cursor: pointer;
 }
 
+/* Connect panel header row — title on the left, settings shortcut on the right. */
+.connect-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.connect-header h2 {
+  margin: 0;
+}
+.connect-settings-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.connect-settings-btn:active {
+  background: var(--bg-card);
+}
+
 .compact-form .primary-btn {
   margin-top: 8px;
 }
@@ -2507,20 +2536,26 @@ hr {
   left: 50%;
   transform: translateX(-50%);
   z-index: 10002;
-  padding: 2px 10px;
-  height: 18px;
-  border-radius: 9px;
-  border: none;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 10px;
-  line-height: 14px;
+  padding: 3px 14px;
+  height: 22px;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
   letter-spacing: 0.5px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.debug-fab:active {
+  background: rgba(0, 0, 0, 0.75);
 }
 
 /* Debug panel — collapsible top panel, pushes content down (#208) */
