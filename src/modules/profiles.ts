@@ -581,6 +581,11 @@ export function editProfile(idx: number): void {
       <option value="">Use default</option>
       ${THEME_ORDER.map((name) => `<option value="${name}"${profile.theme === name ? ' selected' : ''}>${escHtml(THEMES[name].label)}</option>`).join('')}
     </select>
+    <label for="editColor-${String(idx)}">Profile color</label>
+    <div class="profile-color-row">
+      <input type="color" id="editColor-${String(idx)}" class="profile-color-input" data-field="color" value="${escHtml(profileColor(profile))}" data-explicit="${profile.color ? '1' : ''}" aria-label="Profile color" />
+      <button type="button" class="item-btn" data-action="reset-color" data-idx="${String(idx)}" title="Reset to theme accent">Reset</button>
+    </div>
     <div class="profile-edit-actions">
       <button class="item-btn" data-action="close-edit">Done</button>
     </div>
@@ -621,6 +626,31 @@ export function editProfile(idx: number): void {
       void _savePasswordToVault(idx, pwInput.value);
     });
   }
+
+  // Color field: user-pick marks explicit; theme change follows theme unless
+  // explicit; Reset clears color so we re-derive from theme.
+  const colorInput = form.querySelector<HTMLInputElement>(`#editColor-${String(idx)}`);
+  const themeSelect = form.querySelector<HTMLSelectElement>(`#editTheme-${String(idx)}`);
+  if (colorInput) {
+    colorInput.addEventListener('input', () => { colorInput.dataset.explicit = '1'; });
+  }
+  if (colorInput && themeSelect) {
+    themeSelect.addEventListener('change', () => {
+      if (colorInput.dataset.explicit === '1') return;
+      const themeName = (themeSelect.value || 'dark') as ThemeName;
+      colorInput.value = THEMES[themeName].app.accent;
+      // Don't persist the derived color — keep profile.color undefined so the
+      // row re-derives from theme on later edits too.
+    });
+  }
+  form.querySelector('[data-action="reset-color"]')?.addEventListener('click', () => {
+    if (!colorInput || !themeSelect) return;
+    const themeName = (themeSelect.value || 'dark') as ThemeName;
+    colorInput.value = THEMES[themeName].app.accent;
+    colorInput.dataset.explicit = '';
+    autoSaveField(idx, 'color', '');
+    loadProfiles();
+  });
 
   // Close button
   form.querySelector('[data-action="close-edit"]')?.addEventListener('click', () => {

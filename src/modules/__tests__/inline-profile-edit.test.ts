@@ -105,6 +105,49 @@ describe('inline per-profile editing (#446)', () => {
     it('has .undo-toast styles', () => {
       expect(appCss).toContain('.undo-toast');
     });
+
+    it('gives the color input a visible size (not 0×0 in the grid cell)', () => {
+      expect(appCss).toMatch(/\.profile-color-input[\s\S]*?width:\s*\d+px/);
+      expect(appCss).toMatch(/\.profile-color-input[\s\S]*?height:\s*\d+px/);
+    });
+
+    it('preserves the native color swatch (does not force transparent background)', () => {
+      // Regression: an earlier iteration set background:transparent which
+      // blanked the picker on Android Chromium.
+      const ruleStart = appCss.indexOf('.profile-color-input');
+      const ruleEnd = appCss.indexOf('}', ruleStart);
+      const rule = appCss.slice(ruleStart, ruleEnd);
+      expect(rule).not.toMatch(/background\s*:\s*transparent/);
+      expect(rule).toMatch(/appearance\s*:\s*auto/);
+    });
+  });
+
+  describe('profile color field (#per-profile accent)', () => {
+    it('inline edit form renders a color input with data-field="color"', () => {
+      const fnStart = profilesSrc.indexOf('export function editProfile(');
+      const fnEnd = profilesSrc.indexOf('\n}\n', fnStart + 10);
+      const fnBody = profilesSrc.slice(fnStart, fnEnd);
+      expect(fnBody).toMatch(/type="color"[^>]*data-field="color"/);
+    });
+
+    it('inline edit form renders a Reset button', () => {
+      const fnStart = profilesSrc.indexOf('export function editProfile(');
+      const fnEnd = profilesSrc.indexOf('\n}\n', fnStart + 10);
+      const fnBody = profilesSrc.slice(fnStart, fnEnd);
+      expect(fnBody).toContain('data-action="reset-color"');
+    });
+
+    it('Reset handler clears the explicit color via autoSaveField', () => {
+      const fnStart = profilesSrc.indexOf('export function editProfile(');
+      const fnEnd = profilesSrc.indexOf('\n}\n', fnStart + 10);
+      const fnBody = profilesSrc.slice(fnStart, fnEnd);
+      expect(fnBody).toMatch(/reset-color[\s\S]*?autoSaveField\(idx, 'color', ''\)/);
+    });
+
+    it('profileColor helper falls back to theme accent when color is unset', () => {
+      expect(profilesSrc).toMatch(/export function profileColor/);
+      expect(profilesSrc).toMatch(/THEMES\[theme\]\.app\.accent/);
+    });
   });
 
   describe('app.ts wiring', () => {
