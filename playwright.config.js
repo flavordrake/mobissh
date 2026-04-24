@@ -22,7 +22,11 @@ const useExternalServer = !!process.env.BASE_URL;
 
 module.exports = defineConfig({
   testDir: './tests',
-  testIgnore: ['**/emulator/**', '**/appium/**', '**/browserstack*'],
+  // production.spec.js hits the live Tailscale endpoint (hard-coded URL, not
+  // BASE_URL-driven). Run it explicitly with `npx playwright test
+  // tests/production.spec.js` on a machine with Tailscale access — don't
+  // include it in the default fast-gate sweep.
+  testIgnore: ['**/emulator/**', '**/appium/**', '**/browserstack*', '**/production.spec.js'],
   outputDir: 'test-results/headless',
   timeout: 30_000,
   // One retry on CI to tolerate transient xterm.js canvas init timing
