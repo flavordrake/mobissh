@@ -14,7 +14,11 @@ const { test, expect, setupConnected } = require('./fixtures.js');
 const MOCK_ROOT_ENTRIES = [
   { name: 'Documents', isDir: true, size: 0, mtime: 1710000000 },
   { name: 'photos', isDir: true, size: 0, mtime: 1710100000 },
-  { name: 'readme.txt', isDir: false, size: 1234, mtime: 1710200000 },
+  // readme.txt and report.zip are both non-previewable so multi-select tests
+  // can click both without the preview panel opening. `.txt` was re-classified
+  // as previewable (src/modules/sftp-preview.ts TEXT_EXTS), so we no longer
+  // use a .txt file for selection-count assertions.
+  { name: 'archive.zip', isDir: false, size: 1234, mtime: 1710200000 },
   { name: 'data.csv', isDir: false, size: 56789, mtime: 1710300000 },
 ];
 
@@ -28,8 +32,10 @@ const MOCK_DOCS_ENTRIES = [
  * The mock server must handle sftp_realpath and sftp_ls messages.
  */
 async function openSessionMenu(page) {
-  // Files is now reached via the session menu (#449). Hamburger opens the menu.
-  await page.locator('#handleMenuBtn').click();
+  // Files is now reached via the session menu (#449). The session menu is
+  // opened by #sessionMenuBtn (the MobiSSH/active-session label). The #handleMenuBtn
+  // hamburger opens #navMenu (Terminal/Connect/Settings), not the session menu.
+  await page.locator('#sessionMenuBtn').click();
   await expect(page.locator('#sessionMenu')).not.toHaveClass(/hidden/, { timeout: 3000 });
 }
 
@@ -141,7 +147,7 @@ test.describe('Files panel Explore tab (#209)', () => {
 
     // File entries have data-dir="false" and icon F
     const fileEntries = page.locator('.files-entry[data-dir="false"]');
-    await expect(fileEntries).toHaveCount(2); // readme.txt, data.csv
+    await expect(fileEntries).toHaveCount(2); // archive.zip, data.csv
     const fileIcon = fileEntries.first().locator('.files-entry-icon');
     await expect(fileIcon).toHaveText('F');
   });

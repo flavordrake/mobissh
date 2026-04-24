@@ -110,8 +110,9 @@ async function setupConnected(page, mockSshServer) {
     localStorage.setItem('wsUrl', `ws://localhost:${port}`);
   }, mockSshServer.port);
 
-  // Navigate to Connect tab and fill the form
-  await page.locator('[data-panel="connect"]').click();
+  // Navigate to Connect tab and fill the form. Anchor to the tab bar —
+  // a nav menu item (added in #449) also has data-panel="connect".
+  await page.locator('#tabBar [data-panel="connect"]').click();
   await page.locator('#host').fill('mock-host');
   await page.locator('#remote_a').fill('testuser');
   await page.locator('#remote_c').fill('testpass');
@@ -592,7 +593,10 @@ test.describe('IME state machine — compose + preview (#106)', { tag: '@device-
     await page.screenshot({ path: path.join(SM_DIR, '15-previewing-before-tap.png') });
 
     await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
+    // State transition to 'editing' fires on touchend (src/modules/ime.ts:323),
+    // not touchstart. Dispatch both to simulate a real tap.
     await page.locator('#imeInput').dispatchEvent('touchstart', { bubbles: true });
+    await page.locator('#imeInput').dispatchEvent('touchend', { bubbles: true });
     await page.waitForTimeout(100);
     await page.screenshot({ path: path.join(SM_DIR, '16-editing-after-tap.png') });
 
@@ -753,25 +757,11 @@ test.describe('IME auto-positioning based on cursor (#106)', { tag: '@device-cri
     }, { cy: cursorY, r: rows });
   }
 
-  test('cursor in top half → IME preview positioned at bottom', async ({ page, mockSshServer }) => {
-    await setupConnected(page, mockSshServer);
-    await enableComposePreview(page);
-
-    // Place cursor in top half (row 3 of 24 rows)
-    await stubTerminalCursor(page, 3, 24);
-
-    await swipeCompose(page, 'hello');
-    await page.waitForTimeout(100);
-
-    // IME should be visible and positioned at bottom (bottom style set, top = 'auto')
-    await expect(page.locator('#imeInput')).toHaveClass(/ime-visible/);
-    const imeStyle = await page.locator('#imeInput').evaluate((el) => ({
-      bottom: el.style.bottom,
-      top: el.style.top,
-    }));
-    expect(imeStyle.top).toBe('auto');
-    expect(imeStyle.bottom).not.toBe('');
-    expect(imeStyle.bottom).not.toBe('auto');
+  test.skip('cursor in top half → IME preview positioned at bottom', async () => {
+    // Stale UX: IME positioning is no longer auto-derived from the terminal
+    // cursor Y. `_effectiveDock()` (src/modules/ime.ts) now returns only the
+    // stored dock position. If cursor-driven auto-positioning is re-added,
+    // un-skip this test.
   });
 
   test('cursor in bottom half → IME preview positioned at top', async ({ page, mockSshServer }) => {
@@ -820,7 +810,10 @@ test.describe('IME auto-positioning based on cursor (#106)', { tag: '@device-cri
     expect(imeStyle.top).not.toBe('auto');
   });
 
-  test('manual dock toggle overrides auto-positioning within same composition', async ({ page, mockSshServer }) => {
+  test.skip('manual dock toggle overrides auto-positioning within same composition', async ({ page, mockSshServer }) => {
+    // Stale UX: cursor-based auto-positioning was removed; there is no "auto"
+    // to override. The dock toggle still works; covered by `no terminal →
+    // defaults to stored _dockPosition`.
     await setupConnected(page, mockSshServer);
     await enableComposePreview(page);
 

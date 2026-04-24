@@ -30,25 +30,29 @@ test.describe('Initial page load', { tag: '@device-critical' }, () => {
   });
 
   test('smoke: UI loads and all tabs switch panels', async ({ page }) => {
-    // App shell is up
-    await expect(page.locator('#terminal')).toBeVisible();
+    // App shell is up. On cold start with no profiles the app lands on the
+    // Connect panel (src/app.ts:111). The #terminal element lives in
+    // #panel-terminal which is not active yet, so assert on the tab bar (the
+    // most stable "shell is up" signal) instead.
+    await expect(page.locator('#tabBar')).toBeVisible();
 
-    // All four tabs present and enabled
+    // Keys panel was removed (#449); current tabs are terminal, connect,
+    // settings. Scope the locator to the tab bar — `data-panel="connect"` (and
+    // others) also exist on nav-menu items (#449).
     const tabs = [
       { name: 'terminal', panel: '#panel-terminal' },
       { name: 'connect',  panel: '#panel-connect'  },
-      { name: 'keys',     panel: '#panel-keys'     },
       { name: 'settings', panel: '#panel-settings' },
     ];
     for (const { name } of tabs) {
-      const tab = page.locator(`[data-panel="${name}"]`);
+      const tab = page.locator(`#tabBar [data-panel="${name}"]`);
       await expect(tab).toBeVisible();
       await expect(tab).not.toBeDisabled();
     }
 
     // Each tab click activates the right panel
     for (const { name, panel } of tabs) {
-      await page.locator(`[data-panel="${name}"]`).click();
+      await page.locator(`#tabBar [data-panel="${name}"]`).click();
       await expect(page.locator(panel)).toHaveClass(/active/);
       // All other panels must be inactive
       for (const { panel: other } of tabs.filter((t) => t.panel !== panel)) {
@@ -61,55 +65,46 @@ test.describe('Initial page load', { tag: '@device-critical' }, () => {
     expect(page._jsErrors).toEqual([]);
   });
 
-  test('xterm.js initializes and renders terminal', async ({ page }) => {
-    // xterm.js uses a DOM renderer in Chrome Headless Shell (no GPU canvas).
-    // Check for the .xterm container with its expected class structure.
-    const xtermEl = page.locator('.xterm').first();
-    await expect(xtermEl).toBeVisible();
-    // Verify xterm.js rendered rows or canvas inside .xterm-screen
-    const screen = page.locator('.xterm-screen');
-    await expect(screen).toBeVisible();
-    const box = await screen.boundingBox();
-    expect(box.width).toBeGreaterThan(100);
-    expect(box.height).toBeGreaterThan(50);
+  test.skip('xterm.js initializes and renders terminal', async () => {
+    // Stale UX: xterm.js is now created per-session (src/modules/terminal.ts:228
+    // `createSessionTerminal`). On cold start with no sessions there is no .xterm
+    // element. A meaningful test would require a mock connection — see
+    // tests/connection.spec.js for tests that exercise the full flow.
   });
 
-  test('welcome banner text appears in terminal', async ({ page }) => {
-    // xterm.js renders text into canvas rows — the accessible text lives in
-    // .xterm-accessibility or the screen reader buffer, not plain DOM text.
-    // Check for the screen-reader accessible node instead.
-    const terminal = page.locator('#terminal');
-    await expect(terminal).toBeVisible();
-
-    // The welcome banner is written via terminal.writeln() — it ends up in
-    // aria-live regions that Playwright can read.
-    // Fallback: just verify the terminal container has content.
-    const box = await terminal.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThan(100);
-    expect(box.height).toBeGreaterThan(50);
+  test.skip('welcome banner text appears in terminal', async () => {
+    // Stale UX: the welcome banner was a cold-start feature of the old lobby
+    // terminal (removed in dae5f66). Terminal is now created when a session
+    // connects, and the banner is no longer written at boot.
   });
 
-  test('tab bar shows all four tabs', async ({ page }) => {
+  test('tab bar shows all three tabs', async ({ page }) => {
+    // Keys tab was removed (#449); current tabs are terminal, connect, settings.
+    // Scope to #tabBar — nav-menu items share data-panel attributes.
     const tabBar = page.locator('#tabBar');
     await expect(tabBar).toBeVisible();
 
-    await expect(page.locator('[data-panel="terminal"]')).toBeVisible();
-    await expect(page.locator('[data-panel="connect"]')).toBeVisible();
-    await expect(page.locator('[data-panel="keys"]')).toBeVisible();
-    await expect(page.locator('[data-panel="settings"]')).toBeVisible();
+    await expect(page.locator('#tabBar [data-panel="terminal"]')).toBeVisible();
+    await expect(page.locator('#tabBar [data-panel="connect"]')).toBeVisible();
+    await expect(page.locator('#tabBar [data-panel="settings"]')).toBeVisible();
   });
 
-  test('terminal panel is active by default on cold start', async ({ page }) => {
-    const terminalPanel = page.locator('#panel-terminal');
-    await expect(terminalPanel).toHaveClass(/active/);
+  test('connect panel is active by default on cold start with no profiles', async ({ page }) => {
+    // Cold start behavior changed (src/app.ts:111, commit dae5f66 "lobby terminal
+    // removal"): with no saved sessions, app lands on Connect instead of an
+    // empty terminal panel.
+    const connectPanel = page.locator('#panel-connect');
+    await expect(connectPanel).toHaveClass(/active/);
 
     // Other panels should not be active
-    await expect(page.locator('#panel-connect')).not.toHaveClass(/active/);
+    await expect(page.locator('#panel-terminal')).not.toHaveClass(/active/);
     await expect(page.locator('#panel-settings')).not.toHaveClass(/active/);
   });
 
   test('key bar is visible with essential keys', async ({ page }) => {
+    // The key bar lives inside the terminal panel chrome — activate terminal first.
+    await page.locator('#tabBar [data-panel="terminal"]').click();
+
     const keyBar = page.locator('#key-bar');
     await expect(keyBar).toBeVisible();
 
@@ -150,27 +145,30 @@ test.describe('Tab navigation', { tag: '@headless-adequate' }, () => {
   });
 
   test('clicking Connect tab shows connect panel', async ({ page }) => {
-    await page.locator('[data-panel="connect"]').click();
+    // Cold start lands on Connect already; click Terminal first so Connect is
+    // a meaningful transition, then click Connect to verify the tab switch works.
+    await page.locator('#tabBar [data-panel="terminal"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     await expect(page.locator('#panel-connect')).toHaveClass(/active/);
     await expect(page.locator('#panel-terminal')).not.toHaveClass(/active/);
     await page.screenshot({ path: 'test-results/screenshots/connect-tab.png' });
   });
 
-  test('clicking Keys tab shows keys panel', async ({ page }) => {
-    await page.locator('[data-panel="keys"]').click();
-    await expect(page.locator('#panel-keys')).toHaveClass(/active/);
+  test.skip('clicking Keys tab shows keys panel', async () => {
+    // Keys panel removed in #449 — this test targets stale UX. Kept as .skip
+    // for historical reference.
   });
 
   test('clicking Settings tab shows settings panel', async ({ page }) => {
-    await page.locator('[data-panel="settings"]').click();
+    await page.locator('#tabBar [data-panel="settings"]').click();
     await expect(page.locator('#panel-settings')).toHaveClass(/active/);
     await page.screenshot({ path: 'test-results/screenshots/settings-tab.png' });
   });
 
   test('clicking Terminal tab returns to terminal panel', async ({ page }) => {
     // Go to settings then back
-    await page.locator('[data-panel="settings"]').click();
-    await page.locator('[data-panel="terminal"]').click();
+    await page.locator('#tabBar [data-panel="settings"]').click();
+    await page.locator('#tabBar [data-panel="terminal"]').click();
     await expect(page.locator('#panel-terminal')).toHaveClass(/active/);
   });
 });
@@ -180,7 +178,7 @@ test.describe('Connect form', { tag: '@headless-adequate' }, () => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
   });
 
   test('form has required fields', async ({ page }) => {
@@ -309,17 +307,28 @@ test.describe('Settings panel', { tag: '@headless-adequate' }, () => {
     await page.addInitScript(() => localStorage.clear());
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
-    await page.locator('[data-panel="settings"]').click();
+    await page.locator('#tabBar [data-panel="settings"]').click();
   });
 
   test('settings panel renders', async ({ page }) => {
+    // Settings is now an overview/detail two-level UI — fields live inside
+    // per-category subsections. Verify the overview list renders, then drill
+    // into Server and Terminal to verify the canonical fields.
     await expect(page.locator('#panel-settings')).toBeVisible();
+    await expect(page.locator('#settingsOverview')).toBeVisible();
+
+    await page.locator('.settings-category[data-section="server"]').click();
     await expect(page.locator('#wsUrl')).toBeVisible();
+    await page.locator('.settings-detail[data-section="server"] .settings-detail-back').click();
+
+    await page.locator('.settings-category[data-section="terminal"]').click();
     await expect(page.locator('#fontSize')).toBeVisible();
     await expect(page.locator('#termThemeSelect')).toBeVisible();
   });
 
   test('saving a custom WS URL persists to localStorage', async ({ page }) => {
+    // WS URL control is inside the Server subsection.
+    await page.locator('.settings-category[data-section="server"]').click();
     await page.locator('#wsUrl').fill('wss://10.0.0.5:8080');
     await page.locator('#saveSettingsBtn').click();
 
@@ -328,15 +337,25 @@ test.describe('Settings panel', { tag: '@headless-adequate' }, () => {
   });
 
   test('font size range exists with correct bounds', async ({ page }) => {
+    // Font size control lives in the Terminal subsection.
+    await page.locator('.settings-category[data-section="terminal"]').click();
     const slider = page.locator('#fontSize');
     await expect(slider).toHaveAttribute('min', '8');
     await expect(slider).toHaveAttribute('max', '32');
   });
 
-  test('theme selector has all ten themes', async ({ page }) => {
+  test('theme selector includes all canonical themes', async ({ page }) => {
+    // Theme selector lives in the Terminal subsection. THEME_ORDER now has 21
+    // entries (src/modules/constants.ts). The original ten themes must all
+    // still be present; assert subset rather than exact count so new themes
+    // don't break this test.
+    await page.locator('.settings-category[data-section="terminal"]').click();
+    // Wait for the <select> itself to be visible — <option> elements have
+    // hidden layout state in Playwright (only paint when dropdown opens).
+    await expect(page.locator('#termThemeSelect')).toBeVisible();
     const opts = page.locator('#termThemeSelect option');
-    await expect(opts).toHaveCount(10);
     const values = await opts.evaluateAll((els) => els.map((el) => el.value));
+    expect(values.length).toBeGreaterThanOrEqual(10);
     expect(values).toEqual(
       expect.arrayContaining([
         'dark', 'light', 'solarizedDark', 'solarizedLight', 'highContrast',
@@ -346,6 +365,8 @@ test.describe('Settings panel', { tag: '@headless-adequate' }, () => {
   });
 
   test('font selector has three font options (#71)', async ({ page }) => {
+    // Terminal font selector lives in the Terminal subsection.
+    await page.locator('.settings-category[data-section="terminal"]').click();
     const opts = page.locator('#termFontSelect option');
     await expect(opts).toHaveCount(3);
     const values = await opts.evaluateAll((els) => els.map((el) => el.value));
@@ -362,9 +383,10 @@ test.describe('Issue #87 — tab buttons prevent text selection on long-press', 
   });
 
   test('tab buttons have user-select: none', async ({ page }) => {
+    // Keys tab was removed in #449; current count is 3 (terminal, connect, settings).
     const tabs = page.locator('.tab');
     const count = await tabs.count();
-    expect(count).toBeGreaterThanOrEqual(4);
+    expect(count).toBeGreaterThanOrEqual(3);
     for (let i = 0; i < count; i++) {
       const userSelect = await tabs.nth(i).evaluate(
         (el) => {
