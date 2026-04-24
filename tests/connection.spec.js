@@ -33,9 +33,11 @@ test.describe('Connection lifecycle (#110 Phase 7)', { tag: '@headless-adequate'
   test('disconnect button sends disconnect message and resets status', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // Session menu should show connected host
+    // Session menu should show connected host. profileName auto-fills from host
+    // as the user types, so the button title is `mock-host` (profile title),
+    // not `testuser@mock-host`.
     const menuBtnBefore = await page.locator('#sessionMenuBtn').textContent();
-    expect(menuBtnBefore).toContain('testuser@mock-host');
+    expect(menuBtnBefore).toContain('mock-host');
 
     // Open session menu and click disconnect
     await page.locator('#sessionMenuBtn').click();
@@ -160,8 +162,9 @@ test.describe('Connection lifecycle (#110 Phase 7)', { tag: '@headless-adequate'
   test('session menu shows connected host when connected', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
+    // profileName auto-fills from host as the user types → title is `mock-host`.
     const menuBtnText = await page.locator('#sessionMenuBtn').textContent();
-    expect(menuBtnText).toContain('testuser@mock-host');
+    expect(menuBtnText).toContain('mock-host');
   });
 
   test('host key reject does not store fingerprint', async ({ page, mockSshServer }) => {
@@ -198,30 +201,24 @@ test.describe('Connection lifecycle (#110 Phase 7)', { tag: '@headless-adequate'
     expect(response).toBeTruthy();
   });
 
-  test('server error message shows dismissable error dialog (#92)', async ({ page, mockSshServer }) => {
+  test('server error message on connected session surfaces via toast (#92)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // Simulate a non-recoverable server error (e.g., SSRF block)
+    // Simulate a non-recoverable server error (e.g., SSRF block).
+    // Behavior update: when the session is already connected, transient `error`
+    // messages surface via toast (not a blocking modal) to avoid interrupting
+    // the user mid-session. The error dialog is only used for pre-connect /
+    // catastrophic failures. See connection.ts `case 'error'`.
     mockSshServer.sendToPage({
       type: 'error',
       message: 'Connections to private/loopback addresses are blocked.',
     });
 
-    // The error dialog should appear (not the connection status overlay)
-    const errorDialog = page.locator('#errorDialogOverlay');
-    await expect(errorDialog).toBeVisible({ timeout: 3000 });
-
-    // The error text should include the server message
-    const errorText = await page.locator('#errorDialogText').textContent();
-    expect(errorText).toContain('Connections to private/loopback addresses are blocked.');
-
-    // A Dismiss button must be present and visible
-    const dismissBtn = page.locator('#errorDialogDismiss');
-    await expect(dismissBtn).toBeVisible();
-
-    // Clicking Dismiss should close the dialog
-    await dismissBtn.click();
-    await expect(errorDialog).not.toBeVisible();
+    // The toast should appear with the error text.
+    const toast = page.locator('#toast');
+    await expect(toast).toHaveClass(/show/, { timeout: 3000 });
+    const toastText = await toast.textContent();
+    expect(toastText).toContain('Connections to private/loopback addresses are blocked.');
   });
 
 });

@@ -4,6 +4,13 @@
  * Credential vault (#14) — master-password + DEK/KEK architecture.
  * Tests encrypt/decrypt lifecycle, vault setup modal, unlock flow,
  * and the "never store plaintext" security invariant.
+ *
+ * Note on selectors: [data-panel="..."] matches tab bar AND the nav menu
+ * (#449). All clicks must scope to `#tabBar`.
+ *
+ * Note on Settings UX (refactored dbccc86): Settings is overview → detail.
+ * Vault status/controls live in `.settings-detail[data-section="vault"]`,
+ * so tests that inspect #vaultStatus must click into that section first.
  */
 
 const { test, expect, setupConnected, ensureTestVault } = require('./fixtures.js');
@@ -17,12 +24,24 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
-// Reveal the connect form if hidden (profiles exist → form is hidden by default)
+// Reveal the connect form if collapsed. The form lives inside a <details>
+// element (#connect-form-section) that closes after a save. Open it directly
+// so subsequent fills find visible inputs.
 async function revealConnectForm(page) {
-  const btn = page.locator('#newConnBtn');
-  if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
-    await btn.click();
-  }
+  await page.evaluate(() => {
+    const details = document.getElementById('connect-form-section');
+    if (details && !details.open) details.open = true;
+  });
+  // Wait for the #host field to be visible (details animation may be async)
+  await page.waitForSelector('#host:not([hidden])', { state: 'visible', timeout: 2000 });
+}
+
+/** Drill into a settings category so its fields are reachable. Assumes
+ *  tab bar is visible and caller will navigate to Settings first. */
+async function openSettingsSection(page, section) {
+  await page.locator('#tabBar [data-panel="settings"]').click();
+  await page.locator(`.settings-category[data-section="${section}"]`).click();
+  await page.waitForSelector(`.settings-detail[data-section="${section}"].active`, { timeout: 2000 });
 }
 
 test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
@@ -32,7 +51,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
 
     // Save a new profile via the connect form
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('vault-test-host');
     await page.locator('#remote_a').fill('vaultuser');
@@ -66,7 +85,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
     await setupConnected(page, mockSshServer);
 
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('flag-test-host');
     await page.locator('#remote_a').fill('flaguser');
@@ -86,7 +105,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
 
     // Save a profile with credentials
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('roundtrip-host');
     await page.locator('#remote_a').fill('rounduser');
@@ -94,17 +113,19 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
-    // Now click that profile to load it back into the form
-    await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
-    const profileItem = page.locator('.profile-item', { hasText: 'rounduser@roundtrip-host' });
-    await profileItem.waitFor({ state: 'visible', timeout: 3000 });
-    await profileItem.click();
-    await page.waitForTimeout(500);
-
-    // The password field should be populated with the decrypted value
-    const password = await page.locator('#remote_c').inputValue();
-    expect(password).toBe('roundtrip-secret');
+    // Profile UX no longer populates the main form with decrypted creds when
+    // tapped (Edit opens an inline form; the password field stays blank until
+    // the user types a new one). Verify the crypto roundtrip via vaultLoad()
+    // directly — this is the invariant that matters for security & correctness.
+    const decrypted = await page.evaluate(async () => {
+      const profiles = JSON.parse(localStorage.getItem('sshProfiles') || '[]');
+      const profile = profiles.find((p) => p.host === 'roundtrip-host');
+      if (!profile?.vaultId) return null;
+      const { vaultLoad } = await import('./modules/vault.js');
+      return vaultLoad(profile.vaultId);
+    });
+    expect(decrypted).toBeTruthy();
+    expect(decrypted.password).toBe('roundtrip-secret');
   });
 
   test('deleting a profile removes its vault entry', async ({ page, mockSshServer }) => {
@@ -112,7 +133,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
 
     // Save a profile
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     await revealConnectForm(page);
     await page.locator('#host').fill('delete-test-host');
     await page.locator('#remote_a').fill('deleteuser');
@@ -126,7 +147,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
 
     // Delete the profile — navigate to Connect panel where profile list is visible
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     const deleteBtn = page.locator('[data-action="delete"]').first();
     await deleteBtn.waitFor({ state: 'visible', timeout: 3000 });
     await deleteBtn.click();
@@ -151,7 +172,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     await page.locator('#host').fill('no-vault-host');
     await page.locator('#remote_a').fill('novaultuser');
     await page.locator('#remote_c').fill('should-not-persist');
@@ -178,7 +199,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    await page.locator('[data-panel="connect"]').click();
+    await page.locator('#tabBar [data-panel="connect"]').click();
     await page.locator('#host').fill('setup-test-host');
     await page.locator('#remote_a').fill('setupuser');
     await page.locator('#remote_c').fill('setupsecret');
@@ -225,7 +246,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
     });
 
     await showTabBar(page);
-    await page.locator('[data-panel="settings"]').click();
+    await openSettingsSection(page, 'vault');
 
     // Status should show unlocked
     const status = await page.locator('#vaultStatus').textContent();
@@ -247,7 +268,7 @@ test.describe('Credential vault (#14)', { tag: '@headless-adequate' }, () => {
     });
 
     await showTabBar(page);
-    await page.locator('[data-panel="settings"]').click();
+    await openSettingsSection(page, 'vault');
 
     // Click lock
     await page.locator('#vaultLockBtn').click();

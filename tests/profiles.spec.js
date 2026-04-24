@@ -19,12 +19,19 @@ async function showTabBar(page) {
   await page.waitForSelector('#tabBar:not(.hidden)', { timeout: 2000 });
 }
 
-// Reveal the connect form if hidden (profiles exist → form is hidden by default)
+// Click the Connect tab. [data-panel="connect"] matches both the tab bar and
+// the nav menu (#449) — scope to the tab bar to avoid strict-mode violations.
+async function clickConnectTab(page) {
+  await page.locator('#tabBar [data-panel="connect"]').click();
+}
+
+// Reveal the connect form. The form is inside <details id="connect-form-section">
+// — open it directly. #newConnBtn was removed.
 async function revealConnectForm(page) {
-  const btn = page.locator('#newConnBtn');
-  if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
-    await btn.click();
-  }
+  await page.evaluate(() => {
+    const d = document.getElementById('connect-form-section');
+    if (d && 'open' in d) d.open = true;
+  });
 }
 
 // Inject mock PasswordCredential so vault operations work in headless Chromium
@@ -64,7 +71,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
 
     // Save first profile
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
     await revealConnectForm(page);
     await page.locator('#profileName').fill('Original');
     await page.locator('#host').fill('upsert-host');
@@ -75,7 +82,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
 
     // Save again with same host+port+username but different name
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
     await revealConnectForm(page);
     await page.locator('#profileName').fill('Updated');
     await page.locator('#host').fill('upsert-host');
@@ -89,7 +96,8 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
     const profiles = await page.evaluate(() => JSON.parse(localStorage.getItem('sshProfiles') || '[]'));
     const upsertProfiles = profiles.filter(p => p.host === 'upsert-host');
     expect(upsertProfiles.length).toBe(1);
-    expect(upsertProfiles[0].name).toBe('Updated');
+    // #425 migrated profile.name → profile.title
+    expect(upsertProfiles[0].title).toBe('Updated');
   });
 
   test('escHtml prevents script injection in profile names', async ({ page, mockSshServer }) => {
@@ -98,7 +106,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
 
     // Save a profile with XSS payload in the name
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
     await revealConnectForm(page);
     await page.locator('#profileName').fill('<img src=x onerror=alert(1)>');
     await page.locator('#host').fill('xss-host');
@@ -109,7 +117,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
 
     // Navigate to connect panel to see profile list
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
 
     // The img tag should be escaped, not rendered as an element
     const imgCount = await page.locator('#profileList img').count();
@@ -120,13 +128,13 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
     expect(profileHtml).toContain('&lt;img');
   });
 
-  test('loading a profile populates all form fields', async ({ page, mockSshServer }) => {
+  test('editing a profile reveals inline edit form populated with saved values', async ({ page, mockSshServer }) => {
     await injectMockVault(page);
     await setupConnected(page, mockSshServer);
 
     // Save a profile with all fields
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
     await revealConnectForm(page);
     await page.locator('#profileName').fill('LoadTest');
     await page.locator('#host').fill('load-host');
@@ -136,26 +144,27 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
     await page.locator('#connectForm button[type="submit"]').click();
     await page.waitForTimeout(500);
 
-    // Clear form fields manually
+    // Return to connect panel
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
-    await revealConnectForm(page);
-    await page.locator('#profileName').fill('');
-    await page.locator('#host').fill('');
-    await page.locator('#remote_a').fill('');
+    await clickConnectTab(page);
 
-    // Click the profile item to load it
+    // Clicking the profile item body no longer loads into the main form —
+    // the profile list was refactored (#441 + inline-profile-edit) so that
+    // editing is done via the Edit button, which expands an inline form
+    // inside the .profile-item. Open that edit form and verify fields.
     const profileItem = page.locator('.profile-item', { hasText: 'loaduser@load-host' });
     await profileItem.waitFor({ state: 'visible', timeout: 3000 });
-    await profileItem.click();
-    await page.waitForTimeout(500);
+    await profileItem.locator('[data-action="edit"]').click();
+    await page.waitForTimeout(300);
 
-    // Verify form fields populated (advanced fields are inside collapsed <details>)
-    await openConnectAdvanced(page);
-    expect(await page.locator('#profileName').inputValue()).toBe('LoadTest');
-    expect(await page.locator('#host').inputValue()).toBe('load-host');
-    expect(await page.locator('#port').inputValue()).toBe('2222');
-    expect(await page.locator('#remote_a').inputValue()).toBe('loaduser');
+    // The inline edit form uses editTitle-<idx> ids. The idx depends on save
+    // order — find the form within the matching item and read by data-field.
+    const editForm = profileItem.locator('.profile-edit-form');
+    await expect(editForm).toBeVisible({ timeout: 3000 });
+    expect(await editForm.locator('[data-field="title"]').inputValue()).toBe('LoadTest');
+    expect(await editForm.locator('[data-field="host"]').inputValue()).toBe('load-host');
+    expect(await editForm.locator('[data-field="port"]').inputValue()).toBe('2222');
+    expect(await editForm.locator('[data-field="username"]').inputValue()).toBe('loaduser');
   });
 
   test('deleting a profile removes it from localStorage', async ({ page, mockSshServer }) => {
@@ -164,7 +173,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
 
     // Save a profile
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
     await revealConnectForm(page);
     await page.locator('#profileName').fill('ToDelete');
     await page.locator('#host').fill('delete-host');
@@ -179,7 +188,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
 
     // Delete via the delete button
     await showTabBar(page);
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
     const deleteBtn = page.locator('.profile-item', { hasText: 'deluser@delete-host' })
       .locator('[data-action="delete"]');
     await deleteBtn.waitFor({ state: 'visible', timeout: 3000 });
@@ -202,9 +211,17 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
     await injectMockVault(page);
     await setupConnected(page, mockSshServer);
 
-    // Navigate to Keys tab
+    // Keys tab was merged into Connect panel (#441 redirects #keys → #connect).
+    // The "Stored Keys" <details> lives inside the Connect panel.
     await showTabBar(page);
-    await page.locator('[data-panel="keys"]').click();
+    await clickConnectTab(page);
+    await page.waitForTimeout(200);
+
+    // Expand the Stored Keys <details> so the import form is visible.
+    await page.evaluate(() => {
+      const d = document.getElementById('keysSection');
+      if (d && 'open' in d) d.open = true;
+    });
 
     // Try to import invalid key data
     await page.locator('#keyName').fill('bad-key');
@@ -227,7 +244,7 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    await page.locator('[data-panel="connect"]').click();
+    await clickConnectTab(page);
     const hint = page.locator('#profileList .empty-hint');
     await expect(hint).toBeVisible();
     await expect(hint).toHaveText('No saved profiles yet.');

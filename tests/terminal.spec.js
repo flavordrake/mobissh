@@ -7,7 +7,11 @@
 const { test, expect, setupConnected } = require('./fixtures.js');
 
 test.describe('Terminal (#110 Phase 10)', { tag: '@device-critical' }, () => {
-  test('xterm.js terminal is created and visible on load', async ({ page }) => {
+  // Cold-start xterm assertion removed in dae5f66 (lobby terminal removal).
+  // The app now lands on the Connect panel on cold start; .xterm-screen only
+  // exists after the first connection. See visual-smoke + reconnect-lifecycle
+  // for the post-connect terminal assertions.
+  test.skip('xterm.js terminal is created and visible on load', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
@@ -46,8 +50,12 @@ test.describe('Terminal (#110 Phase 10)', { tag: '@device-critical' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    // Navigate to settings and change font size
-    await page.locator('[data-panel="settings"]').click();
+    // Navigate to settings and change font size. [data-panel="settings"] matches
+    // the tab bar AND the nav menu (#449) — scope to tab bar to avoid strict-mode.
+    // Settings UI is an overview + detail navigation: drill into "terminal" to
+    // reach the font size slider.
+    await page.locator('#tabBar [data-panel="settings"]').click();
+    await page.locator('.settings-category[data-section="terminal"]').click();
     const slider = page.locator('#fontSize');
     await slider.fill('18');
     await slider.dispatchEvent('input');

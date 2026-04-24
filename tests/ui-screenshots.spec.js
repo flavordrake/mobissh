@@ -74,9 +74,11 @@ test.describe('IME action buttons visual states (#106)', { tag: '@device-critica
   test('dock position persists in localStorage', async ({ page, mockSshServer }) => {
     await setupIMEComposition(page, mockSshServer, 'persist');
 
+    // Dock positions are currently ['hover-top', 'hover-bottom'] (see ime.ts).
+    // Default is 'hover-top'; first toggle → 'hover-bottom'.
     await page.click('#imeDockToggle');
     const saved = await page.evaluate(() => localStorage.getItem('imeDockPosition'));
-    expect(saved).toBe('top');
+    expect(saved).toBe('hover-bottom');
   });
 
   test('clear button hides actions', async ({ page, mockSshServer }) => {
@@ -132,7 +134,7 @@ test.describe('Layout screenshots', { tag: '@device-critical' }, () => {
   test('connect tab', async ({ page }) => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
-    await page.click('[data-panel="connect"]');
+    await page.click('#tabBar [data-panel="connect"]');
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'layout-connect.png') });
   });
@@ -140,7 +142,7 @@ test.describe('Layout screenshots', { tag: '@device-critical' }, () => {
   test('settings tab', async ({ page }) => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
-    await page.click('[data-panel="settings"]');
+    await page.click('#tabBar [data-panel="settings"]');
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'layout-settings.png') });
   });

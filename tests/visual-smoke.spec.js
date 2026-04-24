@@ -90,7 +90,10 @@ test.describe('Visual smoke tests', { tag: '@smoke' }, () => {
     expect(inputMessages.length).toBeGreaterThan(0);
   });
 
-  test('welcome banner visible before connect', async ({ page }) => {
+  // Lobby terminal removed in dae5f66 — cold start lands on Connect panel.
+  // The "welcome banner" was a feature of the lobby; there is no pre-connect
+  // banner anymore. Skip until a replacement cold-start welcome is designed.
+  test.skip('welcome banner visible before connect', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);

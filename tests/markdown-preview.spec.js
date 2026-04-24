@@ -46,13 +46,29 @@ function installSftpHandlersForPreview(mockSshServer, fileContent) {
       ws.send(JSON.stringify({ type: 'sftp_realpath_result', requestId: msg.requestId, path: '/' }));
     } else if (msg.type === 'sftp_ls') {
       ws.send(JSON.stringify({ type: 'sftp_ls_result', requestId: msg.requestId, entries: MOCK_ENTRIES }));
-    } else if (msg.type === 'sftp_download') {
-      ws.send(JSON.stringify({
-        type: 'sftp_download_result',
-        requestId: msg.requestId,
-        data: Buffer.from(fileContent).toString('base64'),
-        ok: true,
-      }));
+    } else if (msg.type === 'sftp_download' || msg.type === 'sftp_download_start') {
+      // Preview clicks now use the chunked streaming path (`sftp_download_start`
+      // → `sftp_download_chunk` → `sftp_download_end`). Inline image fetches and
+      // legacy relative-image loads still use `sftp_download` / `sftp_download_result`.
+      // Handle both.
+      if (msg.type === 'sftp_download_start') {
+        const buf = Buffer.from(fileContent);
+        ws.send(JSON.stringify({ type: 'sftp_download_meta', requestId: msg.requestId, size: buf.length }));
+        ws.send(JSON.stringify({
+          type: 'sftp_download_chunk',
+          requestId: msg.requestId,
+          offset: 0,
+          data: buf.toString('base64'),
+        }));
+        ws.send(JSON.stringify({ type: 'sftp_download_end', requestId: msg.requestId }));
+      } else {
+        ws.send(JSON.stringify({
+          type: 'sftp_download_result',
+          requestId: msg.requestId,
+          data: Buffer.from(fileContent).toString('base64'),
+          ok: true,
+        }));
+      }
     }
   };
 }
@@ -144,7 +160,19 @@ test.describe('Markdown preview — link and image rendering', () => {
           requestId: msg.requestId,
           entries: [{ name: 'README.md', isDir: false, size: parentMd.length, mtime: 1710000000 }],
         }));
+      } else if (msg.type === 'sftp_download_start') {
+        downloads.push(msg.path);
+        const body = msg.path.endsWith('.md') ? Buffer.from(parentMd) : pngBytes;
+        ws.send(JSON.stringify({ type: 'sftp_download_meta', requestId: msg.requestId, size: body.length }));
+        ws.send(JSON.stringify({
+          type: 'sftp_download_chunk',
+          requestId: msg.requestId,
+          offset: 0,
+          data: body.toString('base64'),
+        }));
+        ws.send(JSON.stringify({ type: 'sftp_download_end', requestId: msg.requestId }));
       } else if (msg.type === 'sftp_download') {
+        // Inline image path — single-shot `sftp_download_result`.
         downloads.push(msg.path);
         const body = msg.path.endsWith('.md') ? Buffer.from(parentMd) : pngBytes;
         ws.send(JSON.stringify({
@@ -181,6 +209,8 @@ test.describe('Markdown preview — link and image rendering', () => {
     const downloadRequests = [];
 
     // Install handler that records requested paths and serves different content per path.
+    // Preview click uses `sftp_download_start` (chunked streaming); fall through to
+    // `sftp_download` for single-shot (inline image / legacy relative-link) paths.
     mockSshServer.onMessage = (ws, msg) => {
       if (msg.type === 'sftp_realpath') {
         ws.send(JSON.stringify({ type: 'sftp_realpath_result', requestId: msg.requestId, path: '/docs' }));
@@ -193,6 +223,18 @@ test.describe('Markdown preview — link and image rendering', () => {
             { name: 'child.md', isDir: false, size: childMd.length, mtime: 1710100000 },
           ],
         }));
+      } else if (msg.type === 'sftp_download_start') {
+        downloadRequests.push(msg.path);
+        const body = msg.path.endsWith('/child.md') ? childMd : parentMd;
+        const buf = Buffer.from(body);
+        ws.send(JSON.stringify({ type: 'sftp_download_meta', requestId: msg.requestId, size: buf.length }));
+        ws.send(JSON.stringify({
+          type: 'sftp_download_chunk',
+          requestId: msg.requestId,
+          offset: 0,
+          data: buf.toString('base64'),
+        }));
+        ws.send(JSON.stringify({ type: 'sftp_download_end', requestId: msg.requestId }));
       } else if (msg.type === 'sftp_download') {
         downloadRequests.push(msg.path);
         const body = msg.path.endsWith('/child.md') ? childMd : parentMd;

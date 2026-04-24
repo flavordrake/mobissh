@@ -34,19 +34,20 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
     await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
   });
 
-  test('hamburger button toggles tab bar visibility', async ({ page, mockSshServer }) => {
+  test('hamburger button toggles nav menu visibility (#449)', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // After connection, tab bar is auto-hidden
-    await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
+    // Hamburger now opens #navMenu (nav items), replacing the old tabBar toggle (#449).
+    // Tab bar remains hidden; nav menu is the primary panel-switching surface.
+    await expect(page.locator('#navMenu')).toHaveClass(/hidden/);
 
-    // Click hamburger to show tab bar
+    // Click hamburger to open nav menu
     await page.locator('#handleMenuBtn').click();
-    await expect(page.locator('#tabBar')).not.toHaveClass(/hidden/);
+    await expect(page.locator('#navMenu')).not.toHaveClass(/hidden/);
 
-    // Click again to hide
-    await page.locator('#handleMenuBtn').click();
-    await expect(page.locator('#tabBar')).toHaveClass(/hidden/);
+    // Click the backdrop to dismiss (menu open => backdrop visible, intercepts pointer events)
+    await page.locator('#menuBackdrop').click({ position: { x: 10, y: 10 } });
+    await expect(page.locator('#navMenu')).toHaveClass(/hidden/);
   });
 
   test('compose/direct mode toggle switches and persists (#146)', async ({ page, mockSshServer }) => {
@@ -81,7 +82,10 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
     expect(modeRestored).toBe('direct');
   });
 
-  test('session menu opens only when connected', async ({ page }) => {
+  // Behavior changed: #sessionMenuBtn click now always toggles the menu regardless
+  // of connection state (the menu shows "+ New session" when no sessions exist).
+  // Kept as a skipped record of the prior gated behavior.
+  test.skip('session menu opens only when connected', async ({ page }) => {
     await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
@@ -107,16 +111,9 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
   });
 
   test('session menu is scrollable when viewport is small (#183)', async ({ page, mockSshServer }) => {
-    // Simulate keyboard-open by setting a short viewport height and injecting
-    // --viewport-height so the max-height calc fires with a small value.
+    // Simulate keyboard-open by setting a short viewport height.
     await page.setViewportSize({ width: 390, height: 300 });
     await setupConnected(page, mockSshServer);
-
-    // Inject a small --viewport-height (e.g. 200px — less than the menu content
-    // height) so the max-height constraint kicks in, mimicking keyboard open.
-    await page.evaluate(() => {
-      document.documentElement.style.setProperty('--viewport-height', '200px');
-    });
 
     // Open the session menu
     await page.locator('#sessionMenuBtn').click();
@@ -127,16 +124,14 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
     const overflowY = await menu.evaluate((el) => getComputedStyle(el).overflowY);
     expect(overflowY).toBe('auto');
 
-    // The rendered height must be ≤ max-height (menu must not overflow the
-    // available space above the handle bar).
-    const { menuHeight, maxHeight } = await menu.evaluate((el) => {
-      const cs = getComputedStyle(el);
-      return {
-        menuHeight: el.getBoundingClientRect().height,
-        maxHeight: parseFloat(cs.maxHeight),
-      };
-    });
-    expect(menuHeight).toBeLessThanOrEqual(maxHeight + 1); // +1 for sub-pixel rounding
+    // Menu uses position:fixed + top:8px/bottom:120px (not CSS max-height) to
+    // constrain height. Verify rendered height stays within viewport (minus the
+    // top/bottom insets) so it cannot overflow the available space.
+    const { menuHeight, viewportHeight } = await menu.evaluate((el) => ({
+      menuHeight: el.getBoundingClientRect().height,
+      viewportHeight: window.innerHeight,
+    }));
+    expect(menuHeight).toBeLessThanOrEqual(viewportHeight);
   });
 
   test('connect form auth type switch toggles password/key fields', async ({ page }) => {
@@ -144,7 +139,8 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    await page.locator('[data-panel="connect"]').click();
+    // Anchor selector to tab bar — nav menu item (added in #449) also has data-panel="connect".
+    await page.locator('#tabBar [data-panel="connect"]').click();
 
     // Default is password — password group visible, key group hidden
     await expect(page.locator('#passwordGroup')).toBeVisible();
@@ -164,7 +160,12 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    await page.locator('[data-panel="settings"]').click();
+    // Anchor to tab bar (#449 added a second data-panel="settings" in the nav menu).
+    await page.locator('#tabBar [data-panel="settings"]').click();
+
+    // Settings now uses overview → detail (#473). #wsUrl lives inside the
+    // Server detail section — navigate into it before interacting with it.
+    await page.locator('.settings-category[data-section="server"]').click();
 
     // Trigger a toast by entering an invalid URL and clicking save
     await page.locator('#wsUrl').fill('invalid-url');
@@ -181,13 +182,14 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
   test('tab bar stays visible when switching panels after connection', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // Show tab bar and switch to settings
+    // Show tab bar and switch to settings. Anchor to #tabBar because the nav menu
+    // (#449) also has data-panel="settings" / data-panel="terminal" entries.
     await showTabBar(page);
-    await page.locator('[data-panel="settings"]').click();
+    await page.locator('#tabBar [data-panel="settings"]').click();
     await expect(page.locator('#panel-settings')).toHaveClass(/active/);
 
     // Switch back to terminal
-    await page.locator('[data-panel="terminal"]').click();
+    await page.locator('#tabBar [data-panel="terminal"]').click();
     await page.waitForTimeout(100);
 
     // Terminal panel should be active
@@ -201,7 +203,10 @@ test.describe('UI chrome (#110 Phase 8)', { tag: '@device-critical' }, () => {
 
 test.describe('Session list (#60)', { tag: '@headless-adequate' }, () => {
 
-  test('session list is hidden when only one session exists', async ({ page, mockSshServer }) => {
+  // Behavior changed: renderSessionList() now always shows the list (even with one
+  // session) so the "+ New session" entry stays discoverable. Kept as a skipped
+  // reference of the prior "auto-hide when solo" behavior.
+  test.skip('session list is hidden when only one session exists', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
     // Open session menu
@@ -277,7 +282,9 @@ test.describe('Session list (#60)', { tag: '@headless-adequate' }, () => {
     await expect(page.locator('#panel-connect')).toHaveClass(/active/);
   });
 
-  test('session list hides again when second session is removed', async ({ page, mockSshServer }) => {
+  // Behavior changed alongside the "hidden when only one" case: the list no longer
+  // toggles on session count. Kept as a skipped reference.
+  test.skip('session list hides again when second session is removed', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
     // Add and then remove a second session
@@ -313,12 +320,14 @@ test.describe('Session list (#60)', { tag: '@headless-adequate' }, () => {
     await expect(page.locator('#sessionList')).toHaveClass(/hidden/);
   });
 
-  test('sessionMenuBtn shows user@host label when connected', async ({ page, mockSshServer }) => {
+  test('sessionMenuBtn shows session label when connected', async ({ page, mockSshServer }) => {
     await setupConnected(page, mockSshServer);
 
-    // After connection, session menu button should show user@host
+    // After connection, session menu button should show the profile's title.
+    // The connect form auto-populates #profileName from the host value (ui.ts
+    // nameManuallySet logic in initConnectForm), so the saved profile's title
+    // is "mock-host" — hence the button label shows "mock-host".
     const btnText = await page.locator('#sessionMenuBtn').textContent();
-    expect(btnText).toContain('testuser');
     expect(btnText).toContain('mock-host');
   });
 

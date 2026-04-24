@@ -43,24 +43,29 @@ test.describe('Panel navigation smoke', { tag: '@headless-adequate' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
-    // Terminal is the default active panel
-    await expect(page.locator('#panel-terminal')).toHaveClass(/active/);
-
-    // Connect tab
-    await page.locator('[data-panel="connect"]').click();
+    // Post-dae5f66 the app cold-starts on the Connect panel (lobby removed),
+    // not the Terminal panel. Verify the Connect panel is active by default.
     await expect(page.locator('#panel-connect')).toHaveClass(/active/);
 
-    // Settings tab
-    await page.locator('[data-panel="settings"]').click();
+    // Settings tab — scope to #tabBar (nav menu duplicates data-panel attrs)
+    await page.locator('#tabBar [data-panel="settings"]').click();
     await expect(page.locator('#panel-settings')).toHaveClass(/active/);
 
-    // Files — reached via session menu entry (#449: no top-level Files tab)
+    // Connect tab
+    await page.locator('#tabBar [data-panel="connect"]').click();
+    await expect(page.locator('#panel-connect')).toHaveClass(/active/);
+
+    // Terminal tab (still routable via tab bar — session may not exist yet)
+    await page.locator('#tabBar [data-panel="terminal"]').click();
+    await expect(page.locator('#panel-terminal')).toHaveClass(/active/);
+
+    // Files panel is only reachable via the session menu (#449). Without a
+    // session, the session menu button is inside the terminal panel chrome
+    // which is visible once we're on the terminal panel above.
+    // Note: this cold-start path has no active session so file operations
+    // won't issue traffic; we just verify the panel activates.
     await openFilesFromMenu(page);
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
-
-    // Terminal tab
-    await page.locator('[data-panel="terminal"]').click();
-    await expect(page.locator('#panel-terminal')).toHaveClass(/active/);
 
     const unknownMsgErrors = consoleErrors.filter((e) => e.includes('Unknown message type'));
     expect(unknownMsgErrors).toHaveLength(0);
@@ -80,6 +85,12 @@ test.describe('Files panel', { tag: '@headless-adequate' }, () => {
     await page.goto('./');
     await Promise.race([page.waitForSelector('#connectForm', { timeout: 8000 }), page.waitForSelector('.xterm-screen', { timeout: 8000 })]);
 
+    // Cold start lands on Connect panel (lobby removed). #sessionMenuBtn lives
+    // inside #panel-terminal chrome, so it isn't visible until the terminal
+    // panel is active. Switch to the terminal panel first, then open files via
+    // the session menu.
+    await page.locator('#tabBar [data-panel="terminal"]').click();
+    await page.waitForTimeout(100);
     await openFilesFromMenu(page);
     await expect(page.locator('#panel-files')).toHaveClass(/active/);
 
