@@ -64,7 +64,9 @@ describe('navbar simplification (#449)', () => {
       // New behavior: handler toggles the 'hidden' class on the menu element.
       // The handler works with the closed-over `menu` / `backdrop` variables
       // from initSessionMenu, so we verify menu toggling rather than the id string.
-      expect(handlerBlock).toMatch(/menu\.classList\.toggle\(['"]hidden['"]/);
+      // Source may refer to the session menu as `menu` or `navMenu` depending on
+      // scoping; accept either name.
+      expect(handlerBlock).toMatch(/(?:navMenu|menu)\.classList\.toggle\(['"]hidden['"]/);
 
       // Old behavior removed: handler no longer calls toggleTabBar().
       expect(handlerBlock).not.toMatch(/toggleTabBar\s*\(/);

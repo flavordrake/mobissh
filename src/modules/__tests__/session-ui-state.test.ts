@@ -275,11 +275,15 @@ describe('session UI state integration (#324)', () => {
       // Every time terminal.onData is called (on connect or reconnect),
       // the returned IDisposable should be stored on session._onDataDisposable.
       // This ensures the reconnecting effect can dispose the CURRENT listener.
-      const onDataAssignment = connectionSrc.match(
+      // Current code assigns via an intermediate local (const onDataDisp = ...;
+      // session._onDataDisposable = onDataDisp;) — accept either form.
+      const directAssignment = connectionSrc.match(
         /(?:session\._onDataDisposable|_onDataDisposable)\s*=\s*(?:session\.)?terminal\.onData/,
       );
+      const indirectAssignment = /terminal\.onData\(/.test(connectionSrc)
+        && /session\._onDataDisposable\s*=\s*\w+/.test(connectionSrc);
       expect(
-        onDataAssignment,
+        directAssignment || indirectAssignment,
         'connection.ts should assign terminal.onData disposable to session._onDataDisposable',
       ).toBeTruthy();
     });

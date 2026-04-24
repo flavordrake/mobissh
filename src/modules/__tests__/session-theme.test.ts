@@ -32,8 +32,31 @@ const sessionElements: Array<{
   classList: { toggle: ReturnType<typeof vi.fn>; add: ReturnType<typeof vi.fn>; contains: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
 }> = [];
 
+// Mock elements used by switchSession / applySessionThemeIfVisible. The
+// theme is only applied when a session-bound panel is the active panel.
+const panelTerminalEl = {
+  classList: {
+    add: vi.fn(),
+    remove: vi.fn(),
+    toggle: vi.fn(),
+    contains: (cls: string) => cls === 'active',
+  },
+};
+const panelOtherEl = {
+  classList: {
+    add: vi.fn(),
+    remove: vi.fn(),
+    toggle: vi.fn(),
+    contains: (_cls: string) => false,
+  },
+};
+
 vi.stubGlobal('document', {
-  getElementById: vi.fn(() => null),
+  getElementById: vi.fn((id: string) => {
+    if (id === 'panel-terminal') return panelTerminalEl;
+    if (id === 'panel-files' || id === 'panel-connect' || id === 'panel-settings') return panelOtherEl;
+    return null;
+  }),
   querySelector: vi.fn(() => null),
   querySelectorAll: vi.fn((selector: string) => {
     if (selector === '[data-session-id]') return sessionElements;
@@ -54,7 +77,11 @@ vi.stubGlobal('document', {
     classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn(), contains: vi.fn(() => false) },
     dataset: {} as Record<string, string>,
   })),
-  body: { appendChild: vi.fn() },
+  body: {
+    appendChild: vi.fn(),
+    dataset: {} as Record<string, string>,
+    classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn(), contains: vi.fn(() => false) },
+  },
   documentElement: {
     style: { setProperty: vi.fn() },
     dataset: {},

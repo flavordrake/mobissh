@@ -144,8 +144,10 @@ describe('backup import (#337)', () => {
 
     const profiles = JSON.parse(storage.get('sshProfiles')!);
     expect(profiles).toHaveLength(2);
-    expect(profiles[0].name).toBe('updated');
-    expect(profiles[1].name).toBe('new');
+    // Profile schema migrated name → title in #425; getProfiles() (called by
+    // importBackup and the subsequent loadProfiles()) migrates on read.
+    expect(profiles[0].title ?? profiles[0].name).toBe('updated');
+    expect(profiles[1].title ?? profiles[1].name).toBe('new');
   });
 
   it('shows error toast on invalid JSON', async () => {

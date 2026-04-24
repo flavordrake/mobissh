@@ -35,7 +35,9 @@ describe('theme deferred until connected (#364)', () => {
     const connectedCase = src.match(/case\s+'connected':[\s\S]*?break;/);
     expect(connectedCase).toBeTruthy();
 
-    // It should apply the session's theme
-    expect(connectedCase![0]).toMatch(/applyTheme/);
+    // It should apply the session's theme. The helper evolved from a direct
+    // applyTheme() call to applySessionThemeIfVisible(session), which gates
+    // repainting to only session-bound panels (#364 / theme-in-settings).
+    expect(connectedCase![0]).toMatch(/applyTheme|applySessionThemeIfVisible/);
   });
 });

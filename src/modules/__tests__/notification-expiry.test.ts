@@ -38,11 +38,27 @@ function makeMockElement(opts: {
   innerHTML?: string;
   children?: Record<string, { text?: string; classes?: Set<string> }>;
 }): Record<string, unknown> {
+  // Parse a minimal <span class="X">Y</span> occurrence out of innerHTML.
+  // Used to expose .session-title-text and .session-title-badge to querySelector.
+  function extractSpanText(html: string, cls: string): string | null {
+    const re = new RegExp(`<span class="${cls}">([^<]*)</span>`);
+    const m = re.exec(html);
+    return m ? m[1]! : null;
+  }
+
   const el: Record<string, unknown> = {
-    get textContent() { return opts.text ?? ''; },
-    set textContent(v: string) { opts.text = v; },
+    // textContent derives from innerHTML when present (matches browser semantics
+    // for elements whose content was set via innerHTML), otherwise falls back
+    // to opts.text.
+    get textContent() {
+      if (opts.innerHTML && opts.innerHTML.length > 0) {
+        return opts.innerHTML.replace(/<[^>]+>/g, '');
+      }
+      return opts.text ?? '';
+    },
+    set textContent(v: string) { opts.text = v; opts.innerHTML = ''; },
     get innerHTML() { return opts.innerHTML ?? ''; },
-    set innerHTML(v: string) { if (opts.innerHTML !== undefined) opts.innerHTML = v; },
+    set innerHTML(v: string) { opts.innerHTML = v; },
     classList: {
       add: (...names: string[]) => { for (const n of names) opts.classes?.add(n); },
       remove: (...names: string[]) => { for (const n of names) opts.classes?.delete(n); },
@@ -74,6 +90,13 @@ function makeMockElement(opts: {
             },
           },
         };
+      }
+      // Synthesize a read-only view into the structured session-title spans (#458).
+      if (sel === '.session-title-text' || sel === '.session-title-badge') {
+        const cls = sel.slice(1);
+        const text = extractSpanText(opts.innerHTML ?? '', cls);
+        if (text === null) return null;
+        return { textContent: text };
       }
       return null;
     },
@@ -193,9 +216,12 @@ describe('#266: notification expiry cleanup updates badge', () => {
     _addNotification('build complete');
     _addNotification('tests passed');
 
-    // Session title should show count
-    const btnBefore = getElementById('sessionMenuBtn') as { textContent: string };
-    expect(btnBefore.textContent).toContain('(2)');
+    // Session title should show count in the structured badge span (#458).
+    const btnBefore = getElementById('sessionMenuBtn') as {
+      querySelector: (sel: string) => { textContent: string } | null;
+    };
+    const badgeBefore = btnBefore.querySelector('.session-title-badge');
+    expect(badgeBefore?.textContent).toBe('2');
 
     // Advance past expiry
     vi.advanceTimersByTime(THIRTY_MIN_MS + 60_000);
@@ -203,10 +229,12 @@ describe('#266: notification expiry cleanup updates badge', () => {
     // Trigger expiry cleanup
     getNotifications();
 
-    // Session title should no longer show a count
-    const btnAfter = getElementById('sessionMenuBtn') as { textContent: string };
-    expect(btnAfter.textContent).not.toContain('(');
-    expect(btnAfter.textContent).toBe('user@host');
+    // Session title should no longer show a count (badge span absent).
+    const btnAfter = getElementById('sessionMenuBtn') as {
+      querySelector: (sel: string) => { textContent: string } | null;
+    };
+    expect(btnAfter.querySelector('.session-title-badge')).toBeNull();
+    expect(btnAfter.querySelector('.session-title-text')?.textContent).toBe('user@host');
   });
 
   it('partial expiry — only expired notifications are removed', () => {
@@ -239,9 +267,11 @@ describe('#266: notification expiry cleanup updates badge', () => {
     _addNotification('alert two');
     _addNotification('alert three');
 
-    // Session title should show "(3)"
-    const btn = getElementById('sessionMenuBtn') as { textContent: string };
-    expect(btn.textContent).toContain('(3)');
+    // Session title should show "3" in the structured badge span (#458).
+    const btn = getElementById('sessionMenuBtn') as {
+      querySelector: (sel: string) => { textContent: string } | null;
+    };
+    expect(btn.querySelector('.session-title-badge')?.textContent).toBe('3');
 
     // Advance past expiry for all three
     vi.advanceTimersByTime(THIRTY_MIN_MS + 60_000);
@@ -250,8 +280,8 @@ describe('#266: notification expiry cleanup updates badge', () => {
     const remaining = getNotifications();
     expect(remaining).toHaveLength(0);
 
-    // Session title should reflect zero notifications (no count shown)
-    expect(btn.textContent).not.toContain('(');
-    expect(btn.textContent).toBe('user@host');
+    // Session title should reflect zero notifications (badge span absent).
+    expect(btn.querySelector('.session-title-badge')).toBeNull();
+    expect(btn.querySelector('.session-title-text')?.textContent).toBe('user@host');
   });
 });

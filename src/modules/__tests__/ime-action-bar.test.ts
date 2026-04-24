@@ -99,7 +99,11 @@ describe('history button disabled state (#265)', () => {
 
 describe('dock toggle persists and repositions (#265)', () => {
   it('persists dock position to localStorage on toggle', () => {
-    expect(imeSrc).toContain("localStorage.setItem('imeDockPosition', _dockPosition)");
+    // Current source delegates persistence to setDockPosition() which wraps
+    // localStorage.setItem. cycleDockPosition() is invoked from the dock toggle
+    // handler and calls setDockPosition() internally.
+    expect(imeSrc).toContain("localStorage.setItem('imeDockPosition', pos)");
+    expect(imeSrc).toMatch(/_onAction\(dockToggle,\s*\(\)\s*=>\s*\{[^}]*cycleDockPosition\(\)/s);
   });
 
   it('calls _positionIME after dock toggle', () => {

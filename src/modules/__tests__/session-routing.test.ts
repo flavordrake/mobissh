@@ -50,10 +50,15 @@ vi.stubGlobal('document', {
     classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn(), contains: vi.fn(() => false) },
     dataset: {} as Record<string, string>,
   })),
-  body: { appendChild: vi.fn() },
+  body: {
+    appendChild: vi.fn(),
+    dataset: {} as Record<string, string>,
+    classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn(), contains: vi.fn(() => false) },
+  },
   documentElement: {
     style: { setProperty: vi.fn() },
-    dataset: {},
+    dataset: {} as Record<string, string>,
+    classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn(), contains: vi.fn(() => false) },
   },
   fonts: { ready: Promise.resolve() },
 });

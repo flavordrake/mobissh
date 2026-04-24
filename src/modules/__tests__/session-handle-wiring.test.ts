@@ -36,7 +36,7 @@ describe('SessionHandle wiring (#374)', () => {
       // The handler reconnects dropped sessions (active immediate, others 3s delay)
       // and calls _probeZombieConnection() for open WS sessions. No fitIfVisible.
       const visStart = connectionSrc.indexOf("document.addEventListener('visibilitychange'");
-      const visBlock = connectionSrc.slice(visStart, visStart + 1200);
+      const visBlock = connectionSrc.slice(visStart, visStart + 2000);
       expect(visBlock).toContain('_probeZombieConnection');
       expect(visBlock).toContain('_openWebSocket');
       // No fitIfVisible or fitAddon.fit in the visibility handler
@@ -55,10 +55,9 @@ describe('SessionHandle wiring (#374)', () => {
     });
 
     it('switchSession uses handle.show/hide instead of classList.toggle', () => {
-      const switchFn = uiSrc.slice(
-        uiSrc.indexOf('export function switchSession'),
-        uiSrc.indexOf('export function switchSession') + 800
-      );
+      const switchStart = uiSrc.indexOf('export function switchSession');
+      const switchEnd = uiSrc.indexOf('\nexport function', switchStart + 1);
+      const switchFn = uiSrc.slice(switchStart, switchEnd > 0 ? switchEnd : switchStart + 2500);
       expect(switchFn).toContain('.show()');
       expect(switchFn).toContain('.hide()');
     });
@@ -87,10 +86,9 @@ describe('SessionHandle wiring (#374)', () => {
     });
 
     it('closeSession calls removeSessionHandle', () => {
-      const closeFn = uiSrc.slice(
-        uiSrc.indexOf('export function closeSession'),
-        uiSrc.indexOf('export function closeSession') + 400
-      );
+      const closeStart = uiSrc.indexOf('export function closeSession');
+      const closeEnd = uiSrc.indexOf('\nexport function', closeStart + 1);
+      const closeFn = uiSrc.slice(closeStart, closeEnd > 0 ? closeEnd : closeStart + 1500);
       expect(closeFn).toContain('removeSessionHandle');
     });
   });

@@ -69,12 +69,14 @@ describe('isPreviewable', () => {
   it.each([
     'photo.png', 'image.jpg', 'pic.jpeg', 'anim.gif', 'hero.webp', 'logo.svg',
     'README.md', 'notes.txt', 'server.log', 'page.html', 'doc.htm',
+    // Video was added to the previewable set (#370); verify it flows through isPreviewable.
+    'clip.mp4', 'stream.webm',
   ])('returns true for previewable file: %s', (filename) => {
     expect(isPreviewable(filename)).toBe(true);
   });
 
   it.each([
-    'archive.bin', 'backup.zip', 'data.tar', 'manual.pdf', 'video.mp4', 'app.exe',
+    'archive.bin', 'backup.zip', 'data.tar', 'manual.pdf', 'app.exe',
   ])('returns false for non-previewable file: %s', (filename) => {
     expect(isPreviewable(filename)).toBe(false);
   });
@@ -114,7 +116,16 @@ describe('getPreviewType', () => {
   });
 
   it.each([
-    'archive.bin', 'backup.zip', 'data.tar', 'manual.pdf', 'video.mp4', 'app.exe',
+    ['clip.mp4', 'video'],
+    ['stream.webm', 'video'],
+    ['movie.mov', 'video'],
+    ['reel.m4v', 'video'],
+  ])('returns "video" for %s (#370)', (filename, expected) => {
+    expect(getPreviewType(filename)).toBe(expected);
+  });
+
+  it.each([
+    'archive.bin', 'backup.zip', 'data.tar', 'manual.pdf', 'app.exe',
   ])('returns null for non-previewable file: %s', (filename) => {
     expect(getPreviewType(filename)).toBeNull();
   });
@@ -200,15 +211,17 @@ describe('createPreviewPanel', () => {
     expect(html).toMatch(/rendered/i);
   });
 
-  it('Source tab shows raw text with line numbers', () => {
+  it('Source tab shows the raw text inside a .source-view <pre>', () => {
     const data = new TextEncoder().encode('line one\nline two\nline three');
     const panel = createPreviewPanel('notes.txt', data);
     const html = typeof panel.innerHTML === 'string' ? panel.innerHTML : '';
-    // Source view should contain line numbers
-    expect(html).toContain('1');
-    expect(html).toContain('2');
-    expect(html).toContain('3');
+    // Source view renders raw text in a <pre class="source-view"> (no line numbers).
+    // Intent of the original test was "source tab shows the raw file content";
+    // current source no longer gutter-numbers lines.
+    expect(html).toContain('class="source-view"');
     expect(html).toContain('line one');
+    expect(html).toContain('line two');
+    expect(html).toContain('line three');
   });
 
   it('Rendered tab shows the rendered preview', () => {

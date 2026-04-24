@@ -261,7 +261,9 @@ describe('AbortController connection lifecycle cleanup (#334)', () => {
       const abortSpy = vi.spyOn(controller1, 'abort');
 
       session.ws = createMockWebSocket();
-      session._cycle = { controller: controller1 };
+      // ConnectionCycle shape (types.ts): { controller, disposables: Disposable[] }.
+      // abortCycle() iterates disposables, so the fixture must supply the array.
+      session._cycle = { controller: controller1, disposables: [] };
 
       driveToState('lifecycle-abort', 'connected');
 
@@ -310,8 +312,9 @@ describe('AbortController connection lifecycle cleanup (#334)', () => {
       const controller = new AbortController();
       const abortSpy = vi.spyOn(controller, 'abort');
 
-      // Attach a mock cycle to the session
-      session._cycle = { controller, abort: () => controller.abort() };
+      // Attach a mock cycle to the session. abortCycle() iterates disposables,
+      // so include the array (ConnectionCycle contract from types.ts).
+      session._cycle = { controller, disposables: [], abort: () => controller.abort() };
       session.ws = createMockWebSocket();
       session.terminal = createMockTerminal();
 
