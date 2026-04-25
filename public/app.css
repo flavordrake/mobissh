@@ -3139,7 +3139,8 @@ hr {
  * needed while viewing a specific file, and it frees the top-left for the
  * preview's own back arrow. */
 #panel-files:has(#filePreview:not(.hidden)) .files-docs-menu-btn,
-#panel-files:has(#filePreview:not(.hidden)) .files-filter-input {
+#panel-files:has(#filePreview:not(.hidden)) .files-filter-input,
+#panel-files:has(#filePreview:not(.hidden)) .files-subtabs {
   display: none;
 }
 
