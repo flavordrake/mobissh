@@ -23,6 +23,7 @@ import { sendSSHInput } from './connection.js';
 import { focusIME, setCtrlActive } from './ui.js';
 import { isSelectionActive } from './selection.js';
 import { computeDiff } from './ime-diff.js';
+import { fixupTerminalCopy } from './ime-fixup.js';
 
 let _handleResize = (): void => {};
 let _applyFontSize = (_size: number): void => {};
@@ -363,6 +364,10 @@ export function initIMEInput(): void {
   const historyUp = document.getElementById('imeHistoryUp');
   const historyDown = document.getElementById('imeHistoryDown');
   const dockToggle = document.getElementById('imeDockToggle');
+  // Quick-paste / fixup overlay
+  const pasteOverlay = document.getElementById('imePasteOverlay');
+  const pasteBtn = document.getElementById('imePasteBtn');
+  const fixupBtn = document.getElementById('imeFixupBtn');
 
 
   /** Return the current dock position from the module-level persisted state. */
@@ -387,14 +392,29 @@ export function initIMEInput(): void {
         imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
         imeActions.style.bottom = 'auto';
       }
+      if (pasteOverlay) {
+        pasteOverlay.style.top = `${String(top + 6)}px`;
+        pasteOverlay.style.right = '7%';
+        pasteOverlay.style.bottom = 'auto';
+      }
     } else {
-      // Bottom (hover-bottom): above the keyboard
-      const bottom = window.innerHeight - (viewTop + viewH) + 8;
+      // Bottom (hover-bottom): above the keyboard AND above the keybar so the
+      // user can still tap /, -, and other keybar shortcuts mid-composition.
+      const keyBar = document.getElementById('key-bar');
+      const keyBarHeight = keyBar ? keyBar.offsetHeight : 0;
+      const bottom = window.innerHeight - (viewTop + viewH) + 8 + keyBarHeight;
       ime.style.bottom = `${String(bottom + actionH)}px`;
       ime.style.top = 'auto';
       if (imeActions) {
         imeActions.style.bottom = `${String(bottom)}px`;
         imeActions.style.top = 'auto';
+      }
+      if (pasteOverlay) {
+        // Anchor relative to the textarea's top edge, which is bottom + actionH + offsetHeight
+        const overlayBottom = bottom + actionH + ime.offsetHeight - 38;
+        pasteOverlay.style.bottom = `${String(overlayBottom)}px`;
+        pasteOverlay.style.right = '7%';
+        pasteOverlay.style.top = 'auto';
       }
     }
   }
@@ -413,6 +433,7 @@ export function initIMEInput(): void {
   /** Show the action button bar and position everything. */
   function _showActions(): void {
     if (imeActions) imeActions.classList.remove('hidden');
+    if (pasteOverlay) pasteOverlay.classList.remove('hidden');
     // Always show history buttons — dim when no history available
     const hasHistory = _commitHistory.length > 0;
     if (historyUp) historyUp.classList.toggle('disabled', !hasHistory);
@@ -422,6 +443,7 @@ export function initIMEInput(): void {
   /** Hide the action button bar. */
   function _hideActions(): void {
     if (imeActions) imeActions.classList.add('hidden');
+    if (pasteOverlay) pasteOverlay.classList.add('hidden');
   }
 
   // Prevent buttons from stealing focus (desktop: mousedown preventDefault).
@@ -493,6 +515,41 @@ export function initIMEInput(): void {
   });
   _onAction(historyDown, () => {
     _loadHistoryEntry(1);
+    focusIME();
+  });
+
+  // ── Paste + Fixup overlay buttons ──────────────────────────────────────
+  // Suppress the focus-stealing mousedown so paste doesn't blur the textarea.
+  if (pasteOverlay) {
+    pasteOverlay.addEventListener('mousedown', (e) => { e.preventDefault(); });
+  }
+  _onAction(pasteBtn, () => {
+    void (async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) return;
+        // Replace selection if any, else insert at cursor / end.
+        const start = ime.selectionStart;
+        const end = ime.selectionEnd;
+        const before = ime.value.slice(0, start);
+        const after = ime.value.slice(end);
+        ime.value = before + text + after;
+        const caret = before.length + text.length;
+        ime.setSelectionRange(caret, caret);
+        // Trigger the input pipeline so the state machine + diff catch the change.
+        ime.dispatchEvent(new Event('input', { bubbles: true }));
+        focusIME();
+      } catch (err) {
+        console.warn('[ime-paste] clipboard read failed:', err);
+      }
+    })();
+  });
+  _onAction(fixupBtn, () => {
+    const cleaned = fixupTerminalCopy(ime.value);
+    if (cleaned === ime.value) { focusIME(); return; }
+    ime.value = cleaned;
+    ime.setSelectionRange(cleaned.length, cleaned.length);
+    ime.dispatchEvent(new Event('input', { bubbles: true }));
     focusIME();
   });
 
@@ -938,19 +995,25 @@ export function initIMEInput(): void {
       return;
     }
 
-    // Enter: commit held text and send \r
+    // Enter:
+    //  - holding text (preview/editing/composing): let the default fire so
+    //    a newline is inserted into the textarea. The user explicitly chose
+    //    multi-line composition; Tab or the ✓ button commits.
+    //  - idle (no preview content): send \r to the terminal as a normal
+    //    newline keystroke.
     if (e.key === 'Enter') {
       ime.setAttribute('autocomplete', 'off');
       const text = ime.value;
       if (_isHolding() && text) {
-        e.preventDefault();
-        sendSSHInput(text);
-        sendSSHInput('\r');
-        _transition('idle');
-        focusIME();
+        // Default browser behavior inserts \n at the caret in the textarea;
+        // the input listener will re-render the preview. Don't commit.
         return;
       }
+      // Idle path: send \r and stay idle.
+      e.preventDefault();
+      sendSSHInput('\r');
       _transition('idle');
+      return;
     }
 
     if (e.ctrlKey && !e.altKey && e.key.length === 1) {

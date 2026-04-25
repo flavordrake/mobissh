@@ -54,13 +54,23 @@
     spellcheck="false"
     tabindex="-1"
   ></textarea>
-  <!-- IME action buttons — float alongside textarea when visible (#106) -->
+  <!-- Quick-paste + fixup overlay — floats at top-right of the IME preview
+       when visible. Paste reads navigator.clipboard.readText(); Fixup
+       collapses common terminal-copy artifacts (newline+spaces, soft wraps)
+       so URLs / bash / API keys stay one line. -->
+  <div id="imePasteOverlay" class="ime-paste-overlay hidden">
+    <button id="imePasteBtn" class="ime-paste-btn" aria-label="Paste from clipboard" title="Paste from clipboard" tabindex="-1">📋</button>
+    <button id="imeFixupBtn" class="ime-paste-btn" aria-label="Fix wrapping" title="Collapse soft wraps from terminal copy" tabindex="-1">✨</button>
+  </div>
+  <!-- IME action buttons — float alongside textarea when visible (#106).
+       Order: dock-toggle (far left), history up/down, clear, then commit
+       (far right) so the most-used commit ✓ sits under the user's thumb. -->
   <div id="imeActions" class="ime-actions hidden">
+    <button id="imeDockToggle" class="ime-action-btn" aria-label="Toggle position" tabindex="-1">↕</button>
     <button id="imeHistoryUp" class="ime-action-btn ime-history-btn" aria-label="Older commit" tabindex="-1">▲</button>
     <button id="imeHistoryDown" class="ime-action-btn ime-history-btn" aria-label="Newer commit" tabindex="-1">▼</button>
     <button id="imeClearBtn" class="ime-action-btn" aria-label="Clear compose" tabindex="-1">✕</button>
     <button id="imeCommitBtn" class="ime-action-btn ime-commit" aria-label="Send compose" tabindex="-1"><svg class="commit-ring" viewBox="0 0 36 36"><circle class="commit-ring-track" cx="18" cy="18" r="16" /><circle class="commit-ring-progress" cx="18" cy="18" r="16" /></svg><span class="commit-label">✓</span><span class="commit-countdown hidden"></span></button>
-    <button id="imeDockToggle" class="ime-action-btn" aria-label="Toggle position" tabindex="-1">↕</button>
   </div>
   <!-- Direct-mode input: type="password" suppresses Gboard predictions so typed
        characters don't leak into the keyboard suggestion bar (#155).
