@@ -364,6 +364,7 @@ export function initIMEInput(): void {
   const historyUp = document.getElementById('imeHistoryUp');
   const historyDown = document.getElementById('imeHistoryDown');
   const dockToggle = document.getElementById('imeDockToggle');
+  const submitBtn = document.getElementById('imeSubmitBtn');
   // Fix / Copy / Paste overlay
   const pasteOverlay = document.getElementById('imePasteOverlay');
   const pasteBtn = document.getElementById('imePasteBtn');
@@ -479,6 +480,10 @@ export function initIMEInput(): void {
   // ── Textarea diffing state (handles post-composition corrections) ──────
   let _lastSentValue = '';
   let _prevInputValue = '';  // tracks ime.value before each input event (#172)
+  /** Timestamp (ms since epoch) of the most recent Enter keypress that landed
+   *  with the caret at the textarea end. Used by the keydown Enter handler to
+   *  detect a double-tap and treat it as full submit (text + \r). */
+  let _lastEnterAt = 0;
   let _replacementHandled = false;
   let _clearTimer: ReturnType<typeof setTimeout> | null = null;
   /** Timestamp of most recent transition to idle — used to reject late browser
@@ -494,20 +499,24 @@ export function initIMEInput(): void {
     focusIME();
   });
 
-  _onAction(commitBtn, () => {
+  /** Send the staged text with optional trailing key. Used by both the ✓
+   *  commit button (no trailing key, the user submits manually) and the ➤
+   *  submit button (sends Enter at end so the remote app runs the line). */
+  function _commitWith(trailing: string): void {
     const text = ime.value;
     if (_imeState === 'editing') {
-      // Editing: user rewrote text locally — send full text as-is
       if (text) sendSSHInput(text);
     } else {
-      // Previewing/composing: erase any partial sends, send final text
       if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
       if (text) sendSSHInput(text);
     }
+    if (trailing) sendSSHInput(trailing);
     _recordHistory(text);
     _transition('idle');
     focusIME();
-  });
+  }
+  _onAction(commitBtn, () => { _commitWith(''); });
+  _onAction(submitBtn, () => { _commitWith('\r'); });
 
   _onAction(dockToggle, () => {
     cycleDockPosition();
@@ -1014,18 +1023,32 @@ export function initIMEInput(): void {
       return;
     }
 
-    // Enter:
-    //  - holding text (preview/editing/composing): let the default fire so
-    //    a newline is inserted into the textarea. The user explicitly chose
-    //    multi-line composition; Tab or the ✓ button commits.
-    //  - idle (no preview content): send \r to the terminal as a normal
-    //    newline keystroke.
+    // Enter behavior in the IME textarea:
+    //  - idle (no held text): send \r to the terminal as a normal Enter.
+    //  - holding text: insert a newline so multi-line composition is easy.
+    //  - holding text + cursor at the very end + previous keystroke was
+    //    Enter (within 600ms): treat as the ➤ Submit button — commit text,
+    //    then send \r. Lets the user finish a line with double-tap Enter
+    //    without reaching for the action bar.
     if (e.key === 'Enter') {
       ime.setAttribute('autocomplete', 'off');
       const text = ime.value;
       if (_isHolding() && text) {
-        // Default browser behavior inserts \n at the caret in the textarea;
-        // the input listener will re-render the preview. Don't commit.
+        const atEnd = ime.selectionStart === text.length && ime.selectionEnd === text.length;
+        const now = Date.now();
+        const prevAtEnd = atEnd && text.endsWith('\n') && (now - _lastEnterAt) < 600;
+        if (prevAtEnd) {
+          // Double Enter at end → full submit. Strip the trailing \n the
+          // first Enter just inserted; _commitWith will append \r.
+          e.preventDefault();
+          ime.value = text.slice(0, -1);
+          _lastEnterAt = 0;
+          _commitWith('\r');
+          return;
+        }
+        // First Enter (or caret not at end) — let the default fire and
+        // remember the timestamp for double-tap detection.
+        _lastEnterAt = atEnd ? now : 0;
         return;
       }
       // Idle path: send \r and stay idle.

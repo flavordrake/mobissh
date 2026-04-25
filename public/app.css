@@ -194,6 +194,14 @@ html, body {
   font-weight: 700;
   position: relative;
 }
+/* Submit (➤) button — sends the same text as commit AND a trailing \r so
+ * the remote app runs the line. Visually distinguished from commit by the
+ * arrow glyph; same accent treatment so they read as a pair. */
+.ime-submit {
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 36px;
+}
 /* SVG countdown ring centered inside the commit button (#169) */
 .commit-ring {
   position: absolute;
