@@ -10,6 +10,7 @@
 import type { AppState, SessionState, SessionLifecycleState, SessionStateWithCompat } from './types.js';
 import { RECONNECT } from './constants.js';
 import { DEFAULT_KEY_BAR_CONFIG } from './keybar-config.js';
+import { logConnect } from './connect-log.js';
 
 /** Valid transitions for the session lifecycle state machine. */
 const VALID_TRANSITIONS: Record<SessionLifecycleState, readonly SessionLifecycleState[]> = {
@@ -275,6 +276,13 @@ export function transitionSession(id: string, targetState: SessionLifecycleState
 
   const previousState = session.state;
   session.state = targetState;
+
+  logConnect('state_transition', id, {
+    from: previousState,
+    to: targetState,
+    failures: session._wsConsecFailures,
+    host: session.profile?.host,
+  });
 
   // Fire onEnter effects for the target state
   const effects = transitionEffects.get(targetState);

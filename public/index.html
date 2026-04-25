@@ -516,6 +516,7 @@
         <button class="settings-category" data-section="vault">Vault<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="agent">Agent Integration<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="advanced">Advanced<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="diagnostics">Diagnostics<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="backup">Backup<span class="settings-category-chevron">›</span></button>
         <p id="versionInfo" class="version-info"></p>
       </div>
@@ -822,6 +823,19 @@
           </label>
         </div>
         <button id="resetAppBtn" class="danger-btn">Reset app (clears all data &amp; cache)</button>
+        </div>
+      </section>
+
+      <section class="settings-detail" data-section="diagnostics">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Diagnostics</h2>
+        </div>
+        <div class="settings-detail-body">
+          <p class="settings-section-help">Connection events from the last 24 hours are logged automatically. Useful for diagnosing reconnect failures and network handoff issues.</p>
+          <p class="settings-section-help"><span id="connectLogCount">0</span> events recorded; oldest <span id="connectLogOldest">—</span>.</p>
+          <button id="connectLogDownloadBtn" class="secondary-btn">Download connect log (JSON)</button>
+          <button id="connectLogClearBtn" class="danger-btn">Clear connect log</button>
         </div>
       </section>
 

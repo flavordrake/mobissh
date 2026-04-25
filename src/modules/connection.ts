@@ -12,6 +12,7 @@ import { showErrorDialog, navigateToPanel, applySessionThemeIfVisible } from './
 import { saveRecentSession, getProfiles, getKeys } from './profiles.js';
 import { getDefaultWsUrl, RECONNECT, escHtml, parseApprovalPayload } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
+import { logConnect } from './connect-log.js';
 import { createSessionTerminal, setSessionHandleLookup } from './terminal.js';
 import { SessionHandle } from './session.js';
 
@@ -656,6 +657,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       _connectTimeout = null;
       _showConnectionStatus(`Connecting to ${baseUrl}…`, { sessionId });
       _showConnectionStatus('Running diagnostic…');
+      logConnect('diag_start', sessionId, {
+        onLine: typeof navigator !== 'undefined' ? navigator.onLine : true,
+        baseUrl,
+      });
       void probeConnectLayers({
         onLine: typeof navigator !== 'undefined' ? navigator.onLine : true,
         fetchImpl: (url, init) => fetch(url, init),
@@ -663,9 +668,15 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       }).then((lines) => {
         for (const line of lines) {
           _showConnectionStatus(`[${line.layer}] ${line.message}`, { error: !line.ok });
+          logConnect('diag_result', sessionId, {
+            layer: line.layer,
+            ok: line.ok,
+            message: line.message,
+          });
         }
       }).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
+        logConnect('diag_result', sessionId, { error: msg });
         _showConnectionStatus(`Diagnostic failed: ${msg}`, { error: true });
       });
     }, 5000);
@@ -697,6 +708,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }
 
   newWs.addEventListener('open', () => {
+    logConnect('ws_open', sessionId, { host: session?.profile?.host, silent });
     // Don't reset _wsConsecFailures here — WS opens fine even when SSH host
     // is unreachable. Only reset on successful SSH ready (case 'ready' below).
     startKeepAlive(sessionId);
@@ -764,6 +776,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
     switch (msg.type) {
       case 'connected': {
+        logConnect('ssh_ready', sessionId, { host: session?.profile?.host });
         if (session) {
           session._wsConsecFailures = 0;
           session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
@@ -830,6 +843,11 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         break;
 
       case 'error':
+        logConnect('ssh_error', sessionId, {
+          message: msg.message,
+          host: session?.profile?.host,
+          sessionState: session?.state,
+        });
         if (session && isSessionConnected(session)) {
           // Already connected — transient error, don't interrupt with modal
           _toast(`Error: ${msg.message}`);
@@ -846,6 +864,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         break;
 
       case 'disconnected':
+        logConnect('ssh_disconnected', sessionId, {
+          reason: msg.reason,
+          host: session?.profile?.host,
+        });
         if (session && session.state === 'connected') transitionSession(sessionId, 'soft_disconnected');
         _setStatus('disconnected', 'Disconnected');
         // Toast instead of blocking overlay — the session will auto-reconnect (#351)
@@ -957,6 +979,14 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }, signal ? { signal } : undefined);
 
   newWs.addEventListener('close', (event: CloseEvent) => {
+    logConnect('ws_close', sessionId, {
+      code: event.code,
+      reason: event.reason,
+      wasClean: event.wasClean,
+      host: session?.profile?.host,
+      sessionState: session?.state,
+      failures: session?._wsConsecFailures,
+    });
     // Fail any in-flight upload acks immediately so uploadFileChunked throws
     // instead of hanging forever on a WS that's gone.
     _rejectAllPendingAcks('WebSocket closed');
@@ -989,6 +1019,11 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }, signal ? { signal } : undefined);
 
   newWs.addEventListener('error', () => {
+    logConnect('ws_error', sessionId, {
+      host: session?.profile?.host,
+      readyState: newWs.readyState,
+      silent,
+    });
     if (!silent) {
       disconnect(sessionId);
       const diag = session?.profile ? `\n\n${_connectionDiagnostic(session.profile)}` : '';
@@ -1025,6 +1060,10 @@ export function scheduleReconnect(sessionId?: string): void {
     session._wsConsecFailures++;
     console.log(`[scheduleReconnect] sid=${sid} failures=${String(session._wsConsecFailures)}/${String(WS_MAX_AUTH_FAILURES)} state=${session.state}`);
     if (session._wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
+      logConnect('reconnect_halt', sid, {
+        host: session.profile.host,
+        failures: WS_MAX_AUTH_FAILURES,
+      });
       console.log(`[scheduleReconnect] HALT — giving up on session=${sid}`);
       session._wsConsecFailures = 0;
       transitionSession(sid, 'failed');
@@ -1035,6 +1074,12 @@ export function scheduleReconnect(sessionId?: string): void {
   }
 
   const delaySec = Math.round(session.reconnectDelay / 1000);
+  logConnect('reconnect_scheduled', sid, {
+    host: session.profile.host,
+    delayMs: session.reconnectDelay,
+    failures: session._wsConsecFailures,
+    wasConnected,
+  });
   _toast(`Reconnecting in ${String(delaySec)}s…`);
   _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
 
@@ -1226,6 +1271,7 @@ export function _probeZombieConnection(): void {
 // probe for zombie connections, and reacquire the wake lock. (#153)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
+    logConnect('visibility_resume', undefined, { onLine: navigator.onLine });
     void acquireWakeLock();
     document.getElementById('errorDialogOverlay')?.classList.add('hidden');
 
@@ -1260,8 +1306,18 @@ document.addEventListener('visibilitychange', () => {
     // No automatic fit on visibility restore — terminal stays at its current
     // layout size. Output buffered while hidden replays on next show().
   } else {
+    logConnect('visibility_hide', undefined, { onLine: navigator.onLine });
     releaseWakeLock();
   }
+});
+
+// Network online/offline events — critical signal when user moves between
+// wifi/cell on mobile. Both fire on the window object.
+window.addEventListener('online', () => {
+  logConnect('net_online', undefined, {});
+});
+window.addEventListener('offline', () => {
+  logConnect('net_offline', undefined, {});
 });
 
 export function disconnect(sessionId?: string): void {

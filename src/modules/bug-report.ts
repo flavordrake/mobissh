@@ -6,6 +6,8 @@
  * a GitHub issue with the screenshot and log context.
  */
 
+import { getConnectLogForBugReport } from './connect-log.js';
+
 declare const html2canvas: (element: HTMLElement, options?: Record<string, unknown>) => Promise<HTMLCanvasElement>;
 
 let _getDebugLines: (() => string[]) | null = null;
@@ -76,6 +78,10 @@ async function submitBugReport(): Promise<void> {
     userAgent: navigator.userAgent,
     url: location.href,
     version,
+    // Last 24h of structured connect events (WS open/close, SSH ready,
+    // reconnect attempts, diagnostic probes, network/visibility changes).
+    // Critical context for connect/reconnect bug reports.
+    connectLog: getConnectLogForBugReport(),
   };
 
   try {

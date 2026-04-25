@@ -12,6 +12,7 @@ import type { ThemeName } from './types.js';
 import { showErrorDialog } from './ui.js';
 import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewIdleDelay } from './ime.js';
 import { getProfiles, loadProfiles } from './profiles.js';
+import { getConnectLog, clearConnectLog, downloadConnectLog } from './connect-log.js';
 
 
 /** Declarative schema for validatable localStorage keys. */
@@ -417,6 +418,38 @@ export function initSettingsPanel(): void {
       importFile.value = '';
     });
   }
+
+  // Diagnostics: connect log management
+  function _refreshConnectLogStatus(): void {
+    const entries = getConnectLog();
+    const countEl = document.getElementById('connectLogCount');
+    const oldestEl = document.getElementById('connectLogOldest');
+    if (countEl) countEl.textContent = String(entries.length);
+    if (oldestEl) {
+      if (entries.length === 0) {
+        oldestEl.textContent = '—';
+      } else {
+        const oldest = new Date(entries[0]!.t);
+        const ageMs = Date.now() - oldest.getTime();
+        const mins = Math.round(ageMs / 60000);
+        oldestEl.textContent = mins < 60 ? `${String(mins)}m ago` : `${String(Math.round(mins / 60))}h ago`;
+      }
+    }
+  }
+  _refreshConnectLogStatus();
+  // Refresh whenever the diagnostics detail section opens — count is fresh
+  // every time the user navigates in. Cheap.
+  document.querySelectorAll('.settings-category[data-section="diagnostics"]').forEach((btn) => {
+    btn.addEventListener('click', _refreshConnectLogStatus);
+  });
+  document.getElementById('connectLogDownloadBtn')?.addEventListener('click', () => {
+    downloadConnectLog();
+  });
+  document.getElementById('connectLogClearBtn')?.addEventListener('click', () => {
+    if (!confirm('Clear all connection log entries? This is local-only and cannot be recovered.')) return;
+    clearConnectLog();
+    _refreshConnectLogStatus();
+  });
 
   const versionEl = document.getElementById('versionInfo');
   const versionMeta = document.querySelector<HTMLMetaElement>('meta[name="app-version"]');
