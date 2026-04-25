@@ -377,15 +377,21 @@ export function createPreviewPanel(
   const editTab = isEditable
     ? '  <button class="preview-tab" data-tab="edit">Edit</button>'
     : '';
+  // Edit pane: textarea fills the area, toolbar is at the BOTTOM right above
+  // the tab bar so it's out from under the file-viewer's X close button at
+  // the top-right. Undo/Redo trigger the textarea's native undo stack via
+  // document.execCommand('undo'|'redo'); ui.ts wires Save/Revert.
   const editPane = isEditable
     ? [
         '<div class="preview-edit" style="display:none;">',
+        '  <textarea class="preview-edit-area" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>',
         '  <div class="preview-edit-toolbar">',
         '    <span class="preview-edit-status" data-status="clean">Saved</span>',
+        '    <button type="button" class="preview-edit-btn preview-edit-undo" data-action="undo-edit" title="Undo last change" aria-label="Undo">↶</button>',
+        '    <button type="button" class="preview-edit-btn preview-edit-redo" data-action="redo-edit" title="Redo" aria-label="Redo">↷</button>',
         '    <button type="button" class="preview-edit-btn preview-edit-discard" data-action="discard-edit" title="Discard changes">Revert</button>',
         '    <button type="button" class="preview-edit-btn preview-edit-save" data-action="save-edit" title="Push edits to server">Save</button>',
         '  </div>',
-        '  <textarea class="preview-edit-area" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>',
         '</div>',
       ].join('\n')
     : '';

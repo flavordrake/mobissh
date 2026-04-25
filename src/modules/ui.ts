@@ -2185,6 +2185,8 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
   const editStatus = panel.querySelector<HTMLElement>('.preview-edit-status');
   const editSave = panel.querySelector<HTMLButtonElement>('.preview-edit-save');
   const editRevert = panel.querySelector<HTMLButtonElement>('.preview-edit-discard');
+  const editUndo = panel.querySelector<HTMLButtonElement>('.preview-edit-undo');
+  const editRedo = panel.querySelector<HTMLButtonElement>('.preview-edit-redo');
   if (editArea && fullPath) {
     const refreshDirty = (): void => {
       const dirty = editArea.value !== editArea.dataset.original;
@@ -2201,6 +2203,31 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
       editArea.value = editArea.dataset.original ?? '';
       refreshDirty();
       editArea.focus();
+    });
+    // Undo / Redo: drive the textarea's native undo stack. Focusing first
+    // is required — execCommand only works against the focused editable.
+    // Suppress the focus-stealing mousedown so the button tap doesn't blur
+    // the textarea before we can refocus.
+    const undoMouseDown = (e: MouseEvent): void => { e.preventDefault(); };
+    editUndo?.addEventListener('mousedown', undoMouseDown);
+    editRedo?.addEventListener('mousedown', undoMouseDown);
+    editUndo?.addEventListener('click', () => {
+      editArea.focus();
+      try {
+        // Legacy API but still the only way to drive a textarea's native
+        // undo stack from a button click (no replacement in 2026).
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        document.execCommand('undo');
+      } catch (_) { /* unsupported */ }
+      refreshDirty();
+    });
+    editRedo?.addEventListener('click', () => {
+      editArea.focus();
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        document.execCommand('redo');
+      } catch (_) { /* unsupported */ }
+      refreshDirty();
     });
     editSave?.addEventListener('click', () => {
       void (async () => {
