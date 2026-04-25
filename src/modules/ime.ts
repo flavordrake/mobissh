@@ -370,6 +370,8 @@ export function initIMEInput(): void {
   const pasteBtn = document.getElementById('imePasteBtn');
   const fixupBtn = document.getElementById('imeFixupBtn');
   const copyBtn = document.getElementById('imeCopyBtn');
+  // History rail (vertical strip on right edge of the IME preview)
+  const historyRail = document.getElementById('imeHistoryRail');
 
 
   /** Return the current dock position from the module-level persisted state. */
@@ -405,6 +407,12 @@ export function initIMEInput(): void {
         pasteOverlay.style.right = '7%';
         pasteOverlay.style.bottom = 'auto';
       }
+      if (historyRail) {
+        historyRail.style.top = `${String(top)}px`;
+        historyRail.style.height = `${String(ime.offsetHeight)}px`;
+        historyRail.style.right = 'calc(5% - 25px)';
+        historyRail.style.bottom = 'auto';
+      }
     } else {
       // Bottom (hover-bottom): above the keyboard AND above the keybar so the
       // user can still tap /, -, and other keybar shortcuts mid-composition.
@@ -425,6 +433,12 @@ export function initIMEInput(): void {
         pasteOverlay.style.right = '7%';
         pasteOverlay.style.top = 'auto';
       }
+      if (historyRail) {
+        historyRail.style.bottom = `${String(bottom + actionH)}px`;
+        historyRail.style.height = `${String(ime.offsetHeight)}px`;
+        historyRail.style.right = 'calc(5% - 25px)';
+        historyRail.style.top = 'auto';
+      }
     }
   }
 
@@ -443,6 +457,7 @@ export function initIMEInput(): void {
   function _showActions(): void {
     if (imeActions) imeActions.classList.remove('hidden');
     if (pasteOverlay) pasteOverlay.classList.remove('hidden');
+    if (historyRail) historyRail.classList.remove('hidden');
     // Always show history buttons — dim when no history available
     const hasHistory = _commitHistory.length > 0;
     if (historyUp) historyUp.classList.toggle('disabled', !hasHistory);
@@ -453,6 +468,7 @@ export function initIMEInput(): void {
   function _hideActions(): void {
     if (imeActions) imeActions.classList.add('hidden');
     if (pasteOverlay) pasteOverlay.classList.add('hidden');
+    if (historyRail) historyRail.classList.add('hidden');
   }
 
   // Prevent buttons from stealing focus (desktop: mousedown preventDefault).
@@ -534,6 +550,46 @@ export function initIMEInput(): void {
     _loadHistoryEntry(1);
     focusIME();
   });
+
+  // ── Swipe-thumb history navigation on the right rail ───────────────────
+  // Vertical drag: every ~40px steps one history entry. Swipe UP = older
+  // (-1), DOWN = newer (+1). Reset on lift. The rail has touch-action: none
+  // so the browser doesn't intercept the gesture for scroll.
+  if (historyRail) {
+    let swipeStartY = -1;
+    let swipeAccum = 0;
+    const SWIPE_STEP = 40;
+    historyRail.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      if (!t) return;
+      // Skip if the touch landed on a button — let the click handler fire.
+      if (e.target instanceof HTMLElement && e.target.closest('.ime-history-rail-btn')) return;
+      swipeStartY = t.clientY;
+      swipeAccum = 0;
+    }, { passive: true });
+    historyRail.addEventListener('touchmove', (e) => {
+      if (swipeStartY < 0) return;
+      const t = e.touches[0];
+      if (!t) return;
+      e.preventDefault();
+      const deltaY = t.clientY - swipeStartY;
+      // Net steps so far minus already-consumed steps.
+      const steps = Math.trunc(deltaY / SWIPE_STEP);
+      const consumed = Math.trunc(swipeAccum / SWIPE_STEP);
+      const todo = steps - consumed;
+      // Up swipe = negative deltaY = older entry (direction -1)
+      // Down swipe = positive deltaY = newer entry (direction +1)
+      for (let i = 0; i < Math.abs(todo); i++) {
+        _loadHistoryEntry(todo > 0 ? 1 : -1);
+      }
+      swipeAccum = steps * SWIPE_STEP;
+    }, { passive: false });
+    historyRail.addEventListener('touchend', () => {
+      swipeStartY = -1;
+      swipeAccum = 0;
+      focusIME();
+    }, { passive: true });
+  }
 
   // ── Paste + Fixup overlay buttons ──────────────────────────────────────
   // Suppress the focus-stealing mousedown so paste doesn't blur the textarea.
