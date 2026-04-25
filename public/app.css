@@ -129,8 +129,9 @@ html, body {
 }
 .handle-preview-btn:active { opacity: 0.7; }
 
-/* Quick-paste / fixup overlay — floating buttons at the top-right of the
- * visible IME preview. Position is set inline by _positionIME() in ime.ts. */
+/* Quick-paste / fixup overlay — small monochrome pills riding the top
+ * border of the IME preview so they don't block content. Position is set
+ * inline by _positionIME() in ime.ts (top/bottom + right). */
 .ime-paste-overlay {
   position: fixed;
   z-index: 9999;
@@ -140,23 +141,24 @@ html, body {
   pointer-events: auto;
 }
 .ime-paste-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 16px;
-  background: rgba(0, 0, 0, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 16px;
-  line-height: 30px;
-  text-align: center;
-  padding: 0;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 9px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.3px;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
-.ime-paste-btn:active { background: rgba(0, 0, 0, 0.8); }
+.ime-paste-btn:active {
+  background: var(--bg-card);
+  color: var(--text);
+}
 
 /* IME action buttons — horizontal row below the textarea (#106) */
 .ime-actions {

@@ -54,13 +54,13 @@
     spellcheck="false"
     tabindex="-1"
   ></textarea>
-  <!-- Quick-paste + fixup overlay — floats at top-right of the IME preview
-       when visible. Paste reads navigator.clipboard.readText(); Fixup
-       collapses common terminal-copy artifacts (newline+spaces, soft wraps)
-       so URLs / bash / API keys stay one line. -->
+  <!-- Quick-paste + fixup overlay — small monochrome pills riding the top
+       border of the IME preview. Paste reads navigator.clipboard.readText();
+       Fix collapses terminal soft-wrap artifacts so URLs/bash/API keys stay
+       one line. -->
   <div id="imePasteOverlay" class="ime-paste-overlay hidden">
-    <button id="imePasteBtn" class="ime-paste-btn" aria-label="Paste from clipboard" title="Paste from clipboard" tabindex="-1">📋</button>
-    <button id="imeFixupBtn" class="ime-paste-btn" aria-label="Fix wrapping" title="Collapse soft wraps from terminal copy" tabindex="-1">✨</button>
+    <button id="imePasteBtn" class="ime-paste-btn" aria-label="Paste from clipboard" title="Paste from clipboard" tabindex="-1">Paste</button>
+    <button id="imeFixupBtn" class="ime-paste-btn" aria-label="Fix wrapping" title="Collapse soft wraps from terminal copy" tabindex="-1">Fix</button>
   </div>
   <!-- IME action buttons — float alongside textarea when visible (#106).
        Order: dock-toggle (far left), history up/down, clear, then commit

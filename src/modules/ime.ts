@@ -383,6 +383,12 @@ export function initIMEInput(): void {
     const actionH = 36; // matches CSS .ime-action-btn height
     const dock = _effectiveDock();
 
+    // Paste overlay rides the textarea's TOP border edge — pill height is
+    // 18px, so offset by 9 to half-overlap the border line. Sits on the
+    // edge instead of inside the content area so it never blocks text.
+    const PASTE_PILL_H = 18;
+    const PASTE_OVERLAP = PASTE_PILL_H / 2;
+
     if (dock === 'hover-top') {
       // Top: just below viewport top (extra margin to clear status bar)
       const top = viewTop + 12;
@@ -393,7 +399,7 @@ export function initIMEInput(): void {
         imeActions.style.bottom = 'auto';
       }
       if (pasteOverlay) {
-        pasteOverlay.style.top = `${String(top + 6)}px`;
+        pasteOverlay.style.top = `${String(top - PASTE_OVERLAP)}px`;
         pasteOverlay.style.right = '7%';
         pasteOverlay.style.bottom = 'auto';
       }
@@ -410,9 +416,10 @@ export function initIMEInput(): void {
         imeActions.style.top = 'auto';
       }
       if (pasteOverlay) {
-        // Anchor relative to the textarea's top edge, which is bottom + actionH + offsetHeight
-        const overlayBottom = bottom + actionH + ime.offsetHeight - 38;
-        pasteOverlay.style.bottom = `${String(overlayBottom)}px`;
+        // Textarea's top edge sits at: bottom + actionH + offsetHeight
+        // Pill rides that edge, half above / half below.
+        const textareaTopFromBottom = bottom + actionH + ime.offsetHeight;
+        pasteOverlay.style.bottom = `${String(textareaTopFromBottom - PASTE_OVERLAP)}px`;
         pasteOverlay.style.right = '7%';
         pasteOverlay.style.top = 'auto';
       }
