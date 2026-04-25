@@ -2154,7 +2154,7 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
   for (const url of _activeInlineImageBlobs) URL.revokeObjectURL(url);
   _activeInlineImageBlobs = [];
 
-  const panel = createPreviewPanel(filename, data);
+  const panel = createPreviewPanel(filename, data, { editable: true });
 
   // Build back button — large triangular left arrow (filename shown in the
   // file list page behind the preview, no need to repeat it here).
@@ -2177,6 +2177,71 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
 
   // Kick off async SFTP fetches for any relative <img data-sftp-src>.
   _fetchInlineImages(panel, _activePreviewPath);
+
+  // Edit pane: Save / Revert wiring. Save uploads via the chunked SFTP path;
+  // Revert restores the textarea to the originally-loaded text and updates
+  // the dirty marker. The textarea owns undo natively (Ctrl+Z / mobile gesture).
+  const editArea = panel.querySelector<HTMLTextAreaElement>('.preview-edit-area');
+  const editStatus = panel.querySelector<HTMLElement>('.preview-edit-status');
+  const editSave = panel.querySelector<HTMLButtonElement>('.preview-edit-save');
+  const editRevert = panel.querySelector<HTMLButtonElement>('.preview-edit-discard');
+  if (editArea && fullPath) {
+    const refreshDirty = (): void => {
+      const dirty = editArea.value !== editArea.dataset.original;
+      if (editStatus) {
+        editStatus.dataset.status = dirty ? 'dirty' : 'clean';
+        editStatus.textContent = dirty ? 'Modified' : 'Saved';
+      }
+      if (editSave) editSave.disabled = !dirty;
+      if (editRevert) editRevert.disabled = !dirty;
+    };
+    refreshDirty();
+    editArea.addEventListener('input', refreshDirty);
+    editRevert?.addEventListener('click', () => {
+      editArea.value = editArea.dataset.original ?? '';
+      refreshDirty();
+      editArea.focus();
+    });
+    editSave?.addEventListener('click', () => {
+      void (async () => {
+        if (editSave.disabled) return;
+        const text = editArea.value;
+        const reqId = `edit-${String(Date.now())}`;
+        const bytes = new TextEncoder().encode(text);
+        const file = new File([bytes as BlobPart], filename, { type: 'text/plain' });
+        const prevLabel = editSave.textContent;
+        editSave.disabled = true;
+        editSave.textContent = 'Saving…';
+        if (editStatus) {
+          editStatus.dataset.status = 'saving';
+          editStatus.textContent = 'Saving…';
+        }
+        try {
+          await uploadFileChunked(fullPath, file, reqId, () => { /* progress not needed for small text */ });
+          editArea.dataset.original = text;
+          if (editStatus) {
+            editStatus.dataset.status = 'clean';
+            editStatus.textContent = 'Saved';
+          }
+          editSave.textContent = prevLabel;
+          toast(`Saved ${filename}`);
+          // Invalidate the cached ls for the parent dir so size/mtime update.
+          const lastSlash = fullPath.lastIndexOf('/');
+          const parent = lastSlash <= 0 ? '/' : fullPath.slice(0, lastSlash);
+          _activeFilesState().cache.delete(parent);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (editStatus) {
+            editStatus.dataset.status = 'dirty';
+            editStatus.textContent = 'Save failed';
+          }
+          editSave.textContent = prevLabel;
+          editSave.disabled = false;
+          toast(`Save failed: ${msg}`);
+        }
+      })();
+    });
+  }
 
   // Video preview: when the <video> can't render (unsupported codec, moov
   // atom at the end of the file, etc.), swap the element for a fallback
@@ -2273,13 +2338,10 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
     panel.querySelectorAll('.preview-tab').forEach((t) => t.classList.toggle('active', t === tab));
     const srcView = panel.querySelector<HTMLElement>('.preview-source');
     const renView = panel.querySelector<HTMLElement>('.preview-rendered');
-    if (tabKey === 'source') {
-      if (srcView) srcView.style.display = '';
-      if (renView) renView.style.display = 'none';
-    } else {
-      if (srcView) srcView.style.display = 'none';
-      if (renView) renView.style.display = '';
-    }
+    const editView = panel.querySelector<HTMLElement>('.preview-edit');
+    if (srcView) srcView.style.display = tabKey === 'source' ? '' : 'none';
+    if (renView) renView.style.display = tabKey === 'rendered' ? '' : 'none';
+    if (editView) editView.style.display = tabKey === 'edit' ? '' : 'none';
   });
 }
 

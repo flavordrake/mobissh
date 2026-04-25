@@ -355,23 +355,48 @@ interface PreviewPanel extends HTMLElement {
   cleanup(): void;
 }
 
-export function createPreviewPanel(filename: string, data: Uint8Array | string): PreviewPanel {
+export function createPreviewPanel(
+  filename: string,
+  data: Uint8Array | string,
+  options?: { editable?: boolean },
+): PreviewPanel {
   _lastBlobUrls = [];
 
   const rendered = renderPreview(filename, data);
   const source = renderSource(data);
   const blobUrls = [..._lastBlobUrls];
+  const type = getPreviewType(filename);
+  const isEditable = (options?.editable ?? false) && (type === 'text' || type === 'html');
 
   const container = document.createElement('div') as unknown as PreviewPanel;
   container.className = 'sftp-preview-panel';
 
-  // Build the full innerHTML with tab bar + both views
-  // Default to rendered tab active
+  // Build the full innerHTML with tab bar + both views.
+  // Edit tab sits at the FAR LEFT of the bar (per #523 — leftmost is the
+  // most-explicit-action slot). Rendered remains the default active tab.
+  const editTab = isEditable
+    ? '  <button class="preview-tab" data-tab="edit">Edit</button>'
+    : '';
+  const editPane = isEditable
+    ? [
+        '<div class="preview-edit" style="display:none;">',
+        '  <div class="preview-edit-toolbar">',
+        '    <span class="preview-edit-status" data-status="clean">Saved</span>',
+        '    <button type="button" class="preview-edit-btn preview-edit-discard" data-action="discard-edit" title="Discard changes">Revert</button>',
+        '    <button type="button" class="preview-edit-btn preview-edit-save" data-action="save-edit" title="Push edits to server">Save</button>',
+        '  </div>',
+        '  <textarea class="preview-edit-area" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>',
+        '</div>',
+      ].join('\n')
+    : '';
+
   container.innerHTML = [
     '<div class="preview-tab-bar">',
+    editTab,
     '  <button class="preview-tab" data-tab="source">Source</button>',
     '  <button class="preview-tab active" data-tab="rendered">Rendered</button>',
     '</div>',
+    editPane,
     '<div class="preview-source" style="display:none;">',
     source,
     '</div>',
@@ -379,6 +404,18 @@ export function createPreviewPanel(filename: string, data: Uint8Array | string):
     rendered,
     '</div>',
   ].join('');
+
+  // Seed the editable textarea with the current file contents. The textarea
+  // owns the editing state; native browser undo (Ctrl+Z / mobile gesture) is
+  // available for free. ui.ts wires Save / Revert via data-action attributes.
+  if (isEditable) {
+    const editArea = container.querySelector<HTMLTextAreaElement>('.preview-edit-area');
+    if (editArea) {
+      const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      editArea.value = text;
+      editArea.dataset.original = text;
+    }
+  }
 
   // Attach cleanup method to revoke blob URLs
   container.cleanup = (): void => {
