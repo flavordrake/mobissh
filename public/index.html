@@ -59,8 +59,9 @@
        Fix collapses terminal soft-wrap artifacts so URLs/bash/API keys stay
        one line. -->
   <div id="imePasteOverlay" class="ime-paste-overlay hidden">
-    <button id="imePasteBtn" class="ime-paste-btn" aria-label="Paste from clipboard" title="Paste from clipboard" tabindex="-1">Paste</button>
     <button id="imeFixupBtn" class="ime-paste-btn" aria-label="Fix wrapping" title="Collapse soft wraps from terminal copy" tabindex="-1">Fix</button>
+    <button id="imeCopyBtn" class="ime-paste-btn" aria-label="Copy preview to clipboard" title="Copy preview text" tabindex="-1">Copy</button>
+    <button id="imePasteBtn" class="ime-paste-btn" aria-label="Paste from clipboard" title="Paste from clipboard" tabindex="-1">Paste</button>
   </div>
   <!-- IME action buttons — float alongside textarea when visible (#106).
        Order: dock-toggle (far left), history up/down, clear, then commit

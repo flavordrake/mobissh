@@ -364,10 +364,11 @@ export function initIMEInput(): void {
   const historyUp = document.getElementById('imeHistoryUp');
   const historyDown = document.getElementById('imeHistoryDown');
   const dockToggle = document.getElementById('imeDockToggle');
-  // Quick-paste / fixup overlay
+  // Fix / Copy / Paste overlay
   const pasteOverlay = document.getElementById('imePasteOverlay');
   const pasteBtn = document.getElementById('imePasteBtn');
   const fixupBtn = document.getElementById('imeFixupBtn');
+  const copyBtn = document.getElementById('imeCopyBtn');
 
 
   /** Return the current dock position from the module-level persisted state. */
@@ -558,6 +559,17 @@ export function initIMEInput(): void {
     ime.setSelectionRange(cleaned.length, cleaned.length);
     ime.dispatchEvent(new Event('input', { bubbles: true }));
     focusIME();
+  });
+  _onAction(copyBtn, () => {
+    const text = ime.value;
+    if (!text) { focusIME(); return; }
+    void navigator.clipboard.writeText(text).then(
+      () => { focusIME(); },
+      (err: unknown) => {
+        console.warn('[ime-copy] clipboard write failed:', err);
+        focusIME();
+      },
+    );
   });
 
   // ── Preview countdown ring on commit button (#169) ─────────────────────
