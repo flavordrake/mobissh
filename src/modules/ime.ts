@@ -410,7 +410,7 @@ export function initIMEInput(): void {
       if (historyRail) {
         historyRail.style.top = `${String(top)}px`;
         historyRail.style.height = `${String(ime.offsetHeight)}px`;
-        historyRail.style.right = 'calc(5% - 25px)';
+        historyRail.style.right = 'calc(5% - 12px)';
         historyRail.style.bottom = 'auto';
       }
     } else {
@@ -436,7 +436,7 @@ export function initIMEInput(): void {
       if (historyRail) {
         historyRail.style.bottom = `${String(bottom + actionH)}px`;
         historyRail.style.height = `${String(ime.offsetHeight)}px`;
-        historyRail.style.right = 'calc(5% - 25px)';
+        historyRail.style.right = 'calc(5% - 12px)';
         historyRail.style.top = 'auto';
       }
     }
@@ -515,16 +515,28 @@ export function initIMEInput(): void {
     focusIME();
   });
 
+  /** Send the staged text wrapped in bracketed-paste markers if it contains
+   *  internal newlines. Without the markers, modern TUIs (Claude Code, vim,
+   *  fish, bash readline) treat each embedded `\n` as Enter and submit
+   *  prematurely. With them, the entire block is delivered as one paste
+   *  event; a subsequent `\r` is the unambiguous "submit" keystroke. */
+  function _sendStaged(text: string): void {
+    if (text.includes('\n')) {
+      sendSSHInput('\x1b[200~' + text + '\x1b[201~');
+    } else {
+      sendSSHInput(text);
+    }
+  }
   /** Send the staged text with optional trailing key. Used by both the ✓
    *  commit button (no trailing key, the user submits manually) and the ➤
    *  submit button (sends Enter at end so the remote app runs the line). */
   function _commitWith(trailing: string): void {
     const text = ime.value;
     if (_imeState === 'editing') {
-      if (text) sendSSHInput(text);
+      if (text) _sendStaged(text);
     } else {
       if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
-      if (text) sendSSHInput(text);
+      if (text) _sendStaged(text);
     }
     if (trailing) sendSSHInput(trailing);
     _recordHistory(text);
