@@ -97,20 +97,41 @@ export function reconstructFromBuffer(
  *
  *  Result: terminal soft-wrap stripped, paragraph breaks preserved.
  */
+/** URL/path punctuation that strongly signals "this run of non-whitespace is
+ *  a single token, not prose": slashes, colons, dots, query syntax,
+ *  percent, plus, underscore, tilde. Letters alone aren't enough.
+ *
+ *  Notably excludes `-` — too ambiguous (shell flags `-v` look like URL
+ *  punctuation but the surrounding context is wrapping prose, not a token).
+ *  URLs that already contain `/`, `:`, `?`, `=`, `&`, `.` still trigger,
+ *  which covers virtually every real-world URL. */
+const _TOKEN_PUNCT = /[/:?#&=%+._~]/;
+
 export function fixupTerminalCopy(input: string): string {
   // 1. Normalize line endings.
   let s = input.replace(/\r\n?/g, '\n');
-  // 2. Trim trailing whitespace at the end of each line.
+  // 2. Trim trailing whitespace at the end of each line so the soft-wrap
+  //    detection sees the real boundary.
   s = s.replace(/[ \t]+\n/g, '\n');
-  // 3. Preserve genuine paragraph breaks: temporarily mark `\n\n+` as a sentinel.
+  // 3. Preserve genuine paragraph breaks.
   const PARA = '\u0001';
   s = s.replace(/\n{2,}/g, PARA);
-  // 4. `\n` followed by indent → single space (soft wrap with continuation indent).
-  s = s.replace(/\n[ \t]+/g, ' ');
-  // 5. Remaining `\n` (terminal mid-string hard wrap with no indent) → no separator.
-  //    URLs, base64 tokens, long shell pipes all join cleanly.
-  s = s.replace(/\n/g, '');
+  // 4. Soft-wrap collapse with token-context awareness. Capture the word
+  //    immediately before the wrap and the word immediately after the
+  //    indent. If either contains URL/path punctuation, the wrap was inside
+  //    a single token (URL, base64, identifier) — join with NO separator.
+  //    Otherwise insert a single space (wrapped prose).
+  s = s.replace(/(\S+)\n[ \t]*(\S+)/g, (_match, prev: string, next: string) => {
+    const isToken = _TOKEN_PUNCT.test(prev) || _TOKEN_PUNCT.test(next);
+    return prev + (isToken ? '' : ' ') + next;
+  });
+  // 5. Any remaining `\n` (e.g. wrap at start/end of doc with no surrounding
+  //    word) collapse to nothing — trim handles outer whitespace next.
+  s = s.replace(/\n[ \t]*/g, '');
   // 6. Restore paragraph breaks.
   s = s.replace(new RegExp(PARA, 'g'), '\n');
+  // 7. Trim leading and trailing whitespace — terminal copy commonly has
+  //    a leading prompt indent or trailing newline.
+  s = s.trim();
   return s;
 }

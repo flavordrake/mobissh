@@ -39,21 +39,21 @@ describe('fixupTerminalCopy', () => {
     expect(fixupTerminalCopy('hello world')).toBe('hello world');
   });
 
-  it('normalizes CRLF to LF before processing', () => {
-    expect(fixupTerminalCopy('a\r\nb')).toBe('ab');
+  it('normalizes CRLF to LF before processing (prose joins with space)', () => {
+    expect(fixupTerminalCopy('a\r\nb')).toBe('a b');
   });
 
-  it('normalizes lone CR to LF', () => {
-    expect(fixupTerminalCopy('a\rb')).toBe('ab');
+  it('normalizes lone CR to LF (prose joins with space)', () => {
+    expect(fixupTerminalCopy('a\rb')).toBe('a b');
   });
 
-  it('collapses newline + leading indent into a single space (canonical xterm soft-wrap)', () => {
+  it('joins URL + path across a soft-wrap with no separator (URL is a token)', () => {
     expect(fixupTerminalCopy('curl https://example.com\n   path/to/thing')).toBe(
-      'curl https://example.com path/to/thing'
+      'curl https://example.compath/to/thing'
     );
   });
 
-  it('collapses newline + tab indent into a single space', () => {
+  it('collapses newline + tab indent into a single space when both sides are prose', () => {
     expect(fixupTerminalCopy('foo\n\tbar')).toBe('foo bar');
   });
 
@@ -71,7 +71,7 @@ describe('fixupTerminalCopy', () => {
     expect(fixupTerminalCopy('a\n\n\n\nb')).toBe('a\nb');
   });
 
-  it('strips trailing whitespace before each newline', () => {
+  it('strips trailing whitespace before each newline (prose joins with space)', () => {
     expect(fixupTerminalCopy('foo   \n   bar')).toBe('foo bar');
   });
 
@@ -95,8 +95,31 @@ describe('fixupTerminalCopy', () => {
     expect(fixupTerminalCopy('')).toBe('');
   });
 
-  it('only whitespace stays only whitespace (trimmed at line ends)', () => {
-    expect(fixupTerminalCopy('   ')).toBe('   ');
+  it('only whitespace collapses to empty after trim', () => {
+    expect(fixupTerminalCopy('   ')).toBe('');
+  });
+
+  it('trims leading and trailing whitespace from the result', () => {
+    expect(fixupTerminalCopy('  hello world  ')).toBe('hello world');
+  });
+
+  it('joins a Google-Docs-style URL split with newline + single space mid-token', () => {
+    // Real-world regression case: terminal soft-wrapped a long Google Docs
+    // URL such that the next line started with one space before the rest of
+    // the doc ID. Old rule "newline + indent → space" introduced a space
+    // mid-URL.
+    const messy = '  https://docs.google.com/document/d/1p4FsyWN2LOjhN\n JBHGW3jsf-TxAjYor9aDSixbGRUDho/edit';
+    expect(fixupTerminalCopy(messy)).toBe('https://docs.google.com/document/d/1p4FsyWN2LOjhNJBHGW3jsf-TxAjYor9aDSixbGRUDho/edit');
+  });
+
+  it('still uses a space when wrapping prose (non-token chars on both sides)', () => {
+    // "see the\n   following text" — these aren't tokens, so the rule
+    // collapses to single space as before.
+    expect(fixupTerminalCopy('see the\n   following text')).toBe('see the following text');
+  });
+
+  it('joins when one side has token punct (URL-y context)', () => {
+    expect(fixupTerminalCopy('url:\n  here')).toBe('url:here');
   });
 });
 
