@@ -19,6 +19,7 @@ import { currentSession } from './state.js';
 import { sendSSHInput } from './connection.js';
 import { toast, focusIME } from './ui.js';
 import { getKeyboardVisible } from './terminal.js';
+import { reconstructFromBuffer } from './ime-fixup.js';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -185,17 +186,50 @@ export function initSelection(): void {
     _dismissSelection();
   });
 
+  /** Reconstruct the current selection using xterm's `isWrapped` metadata so
+   *  soft-wrapped URLs / commands / API keys round-trip into one line. Falls
+   *  back to the raw `getSelection()` string only if buffer access fails. */
+  function _selectionTextWrapAware(): string {
+    const term = currentSession()?.terminal;
+    if (!term) return '';
+    try {
+      // Cast: xterm's internal types match our structural ITerminalLike.
+      const range = (term as unknown as { getSelectionPosition(): { start: { x: number; y: number }; end: { x: number; y: number } } | undefined }).getSelectionPosition();
+      if (range) {
+        return reconstructFromBuffer(term as unknown as Parameters<typeof reconstructFromBuffer>[0], range);
+      }
+    } catch (err) {
+      console.warn('[selection] wrap-aware reconstruction failed:', err);
+    }
+    return term.getSelection();
+  }
+
   // ── Copy button on handle bar ────────────────────────────────────────────
 
   copyBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const sel = currentSession()?.terminal?.getSelection();
+    const sel = _selectionTextWrapAware();
     if (sel) {
       void navigator.clipboard.writeText(sel)
         .then(() => { toast('Copied'); _showPasteIfClipboard(); })
         .catch(() => { toast('Copy failed'); });
     }
     _dismissSelection();
+  });
+
+  // ── Copy event interception (desktop Cmd+C / Ctrl+C) ─────────────────────
+  // xterm renders to canvas; selection is xterm's own state, not a real
+  // browser Selection. The native `copy` event fires with empty data for the
+  // helper textarea — we intercept and substitute the wrap-aware text so
+  // desktop keyboard copy and the handle button both produce identical
+  // output.
+  document.addEventListener('copy', (e) => {
+    const term = currentSession()?.terminal;
+    if (!term?.hasSelection()) return;
+    const text = _selectionTextWrapAware();
+    if (!text) return;
+    e.preventDefault();
+    e.clipboardData?.setData('text/plain', text);
   });
 
   // ── Paste button on handle bar ──────────────────────────────────────────

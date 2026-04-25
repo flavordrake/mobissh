@@ -3,7 +3,36 @@
  * clean executable line by collapsing soft-wrap artifacts.
  */
 import { describe, it, expect } from 'vitest';
-import { fixupTerminalCopy } from '../ime-fixup.js';
+import { fixupTerminalCopy, reconstructFromBuffer } from '../ime-fixup.js';
+
+// ── reconstructFromBuffer fixture helpers ──────────────────────────────────
+// Build a fake xterm-like buffer: rows is an array of [text, isWrapped].
+// translateToString(trimRight, startCol, endCol) honors the start/end slice.
+function makeTerm(rows: Array<[string, boolean]>, cols = 80): {
+  cols: number;
+  buffer: { active: { getLine: (y: number) => { isWrapped: boolean; translateToString: (t?: boolean, s?: number, e?: number) => string } | undefined } };
+} {
+  return {
+    cols,
+    buffer: {
+      active: {
+        getLine(y: number) {
+          const r = rows[y];
+          if (!r) return undefined;
+          const [text, isWrapped] = r;
+          return {
+            isWrapped,
+            translateToString(_trim?: boolean, s?: number, e?: number): string {
+              const start = s ?? 0;
+              const end = e ?? text.length;
+              return text.slice(start, end);
+            },
+          };
+        },
+      },
+    },
+  };
+}
 
 describe('fixupTerminalCopy', () => {
   it('returns plain text unchanged', () => {
@@ -68,5 +97,88 @@ describe('fixupTerminalCopy', () => {
 
   it('only whitespace stays only whitespace (trimmed at line ends)', () => {
     expect(fixupTerminalCopy('   ')).toBe('   ');
+  });
+});
+
+describe('reconstructFromBuffer', () => {
+  it('joins a soft-wrapped URL across two rows without a separator', () => {
+    const term = makeTerm([
+      ['https://example.com/api/v1/abc', false],
+      ['def/long/path/here', true],   // wrapped continuation
+    ], 80);
+    const out = reconstructFromBuffer(term, {
+      start: { x: 0, y: 0 },
+      end:   { x: 18, y: 1 },
+    });
+    expect(out).toBe('https://example.com/api/v1/abcdef/long/path/here');
+  });
+
+  it('preserves a hard newline when the next row is NOT wrapped', () => {
+    const term = makeTerm([
+      ['line one', false],
+      ['line two', false],   // hard newline, not a wrap
+    ], 80);
+    const out = reconstructFromBuffer(term, {
+      start: { x: 0, y: 0 },
+      end:   { x: 8, y: 1 },
+    });
+    expect(out).toBe('line one\nline two');
+  });
+
+  it('joins multiple consecutive wrapped rows', () => {
+    const term = makeTerm([
+      ['curl https://example.com/v1/', false],
+      ['supercalifragilistic-key-', true],
+      ['expialidocious-suffix', true],
+    ], 80);
+    const out = reconstructFromBuffer(term, {
+      start: { x: 0, y: 0 },
+      end:   { x: 21, y: 2 },
+    });
+    expect(out).toBe('curl https://example.com/v1/supercalifragilistic-key-expialidocious-suffix');
+  });
+
+  it('honors start/end columns within the first and last rows', () => {
+    const term = makeTerm([
+      ['XXXhello', false],
+      ['worldYYY', true],
+    ], 80);
+    const out = reconstructFromBuffer(term, {
+      start: { x: 3, y: 0 },
+      end:   { x: 5, y: 1 },
+    });
+    expect(out).toBe('helloworld');
+  });
+
+  it('returns empty for inverted range', () => {
+    const term = makeTerm([['x', false]]);
+    const out = reconstructFromBuffer(term, {
+      start: { x: 0, y: 1 },
+      end:   { x: 0, y: 0 },
+    });
+    expect(out).toBe('');
+  });
+
+  it('mixes soft-wrap and hard newlines correctly', () => {
+    // Row 0 + 1 are a soft-wrapped URL; row 2 is a separate command.
+    const term = makeTerm([
+      ['https://example.com/abcdefghij', false],
+      ['klmnopqrstuvwxyz', true],
+      ['echo done', false],
+    ], 80);
+    const out = reconstructFromBuffer(term, {
+      start: { x: 0, y: 0 },
+      end:   { x: 9, y: 2 },
+    });
+    expect(out).toBe('https://example.com/abcdefghijklmnopqrstuvwxyz\necho done');
+  });
+
+  it('single-row selection just returns the column slice', () => {
+    const term = makeTerm([['abcdefghij', false]], 80);
+    const out = reconstructFromBuffer(term, {
+      start: { x: 2, y: 0 },
+      end:   { x: 7, y: 0 },
+    });
+    expect(out).toBe('cdefg');
   });
 });
