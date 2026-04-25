@@ -64,6 +64,11 @@ export const THEMES: Record<ThemeName, ThemeEntry> = {
       foreground: '#1a1a1a',
       cursor: '#0055cc',
       selectionBackground: '#0055cc44',
+      // Light themes: pure white bg/fg makes bright-white-on-bright-white
+      // tool-block highlights (Claude Code) invisible. Map both `white` and
+      // `brightWhite` to a slightly darker shade so highlights have contrast.
+      white: '#e8e8ec',
+      brightWhite: '#d8d8df',
     },
     app: {
       bgDeep: '#f0f0f5',
@@ -104,6 +109,12 @@ export const THEMES: Record<ThemeName, ThemeEntry> = {
       foreground: '#657b83',
       cursor: '#268bd2',
       selectionBackground: '#268bd244',
+      // Solarized canonical: base2 (#eee8d5) for "white", base3 (#fdf6e3)
+      // for "brightWhite" — but base3 IS the page bg, so bright-white-bg
+      // highlights from Claude Code become invisible. Bump brightWhite
+      // a notch darker than the bg so highlights still read.
+      white: '#eee8d5',
+      brightWhite: '#d3c8a8',
     },
     app: {
       bgDeep: '#eee8d5',

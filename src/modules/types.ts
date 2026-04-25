@@ -74,6 +74,28 @@ export interface TerminalTheme {
   foreground: string;
   cursor: string;
   selectionBackground: string;
+  /** Optional ANSI palette overrides — needed for light themes where the
+   *  default xterm `brightWhite` (#ffffff) is the same as the page bg, so
+   *  any TUI rendering bright-white-bg highlights becomes invisible
+   *  (Claude Code does this for tool-use blocks). Set the eight standard
+   *  + eight bright variants you want to override; xterm uses defaults
+   *  for the rest. */
+  black?: string;
+  red?: string;
+  green?: string;
+  yellow?: string;
+  blue?: string;
+  magenta?: string;
+  cyan?: string;
+  white?: string;
+  brightBlack?: string;
+  brightRed?: string;
+  brightGreen?: string;
+  brightYellow?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+  brightCyan?: string;
+  brightWhite?: string;
 }
 
 export interface AppColors {
