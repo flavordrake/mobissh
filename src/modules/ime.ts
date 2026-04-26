@@ -530,7 +530,17 @@ export function initIMEInput(): void {
   }
   /** Send the staged text with optional trailing key. Used by both the ✓
    *  commit button (no trailing key, the user submits manually) and the ➤
-   *  submit button (sends Enter at end so the remote app runs the line). */
+   *  submit button (sends Enter at end so the remote app runs the line).
+   *
+   *  The trailing key is deferred ~150ms when present. Without the gap,
+   *  the `\r` arrives at the remote TUI (Claude Code, fish, bash readline,
+   *  vim) before it has finished applying the staged text — sometimes
+   *  consumed as part of a bracketed-paste block, sometimes processed
+   *  before the last char of the text reaches the input buffer. The
+   *  observable failure is "Submit acts like Commit" (text inserted, no
+   *  Enter registered). The delay is the upper bound of intra-frame WS
+   *  delivery + TUI render time. */
+  const SUBMIT_TRAILING_DELAY_MS = 150;
   function _commitWith(trailing: string): void {
     const text = ime.value;
     if (_imeState === 'editing') {
@@ -539,7 +549,14 @@ export function initIMEInput(): void {
       if (_lastSentValue) sendSSHInput('\x7f'.repeat(_lastSentValue.length));
       if (text) _sendStaged(text);
     }
-    if (trailing) sendSSHInput(trailing);
+    if (trailing) {
+      if (text) {
+        setTimeout(() => { sendSSHInput(trailing); }, SUBMIT_TRAILING_DELAY_MS);
+      } else {
+        // No staged text — Enter is a bare keystroke, deliver immediately.
+        sendSSHInput(trailing);
+      }
+    }
     _recordHistory(text);
     _transition('idle');
     focusIME();
