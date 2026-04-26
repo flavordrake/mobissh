@@ -32,16 +32,13 @@ async function submitBugReport(): Promise<void> {
   const lines = _getDebugLines ? _getDebugLines() : [];
   const logs = lines.join('\n');
 
-  // Collapse debug panel so it doesn't appear in the screenshot
-  const debugPanel = document.getElementById('debugOverlayPanel');
-  const debugFab = document.getElementById('debugFab');
-  const wasVisible = debugPanel && !debugPanel.classList.contains('hidden');
-  if (debugPanel) debugPanel.classList.add('hidden');
-  if (debugFab) debugFab.classList.add('hidden');
-
+  // Capture the screen as-is — the debug panel and FAB are legitimate
+  // UI elements; hiding them removes context the user may want to verify
+  // (e.g., "is the new toggle style applied?"). User can collapse the
+  // panel manually before tapping Report if they want a clean shot.
   _toast('Capturing bug report...');
 
-  // Small delay for panel to hide and toast to render
+  // Small delay for toast to render
   await new Promise((r) => { setTimeout(r, 300); });
 
   // Capture screenshot (without debug overlay)
@@ -60,10 +57,6 @@ async function submitBugReport(): Promise<void> {
   } catch (err) {
     console.warn('[bug-report] screenshot failed:', err);
   }
-
-  // Restore debug panel
-  if (wasVisible) debugPanel.classList.remove('hidden');
-  if (debugFab) debugFab.classList.remove('hidden');
 
   // Collect metadata
   const meta = document.querySelector<HTMLMetaElement>('meta[name="app-version"]');

@@ -2610,34 +2610,37 @@ hr {
 }
 
 
-/* Debug FAB — thin centered pill at top of viewport (#461).
- * Kept minimal so it doesn't obscure the close X or preview back button. */
+/* Debug FAB — slim pill anchored to the top edge with the same off-screen
+ * overlay affordance as the debug panel: missing top border, slight
+ * upward offset, rounded bottom corners only, blur backdrop. */
 .debug-fab {
   position: fixed;
-  top: calc(env(safe-area-inset-top) + 2px);
+  top: calc(env(safe-area-inset-top, 0px) - 4px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 10002;
-  padding: 3px 14px;
-  height: 22px;
-  border-radius: 11px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(0, 0, 0, 0.55);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 11px;
+  padding: 4px 10px 2px;
+  height: 18px;
+  border: 1px solid rgba(0, 255, 136, 0.28);
+  border-top: none;
+  border-radius: 0 0 9px 9px;
+  background: rgba(0, 0, 0, 0.78);
+  color: rgba(0, 255, 136, 0.85);
+  font-size: 9px;
   font-weight: 600;
-  line-height: 16px;
-  letter-spacing: 0.5px;
+  line-height: 1;
+  letter-spacing: 0.4px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   -webkit-tap-highlight-color: transparent;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
 }
 .debug-fab:active {
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.92);
 }
 
 /* Debug panel — fixed translucent overlay anchored to the top edge.

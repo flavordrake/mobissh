@@ -10,7 +10,26 @@ import type { KeyBarConfig } from './keybar-config.js';
 
 // ── Domain types ────────────────────────────────────────────────────────────
 
-export type ThemeName = 'dark' | 'light' | 'solarizedDark' | 'solarizedLight' | 'highContrast' | 'dracula' | 'nord' | 'gruvboxDark' | 'monokai' | 'tokyoNight' | 'ocean' | 'ember' | 'forest' | 'sunset' | 'synthwave' | 'commodore' | 'terminal' | 'borland' | 'arctic' | 'cobalt' | 'matrix';
+export type ThemeName =
+  | 'dark' | 'light'
+  | 'solarizedDark' | 'solarizedLight'
+  | 'highContrast' | 'highContrastLight'
+  | 'dracula' | 'draculaLight'
+  | 'nord' | 'nordLight'
+  | 'gruvboxDark' | 'gruvboxLight'
+  | 'monokai' | 'monokaiLight'
+  | 'tokyoNight' | 'tokyoNightDay'
+  | 'ocean' | 'oceanLight'
+  | 'ember' | 'emberLight'
+  | 'forest' | 'forestLight'
+  | 'sunset' | 'sunsetLight'
+  | 'synthwave' | 'synthwaveLight'
+  | 'commodore' | 'commodoreLight'
+  | 'terminal' | 'terminalLight'
+  | 'borland' | 'borlandLight'
+  | 'arcticDark' | 'arctic'
+  | 'cobalt' | 'cobaltLight'
+  | 'matrix' | 'matrixLight';
 
 export interface SSHProfile {
   title: string;
