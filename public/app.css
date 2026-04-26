@@ -3143,9 +3143,14 @@ hr {
 /* Hide the docs ⋯ menu while a file preview is active — no Upload/Refresh
  * needed while viewing a specific file, and it frees the top-left for the
  * preview's own back arrow. */
+/* Hide explore-specific chrome (filter input, docs menu) when:
+ *  1. A file preview is mounted (filename block + back arrow take over), OR
+ *  2. The Transfer subtab is active (filter / upload menu are explore-only). */
 #panel-files:has(#filePreview:not(.hidden)) .files-docs-menu-btn,
 #panel-files:has(#filePreview:not(.hidden)) .files-filter-input,
-#panel-files:has(#filePreview:not(.hidden)) .files-subtabs {
+#panel-files:has(#filePreview:not(.hidden)) .files-subtabs,
+#panel-files:has(.files-subtab[data-subtab="transfer"].active) .files-filter-input,
+#panel-files:has(.files-subtab[data-subtab="transfer"].active) .files-docs-menu-btn {
   display: none;
 }
 
