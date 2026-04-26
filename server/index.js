@@ -657,7 +657,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { screenshot, logs, title, userAgent, url, version } = data;
+        const { screenshot, logs, title, userAgent, url, version, connectLog } = data;
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
         fs.mkdirSync(reportDir, { recursive: true });
@@ -677,8 +677,29 @@ const server = http.createServer((req, res) => {
           console.log(`[bug-report] logs: ${ts}-bug-report.log`);
         }
 
+        // Save 24h connect log if attached (added with the diagnostics work
+        // — every connect/reconnect/state-transition event for the past day)
+        let connectLogFile = '';
+        if (Array.isArray(connectLog) && connectLog.length > 0) {
+          connectLogFile = `${ts}-bug-report.connect-log.json`;
+          fs.writeFileSync(
+            path.join(reportDir, connectLogFile),
+            JSON.stringify(connectLog, null, 2),
+          );
+          console.log(`[bug-report] connect log: ${connectLogFile} (${connectLog.length} events)`);
+        }
+
         // Save metadata
-        const meta = { title: title || `Bug report ${ts}`, version, url, userAgent, ts, screenshotFile };
+        const meta = {
+          title: title || `Bug report ${ts}`,
+          version,
+          url,
+          userAgent,
+          ts,
+          screenshotFile,
+          connectLogFile,
+          connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
+        };
         fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.json`), JSON.stringify(meta, null, 2));
 
         const reportTitle = title || `Bug report ${ts}`;
