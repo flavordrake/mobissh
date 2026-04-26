@@ -32,13 +32,19 @@ async function submitBugReport(): Promise<void> {
   const lines = _getDebugLines ? _getDebugLines() : [];
   const logs = lines.join('\n');
 
-  // Capture the screen as-is — the debug panel and FAB are legitimate
-  // UI elements; hiding them removes context the user may want to verify
-  // (e.g., "is the new toggle style applied?"). User can collapse the
-  // panel manually before tapping Report if they want a clean shot.
+  // Hide the debug panel + FAB so they don't obscure the actual bug
+  // surface in the screenshot. Logs are already captured into `logs`
+  // above; visual styling of the debug surfaces was verified once and
+  // doesn't need to ride along on every report.
+  const debugPanel = document.getElementById('debugOverlayPanel');
+  const debugFab = document.getElementById('debugFab');
+  const wasVisible = debugPanel && !debugPanel.classList.contains('hidden');
+  if (debugPanel) debugPanel.classList.add('hidden');
+  if (debugFab) debugFab.classList.add('hidden');
+
   _toast('Capturing bug report...');
 
-  // Small delay for toast to render
+  // Small delay for hide + toast to render
   await new Promise((r) => { setTimeout(r, 300); });
 
   // Capture screenshot (without debug overlay)
@@ -57,6 +63,10 @@ async function submitBugReport(): Promise<void> {
   } catch (err) {
     console.warn('[bug-report] screenshot failed:', err);
   }
+
+  // Restore debug surfaces
+  if (wasVisible) debugPanel.classList.remove('hidden');
+  if (debugFab) debugFab.classList.remove('hidden');
 
   // Collect metadata
   const meta = document.querySelector<HTMLMetaElement>('meta[name="app-version"]');
