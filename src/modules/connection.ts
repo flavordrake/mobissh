@@ -1284,10 +1284,17 @@ document.addEventListener('visibilitychange', () => {
     // Reconnect all dropped sessions — active first, others staggered (#354).
     // Non-active sessions get a 3s delay so Tailscale tunnels have time to
     // re-establish after the phone comes back online.
+    //
+    // SKIP `failed` sessions: they hit the 3-strike halt and need an
+    // explicit user retry OR a real network change (online event). Without
+    // this guard, visibility_resume cycled the user through repeated
+    // 10s SSH handshake timeouts on every screen-on event — the
+    // close-and-restart-fixes-it loop the user reported.
     let reconnected = false;
     const activeId = appState.activeSessionId ?? '';
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
+      if (session.state === 'failed') continue;
       if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
         cancelReconnect(sid);
         if (sid === activeId) {
@@ -1313,8 +1320,21 @@ document.addEventListener('visibilitychange', () => {
 
 // Network online/offline events — critical signal when user moves between
 // wifi/cell on mobile. Both fire on the window object.
+//
+// On `online`, give every `failed` session one shot to recover. This is the
+// genuine "network came back" event (not just visibility), so it deserves a
+// retry even after the 3-strike halt. The user no longer needs to kill the
+// app to escape the failed-after-network-change loop.
 window.addEventListener('online', () => {
   logConnect('net_online', undefined, {});
+  for (const [sid, session] of appState.sessions) {
+    if (session.state !== 'failed' || !session.profile) continue;
+    session._wsConsecFailures = 0;
+    session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+    transitionSession(sid, 'reconnecting');
+    cancelReconnect(sid);
+    _openWebSocket({ silent: true, sessionId: sid });
+  }
 });
 window.addEventListener('offline', () => {
   logConnect('net_offline', undefined, {});
