@@ -1206,6 +1206,24 @@ html, body {
   transition: background 0.2s ease, opacity 0.2s ease;
 }
 
+/* Reconnecting / authenticating / dropped: fade the terminal to half
+ * brightness + half contrast over the SSH readyTimeout window (10s).
+ * The shimmering accent bar alone is easy to miss on mobile; pairing
+ * it with a gradual desaturation makes the in-flight (and failed)
+ * state visually unmistakable. Snap back fast (~0.4s) on recovery so
+ * the moment of reconnect feels instant. */
+#terminal {
+  transition: filter 0.4s ease-in;
+}
+body[data-session-state="reconnecting"] #terminal,
+body[data-session-state="authenticating"] #terminal,
+body[data-session-state="soft_disconnected"] #terminal,
+body[data-session-state="disconnected"] #terminal,
+body[data-session-state="failed"] #terminal {
+  filter: brightness(0.5) contrast(0.5);
+  transition: filter 10s ease-out;
+}
+
 /* Connected: solid accent bar (no animation, full opacity) */
 body[data-session-state="connected"] #key-bar-handle::after {
   background: var(--accent);
