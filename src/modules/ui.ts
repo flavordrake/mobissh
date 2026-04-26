@@ -17,6 +17,7 @@ import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel, MIME_MAP, extOf, SFTP_INLINE_IMG_ATTR, SFTP_RELATIVE_LINK_ATTR } from './sftp-preview.js';
 import { listFavorites, toggleFavorite, isFavorited, profileIdOf } from './favorites.js';
 import type { Favorite } from './types.js';
+import { logGesture } from './gesture-log.js';
 
 /** Update session menu button text without clobbering the notification badge (#458).
  * Delegates to setSessionTitleBase which preserves the current notification count. */
@@ -685,6 +686,12 @@ export function initSessionMenu(): void {
     const keys = Array.from(appState.sessions.keys());
     const idx = keys.indexOf(appState.activeSessionId ?? '');
     const targetIdx = (idx + (dx > 0 ? -1 : 1) + keys.length) % keys.length;
+    logGesture('gesture_session_swipe', {
+      dir: dx > 0 ? 'prev' : 'next',
+      dx: Math.round(dx),
+      from: idx,
+      to: targetIdx,
+    });
     switchSession(keys[targetIdx]!);
     if ('vibrate' in navigator) navigator.vibrate(10);
   });
@@ -744,16 +751,25 @@ export function initSessionMenu(): void {
     _swipeTouchId = -1;
     const deltaY = _swipeStartY - touch.clientY;
     // Upward swipe (deltaY > 30): reveal navbar first if hidden, else cycle depth (#449).
+    let action: 'show_tabbar' | 'depth_up' | 'depth_down' | null = null;
     if (deltaY > 30) {
       if (!appState.tabBarVisible) {
         appState.tabBarVisible = true;
         _applyTabBarVisibility();
+        action = 'show_tabbar';
       } else if (appState.keyBarDepth < 3) {
         setKeyBarDepth((appState.keyBarDepth + 1) as 0 | 1 | 2 | 3);
+        action = 'depth_up';
       }
     } else if (deltaY < -30 && appState.keyBarDepth > 0) {
       setKeyBarDepth((appState.keyBarDepth - 1) as 0 | 1 | 2 | 3);
+      action = 'depth_down';
     }
+    logGesture('gesture_handle_swipe', {
+      dy: Math.round(deltaY),
+      ...(action ? { action } : {}),
+      depth: appState.keyBarDepth,
+    });
   }, { passive: true });
 
   // Down-swipe on the tab bar hides it (#449).
@@ -779,10 +795,16 @@ export function initSessionMenu(): void {
       if (!touch) return;
       _tabSwipeTouchId = -1;
       const deltaY = touch.clientY - _tabSwipeStartY;
+      let action: 'hide_tabbar' | null = null;
       if (deltaY > 30 && appState.tabBarVisible) {
         appState.tabBarVisible = false;
         _applyTabBarVisibility();
+        action = 'hide_tabbar';
       }
+      logGesture('gesture_tabbar_swipe', {
+        dy: Math.round(deltaY),
+        ...(action ? { action } : {}),
+      });
     }, { passive: true });
   }
 

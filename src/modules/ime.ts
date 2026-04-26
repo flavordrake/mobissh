@@ -24,6 +24,7 @@ import { focusIME, setCtrlActive } from './ui.js';
 import { isSelectionActive } from './selection.js';
 import { computeDiff } from './ime-diff.js';
 import { fixupTerminalCopy } from './ime-fixup.js';
+import { logGesture, gestureTarget } from './gesture-log.js';
 
 let _handleResize = (): void => {};
 let _applyFontSize = (_size: number): void => {};
@@ -597,6 +598,12 @@ export function initIMEInput(): void {
       swipeAccum = steps * SWIPE_STEP;
     }, { passive: false });
     historyRail.addEventListener('touchend', () => {
+      if (swipeStartY >= 0 && swipeAccum !== 0) {
+        logGesture('gesture_history_swipe', {
+          dy: swipeAccum,
+          steps: Math.trunc(swipeAccum / SWIPE_STEP),
+        });
+      }
       swipeStartY = -1;
       swipeAccum = 0;
       focusIME();
@@ -1178,6 +1185,7 @@ export function initIMEInput(): void {
 
   // termEl used by gesture handlers and pinch-to-zoom
   const termEl = document.getElementById('terminal')!;
+  logGesture('gesture_handler_init', { surface: 'terminal' });
 
   // ── Tap + swipe gestures on terminal (#32/#37/#16) ────────────────────
 
@@ -1217,6 +1225,10 @@ export function initIMEInput(): void {
   termEl.addEventListener('touchstart', (e) => {
     if (isSelectionActive()) return;
     console.log('[scroll] touchstart y=', e.touches[0]!.clientY, 'touches=', e.touches.length);
+    logGesture('gesture_term_touchstart', {
+      touches: e.touches.length,
+      target: gestureTarget(e.target),
+    });
     _touchStartY = _lastTouchY = e.touches[0]!.clientY;
     _touchStartX = _lastTouchX = e.touches[0]!.clientX;
     _isTouchScroll = false;
@@ -1236,6 +1248,7 @@ export function initIMEInput(): void {
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
       _isTouchScroll = true;
       console.log('[scroll] gesture claimed, totalDy=', totalDy);
+      logGesture('gesture_term_scroll_claim', { dy: Math.round(totalDy) });
     }
 
     // Once we've claimed this gesture as a terminal scroll, prevent the
@@ -1305,17 +1318,35 @@ export function initIMEInput(): void {
     _pendingSGR = null;
     if (_scrollRafId) { cancelAnimationFrame(_scrollRafId); _scrollRafId = null; }
 
+    let horiz: 'next' | 'prev' | null = null;
     if (!wasScroll) {
       if (Math.abs(finalDx) > 40 && Math.abs(finalDx) > Math.abs(finalDy)) {
         const hNatural = _naturalHorizontalScroll();
         const hCmd = hNatural
           ? (finalDx < 0 ? '\x02p' : '\x02n')   // natural: finger left = prev
           : (finalDx < 0 ? '\x02n' : '\x02p');   // traditional: finger left = next
+        horiz = hCmd === '\x02n' ? 'next' : 'prev';
         sendSSHInput(hCmd);
       } else {
         setTimeout(focusIME, 50);
       }
     }
+    logGesture('gesture_term_touchend', {
+      wasScroll,
+      dx: Math.round(finalDx),
+      dy: Math.round(finalDy),
+      ...(horiz ? { horiz } : {}),
+    });
+    if (horiz) logGesture('gesture_term_horiz_swipe', { dir: horiz, dx: Math.round(finalDx) });
+  }, { capture: true });
+
+  // touchcancel — OS reclaimed the gesture. Important diagnostic signal: a
+  // missing touchend after touchstart usually means cancel fired.
+  termEl.addEventListener('touchcancel', () => {
+    if (isSelectionActive()) return;
+    logGesture('gesture_term_touchcancel', { wasScroll: _isTouchScroll });
+    _touchStartY = _touchStartX = _lastTouchY = _lastTouchX = null;
+    _isTouchScroll = false;
   }, { capture: true });
 
   // ── Pinch-to-zoom → font size (#17) — behind enablePinchZoom setting ────
@@ -1347,6 +1378,7 @@ export function initIMEInput(): void {
     _pinchStartSize = pinchTerm
       ? (pinchTerm.options.fontSize ?? 14)
       : (parseInt(localStorage.getItem('fontSize') ?? '14') || 14);
+    logGesture('gesture_term_pinch_start', { fontSize: _pinchStartSize });
     e.preventDefault();
   }, { passive: false });
 
@@ -1358,6 +1390,13 @@ export function initIMEInput(): void {
   }, { passive: false });
 
   termEl.addEventListener('touchend', () => {
+    if (_pinchStartDist !== null) {
+      const pinchTerm = currentSession()?.terminal;
+      const finalSize = pinchTerm
+        ? (pinchTerm.options.fontSize ?? 14)
+        : (parseInt(localStorage.getItem('fontSize') ?? '14') || 14);
+      logGesture('gesture_term_pinch_end', { fontSize: finalSize });
+    }
     _pinchStartDist = null;
     _pinchStartSize = null;
   });

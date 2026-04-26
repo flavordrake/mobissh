@@ -7,6 +7,7 @@
  */
 
 import { getConnectLogForBugReport } from './connect-log.js';
+import { getGestureLogForBugReport } from './gesture-log.js';
 
 declare const html2canvas: (element: HTMLElement, options?: Record<string, unknown>) => Promise<HTMLCanvasElement>;
 
@@ -82,6 +83,9 @@ async function submitBugReport(): Promise<void> {
     // reconnect attempts, diagnostic probes, network/visibility changes).
     // Critical context for connect/reconnect bug reports.
     connectLog: getConnectLogForBugReport(),
+    // Last 24h of gesture events (swipe / pinch / long-press / drag-select).
+    // For diagnosing "swipes stopped working" bug reports.
+    gestureLog: getGestureLogForBugReport(),
   };
 
   try {

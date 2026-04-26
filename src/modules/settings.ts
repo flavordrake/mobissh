@@ -13,6 +13,7 @@ import { showErrorDialog } from './ui.js';
 import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewIdleDelay } from './ime.js';
 import { getProfiles, loadProfiles } from './profiles.js';
 import { getConnectLog, clearConnectLog, downloadConnectLog } from './connect-log.js';
+import { getGestureLog, clearGestureLog, downloadGestureLog } from './gesture-log.js';
 
 
 /** Declarative schema for validatable localStorage keys. */
@@ -419,28 +420,31 @@ export function initSettingsPanel(): void {
     });
   }
 
-  // Diagnostics: connect log management
-  function _refreshConnectLogStatus(): void {
-    const entries = getConnectLog();
-    const countEl = document.getElementById('connectLogCount');
-    const oldestEl = document.getElementById('connectLogOldest');
-    if (countEl) countEl.textContent = String(entries.length);
-    if (oldestEl) {
-      if (entries.length === 0) {
-        oldestEl.textContent = '—';
-      } else {
-        const oldest = new Date(entries[0]!.t);
-        const ageMs = Date.now() - oldest.getTime();
-        const mins = Math.round(ageMs / 60000);
-        oldestEl.textContent = mins < 60 ? `${String(mins)}m ago` : `${String(Math.round(mins / 60))}h ago`;
+  // Diagnostics: connect + gesture log management
+  function _refreshLogStatus(): void {
+    const updateRow = (entries: { t: number }[], countId: string, oldestId: string): void => {
+      const countEl = document.getElementById(countId);
+      const oldestEl = document.getElementById(oldestId);
+      if (countEl) countEl.textContent = String(entries.length);
+      if (oldestEl) {
+        if (entries.length === 0) {
+          oldestEl.textContent = '—';
+        } else {
+          const oldest = new Date(entries[0]!.t);
+          const ageMs = Date.now() - oldest.getTime();
+          const mins = Math.round(ageMs / 60000);
+          oldestEl.textContent = mins < 60 ? `${String(mins)}m ago` : `${String(Math.round(mins / 60))}h ago`;
+        }
       }
-    }
+    };
+    updateRow(getConnectLog(), 'connectLogCount', 'connectLogOldest');
+    updateRow(getGestureLog(), 'gestureLogCount', 'gestureLogOldest');
   }
-  _refreshConnectLogStatus();
+  _refreshLogStatus();
   // Refresh whenever the diagnostics detail section opens — count is fresh
   // every time the user navigates in. Cheap.
   document.querySelectorAll('.settings-category[data-section="diagnostics"]').forEach((btn) => {
-    btn.addEventListener('click', _refreshConnectLogStatus);
+    btn.addEventListener('click', _refreshLogStatus);
   });
   document.getElementById('connectLogDownloadBtn')?.addEventListener('click', () => {
     downloadConnectLog();
@@ -448,7 +452,15 @@ export function initSettingsPanel(): void {
   document.getElementById('connectLogClearBtn')?.addEventListener('click', () => {
     if (!confirm('Clear all connection log entries? This is local-only and cannot be recovered.')) return;
     clearConnectLog();
-    _refreshConnectLogStatus();
+    _refreshLogStatus();
+  });
+  document.getElementById('gestureLogDownloadBtn')?.addEventListener('click', () => {
+    downloadGestureLog();
+  });
+  document.getElementById('gestureLogClearBtn')?.addEventListener('click', () => {
+    if (!confirm('Clear all gesture log entries? This is local-only and cannot be recovered.')) return;
+    clearGestureLog();
+    _refreshLogStatus();
   });
 
   const versionEl = document.getElementById('versionInfo');

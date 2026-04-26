@@ -657,7 +657,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { screenshot, logs, title, userAgent, url, version, connectLog } = data;
+        const { screenshot, logs, title, userAgent, url, version, connectLog, gestureLog } = data;
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
         fs.mkdirSync(reportDir, { recursive: true });
@@ -689,6 +689,18 @@ const server = http.createServer((req, res) => {
           console.log(`[bug-report] connect log: ${connectLogFile} (${connectLog.length} events)`);
         }
 
+        // Save 24h gesture log if attached — every swipe / pinch / long-press
+        // / drag-select. For "swipes stopped working" bug reports.
+        let gestureLogFile = '';
+        if (Array.isArray(gestureLog) && gestureLog.length > 0) {
+          gestureLogFile = `${ts}-bug-report.gesture-log.json`;
+          fs.writeFileSync(
+            path.join(reportDir, gestureLogFile),
+            JSON.stringify(gestureLog, null, 2),
+          );
+          console.log(`[bug-report] gesture log: ${gestureLogFile} (${gestureLog.length} events)`);
+        }
+
         // Save metadata
         const meta = {
           title: title || `Bug report ${ts}`,
@@ -699,6 +711,8 @@ const server = http.createServer((req, res) => {
           screenshotFile,
           connectLogFile,
           connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
+          gestureLogFile,
+          gestureLogEventCount: Array.isArray(gestureLog) ? gestureLog.length : 0,
         };
         fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.json`), JSON.stringify(meta, null, 2));
 

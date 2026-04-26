@@ -20,6 +20,7 @@ import { sendSSHInput } from './connection.js';
 import { toast, focusIME } from './ui.js';
 import { getKeyboardVisible } from './terminal.js';
 import { reconstructFromBuffer } from './ime-fixup.js';
+import { logGesture } from './gesture-log.js';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -300,6 +301,7 @@ export function initSelection(): void {
   function _onLongPress(): void {
     _selectionActive = true;
     _keyboardWasVisible = getKeyboardVisible();
+    logGesture('gesture_long_press', { keyboardVisible: _keyboardWasVisible });
     try { navigator.vibrate(30); } catch { /* vibrate not available */ }
     // Blur the focused IME input. If the user had dismissed the keyboard,
     // the textarea still held focus — touching the terminal would re-summon
@@ -469,6 +471,7 @@ export function initSelection(): void {
     _anchorCol = pos.col;
     _anchorRow = pos.row;
     _dragActive = true;
+    logGesture('gesture_drag_select_start', { col: startCol, row: startRow, len });
   }
 
   /** Extend selection from anchor to current touch position. */
@@ -501,6 +504,8 @@ export function initSelection(): void {
   function _endDragSelect(): void {
     if (!_dragActive) return;
     _dragActive = false;
+    const sel = currentSession()?.terminal?.getSelection() ?? '';
+    logGesture('gesture_drag_select_end', { len: sel.length });
     // Selection stays visible; copy button handled by _watchSelection
   }
 }
