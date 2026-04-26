@@ -1248,7 +1248,16 @@ export function initIMEInput(): void {
     if (!_isTouchScroll && Math.abs(totalDy) > 12 && Math.abs(totalDy) > Math.abs(totalDx)) {
       _isTouchScroll = true;
       console.log('[scroll] gesture claimed, totalDy=', totalDy);
-      logGesture('gesture_term_scroll_claim', { dy: Math.round(totalDy) });
+      const claimTerm = currentSession()?.terminal;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- xterm modes is untyped
+      const claimMode = claimTerm
+        ? ((claimTerm as unknown as { modes?: { mouseTrackingMode?: string } }).modes?.mouseTrackingMode ?? 'none')
+        : 'none';
+      logGesture('gesture_term_scroll_claim', {
+        dy: Math.round(totalDy),
+        mouseMode: claimMode,
+        forceLocal: _forceLocalScroll(),
+      });
     }
 
     // Once we've claimed this gesture as a terminal scroll, prevent the
@@ -1267,7 +1276,7 @@ export function initIMEInput(): void {
         const mouseMode = termUnk.modes &&
           (termUnk.modes as Record<string, unknown>).mouseTrackingMode;
         console.log('[scroll] delta=', delta, 'mouseMode=', mouseMode);
-        if (mouseMode && mouseMode !== 'none') {
+        if (mouseMode && mouseMode !== 'none' && !_forceLocalScroll()) {
           const natural = _naturalVerticalScroll();
           // delta>0 = finger UP, delta<0 = finger DOWN
           // Natural: finger down(-delta) = see older = WheelUp(64)
@@ -1363,6 +1372,15 @@ export function initIMEInput(): void {
 
   function _naturalHorizontalScroll(): boolean {
     return localStorage.getItem('naturalHorizontalScroll') !== 'false';
+  }
+
+  /** When true, vertical swipes always call xterm's `scrollLines()` instead
+   *  of forwarding SGR mouse-wheel events to the remote process. Use when
+   *  inside a TUI (Claude Code, vim with `mouse=a`, htop) that consumes
+   *  wheel events without scrolling its output buffer — local xterm
+   *  scrollback works regardless of remote mouse mode. */
+  function _forceLocalScroll(): boolean {
+    return localStorage.getItem('forceLocalScroll') === 'true';
   }
 
   function _pinchDist(touches: TouchList): number {

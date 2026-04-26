@@ -861,6 +861,24 @@ export function initSessionMenu(): void {
     const session = currentSession();
     if (session) session.activeThemeName = next;
   });
+
+  // Local scrollback toggle — bypasses SGR mouse-wheel forwarding so that
+  // vertical swipes always scroll xterm's local buffer. Needed inside TUIs
+  // that enable mouse mode but don't actually scroll on wheel events
+  // (Claude Code TUI, vim with `set mouse=a`, htop).
+  const localScrollBtn = document.getElementById('sessionLocalScrollBtn');
+  function _refreshLocalScrollLabel(): void {
+    if (!localScrollBtn) return;
+    const on = localStorage.getItem('forceLocalScroll') === 'true';
+    localScrollBtn.textContent = on ? 'Scroll: local ▸' : 'Scroll: TUI ▸';
+  }
+  _refreshLocalScrollLabel();
+  localScrollBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const on = localStorage.getItem('forceLocalScroll') === 'true';
+    localStorage.setItem('forceLocalScroll', on ? 'false' : 'true');
+    _refreshLocalScrollLabel();
+  });
 }
 
 // ── Tab navigation ───────────────────────────────────────────────────────────
