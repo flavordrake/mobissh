@@ -14,6 +14,7 @@ import { getPreviewTimeout, setPreviewTimeout, getPreviewIdleDelay, setPreviewId
 import { getProfiles, loadProfiles } from './profiles.js';
 import { getConnectLog, clearConnectLog, downloadConnectLog } from './connect-log.js';
 import { getGestureLog, clearGestureLog, downloadGestureLog } from './gesture-log.js';
+import { fireNotification, _addNotification } from './terminal.js';
 
 
 /** Declarative schema for validatable localStorage keys. */
@@ -717,11 +718,49 @@ export function connectSSE(): void {
   });
 
   // ── Hook events (non-approval) ──
+  // PermissionRequest goes through the dedicated 'approval' SSE event above,
+  // so this handler covers Stop / Notification / SubagentStop / etc.
+  // Each event class gets a distinct vibration pattern so the user can
+  // tell at a glance what kind of attention is being asked for, plus an
+  // in-app notification entry and an OS-level notification when allowed.
+  // Haptic patterns are gated behind localStorage('hapticNotifications')
+  // (default ON) so the user can mute them.
   es.addEventListener('hook', (e: Event) => {
     const me = e as MessageEvent;
     try {
-      const data = JSON.parse(me.data as string) as { event?: string; tool?: string; detail?: string; description?: string };
+      const data = JSON.parse(me.data as string) as { event?: string; tool?: string; detail?: string; description?: string; message?: string };
       console.log('[sse]', data.event, data.tool, data.detail);
+
+      let body = data.message ?? data.detail ?? data.description ?? '';
+      let title = 'Claude Code';
+      let pattern: number | number[] | null = null;
+
+      switch (data.event) {
+        case 'Stop':
+          title = 'Claude is ready';
+          if (!body) body = 'Awaiting your next instruction.';
+          pattern = 40;
+          break;
+        case 'SubagentStop':
+          title = 'Subagent finished';
+          pattern = [60, 40, 60];
+          break;
+        case 'Notification':
+          title = 'Claude Code';
+          pattern = 20;
+          break;
+        default:
+          // Unknown event — still surface in drawer, no haptic.
+          if (!body) body = data.event ?? 'hook event';
+          break;
+      }
+
+      _addNotification(`[${data.event ?? 'hook'}] ${body}`);
+      if (title && body) fireNotification(title, body);
+
+      if (pattern !== null && localStorage.getItem('hapticNotifications') !== 'false') {
+        try { navigator.vibrate(pattern); } catch { /* not supported */ }
+      }
     } catch {
       console.warn('[sse] failed to parse hook event');
     }
