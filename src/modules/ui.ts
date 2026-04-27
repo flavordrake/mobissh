@@ -2573,6 +2573,30 @@ function _filesNavigateTo(path: string, options?: { fromPopstate?: boolean }): v
   sendSftpLs(path, reqId);
 }
 
+/** Sort key currently selected in the files sort bar. Persisted in
+ *  localStorage so it survives reloads. */
+type FilesSortKey = 'name' | 'date' | 'size';
+function _filesSortKey(): FilesSortKey {
+  const v = localStorage.getItem('filesSortKey');
+  return v === 'date' || v === 'size' ? v : 'name';
+}
+function _filesSortAsc(): boolean {
+  return localStorage.getItem('filesSortAsc') !== 'false';
+}
+function _setFilesSortKey(key: FilesSortKey): void {
+  localStorage.setItem('filesSortKey', key);
+}
+function _setFilesSortAsc(asc: boolean): void {
+  localStorage.setItem('filesSortAsc', asc ? 'true' : 'false');
+}
+/** Re-render the active directory listing with the current sort settings.
+ *  No-op if no entries are cached yet (the initial ls hasn't returned). */
+function _resortAndRerenderFiles(): void {
+  const state = _activeFilesState();
+  const cached = state.cache.get(state.path);
+  if (cached) _renderFilesList(state.path, cached);
+}
+
 /** Apply the current filter-input value to visible file-entry rows.
  *  Case-insensitive substring match on `data-name`. Safe to call any time. */
 function _applyFilesFilter(): void {
@@ -2674,9 +2698,20 @@ function _renderFilesList(path: string, entries: SftpEntry[]): void {
     return;
   }
 
+  const sortKey = _filesSortKey();
+  const sortAsc = _filesSortAsc();
   const sorted = [...entries].sort((a, b) => {
-    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-    return a.name.localeCompare(b.name);
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1; // dirs always pinned
+    let cmp = 0;
+    if (sortKey === 'date') {
+      const am = Number(a.mtime); const bm = Number(b.mtime);
+      cmp = (isNaN(am) ? 0 : am) - (isNaN(bm) ? 0 : bm);
+    } else if (sortKey === 'size') {
+      cmp = a.size - b.size;
+    } else {
+      cmp = a.name.localeCompare(b.name);
+    }
+    return sortAsc ? cmp : -cmp;
   });
 
   const rows = sorted.map((e) => {
@@ -3235,6 +3270,35 @@ export function initFilesPanel(): void {
   // Close button (#459) — return to terminal
   document.getElementById('filesCloseBtn')?.addEventListener('click', () => {
     navigateToPanel('terminal');
+  });
+
+  // Sort bar — segmented key control + direction toggle. Initialise from
+  // localStorage and re-render the cached listing on change.
+  function _refreshSortBarState(): void {
+    const key = _filesSortKey();
+    document.querySelectorAll<HTMLButtonElement>('.files-sort-segment button').forEach((btn) => {
+      const isActive = btn.dataset.sortKey === key;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
+    });
+    const dirBtn = document.getElementById('filesSortDirBtn');
+    if (dirBtn) dirBtn.textContent = _filesSortAsc() ? '↑' : '↓';
+  }
+  _refreshSortBarState();
+  document.querySelectorAll<HTMLButtonElement>('.files-sort-segment button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.sortKey;
+      if (key === 'name' || key === 'date' || key === 'size') {
+        _setFilesSortKey(key);
+        _refreshSortBarState();
+        _resortAndRerenderFiles();
+      }
+    });
+  });
+  document.getElementById('filesSortDirBtn')?.addEventListener('click', () => {
+    _setFilesSortAsc(!_filesSortAsc());
+    _refreshSortBarState();
+    _resortAndRerenderFiles();
   });
 
   // Filter input in the top bar — live-filters visible entries; Enter on a

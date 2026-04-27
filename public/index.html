@@ -371,6 +371,16 @@
           <button class="files-docs-menu-item" data-action="upload" role="menuitem">Upload</button>
         </div>
       </div>
+      <!-- Sort bar — compact segmented control + direction toggle, right-aligned
+           so it sits visually above the date column in each row. -->
+      <div class="files-sort-bar" role="toolbar" aria-label="Sort files">
+        <div class="files-sort-segment" role="radiogroup" aria-label="Sort by">
+          <button data-sort-key="name" class="active" role="radio" aria-checked="true">Name</button>
+          <button data-sort-key="date" role="radio" aria-checked="false">Date</button>
+          <button data-sort-key="size" role="radio" aria-checked="false">Size</button>
+        </div>
+        <button id="filesSortDirBtn" class="files-sort-dir-btn" aria-label="Toggle sort direction" title="Toggle ascending / descending">↑</button>
+      </div>
       <div id="filePreview" class="hidden"></div>
       <div id="filesExplore" class="files-subview active"></div>
       <div id="filesTransfer" class="files-subview hidden">

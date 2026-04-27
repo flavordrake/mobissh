@@ -3190,10 +3190,62 @@ hr {
 #panel-files:has(#filePreview:not(.hidden)) .files-docs-menu-btn,
 #panel-files:has(#filePreview:not(.hidden)) .files-filter-input,
 #panel-files:has(#filePreview:not(.hidden)) .files-subtabs,
+#panel-files:has(#filePreview:not(.hidden)) .files-sort-bar,
 #panel-files:has(.files-subtab[data-subtab="transfer"].active) .files-filter-input,
-#panel-files:has(.files-subtab[data-subtab="transfer"].active) .files-docs-menu-btn {
+#panel-files:has(.files-subtab[data-subtab="transfer"].active) .files-docs-menu-btn,
+#panel-files:has(.files-subtab[data-subtab="transfer"].active) .files-sort-bar {
   display: none;
 }
+
+/* Compact sort bar — sits between chrome and the file list, right-aligned so
+ * the controls hang visually above the date column. Segmented control for
+ * the three keys; arrow toggle for direction. */
+.files-sort-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.files-sort-segment {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.files-sort-segment button {
+  background: transparent;
+  border: none;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.files-sort-segment button + button { border-left: 1px solid var(--border); }
+.files-sort-segment button.active {
+  background: var(--accent);
+  color: var(--bg-deep);
+  font-weight: 600;
+}
+.files-sort-dir-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+  min-width: 24px;
+  -webkit-tap-highlight-color: transparent;
+}
+.files-sort-dir-btn:active { background: var(--accent); color: var(--bg-deep); }
 
 .files-close-btn,
 .files-docs-menu-btn {
