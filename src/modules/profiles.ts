@@ -958,7 +958,18 @@ interface ImportResult {
   errors: string[];
 }
 
-/** Parse and import profiles from JSON string. Deduplicates by host+port+username. */
+/** Parse and import profiles from JSON string. Deduplicates by host+port+username.
+ *
+ *  Accepts two formats:
+ *  - Legacy profile export: a JSON array of profile objects.
+ *  - Full backup file: a JSON object `{ version, profiles[], vault? }`.
+ *    When `vault` is present, the encrypted blob is restored alongside the
+ *    profiles. `dekBio` (biometric DEK wrap) is stripped — bio enrollment
+ *    is device-specific and would fail silently if reused.
+ *
+ *  This means the user can hand the same import button either format
+ *  without having to remember which export produced which file.
+ */
 export function importProfilesFromJSON(json: string): ImportResult {
   const result: ImportResult = { added: 0, skipped: 0, errors: [] };
 
@@ -966,31 +977,43 @@ export function importProfilesFromJSON(json: string): ImportResult {
   try {
     parsed = JSON.parse(json);
   } catch {
-    result.errors.push('Invalid JSON format');
+    result.errors.push('Invalid JSON — the selected file is not valid JSON.');
     return result;
   }
 
-  if (!Array.isArray(parsed)) {
-    result.errors.push('Invalid format: expected an array of profiles');
+  // Detect format. Either an array (legacy) or an object with `profiles[]`.
+  let profileEntries: unknown[];
+  let backupVault: { encrypted?: unknown; meta?: unknown } | null = null;
+  if (Array.isArray(parsed)) {
+    profileEntries = parsed;
+  } else if (parsed !== null && typeof parsed === 'object'
+             && Array.isArray((parsed as Record<string, unknown>).profiles)) {
+    profileEntries = (parsed as { profiles: unknown[] }).profiles;
+    const v = (parsed as Record<string, unknown>).vault;
+    if (v !== null && typeof v === 'object') {
+      backupVault = v as { encrypted?: unknown; meta?: unknown };
+    }
+  } else {
+    result.errors.push('Wrong file shape — expected a profile-export array OR a backup file with a `profiles` array. The file you picked is neither.');
     return result;
   }
 
   const existing = getProfiles();
 
-  for (const entry of parsed) {
+  for (const entry of profileEntries) {
     if (typeof entry !== 'object' || entry === null) {
-      result.errors.push('Invalid entry: not an object');
+      result.errors.push('Skipped a non-object entry in the profiles list.');
       continue;
     }
     const rec = entry as Record<string, unknown>;
 
     // Validate required fields
     if (!rec.host || typeof rec.host !== 'string') {
-      result.errors.push('Invalid entry: missing or invalid host');
+      result.errors.push('Skipped an entry with no host.');
       continue;
     }
     if (!rec.username || typeof rec.username !== 'string') {
-      result.errors.push('Invalid entry: missing or invalid username');
+      result.errors.push(`Skipped ${rec.host} — no username.`);
       continue;
     }
 
@@ -1023,6 +1046,25 @@ export function importProfilesFromJSON(json: string): ImportResult {
   }
 
   localStorage.setItem('sshProfiles', JSON.stringify(existing));
+
+  // Restore encrypted vault from a backup-format file. The blob stays
+  // encrypted; the user unlocks with the same password they set on the
+  // source device. dekBio is stripped — biometric enrollment is bound
+  // to a specific device's WebAuthn credential and won't unwrap here.
+  if (backupVault) {
+    if (typeof backupVault.encrypted === 'string') {
+      localStorage.setItem('sshVault', backupVault.encrypted);
+    }
+    if (typeof backupVault.meta === 'string') {
+      let meta: Record<string, unknown> = {};
+      try { meta = JSON.parse(backupVault.meta) as Record<string, unknown>; } catch { /* keep empty */ }
+      delete meta.dekBio;
+      localStorage.setItem('vaultMeta', JSON.stringify(meta));
+      localStorage.removeItem('webauthnCredId');
+      localStorage.removeItem('webauthnPrfSalt');
+    }
+  }
+
   loadProfiles();
   return result;
 }
@@ -1039,10 +1081,23 @@ export function triggerProfileImport(): void {
     reader.onload = () => {
       const text = reader.result as string;
       const result = importProfilesFromJSON(text);
-      if (result.errors.length > 0) {
-        _toast(`Import: ${String(result.added)} added, ${String(result.skipped)} skipped, ${String(result.errors.length)} errors`);
+      // Toast picks the most useful message we can give:
+      // - 0 added + errors: surface the FIRST error verbatim, since the user
+      //   can't act on a count alone (this was the unhelpful "0 succeed
+      //   1 error" toast).
+      // - some added: report counts; tail-mention error count if any.
+      // - all duplicates: spell that out so the user knows nothing was lost.
+      if (result.added === 0 && result.errors.length > 0) {
+        _toast(result.errors[0] ?? 'Import failed.');
+      } else if (result.added > 0) {
+        const addedMsg = `Imported ${String(result.added)} profile${result.added !== 1 ? 's' : ''}`;
+        const skipMsg = result.skipped > 0 ? `, ${String(result.skipped)} skipped (duplicates)` : '';
+        const errMsg = result.errors.length > 0 ? `, ${String(result.errors.length)} error${result.errors.length !== 1 ? 's' : ''}` : '';
+        _toast(`${addedMsg}${skipMsg}${errMsg}`);
+      } else if (result.skipped > 0) {
+        _toast(`All ${String(result.skipped)} profiles were already present — nothing to import.`);
       } else {
-        _toast(`Imported ${String(result.added)} profile${result.added !== 1 ? 's' : ''}${result.skipped > 0 ? `, ${String(result.skipped)} skipped (duplicates)` : ''}`);
+        _toast('Backup file had no profiles to import.');
       }
     };
     reader.readAsText(file);
