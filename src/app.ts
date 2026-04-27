@@ -15,7 +15,7 @@ import {
   deleteProfile, editProfile, closeProfileEdit,
   loadKeys, importKey, deleteKey, renameKey, editKey, saveKeyEdit, cancelKeyEdit, populateKeyDropdown,
 } from './modules/profiles.js';
-import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE } from './modules/settings.js';
+import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE, applyUiScaleFromStorage } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
 import { appState } from './modules/state.js';
 import { initIME, initIMEInput } from './modules/ime.js';
@@ -45,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
   try {
     console.log('[boot] code version: 2026-04-04T2350-reconnect-guard-v3');
     migrateSettings();
+    applyUiScaleFromStorage();
     initDebugOverlay();
     initTerminal();
     initUI({ keyboardVisible: getKeyboardVisible, ROOT_CSS: getRootCSS(), applyFontSize, applyTheme });

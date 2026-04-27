@@ -46,6 +46,39 @@ export function initSettings({ toast, applyFontSize, applyTheme }: SettingsDeps)
   _applyTheme = applyTheme;
 }
 
+// ── UI scale (#tablet-sizing) ────────────────────────────────────────────────
+// Multiplies the entire chrome via CSS `zoom` on `<body>`. zoom is now
+// supported in Chrome / Edge / Safari and Firefox 126+. Layout reflows
+// and tap targets remain accurate (unlike `transform: scale`).
+//
+// We read the stored scale before init so the very first paint after a
+// reload comes up at the chosen scale — no flash of unscaled UI.
+const UI_SCALE_KEY = 'uiScale';
+
+function _currentUiScale(): number {
+  const raw = localStorage.getItem(UI_SCALE_KEY);
+  const n = raw ? Number(raw) : NaN;
+  return isFinite(n) && n > 0 ? n : 1;
+}
+
+function _writeUiScale(scale: number): void {
+  // body.style.zoom uses CSS pixels; setting "1" leaves the browser
+  // default rendering path. Persist exact numeric value (not formatted)
+  // so 1 doesn't round-trip as "1.0" or vice versa.
+  document.body.style.zoom = scale === 1 ? '' : String(scale);
+}
+
+function _setUiScale(scale: number): void {
+  localStorage.setItem(UI_SCALE_KEY, String(scale));
+  _writeUiScale(scale);
+}
+
+/** Apply persisted UI scale immediately. Called from app.ts on boot
+ *  before the first paint so users don't see a flash of unscaled UI. */
+export function applyUiScaleFromStorage(): void {
+  _writeUiScale(_currentUiScale());
+}
+
 /** Show the Settings overview (category list). Does not touch history — the
  *  caller is responsible for hash state. */
 export function showSettingsOverview(): void {
@@ -368,6 +401,18 @@ export function initSettingsPanel(): void {
   document.getElementById('fontSize')!.addEventListener('input', (e) => {
     _applyFontSize(parseFloat((e.target as HTMLInputElement).value));
   });
+
+  // UI scale (#tablet-sizing) — multiplies the entire chrome via CSS zoom on
+  // body. Applied at module load via applyUiScaleFromStorage(); this block
+  // only handles the user-driven select change.
+  const uiScaleEl = document.getElementById('uiScale') as HTMLSelectElement | null;
+  if (uiScaleEl) {
+    uiScaleEl.value = String(_currentUiScale());
+    uiScaleEl.addEventListener('change', () => {
+      const scale = Number(uiScaleEl.value) || 1;
+      _setUiScale(scale);
+    });
+  }
 
   const themeSelect = document.getElementById('termThemeSelect') as HTMLSelectElement;
   const themePreview = document.getElementById('themePreview');
