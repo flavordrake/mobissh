@@ -18,6 +18,7 @@ RUN cd server && npm ci --omit=dev
 # Copy application sources
 COPY server/ ./server/
 COPY public/ ./public/
+COPY docs/install-mobissh-hooks.md ./docs/install-mobissh-hooks.md
 
 # Compile TypeScript (src/ -> public/modules/, overwrites any stale compiled JS)
 COPY tsconfig.json ./

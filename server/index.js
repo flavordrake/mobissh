@@ -117,6 +117,19 @@ try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).tr
   try { GIT_HASH = fs.readFileSync(path.join(__dirname, '..', '.git-hash'), 'utf8').trim(); } catch (_2) {}
 }
 
+// Cache the install-hooks doc at startup for the /install-hooks route.
+// Served as text/markdown so curl / Claude Code WebFetch / browsers all
+// render it sanely.
+let INSTALL_HOOKS_DOC = '';
+try {
+  INSTALL_HOOKS_DOC = fs.readFileSync(
+    path.join(__dirname, '..', 'docs', 'install-mobissh-hooks.md'),
+    'utf8',
+  );
+} catch (_) {
+  INSTALL_HOOKS_DOC = '# install-mobissh-hooks.md not found\n\nThis MobiSSH build was packaged without the install doc.\n';
+}
+
 // SSE clients for real-time telemetry push
 const sseClients = new Set();
 
@@ -727,6 +740,18 @@ const server = http.createServer((req, res) => {
         res.end('{"error":"invalid json"}');
       }
     });
+    return;
+  }
+
+  // /install-hooks — install snippet for adding the MobiSSH notification
+  // hook to a Claude Code instance. Markdown so it renders sanely in
+  // browsers AND copies cleanly when fetched by another Claude Code agent.
+  if (req.url === '/install-hooks' || req.url === '/install-hooks.md') {
+    res.writeHead(200, {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(INSTALL_HOOKS_DOC);
     return;
   }
 
