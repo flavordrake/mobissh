@@ -445,7 +445,11 @@ html, body {
   min-width: 180px;
   max-width: min(220px, 90vw);
   top: 8px;
-  bottom: 120px;
+  /* Size to content with a hard cap that leaves room for the keybar (~120px).
+   * Was `bottom: 120px` — that pinned both edges and produced empty space at
+   * the bottom of the menu whenever the content was shorter than the
+   * available height. */
+  max-height: calc(100vh - 128px);
   z-index: 200;
   background: var(--bg-panel);
   border: 1px solid var(--border);
