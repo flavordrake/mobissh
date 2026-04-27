@@ -21,3 +21,4 @@ hooks
 *.md
 *.log
 .DS_Store
+!docs/install-mobissh-hooks.md
