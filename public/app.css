@@ -37,6 +37,14 @@ html, body {
   color: var(--text);
   font-family: system-ui, -apple-system, sans-serif;
   -webkit-tap-highlight-color: transparent;
+  /* Disable browser-level pinch-zoom on the chrome. Modern Chrome/Android
+   * ignores `user-scalable=no` in viewport meta when accessibility's
+   * "Force enable zoom" is on, which lets a two-finger pinch scale the
+   * whole PWA — including the back / index buttons in file preview. Our
+   * custom pinch handlers (terminal font-size, future preview content
+   * zoom) bind their own listeners so disabling browser-level pinch
+   * doesn't affect them. */
+  touch-action: pan-x pan-y;
 }
 
 /* Generic hidden class — one rule to hide any element via .hidden toggle */
