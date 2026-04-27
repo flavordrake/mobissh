@@ -1649,8 +1649,8 @@ hr {
 /* Profile list: left-edge color accent so the profile reads the same color
  * in the list, in selection, and in the session dot. */
 .profile-item {
-  border-left: 3px solid var(--profile-color, transparent);
-  padding-left: 10px;
+  border-left: 9px solid var(--profile-color, transparent);
+  padding-left: 12px;
 }
 .active-session-item,
 .recent-session-item {
