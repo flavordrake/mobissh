@@ -282,8 +282,12 @@ html, body {
 #app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh; /* dynamic viewport height for mobile */
+  /* When body has `zoom: N`, a child sized in vh would render at N × vh
+   * visually and overflow the viewport. Divide by --ui-scale (set on
+   * :root by applyUiScaleFromStorage) so the scaled height of #app
+   * lands back at exactly 100vh. */
+  height: calc(100vh / var(--ui-scale, 1));
+  height: calc(100dvh / var(--ui-scale, 1));
   padding-top: env(safe-area-inset-top); /* notch / Dynamic Island */
 }
 

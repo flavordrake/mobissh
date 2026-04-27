@@ -66,6 +66,11 @@ function _writeUiScale(scale: number): void {
   // default rendering path. Persist exact numeric value (not formatted)
   // so 1 doesn't round-trip as "1.0" or vice versa.
   document.body.style.zoom = scale === 1 ? '' : String(scale);
+  // Mirror the scale into a CSS variable so #app and any other height-
+  // sensitive element can divide its viewport-sized height by the scale
+  // — without this the keybar / tab bar at the bottom of the column flex
+  // get pushed below the visible viewport at scale > 1.
+  document.documentElement.style.setProperty('--ui-scale', String(scale));
 }
 
 function _setUiScale(scale: number): void {
