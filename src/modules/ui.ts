@@ -632,12 +632,18 @@ export function initSessionMenu(): void {
     e.stopPropagation();
     const wasHidden = menu.classList.toggle('hidden');
     backdrop.classList.toggle('hidden', wasHidden);
-    // Position menu bottom above the handle bar using actual element position
+    // Cap the menu height so it never overlaps the handle bar — but use
+    // max-height (not bottom) so the menu still sizes to its CONTENT when
+    // the items are shorter than the available space. Setting `bottom`
+    // pins both edges and forces the menu to fill the entire span,
+    // producing dead space below the last item.
     if (!wasHidden) {
       const handleBar = document.getElementById('key-bar-handle');
       if (handleBar) {
         const handleTop = handleBar.getBoundingClientRect().top;
-        menu.style.bottom = `${String(window.innerHeight - handleTop + 4)}px`;
+        // 8px (CSS top) + 8px breathing room above the handle bar.
+        menu.style.maxHeight = `${String(Math.max(120, handleTop - 16))}px`;
+        menu.style.bottom = ''; // clear any prior inline value
       }
       // Session-switch list is at the bottom of the menu (thumb-reach). Scroll
       // to it on open so the user doesn't have to scroll down to switch.
