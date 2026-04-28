@@ -248,6 +248,36 @@ describe('visibility-triggered reconnect (#153)', () => {
 
     expect(mockErrorOverlay.classList.add).toHaveBeenCalledWith('hidden');
   });
+
+  it('scheduleReconnect targets the passed sessionId, not activeSessionId', () => {
+    // Regression: the SSH 'disconnected' message handler used to call
+    // scheduleReconnect() with no argument, which defaulted to activeSessionId.
+    // If session A disconnected while session B was foregrounded, B got
+    // reconnect-thrashed instead of A. Lock the explicit-target path.
+    const profileA = { title: 'A', host: 'host-a', port: 22, username: 'u', authType: 'password' as const };
+    const profileB = { title: 'B', host: 'host-b', port: 22, username: 'u', authType: 'password' as const };
+    const sA = createSession('sess-A');
+    sA.profile = profileA;
+    transitionSession('sess-A', 'connecting');
+    transitionSession('sess-A', 'authenticating');
+    transitionSession('sess-A', 'connected');
+    transitionSession('sess-A', 'soft_disconnected');
+
+    const sB = createSession('sess-B');
+    sB.profile = profileB;
+    transitionSession('sess-B', 'connecting');
+    transitionSession('sess-B', 'authenticating');
+    transitionSession('sess-B', 'connected');
+
+    // User is looking at session B in the UI.
+    appState.activeSessionId = 'sess-B';
+
+    // SSH on session A disconnected — the WS handler now passes sessionId.
+    scheduleReconnect('sess-A');
+
+    expect(sA.reconnectTimer).not.toBeNull();
+    expect(sB.reconnectTimer).toBeNull();
+  });
 });
 
 describe('_probeZombieConnection (#153)', () => {

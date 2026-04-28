@@ -644,7 +644,8 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     _showConnectionStatus(`WebSocket error: ${message}`, { error: true, sessionId });
-    scheduleReconnect();
+    // Schedule reconnect for THIS session, not whichever happens to be active.
+    scheduleReconnect(sessionId);
     return;
   }
 
@@ -885,7 +886,12 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         // Toast instead of blocking overlay — the session will auto-reconnect (#351)
         _toast(`Disconnected: ${msg.reason ?? 'connection lost'}`);
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
-        scheduleReconnect();
+        // Reconnect THIS session, not whichever is active in the UI — otherwise
+        // a disconnect on a backgrounded session reconnect-thrashes the
+        // foreground one (observed: 2026-04-28 connect log, healthy spark
+        // session getting redundant ws_open events after another session's
+        // ssh_disconnected fired).
+        scheduleReconnect(sessionId);
         break;
 
       // [SFTP_CLIENT_ROUTER] -- every type in SFTP_MSG must be listed here
