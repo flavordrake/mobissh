@@ -663,6 +663,69 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /api/drop-telemetry — auto-upload of connection-drop telemetry
+  // (connect log + gesture log + metadata, no screenshot). Client fires this
+  // on every recovery from a `reconnecting` state, throttled to 5min/device.
+  // Lands in test-results/uploads/ alongside bug reports so the watcher
+  // surfaces it the same way; distinguished by the filename prefix.
+  if (req.method === 'POST' && req.url === '/api/drop-telemetry') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const { kind, reason, sessionId, host, ts, userAgent, url, version, connectLog, gestureLog } = data;
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
+        fs.mkdirSync(reportDir, { recursive: true });
+
+        let connectLogFile = '';
+        if (Array.isArray(connectLog) && connectLog.length > 0) {
+          connectLogFile = `${stamp}-drop-telemetry.connect-log.json`;
+          fs.writeFileSync(
+            path.join(reportDir, connectLogFile),
+            JSON.stringify(connectLog, null, 2),
+          );
+        }
+
+        let gestureLogFile = '';
+        if (Array.isArray(gestureLog) && gestureLog.length > 0) {
+          gestureLogFile = `${stamp}-drop-telemetry.gesture-log.json`;
+          fs.writeFileSync(
+            path.join(reportDir, gestureLogFile),
+            JSON.stringify(gestureLog, null, 2),
+          );
+        }
+
+        const meta = {
+          kind: kind || 'drop-recovery',
+          reason: reason || '',
+          sessionId: sessionId || '',
+          host: host || '',
+          ts: ts || Date.now(),
+          stamp,
+          userAgent: userAgent || '',
+          url: url || '',
+          version: version || '',
+          connectLogFile,
+          connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
+          gestureLogFile,
+          gestureLogEventCount: Array.isArray(gestureLog) ? gestureLog.length : 0,
+        };
+        fs.writeFileSync(path.join(reportDir, `${stamp}-drop-telemetry.json`), JSON.stringify(meta, null, 2));
+        console.log(`[drop-telemetry] ${stamp} reason="${meta.reason}" host="${meta.host}" connectEvents=${meta.connectLogEventCount} gestureEvents=${meta.gestureLogEventCount}`);
+        sseBroadcast('drop-telemetry', { reason: meta.reason, host: meta.host, stamp });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, stamp }));
+      } catch (err) {
+        console.error('[drop-telemetry] parse error:', err.message);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"error":"invalid json"}');
+      }
+    });
+    return;
+  }
+
   // POST /api/bug-report — receive screenshot + logs from client, save to disk.
   if (req.method === 'POST' && req.url === '/api/bug-report') {
     let body = '';

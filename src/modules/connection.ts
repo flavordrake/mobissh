@@ -13,6 +13,7 @@ import { saveRecentSession, getProfiles, getKeys } from './profiles.js';
 import { getDefaultWsUrl, RECONNECT, escHtml, parseApprovalPayload } from './constants.js';
 import { appState, currentSession, createSession, transitionSession, isSessionConnected, onStateChange } from './state.js';
 import { logConnect } from './connect-log.js';
+import { uploadDropTelemetry } from './drop-telemetry.js';
 import { createSessionTerminal, setSessionHandleLookup } from './terminal.js';
 import { SessionHandle } from './session.js';
 
@@ -777,11 +778,22 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     switch (msg.type) {
       case 'connected': {
         logConnect('ssh_ready', sessionId, { host: session?.profile?.host });
+        // If this is a recovery (we were in `reconnecting` not `connecting`),
+        // upload the last 24h of telemetry so we can see what happened
+        // without waiting for the user to file a bug report. Throttled to
+        // 5 min/upload — a tight reconnect loop won't flood the server.
+        const wasRecovering = session?.state === 'reconnecting';
         if (session) {
           session._wsConsecFailures = 0;
           session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
           if (session.state === 'connecting' || session.state === 'reconnecting') transitionSession(sessionId, 'authenticating');
           if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
+        }
+        if (wasRecovering) {
+          // session is non-null here because wasRecovering was derived from
+          // session?.state === 'reconnecting', which only narrows true when
+          // session exists. TS' flow analysis carries that narrowing forward.
+          uploadDropTelemetry('recovered', sessionId, session.profile?.host);
         }
         void acquireWakeLock();
         // Mouse tracking reset removed — xterm.js starts clean, and writing mode
