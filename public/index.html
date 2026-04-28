@@ -346,13 +346,20 @@
           </div>
         </div>
       </div>
-      <!-- Approval bar — full-width buttons for Claude Code permission prompts -->
-      <div id="approvalBar" class="approval-bar hidden">
-        <div class="approval-header">
-          <div id="approvalLabel" class="approval-label"></div>
-          <button id="approvalDismiss" class="approval-dismiss" tabindex="-1" title="Dismiss (disable in Settings)">✕</button>
+      <!-- Approval strip — single-line floating chip at the top edge of the
+           active panel. Tap the text to expand for the full prompt; the
+           three actions (auto / no / yes) sit on the right with yes
+           anchored at the rightmost edge for thumb reach. -->
+      <div id="approvalStrip" class="approval-strip hidden" role="dialog" aria-label="Approval">
+        <button id="approvalStripText" class="approval-strip-text" aria-label="Tap to expand approval prompt" tabindex="-1">
+          <span id="approvalStripTag" class="approval-strip-tag"></span>
+          <span id="approvalStripSummary" class="approval-strip-summary"></span>
+        </button>
+        <div class="approval-strip-buttons">
+          <button id="approvalStripAuto" class="approval-strip-btn auto" tabindex="-1" title="Auto-accept future prompts" aria-label="Toggle auto-accept">✓</button>
+          <button id="approvalStripNo" class="approval-strip-btn no" tabindex="-1" aria-label="Deny">No</button>
+          <button id="approvalStripYes" class="approval-strip-btn yes" tabindex="-1" aria-label="Allow">Yes</button>
         </div>
-        <div id="approvalButtons" class="approval-buttons"></div>
       </div>
     </div>
 

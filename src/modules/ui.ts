@@ -1364,36 +1364,39 @@ function _clearApprovalTimer(): void {
 }
 
 export function initApprovalBar(): void {
-  const bar = document.getElementById('approvalBar');
-  const label = document.getElementById('approvalLabel');
-  const buttons = document.getElementById('approvalButtons');
-  const dismissBtn = document.getElementById('approvalDismiss');
-  if (!bar || !label || !buttons) return;
+  const strip = document.getElementById('approvalStrip');
+  const textBtn = document.getElementById('approvalStripText');
+  const summaryEl = document.getElementById('approvalStripSummary');
+  const tagEl = document.getElementById('approvalStripTag');
+  const autoBtn = document.getElementById('approvalStripAuto');
+  const noBtn = document.getElementById('approvalStripNo');
+  const yesBtn = document.getElementById('approvalStripYes');
+  if (!strip || !textBtn || !summaryEl || !tagEl || !autoBtn || !noBtn || !yesBtn) return;
 
   function dismiss(): void {
     _clearApprovalTimer();
-    bar!.classList.add('hidden');
+    strip!.classList.add('hidden');
+    strip!.classList.remove('expanded');
+    yesBtn!.classList.remove('countdown-active');
+    yesBtn!.style.removeProperty('--timer-pct');
   }
 
-  // Permanent dismiss — disables approval bar until re-enabled in Settings
-  if (dismissBtn) {
-    dismissBtn.addEventListener('click', () => {
-      dismiss();
-      localStorage.setItem('approvalBarDisabled', 'true');
-      toast('Approval bar disabled. Re-enable in Settings.');
-    });
-    dismissBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
-  }
+  // Tap the text area to toggle expanded view (full path / description).
+  textBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    strip.classList.toggle('expanded');
+  });
 
-  // Track the current approval's requestId for the gate response
+  // Track the current approval's requestId + the option keys we mapped onto
+  // the yes/no buttons. Different prompts may use different keys.
   let _pendingRequestId: string | null = null;
+  let _yesKey = '';
+  let _noKey = '';
 
   function sendAndDismiss(key: string): void {
-    const decision = key === '1' ? 'allow' : 'deny';
-    console.log(`[approval] button pressed: "${key}" → decision=${decision} requestId=${_pendingRequestId ?? 'none'}`);
-
+    const decision = key === _yesKey ? 'allow' : 'deny';
+    console.log(`[approval] button pressed: key="${key}" → decision=${decision} requestId=${_pendingRequestId ?? 'none'}`);
     if (_pendingRequestId) {
-      // Respond via HTTP to the approval gate — this unblocks the hook script
       void fetch('api/approval-respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1401,10 +1404,66 @@ export function initApprovalBar(): void {
       }).catch(() => { /* network error — gate will timeout */ });
       _pendingRequestId = null;
     } else {
-      // Fallback: no gate pending, send keystroke directly (legacy path)
+      // Fallback: no gate pending, send the keystroke directly (legacy path)
       sendSSHInputToAll(key);
     }
     dismiss();
+  }
+
+  yesBtn.addEventListener('click', () => { if (_yesKey) sendAndDismiss(_yesKey); });
+  yesBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
+  noBtn.addEventListener('click', () => { if (_noKey) sendAndDismiss(_noKey); });
+  noBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
+
+  function _isAutoAccept(): boolean {
+    return parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10) > 0;
+  }
+  function _refreshAutoBtn(): void {
+    autoBtn!.classList.toggle('active', _isAutoAccept());
+    autoBtn!.title = _isAutoAccept()
+      ? `Auto-accept on (${localStorage.getItem('approvalCountdown') ?? '10'}s) — tap to disable`
+      : 'Auto-accept off — tap to enable';
+  }
+  _refreshAutoBtn();
+
+  autoBtn.addEventListener('click', () => {
+    if (_isAutoAccept()) {
+      localStorage.setItem('approvalCountdown', '0');
+      stopCountdown();
+    } else {
+      const stored = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
+      localStorage.setItem('approvalCountdown', stored > 0 ? String(stored) : '10');
+      if (_yesKey && !strip.classList.contains('hidden')) startCountdown();
+    }
+    _refreshAutoBtn();
+  });
+  autoBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
+
+  function startCountdown(): void {
+    if (!_yesKey) return;
+    const sec = parseInt(localStorage.getItem('approvalCountdown') ?? '10', 10) || 10;
+    _clearApprovalTimer();
+    yesBtn!.classList.add('countdown-active');
+    let pct = 1;
+    yesBtn!.style.setProperty('--timer-pct', String(pct));
+    const tickMs = 50;
+    const totalTicks = (sec * 1000) / tickMs;
+    let elapsed = 0;
+    _approvalTimer = setInterval(() => {
+      elapsed++;
+      pct = Math.max(0, 1 - elapsed / totalTicks);
+      yesBtn!.style.setProperty('--timer-pct', String(pct));
+      if (elapsed >= totalTicks) {
+        console.log(`[approval] auto-accept fired (${String(sec)}s)`);
+        sendAndDismiss(_yesKey);
+      }
+    }, tickMs);
+  }
+
+  function stopCountdown(): void {
+    _clearApprovalTimer();
+    yesBtn!.classList.remove('countdown-active');
+    yesBtn!.style.removeProperty('--timer-pct');
   }
 
   window.addEventListener('approval-prompt', ((e: CustomEvent) => {
@@ -1418,150 +1477,62 @@ export function initApprovalBar(): void {
       options: { key: string; label: string }[];
     };
 
-    // Capture requestId for the gate response
     if (requestId) _pendingRequestId = requestId;
 
     // Deduplicate: SSE + WS both broadcast the same approval.
     const approvalKey = `${tool}:${detail}:${description}`;
-    if (!bar.classList.contains('hidden') && bar.dataset.approvalKey === approvalKey) {
+    if (!strip.classList.contains('hidden') && strip.dataset.approvalKey === approvalKey) {
       return;
     }
-    bar.dataset.approvalKey = approvalKey;
+    strip.dataset.approvalKey = approvalKey;
 
-    // Build label
-    let labelText = '';
-    if (description) {
-      labelText = description;
-    } else if (tool) {
-      labelText = detail ? `${tool}: ${detail}` : tool;
-    }
-    label.textContent = labelText || 'Approval required';
+    // Tag the strip with the target session's title when it's not the
+    // currently active session, so the user knows which session the
+    // approval is for without losing it on a session switch.
+    const session = sessionId ? appState.sessions.get(sessionId) : null;
+    const sessionTitle = session?.profile?.title
+      ?? (session?.profile ? `${session.profile.username}@${session.profile.host}` : '');
+    const isActive = sessionId && sessionId === appState.activeSessionId;
+    tagEl.textContent = (sessionTitle && !isActive) ? `[${sessionTitle}] ` : '';
 
-    const notifMsg = labelText || 'Approval required';
+    // Build the summary — short, single-line. Fall back to the tool name
+    // when description is missing. The full text is shown when expanded.
+    const summary = description || (tool ? (detail ? `${tool}: ${detail}` : tool) : 'Approval required');
+    summaryEl.textContent = summary;
+
+    const notifMsg = (sessionTitle && !isActive ? `[${sessionTitle}] ` : '') + summary;
     _addNotification(`Approve: ${notifMsg}`);
     fireNotification('MobiSSH', `Approve: ${notifMsg}`);
     if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
 
-    console.log(`[approval] showing: "${notifMsg}"`);
-
     if (phase === 'trigger') {
-      buttons.innerHTML = '<span class="approval-waiting">Waiting for options...</span>';
-      bar.classList.remove('hidden');
+      // No options yet — show with both action buttons disabled.
+      _yesKey = ''; _noKey = '';
+      yesBtn.setAttribute('disabled', 'true');
+      noBtn.setAttribute('disabled', 'true');
+      strip.classList.remove('hidden');
+      strip.classList.remove('expanded');
       return;
     }
 
-    // Phase: ready — show buttons
+    // Phase: ready — wire yes / no to the actual option keys. The first
+    // non-deny option becomes Yes; the first deny-flagged becomes No.
     _clearApprovalTimer();
-    buttons.innerHTML = '';
-
-    let yesKey = '';
-
+    _yesKey = ''; _noKey = '';
     for (const opt of options) {
-      const btn = document.createElement('button');
-      btn.className = 'approval-btn';
-      btn.setAttribute('tabindex', '-1');
       const lower = opt.label.toLowerCase();
-      if (lower.includes('no') || lower.includes('deny') || lower.includes('reject')) {
-        btn.classList.add('deny');
-      } else if (!yesKey) {
-        yesKey = opt.key;
+      if ((lower.includes('no') || lower.includes('deny') || lower.includes('reject')) && !_noKey) {
+        _noKey = opt.key;
+      } else if (!_yesKey) {
+        _yesKey = opt.key;
       }
-      btn.textContent = `(${opt.key}) ${opt.label}`;
-      btn.addEventListener('click', () => { sendAndDismiss(opt.key); });
-      btn.addEventListener('mousedown', (ev) => { ev.preventDefault(); });
-      buttons.appendChild(btn);
     }
+    if (_yesKey) yesBtn.removeAttribute('disabled'); else yesBtn.setAttribute('disabled', 'true');
+    if (_noKey) noBtn.removeAttribute('disabled'); else noBtn.setAttribute('disabled', 'true');
 
-    // Auto-accept toggle — inline in the approval bar
-    const autoRow = document.createElement('div');
-    autoRow.className = 'approval-auto-row';
-    const autoCheck = document.createElement('input');
-    autoCheck.type = 'checkbox';
-    autoCheck.id = 'approvalAutoToggle';
-    const storedCountdown = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
-    autoCheck.checked = storedCountdown > 0;
-    const autoLabel = document.createElement('label');
-    autoLabel.htmlFor = 'approvalAutoToggle';
-    autoLabel.className = 'approval-auto-label';
-    autoLabel.textContent = storedCountdown > 0 ? `Auto-accept (${String(storedCountdown)}s)` : 'Auto-accept';
-    autoRow.appendChild(autoCheck);
-    autoRow.appendChild(autoLabel);
-    buttons.appendChild(autoRow);
-
-    bar.classList.remove('hidden');
-
-    let countdownEl: HTMLSpanElement | null = null;
-    let targetBtn: HTMLButtonElement | null = null;
-
-    function startCountdown(): void {
-      if (!yesKey) return;
-      const sec = parseInt(localStorage.getItem('approvalCountdown') ?? '10', 10) || 10;
-      _clearApprovalTimer();
-
-      targetBtn = Array.from(buttons!.querySelectorAll<HTMLButtonElement>('.approval-btn'))
-        .find((b) => b.textContent?.includes(`(${yesKey})`)) ?? null; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-
-      if (targetBtn) {
-        targetBtn.classList.add('countdown-active');
-      }
-
-      // Insert VU-meter bar at bottom of approval bar
-      let vuBar = bar!.querySelector<HTMLDivElement>('.approval-vu-bar');
-      if (!vuBar) {
-        vuBar = document.createElement('div');
-        vuBar.className = 'approval-vu-bar';
-        bar!.appendChild(vuBar);
-      }
-      vuBar.style.width = '100%';
-      vuBar.style.transition = 'none';
-      void vuBar.getBoundingClientRect();
-      vuBar.style.transition = `width ${String(sec)}s linear`;
-      vuBar.style.width = '0%';
-
-      let remaining = sec;
-      countdownEl = document.createElement('span');
-      countdownEl.className = 'approval-countdown';
-      countdownEl.textContent = `  (${String(remaining)}s)`;
-      label!.appendChild(countdownEl);
-
-      _approvalTimer = setInterval(() => {
-        remaining--;
-        if (remaining <= 0) {
-          console.log(`[approval] auto-accept: "${yesKey}" after ${String(sec)}s`);
-          sendAndDismiss(yesKey);
-        } else if (countdownEl) {
-          countdownEl.textContent = `  (${String(remaining)}s)`;
-        }
-      }, 1000);
-    }
-
-    function stopCountdown(): void {
-      _clearApprovalTimer();
-      if (countdownEl) { countdownEl.textContent = ''; countdownEl = null; }
-      if (targetBtn) {
-        targetBtn.classList.remove('countdown-active');
-        targetBtn = null;
-      }
-      const vuBar = bar!.querySelector('.approval-vu-bar');
-      if (vuBar) vuBar.remove();
-    }
-
-    autoCheck.addEventListener('change', () => {
-      if (autoCheck.checked) {
-        // Use stored value or default to 10s
-        const val = parseInt(localStorage.getItem('approvalCountdown') ?? '0', 10);
-        localStorage.setItem('approvalCountdown', val > 0 ? String(val) : '10');
-        startCountdown();
-      } else {
-        localStorage.setItem('approvalCountdown', '0');
-        stopCountdown();
-      }
-    });
-
-    // Start countdown if auto-accept is already enabled
-    if (autoCheck.checked && yesKey) {
-      startCountdown();
-    }
+    strip.classList.remove('hidden');
+    strip.classList.remove('expanded');
+    if (_isAutoAccept() && _yesKey) startCountdown();
   }) as EventListener);
 }
 

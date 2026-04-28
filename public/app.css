@@ -1033,71 +1033,96 @@ html, body {
 #key-bar.depth-2,
 #key-bar.depth-3 { height: calc(2 * var(--keybar-row-height) + env(safe-area-inset-bottom)); }
 
-/* Approval bar — Claude Code permission prompt responses */
-.approval-bar {
-  background: var(--bg-card);
-  border-top: 1px solid var(--accent);
-  padding: 6px 8px;
-  flex-shrink: 0;
-  max-height: 50vh;
-  overflow-y: auto;
-}
-.approval-bar.hidden { display: none; }
-.approval-header {
+/* Approval strip — single-line floating chip pinned to the top edge of the
+ * viewport. Layout-neutral (position: fixed) so it never resizes the
+ * terminal underneath. Tap the text to expand into a multi-line view; the
+ * three actions sit on the right with `yes` flush to the right edge for
+ * easy thumb reach. */
+.approval-strip {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 96vw;
+  max-width: 640px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.approval-label {
-  flex: 1;
-  font-size: 12px;
-  color: var(--text);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 6;
-  -webkit-box-orient: vertical;
-  font-family: monospace;
-  word-break: break-all;
-}
-.approval-dismiss {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 16px;
-  padding: 2px 6px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-.approval-buttons {
-  display: flex;
   gap: 6px;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.86);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 255, 136, 0.4);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  z-index: 100;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-mono);
 }
-.approval-btn {
+.approval-strip.hidden { display: none; }
+.approval-strip-text {
   flex: 1;
-  padding: 6px 8px;
-  border: 2px solid var(--accent);
-  border-radius: 6px;
-  background: var(--accent);
-  color: var(--bg-deep);
-  font-size: 14px;
-  font-weight: 700;
-  font-family: monospace;
+  min-width: 0; /* allow flex item to shrink below content size for ellipsis */
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.35;
   cursor: pointer;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-  touch-action: manipulation;
-  touch-action: manipulation;
-  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-tap-highlight-color: transparent;
 }
-.approval-btn:active { opacity: 0.7; }
-.approval-btn.deny { background: transparent; border-color: #e44; color: #e44; }
-.approval-btn.approval-default {
+.approval-strip.expanded .approval-strip-text {
+  white-space: normal;
+  word-break: break-all;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.approval-strip-tag {
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 6px;
+}
+.approval-strip-tag:empty { display: none; }
+.approval-strip-summary { color: var(--text); }
+.approval-strip-buttons {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.approval-strip-btn {
+  min-width: 36px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   position: relative;
   overflow: hidden;
 }
-.approval-btn.approval-default::after {
+.approval-strip-btn:active { opacity: 0.65; }
+.approval-strip-btn.yes {
+  background: var(--accent);
+  color: var(--bg-deep);
+  font-weight: 700;
+}
+.approval-strip-btn.no { border-color: #e44; color: #e44; }
+.approval-strip-btn.auto { border-color: var(--text-dim); color: var(--text-dim); padding: 0 8px; }
+.approval-strip-btn.auto.active { background: var(--text-dim); color: var(--bg-deep); }
+/* Countdown drains the yes button background from full to empty. */
+.approval-strip-btn.yes.countdown-active::after {
   content: '';
   position: absolute;
   left: 0;
@@ -1107,14 +1132,6 @@ html, body {
   background: var(--bg-deep);
   opacity: 0.5;
   transition: width 50ms linear;
-}
-.approval-btn-label { position: relative; z-index: 1; }
-.approval-countdown {
-  position: relative;
-  z-index: 1;
-  margin-left: 6px;
-  font-size: 12px;
-  opacity: 0.7;
 }
 .approval-vu-bar {
   height: 3px;
@@ -3460,9 +3477,9 @@ body.files-overlay #terminal {
   visibility: hidden;
 }
 
-/* Approval bar stays above the files overlay so it remains actionable. */
-body.files-overlay #approvalBar {
-  z-index: 6;
+/* Approval strip rides above the files overlay so it remains actionable. */
+body.files-overlay #approvalStrip {
+  z-index: 100;
 }
 
 /* Panel header with back-to-terminal button (#409) */
