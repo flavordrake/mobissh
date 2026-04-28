@@ -406,6 +406,23 @@ export function initSettingsPanel(): void {
     });
   }
 
+  // Install-hooks URL: shows the same-origin /install-hooks doc URL with a
+  // copy button. Pasting this URL into a Claude Code session on any host
+  // installs the notification hook (per docs/install-mobissh-hooks.md).
+  const installUrlEl = document.getElementById('installHooksUrl');
+  const copyInstallBtn = document.getElementById('copyInstallHooksUrlBtn');
+  if (installUrlEl && copyInstallBtn) {
+    const installUrl = `${location.origin}/install-hooks`;
+    installUrlEl.textContent = installUrl;
+    copyInstallBtn.addEventListener('click', () => {
+      void navigator.clipboard.writeText(installUrl).then(() => {
+        _toast('Install-hooks URL copied.');
+      }).catch((err: unknown) => {
+        showErrorDialog(`Copy failed:\n\n${String(err)}`);
+      });
+    });
+  }
+
   document.getElementById('resetKeyBarBtn')?.addEventListener('click', () => {
     resetKeyBarConfig();
     location.reload();

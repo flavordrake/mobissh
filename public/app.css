@@ -1562,6 +1562,19 @@ input[type="range"] {
   line-height: 1.5;
 }
 
+.install-hooks-url {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: var(--bg-elev);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
+  user-select: all;
+}
+
 #themePreview {
   min-height: 120px;
   width: 100%;

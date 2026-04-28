@@ -60,9 +60,12 @@ and verify the install.
 > EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null || true)
 > [[ -z "$EVENT" ]] && exit 0
 >
-> # Forward raw event JSON with `event` field added
-> BRIDGE_JSON=$(echo "$INPUT" | jq -c --arg event "$EVENT" '. + {event: $event}' 2>/dev/null \
->   || printf '{"event":"%s"}' "$EVENT")
+> # Forward raw event JSON with `event` and `hookHost` fields added.
+> # The phone uses hookHost to route notification taps back to the
+> # matching SSH session (matched against profile.host startsWith).
+> HOOK_HOST=$(hostname 2>/dev/null || echo "")
+> BRIDGE_JSON=$(echo "$INPUT" | jq -c --arg event "$EVENT" --arg host "$HOOK_HOST" '. + {event: $event, hookHost: $host}' 2>/dev/null \
+>   || printf '{"event":"%s","hookHost":"%s"}' "$EVENT" "$HOOK_HOST")
 >
 > curl -sS --max-time 2 -X POST -H 'Content-Type: application/json' \
 >   -d "$BRIDGE_JSON" \
@@ -141,13 +144,10 @@ install the hook on each one with the same `MOBISSH_URL`. All of them
 will fire haptics on the same phone — useful for monitoring multiple
 parallel sessions.
 
-For per-instance distinction, extend the hook to include a host tag:
-```bash
-HOSTNAME_TAG=$(hostname -s)
-BRIDGE_JSON=$(echo "$INPUT" | jq -c --arg event "$EVENT" --arg host "$HOSTNAME_TAG" \
-  '. + {event: $event, host: $host}')
-```
-The PWA will display the host in the notification body.
+The hook script above already includes `hookHost: $(hostname)` so the
+PWA can route notification taps back to the correct SSH session. No
+extra configuration needed for multi-instance setup — just install the
+same script on each host.
 
 ## Uninstall
 
