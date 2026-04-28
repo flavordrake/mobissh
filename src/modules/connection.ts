@@ -1089,7 +1089,19 @@ export function scheduleReconnect(sessionId?: string): void {
       session._wsConsecFailures = 0;
       transitionSession(sid, 'failed');
       _dismissConnectionStatus();
-      showErrorDialog(`Host unreachable after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\n${_connectionDiagnostic(session.profile)}\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
+      // Only modal-block when the user is actively viewing the failing session.
+      // Otherwise the user gets a "host unreachable" dialog over a healthy
+      // session they're working in — observed 2026-04-28 when spark halted
+      // while user was using nv-dev. Backgrounded session failures should
+      // be communicated non-blockingly via the session bar's failed state +
+      // a toast.
+      const isActive = sid === appState.activeSessionId;
+      const hostLabel = session.profile.host;
+      if (isActive) {
+        showErrorDialog(`Host unreachable after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\n${_connectionDiagnostic(session.profile)}\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
+      } else {
+        _toast(`${hostLabel}: unreachable — tap session to retry`);
+      }
       return;
     }
   }
@@ -1101,8 +1113,13 @@ export function scheduleReconnect(sessionId?: string): void {
     failures: session._wsConsecFailures,
     wasConnected,
   });
-  _toast(`Reconnecting in ${String(delaySec)}s…`);
-  _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
+  // Only toast / set chrome status for the session the user is looking at.
+  // Backgrounded sessions reconnect silently — their state shows in the
+  // session bar, no need to spam the foreground.
+  if (sid === appState.activeSessionId) {
+    _toast(`Reconnecting in ${String(delaySec)}s…`);
+    _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
+  }
 
   session.reconnectTimer = setTimeout(() => {
     const s = appState.sessions.get(sid);
