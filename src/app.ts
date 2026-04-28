@@ -17,7 +17,9 @@ import {
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE, applyUiScaleFromStorage } from './modules/settings.js';
 import { initConnection } from './modules/connection.js';
-import { appState } from './modules/state.js';
+import { appState, onStateChange } from './modules/state.js';
+import { refreshKeepAliveNotification, dismissKeepAliveNotification } from './modules/keepalive-notification.js';
+import { disconnect } from './modules/connection.js';
 import { initIME, initIMEInput } from './modules/ime.js';
 import { initSelection } from './modules/selection.js';
 import {
@@ -94,6 +96,24 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
       const { local, server } = e.detail as { local: { version: string; hash: string }; server: { version: string; hash: string } };
       toast(`Update available: ${server.version}:${server.hash} (running ${local.version}:${local.hash}). Long-press Settings to reload.`);
     }) as EventListener);
+
+    // Keep-alive ongoing notification: refresh on every state transition.
+    // The module is idempotent and a no-op when the setting is off.
+    onStateChange(() => { void refreshKeepAliveNotification(); });
+
+    // SW → page channel for the "Disconnect all" notification action.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (e: MessageEvent) => {
+        const data = e.data as { type?: string } | null;
+        if (data?.type !== 'keepalive-disconnect-all') return;
+        const ids = Array.from(appState.sessions.keys());
+        for (const id of ids) {
+          try { disconnect(id); } catch (err) { console.warn('[keepalive] disconnect failed:', id, err); }
+        }
+        void dismissKeepAliveNotification();
+        toast('Disconnected all sessions from notification.');
+      });
+    }
 
     initVaultUI({ toast });
     await initVault();

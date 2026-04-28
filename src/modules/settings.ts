@@ -15,6 +15,10 @@ import { getProfiles, loadProfiles } from './profiles.js';
 import { getConnectLog, clearConnectLog, downloadConnectLog } from './connect-log.js';
 import { getGestureLog, clearGestureLog, downloadGestureLog } from './gesture-log.js';
 import { fireNotification, _addNotification } from './terminal.js';
+import {
+  isKeepAliveEnabled, setKeepAliveEnabledStorage, refreshKeepAliveNotification,
+  dismissKeepAliveNotification, verifyKeepAliveSupport,
+} from './keepalive-notification.js';
 
 
 /** Declarative schema for validatable localStorage keys. */
@@ -367,6 +371,37 @@ export function initSettingsPanel(): void {
       }).catch((err: unknown) => {
         console.error('[settings] requestPermission failed:', err);
         showErrorDialog(`Permission request failed:\n\n${String(err)}`);
+      });
+    });
+  }
+
+  const keepAliveEl = document.getElementById('keepAliveInBackground') as HTMLInputElement | null;
+  if (keepAliveEl) {
+    keepAliveEl.checked = isKeepAliveEnabled();
+    keepAliveEl.addEventListener('change', () => {
+      const wantOn = keepAliveEl.checked;
+      if (!wantOn) {
+        setKeepAliveEnabledStorage(false);
+        void dismissKeepAliveNotification();
+        _toast('Keep-alive disabled.');
+        return;
+      }
+      // Verify before persisting — never claim it's on if the platform won't deliver.
+      void verifyKeepAliveSupport().then((err) => {
+        if (err !== null) {
+          keepAliveEl.checked = false;
+          setKeepAliveEnabledStorage(false);
+          showErrorDialog(`Couldn't enable keep-alive:\n\n${err}`);
+          return;
+        }
+        setKeepAliveEnabledStorage(true);
+        void refreshKeepAliveNotification().then(() => {
+          _toast('Keep-alive enabled. Notification will appear when sessions are connected.');
+        }).catch((showErr: unknown) => {
+          keepAliveEl.checked = false;
+          setKeepAliveEnabledStorage(false);
+          showErrorDialog(`Keep-alive failed to start:\n\n${String(showErr)}`);
+        });
       });
     });
   }

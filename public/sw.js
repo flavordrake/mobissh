@@ -65,7 +65,26 @@ self.addEventListener('activate', (event) => {
 // Notification click: focus or open the app when tapping a notification.
 // Uses origin + pathname prefix matching so hash routes (#connect, #terminal)
 // and query params don't prevent focusing the existing PWA window (#219).
+//
+// Special case: the keepalive notification's "Disconnect all" action — keep the
+// notification on screen, message clients to perform the disconnect locally.
+// The page is responsible for dismissing the notification once disconnect
+// completes; if no client is running, the action is a no-op (sessions are
+// already gone, so the next refresh will dismiss the notification).
 self.addEventListener('notificationclick', (event) => {
+  if (event.action === 'disconnect-all') {
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+        for (const client of clients) {
+          try {
+            client.postMessage({ type: 'keepalive-disconnect-all' });
+          } catch (_) { /* client gone — ignore */ }
+        }
+      })
+    );
+    return;
+  }
+
   event.notification.close();
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
