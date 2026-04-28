@@ -1294,7 +1294,12 @@ document.addEventListener('visibilitychange', () => {
     const activeId = appState.activeSessionId ?? '';
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
-      if (session.state === 'failed') continue;
+      // Skip sessions that are already mid-flight or halted — interrupting
+      // them only restarts the work and creates the loop the user reported
+      // ("connection drops every time the screen comes on"). Only reopen
+      // when the session is genuinely disconnected and not already trying.
+      if (session.state === 'failed' || session.state === 'connecting'
+          || session.state === 'authenticating' || session.state === 'reconnecting') continue;
       if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
         cancelReconnect(sid);
         if (sid === activeId) {
