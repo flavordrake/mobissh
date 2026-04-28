@@ -158,6 +158,11 @@ export interface SessionState {
   activePanel: 'terminal' | 'files';
   _onDataDisposable: { dispose: () => void } | null;
   _wsConsecFailures: number;
+  /** Wall-clock ms when the session most recently transitioned state.
+   *  Used by the visibility_resume handler to detect "stuck in flight"
+   *  sessions (e.g. a reconnecting attempt whose timer was suspended by
+   *  Android Chrome's background throttle) — see connection.ts. */
+  _stateChangedAt: number;
   _cycle: ConnectionCycle | null;
 }
 

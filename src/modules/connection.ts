@@ -1302,17 +1302,30 @@ document.addEventListener('visibilitychange', () => {
     // this guard, visibility_resume cycled the user through repeated
     // 10s SSH handshake timeouts on every screen-on event — the
     // close-and-restart-fixes-it loop the user reported.
+    // Stale-in-flight threshold. Android Chrome aggressively throttles
+    // background JS, so a `reconnecting` session whose timer fired during
+    // suspension can sit in that state forever. After this much wall-clock
+    // time without progress, treat it as dead and force a fresh attempt
+    // even though the state machine still says "in flight". 20s is well
+    // past the SSH 10s readyTimeout — anything older is definitely stuck.
+    const STALE_INFLIGHT_MS = 20_000;
+    const now = Date.now();
     let reconnected = false;
     const activeId = appState.activeSessionId ?? '';
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
-      // Skip sessions that are already mid-flight or halted — interrupting
-      // them only restarts the work and creates the loop the user reported
-      // ("connection drops every time the screen comes on"). Only reopen
-      // when the session is genuinely disconnected and not already trying.
-      if (session.state === 'failed' || session.state === 'connecting'
-          || session.state === 'authenticating' || session.state === 'reconnecting') continue;
-      if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
+      // `failed` is the user-must-retry gate; never auto-disturb.
+      if (session.state === 'failed') continue;
+
+      const inFlight = session.state === 'connecting'
+        || session.state === 'authenticating'
+        || session.state === 'reconnecting';
+      const stateAge = now - session._stateChangedAt;
+      // Healthy in-flight: leave alone. Stuck in-flight (age > threshold):
+      // close the stale WS and start fresh. Disconnected/closed: also reopen.
+      if (inFlight && stateAge < STALE_INFLIGHT_MS) continue;
+
+      if (!session.ws || session.ws.readyState !== WebSocket.OPEN || (inFlight && stateAge >= STALE_INFLIGHT_MS)) {
         cancelReconnect(sid);
         if (sid === activeId) {
           _openWebSocket({ silent: true, sessionId: sid });

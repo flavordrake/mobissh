@@ -237,6 +237,7 @@ export function createSession(id: string): SessionState {
     activePanel: { value: 'terminal' as 'terminal' | 'files', writable: true, enumerable: true, configurable: true },
     _onDataDisposable: { value: null, writable: true, enumerable: true, configurable: true },
     _wsConsecFailures: { value: 0, writable: true, enumerable: true, configurable: true },
+    _stateChangedAt: { value: Date.now(), writable: true, enumerable: true, configurable: true },
     _cycle: { value: null, writable: true, enumerable: true, configurable: true },
     // Compat getters: derive from session.state
     // Setters are no-ops to avoid throwing in strict mode when legacy code assigns
@@ -276,6 +277,7 @@ export function transitionSession(id: string, targetState: SessionLifecycleState
 
   const previousState = session.state;
   session.state = targetState;
+  session._stateChangedAt = Date.now();
 
   logConnect('state_transition', id, {
     from: previousState,
