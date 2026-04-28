@@ -1,157 +1,212 @@
-# Install MobiSSH haptic notifications on a Claude Code instance
+# Install MobiSSH notification hook on a Claude Code instance
 
 Paste the prompt below into a fresh Claude Code session running anywhere
 that can reach your MobiSSH server (over Tailscale, LAN, or localhost).
-The agent will create the hook script, wire it into `~/.claude/settings.json`,
-and verify the install.
+The agent will detect existing hooks, install or upgrade `mobissh-bridge.sh`
+in `~/.claude/hooks/`, and wire it into `~/.claude/settings.json` —
+coexisting with any other hooks already in place.
+
+> **Naming convention:** All MobiSSH hook artifacts are prefixed
+> `mobissh-` so an `ls ~/.claude/hooks/` makes it obvious which scripts
+> belong to MobiSSH. Older installs that used unprefixed names like
+> `notify-bell.sh` are migrated to `mobissh-bridge.sh` automatically.
 
 ## Prompt to paste
 
-> Install the MobiSSH notification hook. My MobiSSH server URL is
+> Install or upgrade the MobiSSH notification hook for this Claude Code
+> instance. My MobiSSH server URL is
 > `<paste-your-https-url-here>` (e.g. `https://mobissh.tailbe5094.ts.net`).
 >
-> Create `~/.claude/hooks/notify-bell.sh` with the script below.
-> Make it executable.
+> ### Phase 1 — Detect prior state
 >
-> Then merge the `hooks` block below into `~/.claude/settings.json`
-> (preserve any existing `hooks`, `permissions`, etc. — don't clobber).
+> Before writing anything, inspect:
 >
-> The script reads each Claude Code hook event (Stop, SubagentStop,
-> Notification, PermissionRequest) from stdin as JSON, adds an
-> `event` field, and POSTs the payload to `${MOBISSH_URL}/api/approval`.
-> The MobiSSH PWA on my phone receives the event via SSE and fires
-> a per-event haptic + notification:
+> 1. `~/.claude/hooks/mobissh-bridge.sh` — does it already exist?
+>    - **Yes:** this is an upgrade. Plan to overwrite the script (the
+>      remote copy is the canonical version) and verify the
+>      `settings.json` wiring still points at it.
+>    - **No:** this is a fresh install.
 >
-> | Event             | Title              | Vibration      |
-> |-------------------|--------------------|----------------|
-> | Stop              | "Claude is ready"  | 40ms           |
-> | SubagentStop      | "Subagent finished"| 60-40-60       |
-> | Notification      | "Claude Code"      | 20ms           |
-> | PermissionRequest | (modal prompt)     | 100-50-100     |
+> 2. `~/.claude/hooks/notify-bell.sh` — legacy MobiSSH name from earlier
+>    installs.
+>    - **Yes:** plan to install `mobissh-bridge.sh` alongside, then
+>      remove `notify-bell.sh` AFTER updating `settings.json` to the
+>      new path.
 >
-> ### `~/.claude/hooks/notify-bell.sh`
+> 3. `~/.claude/settings.json` `hooks` block — for each of `Stop`,
+>    `SubagentStop`, `Notification`, `PermissionRequest` enumerate the
+>    currently-registered command(s):
+>    - If the only command is `mobissh-bridge.sh` or `notify-bell.sh`,
+>      it's a MobiSSH-only setup → safe to replace with the canonical
+>      `mobissh-bridge.sh` path.
+>    - If there are OTHER commands too (a personal `tts.sh`, a
+>      `slack-notify.sh`, anything not prefixed `mobissh-`), this is a
+>      mixed setup → APPEND `mobissh-bridge.sh` to the list, do not
+>      remove the other entries.
+>    - If the event has no hooks at all → install fresh.
+>
+> 4. Project-scoped configs: walk parents from `pwd` up to `/`, looking
+>    for `.claude/settings.json` and `.claude/settings.local.json` that
+>    define a `hooks` block. Apply the same per-event reconciliation to
+>    each one. (Project hooks override the global one — if MobiSSH is
+>    installed globally but a project config overrides Stop without
+>    listing mobissh-bridge.sh, MobiSSH won't fire from that project.)
+>
+> Print a one-paragraph summary of what you found before proceeding to
+> Phase 2 so the user can confirm.
+>
+> ### Phase 2 — Install / upgrade the script
+>
+> Fetch the canonical script content from the server and write it to
+> `~/.claude/hooks/mobissh-bridge.sh`:
 >
 > ```bash
-> #!/usr/bin/env bash
-> # MobiSSH notification hook. Forwards every Claude Code hook event
-> # to the MobiSSH PWA so it can fire a haptic notification on the phone.
-> #
-> # Configured per-host. Set MOBISSH_URL to the HTTPS endpoint of your
-> # MobiSSH server (Tailscale-served, typically).
+> mkdir -p ~/.claude/hooks
+> curl -sS --max-time 10 \
+>   "${MOBISSH_URL}/install-hooks/mobissh-bridge.sh" \
+>   -o ~/.claude/hooks/mobissh-bridge.sh
+> chmod +x ~/.claude/hooks/mobissh-bridge.sh
+> ```
 >
-> set -euo pipefail
+> The script comes from the running MobiSSH server itself, so it stays
+> in sync with whatever the server expects. Do not embed a copy in your
+> output — always fetch the URL.
 >
-> MOBISSH_URL="${MOBISSH_URL:-https://CHANGE-ME.tailbe5094.ts.net}"
+> Verify the script: it must contain `approval-gate` (the v2
+> poll-based PermissionRequest gate) and `hookHost` (the field that
+> lets notification taps route back to the originating SSH session):
 >
-> # 2-second dedup so rapid-fire events don't spam the phone
-> LOCKFILE="/tmp/.claude-mobissh-notify-lock"
-> COOLDOWN=2
-> if [[ -f "$LOCKFILE" ]]; then
->   LAST=$(stat -c %Y "$LOCKFILE" 2>/dev/null || echo 0)
->   NOW=$(date +%s)
->   if (( NOW - LAST < COOLDOWN )); then
->     cat > /dev/null
->     exit 0
->   fi
+> ```bash
+> grep -q approval-gate ~/.claude/hooks/mobissh-bridge.sh && \
+> grep -q hookHost ~/.claude/hooks/mobissh-bridge.sh && \
+>   echo "OK: mobissh-bridge.sh has all required features"
+> ```
+>
+> If either grep fails, the bundled image is stale — tell the user and
+> stop.
+>
+> ### Phase 3 — Reconcile settings.json
+>
+> For every hook event in `Stop`, `SubagentStop`, `Notification`,
+> `PermissionRequest`:
+>
+> ```jq
+> # Idempotent: only adds mobissh-bridge.sh if it isn't already listed.
+> # Preserves any non-mobissh entries (other people's hooks).
+> # Removes any legacy notify-bell.sh entry.
+> ```
+>
+> Use `jq` to update `~/.claude/settings.json` (and any project-scoped
+> configs you found in Phase 1) with this transform:
+>
+> 1. Read the array of hook entries for the event (or `[]` if absent).
+> 2. Drop any entry whose command path ends in `notify-bell.sh` (legacy).
+> 3. If no remaining entry's command path ends in `mobissh-bridge.sh`,
+>    append `{type:"command", command:"~/.claude/hooks/mobissh-bridge.sh"}`.
+> 4. Write back atomically (`tmp` file then `mv`).
+>
+> Pseudocode (write the actual jq invocation per event):
+>
+> ```bash
+> jq '.hooks.Stop = (
+>   ((.hooks.Stop // []) | map(select(.hooks[]?.command | test("notify-bell\\.sh$") | not)))
+>   | if any(.hooks[]?.command; test("mobissh-bridge\\.sh$"))
+>     then .
+>     else . + [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/mobissh-bridge.sh"}]}]
+>     end
+> )' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+> ```
+>
+> Then remove the legacy script if it exists and is no longer
+> referenced by any settings file:
+>
+> ```bash
+> if [[ -f ~/.claude/hooks/notify-bell.sh ]] && \
+>    ! grep -rq notify-bell ~/.claude *.claude/settings*.json 2>/dev/null; then
+>   rm ~/.claude/hooks/notify-bell.sh
+>   echo "Removed legacy ~/.claude/hooks/notify-bell.sh"
 > fi
-> touch "$LOCKFILE"
->
-> INPUT=$(cat)
-> EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null || true)
-> [[ -z "$EVENT" ]] && exit 0
->
-> # Forward raw event JSON with `event` and `hookHost` fields added.
-> # The phone uses hookHost to route notification taps back to the
-> # matching SSH session (matched against profile.host startsWith).
-> HOOK_HOST=$(hostname 2>/dev/null || echo "")
-> BRIDGE_JSON=$(echo "$INPUT" | jq -c --arg event "$EVENT" --arg host "$HOOK_HOST" '. + {event: $event, hookHost: $host}' 2>/dev/null \
->   || printf '{"event":"%s","hookHost":"%s"}' "$EVENT" "$HOOK_HOST")
->
-> curl -sS --max-time 2 -X POST -H 'Content-Type: application/json' \
->   -d "$BRIDGE_JSON" \
->   "${MOBISSH_URL}/api/approval" >/dev/null 2>&1 || true
->
-> # Local terminal fallback: walk process tree for /dev/pts/* and ring bell
-> PID=$$
-> while [[ $PID -gt 1 ]]; do
->   PID=$(awk '{print $4}' /proc/$PID/stat 2>/dev/null) || break
->   TTY=$(readlink /proc/$PID/fd/0 2>/dev/null)
->   if [[ "$TTY" == /dev/pts/* && -w "$TTY" ]]; then
->     printf '\a' > "$TTY" 2>/dev/null
->     exit 0
->   fi
-> done
->
-> exit 0
 > ```
 >
-> ### `~/.claude/settings.json` — merge into `hooks`
+> ### Phase 4 — Verify end-to-end
 >
-> ```json
-> {
->   "hooks": {
->     "Stop": [
->       { "matcher": "", "hooks": [
->         { "type": "command", "command": "~/.claude/hooks/notify-bell.sh" }
->       ]}
->     ],
->     "SubagentStop": [
->       { "matcher": "", "hooks": [
->         { "type": "command", "command": "~/.claude/hooks/notify-bell.sh" }
->       ]}
->     ],
->     "Notification": [
->       { "matcher": "", "hooks": [
->         { "type": "command", "command": "~/.claude/hooks/notify-bell.sh" }
->       ]}
->     ],
->     "PermissionRequest": [
->       { "matcher": "", "hooks": [
->         { "type": "command", "command": "~/.claude/hooks/notify-bell.sh" }
->       ]}
->     ]
->   }
-> }
-> ```
+> 1. **Local script execution.** Pipe a synthetic PermissionRequest
+>    payload through the hook and confirm it returns a valid decision:
 >
-> After install, verify by:
-> 1. Running `~/.claude/hooks/notify-bell.sh < <(echo '{"hook_event_name":"Stop"}')`
->    — should exit 0 with no errors.
-> 2. Triggering a turn-end in Claude Code; my phone should buzz once.
+>    ```bash
+>    echo '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"echo verify"}}' \
+>      | timeout 15 ~/.claude/hooks/mobissh-bridge.sh \
+>      | jq '.hookSpecificOutput.decision.behavior'
+>    ```
+>
+>    Expected: `"allow"` or `"deny"` (whatever the server's default
+>    mode is). If the script hangs, the server is unreachable from this
+>    host — diagnose with `curl -sS ${MOBISSH_URL}/version`.
+>
+> 2. **Server reachability.**
+>
+>    ```bash
+>    curl -sS "${MOBISSH_URL}/version" | jq .
+>    ```
+>
+>    Expected: `{"version":"1.3.0","hash":"..."}`.
+>
+> 3. **Live notification.** Trigger a turn-end (or `/clear` then send a
+>    short message) — the user's MobiSSH PWA should buzz once. If the
+>    user is not currently looking at the PWA, tapping the notification
+>    should focus the app and switch to whichever SSH session matches
+>    `$(hostname)`.
+>
+> ### Phase 5 — Report
+>
+> Summarize, for each settings file you touched:
+>
+> - Path
+> - For each event: was it (a) freshly installed, (b) already present
+>   and left alone, (c) upgraded from `notify-bell.sh` to
+>   `mobissh-bridge.sh`, or (d) coexists with non-MobiSSH entries.
+>
+> Tell the user to restart any running Claude Code sessions for the
+> hooks to take effect.
 
-## What gets sent
+## What this script does
 
-Each event POSTs to `${MOBISSH_URL}/api/approval` with `Content-Type:
-application/json`. The body is the raw Claude Code hook input (whatever
-fields Claude Code provides — typically `hook_event_name`, `session_id`,
-`cwd`, `tool_name`, `tool_input`, etc.) with an additional `event` field
-copied from `hook_event_name` for compatibility with older PWA builds.
+`mobissh-bridge.sh` is a single hook called on every Claude Code event:
 
-The MobiSSH server logs each event:
-```
-[hook] event="Stop" tool="" detail="" desc=""
-[hook] → SSE event="hook" (isApproval=false, clients=N)
-```
+| Hook event          | Behavior                                          |
+|---------------------|---------------------------------------------------|
+| `Stop`              | Fire-and-forget POST → `${MOBISSH_URL}/api/hook`. Phone shows "Claude is ready" (40ms vibration). |
+| `SubagentStop`      | Same; phone shows "Subagent finished" (60-40-60). |
+| `Notification`      | Same; phone shows "Claude Code" (20ms).           |
+| `PermissionRequest` | **Blocking gate** at `${MOBISSH_URL}/api/approval-gate?hookVersion=2`. Hook polls until phone responds yes/no, OR the server's default mode (allow/deny) kicks in if no clients are connected. 115s timeout. |
 
-PermissionRequest takes a different SSE channel (`approval`) so it can
-drive the phone's modal approval UI; everything else flows through the
-generic `hook` channel and only fires the haptic + drawer entry.
+Every payload includes `hookHost: $(hostname)` so notification taps on
+the phone can route back to the originating SSH session.
+
+## Coexistence rules
+
+- **MobiSSH hooks NEVER overwrite non-MobiSSH hooks.** If you have your
+  own Stop hook that does TTS or Slack, MobiSSH appends to the list —
+  both fire on every Stop event.
+- **MobiSSH hooks DO replace older MobiSSH hooks.** `notify-bell.sh` is
+  the legacy name; it gets migrated to `mobissh-bridge.sh` on upgrade.
+- **All MobiSSH artifacts are prefixed `mobissh-`.** If you see a hook
+  in `~/.claude/hooks/` without that prefix, it's not from MobiSSH.
 
 ## Multi-instance setup
 
-If you run Claude Code on several machines (laptop, dev container, CI),
-install the hook on each one with the same `MOBISSH_URL`. All of them
-will fire haptics on the same phone — useful for monitoring multiple
-parallel sessions.
-
-The hook script above already includes `hookHost: $(hostname)` so the
-PWA can route notification taps back to the correct SSH session. No
-extra configuration needed for multi-instance setup — just install the
-same script on each host.
+Install the same hook on every machine that runs Claude Code. The
+`hookHost: $(hostname)` field lets the phone tell them apart and route
+each notification tap to the right SSH session.
 
 ## Uninstall
 
-Remove the four entries from `~/.claude/settings.json` `hooks` block,
-or `rm ~/.claude/hooks/notify-bell.sh`. The script failing fast (curl
-returns non-zero, suppressed by `|| true`) makes uninstall optional —
-but the dedup lockfile and curl call add ~50ms per event.
+```bash
+rm ~/.claude/hooks/mobissh-bridge.sh
+# Then edit ~/.claude/settings.json (and any project configs) to remove
+# entries whose command ends in mobissh-bridge.sh.
+```
+
+If you have non-MobiSSH hooks on the same events, the entries you
+added will stay in place — only the mobissh-bridge.sh entries are
+removed.

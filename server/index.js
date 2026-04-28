@@ -117,10 +117,19 @@ try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).tr
   try { GIT_HASH = fs.readFileSync(path.join(__dirname, '..', '.git-hash'), 'utf8').trim(); } catch (_2) {}
 }
 
-// Cache the install-hooks doc at startup for the /install-hooks route.
-// Served as text/markdown so curl / Claude Code WebFetch / browsers all
-// render it sanely.
+// Cache the install-hooks doc + canonical bridge script at startup for the
+// /install-hooks routes. Doc is served as text/markdown; the script is served
+// as text/plain so curl/wget/WebFetch can pipe it directly to a file.
 let INSTALL_HOOKS_DOC = '';
+let INSTALL_HOOKS_BRIDGE_SCRIPT = '';
+try {
+  INSTALL_HOOKS_BRIDGE_SCRIPT = fs.readFileSync(
+    path.join(__dirname, '..', 'hooks', 'mobissh-bridge.sh'),
+    'utf8',
+  );
+} catch (_) {
+  INSTALL_HOOKS_BRIDGE_SCRIPT = '#!/usr/bin/env bash\n# install-hooks: mobissh-bridge.sh not bundled in this image\nexit 1\n';
+}
 try {
   INSTALL_HOOKS_DOC = fs.readFileSync(
     path.join(__dirname, '..', 'docs', 'install-mobissh-hooks.md'),
@@ -815,6 +824,18 @@ const server = http.createServer((req, res) => {
       'Cache-Control': 'no-store',
     });
     res.end(INSTALL_HOOKS_DOC);
+    return;
+  }
+
+  // /install-hooks/mobissh-bridge.sh — canonical bridge script. The doc
+  // tells agents to fetch this URL directly, so script changes flow
+  // automatically without a doc rewrite.
+  if (req.url === '/install-hooks/mobissh-bridge.sh') {
+    res.writeHead(200, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(INSTALL_HOOKS_BRIDGE_SCRIPT);
     return;
   }
 
