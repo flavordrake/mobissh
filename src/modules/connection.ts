@@ -1334,7 +1334,18 @@ document.addEventListener('visibilitychange', () => {
       // close the stale WS and start fresh. Disconnected/closed: also reopen.
       if (inFlight && stateAge < STALE_INFLIGHT_MS) continue;
 
-      if (!session.ws || session.ws.readyState !== WebSocket.OPEN || (inFlight && stateAge >= STALE_INFLIGHT_MS)) {
+      // A WS in state CONNECTING means a reconnect is already in flight (a
+      // pending reconnectTimer fired moments before this visibility handler
+      // ran — common after a brief background, when queued timers fire ahead
+      // of the visibility event). Treating CONNECTING as "dead" here causes a
+      // duplicate reconnect that races the in-flight one and stacks SSH
+      // handshakes on the bridge. Only force a fresh reconnect when the WS
+      // is unambiguously dead (null / CLOSING / CLOSED) or the in-flight
+      // state has aged past the stale threshold.
+      const wsDead = !session.ws
+        || session.ws.readyState === WebSocket.CLOSING
+        || session.ws.readyState === WebSocket.CLOSED;
+      if (wsDead || (inFlight && stateAge >= STALE_INFLIGHT_MS)) {
         cancelReconnect(sid);
         if (sid === activeId) {
           _openWebSocket({ silent: true, sessionId: sid });

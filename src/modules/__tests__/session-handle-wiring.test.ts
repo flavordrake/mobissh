@@ -36,7 +36,7 @@ describe('SessionHandle wiring (#374)', () => {
       // The handler reconnects dropped sessions (active immediate, others 3s delay)
       // and calls _probeZombieConnection() for open WS sessions. No fitIfVisible.
       const visStart = connectionSrc.indexOf("document.addEventListener('visibilitychange'");
-      const visBlock = connectionSrc.slice(visStart, visStart + 3200);
+      const visBlock = connectionSrc.slice(visStart, visStart + 4000);
       expect(visBlock).toContain('_probeZombieConnection');
       expect(visBlock).toContain('_openWebSocket');
       // No fitIfVisible or fitAddon.fit in the visibility handler

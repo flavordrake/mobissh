@@ -249,6 +249,43 @@ describe('visibility-triggered reconnect (#153)', () => {
     expect(mockErrorOverlay.classList.add).toHaveBeenCalledWith('hidden');
   });
 
+  it('does not duplicate-reconnect when a WS is already CONNECTING on resume', () => {
+    // Regression: when a pending reconnect timer fires moments before the
+    // visibilitychange handler runs (common after a brief background — queued
+    // timers fire ahead of the visibility event), the new WS is in
+    // CONNECTING state. Old code treated `readyState !== OPEN` as "dead" and
+    // scheduled a SECOND reconnect, stacking SSH handshakes on the bridge.
+    _setupSession({ ws: null });
+    const session = appState.sessions.get('test-session')!;
+    transitionSession('test-session', 'connecting');
+    transitionSession('test-session', 'authenticating');
+    transitionSession('test-session', 'connected');
+    transitionSession('test-session', 'disconnected');
+
+    // Simulate the pending reconnect having just fired: a fresh WS is
+    // CONNECTING (state machine moved to 'reconnecting'), session.ws is set.
+    transitionSession('test-session', 'reconnecting');
+    const inFlightWs = {
+      readyState: 0, // CONNECTING
+      url: 'ws://localhost:8081',
+      send: vi.fn(),
+      close: vi.fn(),
+      onopen: null,
+      onclose: null,
+      onmessage: null,
+      onerror: null,
+    };
+    session.ws = inFlightWs as unknown as WebSocket;
+    lastWsInstance = null; // reset — only count NEW WebSocket instances
+
+    // Now fire visibilitychange to visible. Should NOT create a new WS.
+    _visibilityState = 'visible';
+    visibilityHandler?.();
+
+    // The in-flight CONNECTING WS should have been left alone.
+    expect(lastWsInstance).toBeNull();
+  });
+
   it('scheduleReconnect targets the passed sessionId, not activeSessionId', () => {
     // Regression: the SSH 'disconnected' message handler used to call
     // scheduleReconnect() with no argument, which defaulted to activeSessionId.

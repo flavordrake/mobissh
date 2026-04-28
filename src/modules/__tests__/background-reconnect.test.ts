@@ -65,7 +65,7 @@ describe('Background reconnect — structural (#354)', () => {
       const visStart = connectionSrc.indexOf("document.addEventListener('visibilitychange'");
       expect(visStart).toBeGreaterThan(-1);
       // Extract the handler body (look for the next ~1500 chars which covers the handler)
-      const visBlock = connectionSrc.slice(visStart, visStart + 3200);
+      const visBlock = connectionSrc.slice(visStart, visStart + 4000);
 
       // The else branch (WS is OPEN) should probe, not just send a simple ping
       // Current buggy code just does: session.ws.send(JSON.stringify({ type: 'ping' }))
@@ -81,7 +81,7 @@ describe('Background reconnect — structural (#354)', () => {
     it('does not just send a keepalive ping to sessions with open WS', () => {
       const visStart = connectionSrc.indexOf("document.addEventListener('visibilitychange'");
       expect(visStart).toBeGreaterThan(-1);
-      const visBlock = connectionSrc.slice(visStart, visStart + 3200);
+      const visBlock = connectionSrc.slice(visStart, visStart + 4000);
 
       // Find the else branch for OPEN WS sessions
       // Current buggy code: `try { session.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* ignore */ }`
