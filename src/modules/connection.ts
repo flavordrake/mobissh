@@ -801,13 +801,17 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         // disables here leaks through onData → SSH → echo. If stale mouse tracking
         // is an issue (#81), the fix should be server-side or via a dedicated
         // reset-modes message, not terminal.write/reset.
-        if (session?.profile) {
+        // Chrome status reflects the session the USER is viewing. Inactive
+        // session reaching ssh_ready shouldn't repaint the foreground header.
+        if (session?.profile && sessionId === appState.activeSessionId) {
           _setStatus('connected', session.profile.title || `${session.profile.username}@${session.profile.host}`);
         }
         // Cancel the 5s timeout if it hasn't fired yet
         if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
-        // Dismiss any visible overlay (happy path: overlay never appeared)
-        _dismissConnectionStatus();
+        // Dismiss any visible overlay only if it belongs to this session.
+        // (The overlay shows for user-initiated connects and tracks one
+        // session at a time via _showConnectionStatus's sessionId arg.)
+        if (sessionId === appState.activeSessionId) _dismissConnectionStatus();
         // Apply the session's theme — but only if the user is looking at
         // a session-bound panel. Background reconnects / approval events
         // shouldn't repaint Settings or Connect. (#364 / theme-in-settings)
@@ -862,14 +866,16 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           sessionState: session?.state,
         });
         if (session && isSessionConnected(session)) {
-          // Already connected — transient error, don't interrupt with modal
-          _toast(`Error: ${msg.message}`);
+          // Already connected — transient error, don't interrupt with modal.
+          // Only toast the active session; backgrounded session errors stay
+          // in the per-session state machine (visible via the session bar).
+          if (sessionId === appState.activeSessionId) _toast(`Error: ${msg.message}`);
         } else {
           // Not yet connected — SSH-level failure (e.g. handshake timeout).
           // Don't reconnect here — let the WS onclose handler manage retries
           // with its failure counter to prevent infinite loops to dead hosts.
           console.log(`[error-msg] SSH error pre-connect: ${msg.message}, letting onclose handle retry`);
-          _toast(`Connection failed: ${msg.message}`);
+          if (sessionId === appState.activeSessionId) _toast(`Connection failed: ${msg.message}`);
           if (!session?.profile) {
             closeSession(sessionId);
           }
@@ -882,9 +888,14 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           host: session?.profile?.host,
         });
         if (session && session.state === 'connected') transitionSession(sessionId, 'soft_disconnected');
-        _setStatus('disconnected', 'Disconnected');
-        // Toast instead of blocking overlay — the session will auto-reconnect (#351)
-        _toast(`Disconnected: ${msg.reason ?? 'connection lost'}`);
+        // Only update chrome UI for the active session — a backgrounded
+        // session disconnecting shouldn't flip the foreground status bar
+        // or pop a toast over an unrelated session's terminal.
+        if (sessionId === appState.activeSessionId) {
+          _setStatus('disconnected', 'Disconnected');
+          // Toast instead of blocking overlay — the session will auto-reconnect (#351)
+          _toast(`Disconnected: ${msg.reason ?? 'connection lost'}`);
+        }
         stopAndDownloadRecording(); // auto-save recording on SSH disconnect (#54)
         // Reconnect THIS session, not whichever is active in the UI — otherwise
         // a disconnect on a backgrounded session reconnect-thrashes the
@@ -1021,7 +1032,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     stopKeepAlive(sessionId);
     if (!session?.profile) return;
 
-    _setStatus('disconnected', 'Disconnected');
+    // Only update chrome status for the active session.
+    if (sessionId === appState.activeSessionId) {
+      _setStatus('disconnected', 'Disconnected');
+    }
 
     // All reconnect attempts go through scheduleReconnect which has its own
     // failure counter. Previously-connected sessions get a first free reconnect,
@@ -1031,9 +1045,11 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     // Back off hard — retrying immediately just compounds the cap pressure and
     // drops the user into a spinning-reconnect loop across every session.
     if (event.code === 1008) {
-      _toast(`Server busy: ${event.reason || 'too many connections'} — slowing reconnect`);
+      if (sessionId === appState.activeSessionId) {
+        _toast(`Server busy: ${event.reason || 'too many connections'} — slowing reconnect`);
+      }
       session.reconnectDelay = Math.min(session.reconnectDelay * 2, RECONNECT.MAX_DELAY_MS);
-    } else if (wasSshConnected) {
+    } else if (wasSshConnected && sessionId === appState.activeSessionId) {
       _toast('Reconnecting…');
     }
     scheduleReconnect(sessionId);
