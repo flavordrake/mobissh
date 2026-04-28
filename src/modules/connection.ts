@@ -882,16 +882,22 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         }
         break;
 
-      case 'disconnected':
+      case 'disconnected': {
         logConnect('ssh_disconnected', sessionId, {
           reason: msg.reason,
           host: session?.profile?.host,
         });
-        if (session && session.state === 'connected') transitionSession(sessionId, 'soft_disconnected');
-        // Only update chrome UI for the active session — a backgrounded
-        // session disconnecting shouldn't flip the foreground status bar
-        // or pop a toast over an unrelated session's terminal.
-        if (sessionId === appState.activeSessionId) {
+        // Capture the prior state BEFORE transitioning. We only toast/flag
+        // the user when a previously-WORKING session disconnects (i.e. they
+        // notice their session went down). Reconnect-attempt failures
+        // (state === 'reconnecting' / 'failed' / mid-handshake) are part of
+        // the existing reconnect cycle the user already knows about — the
+        // session bar shows the spinner; toasting "Disconnected: handshake
+        // timeout" every retry is just noise when the terminal still looks
+        // fine to the user.
+        const wasUserVisibleConnected = session?.state === 'connected';
+        if (wasUserVisibleConnected) transitionSession(sessionId, 'soft_disconnected');
+        if (sessionId === appState.activeSessionId && wasUserVisibleConnected) {
           _setStatus('disconnected', 'Disconnected');
           // Toast instead of blocking overlay — the session will auto-reconnect (#351)
           _toast(`Disconnected: ${msg.reason ?? 'connection lost'}`);
@@ -904,6 +910,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         // ssh_disconnected fired).
         scheduleReconnect(sessionId);
         break;
+      }
 
       // [SFTP_CLIENT_ROUTER] -- every type in SFTP_MSG must be listed here
       case 'sftp_download_chunk_bin':
