@@ -26,7 +26,7 @@ import {
   initUI, toast, setStatus, focusIME,
   _applyTabBarVisibility, initSessionMenu, initTabBar,
   initConnectForm, initTerminalActions, initApprovalBar, initKeyBar,
-  initRouting, navigateToPanel,
+  initRouting, navigateToPanel, switchSession,
   initFilesPanel, initLongPressTooltips,
 } from './modules/ui.js';
 import {
@@ -101,17 +101,61 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     // The module is idempotent and a no-op when the setting is off.
     onStateChange(() => { void refreshKeepAliveNotification(); });
 
-    // SW → page channel for the "Disconnect all" notification action.
+    // Find a session whose profile.host matches the bare hookHost. The hook
+    // bridge sends $(hostname) which is typically the first label of the
+    // Tailscale FQDN we have in profile.host (e.g. "nv-dev" matches
+    // "nv-dev.tailbe5094.ts.net"). Fall back to substring containment for
+    // unusual cases.
+    const sessionForHookHost = (hookHost: string): string | null => {
+      const needle = hookHost.toLowerCase();
+      for (const [sid, s] of appState.sessions) {
+        const host = s.profile?.host.toLowerCase();
+        if (!host) continue;
+        if (host === needle) return sid;
+        if (host.startsWith(`${needle}.`)) return sid;
+        if (host.includes(needle)) return sid;
+      }
+      return null;
+    };
+
+    const focusSessionByHost = (hookHost: string): void => {
+      const sid = sessionForHookHost(hookHost);
+      if (!sid) {
+        toast(`No session for ${hookHost}`);
+        return;
+      }
+      switchSession(sid);
+      navigateToPanel('terminal');
+      focusIME();
+    };
+
+    // Cold-start hash: if the SW opened a fresh window with #focus-host=...
+    // the page reads it once on boot.
+    const focusHashMatch = /#focus-host=([^&]+)/.exec(location.hash);
+    if (focusHashMatch) {
+      const host = decodeURIComponent(focusHashMatch[1] ?? '');
+      // Defer until session list is populated.
+      setTimeout(() => { focusSessionByHost(host); }, 250);
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+
+    // SW → page channel for notification actions.
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (e: MessageEvent) => {
-        const data = e.data as { type?: string } | null;
-        if (data?.type !== 'keepalive-disconnect-all') return;
-        const ids = Array.from(appState.sessions.keys());
-        for (const id of ids) {
-          try { disconnect(id); } catch (err) { console.warn('[keepalive] disconnect failed:', id, err); }
+        const data = e.data as { type?: string; hookHost?: string } | null;
+        if (data?.type === 'keepalive-disconnect-all') {
+          const ids = Array.from(appState.sessions.keys());
+          for (const id of ids) {
+            try { disconnect(id); } catch (err) { console.warn('[keepalive] disconnect failed:', id, err); }
+          }
+          void dismissKeepAliveNotification();
+          toast('Disconnected all sessions from notification.');
+          return;
         }
-        void dismissKeepAliveNotification();
-        toast('Disconnected all sessions from notification.');
+        if (data?.type === 'focus-session-host' && data.hookHost) {
+          focusSessionByHost(data.hookHost);
+          return;
+        }
       });
     }
 

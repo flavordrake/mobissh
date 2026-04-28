@@ -813,7 +813,7 @@ export function connectSSE(): void {
   es.addEventListener('hook', (e: Event) => {
     const me = e as MessageEvent;
     try {
-      const data = JSON.parse(me.data as string) as { event?: string; tool?: string; detail?: string; description?: string; message?: string };
+      const data = JSON.parse(me.data as string) as { event?: string; tool?: string; detail?: string; description?: string; message?: string; hookHost?: string };
       console.log('[sse]', data.event, data.tool, data.detail);
 
       let body = data.message ?? data.detail ?? data.description ?? '';
@@ -841,7 +841,7 @@ export function connectSSE(): void {
       }
 
       _addNotification(`[${data.event ?? 'hook'}] ${body}`);
-      if (title && body) fireNotification(title, body);
+      if (title && body) fireNotification(title, body, { hookHost: data.hookHost });
 
       if (pattern !== null && localStorage.getItem('hapticNotifications') !== 'false') {
         try { navigator.vibrate(pattern); } catch { /* not supported */ }

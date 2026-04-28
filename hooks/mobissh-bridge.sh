@@ -21,7 +21,10 @@ if [[ -z "$EVENT" ]]; then
   exit 0
 fi
 
-BRIDGE_JSON=$(echo "$INPUT" | jq -c --arg event "$EVENT" '. + {event: $event}' 2>/dev/null)
+# Include the bare hostname so the client can route notification taps back to
+# the matching SSH session (profile.host startsWith hookHost).
+HOOK_HOST=$(hostname 2>/dev/null || echo "")
+BRIDGE_JSON=$(echo "$INPUT" | jq -c --arg event "$EVENT" --arg host "$HOOK_HOST" '. + {event: $event, hookHost: $host}' 2>/dev/null)
 if [[ -z "$BRIDGE_JSON" ]]; then
   exit 0
 fi

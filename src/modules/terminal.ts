@@ -166,10 +166,14 @@ function shouldNotify(): boolean {
   return true;
 }
 
-export function fireNotification(title: string, body: string): void {
+export function fireNotification(title: string, body: string, opts?: { hookHost?: string }): void {
   if (!('serviceWorker' in navigator)) return;
+  // Stash hookHost on data so the SW notificationclick handler can route the
+  // tap back to the originating SSH session.
+  const notifOpts: NotificationOptions = { body, tag: 'mobissh-agent' };
+  if (opts?.hookHost) notifOpts.data = { hookHost: opts.hookHost };
   void navigator.serviceWorker.ready.then((reg) => {
-    return reg.showNotification(title, { body, tag: 'mobissh-agent' });
+    return reg.showNotification(title, notifOpts);
   }).then(() => {
     _lastNotifTime = Date.now();
   }).catch(() => { /* permission may have been revoked */ });

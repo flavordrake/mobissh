@@ -85,6 +85,10 @@ self.addEventListener('notificationclick', (event) => {
     return;
   }
 
+  // Tap on a hook notification → focus the app AND tell it which session
+  // originated the notification, so the page can switch to that session.
+  const hookHost = event.notification.data && event.notification.data.hookHost;
+
   event.notification.close();
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
@@ -97,14 +101,22 @@ self.addEventListener('notificationclick', (event) => {
             clientUrl.origin === scopeUrl.origin &&
             clientUrl.pathname.startsWith(scopeUrl.pathname);
           if (sameApp && 'focus' in client) {
+            if (hookHost) {
+              try { client.postMessage({ type: 'focus-session-host', hookHost }); } catch (_) { /* ignore */ }
+            }
             return client.focus();
           }
         } catch (_) {
           // Malformed URL — skip this client
         }
       }
-      // Otherwise open a new window
-      return self.clients.openWindow(self.registration.scope);
+      // Otherwise open a new window. The page reads sessionStorage on boot
+      // to pick up the focus target since postMessage to a not-yet-running
+      // client isn't reliable.
+      const url = hookHost
+        ? `${self.registration.scope}#focus-host=${encodeURIComponent(hookHost)}`
+        : self.registration.scope;
+      return self.clients.openWindow(url);
     })
   );
 });

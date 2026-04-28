@@ -970,7 +970,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
       case 'hook_event': {
         // All non-approval hook events — log to debug overlay + notify when backgrounded
-        const hookMsg = msg as unknown as { event?: string; tool?: string; detail?: string; description?: string };
+        const hookMsg = msg as unknown as { event?: string; tool?: string; detail?: string; description?: string; hookHost?: string };
         console.log('[hook→ws]', hookMsg.event, hookMsg.tool, hookMsg.detail);
 
         // Fire PWA notification for significant events when app is backgrounded.
@@ -983,7 +983,10 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         if (isSignificant && isBackgrounded && Notification.permission === 'granted') {
           const title = `MobiSSH: ${event}`;
           const body = [hookMsg.tool, hookMsg.detail, hookMsg.description].filter(Boolean).join(' — ');
-          fireNotification(title, body || event);
+          // Prefer hookHost from the payload; fall back to the WS session's host
+          // (since the hook event arrived on this session's WS).
+          const hookHost = hookMsg.hookHost ?? session?.profile?.host;
+          fireNotification(title, body || event, hookHost ? { hookHost } : undefined);
         }
         break;
       }
