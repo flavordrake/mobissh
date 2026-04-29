@@ -1624,11 +1624,18 @@ hr {
   margin: 16px 0;
 }
 
-/* Profile and key list items */
+/* Profile and key list items.
+ *
+ * Layout: CSS grid with auto-fill + ch-based minmax. On phones the column
+ * width naturally collapses to 1; tablets and desktops fill 2-4+ columns
+ * based on viewport width. The minimum is in `ch` so it scales with the
+ * user's chosen font size — bigger font → wider cards → fewer columns,
+ * but legibility per card stays consistent. 28ch ≈ 28 character widths,
+ * enough for "user@host:port" labels without truncation. */
 .item-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(28ch, 1fr));
+  gap: 10px;
   margin-top: 8px;
 }
 
