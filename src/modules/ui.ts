@@ -1525,7 +1525,10 @@ export function initApprovalBar(): void {
     const notifMsg = (sessionTitle && !isActive ? `[${sessionTitle}] ` : '') + summary;
     _addNotification(`Approve: ${notifMsg}`);
     fireNotification('MobiSSH', `Approve: ${notifMsg}`);
-    if ('vibrate' in navigator) navigator.vibrate([50, 80, 50]);
+    // Decision-required: single short buzz. Frequent event — should feel
+    // like a quick reminder, not an alarm. Distinct from the Stop double
+    // buzz (Claude-is-back-and-needs-you), which is rarer and louder.
+    if ('vibrate' in navigator) navigator.vibrate(30);
 
     if (phase === 'trigger') {
       // No options yet — show with both action buttons disabled.

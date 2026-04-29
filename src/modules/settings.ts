@@ -841,7 +841,9 @@ export function connectSSE(): void {
         case 'Stop':
           title = 'Claude is ready';
           if (!body) body = 'Awaiting your next instruction.';
-          pattern = 40;
+          // Double buzz — Claude is done and needs attention. Distinct
+          // from the single short buzz used for decision-required prompts.
+          pattern = [80, 60, 80];
           break;
         case 'SubagentStop':
           title = 'Subagent finished';
