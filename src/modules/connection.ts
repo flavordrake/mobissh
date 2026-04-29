@@ -1329,6 +1329,21 @@ document.addEventListener('visibilitychange', () => {
     void acquireWakeLock();
     document.getElementById('errorDialogOverlay')?.classList.add('hidden');
 
+    // Pre-warm the TCP+TLS connection to the bridge BEFORE any WS attempt.
+    // Observed (2026-04-29 19:42 telemetry): on a cold mobile radio after
+    // backgrounding, the FIRST ws_open takes ~7.5s end-to-end (radio wake +
+    // TCP SYN + TLS handshake + WS upgrade). Subsequent WSes only take
+    // ~5s because they share the warm TCP/TLS path.
+    //
+    // Firing fetch('/version') as fire-and-forget warms that path while
+    // the rest of the resume handler runs. By the time _openWebSocket()
+    // creates the WS, the TLS connection is already established and the WS
+    // upgrade is one extra round-trip instead of four. {keepalive:true}
+    // ensures the request survives if the JS context flickers.
+    try {
+      void fetch('version', { keepalive: true, cache: 'no-store' }).catch(() => {});
+    } catch { /* fetch unavailable — harmless */ }
+
     // Auto-unlock vault on resume if biometric is enrolled — avoids password
     // prompt on every reconnect after the idle timer locked the vault.
     if (!appState.vaultKey) {
@@ -1383,7 +1398,13 @@ document.addEventListener('visibilitychange', () => {
         if (sid === activeId) {
           _openWebSocket({ silent: true, sessionId: sid });
         } else {
-          setTimeout(() => { _openWebSocket({ silent: true, sessionId: sid }); }, 3000);
+          // Was 3000ms — the original comment said "Tailscale tunnels have
+          // time to re-establish", but with the prewarm above the TCP/TLS
+          // path is already warm by the time non-active sessions fire. 500ms
+          // gives the active session a tiny head-start on the WS upgrade so
+          // it gets the user's foreground-priority handshake, then the
+          // others follow on the now-multiplexed connection.
+          setTimeout(() => { _openWebSocket({ silent: true, sessionId: sid }); }, 500);
         }
         reconnected = true;
       }
