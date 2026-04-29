@@ -633,7 +633,16 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
 
   const baseUrl = localStorage.getItem('wsUrl') ?? getDefaultWsUrl();
   const token = _getWsToken();
-  const wsUrl = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+  // Build the WS URL including any reattach hint. If the bridge is still
+  // holding our SSH session (within the 60s grace window), the reattach lets
+  // us skip the auth handshake and resume from the buffered output. The
+  // server falls through to normal connect if the ID is unknown.
+  const params = new URLSearchParams();
+  if (token) params.set('token', token);
+  const reattachId = session?.wsReattachId;
+  if (reattachId) params.set('reattach', reattachId);
+  const qs = params.toString();
+  const wsUrl = qs ? `${baseUrl}?${qs}` : baseUrl;
 
   _setStatus('connecting', `Connecting to ${baseUrl}…`);
   if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
@@ -713,14 +722,15 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     session._cycle?.disposables.push(onDataDisp);
   }
 
-  newWs.addEventListener('open', () => {
-    logConnect('ws_open', sessionId, { host: session?.profile?.host, silent });
-    // Don't reset _wsConsecFailures here — WS opens fine even when SSH host
-    // is unreachable. Only reset on successful SSH ready (case 'ready' below).
-    startKeepAlive(sessionId);
+  // Track whether we're awaiting a reattach response. If session.wsReattachId
+  // was set on the WS URL, the open handler defers the auth send until the
+  // server confirms reattached (skip auth) or reattach_failed (proceed with
+  // normal auth). On a fresh connect (no wsReattachId), this stays 'failed'.
+  let reattachOutcome: 'pending' | 'success' | 'failed' = session?.wsReattachId ? 'pending' : 'failed';
+
+  function sendAuthMessage(): void {
     const profile = session?.profile;
     if (!profile) return;
-
     // Resolve passphrase before building auth message (#418).
     // On reconnect, the in-memory cache may be empty (e.g. after page reload),
     // so we must re-resolve from vault/cache/prompt before sending credentials.
@@ -751,6 +761,18 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       // Status overlay only shows if the 5s timeout already fired
       if (!silent && _currentOverlay) _showConnectionStatus(`SSH → ${profile.title || `${profile.username}@${profile.host}:${String(profile.port || 22)}`}…`);
     });
+  }
+
+  newWs.addEventListener('open', () => {
+    logConnect('ws_open', sessionId, { host: session?.profile?.host, silent, reattach: reattachOutcome === 'pending' });
+    // Don't reset _wsConsecFailures here — WS opens fine even when SSH host
+    // is unreachable. Only reset on successful SSH ready (case 'ready' below).
+    startKeepAlive(sessionId);
+    const profile = session?.profile;
+    if (!profile) return;
+    // If we asked for a reattach, defer auth until the bridge confirms or denies.
+    if (reattachOutcome === 'pending') return;
+    sendAuthMessage();
   }, signal ? { signal } : undefined);
 
   // Pending binary-header: when a sftp_download_chunk_bin text message arrives,
@@ -781,6 +803,51 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     try { msg = JSON.parse(event.data as string) as ServerMessage; } catch { return; }
 
     switch (msg.type) {
+      case 'session_id': {
+        // Bridge has registered this session for potential reattach. Stash
+        // the ID so subsequent _openWebSocket calls append ?reattach=<id>.
+        if (session && msg.sessionId) session.wsReattachId = msg.sessionId;
+        break;
+      }
+      case 'reattached': {
+        // Bridge swapped this fresh WS into our existing SSH session. Skip
+        // the auth handshake; transition straight to connected. Bridge has
+        // already flushed any output captured during the gap.
+        reattachOutcome = 'success';
+        if (session && msg.sessionId) session.wsReattachId = msg.sessionId;
+        logConnect('ssh_ready', sessionId, { host: session?.profile?.host, reattach: true });
+        if (session) {
+          session._wsConsecFailures = 0;
+          session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+          if (session.state === 'connecting' || session.state === 'reconnecting') transitionSession(sessionId, 'authenticating');
+          if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
+        }
+        void acquireWakeLock();
+        if (session?.profile && sessionId === appState.activeSessionId) {
+          _setStatus('connected', session.profile.title || `${session.profile.username}@${session.profile.host}`);
+        }
+        if (_connectTimeout) { clearTimeout(_connectTimeout); _connectTimeout = null; }
+        if (sessionId === appState.activeSessionId) _dismissConnectionStatus();
+        if (session) applySessionThemeIfVisible(session);
+        // Resize: the held SSH stream may have an outdated cols/rows from
+        // before the gap — push our current dimensions so output renders correctly.
+        const reHandle = _sessionHandles.get(sessionId);
+        const reCols = reHandle ? reHandle.terminal.cols : ((session?.terminal?.cols && session.terminal.cols > 1) ? session.terminal.cols : 80);
+        const reRows = reHandle ? reHandle.terminal.rows : ((session?.terminal?.rows && session.terminal.rows > 1) ? session.terminal.rows : 24);
+        newWs.send(JSON.stringify({ type: 'resize', cols: reCols, rows: reRows }));
+        _focusIME();
+        break;
+      }
+      case 'reattach_failed': {
+        // Bridge no longer has our held SSH session (expired, or first
+        // connect after reload). Clear the stale ID and proceed with the
+        // normal auth flow that would have run from the open handler.
+        reattachOutcome = 'failed';
+        if (session) session.wsReattachId = null;
+        logConnect('reattach_failed', sessionId, { host: session?.profile?.host });
+        sendAuthMessage();
+        break;
+      }
       case 'connected': {
         logConnect('ssh_ready', sessionId, { host: session?.profile?.host });
         // If this is a recovery (we were in `reconnecting` not `connecting`),
@@ -1491,6 +1558,10 @@ export function disconnect(sessionId?: string): void {
         || session.state === 'reconnecting') ? 'failed' : 'disconnected';
       transitionSession(session.id, target);
     }
+    // User-initiated disconnect: bridge will tear down its end too. Clear
+    // the reattach ID so any subsequent reconnect starts fresh instead of
+    // trying to resume a session the bridge has thrown away.
+    session.wsReattachId = null;
     session.profile = null;
   }
 

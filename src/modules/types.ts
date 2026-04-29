@@ -152,6 +152,12 @@ export interface SessionState {
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   reconnectDelay: number;
   keepAliveTimer: ReturnType<typeof setInterval> | null;
+  /** Server-assigned reattachable session ID. Set when the bridge sends
+   *  `{type:'session_id',sessionId}` after SSH ready. Appended to subsequent
+   *  WS URLs as `?reattach=<id>` so the bridge can resume the SSH session
+   *  in-place if the WS dropped within the hold grace window. Cleared on
+   *  reattach_failed or explicit user disconnect. */
+  wsReattachId: string | null;
   activeThemeName: ThemeName;
   /** Which panel this session was last in — restored on session switch (#468). */
   activePanel: 'terminal' | 'files';
@@ -281,7 +287,10 @@ export type ServerMessage =
   | { type: 'sftp_realpath_result'; requestId: string; path: string }
   | { type: 'sftp_error'; requestId: string; message: string }
   | { type: 'approval_prompt'; tool?: string; detail?: string; description?: string }
-  | { type: 'hook_event'; event?: string; tool?: string; detail?: string; description?: string };
+  | { type: 'hook_event'; event?: string; tool?: string; detail?: string; description?: string }
+  | { type: 'session_id'; sessionId: string }
+  | { type: 'reattached'; sessionId: string }
+  | { type: 'reattach_failed' };
 
 export interface ConnectMessage {
   type: 'connect';

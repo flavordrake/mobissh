@@ -983,6 +983,72 @@ const MAX_ACTIVE_PER_IP   = 32;       // max concurrent WS/SSH sessions per IP (
 // ip → { attempts: number, windowStart: number, active: number }
 const connTracker = new Map();
 
+// ── Detached SSH session hold (ssh-session-resume) ───────────────────────────
+// When a phone WS dies mid-session (Android backgrounding / network flap),
+// hold the SSH connection alive for a grace window. If the phone reconnects
+// with `?reattach=<sessionId>` the bridge swaps the new WS into the existing
+// SSH stream and flushes a ring buffer of output captured during the gap.
+// Result: from sshd's view nothing happened; from the user's view the
+// reconnect is near-instant (no SSH handshake, scrollback preserved).
+const HOLD_GRACE_MS = 60_000;        // 60s: how long to keep SSH alive after WS drop
+const HOLD_BUFFER_MAX = 256 * 1024;  // 256 KB ring buffer of captured output
+
+// sessionId → { clientIP, sshClient, sshStream, sftpClient, sftpPending,
+//               openUploads, _sshTarget, ringBuffer, ringBufferBytes,
+//               ringOverflow, graceTimer, captureChunk }
+const heldSessions = new Map();
+
+/** Park a session for HOLD_GRACE_MS; capture stream output in a ring buffer.
+ *  Caller is responsible for nulling out its own SSH refs after this returns
+ *  so the closing-WS closure stops manipulating the SSH state. */
+function holdSession(sessionId, state) {
+  // Replace the active stream listeners with capture-into-buffer listeners.
+  // The OLD listeners (which called send() over the now-dead WS) were attached
+  // by the WS-connection closure; remove them all and install ours.
+  state.sshStream.removeAllListeners('data');
+  state.sshStream.stderr.removeAllListeners('data');
+  state.sshStream.removeAllListeners('close');
+
+  state.ringBuffer = [];
+  state.ringBufferBytes = 0;
+  state.ringOverflow = false;
+
+  state.captureChunk = (chunk) => {
+    const s = chunk.toString('utf8');
+    state.ringBuffer.push(s);
+    state.ringBufferBytes += s.length;
+    while (state.ringBufferBytes > HOLD_BUFFER_MAX && state.ringBuffer.length > 1) {
+      const evicted = state.ringBuffer.shift();
+      state.ringBufferBytes -= evicted.length;
+      state.ringOverflow = true;
+    }
+  };
+  state.sshStream.on('data', state.captureChunk);
+  state.sshStream.stderr.on('data', state.captureChunk);
+
+  // If SSH dies during the hold window, evict from the registry and free state.
+  state.sshStream.on('close', () => {
+    if (heldSessions.get(sessionId) === state) {
+      heldSessions.delete(sessionId);
+      clearTimeout(state.graceTimer);
+      try { state.sshClient.end(); } catch (_) {}
+      console.log(`[ssh-bridge] Held session SSH stream closed before reattach: sessionId=${sessionId.slice(0,8)}`);
+    }
+  });
+
+  // Grace timer — if no reattach within HOLD_GRACE_MS, tear down.
+  state.graceTimer = setTimeout(() => {
+    if (heldSessions.get(sessionId) === state) {
+      heldSessions.delete(sessionId);
+      try { state.sshStream.close(); } catch (_) {}
+      try { state.sshClient.end(); } catch (_) {}
+      console.log(`[ssh-bridge] Held session expired: sessionId=${sessionId.slice(0,8)} (${state._sshTarget})`);
+    }
+  }, HOLD_GRACE_MS);
+
+  heldSessions.set(sessionId, state);
+}
+
 function getIP(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim()
     || req.socket.remoteAddress
@@ -1199,12 +1265,59 @@ wss.on('connection', (ws, req) => {
   let sftpPending = null; // pending callbacks while SFTP channel is being opened
   let connecting = false;
   let pendingVerify = null; // hostVerifier callback waiting for client response (#5)
-  const openUploads = new Map(); // requestId → { stream, offset, path } for chunked uploads
+  let openUploads = new Map(); // requestId → { stream, offset, path } for chunked uploads
+  let mySessionId = null; // server-assigned reattachable ID, sent to client on shell ready
 
   function send(obj) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(obj));
     }
+  }
+
+  // ── Reattach path ────────────────────────────────────────────────────────
+  // Phone reconnects after a brief drop; if the bridge is still holding the
+  // SSH session for this clientIP, swap this fresh WS into the existing
+  // stream and flush the captured output. No SSH handshake, no auth round-trip.
+  try {
+    const url = new URL(req.url || '/', 'http://localhost');
+    const reattachId = url.searchParams.get('reattach');
+    if (reattachId) {
+      const held = heldSessions.get(reattachId);
+      if (held && held.clientIP === clientIP) {
+        // Atomically claim the held session
+        heldSessions.delete(reattachId);
+        clearTimeout(held.graceTimer);
+        // Swap the held SSH state into this closure
+        sshClient = held.sshClient;
+        sshStream = held.sshStream;
+        sftpClient = held.sftpClient;
+        openUploads = held.openUploads;
+        _sshTarget = held._sshTarget;
+        mySessionId = reattachId;
+        // Replace capture-into-buffer listeners with send-via-new-WS listeners
+        sshStream.removeAllListeners('data');
+        sshStream.stderr.removeAllListeners('data');
+        sshStream.removeAllListeners('close');
+        sshStream.on('data', (chunk) => { send({ type: 'output', data: chunk.toString('utf8') }); });
+        sshStream.stderr.on('data', (chunk) => { send({ type: 'output', data: chunk.toString('utf8') }); });
+        sshStream.on('close', () => { cleanup('SSH stream closed'); });
+        send({ type: 'reattached', sessionId: mySessionId });
+        // Flush ring buffer (output produced during the gap)
+        if (held.ringOverflow) {
+          send({ type: 'output', data: '\r\n\u001b[33m[mobissh: buffer overflow during gap — earlier output trimmed]\u001b[0m\r\n' });
+        }
+        for (const chunk of held.ringBuffer) {
+          send({ type: 'output', data: chunk });
+        }
+        console.log(`[ssh-bridge] WS reattached: ${clientIP} cid=${connectionId.slice(0,8)} → ${_sshTarget} (sessionId=${mySessionId.slice(0,8)}, flushed ${held.ringBufferBytes}B${held.ringOverflow ? ' overflow' : ''})`);
+      } else {
+        // ID provided but no matching hold (expired, or wrong IP)
+        send({ type: 'reattach_failed' });
+        console.log(`[ssh-bridge] reattach_failed: ${clientIP} cid=${connectionId.slice(0,8)} reattachId=${reattachId.slice(0,8)} (held=${!!held}${held && held.clientIP !== clientIP ? ' ip-mismatch' : ''})`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[ssh-bridge] reattach parse error: ${err.message}`);
   }
 
   /** Lazily open the SFTP subsystem on first use; reuse the same channel.
@@ -1327,6 +1440,11 @@ wss.on('connection', (ws, req) => {
           }
           sshStream = stream;
           connecting = false;
+          // Generate a reattachable session ID on first shell-ready. Sent to
+          // the client immediately so it can include `?reattach=<id>` on any
+          // subsequent reconnect attempt.
+          mySessionId = randomBytes(16).toString('hex');
+          send({ type: 'session_id', sessionId: mySessionId });
           send({ type: 'connected' });
 
           stream.on('data', (chunk) => {
@@ -1464,6 +1582,35 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     const t = connTracker.get(clientIP);
     if (t) t.active = Math.max(0, t.active - 1);
+
+    // If SSH is alive and we have a reattachable session ID, park it in the
+    // hold registry instead of tearing down. Caller (phone) can reconnect
+    // within HOLD_GRACE_MS via `?reattach=<sessionId>` and resume seamlessly.
+    if (sshClient && sshStream && mySessionId && !heldSessions.has(mySessionId)) {
+      const state = {
+        clientIP,
+        sshClient,
+        sshStream,
+        sftpClient,
+        sftpPending,
+        openUploads,
+        _sshTarget,
+        ringBuffer: [],
+        ringBufferBytes: 0,
+        ringOverflow: false,
+        graceTimer: null,
+        captureChunk: null,
+      };
+      holdSession(mySessionId, state);
+      // Release closure refs so cleanup() in this scope is a no-op for SSH.
+      sshClient = null;
+      sshStream = null;
+      sftpClient = null;
+      openUploads = new Map();
+      console.log(`[ssh-bridge] WS closed, holding session ${mySessionId.slice(0,8)} for ${HOLD_GRACE_MS/1000}s: ${clientIP} cid=${connectionId.slice(0,8)} → ${_sshTarget} (active: ${t ? t.active : '?'})`);
+      return;
+    }
+
     console.log(`[ssh-bridge] WS closed: ${clientIP} cid=${connectionId.slice(0,8)} → ${_sshTarget} (active: ${t ? t.active : '?'})`);
     cleanup(null);
   });

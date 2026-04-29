@@ -232,6 +232,7 @@ export function createSession(id: string): SessionState {
     reconnectTimer: { value: null, writable: true, enumerable: true, configurable: true },
     reconnectDelay: { value: RECONNECT.INITIAL_DELAY_MS, writable: true, enumerable: true, configurable: true },
     keepAliveTimer: { value: null, writable: true, enumerable: true, configurable: true },
+    wsReattachId: { value: null, writable: true, enumerable: true, configurable: true },
     activeThemeName: { value: appState.activeThemeName, writable: true, enumerable: true, configurable: true },
     activePanel: { value: 'terminal' as 'terminal' | 'files', writable: true, enumerable: true, configurable: true },
     _onDataDisposable: { value: null, writable: true, enumerable: true, configurable: true },
