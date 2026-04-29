@@ -1036,8 +1036,18 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     // Capture BEFORE transition — needed to distinguish "was connected" from "never connected"
     const wasSshConnected = session ? (session.state === 'connected' || session.state === 'soft_disconnected') : false;
     if (session && session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {
-      // From connecting/authenticating, transition to 'failed'; from connected/soft_disconnected to 'disconnected'
-      const target = (session.state === 'connecting' || session.state === 'authenticating') ? 'failed' : 'disconnected';
+      // Map current state → next state for the close event:
+      //   connected / soft_disconnected → disconnected (was working, lost it)
+      //   connecting / authenticating / reconnecting → failed (in-flight, didn't make it)
+      // `reconnecting → disconnected` is NOT a valid VALID_TRANSITIONS entry
+      // and the throw silently swallowed the rest of this handler — including
+      // `scheduleReconnect(sessionId)` below — leaving the session wedged in
+      // `reconnecting` state with no pending timer. Only visibility_resume
+      // kicks could revive it. Bug-for-bug parallel to the disconnect()
+      // throw fixed in b1bc871; same predicate, same omission.
+      const target = (session.state === 'connecting'
+        || session.state === 'authenticating'
+        || session.state === 'reconnecting') ? 'failed' : 'disconnected';
       transitionSession(sessionId, target);
     }
     stopKeepAlive(sessionId);
