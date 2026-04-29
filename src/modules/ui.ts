@@ -467,26 +467,30 @@ export function switchSession(id: string): void {
 
   // Auto-reconnect on switch — but only if the session is genuinely dead.
   //
-  // History: original (#354) reconnected unconditionally if !connected.
-  // First fix (5c0c5be) gated on state-name age. That was still wrong:
-  // a session can sit in `reconnecting` with no actual reconnect timer
-  // pending and no live WS — state-machine wedged. The state name alone
-  // is not a reliable "recovery in flight" signal.
+  // History:
+  //   original #354: reconnect unconditionally if !connected
+  //   5c0c5be: gate on state-name age (too conservative for stuck states)
+  //   b1bc871: gate on reconnectTimer pending OR ws.readyState in OPEN/CONNECTING
+  //   THIS:    gate ONLY on ws.readyState — a tap IS a "retry now" signal,
+  //            so a pending 10s reconnect timer should NOT block immediate retry.
   //
-  // The right indicators for "recovery actually in flight":
-  //   1. session.reconnectTimer is set (a setTimeout pending)
-  //   2. session.ws is in CONNECTING or OPEN readyState
-  // If neither is true, no recovery is happening — force a fresh attempt
-  // even if state name says `reconnecting`.
+  // Rationale: when the user taps a non-connected session, they are
+  // explicitly asking it to come back. A scheduled-but-not-yet-fired
+  // reconnect timer (e.g., the 10s post-halt backoff) means "wait" — but
+  // the user just chose not to wait. Cancel the timer and force a fresh
+  // attempt.
+  //
+  // The ONLY case we leave alone is when the WS is actively mid-handshake
+  // (OPEN or CONNECTING). Tearing down an in-flight WS would set us back
+  // to zero. Wait for it to either complete or fail naturally.
   if (session.profile && !isSessionConnected(session)) {
     const wsAlive = session.ws
       && (session.ws.readyState === WebSocket.OPEN
           || session.ws.readyState === WebSocket.CONNECTING);
-    const reconnectTimerPending = session.reconnectTimer != null;
-    const recoveryInProgress = wsAlive || reconnectTimerPending;
 
-    if (!recoveryInProgress) {
-      // Stuck or dead — close any stale WS and start a fresh attempt.
+    if (!wsAlive) {
+      // Cancel any pending reconnect timer — the user wants NOW, not later.
+      cancelReconnect(id);
       if (session.ws && session.ws.readyState !== WebSocket.OPEN) {
         try { session.ws.close(); } catch { /* ignore */ }
         session.ws = null;
