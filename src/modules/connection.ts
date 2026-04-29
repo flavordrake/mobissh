@@ -527,7 +527,11 @@ export async function _resolvePassphrase(profile: SSHProfile): Promise<'ok' | 'c
 
 // Max consecutive pre-open WS close events before halting the reconnect loop.
 // A close before onopen fires typically indicates a server-side auth rejection.
-const WS_MAX_AUTH_FAILURES = 3;
+// Bumped 3 → 5 (2026-04-29). With server readyTimeout now 30s, transient
+// slow handshakes shouldn't halt — but real dead targets still hit the
+// ceiling within a couple of minutes. Three strikes was too tight: a single
+// slow visibility_resume cycle could halt all sessions simultaneously.
+const WS_MAX_AUTH_FAILURES = 5;
 // _wsConsecFailures is now per-session (SessionState._wsConsecFailures) — #362
 
 /** Read the HMAC token injected by the server on page load (#93). */
@@ -1208,11 +1212,18 @@ export function reconnect(sessionId?: string): Promise<string> {
   return txn;
 }
 
-// Application-layer keepalive (#29, #204): sends a ping every 25s so NAT/proxies
-// don't drop idle SSH sessions. A dedicated Web Worker opens its own WS connection
-// and sends pings directly -- Worker threads are not frozen when Chrome backgrounds
-// the tab, unlike main-thread setInterval which gets throttled to ~60s.
-// The main thread also sends pings as a belt-and-suspenders fallback.
+// Application-layer keepalive (#29): sends a ping every 25s so NAT/proxies
+// don't drop idle SSH sessions.
+//
+// History: #204 originally added a SECOND WebSocket per session via a Web
+// Worker, on the theory that workers are not frozen when Chrome backgrounds
+// the tab. In practice that doubled bridge load (4 sessions = 8 WSes from
+// the phone, with `active: 7` regularly observed in bridge logs) and DID
+// NOT keep the main SSH WS alive — Android tears down WSes at the OS level
+// regardless of what a worker pings, because the worker's WS isn't the same
+// socket carrying the SSH session. Removed the worker; main-thread ping is
+// the only keepalive now. The actual "keep tab alive when backgrounded"
+// fix is the foreground notification (Settings → Keep alive in background).
 const WS_PING_INTERVAL_MS = 25_000;
 
 /** Exported for testing only. */
@@ -1234,29 +1245,11 @@ function startKeepAlive(sessionId: string): void {
       stopKeepAlive(sessionId);
     }
   }, WS_PING_INTERVAL_MS);
-
-  // Worker keepalive: opens a separate WS that pings even when tab is frozen
-  const wsUrl = session.ws?.url;
-  if (!wsUrl) return;
-  try {
-    session.keepAliveWorker = new Worker('ws-keepalive-worker.js');
-    session.keepAliveWorker.onmessage = () => {
-      // Worker's WS disconnected -- not critical, main-thread ping is still running
-    };
-    session.keepAliveWorker.postMessage({ command: 'start', url: wsUrl, interval: WS_PING_INTERVAL_MS });
-  } catch {
-    // Worker unavailable -- main-thread setInterval is already running
-  }
 }
 
 function stopKeepAlive(sessionId: string): void {
   const session = appState.sessions.get(sessionId);
   if (!session) return;
-  if (session.keepAliveWorker) {
-    session.keepAliveWorker.postMessage({ command: 'stop' });
-    session.keepAliveWorker.terminate();
-    session.keepAliveWorker = null;
-  }
   if (session.keepAliveTimer) {
     clearInterval(session.keepAliveTimer);
     session.keepAliveTimer = null;

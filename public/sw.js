@@ -25,7 +25,6 @@ const SHELL_FILES = [
   './modules/terminal.js',
   './app.css',
   './recovery.js',
-  './ws-keepalive-worker.js',
   './manifest.json',
   './icon-192.svg',
   './icon-512.svg',

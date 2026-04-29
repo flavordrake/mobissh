@@ -41,9 +41,6 @@ vi.stubGlobal('WebSocket', class {
   close = vi.fn(); send = vi.fn();
   static OPEN = 1;
 });
-vi.stubGlobal('Worker', class {
-  onmessage = null; postMessage = vi.fn(); terminate = vi.fn();
-});
 vi.stubGlobal('navigator', { wakeLock: undefined });
 vi.stubGlobal('window', { addEventListener: vi.fn() });
 
@@ -86,31 +83,27 @@ describe('per-session keep-alive timer isolation (#62)', () => {
     _stopKeepAlive('session-a');
 
     expect(s1.keepAliveTimer).toBeNull();
-    expect(s1.keepAliveWorker).toBeNull();
     // session-b timer must survive
     expect(s2.keepAliveTimer).not.toBeNull();
   });
 
-  it('stopKeepAlive terminates the Worker for the target session only', () => {
+  it('startKeepAlive does NOT spawn a Web Worker', () => {
+    // The keepalive Worker spawn was removed (2026-04-29). It opened a
+    // SECOND WS per session for ping-only traffic — doubled bridge load
+    // without keeping the real SSH WS alive. Verify no worker is created.
+    const workerSpawn = vi.fn();
+    vi.stubGlobal('Worker', class {
+      constructor() { workerSpawn(); }
+      onmessage = null; postMessage = vi.fn(); terminate = vi.fn();
+    });
     const fakeWs = { readyState: 1, url: 'ws://localhost:8081', send: vi.fn(), close: vi.fn(), onopen: null, onclose: null, onmessage: null, onerror: null } as unknown as WebSocket;
-    const s1 = createSession('s1');
-    s1.ws = fakeWs;
-    const s2 = createSession('s2');
-    s2.ws = fakeWs;
+    const s = createSession('no-worker');
+    s.ws = fakeWs;
 
-    _startKeepAlive('s1');
-    _startKeepAlive('s2');
+    _startKeepAlive('no-worker');
 
-    const worker1 = s1.keepAliveWorker;
-    const worker2 = s2.keepAliveWorker;
-
-    _stopKeepAlive('s1');
-
-    // worker1 must be terminated, worker2 must not
-    expect((worker1 as { terminate: ReturnType<typeof vi.fn> } | null)?.terminate).toHaveBeenCalledTimes(1);
-    expect((worker2 as { terminate: ReturnType<typeof vi.fn> } | null)?.terminate).not.toHaveBeenCalled();
-    expect(s1.keepAliveWorker).toBeNull();
-    expect(s2.keepAliveWorker).not.toBeNull();
+    expect(workerSpawn).not.toHaveBeenCalled();
+    expect(s.keepAliveTimer).not.toBeNull();
   });
 
   it('startKeepAlive is a no-op for unknown sessionId', () => {
@@ -122,16 +115,14 @@ describe('per-session keep-alive timer isolation (#62)', () => {
     expect(() => _stopKeepAlive('nonexistent')).not.toThrow();
   });
 
-  it('stopKeepAlive clears both timer and worker on the session', () => {
+  it('stopKeepAlive clears the timer', () => {
     const fakeWs = { readyState: 1, url: 'ws://localhost:8081', send: vi.fn(), close: vi.fn(), onopen: null, onclose: null, onmessage: null, onerror: null } as unknown as WebSocket;
     const s = createSession('full-stop');
     s.ws = fakeWs;
     _startKeepAlive('full-stop');
     expect(s.keepAliveTimer).not.toBeNull();
-    expect(s.keepAliveWorker).not.toBeNull();
 
     _stopKeepAlive('full-stop');
     expect(s.keepAliveTimer).toBeNull();
-    expect(s.keepAliveWorker).toBeNull();
   });
 });

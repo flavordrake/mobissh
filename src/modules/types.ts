@@ -152,7 +152,6 @@ export interface SessionState {
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   reconnectDelay: number;
   keepAliveTimer: ReturnType<typeof setInterval> | null;
-  keepAliveWorker: Worker | null;
   activeThemeName: ThemeName;
   /** Which panel this session was last in — restored on session switch (#468). */
   activePanel: 'terminal' | 'files';

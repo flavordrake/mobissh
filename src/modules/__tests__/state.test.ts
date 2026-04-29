@@ -46,7 +46,6 @@ describe('session state management', () => {
     expect(session.reconnectTimer).toBeNull();
     expect(session.reconnectDelay).toBe(2000);
     expect(session.keepAliveTimer).toBeNull();
-    expect(session.keepAliveWorker).toBeNull();
     expect(session.activeThemeName).toBe('dark');
   });
 

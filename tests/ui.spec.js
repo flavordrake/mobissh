@@ -230,7 +230,7 @@ test.describe('Session list (#60)', { tag: '@headless-adequate' }, () => {
         terminal: null, fitAddon: null, ws: null,
         wsConnected: false, sshConnected: false,
         reconnectTimer: null, reconnectDelay: 2000,
-        keepAliveTimer: null, keepAliveWorker: null,
+        keepAliveTimer: null,
         activeThemeName: 'dark',
       };
       appState.sessions.set('test-session-2', s2);
@@ -266,7 +266,7 @@ test.describe('Session list (#60)', { tag: '@headless-adequate' }, () => {
         terminal: null, fitAddon: null, ws: null,
         wsConnected: false, sshConnected: false,
         reconnectTimer: null, reconnectDelay: 2000,
-        keepAliveTimer: null, keepAliveWorker: null,
+        keepAliveTimer: null,
         activeThemeName: 'dark',
       });
       renderSessionList();
@@ -297,7 +297,7 @@ test.describe('Session list (#60)', { tag: '@headless-adequate' }, () => {
         terminal: null, fitAddon: null, ws: null,
         wsConnected: false, sshConnected: false,
         reconnectTimer: null, reconnectDelay: 2000,
-        keepAliveTimer: null, keepAliveWorker: null,
+        keepAliveTimer: null,
         activeThemeName: 'dark',
       });
       renderSessionList();

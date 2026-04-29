@@ -1365,7 +1365,14 @@ wss.on('connection', (ws, req) => {
       host: resolvedIp,
       port: parseInt(cfg.port) || 22,
       username: cfg.username,
-      readyTimeout: 10000,  // 10s — fail fast, client retries 3x
+      readyTimeout: 30000,  // 30s — Tailscale paths through DERP relays or
+                            // to sleeping targets legitimately take longer
+                            // than 10s. Bridge log evidence (2026-04-29):
+                            // handshakes that eventually succeed on retry,
+                            // synchronized halts across all 4 sessions
+                            // every ~3 min when paths slow. 30s lets
+                            // genuine slow handshakes complete; the client
+                            // halt threshold absorbs anything truly dead.
       keepaliveInterval: 15000,  // SSH-layer keepalive every 15s
       keepaliveCountMax: 10,      // drop after 10 unanswered (~150s) — mobile needs longer grace
       hostVerifier(keyBuffer, verify) {
