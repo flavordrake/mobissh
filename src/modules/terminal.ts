@@ -436,7 +436,16 @@ export function applyTheme(name: string, { persist = false } = {}): void {
   const t = THEMES[name as ThemeName];
   appState.activeThemeName = name as ThemeName;
   const term = currentSession()?.terminal;
-  if (term) term.options.theme = t.theme;
+  if (term) {
+    term.options.theme = t.theme;
+    // Force a full re-paint. Without this, mid-render frames during a
+    // type-out keep the old theme's pre-rasterized glyph cache until the
+    // next idle moment — observable as "the new session keeps the old
+    // theme" when swiping between sessions while output is streaming or a
+    // modal is open. refresh(0, rows-1) invalidates xterm's renderer
+    // state for every visible row.
+    try { term.refresh(0, Math.max(0, term.rows - 1)); } catch { /* terminal may not be open yet */ }
+  }
   if (persist) localStorage.setItem('termTheme', name);
   const { style } = document.documentElement;
   style.setProperty('--terminal-bg', t.theme.background);
