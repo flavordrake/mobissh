@@ -303,13 +303,18 @@ export function initSelection(): void {
     _keyboardWasVisible = getKeyboardVisible();
     logGesture('gesture_long_press', { keyboardVisible: _keyboardWasVisible });
     try { navigator.vibrate(30); } catch { /* vibrate not available */ }
-    // Blur the focused IME input. If the user had dismissed the keyboard,
-    // the textarea still held focus — touching the terminal would re-summon
-    // the keyboard mid-selection, resize the viewport, and invalidate the
-    // drag anchor. Blur decouples the touch from the keyboard.
-    // _dismissSelection restores focus via focusIME() only when the keyboard
-    // was visible at start — so blur here is reversible.
-    if (document.activeElement instanceof HTMLElement) {
+    // Conditional blur. If the keyboard was HIDDEN but the textarea still
+    // had focus (user dismissed via back button), blur to prevent the
+    // terminal touch from re-summoning the keyboard mid-select. If the
+    // keyboard was already VISIBLE, do NOT blur — blurring dismisses the
+    // keyboard, which fires a viewport resize during the drag-select
+    // gesture, shifts the buffer-coordinate anchor, and produces a wrong
+    // selection. The user reported the regression directly: "long pressing
+    // when keyboard is visible dismisses the keyboard, resizes the screen,
+    // and tapping again re-activates it."
+    // _dismissSelection's focusIME restore is gated on _keyboardWasVisible,
+    // so leaving focus intact here stays consistent with that path.
+    if (!_keyboardWasVisible && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
     _showPasteIfClipboard();
