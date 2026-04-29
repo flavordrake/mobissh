@@ -1524,11 +1524,18 @@ export function initApprovalBar(): void {
 
     const notifMsg = (sessionTitle && !isActive ? `[${sessionTitle}] ` : '') + summary;
     _addNotification(`Approve: ${notifMsg}`);
-    fireNotification('MobiSSH', `Approve: ${notifMsg}`);
-    // Decision-required: single short buzz. Frequent event — should feel
-    // like a quick reminder, not an alarm. Distinct from the Stop double
-    // buzz (Claude-is-back-and-needs-you), which is rarer and louder.
-    if ('vibrate' in navigator) navigator.vibrate(30);
+    // OS notification + haptic only when the user actually has to decide.
+    // If auto-accept is on, the prompt will resolve itself within seconds
+    // without input — buzzing the wrist for an automated decision is just
+    // noise. The in-app drawer entry above is kept either way so the user
+    // can review what was auto-handled.
+    if (!_isAutoAccept()) {
+      fireNotification('MobiSSH', `Approve: ${notifMsg}`);
+      // Decision-required (manual): single 100ms pulse. A bit firmer than
+      // the previous 30ms tap so the user doesn't miss it when auto is off
+      // and they actually need to act.
+      if ('vibrate' in navigator) navigator.vibrate(100);
+    }
 
     if (phase === 'trigger') {
       // No options yet — show with both action buttons disabled.
