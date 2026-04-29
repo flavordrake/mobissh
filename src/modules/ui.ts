@@ -465,30 +465,28 @@ export function switchSession(id: string): void {
   // shouldn't repaint app chrome.
   applySessionThemeIfVisible(session);
 
-  // Auto-reconnect on switch — but ONLY if the session is genuinely dead.
+  // Auto-reconnect on switch — but only if the session is genuinely dead.
   //
-  // Original (#354): "if not connected, reconnect unconditionally". That
-  // conflated several states under "not connected" — including
-  // `reconnecting` and `authenticating`, which mean a recovery is already
-  // in flight. Tapping such a session would tear down the in-flight WS
-  // and start a fresh attempt, throwing away progress and triggering a
-  // "Reconnecting…" toast on every session tap. User-reported (2026-04-29):
-  // "every time I switch between them, it still does a reconnecting step."
+  // History: original (#354) reconnected unconditionally if !connected.
+  // First fix (5c0c5be) gated on state-name age. That was still wrong:
+  // a session can sit in `reconnecting` with no actual reconnect timer
+  // pending and no live WS — state-machine wedged. The state name alone
+  // is not a reliable "recovery in flight" signal.
   //
-  // Skip the reconnect if:
-  //   - already in flight (state ∈ {connecting, authenticating, reconnecting})
-  //     AND the state is recent (stateAge < 30s — past this, treat as stuck)
-  //   - WS is OPEN (might just be that state.transition hasn't fired yet)
-  if (session.profile) {
-    const inFlight = session.state === 'connecting'
-      || session.state === 'authenticating'
-      || session.state === 'reconnecting';
-    const stateAge = Date.now() - session._stateChangedAt;
-    const wsOpen = session.ws?.readyState === WebSocket.OPEN;
+  // The right indicators for "recovery actually in flight":
+  //   1. session.reconnectTimer is set (a setTimeout pending)
+  //   2. session.ws is in CONNECTING or OPEN readyState
+  // If neither is true, no recovery is happening — force a fresh attempt
+  // even if state name says `reconnecting`.
+  if (session.profile && !isSessionConnected(session)) {
+    const wsAlive = session.ws
+      && (session.ws.readyState === WebSocket.OPEN
+          || session.ws.readyState === WebSocket.CONNECTING);
+    const reconnectTimerPending = session.reconnectTimer != null;
+    const recoveryInProgress = wsAlive || reconnectTimerPending;
 
-    const recoveryInProgress = (inFlight && stateAge < 30_000) || wsOpen;
-    if (!isSessionConnected(session) && !recoveryInProgress) {
-      // Truly dead — close any stale WS and start fresh.
+    if (!recoveryInProgress) {
+      // Stuck or dead — close any stale WS and start a fresh attempt.
       if (session.ws && session.ws.readyState !== WebSocket.OPEN) {
         try { session.ws.close(); } catch { /* ignore */ }
         session.ws = null;

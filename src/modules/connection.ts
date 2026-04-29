@@ -1468,8 +1468,17 @@ export function disconnect(sessionId?: string): void {
       session.ws = null;
     }
     // Transition state BEFORE nulling profile so side-effects can read it (#388)
+    // `reconnecting` was previously routed to `disconnected`, but
+    // `reconnecting → disconnected` is NOT a valid state-machine transition
+    // (only authenticating / connected / failed / closed). The throw left
+    // the rest of disconnect() unrun and closeSession() un-called — so the
+    // disconnect button silently did nothing on stuck-reconnecting sessions.
+    // Route `reconnecting` to `failed` (which IS valid) along with the
+    // other in-flight states.
     if (session.state !== 'disconnected' && session.state !== 'closed' && session.state !== 'failed') {
-      const target = (session.state === 'connecting' || session.state === 'authenticating') ? 'failed' : 'disconnected';
+      const target = (session.state === 'connecting'
+        || session.state === 'authenticating'
+        || session.state === 'reconnecting') ? 'failed' : 'disconnected';
       transitionSession(session.id, target);
     }
     session.profile = null;
