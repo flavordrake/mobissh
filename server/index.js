@@ -990,7 +990,7 @@ const connTracker = new Map();
 // SSH stream and flushes a ring buffer of output captured during the gap.
 // Result: from sshd's view nothing happened; from the user's view the
 // reconnect is near-instant (no SSH handshake, scrollback preserved).
-const HOLD_GRACE_MS = 60_000;        // 60s: how long to keep SSH alive after WS drop
+const HOLD_GRACE_MS = 300_000;       // 5min: how long to keep SSH alive after WS drop
 const HOLD_BUFFER_MAX = 256 * 1024;  // 256 KB ring buffer of captured output
 
 // sessionId → { clientIP, sshClient, sshStream, sftpClient, sftpPending,

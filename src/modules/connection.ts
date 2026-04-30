@@ -845,6 +845,11 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         reattachOutcome = 'failed';
         if (session) session.wsReattachId = null;
         logConnect('reattach_failed', sessionId, { host: session?.profile?.host });
+        // Visible breadcrumb in the terminal so the user understands why
+        // their scrollback is gone: the bridge's hold grace expired while
+        // the phone was backgrounded. Without this, an empty fresh shell
+        // looks identical to a stuck connection.
+        _bufferTerminalWrite(sessionId, '\r\n\x1b[2m[previous session expired — fresh shell]\x1b[0m\r\n');
         sendAuthMessage();
         break;
       }
@@ -1446,15 +1451,41 @@ document.addEventListener('visibilitychange', () => {
     const now = Date.now();
     let reconnected = false;
     const activeId = appState.activeSessionId ?? '';
+    // Stale-halt threshold: if a session has been in `failed` state longer
+    // than this when visibility resumes, treat resume as the retry signal.
+    // The halt was almost certainly caused by background-suspended retries
+    // hitting the failure cap, not a real "host unreachable" failure. Without
+    // this, the user has to manually tap each halted session after every
+    // long background. Threshold is generous enough that rapid screen
+    // flicker (the original loop concern) won't cycle through halts —
+    // a halt that's <30s old is fresh and stays user-must-retry.
+    const STALE_HALT_MS = 30_000;
     for (const [sid, session] of appState.sessions) {
       if (!session.profile) continue;
-      // `failed` is the user-must-retry gate; never auto-disturb.
-      if (session.state === 'failed') continue;
 
       const inFlight = session.state === 'connecting'
         || session.state === 'authenticating'
         || session.state === 'reconnecting';
       const stateAge = now - session._stateChangedAt;
+
+      // `failed`: usually user-must-retry, but if the halt is stale (phone
+      // was backgrounded long enough that the failures are unrelated to
+      // current network state), treat resume as the retry. Otherwise skip.
+      if (session.state === 'failed') {
+        if (stateAge < STALE_HALT_MS) continue;
+        cancelReconnect(sid);
+        session._wsConsecFailures = 0;
+        session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
+        transitionSession(sid, 'reconnecting');
+        if (sid === activeId) {
+          _openWebSocket({ silent: true, sessionId: sid });
+        } else {
+          setTimeout(() => { _openWebSocket({ silent: true, sessionId: sid }); }, 500);
+        }
+        reconnected = true;
+        continue;
+      }
+
       // Healthy in-flight: leave alone. Stuck in-flight (age > threshold):
       // close the stale WS and start fresh. Disconnected/closed: also reopen.
       if (inFlight && stateAge < STALE_INFLIGHT_MS) continue;
