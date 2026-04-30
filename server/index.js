@@ -1425,18 +1425,15 @@ wss.on('connection', (ws, req) => {
 
     // Per-phase timing so the connect-log captures where slowness lives. SSH
     // readyTimeout is 30s — when handshakes legitimately take 10–25s the user
-    // can't tell which stage stalled (TCP, KEX, auth, channel). Each phase
-    // event ships a delta from connect() so a slow reconnect shows up as
-    // {phase, ms} in the client telemetry.
-    const phaseT0 = Date.now();
-    let phaseSeen = false;
+    // can't tell which stage stalled (TCP, KEX, auth, channel).
+    const phaseT0 = performance.now();
     const sendPhase = (name) => {
-      const ms = Date.now() - phaseT0;
-      send({ type: 'phase', name, ms });
+      const ms = Math.round(performance.now() - phaseT0);
+      try { send({ type: 'phase', name, ms }); } catch (_) {}
       console.log(`[ssh-bridge] phase=${name} ms=${ms} cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
     };
 
-    client.on('greeting', () => { if (!phaseSeen) { phaseSeen = true; sendPhase('greeting'); } });
+    client.on('greeting', () => { sendPhase('greeting'); });
     client.on('banner', () => { sendPhase('banner'); });
     client.on('handshake', () => { sendPhase('handshake'); });
 

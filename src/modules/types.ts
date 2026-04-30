@@ -291,7 +291,7 @@ export type ServerMessage =
   | { type: 'session_id'; sessionId: string }
   | { type: 'reattached'; sessionId: string }
   | { type: 'reattach_failed' }
-  | { type: 'phase'; name: string; ms: number };
+  | { type: 'phase'; name: 'greeting' | 'banner' | 'handshake' | 'ssh_ready'; ms: number };
 
 export interface ConnectMessage {
   type: 'connect';
