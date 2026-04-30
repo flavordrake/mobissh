@@ -1439,15 +1439,17 @@ wss.on('connection', (ws, req) => {
     // where TCP routes into the void and ssh2 never receives any data.
     // Trip on whichever of greeting/banner/handshake fires first — the
     // greeting event is optional in ssh2 (not all servers emit it), but
-    // handshake fires reliably once KEX completes. If none fire in 10s,
-    // we've never gotten data back from the target.
+    // handshake fires reliably once KEX completes. Healthy paths produce
+    // handshake in <1s; cold direct-paths (Tailscale NAT-traversal) tend
+    // to fail entirely on the first attempt and succeed on auto-retry,
+    // so 5s is plenty — anything slower retries via the schedule below.
     let progressSeen = false;
     const unreachableTimer = setTimeout(() => {
       if (progressSeen || sshClient !== client) return;
-      console.log(`[ssh-bridge] no SSH response in 10s — host unreachable cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
-      try { send({ type: 'error', message: 'Host unreachable (no SSH response in 10s)' }); } catch (_) {}
+      console.log(`[ssh-bridge] no SSH response in 5s — host unreachable cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
+      try { send({ type: 'error', message: 'Host unreachable (no SSH response in 5s)' }); } catch (_) {}
       try { client.end(); } catch (_) {}
-    }, 10_000);
+    }, 5_000);
     const markProgress = () => { progressSeen = true; clearTimeout(unreachableTimer); };
 
     client.on('greeting', () => { markProgress(); sendPhase('greeting'); });
