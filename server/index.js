@@ -1433,7 +1433,23 @@ wss.on('connection', (ws, req) => {
       console.log(`[ssh-bridge] phase=${name} ms=${ms} cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
     };
 
-    client.on('greeting', () => { sendPhase('greeting'); });
+    // Fail-fast for unreachable hosts. The 30s readyTimeout below covers
+    // legitimate slow handshakes (DERP relays, sleeping targets), but it
+    // also gates on dead hosts where we'll never receive any SSH greeting
+    // (TCP routes into the void — e.g., Tailscale-offline peer). For the
+    // dead-host case we don't need 30s of waiting: the SSH greeting is the
+    // first thing sshd sends on TCP connect, so a 10s no-greeting window
+    // means the path is broken. Distinct error keeps the user informed
+    // ("host unreachable" vs. the more ambiguous "handshake timeout").
+    let greetingSeen = false;
+    const unreachableTimer = setTimeout(() => {
+      if (greetingSeen || sshClient !== client) return;
+      console.log(`[ssh-bridge] no SSH greeting in 10s — host unreachable cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
+      try { send({ type: 'error', message: 'Host unreachable (no SSH greeting in 10s)' }); } catch (_) {}
+      try { client.end(); } catch (_) {}
+    }, 10_000);
+
+    client.on('greeting', () => { greetingSeen = true; clearTimeout(unreachableTimer); sendPhase('greeting'); });
     client.on('banner', () => { sendPhase('banner'); });
     client.on('handshake', () => { sendPhase('handshake'); });
 
@@ -1488,11 +1504,12 @@ wss.on('connection', (ws, req) => {
     }
 
     client.on('error', (err) => {
+      clearTimeout(unreachableTimer);
       send({ type: 'error', message: err.message });
       sshCleanup(err.message);
     });
-    client.on('end', () => { sshCleanup('SSH connection ended'); });
-    client.on('close', () => { sshCleanup('SSH connection closed'); });
+    client.on('end', () => { clearTimeout(unreachableTimer); sshCleanup('SSH connection ended'); });
+    client.on('close', () => { clearTimeout(unreachableTimer); sshCleanup('SSH connection closed'); });
 
     const sshConfig = {
       host: resolvedIp,
