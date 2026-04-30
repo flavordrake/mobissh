@@ -193,10 +193,13 @@ export function navigateToPanel(
 }
 
 /** Apply a session's theme to `:root` only if the currently-visible panel
- *  paints with session scope (terminal/files). Non-session views (connect,
- *  settings) should keep the default theme even when a background session
- *  connects or the user swipes among sessions. */
-export function applySessionThemeIfVisible(session: { activeThemeName: ThemeName }): void {
+ *  paints with session scope (terminal/files) AND this session is the one
+ *  the user is actively viewing. Non-session views (connect, settings) keep
+ *  the default theme. Background sessions repainting while another session
+ *  is active would bleed the wrong theme onto the foreground (bug 02:27).
+ */
+export function applySessionThemeIfVisible(session: { id: string; activeThemeName: ThemeName }): void {
+  if (session.id !== appState.activeSessionId) return;
   const panelTerminal = document.getElementById('panel-terminal');
   const panelFiles = document.getElementById('panel-files');
   const sessionBoundVisible = (panelTerminal?.classList.contains('active') ?? false)
