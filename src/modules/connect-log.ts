@@ -37,7 +37,8 @@ export type ConnectLogType =
   | 'session_close'
   | 'app_start'
   | 'app_resume'
-  | 'reattach_failed';
+  | 'reattach_failed'
+  | 'phase';
 
 export interface ConnectLogEntry {
   /** Unix ms */

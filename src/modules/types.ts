@@ -290,7 +290,8 @@ export type ServerMessage =
   | { type: 'hook_event'; event?: string; tool?: string; detail?: string; description?: string }
   | { type: 'session_id'; sessionId: string }
   | { type: 'reattached'; sessionId: string }
-  | { type: 'reattach_failed' };
+  | { type: 'reattach_failed' }
+  | { type: 'phase'; name: string; ms: number };
 
 export interface ConnectMessage {
   type: 'connect';

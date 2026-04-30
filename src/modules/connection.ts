@@ -809,6 +809,18 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         if (session && msg.sessionId) session.wsReattachId = msg.sessionId;
         break;
       }
+      case 'phase': {
+        // Per-phase SSH timing from the bridge: greeting/banner/handshake/
+        // ssh_ready, each carrying ms-from-connect(). Lets bug-report
+        // telemetry pinpoint where a slow handshake actually stalled
+        // (TCP connect, KEX, auth, channel open).
+        logConnect('phase', sessionId, {
+          host: session?.profile?.host,
+          name: msg.name,
+          ms: msg.ms,
+        });
+        break;
+      }
       case 'reattached': {
         // Bridge swapped this fresh WS into our existing SSH session. Skip
         // the auth handshake; transition straight to connected. Bridge has
