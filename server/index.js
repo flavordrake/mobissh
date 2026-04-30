@@ -1433,25 +1433,26 @@ wss.on('connection', (ws, req) => {
       console.log(`[ssh-bridge] phase=${name} ms=${ms} cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
     };
 
-    // Fail-fast for unreachable hosts. The 30s readyTimeout below covers
-    // legitimate slow handshakes (DERP relays, sleeping targets), but it
-    // also gates on dead hosts where we'll never receive any SSH greeting
-    // (TCP routes into the void — e.g., Tailscale-offline peer). For the
-    // dead-host case we don't need 30s of waiting: the SSH greeting is the
-    // first thing sshd sends on TCP connect, so a 10s no-greeting window
-    // means the path is broken. Distinct error keeps the user informed
-    // ("host unreachable" vs. the more ambiguous "handshake timeout").
-    let greetingSeen = false;
+    // Fail-fast for unreachable hosts. 30s readyTimeout below covers
+    // legitimate slow handshakes (DERP relays, sleeping targets); this
+    // shorter window catches dead paths (Tailscale-offline peer, etc.)
+    // where TCP routes into the void and ssh2 never receives any data.
+    // Trip on whichever of greeting/banner/handshake fires first — the
+    // greeting event is optional in ssh2 (not all servers emit it), but
+    // handshake fires reliably once KEX completes. If none fire in 10s,
+    // we've never gotten data back from the target.
+    let progressSeen = false;
     const unreachableTimer = setTimeout(() => {
-      if (greetingSeen || sshClient !== client) return;
-      console.log(`[ssh-bridge] no SSH greeting in 10s — host unreachable cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
-      try { send({ type: 'error', message: 'Host unreachable (no SSH greeting in 10s)' }); } catch (_) {}
+      if (progressSeen || sshClient !== client) return;
+      console.log(`[ssh-bridge] no SSH response in 10s — host unreachable cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
+      try { send({ type: 'error', message: 'Host unreachable (no SSH response in 10s)' }); } catch (_) {}
       try { client.end(); } catch (_) {}
     }, 10_000);
+    const markProgress = () => { progressSeen = true; clearTimeout(unreachableTimer); };
 
-    client.on('greeting', () => { greetingSeen = true; clearTimeout(unreachableTimer); sendPhase('greeting'); });
-    client.on('banner', () => { sendPhase('banner'); });
-    client.on('handshake', () => { sendPhase('handshake'); });
+    client.on('greeting', () => { markProgress(); sendPhase('greeting'); });
+    client.on('banner', () => { markProgress(); sendPhase('banner'); });
+    client.on('handshake', () => { markProgress(); sendPhase('handshake'); });
 
     client.on('ready', () => {
       sendPhase('ssh_ready');
