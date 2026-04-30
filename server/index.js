@@ -1439,17 +1439,21 @@ wss.on('connection', (ws, req) => {
     // where TCP routes into the void and ssh2 never receives any data.
     // Trip on whichever of greeting/banner/handshake fires first — the
     // greeting event is optional in ssh2 (not all servers emit it), but
-    // handshake fires reliably once KEX completes. Healthy paths produce
-    // handshake in <1s; cold direct-paths (Tailscale NAT-traversal) tend
-    // to fail entirely on the first attempt and succeed on auto-retry,
-    // so 5s is plenty — anything slower retries via the schedule below.
+    // handshake fires reliably once KEX completes.
+    //
+    // 10s, not 5s: a 5s window killed cold direct-path Tailscale connects
+    // that would have completed at 6-9s after a phone wake — the bridge
+    // saw the whole 5-failure halt threshold burn through in ~30s and
+    // sessions wedged. 10s gives genuine cold-path NAT-traversal room
+    // while still cutting the previous 30s readyTimeout in third for
+    // truly dead hosts (e.g., Tailscale-offline peer).
     let progressSeen = false;
     const unreachableTimer = setTimeout(() => {
       if (progressSeen || sshClient !== client) return;
-      console.log(`[ssh-bridge] no SSH response in 5s — host unreachable cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
-      try { send({ type: 'error', message: 'Host unreachable (no SSH response in 5s)' }); } catch (_) {}
+      console.log(`[ssh-bridge] no SSH response in 10s — host unreachable cid=${connectionId.slice(0,8)} → ${_sshTarget}`);
+      try { send({ type: 'error', message: 'Host unreachable (no SSH response in 10s)' }); } catch (_) {}
       try { client.end(); } catch (_) {}
-    }, 5_000);
+    }, 10_000);
     const markProgress = () => { progressSeen = true; clearTimeout(unreachableTimer); };
 
     client.on('greeting', () => { markProgress(); sendPhase('greeting'); });
