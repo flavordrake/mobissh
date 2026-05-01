@@ -1210,6 +1210,7 @@ export function initIMEInput(): void {
 
   let _touchStartY: number | null = null;
   let _touchStartX: number | null = null;
+  let _touchStartTime: number = 0;
   let _lastTouchY: number | null = null;
   let _lastTouchX: number | null = null;
   let _isTouchScroll = false;
@@ -1248,6 +1249,7 @@ export function initIMEInput(): void {
     });
     _touchStartY = _lastTouchY = e.touches[0]!.clientY;
     _touchStartX = _lastTouchX = e.touches[0]!.clientX;
+    _touchStartTime = performance.now();
     _isTouchScroll = false;
     _scrolledLines = 0;
     _pendingLines = 0;
@@ -1333,6 +1335,7 @@ export function initIMEInput(): void {
     const wasScroll = _isTouchScroll;
     const finalDx = (_lastTouchX ?? _touchStartX ?? 0) - (_touchStartX ?? 0);
     const finalDy = (_lastTouchY ?? _touchStartY ?? 0) - (_touchStartY ?? 0);
+    const touchDurationMs = performance.now() - _touchStartTime;
 
     _touchStartY = _touchStartX = _lastTouchY = _lastTouchX = null;
     _isTouchScroll = false;
@@ -1353,7 +1356,13 @@ export function initIMEInput(): void {
           : (finalDx < 0 ? '\x02n' : '\x02p');   // traditional: finger left = next
         horiz = hCmd === '\x02n' ? 'next' : 'prev';
         sendSSHInput(hCmd);
-      } else {
+      } else if (touchDurationMs < 300) {
+        // Real tap (held briefly) → focus the IME textarea so the keyboard
+        // appears for typing. A long-press attempt that didn't quite cross
+        // selection.ts's threshold (e.g., finger drifted >10px during the
+        // hold, or held just under 500ms) was reported as "long press is
+        // popping the keyboard." Anything held ≥300ms is treated as a
+        // gesture attempt — leave focus alone, no keyboard summon.
         setTimeout(focusIME, 50);
       }
     }
