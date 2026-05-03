@@ -2362,34 +2362,119 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
       wrap?.querySelector<HTMLElement>('.preview-video-save')?.classList.add('hidden');
     });
 
-    // Pinch-zoom: scale only the <video>, not the entire page (#491). The
-    // viewport meta asks for user-scalable=no but modern iOS/Android ignore
-    // that, so two-finger pinches that land on the video would otherwise
-    // page-zoom the whole app. Wrap has touch-action: pan-x pan-y to block
-    // browser pinch in this region; we apply the scale ourselves.
+    // Pinch + pan on the <video> only (#491). App-level pinch is blocked
+    // globally by `touch-action: pan-x pan-y` on body; the wrap has the same
+    // setting so browser pinch never lands here. We handle both gestures:
+    //
+    //  - Two fingers: scale 0.5×–5× around the midpoint between them, so the
+    //    image grows under the user's pinch (not the element's center).
+    //  - One finger when zoomed: 1:1 pan with finger; clamped so the image
+    //    can't be dragged past its own edges.
+    //  - Snap back to scale=1, translate=0 when the user pinches below 1×.
+    let currentScale = 1;
+    let translateX = 0;
+    let translateY = 0;
     let initialDist = 0;
     let initialScale = 1;
-    let currentScale = 1;
-    const dist = (a: Touch, b: Touch): number => {
-      const dx = a.clientX - b.clientX;
-      const dy = a.clientY - b.clientY;
-      return Math.hypot(dx, dy);
+    let initialTransX = 0;
+    let initialTransY = 0;
+    let initialMidX = 0;
+    let initialMidY = 0;
+    let panStartFingerX = 0;
+    let panStartFingerY = 0;
+    let panStartTransX = 0;
+    let panStartTransY = 0;
+    let panActive = false;
+
+    const dist = (a: Touch, b: Touch): number => Math.hypot(
+      a.clientX - b.clientX, a.clientY - b.clientY,
+    );
+    const apply = (): void => {
+      if (currentScale === 1 && translateX === 0 && translateY === 0) {
+        video.style.transform = '';
+        return;
+      }
+      video.style.transform = `translate(${String(translateX)}px, ${String(translateY)}px) scale(${String(currentScale)})`;
     };
+    const clampTranslate = (): void => {
+      // With transform-origin: center, a scale of s leaves at most
+      // ((s-1) * dim) / 2 of slack on each side before the image edge
+      // crosses the visible viewport. Clamp so the user can't pan beyond.
+      const w = video.clientWidth;
+      const h = video.clientHeight;
+      const maxX = Math.max(0, ((currentScale - 1) * w) / 2);
+      const maxY = Math.max(0, ((currentScale - 1) * h) / 2);
+      translateX = Math.max(-maxX, Math.min(maxX, translateX));
+      translateY = Math.max(-maxY, Math.min(maxY, translateY));
+    };
+
     video.addEventListener('touchstart', (e: TouchEvent) => {
-      if (e.touches.length !== 2) return;
-      e.preventDefault();
-      initialDist = dist(e.touches[0]!, e.touches[1]!);
-      initialScale = currentScale;
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const t0 = e.touches[0]!;
+        const t1 = e.touches[1]!;
+        initialDist = dist(t0, t1);
+        initialScale = currentScale;
+        initialTransX = translateX;
+        initialTransY = translateY;
+        const rect = video.getBoundingClientRect();
+        initialMidX = (t0.clientX + t1.clientX) / 2 - (rect.left + rect.width / 2);
+        initialMidY = (t0.clientY + t1.clientY) / 2 - (rect.top + rect.height / 2);
+        panActive = false;
+      } else if (e.touches.length === 1 && currentScale > 1) {
+        // Single-finger drag pans only when zoomed in. At 1× we leave native
+        // controls (tap-to-play, scrub) untouched.
+        e.preventDefault();
+        const t0 = e.touches[0]!;
+        panStartFingerX = t0.clientX;
+        panStartFingerY = t0.clientY;
+        panStartTransX = translateX;
+        panStartTransY = translateY;
+        panActive = true;
+      }
     }, { passive: false });
+
     video.addEventListener('touchmove', (e: TouchEvent) => {
-      if (e.touches.length !== 2 || initialDist === 0) return;
-      e.preventDefault();
-      const d = dist(e.touches[0]!, e.touches[1]!);
-      currentScale = Math.max(0.5, Math.min(5, initialScale * (d / initialDist)));
-      video.style.transform = `scale(${String(currentScale)})`;
+      if (e.touches.length === 2 && initialDist > 0) {
+        e.preventDefault();
+        const t0 = e.touches[0]!;
+        const t1 = e.touches[1]!;
+        const d = dist(t0, t1);
+        const newScale = Math.max(0.5, Math.min(5, initialScale * (d / initialDist)));
+        // Anchor pinch to the midpoint of the two fingers so the image grows
+        // under the user's hands, not the element's center.
+        const rect = video.getBoundingClientRect();
+        const midX = (t0.clientX + t1.clientX) / 2 - (rect.left + rect.width / 2);
+        const midY = (t0.clientY + t1.clientY) / 2 - (rect.top + rect.height / 2);
+        const scaleDelta = newScale / initialScale;
+        translateX = midX - (initialMidX - initialTransX) * scaleDelta;
+        translateY = midY - (initialMidY - initialTransY) * scaleDelta;
+        currentScale = newScale;
+        clampTranslate();
+        apply();
+      } else if (panActive && e.touches.length === 1) {
+        e.preventDefault();
+        const t0 = e.touches[0]!;
+        translateX = panStartTransX + (t0.clientX - panStartFingerX);
+        translateY = panStartTransY + (t0.clientY - panStartFingerY);
+        clampTranslate();
+        apply();
+      }
     }, { passive: false });
+
     video.addEventListener('touchend', (e: TouchEvent) => {
       if (e.touches.length < 2) initialDist = 0;
+      if (e.touches.length === 0) {
+        panActive = false;
+        // Snap back if user pinched below 1× — keeps the image centered and
+        // avoids stranding it off-screen.
+        if (currentScale < 1) {
+          currentScale = 1;
+          translateX = 0;
+          translateY = 0;
+          apply();
+        }
+      }
     });
   });
 
