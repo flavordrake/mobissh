@@ -2361,6 +2361,36 @@ function _showFilePreview(filename: string, data: Uint8Array, fullPath?: string)
     video.addEventListener('playing', () => {
       wrap?.querySelector<HTMLElement>('.preview-video-save')?.classList.add('hidden');
     });
+
+    // Pinch-zoom: scale only the <video>, not the entire page (#491). The
+    // viewport meta asks for user-scalable=no but modern iOS/Android ignore
+    // that, so two-finger pinches that land on the video would otherwise
+    // page-zoom the whole app. Wrap has touch-action: pan-x pan-y to block
+    // browser pinch in this region; we apply the scale ourselves.
+    let initialDist = 0;
+    let initialScale = 1;
+    let currentScale = 1;
+    const dist = (a: Touch, b: Touch): number => {
+      const dx = a.clientX - b.clientX;
+      const dy = a.clientY - b.clientY;
+      return Math.hypot(dx, dy);
+    };
+    video.addEventListener('touchstart', (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      e.preventDefault();
+      initialDist = dist(e.touches[0]!, e.touches[1]!);
+      initialScale = currentScale;
+    }, { passive: false });
+    video.addEventListener('touchmove', (e: TouchEvent) => {
+      if (e.touches.length !== 2 || initialDist === 0) return;
+      e.preventDefault();
+      const d = dist(e.touches[0]!, e.touches[1]!);
+      currentScale = Math.max(0.5, Math.min(5, initialScale * (d / initialDist)));
+      video.style.transform = `scale(${String(currentScale)})`;
+    }, { passive: false });
+    video.addEventListener('touchend', (e: TouchEvent) => {
+      if (e.touches.length < 2) initialDist = 0;
+    });
   });
 
   function closePreview(): void {

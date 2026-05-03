@@ -3853,6 +3853,13 @@ body.files-overlay #approvalStrip {
   align-items: center;
   gap: 12px;
   width: 100%;
+  /* Clear the absolutely-positioned back ✕ (top:4px, 44px tall) and close ✕
+   * in .files-chrome so the top edge of the video isn't occluded (#491). */
+  padding-top: 52px;
+  /* Block browser-level pinch-zoom in the video area; the JS pinch handler
+   * scales the <video> element directly via transform: scale (#491). Pan is
+   * still allowed so single-finger scrub/seek works inside native controls. */
+  touch-action: pan-x pan-y;
 }
 .preview-video {
   width: 100%;
@@ -3860,6 +3867,9 @@ body.files-overlay #approvalStrip {
   max-height: 80vh;
   background: #000;
   object-fit: contain;
+  /* Origin at center so pinch grows around the visible frame, not the corner. */
+  transform-origin: center center;
+  will-change: transform;
 }
 .preview-video-wrap.video-failed .preview-video {
   display: none;
