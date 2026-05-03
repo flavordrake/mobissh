@@ -260,6 +260,10 @@
         <button id="selectionDismissBtn" class="selection-chip-btn selection-chip-dismiss" aria-label="Dismiss">✕</button>
       </div>
       <!-- IME preview element removed — actions are now on #imeContainer (#106) -->
+      <!-- Quick-response floating chips (#480). Anchored above the handle bar.
+           Hidden when no entries exist or no terminal session is active.
+           Populated dynamically by initQuickResponses in ui.ts. -->
+      <div id="quickResponseStrip" class="quick-response-strip hidden" role="toolbar" aria-label="Quick responses"></div>
       <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
         <button id="handleMenuBtn" class="handle-btn handle-menu-btn" title="Show tabs" aria-label="Show tabs" data-tooltip="Show tabs">≡</button>
@@ -648,6 +652,22 @@
             <option value="2000">2s</option>
             <option value="3000">3s</option>
           </select>
+        </div>
+
+        <!-- Quick responses (#480) — saved phrases sendable with one tap from
+             a floating chip strip on the terminal panel. -->
+        <div class="settings-subsection">
+          <h3 class="settings-subsection-title">Quick responses</h3>
+          <p class="hint">Saved phrases that appear as floating chips above the keybar. Tap a chip to send the phrase to the active terminal.</p>
+          <div id="quickResponseList"></div>
+          <div class="quick-response-add">
+            <input type="text" id="quickResponseAddLabel" placeholder="Label (chip text)" />
+            <input type="text" id="quickResponseAddText" placeholder="Text to send" />
+            <label class="quick-response-add-enter">
+              <input type="checkbox" id="quickResponseAddAppendEnter" checked /> append Enter
+            </label>
+            <button id="quickResponseAddBtn" class="primary-btn">Add quick response</button>
+          </div>
         </div>
         </div>
       </section>
