@@ -22,6 +22,8 @@ import { refreshKeepAliveNotification, dismissKeepAliveNotification } from './mo
 import { disconnect } from './modules/connection.js';
 import { initIME, initIMEInput } from './modules/ime.js';
 import { initSelection } from './modules/selection.js';
+import { initQuickResponses } from './modules/quick-responses-ui.js';
+import { sendSSHInput } from './modules/connection.js';
 import {
   initUI, toast, setStatus, focusIME,
   _applyTabBarVisibility, initSessionMenu, initTabBar,
@@ -68,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initConnection({ toast, setStatus, focusIME, applyTabBarVisibility: _applyTabBarVisibility });
     initSessionMenu();
     initSettingsPanel();
+    initQuickResponses({ sendInput: sendSSHInput, toast });
     loadProfiles();
     loadKeys();
     populateKeyDropdown();
