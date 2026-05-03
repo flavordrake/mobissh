@@ -9,6 +9,7 @@
 import type { SSHProfile, ThemeName, SessionLifecycleState, ConnectionCycle } from './types.js';
 import { THEMES, RECONNECT } from './constants.js';
 import { FONT_FAMILIES } from './terminal.js';
+import { makePatternLinkProvider } from './pattern-link-provider.js';
 
 // Filter DA1/DA2/DA3 responses — xterm.js auto-responds to terminal capability
 // queries from the remote (CSI c, CSI > c). If not filtered, responses leak
@@ -158,6 +159,17 @@ export class SessionHandle {
     if (terminalRoot) terminalRoot.appendChild(this.container);
 
     this.terminal.open(this.container);
+
+    // Pattern-detection link provider (#478): user-defined regex rules turn
+    // matched text into clickable links. Re-reads rules on each invocation
+    // so settings edits take effect immediately. Guarded against test mocks
+    // of Terminal that may not implement registerLinkProvider.
+    if (typeof (this.terminal as unknown as { registerLinkProvider?: unknown }).registerLinkProvider === 'function') {
+      this.terminal.registerLinkProvider(makePatternLinkProvider({
+        terminal: this.terminal,
+        getHost: () => this.profile?.host ?? '',
+      }));
+    }
 
     // Debounced ResizeObserver — fires when container is resized by UI
     // actions (keybar toggle, tab bar, keyboard). Skips hidden containers.

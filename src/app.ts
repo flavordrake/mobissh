@@ -16,6 +16,7 @@ import {
   loadKeys, importKey, deleteKey, renameKey, editKey, saveKeyEdit, cancelKeyEdit, populateKeyDropdown,
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE, applyUiScaleFromStorage } from './modules/settings.js';
+import { initPatternLinksUI } from './modules/pattern-links-ui.js';
 import { initConnection } from './modules/connection.js';
 import { appState, onStateChange } from './modules/state.js';
 import { refreshKeepAliveNotification, dismissKeepAliveNotification } from './modules/keepalive-notification.js';
@@ -68,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
     initConnection({ toast, setStatus, focusIME, applyTabBarVisibility: _applyTabBarVisibility });
     initSessionMenu();
     initSettingsPanel();
+    initPatternLinksUI({ toast });
     loadProfiles();
     loadKeys();
     populateKeyDropdown();

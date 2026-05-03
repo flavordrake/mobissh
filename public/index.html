@@ -529,6 +529,7 @@
         <button class="settings-category" data-section="server">Server<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="terminal">Terminal<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="input">Input<span class="settings-category-chevron">›</span></button>
+        <button class="settings-category" data-section="smartlinks">Smart links<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="gestures">Gestures<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="notifications">Notifications<span class="settings-category-chevron">›</span></button>
         <button class="settings-category" data-section="vault">Vault<span class="settings-category-chevron">›</span></button>
@@ -649,6 +650,29 @@
             <option value="3000">3s</option>
           </select>
         </div>
+        </div>
+      </section>
+
+      <section class="settings-detail" data-section="smartlinks">
+        <div class="settings-detail-header">
+          <button class="settings-detail-back" aria-label="Back to Settings">‹ Settings</button>
+          <h2>Smart links</h2>
+        </div>
+        <div class="settings-detail-body">
+          <p class="settings-section-help">Turn matched terminal text into clickable links. Each rule is a regex (with one capture group for the linked text) and a URL template. Use <code>{match}</code> for the captured text and <code>{host}</code> for the active session host.</p>
+          <div id="patternRulesList" class="pattern-rules-list"></div>
+          <div class="pattern-rule-add">
+            <h3>Add rule</h3>
+            <label for="patternRuleName">Name</label>
+            <input type="text" id="patternRuleName" placeholder="e.g. GitHub issue" />
+            <label for="patternRulePattern">Regex pattern</label>
+            <input type="text" id="patternRulePattern" placeholder="e.g. #(\d+)" autocapitalize="off" autocorrect="off" spellcheck="false" />
+            <label for="patternRuleUrl">URL template</label>
+            <input type="text" id="patternRuleUrl" placeholder="e.g. https://github.com/owner/repo/issues/{match}" autocapitalize="off" autocorrect="off" spellcheck="false" />
+            <label for="patternRuleHostGlob">Active when host matches</label>
+            <input type="text" id="patternRuleHostGlob" placeholder="* (all hosts), or e.g. *.corp" autocapitalize="off" autocorrect="off" spellcheck="false" />
+            <button id="addPatternRuleBtn" class="primary-btn">Add rule</button>
+          </div>
         </div>
       </section>
 
