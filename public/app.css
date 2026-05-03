@@ -3966,3 +3966,61 @@ body.files-overlay #approvalStrip {
   font-size: 13px;
   line-height: 1.6;
 }
+
+/* Smart links (#478) — pattern rules settings UI */
+.pattern-rules-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.pattern-rule-row {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pattern-rule-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pattern-rule-row-head .pattern-rule-name { flex: 1; min-width: 0; }
+.pattern-rule-row .pattern-rule-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.pattern-rule-row input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.pattern-rule-add {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pattern-rule-add h3 { margin: 0 0 4px 0; font-size: 14px; }
+.pattern-rule-add label { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.pattern-rule-add input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.pattern-rule-add button { margin-top: 8px; }
