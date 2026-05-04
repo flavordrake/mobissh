@@ -23,6 +23,7 @@ import { sendSSHInput } from './connection.js';
 import { focusIME, setCtrlActive } from './ui.js';
 import { isSelectionActive } from './selection.js';
 import { computeDiff } from './ime-diff.js';
+import { fixupTerminalCopy } from './ime-fixup.js';
 import { logGesture, gestureTarget } from './gesture-log.js';
 
 let _handleResize = (): void => {};
@@ -365,6 +366,11 @@ export function initIMEInput(): void {
   const historyDown = document.getElementById('imeHistoryDown');
   const dockToggle = document.getElementById('imeDockToggle');
   const submitBtn = document.getElementById('imeSubmitBtn');
+  // Fix / Copy / Paste overlay
+  const pasteOverlay = document.getElementById('imePasteOverlay');
+  const pasteBtn = document.getElementById('imePasteBtn');
+  const fixupBtn = document.getElementById('imeFixupBtn');
+  const copyBtn = document.getElementById('imeCopyBtn');
   // History rail (vertical strip on right edge of the IME preview)
   const historyRail = document.getElementById('imeHistoryRail');
 
@@ -382,6 +388,12 @@ export function initIMEInput(): void {
     const actionH = 36; // matches CSS .ime-action-btn height
     const dock = _effectiveDock();
 
+    // Paste overlay rides the textarea's TOP border edge — pill height is
+    // 18px, so offset by 9 to half-overlap the border line. Sits on the
+    // edge instead of inside the content area so it never blocks text.
+    const PASTE_PILL_H = 18;
+    const PASTE_OVERLAP = PASTE_PILL_H / 2;
+
     if (dock === 'hover-top') {
       // Top: just below viewport top (extra margin to clear status bar)
       const top = viewTop + 12;
@@ -390,6 +402,11 @@ export function initIMEInput(): void {
       if (imeActions) {
         imeActions.style.top = `${String(top + ime.offsetHeight)}px`;
         imeActions.style.bottom = 'auto';
+      }
+      if (pasteOverlay) {
+        pasteOverlay.style.top = `${String(top - PASTE_OVERLAP)}px`;
+        pasteOverlay.style.right = '7%';
+        pasteOverlay.style.bottom = 'auto';
       }
       if (historyRail) {
         historyRail.style.top = `${String(top)}px`;
@@ -408,6 +425,14 @@ export function initIMEInput(): void {
       if (imeActions) {
         imeActions.style.bottom = `${String(bottom)}px`;
         imeActions.style.top = 'auto';
+      }
+      if (pasteOverlay) {
+        // Textarea's top edge sits at: bottom + actionH + offsetHeight
+        // Pill rides that edge, half above / half below.
+        const textareaTopFromBottom = bottom + actionH + ime.offsetHeight;
+        pasteOverlay.style.bottom = `${String(textareaTopFromBottom - PASTE_OVERLAP)}px`;
+        pasteOverlay.style.right = '7%';
+        pasteOverlay.style.top = 'auto';
       }
       if (historyRail) {
         historyRail.style.bottom = `${String(bottom + actionH)}px`;
@@ -432,6 +457,7 @@ export function initIMEInput(): void {
   /** Show the action button bar and position everything. */
   function _showActions(): void {
     if (imeActions) imeActions.classList.remove('hidden');
+    if (pasteOverlay) pasteOverlay.classList.remove('hidden');
     if (historyRail) historyRail.classList.remove('hidden');
     // Always show history buttons — dim when no history available
     const hasHistory = _commitHistory.length > 0;
@@ -442,6 +468,7 @@ export function initIMEInput(): void {
   /** Hide the action button bar. */
   function _hideActions(): void {
     if (imeActions) imeActions.classList.add('hidden');
+    if (pasteOverlay) pasteOverlay.classList.add('hidden');
     if (historyRail) historyRail.classList.add('hidden');
   }
 
@@ -599,6 +626,52 @@ export function initIMEInput(): void {
       focusIME();
     }, { passive: true });
   }
+
+  // ── Paste + Fixup overlay buttons ──────────────────────────────────────
+  // Suppress the focus-stealing mousedown so paste doesn't blur the textarea.
+  if (pasteOverlay) {
+    pasteOverlay.addEventListener('mousedown', (e) => { e.preventDefault(); });
+  }
+  _onAction(pasteBtn, () => {
+    void (async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) return;
+        // Replace selection if any, else insert at cursor / end.
+        const start = ime.selectionStart;
+        const end = ime.selectionEnd;
+        const before = ime.value.slice(0, start);
+        const after = ime.value.slice(end);
+        ime.value = before + text + after;
+        const caret = before.length + text.length;
+        ime.setSelectionRange(caret, caret);
+        // Trigger the input pipeline so the state machine + diff catch the change.
+        ime.dispatchEvent(new Event('input', { bubbles: true }));
+        focusIME();
+      } catch (err) {
+        console.warn('[ime-paste] clipboard read failed:', err);
+      }
+    })();
+  });
+  _onAction(fixupBtn, () => {
+    const cleaned = fixupTerminalCopy(ime.value);
+    if (cleaned === ime.value) { focusIME(); return; }
+    ime.value = cleaned;
+    ime.setSelectionRange(cleaned.length, cleaned.length);
+    ime.dispatchEvent(new Event('input', { bubbles: true }));
+    focusIME();
+  });
+  _onAction(copyBtn, () => {
+    const text = ime.value;
+    if (!text) { focusIME(); return; }
+    void navigator.clipboard.writeText(text).then(
+      () => { focusIME(); },
+      (err: unknown) => {
+        console.warn('[ime-copy] clipboard write failed:', err);
+        focusIME();
+      },
+    );
+  });
 
   // ── Preview countdown ring on commit button (#169) ─────────────────────
   const commitCountdown = commitBtn?.querySelector('.commit-countdown') as HTMLElement | null;
