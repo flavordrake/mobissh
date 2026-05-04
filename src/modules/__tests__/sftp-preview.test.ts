@@ -129,6 +129,25 @@ describe('getPreviewType', () => {
   ])('returns null for non-previewable file: %s', (filename) => {
     expect(getPreviewType(filename)).toBeNull();
   });
+
+  // Bare dotfiles — leading dot, no inner extension. Conventionally
+  // plain-text config; should be previewable + editable like .sh.
+  it.each([
+    '.bashrc', '.zshrc', '.profile', '.bash_profile',
+    '.gitconfig', '.gitignore', '.gitattributes',
+    '.vimrc', '.editorconfig', '.dockerignore',
+    '.npmrc', '.yarnrc', '.eslintrc', '.prettierrc',
+  ])('returns "text" for bare dotfile: %s', (filename) => {
+    expect(getPreviewType(filename)).toBe('text');
+  });
+
+  it('still resolves dotfiles with explicit extensions via the extension map', () => {
+    // `.tmux.conf` → `.conf` extension → text. `.env.local` does NOT match —
+    // unmentioned by user request, conservative no-op.
+    expect(getPreviewType('.tmux.conf')).toBe('text');
+    expect(getPreviewType('.env')).toBe('text');
+    expect(getPreviewType('.env.local')).toBeNull();
+  });
 });
 
 // --- 2. Preview rendering API ---

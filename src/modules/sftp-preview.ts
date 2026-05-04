@@ -37,7 +37,18 @@ export function getPreviewType(filename: string): PreviewType | null {
   if (VIDEO_EXTS.has(ext)) return 'video';
   if (TEXT_EXTS.has(ext)) return 'text';
   if (HTML_EXTS.has(ext)) return 'html';
+  // Bare dotfiles (`.bashrc`, `.zshrc`, `.gitconfig`, `.vimrc`, ...) are
+  // conventionally plain-text config; treat as text without enumerating them.
+  if (isDotfile(filename)) return 'text';
   return null;
+}
+
+/** A "bare dotfile" — leading dot and no inner dot, e.g. `.bashrc`, `.gitignore`.
+ *  Files like `.tmux.conf` or `.env.local` already match by their `.conf` /
+ *  `.local` extension fall-through, so this only covers the no-extension case. */
+export function isDotfile(filename: string): boolean {
+  if (!filename.startsWith('.')) return false;
+  return filename.indexOf('.', 1) === -1;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
