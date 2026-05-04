@@ -281,7 +281,9 @@ test.describe('Selection Phase 2 baseline', () => {
       await writeTestContent(driver);
     });
 
-    test('long-press shows chip with all buttons', async ({ driver }, testInfo) => {
+    // #494: Paste + Select All removed from chip; only Select Visible + Dismiss remain.
+    // Skipped per frozen-baseline rule.
+    test.skip('long-press shows chip with all buttons', async ({ driver }, testInfo) => {
       const bounds = await getVisibleTerminalBounds(driver); // nosemgrep: frozen-baseline-test
       expect(bounds).toBeTruthy(); // nosemgrep: frozen-baseline-test
       const cx = Math.round((bounds.left + bounds.right) / 2);

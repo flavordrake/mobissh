@@ -82,7 +82,9 @@ test.describe('Selection long-press baseline (Appium)', () => {
     await driver.pause(500);
   });
 
-  test('long-press shows selection chip with correct buttons', async ({ driver }, testInfo) => {
+  // #494: selection chip Paste + Select All buttons removed. This test asserts
+  // their existence; skipped per frozen-baseline rule.
+  test.skip('long-press shows selection chip with correct buttons', async ({ driver }, testInfo) => {
     await setupRealSSHConnection(driver);
     await exposeTerminal(driver);
     await dismissKeyboardViaBack(driver);
@@ -195,7 +197,8 @@ test.describe('Selection long-press baseline (Appium)', () => {
     expect(state.copyVisible).toBe(true); // nosemgrep: frozen-baseline-test
   });
 
-  test('Select All selects entire buffer and shows Copy button', async ({ driver }, testInfo) => {
+  // #494: Select All button removed from selection chip. Skipped per frozen-baseline rule.
+  test.skip('Select All selects entire buffer and shows Copy button', async ({ driver }, testInfo) => {
     await setupRealSSHConnection(driver);
     await exposeTerminal(driver);
 

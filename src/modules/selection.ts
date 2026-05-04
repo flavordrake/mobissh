@@ -16,7 +16,6 @@
  */
 
 import { currentSession } from './state.js';
-import { sendSSHInput } from './connection.js';
 import { toast, focusIME } from './ui.js';
 import { getKeyboardVisible } from './terminal.js';
 import { reconstructFromBuffer } from './ime-fixup.js';
@@ -39,41 +38,6 @@ let _keyboardWasVisible = false;
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_THRESHOLD = 10; // px
-
-/**
- * Read clipboard content, supporting images via navigator.clipboard.read().
- * Prefers text/plain; converts images to base64 for piping on remote.
- * Falls back to readText() if clipboard.read() is not available.
- */
-async function readClipboard(): Promise<string> {
-  try {
-    const items = await navigator.clipboard.read();
-    for (const item of items) {
-      if (item.types.includes('text/plain')) {
-        const blob = await item.getType('text/plain');
-        return await blob.text();
-      }
-      for (const type of item.types) {
-        if (type.startsWith('image/')) {
-          const blob = await item.getType(type);
-          const bytes = new Uint8Array(await blob.arrayBuffer());
-          let binary = '';
-          const CHUNK = 8192;
-          for (let i = 0; i < bytes.length; i += CHUNK) {
-            binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-          }
-          toast('Pasted image as base64');
-          return btoa(binary);
-        }
-      }
-    }
-  } catch {
-    // clipboard.read() not permitted or unavailable — fall back to readText
-    const text = await navigator.clipboard.readText();
-    return text;
-  }
-  return '';
-}
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -155,29 +119,12 @@ export function initSelection(): void {
 
   // ── Action chip buttons ──────────────────────────────────────────────────
 
-  document.getElementById('selectionPasteBtn')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    void readClipboard().then((text) => {
-      if (text) sendSSHInput(text);
-      else toast('Clipboard empty');
-    }).catch(() => { toast('Paste failed'); });
-    _hideChip();
-  });
-
   document.getElementById('selectionVisibleBtn')!.addEventListener('click', (e) => {
     e.stopPropagation();
     const visTerm = currentSession()?.terminal;
     if (!visTerm) return;
     const buf = visTerm.buffer.active;
     visTerm.selectLines(buf.viewportY, buf.viewportY + visTerm.rows - 1);
-    _hideChip();
-  });
-
-  document.getElementById('selectionAllBtn')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const allTerm = currentSession()?.terminal;
-    if (!allTerm) return;
-    allTerm.selectAll();
     _hideChip();
   });
 
