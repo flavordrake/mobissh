@@ -436,7 +436,9 @@ test.describe('Selection Phase 2 baseline', () => {
       await exposeTerminal(driver);
     });
 
-    test('scroll gesture works after selection dismiss', async ({ driver }, testInfo) => {
+    // #496: chip removed; this test exercises selectionVisibleBtn + selectionDismissBtn.
+    // Skipped per frozen-baseline rule.
+    test.skip('scroll gesture works after selection dismiss', async ({ driver }, testInfo) => {
       // Generate scrollback
       await sendCommand(driver, 'for i in $(seq 1 100); do echo "SCROLL_LINE $i"; done');
       await driver.pause(2000);

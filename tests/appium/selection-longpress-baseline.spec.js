@@ -124,7 +124,8 @@ test.describe('Selection long-press baseline (Appium)', () => {
     expect(chipState.dismiss).toBe(true); // nosemgrep: frozen-baseline-test
   });
 
-  test('dismiss button hides chip and restores gesture control', async ({ driver }, testInfo) => {
+  // #496: selection chip removed entirely. Skipped per frozen-baseline rule.
+  test.skip('dismiss button hides chip and restores gesture control', async ({ driver }, testInfo) => {
     await setupRealSSHConnection(driver);
     await exposeTerminal(driver);
     await dismissKeyboardViaBack(driver);
@@ -156,7 +157,8 @@ test.describe('Selection long-press baseline (Appium)', () => {
     expect(state.selectionActive).toBe(false); // nosemgrep: frozen-baseline-test
   });
 
-  test('Select Visible selects viewport rows and shows Copy button', async ({ driver }, testInfo) => {
+  // #496: Select Visible button removed (chip removed entirely). Skipped per frozen-baseline rule.
+  test.skip('Select Visible selects viewport rows and shows Copy button', async ({ driver }, testInfo) => {
     await setupRealSSHConnection(driver);
     await exposeTerminal(driver);
 
@@ -234,7 +236,9 @@ test.describe('Selection long-press baseline (Appium)', () => {
     expect(state.copyVisible).toBe(true); // nosemgrep: frozen-baseline-test
   });
 
-  test('scroll gesture works after selection dismiss (no regression)', async ({ driver }, testInfo) => {
+  // #496: chip removed; this test depends on long-press chip → dismiss → scroll flow.
+  // Skipped per frozen-baseline rule.
+  test.skip('scroll gesture works after selection dismiss (no regression)', async ({ driver }, testInfo) => {
     await setupRealSSHConnection(driver);
     await exposeTerminal(driver);
 

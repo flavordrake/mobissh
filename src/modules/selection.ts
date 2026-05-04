@@ -49,7 +49,6 @@ export function isSelectionActive(): boolean {
 /** Call once after terminal is created and DOM is ready. */
 export function initSelection(): void {
   const termEl = document.getElementById('terminal')!;
-  const chip = document.getElementById('selectionChip')!;
   const copyBtn = document.getElementById('handleCopyBtn')!;
 
   // ── Suppress native context menu on terminal (#55) ─────────────────────
@@ -102,7 +101,6 @@ export function initSelection(): void {
   // Tap while selection active: contract unit→word, then word→dismiss
   termEl.addEventListener('click', (e) => {
     if (!_selectionActive) return;
-    if ((e.target as HTMLElement).closest('#selectionChip')) return;
     if (_selectionLevel === 'unit') {
       // Contract URL/path selection down to just the word at tap position
       const pos = _touchToBufferPos(e.clientX, e.clientY);
@@ -114,22 +112,6 @@ export function initSelection(): void {
         return;
       }
     }
-    _dismissSelection();
-  });
-
-  // ── Action chip buttons ──────────────────────────────────────────────────
-
-  document.getElementById('selectionVisibleBtn')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const visTerm = currentSession()?.terminal;
-    if (!visTerm) return;
-    const buf = visTerm.buffer.active;
-    visTerm.selectLines(buf.viewportY, buf.viewportY + visTerm.rows - 1);
-    _hideChip();
-  });
-
-  document.getElementById('selectionDismissBtn')!.addEventListener('click', (e) => {
-    e.stopPropagation();
     _dismissSelection();
   });
 
@@ -180,13 +162,12 @@ export function initSelection(): void {
   });
 
 
-  // ── Back gesture / hardware back → dismiss chip ───────────────────────────
-  // When back fires, the browser already popped our {selectionChip} entry.
+  // ── Back gesture / hardware back → dismiss selection ──────────────────────
+  // When back fires, the browser already popped our selection history entry.
   // We just need to dismiss without calling history.back() again.
   window.addEventListener('popstate', () => {
     if (_selectionActive) {
       _selectionActive = false;
-      _hideChip();
       currentSession()?.terminal?.clearSelection();
       copyBtn.classList.add('hidden');
       if (_keyboardWasVisible) setTimeout(focusIME, 50);
@@ -220,24 +201,18 @@ export function initSelection(): void {
     if (!_keyboardWasVisible && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    chip.classList.remove('hidden');
-    // Push history entry so Android back gesture dismisses the chip
-    history.pushState({ selectionChip: true }, '');
-  }
-
-  function _hideChip(): void {
-    chip.classList.add('hidden');
+    // Push a history entry so Android back gesture dismisses the selection.
+    history.pushState({ selectionActive: true }, '');
   }
 
   function _dismissSelection(): void {
     if (!_selectionActive) return;
     _selectionActive = false;
     _dragActive = false;
-    _hideChip();
     currentSession()?.terminal?.clearSelection();
     copyBtn.classList.add('hidden');
     // Pop the history entry we pushed (unless back gesture already did it)
-    if (history.state != null && (history.state as Record<string, unknown>).selectionChip === true) {
+    if (history.state != null && (history.state as Record<string, unknown>).selectionActive === true) {
       history.back();
     }
     // Only restore keyboard focus if it was visible when selection started.
@@ -384,7 +359,6 @@ export function initSelection(): void {
   function _extendDragSelect(clientX: number, clientY: number): void {
     const extTerm = currentSession()?.terminal;
     if (!_dragActive || !extTerm) return;
-    _hideChip();
     const pos = _touchToBufferPos(clientX, clientY);
     if (!pos) return;
     // Determine start and end in buffer order
