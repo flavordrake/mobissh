@@ -15,7 +15,7 @@ import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, c
 import { saveProfile, connectFromProfile, newConnection, loadProfiles, removeRecentSession, getRecentSessions, downloadProfilesExport, triggerProfileImport, profileColor } from './profiles.js';
 import { clearIMEPreview, restoreIMEOverlay } from './ime.js';
 import { isPreviewable, createPreviewPanel, MIME_MAP, extOf, SFTP_INLINE_IMG_ATTR, SFTP_RELATIVE_LINK_ATTR } from './sftp-preview.js';
-import { listFavorites, toggleFavorite, isFavorited, profileIdOf } from './favorites.js';
+import { listFavorites, toggleFavorite, isFavorited, profileIdOf, commonPathPrefix, collapsePrefix } from './favorites.js';
 import type { Favorite } from './types.js';
 import { logGesture } from './gesture-log.js';
 
@@ -3112,7 +3112,7 @@ function _showContextMenu(touchX: number, touchY: number, path: string, isDir: b
   });
 }
 
-/** Render the favorites submenu anchored near the Files menu item. (#470) */
+/** Render the favorites submenu anchored near the Files menu item. (#470, #492) */
 function _showFavoritesSubmenu(_touchX: number, touchY: number): void {
   _dismissContextMenu();
   const profId = _activeProfileId();
@@ -3130,11 +3130,16 @@ function _showFavoritesSubmenu(_touchX: number, touchY: number): void {
   overlay.id = 'filesFavOverlay';
   overlay.className = 'ctx-overlay';
 
+  // Collapse redundant prefixes for unlabeled entries so the divergent suffix
+  // is what the user actually reads. Labeled entries keep their explicit name.
+  const unlabeledPaths = favs.filter((f) => !f.label).map((f) => f.path);
+  const lcp = commonPathPrefix(unlabeledPaths);
+
   const menu = document.createElement('div');
   menu.id = 'filesFavMenu';
   menu.className = 'ctx-menu files-fav-menu';
   menu.innerHTML = favs.map((f) => {
-    const label = f.label ?? f.path;
+    const label = f.label ?? collapsePrefix(f.path, lcp);
     const icon = f.isFile ? 'F' : 'D';
     return `<button class="ctx-menu-item files-fav-item" data-path="${escHtml(f.path)}" data-is-file="${String(f.isFile)}"><span class="files-fav-icon">${icon}</span>${escHtml(label)}</button>`;
   }).join('');

@@ -28,7 +28,7 @@ vi.stubGlobal('localStorage', {
 
 const FAVORITES_KEY = 'filesFavorites';
 
-const { listFavorites, toggleFavorite, isFavorited, profileIdOf } = await import('../favorites.js');
+const { listFavorites, toggleFavorite, isFavorited, profileIdOf, commonPathPrefix, collapsePrefix } = await import('../favorites.js');
 
 describe('favorites module (#470)', () => {
   beforeEach(() => {
@@ -206,5 +206,59 @@ describe('files panel chrome DOM (#470)', () => {
   it('ui.ts wires a long-press on sessionFilesBtn that shows favorites', () => {
     expect(uiSrc).toContain('_showFavoritesSubmenu');
     expect(uiSrc).toMatch(/sessionFilesBtn\?\.addEventListener\(['"]touchstart['"]/);
+  });
+});
+
+describe('favorites: common-prefix collapse (#492)', () => {
+  describe('commonPathPrefix', () => {
+    it('returns "" for fewer than 2 paths', () => {
+      expect(commonPathPrefix([])).toBe('');
+      expect(commonPathPrefix(['/a/b/c'])).toBe('');
+    });
+
+    it('returns "" when no segments are shared', () => {
+      expect(commonPathPrefix(['/a/x', '/b/y'])).toBe('');
+    });
+
+    it('returns the shared segment chain', () => {
+      expect(commonPathPrefix(['/home/dev/foo', '/home/dev/bar'])).toBe('/home/dev');
+      expect(commonPathPrefix([
+        '/home/dev/workspace/mobissh',
+        '/home/dev/workspace/cuda',
+        '/home/dev/workspace/devloop',
+      ])).toBe('/home/dev/workspace');
+    });
+
+    it('keeps at least the leaf segment for one common-parent set', () => {
+      // All paths share /a/b/c and have no further segments — must not collapse
+      // to /a/b/c so the leaf is still distinguishable.
+      expect(commonPathPrefix(['/a/b/c', '/a/b/c'])).toBe('/a/b');
+    });
+
+    it('does not split mid-segment', () => {
+      // /home/devops vs /home/dev should NOT share /home/dev — segment-wise the
+      // shared prefix is just /home.
+      expect(commonPathPrefix(['/home/devops/a', '/home/dev/b'])).toBe('/home');
+    });
+  });
+
+  describe('collapsePrefix', () => {
+    it('replaces a leading prefix with "…/"', () => {
+      expect(collapsePrefix('/home/dev/workspace/mobissh', '/home/dev/workspace'))
+        .toBe('…/mobissh');
+    });
+
+    it('returns the path untouched when prefix is empty', () => {
+      expect(collapsePrefix('/a/b', '')).toBe('/a/b');
+    });
+
+    it('returns the path untouched when prefix does not match', () => {
+      expect(collapsePrefix('/x/y', '/a/b')).toBe('/x/y');
+    });
+
+    it('does not match a prefix that is missing the trailing /', () => {
+      // Avoid mid-segment splits: '/home/dev' must not collapse '/home/develop'.
+      expect(collapsePrefix('/home/develop', '/home/dev')).toBe('/home/develop');
+    });
   });
 });

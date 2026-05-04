@@ -47,6 +47,26 @@ export function isFavorited(profileId: string, path: string): boolean {
   return listFavorites(profileId).some((f) => f.path === path);
 }
 
+/** Longest common path-segment prefix across `paths`. Always stops one
+ *  segment short of the shortest path so a single common-parent set still
+ *  shows distinguishable leaves. Returns '' when there's no shared prefix. */
+export function commonPathPrefix(paths: string[]): string {
+  if (paths.length < 2) return '';
+  const splits = paths.map((p) => p.split('/'));
+  const minLen = Math.min(...splits.map((s) => s.length));
+  let i = 0;
+  while (i < minLen - 1 && splits.every((s) => s[i] === splits[0]![i])) i++;
+  if (i === 0) return '';
+  return splits[0]!.slice(0, i).join('/');
+}
+
+/** Strip a leading common prefix from a path, replacing it with `…/`. */
+export function collapsePrefix(path: string, prefix: string): string {
+  if (!prefix) return path;
+  if (!path.startsWith(prefix + '/')) return path;
+  return '…/' + path.slice(prefix.length + 1);
+}
+
 /** Toggle favorite state. Returns the NEW isFavorited state (true = added, false = removed). */
 export function toggleFavorite(profileId: string, fav: Favorite): boolean {
   const map = _readMap();
