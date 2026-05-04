@@ -87,7 +87,6 @@ export function initSelection(): void {
   const termEl = document.getElementById('terminal')!;
   const chip = document.getElementById('selectionChip')!;
   const copyBtn = document.getElementById('handleCopyBtn')!;
-  const pasteBtn = document.getElementById('handlePasteBtn')!;
 
   // ── Suppress native context menu on terminal (#55) ─────────────────────
   // Prevents OS paste chip, "Open URL" menu, and other native long-press UI
@@ -212,7 +211,7 @@ export function initSelection(): void {
     const sel = _selectionTextWrapAware();
     if (sel) {
       void navigator.clipboard.writeText(sel)
-        .then(() => { toast('Copied'); _showPasteIfClipboard(); })
+        .then(() => { toast('Copied'); })
         .catch(() => { toast('Copy failed'); });
     }
     _dismissSelection();
@@ -233,48 +232,6 @@ export function initSelection(): void {
     e.clipboardData?.setData('text/plain', text);
   });
 
-  // ── Paste button on handle bar ──────────────────────────────────────────
-  // Replaces the native OS paste chip we suppressed via contextmenu preventDefault.
-
-  pasteBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    void readClipboard().then((text) => {
-      if (text) sendSSHInput(text);
-      else toast('Clipboard empty');
-    }).catch(() => { toast('Paste failed'); });
-    _dismissSelection();
-  });
-
-  // Show paste button when long-press activates selection (clipboard likely has content)
-  // and when selection is dismissed (user may want to paste after copying).
-  function _showPasteIfClipboard(): void {
-    // Try clipboard.read() first to detect images; fall back to readText()
-    void (async () => {
-      try {
-        const items = await navigator.clipboard.read();
-        let hasContent = false;
-        let hasImage = false;
-        for (const item of items) {
-          if (item.types.includes('text/plain')) { hasContent = true; break; }
-          for (const type of item.types) {
-            if (type.startsWith('image/')) { hasContent = true; hasImage = true; break; }
-          }
-          if (hasContent) break;
-        }
-        pasteBtn.classList.toggle('hidden', !hasContent);
-        pasteBtn.textContent = hasImage ? 'Paste (image)' : 'Paste';
-      } catch {
-        // clipboard.read() not available — fall back to readText
-        try {
-          const text = await navigator.clipboard.readText();
-          pasteBtn.classList.toggle('hidden', !text);
-          pasteBtn.textContent = 'Paste';
-        } catch {
-          pasteBtn.classList.add('hidden');
-        }
-      }
-    })();
-  }
 
   // ── Back gesture / hardware back → dismiss chip ───────────────────────────
   // When back fires, the browser already popped our {selectionChip} entry.
@@ -285,7 +242,6 @@ export function initSelection(): void {
       _hideChip();
       currentSession()?.terminal?.clearSelection();
       copyBtn.classList.add('hidden');
-      pasteBtn.classList.add('hidden');
       if (_keyboardWasVisible) setTimeout(focusIME, 50);
     }
   });
@@ -317,7 +273,6 @@ export function initSelection(): void {
     if (!_keyboardWasVisible && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    _showPasteIfClipboard();
     chip.classList.remove('hidden');
     // Push history entry so Android back gesture dismisses the chip
     history.pushState({ selectionChip: true }, '');
@@ -334,7 +289,6 @@ export function initSelection(): void {
     _hideChip();
     currentSession()?.terminal?.clearSelection();
     copyBtn.classList.add('hidden');
-    pasteBtn.classList.add('hidden');
     // Pop the history entry we pushed (unless back gesture already did it)
     if (history.state != null && (history.state as Record<string, unknown>).selectionChip === true) {
       history.back();

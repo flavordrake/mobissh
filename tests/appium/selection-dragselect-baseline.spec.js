@@ -353,7 +353,9 @@ test.describe('Selection Phase 2 baseline', () => {
       expect(stateAfterClear.selectionEmpty).toBe(true); // nosemgrep: frozen-baseline-test
     });
 
-    test('Paste button exists on handle bar and can be shown', async ({ driver }, testInfo) => {
+    // #492: handle paste button removed. Skipped per testing rule (don't modify
+    // frozen baselines; skip with comment referencing the change).
+    test.skip('Paste button exists on handle bar and can be shown', async ({ driver }, testInfo) => {
       // Verify paste button element exists in the DOM
       const pasteExists = await driver.executeScript(`
         const btn = document.getElementById('handlePasteBtn');
@@ -382,7 +384,9 @@ test.describe('Selection Phase 2 baseline', () => {
       expect(pasteVisible).toBe(true); // nosemgrep: frozen-baseline-test
     });
 
-    test('dismiss clears selection and hides all buttons', async ({ driver }, testInfo) => {
+    // #492: handle paste button removed; this test asserts on the deleted
+    // element's hidden state. Skipped per testing rule.
+    test.skip('dismiss clears selection and hides all buttons', async ({ driver }, testInfo) => {
       // Create selection + show chip
       const pos = await findInBuffer(driver, 'ALPHA');
       await driver.executeScript(`

@@ -54,15 +54,6 @@
     spellcheck="false"
     tabindex="-1"
   ></textarea>
-  <!-- Quick-paste + fixup overlay — small monochrome pills riding the top
-       border of the IME preview. Paste reads navigator.clipboard.readText();
-       Fix collapses terminal soft-wrap artifacts so URLs/bash/API keys stay
-       one line. -->
-  <div id="imePasteOverlay" class="ime-paste-overlay hidden">
-    <button id="imeFixupBtn" class="ime-paste-btn" aria-label="Fix wrapping" title="Collapse soft wraps from terminal copy" tabindex="-1">Fix</button>
-    <button id="imeCopyBtn" class="ime-paste-btn" aria-label="Copy preview to clipboard" title="Copy preview text" tabindex="-1">Copy</button>
-    <button id="imePasteBtn" class="ime-paste-btn" aria-label="Paste from clipboard" title="Paste from clipboard" tabindex="-1">Paste</button>
-  </div>
   <!-- IME action buttons — float alongside textarea when visible (#106).
        Order: dock-toggle (far left), clear, commit, submit (far right).
        History ▲▼ moved to the right-edge rail (#imeHistoryRail). -->
@@ -263,7 +254,6 @@
       <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
         <button id="handleMenuBtn" class="handle-btn handle-menu-btn" title="Show tabs" aria-label="Show tabs" data-tooltip="Show tabs">≡</button>
-        <button id="handlePasteBtn" class="handle-paste-btn hidden" title="Paste clipboard" aria-label="Paste clipboard">Paste</button>
         <button id="sessionMenuBtn" title="Session menu" aria-label="Session menu" data-tooltip="Session menu">MobiSSH</button>
         <button id="handleCopyBtn" class="handle-copy-btn hidden" title="Copy selection" aria-label="Copy selection">Copy</button>
         <button id="bellIndicatorBtn" class="handle-btn handle-bell-btn hidden" title="Notifications" aria-label="Notifications" data-tooltip="Notifications"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="bell-badge hidden">0</span></button>
