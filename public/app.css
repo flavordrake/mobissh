@@ -702,6 +702,19 @@ html, body {
 }
 .session-menu-half:last-child { border-right: none; }
 
+/* Collapsible submenu (e.g. Terminal ▸ → Clear scrollback / Reset / Scroll). */
+.session-submenu-toggle[aria-expanded="true"] {
+  /* Indicate expanded: the chevron is part of the textContent, swapped in JS. */
+  background: var(--bg-card);
+}
+.session-submenu {
+  background: var(--bg-deep, var(--bg-panel));
+}
+.session-submenu-item {
+  padding-left: 32px !important;
+  font-size: 13px;
+}
+
 /* Shared base for icon-only handle bar buttons */
 .handle-btn {
   background: none;

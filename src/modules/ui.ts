@@ -881,10 +881,30 @@ export function initSessionMenu(): void {
     const sel = document.getElementById('termFontSelect') as HTMLSelectElement | null;
     if (sel) sel.value = next.key;
     // Apply to the active terminal live so the user sees the change without
-    // restarting the session. xterm reads `options.fontFamily`; assigning
-    // triggers a re-measure on next render.
-    const term = currentSession()?.terminal;
-    if (term) term.options.fontFamily = FONT_FAMILIES[next.key] ?? FONT_FAMILIES['monospace']!;
+    // restarting the session. Setting `options.fontFamily` alone isn't
+    // enough — xterm caches character-cell dimensions so the new font
+    // doesn't appear until a re-measure. `fitAddon.fit()` re-measures and
+    // repaints. (Mirrors the document.fonts.ready handler in terminal.ts.)
+    const session = currentSession();
+    if (session?.terminal) {
+      session.terminal.options.fontFamily = FONT_FAMILIES[next.key] ?? FONT_FAMILIES['monospace']!;
+      session.fitAddon?.fit();
+    }
+  });
+
+  // Terminal submenu — collapsible group containing Clear scrollback /
+  // Reset terminal / Scroll mode. Tap the header to expand or collapse.
+  // The submenu stays in the DOM so individual handlers below find their
+  // buttons regardless of collapse state.
+  const termSubmenuBtn = document.getElementById('sessionTerminalSubmenuBtn');
+  const termSubmenuEl = document.getElementById('sessionTerminalSubmenu');
+  termSubmenuBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!termSubmenuEl) return;
+    const expanded = !termSubmenuEl.classList.contains('hidden');
+    termSubmenuEl.classList.toggle('hidden', expanded);
+    termSubmenuBtn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    termSubmenuBtn.textContent = expanded ? 'Terminal ▸' : 'Terminal ▾';
   });
 
   document.getElementById('sessionResetBtn')!.addEventListener('click', () => {

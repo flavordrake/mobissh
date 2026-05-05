@@ -291,9 +291,12 @@
             <button id="fontIncBtn"   class="font-adj-btn font-adj-btn-edge" title="Increase font size">A+</button>
           </div>
           <button id="sessionThemeBtn"      class="session-menu-item" role="menuitem">Theme: Dark ▸</button>
-          <button id="sessionResetBtn"      class="session-menu-item" role="menuitem">Reset terminal</button>
-          <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
-          <button id="sessionLocalScrollBtn" class="session-menu-item" role="menuitem">Scroll: TUI ▸</button>
+          <button id="sessionTerminalSubmenuBtn" class="session-menu-item session-submenu-toggle" role="menuitem" aria-expanded="false" aria-controls="sessionTerminalSubmenu">Terminal ▸</button>
+          <div id="sessionTerminalSubmenu" class="session-submenu hidden" role="group" aria-label="Terminal controls">
+            <button id="sessionClearBtn"      class="session-menu-item session-submenu-item" role="menuitem">Clear scrollback</button>
+            <button id="sessionResetBtn"      class="session-menu-item session-submenu-item" role="menuitem">Reset terminal</button>
+            <button id="sessionLocalScrollBtn" class="session-menu-item session-submenu-item" role="menuitem">Scroll: TUI ▸</button>
+          </div>
           <div class="session-menu-row" role="menuitem">
             <button id="sessionReconnectBtn"  class="session-menu-item session-menu-half" role="menuitem">Reconnect</button>
             <button id="sessionDisconnectBtn" class="session-menu-item session-menu-half danger" role="menuitem">Disconnect</button>
