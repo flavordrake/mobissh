@@ -930,6 +930,25 @@ export function initSessionMenu(): void {
     toggleTabBar();
   });
 
+  // Cycle key-bar height through 0 → 1 → 2 (no rows / single row / two rows).
+  // Depth 3 is reached separately via vertical swipe (shows tab bar) and is
+  // not part of this 3-state cycle. Menu stays open so the user can tap
+  // through states quickly without re-opening.
+  function _refreshKeyBarBtnLabel(): void {
+    const btn = document.getElementById('sessionKeyBarBtn');
+    if (!btn) return;
+    const cur = Math.min(appState.keyBarDepth, 2);
+    btn.textContent = `Keys: ${String(cur)}/2`;
+  }
+  _refreshKeyBarBtnLabel();
+  document.getElementById('sessionKeyBarBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const cur = Math.min(appState.keyBarDepth, 2);
+    const next = ((cur + 1) % 3) as 0 | 1 | 2;
+    setKeyBarDepth(next);
+    _refreshKeyBarBtnLabel();
+  });
+
   document.getElementById('sessionDisconnectBtn')!.addEventListener('click', () => {
     closeMenu();
     const sessionId = appState.activeSessionId;

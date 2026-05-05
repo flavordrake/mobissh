@@ -283,7 +283,10 @@
           <button class="nav-menu-item" data-panel="settings" role="menuitem">⚙ Settings</button>
         </div>
         <div id="sessionMenu" class="hidden" role="menu" aria-label="Terminal menu">
-          <button id="sessionNavBarBtn"     class="session-menu-item" role="menuitem">≡ Toggle nav bar</button>
+          <div class="session-menu-row" role="menuitem">
+            <button id="sessionNavBarBtn"   class="session-menu-item session-menu-half" role="menuitem">≡ Nav bar</button>
+            <button id="sessionKeyBarBtn"   class="session-menu-item session-menu-half" role="menuitem">Keys: 1/2</button>
+          </div>
           <button id="sessionNotifBtn"      class="session-menu-item" role="menuitem">🔔 Notifications</button>
           <div class="session-menu-item font-size-row" role="menuitem">
             <button id="fontDecBtn"   class="font-adj-btn font-adj-btn-edge" title="Decrease font size">A−</button>
