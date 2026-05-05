@@ -32,6 +32,8 @@ const SHELL_FILES = [
   './vendor/xterm.min.css',
   './vendor/xterm-addon-fit.min.js',
   './vendor/html2canvas.min.js',
+  './vendor/fonts/JetBrainsMono-Regular.woff2',
+  './vendor/fonts/FiraCode-Regular.woff2',
 ];
 
 // Install: cache the app shell

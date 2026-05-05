@@ -1,5 +1,24 @@
 /* MobiSSH PWA — Mobile-first styles */
 
+/* Bundled programmer fonts for the terminal — exposed via the font-cycle
+ * button on the Terminal menu. `font-display: swap` so the system monospace
+ * fallback renders immediately and the woff2 swaps in once loaded.
+ * Files in public/vendor/fonts/ are cached by the service worker. */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('vendor/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Fira Code';
+  src: url('vendor/fonts/FiraCode-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg-deep: #0d0d1a;
   --bg-panel: #1a1a2e;
