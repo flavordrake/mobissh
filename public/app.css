@@ -572,12 +572,24 @@ html, body {
   border-color: var(--profile-color, var(--accent));
 }
 .session-item.session-connected .session-item-dot { opacity: 1; }
-.session-item.session-disconnected .session-item-dot,
-.session-item.session-failed .session-item-dot { opacity: 0.4; }
+.session-item.session-disconnected .session-item-dot { opacity: 0.4; }
 .session-item.session-connecting .session-item-dot,
 .session-item.session-reconnecting .session-item-dot {
   opacity: 0.85;
   animation: pulse-dot 1s infinite;
+}
+
+/* Failed: theme-agnostic red dot + warning glyph next to label so a
+ * backgrounded session in `failed` state is unmistakable in the list (#497). */
+.session-item.session-failed .session-item-dot {
+  background: #cc3333 !important;
+  border-color: #cc3333;
+  opacity: 1;
+}
+.session-item.session-failed .session-item-label::after {
+  content: ' ⚠';
+  color: #cc3333;
+  font-weight: 700;
 }
 
 .session-disconnected { opacity: 0.7; }
