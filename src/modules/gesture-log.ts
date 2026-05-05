@@ -21,6 +21,8 @@ const MAX_ENTRIES = 5000;
 export type GestureLogType =
   | 'gesture_handler_init'
   | 'gesture_term_touchstart'
+  | 'gesture_term_touchstart_skipped'
+  | 'gesture_term_touchmove_no_start'
   | 'gesture_term_scroll_claim'
   | 'gesture_term_touchend'
   | 'gesture_term_touchcancel'
@@ -34,6 +36,7 @@ export type GestureLogType =
   | 'gesture_long_press'
   | 'gesture_drag_select_start'
   | 'gesture_drag_select_end'
+  | 'gesture_keyboard_changed'
   | 'gesture_listener_error';
 
 export interface GestureLogEntry {

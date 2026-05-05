@@ -5,6 +5,7 @@
 import type { ThemeName, RootCSS } from './types.js';
 import { THEMES, ANSI, FONT_SIZE, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected } from './state.js';
+import { logGesture } from './gesture-log.js';
 
 // Late-bound handle lookup to avoid circular import with connection.ts (#374)
 let _getSessionHandle: ((id: string) => { fit(): void } | undefined) | null = null;
@@ -365,7 +366,19 @@ export function initKeyboardAwareness(): void {
 
     const h = Math.round(vv.height);
 
+    const wasVisible = keyboardVisible;
     keyboardVisible = h < window.outerHeight * 0.75;
+    // #498 telemetry: transition events make it possible to correlate
+    // keyboard show/hide with the "vertical scroll dies" bug. The user
+    // reports scrolling returns after a keyboard hide/show — capture the
+    // exact transition timestamps in the gesture log.
+    if (wasVisible !== keyboardVisible) {
+      logGesture('gesture_keyboard_changed', {
+        visible: keyboardVisible,
+        viewportHeight: h,
+        outerHeight: window.outerHeight,
+      });
+    }
 
     if (vv.scale === 1) {
       if (keyboardVisible) {

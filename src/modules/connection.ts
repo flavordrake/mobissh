@@ -830,6 +830,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         logConnect('ssh_ready', sessionId, { host: session?.profile?.host, reattach: true });
         if (session) {
           session._wsConsecFailures = 0;
+          session._lastErrorUnreachable = false;
           session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
           if (session.state === 'connecting' || session.state === 'reconnecting') transitionSession(sessionId, 'authenticating');
           if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
@@ -874,6 +875,7 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
         const wasRecovering = session?.state === 'reconnecting';
         if (session) {
           session._wsConsecFailures = 0;
+          session._lastErrorUnreachable = false;
           session.reconnectDelay = RECONNECT.INITIAL_DELAY_MS;
           if (session.state === 'connecting' || session.state === 'reconnecting') transitionSession(sessionId, 'authenticating');
           if (session.state === 'authenticating') transitionSession(sessionId, 'connected');
@@ -963,6 +965,14 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
           // Don't reconnect here — let the WS onclose handler manage retries
           // with its failure counter to prevent infinite loops to dead hosts.
           console.log(`[error-msg] SSH error pre-connect: ${msg.message}, letting onclose handle retry`);
+          // Tag the session if the bridge said the target was unreachable so
+          // scheduleReconnect can keep retrying at a short fixed interval
+          // (don't HALT, don't apply exponential backoff). Tailscale auth
+          // flakes and sleeping targets recover on their own; we just need
+          // to keep knocking. (#498)
+          if (session && /unreachable|no SSH response|ECONNREFUSED|ETIMEDOUT/i.test(msg.message)) {
+            session._lastErrorUnreachable = true;
+          }
           if (sessionId === appState.activeSessionId) _toast(`Connection failed: ${msg.message}`);
           if (!session?.profile) {
             closeSession(sessionId);
@@ -1196,9 +1206,14 @@ export function scheduleReconnect(sessionId?: string): void {
   const session = appState.sessions.get(sid);
   if (!session?.profile) return;
 
-  // Guard: stop reconnecting after repeated failures to unreachable hosts
   const wasConnected = session.state === 'connected' || session.state === 'soft_disconnected';
-  if (!wasConnected) {
+  // "Host unreachable" failures are transient — Tailscale auth flakes,
+  // sleeping targets, etc. Don't HALT, don't apply exponential backoff;
+  // retry at a short fixed interval until the target comes back. The 10s
+  // bridge-side timeout per attempt is a sufficient natural rate limit.
+  // (#498) User: "just reconnect in this case don't bother to wait it out".
+  const unreachable = session._lastErrorUnreachable;
+  if (!wasConnected && !unreachable) {
     session._wsConsecFailures++;
     console.log(`[scheduleReconnect] sid=${sid} failures=${String(session._wsConsecFailures)}/${String(WS_MAX_AUTH_FAILURES)} state=${session.state}`);
     if (session._wsConsecFailures >= WS_MAX_AUTH_FAILURES) {
@@ -1219,39 +1234,50 @@ export function scheduleReconnect(sessionId?: string): void {
       const isActive = sid === appState.activeSessionId;
       const hostLabel = session.profile.host;
       if (isActive) {
-        showErrorDialog(`Host unreachable after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\n${_connectionDiagnostic(session.profile)}\n\nThe remote host did not respond. Check that it is online, then tap Connect to retry.`);
+        showErrorDialog(`Connection rejected after ${String(WS_MAX_AUTH_FAILURES)} attempts.\n\n${_connectionDiagnostic(session.profile)}\n\nCheck credentials and that the bridge is reachable, then tap Connect to retry.`);
       } else {
-        _toast(`${hostLabel}: unreachable — tap session to retry`);
+        _toast(`${hostLabel}: rejected — tap session to retry`);
       }
       return;
     }
+  } else if (unreachable) {
+    console.log(`[scheduleReconnect] sid=${sid} unreachable=true (no HALT, fixed delay) state=${session.state}`);
   }
 
-  const delaySec = Math.round(session.reconnectDelay / 1000);
+  // Unreachable retries use a short fixed delay; auth-failure retries use
+  // the existing exponential backoff. The bridge-side 10s greeting timeout
+  // is the natural rate limit for unreachable hosts.
+  const UNREACHABLE_DELAY_MS = 1500;
+  const delayMs = unreachable ? UNREACHABLE_DELAY_MS : session.reconnectDelay;
+  const delaySec = Math.max(1, Math.round(delayMs / 1000));
+
   logConnect('reconnect_scheduled', sid, {
     host: session.profile.host,
-    delayMs: session.reconnectDelay,
+    delayMs,
     failures: session._wsConsecFailures,
     wasConnected,
+    unreachable,
   });
   // Only toast / set chrome status for the session the user is looking at.
   // Backgrounded sessions reconnect silently — their state shows in the
   // session bar, no need to spam the foreground.
   if (sid === appState.activeSessionId) {
-    _toast(`Reconnecting in ${String(delaySec)}s…`);
-    _setStatus('connecting', `Reconnecting in ${String(delaySec)}s…`);
+    if (!unreachable) _toast(`Reconnecting in ${String(delaySec)}s…`);
+    _setStatus('connecting', unreachable ? 'Retrying…' : `Reconnecting in ${String(delaySec)}s…`);
   }
 
   session.reconnectTimer = setTimeout(() => {
     const s = appState.sessions.get(sid);
-    if (s) {
+    // Only grow exponential backoff for non-unreachable retries; unreachable
+    // sticks to the short fixed delay.
+    if (s && !s._lastErrorUnreachable) {
       s.reconnectDelay = Math.min(
         s.reconnectDelay * RECONNECT.BACKOFF_FACTOR,
         RECONNECT.MAX_DELAY_MS
       );
     }
     _openWebSocket({ silent: true, sessionId: sid });
-  }, session.reconnectDelay);
+  }, delayMs);
 }
 
 export function cancelReconnect(sessionId?: string): void {

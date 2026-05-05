@@ -163,6 +163,13 @@ export interface SessionState {
   activePanel: 'terminal' | 'files';
   _onDataDisposable: { dispose: () => void } | null;
   _wsConsecFailures: number;
+  /** True when the most recent failure was a "Host unreachable" pre-connect
+   *  timeout (bridge couldn't reach the SSH target). These are transient by
+   *  nature — Tailscale auth flakes, target sleeping, etc. — so the
+   *  reconnect loop skips both the failure-count increment and the
+   *  exponential backoff for them, retrying at a short fixed interval until
+   *  the target comes back. Cleared on a successful connection. (#498) */
+  _lastErrorUnreachable: boolean;
   /** Wall-clock ms when the session most recently transitioned state.
    *  Used by the visibility_resume handler to detect "stuck in flight"
    *  sessions (e.g. a reconnecting attempt whose timer was suspended by

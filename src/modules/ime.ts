@@ -1241,11 +1241,23 @@ export function initIMEInput(): void {
 
   // nosemgrep: duplicate-event-listener -- scroll (1-finger) and pinch (2-finger) are separate gestures
   termEl.addEventListener('touchstart', (e) => {
-    if (isSelectionActive()) return;
+    // #498 telemetry: log skip reason when scroll handler bails so we can see
+    // why scrolling appeared to "die" in the bug-report bundle. The user
+    // reported the scroll only returning after keyboard hide/show.
+    if (isSelectionActive()) {
+      logGesture('gesture_term_touchstart_skipped', {
+        reason: 'selection_active',
+        target: gestureTarget(e.target),
+      });
+      return;
+    }
     console.log('[scroll] touchstart y=', e.touches[0]!.clientY, 'touches=', e.touches.length);
     logGesture('gesture_term_touchstart', {
       touches: e.touches.length,
       target: gestureTarget(e.target),
+      selectionActive: false,
+      keyboardVisible: typeof window.visualViewport !== 'undefined' &&
+        window.visualViewport!.height < window.innerHeight - 100,
     });
     _touchStartY = _lastTouchY = e.touches[0]!.clientY;
     _touchStartX = _lastTouchX = e.touches[0]!.clientX;
@@ -1260,7 +1272,14 @@ export function initIMEInput(): void {
   // nosemgrep: duplicate-event-listener
   termEl.addEventListener('touchmove', (e) => {
     if (isSelectionActive()) return;
-    if (_touchStartY === null || _touchStartX === null) return;
+    if (_touchStartY === null || _touchStartX === null) {
+      // Touch landed on something that swallowed touchstart (e.g. a child
+      // element with its own handler that called stopPropagation). #498
+      logGesture('gesture_term_touchmove_no_start', {
+        target: gestureTarget(e.target),
+      });
+      return;
+    }
     const totalDy = _touchStartY - e.touches[0]!.clientY;
     const totalDx = _touchStartX - e.touches[0]!.clientX;
 

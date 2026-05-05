@@ -85,7 +85,9 @@ describe('disconnect chrome UI gates on active session', () => {
 
   it('scheduleReconnect "Reconnecting in Ns…" gates on activeSessionId', () => {
     const start = connectionSrc.indexOf('export function scheduleReconnect');
-    const block = connectionSrc.slice(start, start + 2500);
+    // 4500-char window covers the function after the #498 unreachable-retry
+    // branch was added. If scheduleReconnect grows further, bump again.
+    const block = connectionSrc.slice(start, start + 4500);
     // The toast and _setStatus pair fires only for active sid.
     const guardIdx = block.indexOf('sid === appState.activeSessionId');
     const reconnectingToastIdx = block.indexOf('Reconnecting in ');
