@@ -184,8 +184,21 @@ export function initSelection(): void {
 
   function _onLongPress(): void {
     _selectionActive = true;
-    _keyboardWasVisible = getKeyboardVisible();
-    logGesture('gesture_long_press', { keyboardVisible: _keyboardWasVisible });
+    // Read keyboard visibility INLINE from visualViewport — the cached
+    // `getKeyboardVisible()` flag in terminal.ts can go stale (a back-gesture
+    // dismiss may not fire visualViewport.resize, leaving cache=true while
+    // keyboard is actually hidden). Bug-report 2026-05-05T01-53-59 caught
+    // exactly that: touchstart's inline check said hidden, long-press's
+    // cached check said visible — they should agree. Stale cache made us
+    // skip the blur, then xterm's `term.select()` re-focused its helper
+    // textarea and summoned the keyboard. Use the inline reading.
+    const vv = window.visualViewport;
+    const kbVisibleNow = !!vv && vv.height < window.innerHeight - 100;
+    _keyboardWasVisible = kbVisibleNow;
+    logGesture('gesture_long_press', {
+      keyboardVisible: kbVisibleNow,
+      cachedKeyboardVisible: getKeyboardVisible(),
+    });
     try { navigator.vibrate(30); } catch { /* vibrate not available */ }
     // Conditional blur. If the keyboard was HIDDEN but the textarea still
     // had focus (user dismissed via back button), blur to prevent the
@@ -198,7 +211,7 @@ export function initSelection(): void {
     // and tapping again re-activates it."
     // _dismissSelection's focusIME restore is gated on _keyboardWasVisible,
     // so leaving focus intact here stays consistent with that path.
-    if (!_keyboardWasVisible && document.activeElement instanceof HTMLElement) {
+    if (!kbVisibleNow && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
     // Push a history entry so Android back gesture dismisses the selection.
@@ -348,6 +361,19 @@ export function initSelection(): void {
     if (!pos || !dragTerm) return;
     const [startCol, startRow, len] = _selectableUnitAt(pos.row, pos.col);
     dragTerm.select(startCol, startRow, len);
+    // xterm's `select()` synchronously focuses its `.xterm-helper-textarea`
+    // (hidden child of `.xterm`) so Cmd+C / Ctrl+C copies the selection.
+    // On Android Chrome, focusing any textarea summons the soft keyboard
+    // even when the textarea is offscreen — that's how the keyboard "popped
+    // up during long-press" bug manifested. If the keyboard was hidden when
+    // the user started the long-press, blur the helper textarea so it stays
+    // hidden. Desktop copy still works via the document-level `copy` event
+    // listener installed earlier in this module.
+    if (!_keyboardWasVisible) {
+      const root = dragTerm.element ?? document;
+      const helper = root.querySelector<HTMLElement>('.xterm-helper-textarea');
+      helper?.blur();
+    }
     _selectionLevel = 'unit';
     _anchorCol = pos.col;
     _anchorRow = pos.row;
