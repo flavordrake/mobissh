@@ -8,7 +8,7 @@
 import type { UIDeps, ConnectionStatus, RootCSS, ThemeName, SftpEntry } from './types.js';
 import { KEY_REPEAT, THEMES, THEME_ORDER, escHtml } from './constants.js';
 import { appState, currentSession, isSessionConnected, onStateChange, transitionSession } from './state.js';
-import { applyTheme, _addNotification, fireNotification, setSessionTitleBase, clearNotifications, getNotifications } from './terminal.js';
+import { applyTheme, _addNotification, fireNotification, setSessionTitleBase, clearNotifications, getNotifications, FONT_FAMILIES } from './terminal.js';
 import { showSettingsOverview, showSettingsSection } from './settings.js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- backward compat: sendSftpUpload kept for legacy callers
 import { sendSSHInput, sendSSHInputToAll, disconnect, reconnect, probeSession, cancelReconnect, sendSftpLs, setSftpHandler, sendSftpDownload, sendSftpDownloadStart, sendSftpUpload, sendSftpRename, sendSftpDelete, sendSftpRealpath, uploadFileChunked, sendSftpUploadCancel, getSessionHandle, removeSessionHandle } from './connection.js';
@@ -853,6 +853,38 @@ export function initSessionMenu(): void {
   document.getElementById('fontIncBtn')!.addEventListener('click', (e) => {
     e.stopPropagation();
     _applyFontSize((parseInt(localStorage.getItem('fontSize') ?? '14') || 14) + 1);
+  });
+
+  // Font-family cycle: tap the middle of the font row to cycle through
+  // monospace → JetBrains Mono → Fira Code → monospace. Updates the active
+  // terminal in-place (no reload needed) and persists for next session.
+  const FONT_KEYS: { key: string; label: string }[] = [
+    { key: 'monospace', label: 'Mono' },
+    { key: 'jetbrains', label: 'JetBrains' },
+    { key: 'firacode',  label: 'Fira' },
+  ];
+  function _refreshFontFamilyLabel(): void {
+    const cur = localStorage.getItem('termFont') ?? 'monospace';
+    const entry = FONT_KEYS.find((f) => f.key === cur) ?? FONT_KEYS[0]!;
+    const labelEl = document.getElementById('fontFamilyLabel');
+    if (labelEl) labelEl.textContent = entry.label;
+  }
+  _refreshFontFamilyLabel();
+  document.getElementById('fontFamilyBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const cur = localStorage.getItem('termFont') ?? 'monospace';
+    const idx = FONT_KEYS.findIndex((f) => f.key === cur);
+    const next = FONT_KEYS[(idx + 1) % FONT_KEYS.length]!;
+    localStorage.setItem('termFont', next.key);
+    _refreshFontFamilyLabel();
+    // Keep settings <select> in sync so it reflects the new value next open.
+    const sel = document.getElementById('termFontSelect') as HTMLSelectElement | null;
+    if (sel) sel.value = next.key;
+    // Apply to the active terminal live so the user sees the change without
+    // restarting the session. xterm reads `options.fontFamily`; assigning
+    // triggers a re-measure on next render.
+    const term = currentSession()?.terminal;
+    if (term) term.options.fontFamily = FONT_FAMILIES[next.key] ?? FONT_FAMILIES['monospace']!;
   });
 
   document.getElementById('sessionResetBtn')!.addEventListener('click', () => {

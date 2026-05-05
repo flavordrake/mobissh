@@ -264,7 +264,7 @@
       <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
         <button id="handleMenuBtn" class="handle-btn handle-menu-btn" title="Show tabs" aria-label="Show tabs" data-tooltip="Show tabs">≡</button>
-        <button id="sessionMenuBtn" title="Session menu" aria-label="Session menu" data-tooltip="Session menu">MobiSSH</button>
+        <button id="sessionMenuBtn" title="Terminal menu" aria-label="Terminal menu" data-tooltip="Terminal menu">MobiSSH</button>
         <button id="handleCopyBtn" class="handle-copy-btn hidden" title="Copy selection" aria-label="Copy selection">Copy</button>
         <button id="bellIndicatorBtn" class="handle-btn handle-bell-btn hidden" title="Notifications" aria-label="Notifications" data-tooltip="Notifications"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="bell-badge hidden">0</span></button>
         <button id="previewModeBtn" class="handle-btn handle-preview-btn" title="Preview mode: review text before sending" data-tooltip="Preview mode"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
@@ -282,20 +282,22 @@
           <button class="nav-menu-item" data-panel="connect" role="menuitem">⚡ Connect</button>
           <button class="nav-menu-item" data-panel="settings" role="menuitem">⚙ Settings</button>
         </div>
-        <div id="sessionMenu" class="hidden" role="menu">
+        <div id="sessionMenu" class="hidden" role="menu" aria-label="Terminal menu">
+          <button id="sessionNavBarBtn"     class="session-menu-item" role="menuitem">≡ Toggle nav bar</button>
           <button id="sessionNotifBtn"      class="session-menu-item" role="menuitem">🔔 Notifications</button>
           <div class="session-menu-item font-size-row" role="menuitem">
-            <button id="fontDecBtn"   class="font-adj-btn" title="Decrease font size">A−</button>
-            <span   id="fontSizeLabel">14px</span>
-            <button id="fontIncBtn"   class="font-adj-btn" title="Increase font size">A+</button>
+            <button id="fontDecBtn"   class="font-adj-btn font-adj-btn-edge" title="Decrease font size">A−</button>
+            <button id="fontFamilyBtn" class="font-family-btn" title="Tap to cycle terminal fonts"><span id="fontFamilyLabel">Mono</span> · <span id="fontSizeLabel">14px</span></button>
+            <button id="fontIncBtn"   class="font-adj-btn font-adj-btn-edge" title="Increase font size">A+</button>
           </div>
+          <button id="sessionThemeBtn"      class="session-menu-item" role="menuitem">Theme: Dark ▸</button>
           <button id="sessionResetBtn"      class="session-menu-item" role="menuitem">Reset terminal</button>
           <button id="sessionClearBtn"      class="session-menu-item" role="menuitem">Clear scrollback</button>
-          <button id="sessionThemeBtn"      class="session-menu-item" role="menuitem">Theme: Dark ▸</button>
           <button id="sessionLocalScrollBtn" class="session-menu-item" role="menuitem">Scroll: TUI ▸</button>
-          <button id="sessionReconnectBtn"  class="session-menu-item" role="menuitem">Reconnect</button>
-          <button id="sessionNavBarBtn"     class="session-menu-item" role="menuitem">≡ Toggle nav bar</button>
-          <button id="sessionDisconnectBtn" class="session-menu-item danger" role="menuitem">Disconnect</button>
+          <div class="session-menu-row" role="menuitem">
+            <button id="sessionReconnectBtn"  class="session-menu-item session-menu-half" role="menuitem">Reconnect</button>
+            <button id="sessionDisconnectBtn" class="session-menu-item session-menu-half danger" role="menuitem">Disconnect</button>
+          </div>
           <button id="sessionFilesBtn"      class="session-menu-item" role="menuitem">📁 Files</button>
           <div id="sessionList" class="session-list hidden" role="group" aria-label="Active sessions"></div>
         </div>

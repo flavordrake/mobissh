@@ -638,22 +638,41 @@ html, body {
 .session-menu-item:active { background: var(--bg-card); }
 .session-menu-item.danger { color: var(--danger); }
 
-/* Font size row — inline +/− controls that keep menu open */
+/* Font row — A− at far left, font name+size as tappable cycle button in
+ * middle, A+ at far right. The middle button cycles terminal font
+ * (monospace → JetBrains Mono → Fira Code → ...). +/- adjust size only. */
 .font-size-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   cursor: default;
-  gap: 8px;
+  gap: 0;
+  padding: 6px 8px;
 }
 .font-size-row:active { background: none; }
 
-#fontSizeLabel {
-  font-size: 13px;
-  color: var(--text-dim);
-  min-width: 32px;
-  text-align: center;
+.font-family-btn {
   flex: 1;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  padding: 8px 12px;
+  margin: 0 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+  text-align: center;
+  letter-spacing: 0.2px;
+}
+.font-family-btn:active { background: var(--bg-card); }
+#fontSizeLabel {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+#fontFamilyLabel {
+  font-weight: 500;
 }
 
 .font-adj-btn {
@@ -661,12 +680,27 @@ html, body {
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 4px;
-  padding: 4px 12px;
+  padding: 6px 14px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
+  flex-shrink: 0;
 }
+.font-adj-btn-edge { /* push to row edges */ }
+
+/* Two-button horizontal row inside the menu (e.g. Reconnect | Disconnect). */
+.session-menu-row {
+  display: flex;
+  border-top: 1px solid var(--border);
+}
+.session-menu-half {
+  flex: 1;
+  border-top: none !important;
+  border-right: 1px solid var(--border);
+  text-align: center !important;
+}
+.session-menu-half:last-child { border-right: none; }
 
 /* Shared base for icon-only handle bar buttons */
 .handle-btn {
