@@ -367,6 +367,7 @@ html, body {
 /* Terminal panel */
 #panel-terminal {
   padding: 0;
+  position: relative; /* anchor for #sessionFailedOverlay (#497) */
 }
 
 #terminal {
@@ -1213,6 +1214,54 @@ body[data-session-state="failed"] #terminal {
   filter: brightness(0.5) contrast(0.5);
   transition: filter 10s ease-out;
 }
+
+/* Session-failed banner (#497) — high-contrast, theme-agnostic. The slight
+ * `brightness(0.5) contrast(0.5)` filter on a cream theme is invisible, and
+ * once the user dismisses the modal Reconnect dialog they otherwise have no
+ * way to know their session is dead. This overlay stays put. */
+.session-failed-overlay {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 30;
+  background: #2a0d0d;
+  color: #ffd6d6;
+  border: 1px solid #cc3333;
+  border-radius: 8px;
+  padding: 16px 20px;
+  text-align: center;
+  font-family: var(--font-ui);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+  max-width: 80%;
+}
+body[data-session-state="failed"] #sessionFailedOverlay {
+  display: block;
+}
+.session-failed-msg {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.session-failed-detail {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-bottom: 12px;
+}
+.session-failed-retry {
+  background: #cc3333;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 44px;
+}
+.session-failed-retry:active { background: #aa2222; }
 
 /* Connected: solid accent bar (no animation, full opacity) */
 body[data-session-state="connected"] #key-bar-handle::after {

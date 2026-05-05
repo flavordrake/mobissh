@@ -19,7 +19,7 @@ import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings
 import { initConnection } from './modules/connection.js';
 import { appState, onStateChange } from './modules/state.js';
 import { refreshKeepAliveNotification, dismissKeepAliveNotification } from './modules/keepalive-notification.js';
-import { disconnect } from './modules/connection.js';
+import { disconnect, reconnect } from './modules/connection.js';
 import { initIME, initIMEInput } from './modules/ime.js';
 import { initSelection } from './modules/selection.js';
 import {
@@ -218,6 +218,16 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
           (document.getElementById('keyName') as HTMLInputElement).value = '';
           (document.getElementById('keyData') as HTMLTextAreaElement).value = '';
         }
+      });
+    });
+
+    // Session-failed banner retry button (#497) — visible when active session
+    // is in `failed` state. Clicking re-runs reconnect() for the active session.
+    document.getElementById('sessionFailedRetryBtn')?.addEventListener('click', () => {
+      const sid = appState.activeSessionId;
+      if (!sid) return;
+      void reconnect(sid).catch((err: unknown) => {
+        console.warn('[session-failed] reconnect failed:', err);
       });
     });
 

@@ -252,6 +252,14 @@
     <div id="panel-terminal" class="panel active">
       <div id="terminal">
       </div>
+      <!-- Persistent banner shown when active session is in `failed` state.
+           Visible regardless of theme so the user always knows a session
+           died, even after the modal Reconnect dialog is dismissed (#497). -->
+      <div id="sessionFailedOverlay" class="session-failed-overlay" role="status" aria-live="polite">
+        <div class="session-failed-msg">Session unreachable.</div>
+        <div class="session-failed-detail">Reconnect attempts gave up.</div>
+        <button id="sessionFailedRetryBtn" class="session-failed-retry">Tap to reconnect</button>
+      </div>
       <!-- IME preview element removed — actions are now on #imeContainer (#106) -->
       <!-- Handle strip: session identity (center, swipe up/down toggles tab bar) | ▾ key bar toggle -->
       <div id="key-bar-handle" aria-label="Terminal controls">
