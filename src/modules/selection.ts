@@ -426,8 +426,15 @@ function _watchSelection(copyBtn: HTMLElement): void {
   if (!watchTerm || watchTerm === _watchedTerminal) return;
   _watchedTerminal = watchTerm;
   watchTerm.onSelectionChange(() => {
-    const sel = currentSession()?.terminal?.getSelection();
-    if (sel) {
+    // Use `hasSelection()` (predicate) rather than `getSelection()` (text).
+    // The text getter returns whitespace-only strings for selections that
+    // span only spaces/empty cells, and on some xterm versions the change
+    // event fires once with an empty string mid-transition before settling.
+    // Either case left the Copy button hidden for legitimate selections —
+    // particularly small partial-line selections. `hasSelection()` reports
+    // any visible highlight regardless of content.
+    const term = currentSession()?.terminal;
+    if (term?.hasSelection()) {
       _selectionActive = true;
       copyBtn.classList.remove('hidden');
     } else {
