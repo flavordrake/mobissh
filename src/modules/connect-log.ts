@@ -19,6 +19,7 @@ export type ConnectLogType =
   | 'ws_close'
   | 'ws_error'
   | 'ws_message_parse_fail'
+  | 'large_write_batch'
   | 'ssh_connecting'
   | 'ssh_ready'
   | 'ssh_error'

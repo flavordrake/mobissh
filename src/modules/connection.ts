@@ -350,7 +350,27 @@ function _bufferTerminalWrite(sessionId: string, data: string): void {
   // Approval detection moved to WS message handler — hook POSTs to /api/approval,
   // server broadcasts as { type: 'approval_prompt' } to all clients.
   if (!_writeRafs.has(sessionId)) {
-    _writeRafs.set(sessionId, requestAnimationFrame(() => { _flushTerminalWrite(sessionId); }));
+    _writeRafs.set(sessionId, requestAnimationFrame(() => {
+      // Render-batch telemetry: log oversized batches so we can correlate
+      // smearing reports with terminal-write throughput. Heavy TUIs (Claude
+      // Code thinking spinners, vim mouse-mode redraws) coalesce into a
+      // single mega-write per frame; if that batch is large enough that
+      // xterm's renderer drops paints, smearing results. Threshold 4 KB —
+      // much bigger than typical command output, smaller than full-screen
+      // TUI redraws.
+      const buf = _writeBufs.get(sessionId) ?? '';
+      if (buf.length >= 4096) {
+        /* eslint-disable no-control-regex */
+        logConnect('large_write_batch', sessionId, {
+          bytes: buf.length,
+          hasCSI: /\x1b\[/.test(buf),
+          hasCursorUp: /\x1b\[\d*A/.test(buf),
+          hasClearLine: /\x1b\[2?K/.test(buf),
+        });
+        /* eslint-enable no-control-regex */
+      }
+      _flushTerminalWrite(sessionId);
+    }));
   }
 }
 let _focusIME = (): void => {};

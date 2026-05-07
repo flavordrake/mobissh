@@ -212,15 +212,27 @@ export function initTerminal(): void {
     notifDrawer.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { passive: false });
   }
 
-  // Re-measure character cells after web fonts finish loading (#71)
-  void document.fonts.ready.then(() => {
-    const t = currentSession()?.terminal;
-    if (!t) return;
+  // Re-measure character cells whenever any web font finishes loading.
+  // The original `document.fonts.ready` promise resolves ONCE during boot —
+  // good enough when system monospace was the only option, but with bundled
+  // JetBrains Mono / Fira Code (#fonts), a font may finish loading mid-session
+  // (e.g. user cycles to a font that hadn't been requested yet). xterm caches
+  // character-cell dimensions at construction; cells then don't fully overpaint
+  // each other after a font swap, leaving "smear" trails on heavy TUIs.
+  // `loadingdone` fires every time a FontFace finishes loading — re-fit each
+  // time so xterm re-measures.
+  function _refitForFontChange(reason: string): void {
+    const session = currentSession();
+    const t = session?.terminal;
+    if (!session || !t) return;
     const savedFont = localStorage.getItem('termFont') ?? 'monospace';
     const fontFamily = FONT_FAMILIES[savedFont] ?? FONT_FAMILIES.monospace;
     t.options.fontFamily = fontFamily;
-    currentSession()?.fitAddon?.fit();
-  });
+    session.fitAddon?.fit();
+    logGesture('gesture_handler_init', { surface: 'terminal_refit', reason });
+  }
+  void document.fonts.ready.then(() => { _refitForFontChange('fonts.ready'); });
+  document.fonts.addEventListener('loadingdone', () => { _refitForFontChange('loadingdone'); });
 
   window.addEventListener('resize', handleResize);
 }
