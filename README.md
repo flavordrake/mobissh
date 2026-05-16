@@ -84,24 +84,49 @@ cd server && npm install && npm start
 # Listening on http://0.0.0.0:8081
 ```
 
-### Termux (Android)
+### Local install via Termux (Android)
 
-Run MobiSSH directly on your phone with [Termux](https://termux.dev):
+Run MobiSSH directly on your Android device with [Termux](https://termux.dev).
+This gives you `-L` local port forwarding — not available in the remote Docker install.
+
+**Prerequisites:** Termux installed from F-Droid or Google Play.
+
+**One-line bootstrap:**
 
 ```bash
-pkg install nodejs-lts git
-git clone https://github.com/flavordrake/mobissh.git
-cd mobissh/server && npm install && npm start
+curl -fsSL https://raw.githubusercontent.com/flavordrake/mobissh/main/scripts/termux-bootstrap.sh | bash
 ```
 
-Open `http://localhost:8081` in your device browser. To keep the server running when the screen is off:
+The script:
+1. Verifies it is running inside Termux (aborts cleanly otherwise)
+2. Installs `nodejs` and `git` via `pkg` if not already present
+3. Clones or updates this repo to `~/mobissh`
+4. Runs `npm install --omit=dev` inside `server/`
+5. Prints the exact command to start the bridge
+
+**Start the bridge with local port-forwarding enabled:**
+
+```bash
+MOBISSH_LOCAL_FORWARDS=1 node ~/mobissh/server/index.js
+```
+
+Then open `http://127.0.0.1:8081/` in any browser on the device and install as a PWA.
+
+**Local port forwarding (`-L`):** With `MOBISSH_LOCAL_FORWARDS=1`, a "Forwards" panel
+appears in the session menu. Use it to forward a local phone port to a remote SSH host
+(e.g., `8080 → internal-host:80`). This feature is intentionally absent from the remote
+`mobissh-prod` Docker install.
+
+**PWA coexistence:** You can install both `https://mobissh.tailnet/` (remote Docker PWA)
+and `http://127.0.0.1:8081/` (Termux PWA) as separate home-screen icons — they have
+distinct scopes and do not conflict.
+
+To keep the server running when the screen is off:
 
 ```bash
 termux-wake-lock
-npm start
+MOBISSH_LOCAL_FORWARDS=1 node ~/mobissh/server/index.js
 ```
-
-Use `termux-open http://localhost:8081` to launch the browser from Termux. To connect to other machines on your network, use their Tailscale IP as the SSH host.
 
 ### Other options
 
