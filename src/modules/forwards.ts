@@ -86,7 +86,7 @@ export async function loadCapabilities(): Promise<Capabilities> {
     if (!res.ok) {
       // 404 or other non-success: return fallback, do NOT cache so a new
       // bridge deploy can be detected on next boot.
-      console.warn(`[forwards] /capabilities returned ${res.status} — using fallback`);
+      console.warn(`[forwards] /capabilities returned ${String(res.status)} — using fallback`);
       _capabilities = { ...FALLBACK_CAPABILITIES };
       return _capabilities;
     }
@@ -431,14 +431,14 @@ function _buildRow(fwd: LocalForward): HTMLElement {
 
   const label = document.createElement('span');
   label.className = 'forwards-row-label';
-  label.textContent = `${fwd.srcPort} → ${fwd.dstHost}:${fwd.dstPort}`;
+  label.textContent = `${String(fwd.srcPort)} → ${fwd.dstHost}:${String(fwd.dstPort)}`;
 
   const removeBtn = document.createElement('button');
   removeBtn.className = 'forwards-row-remove';
   removeBtn.setAttribute('data-action', 'remove-forward');
   removeBtn.textContent = 'Remove';
   removeBtn.addEventListener('click', () => {
-    void _panelHooks.close(fwd.id);
+    void _callClose(fwd.id);
   });
 
   row.appendChild(label);
@@ -506,13 +506,15 @@ function _ensureAddForwardControls(panel: HTMLElement): void {
     errorEl.textContent = '';
     errorEl.classList.add('hidden');
 
-    _panelHooks.open(srcPort, dstHost, dstPort).then(() => {
+    _callOpen(srcPort, dstHost, dstPort).then(() => {
       // Success: hide form, re-show add button
       form.classList.add('hidden');
       addBtn.classList.remove('hidden');
-    }).catch((err: Error & { code?: string }) => {
+    }).catch((err: unknown) => {
       // C5b: keep form open, show inline error
-      const msg = err.code ? `${err.code}: ${err.message}` : err.message;
+      const e = err as { code?: string; message?: string };
+      const message = e.message ?? String(err);
+      const msg = e.code ? `${e.code}: ${message}` : message;
       errorEl.textContent = msg;
       errorEl.classList.remove('hidden');
     });

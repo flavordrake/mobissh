@@ -185,7 +185,7 @@ describe('forwards panel gating (#499)', () => {
       const mod = await import('../forwards.js');
       const closeSpy = vi.spyOn(mod, 'closeLocalForward').mockImplementation(() => Promise.resolve());
 
-      mod.initForwardsPanel();
+      mod.initForwardsPanel(mod);
       mod.applyCapabilities({
         version: 1, bridge: { version: 't', hash: 'h' },
         portForward: { local: true, remote: false, dynamic: false },
@@ -206,7 +206,7 @@ describe('forwards panel gating (#499)', () => {
         listenAddr: '127.0.0.1', state: 'active', openedAt: Date.now(),
       }));
 
-      mod.initForwardsPanel();
+      mod.initForwardsPanel(mod);
       mod.applyCapabilities({
         version: 1, bridge: { version: 't', hash: 'h' },
         portForward: { local: true, remote: false, dynamic: false },
@@ -241,7 +241,7 @@ describe('forwards panel gating (#499)', () => {
         Promise.reject(Object.assign(new Error('bind failed: EADDRINUSE'), { code: 'eaddrinuse' }))
       );
 
-      mod.initForwardsPanel();
+      mod.initForwardsPanel(mod);
       mod.applyCapabilities({
         version: 1, bridge: { version: 't', hash: 'h' },
         portForward: { local: true, remote: false, dynamic: false },
