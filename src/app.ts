@@ -13,6 +13,7 @@ import { initVaultUI, promptVaultSetupOnStartup } from './modules/vault-ui.js';
 import {
   initProfiles, getProfiles, loadProfiles,
   deleteProfile, editProfile, closeProfileEdit,
+  showProfileReorderMenu,
   loadKeys, importKey, deleteKey, renameKey, editKey, saveKeyEdit, cancelKeyEdit, populateKeyDropdown,
 } from './modules/profiles.js';
 import { initSettings, initSettingsPanel, registerServiceWorker, migrateSettings, connectSSE, applyUiScaleFromStorage } from './modules/settings.js';
@@ -188,6 +189,7 @@ document.addEventListener('DOMContentLoaded', () => void (async () => {
         if (btn.dataset.action === 'edit') editProfile(idx);
         else if (btn.dataset.action === 'delete') deleteProfile(idx);
         else if (btn.dataset.action === 'close-edit') { closeProfileEdit(); loadProfiles(); }
+        else if (btn.dataset.action === 'reorder') showProfileReorderMenu(btn);
         return;
       }
     });

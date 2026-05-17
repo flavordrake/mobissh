@@ -25,6 +25,86 @@ export function profileColor(profile: { color?: string; theme?: string }): strin
   return THEMES[theme].app.accent;
 }
 
+// StoredProfile shape — full definition is below; declared early so the
+// profile-order helpers compile without no-use-before-define lint errors.
+interface StoredProfile {
+  title: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: string;
+  initialCommand: string;
+  vaultId: string;
+  hasVaultCreds?: boolean;
+  keyVaultId?: string;
+  theme?: string;
+  color?: string;
+}
+
+// Profile display order helpers live in their own module so the storage
+// logic is unit-testable without pulling the full UI/connection import chain.
+import {
+  getProfileOrder,
+  sortProfilesByOrder,
+  moveProfileToPosition as _moveProfileToPosition,
+  removeProfileFromOrder,
+} from './profile-order.js';
+export { getProfileOrder, sortProfilesByOrder, removeProfileFromOrder };
+export function moveProfileToPosition(vaultId: string, position: number): void {
+  _moveProfileToPosition(vaultId, position, getProfiles());
+}
+
+/** Render a small popup menu next to the profile-card reorder grip with
+ *  "Move to top" / "Move to bottom" actions. Tapping outside dismisses. */
+export function showProfileReorderMenu(anchor: HTMLElement): void {
+  // Reuse-or-replace pattern: kill any existing menu first so a second tap
+  // toggles it off rather than stacking.
+  document.getElementById('profileReorderMenu')?.remove();
+
+  const vaultId = anchor.dataset['vaultId'];
+  if (!vaultId) return;
+
+  const menu = document.createElement('div');
+  menu.id = 'profileReorderMenu';
+  menu.className = 'profile-reorder-menu';
+  menu.innerHTML = `
+    <button class="profile-reorder-menu-item" data-action="move-top">Move to top</button>
+    <button class="profile-reorder-menu-item" data-action="move-bottom">Move to bottom</button>
+  `;
+
+  // Position relative to the anchor button's bounding rect so the menu hangs
+  // below-and-to-the-left of the grip on the upper-right corner of the card.
+  const rect = anchor.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.top = `${String(rect.bottom + 4)}px`;
+  menu.style.right = `${String(window.innerWidth - rect.right)}px`;
+
+  document.body.appendChild(menu);
+
+  const dismiss = (): void => {
+    menu.remove();
+    document.removeEventListener('click', onOutside, true);
+  };
+  function onOutside(e: Event): void {
+    if (!menu.contains(e.target as Node)) dismiss();
+  }
+
+  menu.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!btn) return;
+    const act = btn.dataset['action'];
+    if (act === 'move-top') moveProfileToPosition(vaultId, 0);
+    else if (act === 'move-bottom') moveProfileToPosition(vaultId, -1);
+    dismiss();
+    loadProfiles();
+  });
+
+  // Defer outside-click registration one tick so the originating click
+  // doesn't immediately dismiss the menu we just opened.
+  setTimeout(() => { document.addEventListener('click', onOutside, true); }, 0);
+}
+
 // ── Recent sessions persistence (#385) ──────────────────────────────────────
 
 const RECENT_SESSIONS_KEY = 'recentSessions';
@@ -112,21 +192,9 @@ export function initProfiles({ toast, navigateToConnect }: ProfilesDeps): void {
   }
 }
 
-// Profile storage
-
-interface StoredProfile {
-  title: string;
-  host: string;
-  port: number;
-  username: string;
-  authType: string;
-  initialCommand: string;
-  vaultId: string;
-  hasVaultCreds?: boolean;
-  keyVaultId?: string;
-  theme?: string;
-  color?: string;
-}
+// Profile storage. StoredProfile interface declared earlier (above the
+// profile-order helpers) so they can reference it without
+// no-use-before-define.
 
 export function getProfiles(): StoredProfile[] {
   const raw = JSON.parse(localStorage.getItem('sshProfiles') || '[]') as StoredProfile[];
@@ -296,8 +364,13 @@ export function loadProfiles(): void {
 
   // Profiles section — only show header when active sessions exist above (#306)
   const profilesHeader = allSessions.length > 0 ? '<h3 class="section-label">Profiles</h3>' : '';
+  // Apply user-selected order (#481). Render in sorted order, but data-idx
+  // still references the original `profiles` array so click handlers that
+  // call getProfiles()[idx] keep working unchanged.
+  const sortedProfiles = sortProfilesByOrder(profiles);
   list.innerHTML = profilesHeader
-    + profiles.map((p, i) => {
+    + sortedProfiles.map((p) => {
+      const i = profiles.indexOf(p);
       const matchingSessions = allSessions.filter(
         (s) => s.profile!.host === p.host && (s.profile!.port || 22) === (p.port || 22) && s.profile!.username === p.username
       );
@@ -307,7 +380,8 @@ export function loadProfiles(): void {
       const connectBtnClass = isConnecting ? 'item-btn connecting' : 'item-btn';
       const connectBtnText = isConnecting ? 'Connecting…' : 'Connect';
       const color = profileColor(p);
-      return `<div class="profile-item${connClass}" data-idx="${String(i)}" style="--profile-color:${escHtml(color)}">
+      return `<div class="profile-item${connClass}" data-idx="${String(i)}" data-vault-id="${escHtml(p.vaultId)}" style="--profile-color:${escHtml(color)}">
+        <button class="profile-reorder-btn" data-action="reorder" data-vault-id="${escHtml(p.vaultId)}" aria-label="Reorder profile" title="Drag to reorder, tap for menu">⋮⋮</button>
         <span class="profile-name">${escHtml(p.title || `${p.username}@${p.host}`)}</span>
         <span class="profile-host">${escHtml(p.username)}@${escHtml(p.host)}:${String(p.port || 22)}</span>
         <div class="item-actions">
@@ -506,7 +580,10 @@ export async function connectFromProfile(idx: number): Promise<boolean> {
 export function deleteProfile(idx: number): void {
   const profiles = getProfiles();
   const p = profiles[idx];
-  if (p?.vaultId) vaultDelete(p.vaultId);
+  if (p?.vaultId) {
+    vaultDelete(p.vaultId);
+    removeProfileFromOrder(p.vaultId);
+  }
   profiles.splice(idx, 1);
   localStorage.setItem('sshProfiles', JSON.stringify(profiles));
   loadProfiles();

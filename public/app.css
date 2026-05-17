@@ -1836,6 +1836,67 @@ hr {
 .profile-item {
   border-left: 9px solid var(--profile-color, transparent);
   padding-left: 12px;
+  position: relative;
+}
+
+/* Drag-grip / reorder menu trigger in the upper-right corner (#481).
+ * Tap → menu (Move to top / Move to bottom). Sits inside the card border
+ * with enough tap target to comfortably hit on mobile while staying
+ * visually secondary to the connect/edit/delete buttons. */
+.profile-reorder-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  letter-spacing: -1px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.profile-reorder-btn:active {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+/* Floating popup menu anchored to a profile-reorder-btn. Positioned
+ * via inline top/right by showProfileReorderMenu in profiles.ts. */
+.profile-reorder-menu {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  min-width: 160px;
+  overflow: hidden;
+}
+.profile-reorder-menu-item {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.profile-reorder-menu-item:active {
+  background: var(--bg-card);
+}
+.profile-reorder-menu-item + .profile-reorder-menu-item {
+  border-top: 1px solid var(--border);
 }
 .active-session-item,
 .recent-session-item {
