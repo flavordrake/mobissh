@@ -52,7 +52,6 @@
  */
 
 const http = require('http');
-const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const dns = require('dns');
@@ -110,10 +109,6 @@ function validateWsToken(token) {
   if (expectedBuf.length !== macBuf.length) return false;
   return timingSafeEqual(expectedBuf, macBuf);
 }
-
-// Local (-L) port-forward support — opt in via MOBISSH_LOCAL_FORWARDS=1 (issue #499).
-// Default is false so the remote mobissh-prod install is unaffected.
-const LOCAL_FORWARDS_ENABLED = process.env.MOBISSH_LOCAL_FORWARDS === '1';
 
 const APP_VERSION = require('./package.json').version || '0.0.0';
 let GIT_HASH = 'unknown';
@@ -854,27 +849,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // /capabilities — bridge feature advertisement (issue #499).
-  // Read by the PWA on first boot to gate optional features (port forwarding panel).
-  // Unauthenticated read-only JSON; no internal state exposed beyond the spec shape.
-  if (req.url === '/capabilities') {
-    const caps = {
-      version: 1,
-      bridge: { version: APP_VERSION, hash: GIT_HASH },
-      portForward: {
-        local: LOCAL_FORWARDS_ENABLED,   // -L: gated by MOBISSH_LOCAL_FORWARDS=1
-        remote: false,                   // -R: not in slice 1
-        dynamic: false,                  // -D: not in slice 1
-      },
-    };
-    res.writeHead(200, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
-    });
-    res.end(JSON.stringify(caps));
-    return;
-  }
-
   // /events — SSE channel for real-time client telemetry.
   // Sends server version on connect so clients detect staleness immediately
   // after a container restart (SSE auto-reconnects via EventSource).
@@ -1398,8 +1372,6 @@ wss.on('connection', (ws, req) => {
       sshClient = null;
     }
     connecting = false;
-    // EC4: close all active local forwards on SSH disconnect
-    closeAllForwards('ssh_disconnected');
     if (reason) {
       send({ type: 'disconnected', reason });
       console.log(`[ssh-bridge] Session ended (${clientIP} cid=${connectionId.slice(0,8)} → ${_sshTarget}): ${reason}`);
@@ -1598,159 +1570,6 @@ wss.on('connection', (ws, req) => {
     }
   }
 
-  // ── Local port-forward state (per-WS-connection) ─────────────────────────
-  // Map of forward id → { server: net.Server, channels: Map<channelId, stream> }
-  const activeForwards = new Map();
-
-  // [FWD_LOCAL_HANDLER] -- pair with [FWD_LOCAL_ROUTER] and client types.ts [FWD_LOCAL_CLIENT_MESSAGE]
-  function handleFwdLocalMessage(msg) {
-    if (!LOCAL_FORWARDS_ENABLED) {
-      send({ type: 'fwd_local_error', id: msg.id, code: 'not_supported', message: 'Local forwards not enabled on this bridge (set MOBISSH_LOCAL_FORWARDS=1)' });
-      return;
-    }
-
-    switch (msg.type) {
-      case 'fwd_local_listen': {
-        if (!sshClient) {
-          send({ type: 'fwd_local_error', id: msg.id, code: 'not_supported', message: 'No active SSH session' });
-          return;
-        }
-        const { id, srcPort, dstHost, dstPort } = msg;
-        const tcpServer = net.createServer((socket) => {
-          const channelId = randomBytes(8).toString('hex');
-          send({ type: 'fwd_local_accept', id, channelId, peer: { host: socket.remoteAddress || '', port: socket.remotePort || 0 } });
-
-          sshClient.forwardOut('127.0.0.1', srcPort, dstHost, dstPort, (err, stream) => {
-            if (err) {
-              send({ type: 'fwd_local_channel_close', id, channelId, reason: 'forward_failed: ' + err.message });
-              socket.destroy();
-              return;
-            }
-            const fwd = activeForwards.get(id);
-            if (fwd) fwd.channels.set(channelId, { stream, socket });
-
-            // Remote → client: send as fwd_local_data dir:'in' (B5)
-            stream.on('data', (chunk) => {
-              send({ type: 'fwd_local_data', id, channelId, dir: 'in', b64: chunk.toString('base64') });
-            });
-            stream.on('close', () => {
-              send({ type: 'fwd_local_channel_close', id, channelId, reason: 'eof' });
-              socket.destroy();
-              if (fwd) fwd.channels.delete(channelId);
-            });
-            stream.on('error', () => {
-              send({ type: 'fwd_local_channel_close', id, channelId, reason: 'stream_error' });
-              socket.destroy();
-              if (fwd) fwd.channels.delete(channelId);
-            });
-
-            // Client → remote: socket data relayed via ssh2 forwardOut stream
-            socket.on('data', (chunk) => {
-              try { stream.write(chunk); } catch (_) {}
-            });
-            socket.on('close', () => {
-              try { stream.close(); } catch (_) {}
-              if (fwd) fwd.channels.delete(channelId);
-            });
-            socket.on('error', () => {
-              try { stream.close(); } catch (_) {}
-              if (fwd) fwd.channels.delete(channelId);
-            });
-          });
-        });
-
-        tcpServer.listen(srcPort, '127.0.0.1', () => {
-          const boundPort = tcpServer.address().port;
-          activeForwards.set(id, { server: tcpServer, channels: new Map() });
-          send({ type: 'fwd_local_ready', id, srcPort: boundPort, listenAddr: '127.0.0.1' });
-          console.log(`[fwd-local] listening id=${id} port=${boundPort} → ${dstHost}:${dstPort} cid=${connectionId.slice(0,8)}`);
-        });
-
-        tcpServer.on('error', (err) => {
-          const code = err.code === 'EADDRINUSE' ? 'eaddrinuse'
-            : (err.code === 'EACCES' || err.code === 'EPERM') ? 'eaccess'
-            : 'forward_failed';
-          const message = code === 'eaccess'
-            ? `Permission denied: cannot bind port ${srcPort} (privileged ports require root)`
-            : err.message;
-          send({ type: 'fwd_local_error', id, code, message });
-        });
-        break;
-      }
-
-      case 'fwd_local_data': {
-        // Client sends outbound data (dir:'out') to write into the forwardOut stream (B5)
-        const fwd = activeForwards.get(msg.id);
-        if (!fwd) break;
-        const ch = fwd.channels.get(msg.channelId);
-        if (!ch) break;
-        let decoded;
-        try {
-          decoded = Buffer.from(msg.b64, 'base64');
-          // EC8: verify round-trip to detect malformed base64
-          if (decoded.toString('base64').replace(/=+$/, '') !== msg.b64.replace(/=+$/, '')) {
-            throw new Error('base64 decode mismatch');
-          }
-        } catch (_) {
-          // EC8: bad payload — close channel, WS stays open
-          send({ type: 'fwd_local_channel_close', id: msg.id, channelId: msg.channelId, reason: 'bad_payload' });
-          try { ch.stream.close(); } catch (_e) {}
-          try { ch.socket.destroy(); } catch (_e) {}
-          fwd.channels.delete(msg.channelId);
-          break;
-        }
-        try { ch.stream.write(decoded); } catch (_) {}
-        break;
-      }
-
-      case 'fwd_local_channel_close': {
-        const fwd = activeForwards.get(msg.id);
-        if (!fwd) break;
-        const ch = fwd.channels.get(msg.channelId);
-        if (!ch) break;
-        try { ch.stream.close(); } catch (_) {}
-        try { ch.socket.destroy(); } catch (_) {}
-        fwd.channels.delete(msg.channelId);
-        break;
-      }
-
-      case 'fwd_local_close': {
-        const fwd = activeForwards.get(msg.id);
-        if (!fwd) break;
-        // Close all channels
-        for (const [, ch] of fwd.channels) {
-          try { ch.stream.close(); } catch (_) {}
-          try { ch.socket.destroy(); } catch (_) {}
-        }
-        fwd.channels.clear();
-        fwd.server.close(() => {
-          send({ type: 'fwd_local_closed', id: msg.id, reason: 'user' });
-        });
-        activeForwards.delete(msg.id);
-        break;
-      }
-
-      default:
-        // D4: unknown fwd_local_* — fall through to the WS router's default
-        send({ type: 'error', message: `Unknown message type: ${msg.type}` });
-        break;
-    }
-  }
-
-  /** Close all active forwards; called on SSH disconnect. */
-  function closeAllForwards(reason) {
-    for (const [id, fwd] of activeForwards) {
-      for (const [, ch] of fwd.channels) {
-        try { ch.stream.close(); } catch (_) {}
-        try { ch.socket.destroy(); } catch (_) {}
-      }
-      fwd.channels.clear();
-      fwd.server.close();
-      send({ type: 'fwd_local_closed', id, reason });
-    }
-    activeForwards.clear();
-  }
-
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch (_) {
@@ -1794,13 +1613,6 @@ wss.on('connection', (ws, req) => {
           if (err) { send({ type: 'sftp_error', requestId: msg.requestId, message: err.message }); return; }
           handleSftpMessage(msg, sftp, send, openUploads, ws, connectionId);
         });
-        break;
-      // [FWD_LOCAL_ROUTER] -- every type in FWD_LOCAL_HANDLER must be listed here
-      case 'fwd_local_listen':
-      case 'fwd_local_data':
-      case 'fwd_local_channel_close':
-      case 'fwd_local_close':
-        handleFwdLocalMessage(msg);
         break;
       default: send({ type: 'error', message: `Unknown message type: ${msg.type}` });
     }
