@@ -1788,8 +1788,19 @@ hr {
   cursor: pointer;
 }
 
-.profile-item.tapped { border-color: var(--accent); }
-.profile-item.profile-connected { border-color: var(--accent); border-width: 2px; }
+/* tapped / connected highlight: outline the non-left edges only so the
+ * profile-color band on the left edge (set by .profile-item border-left)
+ * stays visible — it's the profile's identity signal across states. */
+.profile-item.tapped {
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.profile-item.profile-connected {
+  border-top: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
 
 /* Active sessions section (#306) */
 .section-label {
