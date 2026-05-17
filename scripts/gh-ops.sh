@@ -29,7 +29,7 @@ source "$(dirname "$0")/lib/repo-guard.sh"
 
 usage() {
   echo "Usage: scripts/gh-ops.sh <command> [args]" >&2
-  echo "Commands: comment, labels, close, search, version, pr-create, pr-merge, pr-close, integrate, delegate, fetch-issues" >&2
+  echo "Commands: comment, labels, close, reopen, search, version, pr-create, pr-merge, pr-close, integrate, delegate, fetch-issues" >&2
   exit 1
 }
 
@@ -126,6 +126,29 @@ case "$CMD" in
       gh issue close "$ISSUE" --comment "$BODY"
     else
       gh issue close "$ISSUE"
+    fi
+    ;;
+
+  reopen)
+    [ $# -ge 1 ] || { echo "Error: reopen requires ISSUE number" >&2; exit 1; }
+    ISSUE="$1"; shift
+    BODY=""
+    BODY_FILE=""
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --comment|--body) BODY="$2"; shift 2 ;;
+        --body-file) BODY_FILE="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    if [ -n "$BODY_FILE" ]; then
+      BODY=$(cat "$BODY_FILE")
+    fi
+    echo "Reopening #${ISSUE}" >&2
+    if [ -n "$BODY" ]; then
+      gh issue reopen "$ISSUE" --comment "$BODY"
+    else
+      gh issue reopen "$ISSUE"
     fi
     ;;
 
