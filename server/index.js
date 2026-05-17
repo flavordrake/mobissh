@@ -1768,7 +1768,15 @@ wss.on('connection', (ws, req) => {
           sshStream.setWindow(parseInt(msg.rows), parseInt(msg.cols), 0, 0);
         break;
       case 'disconnect': cleanup('User disconnected'); break;
-      case 'ping': break; // application-layer keepalive (#29), no response needed
+      case 'ping':
+        // Application-layer keepalive (#29). If the client tagged the ping
+        // with a `t` field (#499 follow-up), echo it back as a `pong` so the
+        // client can compute WS round-trip latency. Old clients without `t`
+        // get no reply — same behavior as before.
+        if (typeof msg.t === 'number' && ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'pong', t: msg.t }));
+        }
+        break;
       case 'hostkey_response': // host key accept/reject from browser client (#5)
         if (pendingVerify) {
           const fn = pendingVerify;

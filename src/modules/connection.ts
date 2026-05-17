@@ -326,6 +326,12 @@ let _setStatus = (_state: ConnectionStatus, _text: string): void => {};
 const _writeBufs = new Map<string, string>();
 const _writeRafs = new Map<string, number>();
 
+// Echo-RTT timing: stamp performance.now() when input is sent; clear on the
+// first terminal output that follows. Heuristic — not all output is echo
+// (TUI redraws, password prompts) — but in interactive shells it gives a
+// usable order-of-magnitude. Filter outliers in analysis. (#499 follow-up)
+const _lastInputAt = new Map<string, number>();
+
 function _flushTerminalWrite(sessionId: string): void {
   _writeRafs.delete(sessionId);
   const buf = _writeBufs.get(sessionId) ?? '';
@@ -784,7 +790,15 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
   }
 
   newWs.addEventListener('open', () => {
-    logConnect('ws_open', sessionId, { host: session?.profile?.host, silent, reattach: reattachOutcome === 'pending' });
+    logConnect('ws_open', sessionId, {
+      host: session?.profile?.host,
+      silent,
+      reattach: reattachOutcome === 'pending',
+      // Bridge fingerprint — distinguishes local (Termux at 127.0.0.1) from
+      // remote (mobissh-prod over Tailscale) so connect-log dumps can be
+      // split A/B for perf comparison. (#499 follow-up)
+      bridge: location.host,
+    });
     // Don't reset _wsConsecFailures here — WS opens fine even when SSH host
     // is unreachable. Only reset on successful SSH ready (case 'ready' below).
     startKeepAlive(sessionId);
@@ -823,6 +837,14 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
     try { msg = JSON.parse(event.data as string) as ServerMessage; } catch { return; }
 
     switch (msg.type) {
+      case 'pong': {
+        // WS RTT probe (#499 follow-up): server echoes the `t` it received.
+        // performance.now() - t = round-trip transport latency excluding SSH.
+        if (typeof msg.t === 'number') {
+          logConnect('ws_rtt', sessionId, { ms: Math.round(performance.now() - msg.t) });
+        }
+        break;
+      }
       case 'session_id': {
         // Bridge has registered this session for potential reattach. Stash
         // the ID so subsequent _openWebSocket calls append ?reattach=<id>.
@@ -963,6 +985,17 @@ function _openWebSocket(options?: { silent?: boolean; sessionId?: string }): voi
       }
 
       case 'output':
+        // Echo-RTT (#499 follow-up): if there's a recent unmatched input on
+        // this session, the first output is presumed to be its echo. Log the
+        // delta, then clear so subsequent outputs aren't all attributed to
+        // this one keystroke.
+        {
+          const sentAt = _lastInputAt.get(sessionId);
+          if (sentAt !== undefined) {
+            logConnect('echo_rtt', sessionId, { ms: Math.round(performance.now() - sentAt) });
+            _lastInputAt.delete(sessionId);
+          }
+        }
         _bufferTerminalWrite(sessionId, msg.data);
         if (appState.recording && appState.recordingStartTime !== null) {
           appState.recordingEvents.push([(Date.now() - appState.recordingStartTime) / 1000, 'o', msg.data]);
@@ -1380,7 +1413,10 @@ function startKeepAlive(sessionId: string): void {
   session.keepAliveTimer = setInterval(() => {
     const s = appState.sessions.get(sessionId);
     if (s?.ws?.readyState === WebSocket.OPEN) {
-      s.ws.send(JSON.stringify({ type: 'ping' }));
+      // Stamp the ping with a client-side timestamp so the bridge can echo it
+      // back and we can log ws_rtt. Older bridges (without #499 follow-up
+      // server change) drop the field and don't reply with `pong` — harmless.
+      s.ws.send(JSON.stringify({ type: 'ping', t: performance.now() }));
     } else {
       stopKeepAlive(sessionId);
     }
@@ -1674,6 +1710,7 @@ export function sendSSHInput(data: string): void {
   }
   const filtered = data.replace(DA_RESPONSE_RE, '');
   if (!filtered) return;
+  _lastInputAt.set(session.id, performance.now());
   session.ws.send(JSON.stringify({ type: 'input', data: filtered }));
 }
 
@@ -1685,6 +1722,7 @@ export function sendSSHInputToSession(sessionId: string, data: string): void {
     sendSSHInputToAll(data);
     return;
   }
+  _lastInputAt.set(sessionId, performance.now());
   session.ws.send(JSON.stringify({ type: 'input', data }));
 }
 
