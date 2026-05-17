@@ -279,7 +279,6 @@ export type ServerMessage =
   | { type: 'output'; data: string }
   | { type: 'error'; message: string }
   | { type: 'disconnected'; reason?: string }
-  | { type: 'pong'; t?: number }
   | { type: 'hostkey'; host: string; port: number; keyType: string; fingerprint: string }
   | { type: 'sftp_ls_result'; requestId: string; entries: SftpEntry[] }
   | { type: 'sftp_download_result'; requestId: string; data?: string; ok?: boolean; error?: string }
@@ -382,7 +381,7 @@ export type ClientMessage =
   | InputMessage
   | HostKeyResponseMessage
   | { type: 'disconnect' }
-  | { type: 'ping'; t?: number }
+  | { type: 'ping' }
   // [FWD_LOCAL_CLIENT_MESSAGE] -- pair with server/index.js [FWD_LOCAL_HANDLER] / [FWD_LOCAL_ROUTER]
   // Local (-L) port-forward client→server variants. See issue #499 (slice 1).
   | { type: 'fwd_local_listen'; id: string; srcPort: number; dstHost: string; dstPort: number }
