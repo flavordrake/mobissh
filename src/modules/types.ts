@@ -298,7 +298,50 @@ export type ServerMessage =
   | { type: 'session_id'; sessionId: string }
   | { type: 'reattached'; sessionId: string }
   | { type: 'reattach_failed' }
-  | { type: 'phase'; name: 'greeting' | 'banner' | 'handshake' | 'ssh_ready'; ms: number };
+  | { type: 'phase'; name: 'greeting' | 'banner' | 'handshake' | 'ssh_ready'; ms: number }
+  // [FWD_LOCAL_SERVER_MESSAGE] -- pair with server/index.js [FWD_LOCAL_HANDLER] / [FWD_LOCAL_ROUTER]
+  // Local (-L) port-forward server→client variants. See issue #499 (slice 1).
+  | { type: 'fwd_local_ready'; id: string; srcPort: number; listenAddr: string }
+  | { type: 'fwd_local_accept'; id: string; channelId: string; peer: { host: string; port: number } }
+  | { type: 'fwd_local_data'; id: string; channelId: string; dir: 'in'; b64: string }
+  | { type: 'fwd_local_channel_close'; id: string; channelId: string; reason?: string }
+  | { type: 'fwd_local_error'; id: string; code: string; message: string }
+  | { type: 'fwd_local_closed'; id: string; reason: string };
+
+// ── Capabilities + port-forwarding domain (#499) ────────────────────────────
+
+/**
+ * Bridge capabilities handshake.
+ *
+ * Served by GET /capabilities. The PWA fetches this once on boot to decide
+ * which optional features to surface (port forwarding panel, etc.).
+ *
+ * Unknown / future keys must be additive — parsers MUST NOT reject extras.
+ * `version` is the capability-schema version (integer), independent of
+ * `bridge.version` (the build version reported by /version).
+ */
+export interface Capabilities {
+  version: 1;
+  bridge: { version: string; hash: string };
+  portForward: { local: boolean; remote: boolean; dynamic: boolean };
+}
+
+/**
+ * Client-side model of one active local (-L) port forward.
+ *
+ * Lifecycle: `pending` (after fwd_local_listen sent, before fwd_local_ready)
+ * → `active` (server bound the listening socket) → `closing` (close requested)
+ * → `closed` (entry removed from appState.forwards).
+ */
+export interface LocalForward {
+  id: string;
+  srcPort: number;
+  dstHost: string;
+  dstPort: number;
+  listenAddr: string;
+  state: 'pending' | 'active' | 'closing' | 'closed';
+  openedAt: number;
+}
 
 export interface ConnectMessage {
   type: 'connect';
@@ -327,6 +370,24 @@ export interface HostKeyResponseMessage {
   type: 'hostkey_response';
   accepted: boolean;
 }
+
+// [CLIENT_MESSAGE] -- keep in sync with server/index.js WS router (server/index.js:1580)
+// Discriminated union of every message the PWA sends to the bridge. New
+// variants added here MUST get a matching case in the server's
+// `ws.on('message', ...)` switch.
+export type ClientMessage =
+  | ConnectMessage
+  | ResizeMessage
+  | InputMessage
+  | HostKeyResponseMessage
+  | { type: 'disconnect' }
+  | { type: 'ping' }
+  // [FWD_LOCAL_CLIENT_MESSAGE] -- pair with server/index.js [FWD_LOCAL_HANDLER] / [FWD_LOCAL_ROUTER]
+  // Local (-L) port-forward client→server variants. See issue #499 (slice 1).
+  | { type: 'fwd_local_listen'; id: string; srcPort: number; dstHost: string; dstPort: number }
+  | { type: 'fwd_local_data'; id: string; channelId: string; dir: 'out'; b64: string }
+  | { type: 'fwd_local_channel_close'; id: string; channelId: string }
+  | { type: 'fwd_local_close'; id: string };
 
 // ── Asciicast v2 recording ──────────────────────────────────────────────────
 
