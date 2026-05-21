@@ -763,6 +763,7 @@ export function initSessionMenu(): void {
   const handle = document.getElementById('key-bar-handle')!;
   let _swipeTouchId = -1;
   let _swipeStartY = 0;
+  let _swipeStartX = 0;
 
   // Scrollable overlays that can overlap the handle strip (#268).
   const _scrollableOverlay = '#sessionMenu, .notif-drawer-list, .debug-panel-log, .files-body, .vault-file-list';
@@ -775,6 +776,7 @@ export function initSessionMenu(): void {
       if (target && target.closest(_scrollableOverlay)) return;
       _swipeTouchId = t.identifier;
       _swipeStartY = t.clientY;
+      _swipeStartX = t.clientX;
     }
   }, { passive: true });
 
@@ -783,6 +785,15 @@ export function initSessionMenu(): void {
     if (!touch) return;
     _swipeTouchId = -1;
     const deltaY = _swipeStartY - touch.clientY;
+    const deltaX = touch.clientX - _swipeStartX;
+    // If the swipe was primarily horizontal, treat it as a session-switch
+    // gesture (handled by menuBtn's own touch handlers) and do NOT adjust
+    // keybar depth or tabbar visibility. Otherwise vertical drift during
+    // a left/right session swipe would flip the keybar height — user
+    // explicitly does not want that.
+    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+      return;
+    }
     // Upward swipe (deltaY > 30): reveal navbar first if hidden, else cycle depth (#449).
     let action: 'show_tabbar' | 'depth_up' | 'depth_down' | null = null;
     if (deltaY > 30) {
