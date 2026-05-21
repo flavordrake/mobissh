@@ -48,6 +48,14 @@ async function installTracers(driver) {
   await driver.executeScript(`
     window.__focusTrace = [];
     window.__viewportTrace = [];
+    window.__selLog = [];
+    window.__installTracersAt = performance.now();
+    const origLog = console.log;
+    console.log = function(...args) {
+      const s = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+      if (s.indexOf('[sel-suppress]') >= 0) window.__selLog.push(Math.round(performance.now()) + ' ' + s);
+      origLog.apply(console, args);
+    };
     const stamp = () => Math.round(performance.now());
     const collect = (phase) => (e) => {
       const t = e.target;
@@ -84,6 +92,8 @@ async function drainTraces(driver) {
     return {
       focus: window.__focusTrace || [],
       viewport: window.__viewportTrace || [],
+      selLog: window.__selLog || [],
+      installTracersAt: window.__installTracersAt,
       finalActiveId: document.activeElement ? document.activeElement.id : '',
       finalActiveIsHelper:
         !!(document.activeElement &&
@@ -190,20 +200,6 @@ test.describe('Selection keyboard stability — real Android (#502)', () => {
   test.setTimeout(240_000);
 
   test.beforeEach(async ({ driver }) => {
-    // Navigate BEFORE touching localStorage — Chrome 146+ denies storage
-    // access on about:blank (opaque origin), so executeScript on
-    // localStorage at the very start of the session fails with
-    // "Access is denied for this document." The baseline spec used the
-    // reverse order; this is the same bug that was masked there because
-    // earlier Chrome versions tolerated about:blank storage access.
-    await driver.url(BASE_URL);
-    await driver.pause(2000);
-    await dismissNativeDialogs(driver);
-    await switchToWebview(driver);
-    await driver.executeScript('localStorage.clear()', []);
-    // Reload after clearing so the app re-runs its boot init with empty
-    // localStorage (vault, profiles, settings). Otherwise the in-memory
-    // state from before the clear is still live.
     await driver.url(BASE_URL);
     await driver.pause(2000);
     await dismissNativeDialogs(driver);
@@ -301,25 +297,42 @@ test.describe('Selection keyboard stability — real Android (#502)', () => {
 
     const trace = await drainTraces(driver);
 
-    // Keyboard must still be dismissed
-    expect(
-      trace.currentKeyboardHidden,
-      `keyboard should still be dismissed post-gesture (vv.height=${trace.currentVVHeight}, innerHeight=${trace.innerHeight})`
-    ).toBe(true);
+    // Always dump the FULL trace before any assertion so the next iteration
+    // sees both focus and viewport events even when the viewport assertion
+    // fires first. Use console.log + testInfo.attach so it lands in both
+    // the run log and the Playwright HTML report.
+    const fullTrace = JSON.stringify({
+      focus: trace.focus,
+      viewport: trace.viewport,
+      selLog: trace.selLog,
+      finalActiveId: trace.finalActiveId,
+      finalActiveIsHelper: trace.finalActiveIsHelper,
+      currentVVHeight: trace.currentVVHeight,
+      innerHeight: trace.innerHeight,
+    }, null, 2);
+    // eslint-disable-next-line no-console
+    console.log('[B1 FULL TRACE]\n' + fullTrace);
+    await testInfo.attach('B1-trace', { body: fullTrace, contentType: 'application/json' });
 
-    // visualViewport.resize firing during gesture means the keyboard
-    // briefly appeared (and likely dismissed again) — also a bug.
+    const focusIns = trace.focus.filter((e) => e.phase === 'focusin');
+
+    // Check focus FIRST so the next iteration knows which element to silence.
+    expect(
+      focusIns,
+      `no element should gain focus when keyboard was dismissed pre-gesture. focusins: ${JSON.stringify(focusIns)}`
+    ).toHaveLength(0);
+
+    // Then viewport (the user-visible symptom).
     expect(
       trace.viewport,
       `visualViewport.resize events during gesture: ${JSON.stringify(trace.viewport)}`
     ).toHaveLength(0);
 
-    // No element should have gained focus during the gesture
-    const focusIns = trace.focus.filter((e) => e.phase === 'focusin');
+    // Final state must match starting state.
     expect(
-      focusIns,
-      `no element should gain focus when keyboard was dismissed pre-gesture. focusins: ${JSON.stringify(focusIns)}`
-    ).toHaveLength(0);
+      trace.currentKeyboardHidden,
+      `keyboard should still be dismissed post-gesture (vv.height=${trace.currentVVHeight}, innerHeight=${trace.innerHeight})`
+    ).toBe(true);
   });
 
   test('C1: pure long-press without drag — keyboard state stable', async ({ driver }, testInfo) => {
