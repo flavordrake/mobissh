@@ -20,8 +20,37 @@ import { toast, focusIME } from './ui.js';
 import { getKeyboardVisible } from './terminal.js';
 import { reconstructFromBuffer } from './ime-fixup.js';
 import { logGesture } from './gesture-log.js';
+import { getIMEState } from './ime.js';
+import { uploadGestureAnomaly } from './drop-telemetry.js';
 
 // ── State ────────────────────────────────────────────────────────────────────
+
+// ── Gesture-window diagnostic state (#502) ──────────────────────────────────
+// A "gesture window" spans from touchstart on #terminal until 2s after
+// touchend. While the window is active, capturing focusin/focusout listeners
+// and a visualViewport.resize listener record events with timestamps relative
+// to gesture start. ALL listeners are passive observers — no focus state
+// mutation, no preventDefault on focus events.
+//
+// The 2s tail catches delayed IME show events that fire after touchend.
+//
+// At window close, if any anomaly condition triggers, uploadGestureAnomaly()
+// is called (throttled). Conditions:
+//   - any gesture_focusin with isHelper=true
+//   - any gesture_viewport_resize with |deltaH| > 100
+//   - imeState changed between touchstart snapshot and window close
+let _gestureWindowActive = false;
+let _gestureWindowStart = 0;
+let _gestureWindowEndTimer: ReturnType<typeof setTimeout> | null = null;
+let _gestureAuditTimer: ReturnType<typeof setInterval> | null = null;
+let _gestureFocusinListener: ((e: FocusEvent) => void) | null = null;
+let _gestureFocusoutListener: ((e: FocusEvent) => void) | null = null;
+let _gestureVVResizeListener: ((e: Event) => void) | null = null;
+let _gestureVVPrevHeight = 0;
+let _gestureImeStateAtStart: string = 'idle';
+let _gestureHelperFocusInCount = 0;
+let _gestureLargeResizeCount = 0;
+let _gestureEventCount = 0;
 
 let _selectionActive = false;
 let _longPressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -46,6 +75,257 @@ export function isSelectionActive(): boolean {
   return _selectionActive;
 }
 
+// ── Gesture-window helpers (#502 diagnostic) ────────────────────────────────
+
+/** Truncate any string-coerced className to 80 chars. SVG-element className is
+ *  a `SVGAnimatedString`, not a string — so coerce defensively. */
+function _classOf(el: Element | null): string {
+  if (!el) return '';
+  try {
+    const c = (el as { className?: unknown }).className;
+    if (typeof c === 'string') return c.slice(0, 80);
+    if (c && typeof (c as { baseVal?: string }).baseVal === 'string') {
+      return (c as { baseVal: string }).baseVal.slice(0, 80);
+    }
+  } catch { /* fall through */ }
+  return '';
+}
+
+/** Capture a 6-frame stack trace at event-time. Browsers vary in how much
+ *  of the dispatcher's frames they preserve; Chrome typically keeps enough
+ *  to identify which library called .focus(). Anonymous-only frames are
+ *  dropped. */
+function _captureStack(): string | null {
+  try {
+    const e = new Error('stack-probe');
+    if (!e.stack) return null;
+    const lines = e.stack.split('\n').map((s) => s.trim());
+    // Drop the first frame ("Error: stack-probe") and our own helper frame.
+    const filtered = lines
+      .slice(1)
+      .filter((l) => l.length > 0 && !l.includes('_captureStack'))
+      .filter((l) => !/^at\s+(<anonymous>|\(<anonymous>\))$/.test(l));
+    return filtered.slice(0, 6).join('\n');
+  } catch {
+    return null;
+  }
+}
+
+function _safeGetIMEState(): string {
+  try { return getIMEState(); } catch { return 'unknown'; }
+}
+
+function _helperFocusAuditSnapshot(): Record<string, unknown> {
+  try {
+    const active = document.activeElement;
+    const helper = document.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea');
+    return {
+      activeId: active instanceof Element ? (active.id || '') : '',
+      activeClass: _classOf(active),
+      activeTag: active instanceof Element ? active.tagName.toLowerCase() : '',
+      helperTabIndex: helper ? helper.tabIndex : null,
+      helperInputMode: helper ? helper.inputMode : null,
+      helperReadOnly: helper ? helper.readOnly : null,
+      helperPresent: !!helper,
+    };
+  } catch (err) {
+    return { auditError: (err as Error).message };
+  }
+}
+
+function _openGestureWindow(): void {
+  if (_gestureWindowActive) {
+    // Already inside a window (touchstart fired again before tail expired).
+    // Cancel any pending close and refresh start time only if we'd otherwise
+    // close. Keep the original gesture-start so deltas remain meaningful.
+    if (_gestureWindowEndTimer !== null) {
+      clearTimeout(_gestureWindowEndTimer);
+      _gestureWindowEndTimer = null;
+    }
+    return;
+  }
+  _gestureWindowActive = true;
+  _gestureWindowStart = performance.now();
+  _gestureHelperFocusInCount = 0;
+  _gestureLargeResizeCount = 0;
+  _gestureEventCount = 0;
+  _gestureImeStateAtStart = _safeGetIMEState();
+  try {
+    const vv = window.visualViewport;
+    _gestureVVPrevHeight = vv?.height ?? window.innerHeight;
+  } catch { _gestureVVPrevHeight = window.innerHeight; }
+
+  // Initial audit snapshot.
+  try {
+    logGesture('gesture_helper_focus_audit', {
+      ..._helperFocusAuditSnapshot(),
+      t: 0,
+      trigger: 'touchstart',
+    });
+  } catch { /* log must not throw */ }
+
+  // Install passive observers.
+  _gestureFocusinListener = (e: FocusEvent): void => {
+    try {
+      const target = e.target as Element | null;
+      const id = target instanceof Element ? (target.id || '') : '';
+      const cls = _classOf(target);
+      const isHelper = cls.includes('xterm-helper-textarea');
+      const isOurs = id === 'imeInput' || id === 'directInput';
+      if (isHelper) _gestureHelperFocusInCount++;
+      _gestureEventCount++;
+      const vv = window.visualViewport;
+      logGesture('gesture_focusin', {
+        t: Math.round(performance.now() - _gestureWindowStart),
+        targetId: id,
+        targetClass: cls,
+        isHelper,
+        isOurs,
+        imeState: _safeGetIMEState(),
+        selectionActive: _selectionActive,
+        vvHeight: vv?.height ?? null,
+        vvScale: vv?.scale ?? null,
+        innerHeight: window.innerHeight,
+        stack: _captureStack(),
+      });
+    } catch (err) {
+      try { logGesture('gesture_listener_error', { where: 'focusin', err: (err as Error).message }); } catch { /* */ }
+    }
+  };
+
+  _gestureFocusoutListener = (e: FocusEvent): void => {
+    try {
+      const target = e.target as Element | null;
+      const id = target instanceof Element ? (target.id || '') : '';
+      const cls = _classOf(target);
+      const isHelper = cls.includes('xterm-helper-textarea');
+      const isOurs = id === 'imeInput' || id === 'directInput';
+      _gestureEventCount++;
+      const vv = window.visualViewport;
+      logGesture('gesture_focusout', {
+        t: Math.round(performance.now() - _gestureWindowStart),
+        targetId: id,
+        targetClass: cls,
+        isHelper,
+        isOurs,
+        imeState: _safeGetIMEState(),
+        selectionActive: _selectionActive,
+        vvHeight: vv?.height ?? null,
+        vvScale: vv?.scale ?? null,
+        innerHeight: window.innerHeight,
+        stack: _captureStack(),
+      });
+    } catch (err) {
+      try { logGesture('gesture_listener_error', { where: 'focusout', err: (err as Error).message }); } catch { /* */ }
+    }
+  };
+
+  _gestureVVResizeListener = (): void => {
+    try {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      const h = vv.height;
+      const w = vv.width;
+      const scale = vv.scale;
+      const deltaH = h - _gestureVVPrevHeight;
+      _gestureVVPrevHeight = h;
+      if (Math.abs(deltaH) > 100) _gestureLargeResizeCount++;
+      _gestureEventCount++;
+      logGesture('gesture_viewport_resize', {
+        t: Math.round(performance.now() - _gestureWindowStart),
+        h,
+        w,
+        scale,
+        deltaH,
+      });
+    } catch (err) {
+      try { logGesture('gesture_listener_error', { where: 'vv_resize', err: (err as Error).message }); } catch { /* */ }
+    }
+  };
+
+  document.addEventListener('focusin', _gestureFocusinListener, true);
+  document.addEventListener('focusout', _gestureFocusoutListener, true);
+  try {
+    window.visualViewport?.addEventListener('resize', _gestureVVResizeListener);
+  } catch { /* visualViewport unavailable in some environments */ }
+
+  // Periodic helper-focus audit while gesture window is active.
+  _gestureAuditTimer = setInterval(() => {
+    try {
+      logGesture('gesture_helper_focus_audit', {
+        ..._helperFocusAuditSnapshot(),
+        t: Math.round(performance.now() - _gestureWindowStart),
+        trigger: 'periodic',
+      });
+    } catch { /* */ }
+  }, 5000);
+}
+
+function _scheduleGestureWindowClose(): void {
+  if (!_gestureWindowActive) return;
+  if (_gestureWindowEndTimer !== null) {
+    clearTimeout(_gestureWindowEndTimer);
+  }
+  _gestureWindowEndTimer = setTimeout(_closeGestureWindow, 2000);
+}
+
+function _closeGestureWindow(): void {
+  if (!_gestureWindowActive) return;
+  _gestureWindowActive = false;
+  _gestureWindowEndTimer = null;
+
+  if (_gestureFocusinListener) {
+    document.removeEventListener('focusin', _gestureFocusinListener, true);
+    _gestureFocusinListener = null;
+  }
+  if (_gestureFocusoutListener) {
+    document.removeEventListener('focusout', _gestureFocusoutListener, true);
+    _gestureFocusoutListener = null;
+  }
+  if (_gestureVVResizeListener) {
+    try { window.visualViewport?.removeEventListener('resize', _gestureVVResizeListener); } catch { /* */ }
+    _gestureVVResizeListener = null;
+  }
+  if (_gestureAuditTimer !== null) {
+    clearInterval(_gestureAuditTimer);
+    _gestureAuditTimer = null;
+  }
+
+  // Evaluate anomaly conditions. Pick the most-specific reason if multiple
+  // conditions fire (helper-focus is the strongest signal for #502).
+  try {
+    const imeStateAtClose = _safeGetIMEState();
+    const imeChanged = imeStateAtClose !== _gestureImeStateAtStart;
+    const helperFocused = _gestureHelperFocusInCount > 0;
+    const largeResize = _gestureLargeResizeCount > 0;
+    if (helperFocused || largeResize || imeChanged) {
+      let reason = 'unknown';
+      if (helperFocused) reason = 'focus_during_long_press';
+      else if (largeResize) reason = 'viewport_resize_during_gesture';
+      else if (imeChanged) reason = 'ime_state_changed_during_gesture';
+      uploadGestureAnomaly(reason, _gestureEventCount);
+    }
+  } catch (err) {
+    try { logGesture('gesture_listener_error', { where: 'window_close', err: (err as Error).message }); } catch { /* */ }
+  }
+}
+
+/** Test-only: force-close the gesture window immediately. Exported for
+ *  vitest. Not part of the runtime selection API. */
+export function _testCloseGestureWindow(): void {
+  if (_gestureWindowEndTimer !== null) {
+    clearTimeout(_gestureWindowEndTimer);
+    _gestureWindowEndTimer = null;
+  }
+  _closeGestureWindow();
+}
+
+/** Test-only: open a gesture window without a real touchstart. Exported for
+ *  vitest. */
+export function _testOpenGestureWindow(): void {
+  _openGestureWindow();
+}
+
 /** Call once after terminal is created and DOM is ready. */
 export function initSelection(): void {
   const termEl = document.getElementById('terminal')!;
@@ -62,6 +342,10 @@ export function initSelection(): void {
     if (e.touches.length !== 1) return;
     _touchAnchorX = e.touches[0]!.clientX;
     _touchAnchorY = e.touches[0]!.clientY;
+    // Open the gesture diagnostic window (#502 — passive observers, no
+    // focus-state mutation). Listeners gated by _gestureWindowActive close
+    // 2s after touchend so delayed IME-show events are captured.
+    try { _openGestureWindow(); } catch { /* diagnostic must not break gestures */ }
     _longPressTimer = setTimeout(() => {
       _longPressTimer = null;
       _onLongPress();
@@ -96,6 +380,9 @@ export function initSelection(): void {
     if (_dragActive) {
       _endDragSelect();
     }
+    // Schedule the gesture-window close 2s after touchend (catches delayed
+    // IME show events that fire after touchend on Android Chrome).
+    try { _scheduleGestureWindowClose(); } catch { /* */ }
   }, { passive: true });
 
   // Tap while selection active: contract unit→word, then word→dismiss

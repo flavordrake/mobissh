@@ -339,6 +339,66 @@ test.describe('Keyboard stability across selection gesture (#502)', () => {
     ).toHaveLength(0);
   });
 
+  test('D1: gesture-log captures focusin events during the gesture (#502 telemetry)', async ({ page }) => {
+    // Confirms the production diagnostic instrumentation actually fires
+    // during a real headless gesture — not just in mocked unit tests.
+    // The gesture-log ring buffer is in localStorage under
+    // 'mobissh.gestureLog.v1'. A long-press triggers term.select() which
+    // synchronously focuses the helper textarea. The gesture-window listener
+    // installed by selection.ts should log that focusin.
+    await simulateKeyboardVisible(page);
+    await page.evaluate((sel) => { document.querySelector(sel)?.focus(); }, IME_INPUT);
+
+    // Snapshot existing gesture log so we only inspect events from THIS gesture.
+    const baselineLen = await page.evaluate(() => {
+      try {
+        const raw = localStorage.getItem('mobissh.gestureLog.v1');
+        if (!raw) return 0;
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr.length : 0;
+      } catch { return 0; }
+    });
+
+    const { x, y } = await getTerminalCenter(page);
+    await longPressDragRelease(page, { startX: x, startY: y });
+    // Wait past the 2s gesture-window tail so window close logging runs.
+    await page.waitForTimeout(2200);
+
+    const events = await page.evaluate((startIdx) => {
+      try {
+        const raw = localStorage.getItem('mobissh.gestureLog.v1');
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return [];
+        return arr.slice(startIdx);
+      } catch { return []; }
+    }, baselineLen);
+
+    // The new event types must appear after a real gesture. The "audit"
+    // snapshot is always logged on touchstart, so it's the most reliable
+    // proof the gesture window opened.
+    const auditCount = events.filter((e) => e.e === 'gesture_helper_focus_audit').length;
+    expect(
+      auditCount,
+      `gesture_helper_focus_audit must be logged on touchstart. recent events: ${JSON.stringify(events.map((e) => e.e))}`,
+    ).toBeGreaterThan(0);
+
+    // If the headless gesture caused any focusin (it normally does because
+    // xterm.js's term.select() focuses the helper), it must have been
+    // captured by the gesture-window listener.
+    const focusinEvents = events.filter((e) => e.e === 'gesture_focusin');
+    // We don't assert > 0 unconditionally — a degenerate selection (empty
+    // line) skips term.select() — but if the page had ANY focusin event
+    // visible to installFocusTraps, the gesture log must mirror it.
+    const trace = await drainTraces(page);
+    if (trace.focus.some((f) => f.phase === 'focusin')) {
+      expect(
+        focusinEvents.length,
+        `gesture-window listener should have captured focusin events: ${JSON.stringify(events.map((e) => e.e))}`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
   test('C1: visualViewport height is stable across the gesture (headless trivial pass — documents intent)', async ({ page }) => {
     await page.evaluate((sel) => { document.querySelector(sel)?.focus(); }, IME_INPUT);
 
