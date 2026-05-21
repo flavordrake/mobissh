@@ -66,8 +66,24 @@ function _installHelperFocusGuard(): void {
   document.addEventListener('focusin', (e) => {
     const t = e.target;
     if (!(t instanceof HTMLElement)) return;
-    if (typeof t.className === 'string' && t.className.indexOf('xterm-helper-textarea') >= 0) {
-      t.blur();
+    if (typeof t.className !== 'string' || t.className.indexOf('xterm-helper-textarea') < 0) return;
+
+    // Blur helper to remove it as the IME's focus target. But naïvely
+    // blurring drops focus to body, which on Android Chrome dismisses
+    // the keyboard if it was up. Restore focus to the previous element
+    // (#imeInput or #directInput) IFF the keyboard was visible at the
+    // time of focusin — that way:
+    //   - kb visible: focus stays on a user input → kb stays up (no flicker)
+    //   - kb dismissed: focus drops to body → kb stays dismissed
+    const prev = e.relatedTarget;
+    const vv = window.visualViewport;
+    const kbVisible = !!vv && vv.height < window.innerHeight - 100;
+
+    t.blur();
+
+    if (kbVisible && prev instanceof HTMLElement &&
+        (prev.id === 'imeInput' || prev.id === 'directInput')) {
+      prev.focus({ preventScroll: true });
     }
   }, { capture: true });
 }
