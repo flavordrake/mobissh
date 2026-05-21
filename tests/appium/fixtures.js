@@ -457,15 +457,20 @@ async function setupRealSSHConnection(driver) {
     };
   `, []);
 
-  // Navigate to connect panel and wait for it to be active
+  // Navigate to connect panel and wait for it to be active.
+  // Panel ID is `panel-connect` (per public/index.html); active state is
+  // signaled by the `active` class — `hidden` is for unrelated overlays.
+  // (Previously polled `connectPanel` which never existed in this codebase
+  //  — the fixture had bit-rotted; surfaced when #502 added the first
+  //  spec to actually exercise this path.)
   await driver.executeScript(
     "document.querySelector('[data-panel=\"connect\"]')?.click()", []);
   await driver.waitUntil(async () => {
     return driver.executeScript(`
-      const panel = document.getElementById('connectPanel');
-      return panel && !panel.classList.contains('hidden');
+      const panel = document.getElementById('panel-connect');
+      return !!(panel && panel.classList.contains('active'));
     `, []);
-  }, { timeout: 10000, interval: 500, timeoutMsg: 'Connect panel did not become visible' });
+  }, { timeout: 10000, interval: 500, timeoutMsg: 'panel-connect did not become active' });
 
   // Fill connection form via executeScript (more reliable than WebDriverIO setValue
   // which requires element focus + Appium typing, and may conflict with Chrome autocomplete)
