@@ -51,11 +51,6 @@ export function initSelection(): void {
   const termEl = document.getElementById('terminal')!;
   const copyBtn = document.getElementById('handleCopyBtn')!;
 
-  // Install the helper-focus guard immediately on init — any terminal
-  // touch can trigger native focus on .xterm-helper-textarea, not just
-  // our long-press handler. See #502.
-  _installHelperFocusGuard();
-
   // ── Suppress native context menu on terminal (#55) ─────────────────────
   // Prevents OS paste chip, "Open URL" menu, and other native long-press UI
   // that conflicts with our custom selection system.
@@ -238,37 +233,6 @@ export function initSelection(): void {
     if (_keyboardWasVisible) setTimeout(focusIME, 50);
   }
 
-  // ── Permanent helper-focus neutralization (#502) ─────────────────────
-  // The .xterm-helper-textarea exists for xterm.js's native Cmd+C copy
-  // path. On Android Chrome, ANY touch on the terminal area can trigger
-  // the helper to gain focus via native gesture handling (#502 Appium
-  // trace showed this fires even from measureScreenOffset's probe touch,
-  // before our _startDragSelect runs). That focus queues an IME-show
-  // task that fires ~250-470ms later regardless of any subsequent blur
-  // we do — Android sees the focusin event, decides "user is interacting
-  // with input," and shows the keyboard for whichever input is focused
-  // when the task executes.
-  //
-  // Mitigation: install a single, permanent, capture-phase focusin
-  // listener that blurs `.xterm-helper-textarea` IMMEDIATELY on any
-  // focus. The desktop Cmd+C path is unaffected because our
-  // document-level `copy` event handler (this file, line ~155) provides
-  // wrap-aware clipboard text without needing the helper to be focused.
-  let _helperFocusGuardInstalled = false;
-  function _installHelperFocusGuard(): void {
-    if (_helperFocusGuardInstalled) return;
-    _helperFocusGuardInstalled = true;
-    document.addEventListener('focusin', (e) => {
-      const t = e.target;
-      if (!(t instanceof HTMLElement)) return;
-      // Match by class — xterm.js's helper has class 'xterm-helper-textarea'
-      // and no id. Other textareas keep their natural focus behavior.
-      if (typeof t.className === 'string' && t.className.indexOf('xterm-helper-textarea') >= 0) {
-        t.blur();
-      }
-    }, { capture: true });
-  }
-
   // ── Phase 2: Direct terminal.select() for drag-to-select ───────────────
   // xterm.js synthetic mouse events don't produce selections (xtermjs#5377).
   // Instead we map touch CSS coords → buffer col/row and call select() directly.
@@ -396,28 +360,24 @@ export function initSelection(): void {
     const dragTerm = currentSession()?.terminal;
     if (!pos || !dragTerm) return;
     const [startCol, startRow, len] = _selectableUnitAt(pos.row, pos.col);
-    // xterm.js's term.select() synchronously focuses
-    // `.xterm-helper-textarea` (so Cmd+C can copy from a real textarea
-    // node). On Android Chrome, that focus queues an IME-show task that
-    // fires ~250ms later for whichever input is focused at that moment —
-    // even if we blur the helper immediately, the browser auto-restores
-    // focus to the most-recently-focused input (e.g. #directInput), so
-    // the IME shows for THAT input ~250ms post-gesture and then dismisses.
-    // See #502 Appium B1 trace at t=7567 (focusin helper) → t=7583
-    // (focusin directInput, browser auto-restore) → t=7813 (vv.height
-    // 806→436, IME-show fires).
-    //
-    // Mitigation: hold a focus "blackout" for ~300ms after term.select()
-    // by blurring whichever element gains focus during that window. The
-    // IME-show task sees no focused input and drops. We then let normal
-    // focus management resume — _dismissSelection's focusIME restore
-    // (gated on _keyboardWasVisible) handles the post-gesture state.
-    // Permanent helper-focus guard does the heavy lifting. We still call
-    // .blur() defensively in case a future xterm.js version sets focus
-    // via a path the capture listener doesn't see.
+    // Suppress the soft keyboard on `.xterm-helper-textarea` BEFORE
+    // term.select() focuses it. xterm.js's select() synchronously focuses
+    // its hidden helper textarea so Cmd+C / Ctrl+C can copy the selection.
+    // On Android Chrome, that focus queues an IME-show task; even a
+    // synchronous helper.blur() afterwards can leave the IME visible for
+    // a frame (#502 Appium B1 caught vv.height: 806→436 mid-gesture).
+    // Setting inputmode="none" on the helper tells Android Chrome to
+    // NEVER show an IME for it, so the focus is silent — keyboard state
+    // doesn't change regardless of whether it was up or dismissed. Cmd+C
+    // on desktop still works (focus is unaffected; only IME is suppressed).
     const root = dragTerm.element ?? document;
     const helper = root.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea');
+    if (helper && helper.inputMode !== 'none') {
+      helper.inputMode = 'none';
+    }
     dragTerm.select(startCol, startRow, len);
+    // Defensive blur — if a future xterm.js update changes the focus
+    // behavior, this still keeps focus off helper.
     helper?.blur();
     _selectionLevel = 'unit';
     _anchorCol = pos.col;
