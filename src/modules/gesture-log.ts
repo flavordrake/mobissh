@@ -37,7 +37,18 @@ export type GestureLogType =
   | 'gesture_drag_select_start'
   | 'gesture_drag_select_end'
   | 'gesture_keyboard_changed'
-  | 'gesture_listener_error';
+  | 'gesture_listener_error'
+  // ── Focus/IME diagnostic instrumentation (#502 — read-only observers) ──
+  // These fire only inside a "gesture window" (touchstart on #terminal until
+  // 2s after touchend). Outside the window, focus/resize chatter is ignored
+  // so the ring buffer isn't flooded.
+  | 'gesture_focusin'
+  | 'gesture_focusout'
+  | 'gesture_viewport_resize'
+  | 'gesture_helper_focus_audit'
+  // Logged when uploadGestureAnomaly() actually fires — captures throttle
+  // behaviour in the same log as the events that triggered it.
+  | 'gesture_anomaly_uploaded';
 
 export interface GestureLogEntry {
   /** Unix ms */

@@ -740,6 +740,63 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /api/gesture-telemetry — auto-upload of gesture-anomaly telemetry
+  // (#502 diagnostic). Fires when selection.ts detects a focus/IME anomaly
+  // during a gesture window. Independent throttle from drop-telemetry.
+  // Lands in test-results/uploads/ with prefix gesture-telemetry.
+  if (req.method === 'POST' && req.url === '/api/gesture-telemetry') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const { kind, reason, eventCount, ts, userAgent, url, version, log } = data;
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
+        fs.mkdirSync(reportDir, { recursive: true });
+
+        let logFile = '';
+        if (Array.isArray(log) && log.length > 0) {
+          logFile = `${stamp}-gesture-telemetry.gesture-log.json`;
+          const logPath = path.join(reportDir, logFile);
+          const logBody = JSON.stringify(log, null, 2);
+          // Cap individual log files at ~1MB to bound disk usage.
+          const MAX_LOG_BYTES = 1024 * 1024;
+          const safeBody = Buffer.byteLength(logBody, 'utf8') > MAX_LOG_BYTES
+            ? JSON.stringify(log.slice(-Math.floor(log.length / 2)), null, 2)
+            : logBody;
+          fs.writeFileSync(logPath, safeBody);
+        }
+
+        const meta = {
+          kind: kind || 'gesture-anomaly',
+          reason: reason || '',
+          eventCount: typeof eventCount === 'number' ? eventCount : 0,
+          ts: ts || Date.now(),
+          stamp,
+          userAgent: userAgent || '',
+          url: url || '',
+          version: version || '',
+          logFile,
+          logEventCount: Array.isArray(log) ? log.length : 0,
+        };
+        fs.writeFileSync(
+          path.join(reportDir, `${stamp}-gesture-telemetry.json`),
+          JSON.stringify(meta, null, 2),
+        );
+        console.log(`[gesture-telemetry] ${stamp} reason="${meta.reason}" events=${meta.eventCount} logEvents=${meta.logEventCount}`);
+        sseBroadcast('gesture-telemetry', { reason: meta.reason, eventCount: meta.eventCount, stamp });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, stamp }));
+      } catch (err) {
+        console.error('[gesture-telemetry] parse error:', err.message);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"error":"invalid json"}');
+      }
+    });
+    return;
+  }
+
   // POST /api/bug-report — receive screenshot + logs from client, save to disk.
   if (req.method === 'POST' && req.url === '/api/bug-report') {
     let body = '';
