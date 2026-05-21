@@ -360,20 +360,25 @@ export function initSelection(): void {
     const dragTerm = currentSession()?.terminal;
     if (!pos || !dragTerm) return;
     const [startCol, startRow, len] = _selectableUnitAt(pos.row, pos.col);
-    dragTerm.select(startCol, startRow, len);
-    // xterm's `select()` synchronously focuses its `.xterm-helper-textarea`
-    // (hidden child of `.xterm`) so Cmd+C / Ctrl+C copies the selection.
-    // On Android Chrome, focusing any textarea summons the soft keyboard
-    // even when the textarea is offscreen — that's how the keyboard "popped
-    // up during long-press" bug manifested. If the keyboard was hidden when
-    // the user started the long-press, blur the helper textarea so it stays
-    // hidden. Desktop copy still works via the document-level `copy` event
-    // listener installed earlier in this module.
-    if (!_keyboardWasVisible) {
-      const root = dragTerm.element ?? document;
-      const helper = root.querySelector<HTMLElement>('.xterm-helper-textarea');
-      helper?.blur();
+    // Suppress the soft keyboard on `.xterm-helper-textarea` BEFORE
+    // term.select() focuses it. xterm.js's select() synchronously focuses
+    // its hidden helper textarea so Cmd+C / Ctrl+C can copy the selection.
+    // On Android Chrome, that focus queues an IME-show task; even a
+    // synchronous helper.blur() afterwards can leave the IME visible for
+    // a frame (#502 Appium B1 caught vv.height: 806→436 mid-gesture).
+    // Setting inputmode="none" on the helper tells Android Chrome to
+    // NEVER show an IME for it, so the focus is silent — keyboard state
+    // doesn't change regardless of whether it was up or dismissed. Cmd+C
+    // on desktop still works (focus is unaffected; only IME is suppressed).
+    const root = dragTerm.element ?? document;
+    const helper = root.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea');
+    if (helper && helper.inputMode !== 'none') {
+      helper.inputMode = 'none';
     }
+    dragTerm.select(startCol, startRow, len);
+    // Defensive blur — if a future xterm.js update changes the focus
+    // behavior, this still keeps focus off helper.
+    helper?.blur();
     _selectionLevel = 'unit';
     _anchorCol = pos.col;
     _anchorRow = pos.row;
