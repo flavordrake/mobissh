@@ -336,6 +336,31 @@ export function initSelection(): void {
   // that conflicts with our custom selection system.
   termEl.addEventListener('contextmenu', (e) => { e.preventDefault(); });
 
+  // ── Suppress xterm.js's rightClickHandler on touch-derived mousedown (#502) ──
+  // Telemetry trace (2026-05-21T20:49) showed: on long-press with keyboard
+  // visible, Android Chrome synthesises mousedown from the touch; xterm.js's
+  // capture-phase listener calls `t.rightClickHandler` which focuses the
+  // .xterm-helper-textarea; that focus shift causes Android to dismiss the
+  // soft keyboard (which the user reports as "keyboard disappeared on
+  // long-press"). Stack: _gestureFocusinListener ← n ← t.rightClickHandler
+  // ← HTMLDivElement.<anonymous> (xterm.min.js:7:16568).
+  //
+  // Fix: gate any mousedown that arrives within 600ms of a touchstart on
+  // #terminal. Stop propagation in the capture phase so xterm's listener
+  // never runs. Desktop mouse interaction is unaffected (no touchstart
+  // precedes a real mouse click). Our own selection.ts long-press path is
+  // unaffected (it's keyed off touchstart/touchmove/touchend, never
+  // mousedown).
+  let _lastTouchstartOnTerm = 0;
+  termEl.addEventListener('touchstart', () => {
+    _lastTouchstartOnTerm = performance.now();
+  }, { passive: true, capture: true });
+  termEl.addEventListener('mousedown', (e) => {
+    if (performance.now() - _lastTouchstartOnTerm < 600) {
+      e.stopImmediatePropagation();
+    }
+  }, { capture: true });
+
   // ── Long-press detection + drag-to-select (Phase 2) ─────────────────────
 
   termEl.addEventListener('touchstart', (e) => {
