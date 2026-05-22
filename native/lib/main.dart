@@ -1,12 +1,15 @@
 // MobiSSH native — Flutter port of the PWA (#501).
 //
-// Phase 1: connect form + SSH lifecycle. No terminal yet (Phase 2).
+// Phase 1: connect form + SSH lifecycle.
+// Phase 2.A: route to TerminalScreen when `connected`.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'ssh/ssh_session.dart';
 import 'state/connection_providers.dart';
 import 'ui/connect_form.dart';
+import 'ui/terminal_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: MobisshApp()));
@@ -26,13 +29,31 @@ class MobisshApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const HomePage(),
+      home: const RootRouter(),
     );
   }
 }
 
-class HomePage extends ConsumerWidget {
-  const HomePage({super.key});
+/// Switches between the connect form and the live terminal based on the
+/// SSH session lifecycle. Phase 2.A keeps this as a simple boolean swap —
+/// Phase 4 will introduce a tab bar for multiple sessions.
+class RootRouter extends ConsumerWidget {
+  const RootRouter({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(sshSessionDataProvider);
+    final data = async.valueOrNull;
+    final isConnected = data?.state == SshSessionState.connected;
+    if (isConnected) {
+      return const TerminalScreen();
+    }
+    return const ConnectHomePage();
+  }
+}
+
+class ConnectHomePage extends ConsumerWidget {
+  const ConnectHomePage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -86,11 +107,6 @@ class _StatusPanel extends ConsumerWidget {
               Text('Error: ${data.error}',
                   style: const TextStyle(color: Colors.redAccent)),
             ],
-            const Spacer(),
-            const Text(
-              'Terminal view lands in Phase 2.',
-              style: TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
-            ),
           ],
         ),
       ),
