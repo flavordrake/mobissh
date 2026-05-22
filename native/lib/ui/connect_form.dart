@@ -3,15 +3,19 @@
 // Phase 1 (#501): no profiles, no persistence. Submit calls the SshSession
 // controller; UI mirrors lifecycle state below the form.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../diagnostics/crash_reporter.dart';
+
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
+import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
 
 enum _AuthKind { password, key }
@@ -158,6 +162,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               icon: const Icon(Icons.link_off),
               label: const Text('Disconnect'),
             ),
+          const SizedBox(height: 8),
+          const DiagnosticsSection(),
         ],
       ),
     );
@@ -209,6 +215,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     setState(() => _busy = true);
     try {
       await ref.read(sshSessionControllerProvider).connect(params);
+      // Once we've proven we have network reachability, fire-and-forget a
+      // crash upload sweep. Tailscale being down is the common case at boot
+      // and the second-chance path matters more than blocking the UI.
+      unawaited(CrashReporter.uploadPending());
     } finally {
       if (mounted) setState(() => _busy = false);
     }
