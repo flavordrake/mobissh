@@ -925,7 +925,9 @@ export function deleteKey(idx: number): void {
 /** Safe metadata fields included in export. Everything else is stripped. */
 const EXPORT_FIELDS = ['title', 'host', 'port', 'username', 'authType'] as const;
 
-/** Serialize saved profiles to JSON string containing ONLY non-sensitive metadata. */
+/** Serialize saved profiles to JSON string containing ONLY non-sensitive metadata.
+ *
+ *  Legacy bare-array shape used by #419 import. Kept for back-compat. */
 export function exportProfilesJSON(): string {
   const profiles = getProfiles();
   const safe = profiles.map((p) => {
@@ -938,7 +940,7 @@ export function exportProfilesJSON(): string {
   return JSON.stringify(safe, null, 2);
 }
 
-/** Trigger a browser download of exported profiles. */
+/** Trigger a browser download of exported profiles (legacy bare-array shape). */
 export function downloadProfilesExport(): void {
   const json = exportProfilesJSON();
   const blob = new Blob([json], { type: 'application/json' });
@@ -946,6 +948,94 @@ export function downloadProfilesExport(): void {
   const a = document.createElement('a');
   a.href = url;
   a.download = 'mobissh-profiles.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Native-import export (#501) ──────────────────────────────────────────────
+//
+// The native Android client (#501) reads a versioned-wrapper shape so it can
+// validate format upfront and reject future incompatible exports cleanly:
+//   { version: 1, exportedAt: <ISO-8601>, profiles: [{ title, host, port,
+//     username, theme?, color? }] }
+// Credentials and vaultId are NEVER emitted — only connection metadata, the
+// theme name, and the per-profile color so the native app can show the same
+// visual identity as the PWA.
+
+interface NativeProfileExport {
+  title: string;
+  host: string;
+  port: number;
+  username: string;
+  theme?: string;
+  color?: string;
+}
+
+interface NativeProfilesExportEnvelope {
+  version: 1;
+  exportedAt: string;
+  profiles: NativeProfileExport[];
+}
+
+/** Serialize saved profiles to the native-client wrapped JSON shape.
+ *
+ *  Distinct from `exportProfilesJSON` (legacy bare array). This shape is what
+ *  the Flutter `ProfilesStore.importFromJson` parses. No credentials, no
+ *  vault references — purely connection metadata + visual identity. */
+export function exportProfilesJson(): string {
+  const profiles = getProfiles();
+  const envelope: NativeProfilesExportEnvelope = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    profiles: profiles.map((p) => {
+      const out: NativeProfileExport = {
+        title: p.title || `${p.username}@${p.host}`,
+        host: p.host,
+        port: p.port || 22,
+        username: p.username,
+      };
+      if (p.theme) out.theme = p.theme;
+      if (p.color) out.color = p.color;
+      return out;
+    }),
+  };
+  return JSON.stringify(envelope, null, 2);
+}
+
+/** Write the native-export JSON to the clipboard AND trigger a file download.
+ *
+ *  Both paths are attempted because mobile-browser availability varies:
+ *  - `navigator.clipboard.writeText` works on Android Chrome but may be absent
+ *    in older WebViews; failures are swallowed.
+ *  - Anchor-click download is the universal fallback.
+ *  The user can paste OR upload the resulting JSON into the native app's
+ *  "Import from PWA" dialog. */
+export function triggerProfilesDownload(): void {
+  const json = exportProfilesJson();
+
+  // 1. Clipboard write (best-effort, fire-and-forget). The Navigator type
+  // ships `clipboard: Clipboard`, but on some Android WebViews the API is
+  // absent at runtime. Probe via an `unknown` cast.
+  const clip = (navigator as unknown as { clipboard?: { writeText?: (s: string) => Promise<void> } }).clipboard;
+  const writeText = clip?.writeText?.bind(clip);
+  if (writeText) {
+    try {
+      void writeText(json).then(
+        () => { _toast('Profiles copied to clipboard and downloading…'); },
+        () => { /* swallow — download is the reliable fallback */ },
+      );
+    } catch { /* same */ }
+  }
+
+  // 2. File download with timestamped name.
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mobissh-profiles-${ts}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

@@ -250,4 +250,55 @@ test.describe('Profile & key storage (#110 Phase 5)', { tag: '@headless-adequate
     await expect(hint).toHaveText('No saved profiles yet.');
   });
 
+  // #501: PWA→native export. The connect navbar has a new "Export to native"
+  // button that copies a versioned-wrapper JSON to the clipboard and downloads
+  // it. Headless test verifies the button exists and the clipboard format.
+  test('export-to-native button writes versioned wrapper to clipboard', async ({ page, mockSshServer, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await injectMockVault(page);
+    await setupConnected(page, mockSshServer);
+
+    // Save a profile so the export has content.
+    await showTabBar(page);
+    await clickConnectTab(page);
+    await revealConnectForm(page);
+    await page.locator('#profileName').fill('NativeExport');
+    await page.locator('#host').fill('native-host');
+    await page.locator('#remote_a').fill('nativeuser');
+    await page.locator('#remote_c').fill('pw');
+    await page.locator('#connectForm button[type="submit"]').click();
+    await page.waitForTimeout(500);
+
+    // Stub anchor.click() so the download doesn't actually pop a dialog —
+    // we only care about clipboard payload here.
+    await page.evaluate(() => {
+      const orig = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        // Skip download, keep clipboard path.
+        void orig;
+      };
+    });
+
+    await showTabBar(page);
+    await clickConnectTab(page);
+
+    const exportBtn = page.locator('#exportProfilesBtn');
+    await expect(exportBtn).toBeVisible({ timeout: 3000 });
+    await exportBtn.click();
+    await page.waitForTimeout(300);
+
+    // The clipboard now holds the wrapped export.
+    const clipText = await page.evaluate(() => navigator.clipboard.readText());
+    const parsed = JSON.parse(clipText);
+    expect(parsed.version).toBe(1);
+    expect(typeof parsed.exportedAt).toBe('string');
+    expect(Array.isArray(parsed.profiles)).toBe(true);
+    const native = parsed.profiles.find((p) => p.host === 'native-host');
+    expect(native).toBeTruthy();
+    expect(native.username).toBe('nativeuser');
+    // SECURITY: no credentials in the export.
+    expect(native).not.toHaveProperty('password');
+    expect(native).not.toHaveProperty('vaultId');
+  });
+
 });
