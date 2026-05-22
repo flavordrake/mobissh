@@ -23,8 +23,9 @@ else
   exit 1
 fi
 
-echo "> Gate 2/2: flutter test..."
-if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" test; then
+echo "> Gate 2/2: flutter test (excluding integration tag)..."
+if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" test \
+    --exclude-tags integration; then
   echo "+ test: pass"
 else
   echo "! test: FAIL"

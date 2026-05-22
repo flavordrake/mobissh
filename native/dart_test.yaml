@@ -1,0 +1,7 @@
+# Test runner config.
+#
+# The `integration` tag flags tests that need a real SSH server (test-sshd).
+# The `scripts/native-fast-gate.sh` excludes this tag so the fast loop stays
+# offline. Opt in explicitly with `flutter test --tags integration`.
+tags:
+  integration:
