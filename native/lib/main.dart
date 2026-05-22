@@ -3,16 +3,29 @@
 // Phase 1: connect form + SSH lifecycle.
 // Phase 2.A: route to TerminalScreen when `connected`.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'diagnostics/crash_reporter.dart';
 import 'ssh/ssh_session.dart';
 import 'state/connection_providers.dart';
 import 'ui/connect_form.dart';
 import 'ui/terminal_screen.dart';
 
 void main() {
-  runApp(const ProviderScope(child: MobisshApp()));
+  // CrashReporter.runGuarded wraps the entire app in a zone that captures
+  // uncaught Dart errors. It must be the OUTERMOST call so a crash during
+  // engine init still flows through the reporter. See lessons-from-pwa.md
+  // for the "user installs APK, app crashes silently" failure mode.
+  CrashReporter.runGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    await CrashReporter.bootstrap();
+    // Fire-and-forget — don't block first paint on bridge reachability.
+    unawaited(CrashReporter.uploadPending());
+    runApp(const ProviderScope(child: MobisshApp()));
+  });
 }
 
 class MobisshApp extends StatelessWidget {
@@ -62,12 +75,14 @@ class ConnectHomePage extends ConsumerWidget {
         title: const Text('MobiSSH'),
       ),
       body: SafeArea(
-        child: Column(
-          children: const [
-            ConnectForm(),
-            Divider(),
-            Expanded(child: _StatusPanel()),
-          ],
+        child: SingleChildScrollView(
+          child: Column(
+            children: const [
+              ConnectForm(),
+              Divider(),
+              _StatusPanel(),
+            ],
+          ),
         ),
       ),
     );
@@ -81,8 +96,14 @@ class _StatusPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(sshSessionDataProvider);
     return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Provider error: $e')),
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text('Provider error: $e'),
+      ),
       data: (data) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Column(

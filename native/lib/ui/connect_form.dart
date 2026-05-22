@@ -6,16 +6,20 @@
 // Profile import (Phase 3 of #501): saved profiles rendered above the form;
 // tapping one populates host/port/username (user still types credentials).
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../diagnostics/crash_reporter.dart';
+
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
 import '../storage/profiles_store.dart';
+import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_list.dart';
@@ -177,6 +181,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               icon: const Icon(Icons.link_off),
               label: const Text('Disconnect'),
             ),
+          const SizedBox(height: 8),
+          const DiagnosticsSection(),
         ],
       ),
     );
@@ -228,6 +234,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     setState(() => _busy = true);
     try {
       await ref.read(sshSessionControllerProvider).connect(params);
+      // Once we've proven we have network reachability, fire-and-forget a
+      // crash upload sweep. Tailscale being down is the common case at boot
+      // and the second-chance path matters more than blocking the UI.
+      unawaited(CrashReporter.uploadPending());
     } finally {
       if (mounted) setState(() => _busy = false);
     }
