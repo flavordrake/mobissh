@@ -28,7 +28,7 @@ import 'crash_environment.dart';
 /// Default endpoint for crash uploads. Pointed at the production bridge.
 /// Overridable via [CrashReporter.configure] for tests/dev.
 const String _defaultEndpoint =
-    'https://mobissh.tail-scale.ts.net/api/native-crash';
+    'https://mobissh.tailbe5094.ts.net/api/native-crash';
 
 /// JSON file extension we expect under the crashes dir.
 const String _crashFileSuffix = '.json';
