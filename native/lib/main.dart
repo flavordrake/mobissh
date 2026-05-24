@@ -13,6 +13,7 @@ import 'diagnostics/crash_reporter.dart';
 import 'ssh/ssh_session.dart';
 import 'state/connection_providers.dart';
 import 'state/keepalive_providers.dart';
+import 'state/lifecycle_providers.dart';
 import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
@@ -40,16 +41,18 @@ class MobisshApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'MobiSSH',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
-          brightness: Brightness.dark,
+    return AppLifecycleObserver(
+      child: MaterialApp(
+        title: 'MobiSSH',
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.indigo,
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
         ),
-        useMaterial3: true,
+        home: const RootRouter(),
       ),
-      home: const RootRouter(),
     );
   }
 }
