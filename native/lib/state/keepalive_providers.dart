@@ -57,14 +57,16 @@ final keepaliveEnabledProvider =
   return KeepaliveEnabledNotifier();
 });
 
-/// Singleton KeepaliveController, attached to the singleton SSH session
-/// controller. Recreated only when the provider container is disposed.
+/// Singleton KeepaliveController, attached to the active session's proxy
+/// (#533 — was the in-UI controller; sessions now run task-side via
+/// [SshSessionProxy]). Recreated only when the provider container is
+/// disposed.
 final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
-  final session = ref.watch(sshSessionControllerProvider);
+  final proxy = ref.watch(sshSessionProxyProvider);
   final controller = KeepaliveController(
     enabled: ref.read(keepaliveEnabledProvider),
   );
-  controller.attach(session);
+  controller.attach(proxy);
   // Mirror toggle changes into the controller.
   ref.listen<bool>(keepaliveEnabledProvider, (_, next) {
     controller.enabled = next;

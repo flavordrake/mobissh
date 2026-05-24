@@ -15,6 +15,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../ssh/ssh_session.dart';
+import '../ssh/ssh_session_proxy.dart';
 import 'session_host.dart';
 import 'task_ssh_gateway.dart';
 
@@ -204,7 +205,7 @@ class KeepaliveController {
   final KeepaliveGateway _gateway;
   bool _enabled = true;
   int _connectedCount = 0;
-  final Map<SshSessionController, StreamSubscription<SshSessionData>>
+  final Map<Object, StreamSubscription<SshSessionData>>
       _subscriptions = {};
 
   /// Whether the keep-alive service is allowed to run at all. Setting this
@@ -234,16 +235,24 @@ class KeepaliveController {
         state == SshSessionState.reconnecting;
   }
 
-  /// Begin observing the given session controller. Safe to call multiple
-  /// times with the same controller.
-  void attach(SshSessionController session) {
+  /// Begin observing the given SSH session view (proxy or controller —
+  /// anything that exposes a `data` snapshot + `stream` of `SshSessionData`).
+  /// Safe to call multiple times with the same view.
+  ///
+  /// Accepts either an [SshSessionController] (used by tests + task-side
+  /// code) or an [SshSessionProxy] (used by the UI consumer path post-#533).
+  /// Both shapes expose the same fields by duck typing — the controller
+  /// implements them explicitly, the proxy mirrors them from gateway events.
+  void attach(Object session) {
     if (_subscriptions.containsKey(session)) return;
-    var wasConnected = _holdsService(session.data.state);
+    final (Stream<SshSessionData> stream, SshSessionData Function() snapshot) =
+        _viewOf(session);
+    var wasConnected = _holdsService(snapshot().state);
     if (wasConnected) {
       _connectedCount += 1;
       unawaited(_startIfStopped());
     }
-    _subscriptions[session] = session.stream.listen((data) {
+    _subscriptions[session] = stream.listen((data) {
       final isConnected = _holdsService(data.state);
       if (isConnected && !wasConnected) {
         _connectedCount += 1;
@@ -256,16 +265,33 @@ class KeepaliveController {
     });
   }
 
-  /// Stop observing the given session controller. If it was connected, the
-  /// connected count is decremented.
-  Future<void> detach(SshSessionController session) async {
+  /// Stop observing the given session. If it was connected, the connected
+  /// count is decremented.
+  Future<void> detach(Object session) async {
     final sub = _subscriptions.remove(session);
     if (sub == null) return;
     await sub.cancel();
-    if (_holdsService(session.data.state)) {
+    final (_, SshSessionData Function() snapshot) = _viewOf(session);
+    if (_holdsService(snapshot().state)) {
       _connectedCount = (_connectedCount - 1).clamp(0, 1 << 30);
       if (_connectedCount == 0) await _stopIfRunning();
     }
+  }
+
+  /// Coerce a session-shaped object to the stream + snapshot pair. Avoids a
+  /// shared abstract base class — the controller and proxy lifecycles are
+  /// independent (controller lives in the task isolate, proxy in the UI
+  /// isolate). Adding a common interface would force one to depend on the
+  /// other's types, which we explicitly don't want.
+  (Stream<SshSessionData>, SshSessionData Function()) _viewOf(Object session) {
+    if (session is SshSessionController) {
+      return (session.stream, () => session.data);
+    }
+    if (session is SshSessionProxy) {
+      return (session.stream, () => session.data);
+    }
+    throw ArgumentError(
+        'KeepaliveController.attach: unsupported session type ${session.runtimeType}');
   }
 
   /// Release all session subscriptions and stop the service if running.

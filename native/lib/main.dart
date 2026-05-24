@@ -86,11 +86,25 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     // keeps the Dart isolate from being frozen during Doze.
     ref.listen<AppLifecycleState>(lifecycleProvider, (prev, next) {
       if (!mounted) return;
+      if (next == AppLifecycleState.paused) {
+        // #533: drop proxy event subscriptions during pause so the UI
+        // doesn't accumulate state events while the foreground service keeps
+        // SSH alive. Rebind on resume re-emits the cached snapshot so the
+        // first paint is instant.
+        for (final e in ref.read(sessionsProvider).entries) {
+          e.proxy.unbind();
+        }
+      }
       if (next == AppLifecycleState.resumed) {
         // The keepalive controller already kept the SSH socket alive (#517
         // reconnect-on-transient + #512 foreground service). On resume we
-        // just need to repaint — Riverpod watchers will replay the current
-        // session data automatically because we trigger a setState here.
+        // rebind every proxy so each one re-emits its cached snapshot
+        // (#524 500ms rebind budget) and requests a fresh task-side
+        // snapshot. The setState forces the router to re-resolve route
+        // selection from the now-current session data.
+        for (final e in ref.read(sessionsProvider).entries) {
+          e.proxy.rebind();
+        }
         setState(() {});
       }
     });

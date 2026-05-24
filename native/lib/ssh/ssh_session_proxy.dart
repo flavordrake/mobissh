@@ -112,7 +112,13 @@ class SshSessionProxy {
 
   /// Send a connect command across the gateway. The task-side host turns
   /// this into `SshSessionController.connect(...)`.
-  void connect(SshConnectParams params, {String? title}) {
+  ///
+  /// Returns a `Future<void>` that completes synchronously — the gateway is
+  /// fire-and-forget; state updates arrive asynchronously through [stream].
+  /// The `Future`-shaped return keeps the proxy drop-in compatible with
+  /// `SshSessionController.connect`, so call sites that previously awaited
+  /// the controller call continue to compile (#533).
+  Future<void> connect(SshConnectParams params, {String? title}) async {
     gateway.send(SshConnectCommand(
       sessionId: sessionId,
       host: params.host,
@@ -126,6 +132,25 @@ class SshSessionProxy {
   /// Send a disconnect command.
   void disconnect() {
     gateway.send(SshDisconnectCommand(sessionId: sessionId).toJson());
+  }
+
+  /// Accept a pending host-key prompt.
+  ///
+  /// No-op today (#533): the IPC envelope contract from #530 does NOT carry
+  /// `pendingHostKey` state across the gateway, so the UI never sees a
+  /// prompt and never needs to dispatch a decision. The trust-on-first-use
+  /// cache lives in the task-side controller; cached fingerprints continue
+  /// to authenticate without UI involvement. Surfacing fresh host-key
+  /// prompts to the UI is tracked as a follow-up — when the contract grows
+  /// `SshHostKeyEvent` + `SshHostKeyDecisionCommand`, this method will send
+  /// the accept envelope.
+  void acceptHostKey() {
+    // intentional no-op pending IPC envelope extension (follow-up to #533)
+  }
+
+  /// Reject a pending host-key prompt. See [acceptHostKey] for status.
+  void rejectHostKey() {
+    // intentional no-op pending IPC envelope extension (follow-up to #533)
   }
 
   /// Send keystroke / paste bytes to the remote PTY through the gateway.

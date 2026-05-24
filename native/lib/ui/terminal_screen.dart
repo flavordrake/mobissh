@@ -52,7 +52,7 @@ class TerminalScreen extends ConsumerWidget {
             key: const Key('terminal-disconnect-button'),
             tooltip: 'Disconnect',
             icon: const Icon(Icons.link_off),
-            onPressed: () => activeEntry.controller.disconnect(),
+            onPressed: () => activeEntry.proxy.disconnect(),
           ),
         ],
       ),
