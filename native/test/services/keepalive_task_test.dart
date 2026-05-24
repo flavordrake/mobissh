@@ -221,6 +221,58 @@ void main() {
       await session.dispose();
       await controller.dispose();
     });
+
+    test('reconnecting state holds the service running (#517)', () async {
+      // Background app swap → kernel aborts socket → controller transitions
+      // to `reconnecting`. The foreground service must keep running so the
+      // Dart isolate isn't frozen mid-retry.
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final session = StubSession();
+      controller.attach(session);
+
+      session.emit(SshSessionState.connected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+
+      session.emit(SshSessionState.reconnecting);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue,
+          reason: 'service must stay running across transient reconnects');
+      expect(controller.connectedCount, 1);
+
+      session.emit(SshSessionState.connected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+      expect(controller.connectedCount, 1,
+          reason: 'no double-count when transitioning back to connected');
+
+      await controller.dispose();
+      await session.dispose();
+    });
+
+    test('failed after reconnecting stops the service', () async {
+      // If reconnect exhausts retries we land in `failed` — service goes
+      // away (same as the normal connected→failed flow).
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final session = StubSession();
+      controller.attach(session);
+
+      session.emit(SshSessionState.connected);
+      await _drain();
+      session.emit(SshSessionState.reconnecting);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+
+      session.emit(SshSessionState.failed);
+      await _drain();
+      expect(await gateway.isRunningService, isFalse);
+      expect(controller.connectedCount, 0);
+
+      await controller.dispose();
+      await session.dispose();
+    });
   });
 
   group('KeepaliveTaskHandler', () {
