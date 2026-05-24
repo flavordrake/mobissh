@@ -18,6 +18,7 @@ import '../diagnostics/crash_reporter.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
+import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../storage/profiles_store.dart';
 import 'diagnostics_section.dart';
@@ -255,13 +256,40 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     }
   }
 
-  /// Populate the form with metadata from a saved profile. Credentials are
-  /// never auto-filled — the user types password / key per connect.
+  /// Populate the form with metadata from a saved profile. When the
+  /// profile has a `vaultId`, look up the decrypted secret in
+  /// `flutter_secure_storage` and prefill the password / key fields. The
+  /// user can still edit them before submitting.
   void _applyProfileToForm(SavedProfile profile) {
     setState(() {
       _hostCtrl.text = profile.host;
       _portCtrl.text = profile.port.toString();
       _userCtrl.text = profile.username;
+      if (profile.authType == 'key') {
+        _authKind = _AuthKind.key;
+      } else if (profile.authType == 'password') {
+        _authKind = _AuthKind.password;
+      }
+    });
+    if (profile.vaultId != null) {
+      unawaited(_prefillFromVault(profile));
+    }
+  }
+
+  Future<void> _prefillFromVault(SavedProfile profile) async {
+    final secrets = ref.read(secretsStoreProvider);
+    final secret = await secrets.read(profile.vaultId!);
+    if (!mounted || secret == null) return;
+    setState(() {
+      final pw = secret['password'];
+      if (pw is String) _passwordCtrl.text = pw;
+      final key = secret['privateKey'];
+      if (key is String && key.isNotEmpty) {
+        _keyCtrl.text = key;
+        _authKind = _AuthKind.key;
+      }
+      final passphrase = secret['passphrase'];
+      if (passphrase is String) _passphraseCtrl.text = passphrase;
     });
   }
 

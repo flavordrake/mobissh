@@ -2,19 +2,26 @@
 //
 // Mirrors the PWA's `getProfiles` / `saveProfile` pattern: a JSON-encoded list
 // of connection metadata persisted in shared_preferences under the key
-// `mobissh.profiles.v1`. Credentials are explicitly NOT stored here — the
-// vault (Phase 3) owns secrets. This file owns identity only.
+// `mobissh.profiles.v1`. Identity-only fields plus optional vault references
+// (vaultId / keyVaultId / authType / initialCommand) introduced for #510 so
+// the native connect path can look up secrets by vaultId. Credentials
+// themselves live in `flutter_secure_storage` (see `secrets_store.dart`).
 //
 // The matching PWA export shape (see `exportProfilesJson` in
 // src/modules/profiles.ts) is `{ version: 1, exportedAt, profiles: [...] }`.
+// The richer backup-envelope shape additionally carries a `vault` field with
+// PBKDF2+AES-GCM encrypted secrets; see `parseBackupEnvelope` / `applyBackup`.
 
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Persisted profile shape. Connection metadata + optional visual identity.
-/// No credentials. No vaultId. Equality is by (host, port, username) — the
+import 'secrets_store.dart';
+import 'vault.dart';
+
+/// Persisted profile shape. Connection metadata + optional visual identity +
+/// optional vault references. Equality is by (host, port, username) — the
 /// natural identity used for dedupe everywhere else in the app.
 class SavedProfile {
   SavedProfile({
@@ -24,6 +31,10 @@ class SavedProfile {
     required this.username,
     this.theme,
     this.color,
+    this.authType,
+    this.vaultId,
+    this.keyVaultId,
+    this.initialCommand,
   });
 
   final String title;
@@ -32,6 +43,21 @@ class SavedProfile {
   final String username;
   final String? theme;
   final String? color;
+
+  /// 'password' or 'key'. Optional — older saved profiles omit it.
+  final String? authType;
+
+  /// Reference to a secret in `SecretsStore`. Populated when the profile
+  /// came from a backup-envelope import and its credentials were decrypted
+  /// + persisted. When null, the connect path falls back to prompting.
+  final String? vaultId;
+
+  /// Separate reference for a key's secret material when both a password and
+  /// a key are stored. Mirrors the PWA field of the same name.
+  final String? keyVaultId;
+
+  /// Optional command to send after auth — preserved verbatim from the PWA.
+  final String? initialCommand;
 
   /// Identity key for dedupe / lookup. Matches the PWA's behavior of treating
   /// (host:port:username) as the unique constraint.
@@ -46,6 +72,12 @@ class SavedProfile {
     };
     if (theme != null) out['theme'] = theme;
     if (color != null) out['color'] = color;
+    if (authType != null) out['authType'] = authType;
+    if (vaultId != null) out['vaultId'] = vaultId;
+    if (keyVaultId != null) out['keyVaultId'] = keyVaultId;
+    if (initialCommand != null && initialCommand!.isNotEmpty) {
+      out['initialCommand'] = initialCommand;
+    }
     return out;
   }
 
@@ -85,6 +117,29 @@ class SavedProfile {
     final colorRaw = json['color'];
     if (colorRaw is String && colorRaw.isNotEmpty) color = colorRaw;
 
+    String? authType;
+    final authTypeRaw = json['authType'];
+    if (authTypeRaw is String &&
+        (authTypeRaw == 'password' || authTypeRaw == 'key')) {
+      authType = authTypeRaw;
+    }
+
+    String? vaultId;
+    final vaultIdRaw = json['vaultId'];
+    if (vaultIdRaw is String && vaultIdRaw.isNotEmpty) vaultId = vaultIdRaw;
+
+    String? keyVaultId;
+    final keyVaultIdRaw = json['keyVaultId'];
+    if (keyVaultIdRaw is String && keyVaultIdRaw.isNotEmpty) {
+      keyVaultId = keyVaultIdRaw;
+    }
+
+    String? initialCommand;
+    final initialCommandRaw = json['initialCommand'];
+    if (initialCommandRaw is String && initialCommandRaw.isNotEmpty) {
+      initialCommand = initialCommandRaw;
+    }
+
     return SavedProfile(
       title: title,
       host: hostRaw,
@@ -92,10 +147,18 @@ class SavedProfile {
       username: usernameRaw,
       theme: theme,
       color: color,
+      authType: authType,
+      vaultId: vaultId,
+      keyVaultId: keyVaultId,
+      initialCommand: initialCommand,
     );
   }
 
-  SavedProfile copyWith({String? title}) {
+  SavedProfile copyWith({
+    String? title,
+    String? vaultId,
+    String? keyVaultId,
+  }) {
     return SavedProfile(
       title: title ?? this.title,
       host: host,
@@ -103,6 +166,10 @@ class SavedProfile {
       username: username,
       theme: theme,
       color: color,
+      authType: authType,
+      vaultId: vaultId ?? this.vaultId,
+      keyVaultId: keyVaultId ?? this.keyVaultId,
+      initialCommand: initialCommand,
     );
   }
 
@@ -128,6 +195,36 @@ class ImportResult {
   final int added;
   final int skipped;
   final List<String> errors;
+}
+
+/// Outcome of a sync envelope-shape scan. The UI uses this to decide whether
+/// to render a master-password prompt before committing the import.
+class ParsedImport {
+  ParsedImport({
+    required this.profileEntries,
+    this.vaultEncryptedJson,
+    this.vaultMetaJson,
+    this.errors = const [],
+  });
+
+  /// Raw profile maps as decoded from the envelope. Validation happens at
+  /// apply-time, not parse-time, so the user sees one set of errors.
+  final List<Map<String, dynamic>> profileEntries;
+
+  /// `vault.encrypted` field if the envelope contained one. Null otherwise.
+  final String? vaultEncryptedJson;
+
+  /// `vault.meta` field if the envelope contained one. Null otherwise.
+  final String? vaultMetaJson;
+
+  /// Parse-time errors (non-JSON, wrong shape). When non-empty and there are
+  /// no profiles either, the UI surfaces these in an inline error.
+  final List<String> errors;
+
+  /// True when this envelope carries an encrypted vault — caller must prompt
+  /// for the master password before [ProfilesStore.applyParsedImport].
+  bool get hasVault =>
+      vaultEncryptedJson != null && vaultMetaJson != null;
 }
 
 /// shared_preferences key. Versioned so a future schema change can migrate
@@ -184,60 +281,132 @@ class ProfilesStore {
     await prefs.setString(profilesPrefsKey, encoded);
   }
 
-  /// Import from a PWA-shaped export. Accepts:
-  ///   `{ version: 1, exportedAt: "iso-8601", profiles: [...] }`
-  /// Merges with existing storage; dedupes on (host:port:username).
+  /// Side-effect-free first stage of import. Detects envelope shape, extracts
+  /// profile entries, and surfaces vault material for the UI to prompt-on.
   ///
-  /// Returns an [ImportResult] enumerating added/skipped/errors. Does NOT
-  /// throw on malformed input — that's a user-recoverable error reported via
-  /// the result.
-  Future<ImportResult> importFromJson(String json) async {
+  /// Returns a [ParsedImport] with either populated profile entries + vault
+  /// fields, or a non-empty `errors` list explaining why the input was
+  /// unusable. Never throws on bad input — the UI relies on the errors list.
+  static ParsedImport parseImport(String json) {
     final dynamic decoded;
     try {
       decoded = jsonDecode(json);
     } on FormatException catch (e) {
-      return ImportResult(errors: ['Not valid JSON: ${e.message}']);
+      return ParsedImport(
+        profileEntries: const [],
+        errors: ['Not valid JSON: ${e.message}'],
+      );
     }
 
-    // Accept either:
-    //   1) The PWA's native-export envelope `{ version, profiles[] }`
-    //   2) The legacy bare-array shape (forward-compat with #419 exports).
-    List<dynamic> entries;
     if (decoded is List) {
-      entries = decoded;
-    } else if (decoded is Map<String, dynamic>) {
-      final version = decoded['version'];
-      if (version != null && version != 1) {
-        return ImportResult(errors: [
-          'Unsupported export version: $version (this client supports v1).',
-        ]);
+      return ParsedImport(
+        profileEntries: _coerceEntries(decoded),
+      );
+    }
+
+    if (decoded is! Map) {
+      return ParsedImport(
+        profileEntries: const [],
+        errors: ['Wrong file shape — expected an export envelope or profile array.'],
+      );
+    }
+
+    final version = decoded['version'];
+    if (version != null && version != 1) {
+      return ParsedImport(
+        profileEntries: const [],
+        errors: ['Unsupported export version: $version (this client supports v1).'],
+      );
+    }
+
+    final profilesRaw = decoded['profiles'];
+    if (profilesRaw is! List) {
+      return ParsedImport(
+        profileEntries: const [],
+        errors: ['Export envelope missing `profiles` array.'],
+      );
+    }
+
+    String? vaultEncryptedJson;
+    String? vaultMetaJson;
+    final vaultRaw = decoded['vault'];
+    if (vaultRaw is Map) {
+      final enc = vaultRaw['encrypted'];
+      final meta = vaultRaw['meta'];
+      // Both fields must be strings for the envelope to be useful; if either
+      // is missing we treat the envelope as "metadata-only" and fall through.
+      if (enc is String && enc.isNotEmpty && meta is String && meta.isNotEmpty) {
+        vaultEncryptedJson = enc;
+        vaultMetaJson = meta;
       }
-      final profilesRaw = decoded['profiles'];
-      if (profilesRaw is! List) {
-        return ImportResult(errors: [
-          'Export envelope missing `profiles` array.',
-        ]);
+    }
+
+    return ParsedImport(
+      profileEntries: _coerceEntries(profilesRaw),
+      vaultEncryptedJson: vaultEncryptedJson,
+      vaultMetaJson: vaultMetaJson,
+    );
+  }
+
+  static List<Map<String, dynamic>> _coerceEntries(List<dynamic> raw) {
+    final out = <Map<String, dynamic>>[];
+    for (final entry in raw) {
+      if (entry is Map) {
+        out.add(Map<String, dynamic>.from(entry));
       }
-      entries = profilesRaw;
-    } else {
-      return ImportResult(errors: [
-        'Wrong file shape — expected an export envelope or profile array.',
-      ]);
+    }
+    return out;
+  }
+
+  /// Apply a parsed import. When [parsed.hasVault] is true, [password] is
+  /// required and the vault is decrypted before any persistence happens —
+  /// the wrong password aborts cleanly with no partial state.
+  ///
+  /// [secrets] is required when persisting decrypted secrets; tests pass an
+  /// [InMemorySecretsBackend]-backed store.
+  Future<ImportResult> applyParsedImport(
+    ParsedImport parsed, {
+    String? password,
+    SecretsStore? secrets,
+    VaultDecryptor? decryptor,
+  }) async {
+    if (parsed.errors.isNotEmpty && parsed.profileEntries.isEmpty) {
+      return ImportResult(errors: parsed.errors);
+    }
+
+    // If the envelope carries a vault, decrypt it BEFORE writing anything.
+    // A failed decrypt must leave the store untouched.
+    Map<String, Map<String, Object?>> decryptedVault =
+        <String, Map<String, Object?>>{};
+    if (parsed.hasVault) {
+      if (password == null || password.isEmpty) {
+        return ImportResult(errors: ['Master password required to decrypt vault.']);
+      }
+      if (secrets == null) {
+        return ImportResult(errors: ['Secrets store unavailable.']);
+      }
+      try {
+        decryptedVault = await (decryptor ?? VaultDecryptor()).decryptEnvelope(
+          encryptedJson: parsed.vaultEncryptedJson!,
+          metaJson: parsed.vaultMetaJson!,
+          password: password,
+        );
+      } on VaultDecryptException catch (e) {
+        return ImportResult(errors: [e.message]);
+      } on VaultEnvelopeException catch (e) {
+        return ImportResult(errors: ['Vault envelope is malformed: ${e.message}']);
+      }
     }
 
     final existing = await load();
     final existingKeys = existing.map((p) => p.identityKey).toSet();
-    final errors = <String>[];
+    final errors = <String>[...parsed.errors];
     int added = 0;
     int skipped = 0;
 
-    for (final entry in entries) {
-      if (entry is! Map) {
-        errors.add('Skipped a non-object entry.');
-        continue;
-      }
+    for (final entry in parsed.profileEntries) {
       try {
-        final profile = SavedProfile.fromJson(Map<String, dynamic>.from(entry));
+        final profile = SavedProfile.fromJson(entry);
         if (existingKeys.contains(profile.identityKey)) {
           skipped++;
           continue;
@@ -250,11 +419,43 @@ class ProfilesStore {
       }
     }
 
+    // Persist secrets before profiles. If profile save fails (it shouldn't),
+    // we'd rather leak an extra secret blob than have a profile without its
+    // secret. Either way, the same vaultId would just be overwritten on a
+    // re-import.
+    if (secrets != null) {
+      for (final entry in decryptedVault.entries) {
+        await secrets.write(entry.key, entry.value);
+      }
+    }
+
     if (added > 0) {
       await save(existing);
     }
 
     return ImportResult(added: added, skipped: skipped, errors: errors);
+  }
+
+  /// Backwards-compatible single-shot importer. Accepts the
+  /// `{ version, profiles[] }` envelope or a legacy bare array, ignores
+  /// any vault payload (for that, the UI calls [parseImport] +
+  /// [applyParsedImport] with a password).
+  ///
+  /// Returns an [ImportResult] enumerating added/skipped/errors. Does NOT
+  /// throw on malformed input — that's a user-recoverable error reported via
+  /// the result.
+  Future<ImportResult> importFromJson(String json) async {
+    final parsed = parseImport(json);
+    if (parsed.errors.isNotEmpty && parsed.profileEntries.isEmpty) {
+      return ImportResult(errors: parsed.errors);
+    }
+    // Without a password we cannot decrypt; the UI is expected to use the
+    // two-stage path for vault envelopes. Re-emit a non-vault parsed import
+    // so the existing call sites keep their behavior.
+    return applyParsedImport(ParsedImport(
+      profileEntries: parsed.profileEntries,
+      errors: parsed.errors,
+    ));
   }
 
   /// Delete a single profile by identity. Persists if anything was removed.

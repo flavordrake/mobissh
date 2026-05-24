@@ -55,6 +55,11 @@ dependencies:
   # Persist profile list, settings; small JSON blobs only
   shared_preferences: ^2.3.5
 
+  # PBKDF2-HMAC-SHA256 + AES-GCM-256 for vault decryption parity with the
+  # PWA's WebCrypto vault (#510). Pure-Dart; no platform channel; runs in
+  # flutter_test without a device.
+  cryptography: ^2.7.0
+
   # Crash telemetry pipeline (#501 crash-on-launch).
   # http: bridge upload. path_provider: app-docs dir shared with the Kotlin
   # crash writer. device_info_plus + package_info_plus: enrich crash JSON.

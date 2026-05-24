@@ -1,9 +1,15 @@
-// "Import from PWA" dialog (#501).
+// "Import from PWA" dialog (#501, vault decrypt for #510).
 //
-// Accepts pasted JSON in the PWA export shape and merges into the store.
+// Two-stage flow:
+//   1. User pastes JSON. Submit triggers a sync parse.
+//   2. If the parsed envelope carries `vault.encrypted`+`vault.meta`, an
+//      additional password field appears (same dialog). Submit then
+//      decrypts + persists.
+//   3. Plain envelope (no vault) → single Submit path, same as before.
+//
 // On success: returns the [ImportResult] so the caller can show a snackbar.
-// On parse failure or unknown shape: shows the error in-dialog without
-// closing, so the user can fix the paste and retry.
+// On parse failure / wrong password / unknown shape: shows the error
+// in-dialog without closing, so the user can fix the input and retry.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,16 +36,20 @@ class ImportProfilesDialog extends ConsumerStatefulWidget {
 }
 
 class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
-  final _ctrl = TextEditingController();
+  final _jsonCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
   String? _error;
   bool _busy = false;
+
+  // Stage 2: a parsed envelope carrying a vault. When non-null, the
+  // password field is rendered and Submit applies with the password.
+  ParsedImport? _pendingVault;
 
   @override
   void initState() {
     super.initState();
-    // Rebuild on text changes so the Submit button's enabled state tracks
-    // whether the paste field is empty.
-    _ctrl.addListener(_onTextChanged);
+    _jsonCtrl.addListener(_onTextChanged);
+    _passwordCtrl.addListener(_onTextChanged);
   }
 
   void _onTextChanged() {
@@ -48,8 +58,10 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
 
   @override
   void dispose() {
-    _ctrl.removeListener(_onTextChanged);
-    _ctrl.dispose();
+    _jsonCtrl.removeListener(_onTextChanged);
+    _passwordCtrl.removeListener(_onTextChanged);
+    _jsonCtrl.dispose();
+    _passwordCtrl.dispose();
     super.dispose();
   }
 
@@ -58,12 +70,48 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
       _busy = true;
       _error = null;
     });
+
     final store = ref.read(profilesStoreProvider);
-    final result = await store.importFromJson(_ctrl.text);
+    final secrets = ref.read(secretsStoreProvider);
+
+    // Stage 2: already have a vault parse; this submit carries the password.
+    if (_pendingVault != null) {
+      final result = await store.applyParsedImport(
+        _pendingVault!,
+        password: _passwordCtrl.text,
+        secrets: secrets,
+      );
+      if (!mounted) return;
+
+      if (result.added == 0 && result.skipped == 0 && result.errors.isNotEmpty) {
+        setState(() {
+          _busy = false;
+          _error = result.errors.first;
+        });
+        return;
+      }
+      if (result.added > 0) {
+        ref.invalidate(savedProfilesProvider);
+      }
+      Navigator.of(context).pop(result);
+      return;
+    }
+
+    // Stage 1: parse the pasted JSON. If it carries a vault, switch the
+    // dialog into stage 2 (password prompt) without persisting anything.
+    final parsed = ProfilesStore.parseImport(_jsonCtrl.text);
+    if (parsed.hasVault) {
+      setState(() {
+        _busy = false;
+        _pendingVault = parsed;
+      });
+      return;
+    }
+
+    // No vault: persist directly.
+    final result = await store.applyParsedImport(parsed);
     if (!mounted) return;
 
-    // If we got zero adds and zero skips with errors, treat as input error
-    // and leave the dialog open so the user can fix the paste.
     if (result.added == 0 && result.skipped == 0 && result.errors.isNotEmpty) {
       setState(() {
         _busy = false;
@@ -71,40 +119,71 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
       });
       return;
     }
-
-    // Invalidate the watcher so the parent list rebuilds.
     if (result.added > 0) {
       ref.invalidate(savedProfilesProvider);
     }
     Navigator.of(context).pop(result);
   }
 
+  bool _canSubmit() {
+    if (_busy) return false;
+    if (_pendingVault != null) {
+      return _passwordCtrl.text.isNotEmpty;
+    }
+    return _jsonCtrl.text.trim().isNotEmpty;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final inVaultStage = _pendingVault != null;
     return AlertDialog(
       key: const Key('import-profiles-dialog'),
-      title: const Text('Import profiles from PWA'),
+      title: Text(inVaultStage
+          ? 'Unlock encrypted vault'
+          : 'Import profiles from PWA'),
       content: SizedBox(
         width: 500,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Paste the JSON copied from the PWA "Export to native" button.',
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              key: const Key('import-profiles-input'),
-              controller: _ctrl,
-              maxLines: 8,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(
-                hintText: '{ "version": 1, "profiles": [ ... ] }',
-                border: OutlineInputBorder(),
+            if (!inVaultStage) ...[
+              const Text(
+                'Paste the JSON copied from the PWA "Export to native" button.',
               ),
-            ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('import-profiles-input'),
+                controller: _jsonCtrl,
+                maxLines: 8,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  hintText: '{ "version": 1, "profiles": [ ... ] }',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ] else ...[
+              const Text(
+                'This backup is encrypted. Enter the master password you set '
+                'in the PWA to decrypt the saved credentials.',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('import-profiles-password'),
+                controller: _passwordCtrl,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                onSubmitted: (_) {
+                  if (_canSubmit()) _submit();
+                },
+                decoration: const InputDecoration(
+                  labelText: 'Master password',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -124,8 +203,10 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
         ),
         FilledButton(
           key: const Key('import-profiles-submit'),
-          onPressed: _busy || _ctrl.text.trim().isEmpty ? null : _submit,
-          child: Text(_busy ? 'Importing…' : 'Import'),
+          onPressed: _canSubmit() ? _submit : null,
+          child: Text(_busy
+              ? 'Importing…'
+              : (inVaultStage ? 'Unlock & import' : 'Import')),
         ),
       ],
     );
