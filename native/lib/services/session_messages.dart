@@ -21,6 +21,7 @@ enum SshTaskCommandKind {
   input,
   resize,
   requestSnapshot,
+  hostKeyDecision,
 }
 
 /// Envelope kind discriminator for task → UI events.
@@ -30,6 +31,7 @@ enum SshTaskEventKind {
   snapshot,
   closed,
   error,
+  hostKeyChallenge,
 }
 
 /// Base for all UI → task command envelopes. Subclasses are concrete records
@@ -84,6 +86,11 @@ sealed class SshTaskCommand {
         );
       case SshTaskCommandKind.requestSnapshot:
         return SshRequestSnapshotCommand(sessionId: sessionId);
+      case SshTaskCommandKind.hostKeyDecision:
+        return SshHostKeyDecisionCommand(
+          sessionId: sessionId,
+          accepted: json['accepted'] as bool,
+        );
     }
   }
 }
@@ -195,6 +202,30 @@ class SshRequestSnapshotCommand extends SshTaskCommand {
       };
 }
 
+/// UI → task: the user's trust decision for a pending host-key challenge
+/// (#536). Routed to the task-side controller's
+/// `acceptHostKey()` / `rejectHostKey()` so trust-on-first-use can resolve the
+/// verify callback that the controller is blocked on.
+class SshHostKeyDecisionCommand extends SshTaskCommand {
+  const SshHostKeyDecisionCommand({
+    required String sessionId,
+    required this.accepted,
+  }) : super(sessionId);
+
+  /// True = trust + continue; false = reject + abort.
+  final bool accepted;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.hostKeyDecision;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'accepted': accepted,
+      };
+}
+
 // ---------------------------------------------------------------------------
 // Events (task → UI)
 // ---------------------------------------------------------------------------
@@ -252,6 +283,14 @@ sealed class SshTaskEvent {
         return SshErrorEvent(
           sessionId: sessionId,
           message: json['message'] as String,
+        );
+      case SshTaskEventKind.hostKeyChallenge:
+        return SshHostKeyChallengeEvent(
+          sessionId: sessionId,
+          host: json['host'] as String,
+          port: json['port'] as int,
+          keyType: json['keyType'] as String,
+          fingerprint: json['fingerprint'] as String,
         );
     }
   }
@@ -375,5 +414,36 @@ class SshErrorEvent extends SshTaskEvent {
         'kind': kind.name,
         'sessionId': sessionId,
         'message': message,
+      };
+}
+
+/// Task → UI: a new (untrusted) host key needs a user trust decision (#536).
+/// The UI proxy turns this into a `PendingHostKey` so the existing host-key
+/// dialog (keyed on `SshSessionData.pendingHostKey`) surfaces unchanged.
+class SshHostKeyChallengeEvent extends SshTaskEvent {
+  const SshHostKeyChallengeEvent({
+    required String sessionId,
+    required this.host,
+    required this.port,
+    required this.keyType,
+    required this.fingerprint,
+  }) : super(sessionId);
+
+  final String host;
+  final int port;
+  final String keyType;
+  final String fingerprint;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.hostKeyChallenge;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'host': host,
+        'port': port,
+        'keyType': keyType,
+        'fingerprint': fingerprint,
       };
 }

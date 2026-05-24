@@ -134,23 +134,30 @@ class SshSessionProxy {
     gateway.send(SshDisconnectCommand(sessionId: sessionId).toJson());
   }
 
-  /// Accept a pending host-key prompt.
-  ///
-  /// No-op today (#533): the IPC envelope contract from #530 does NOT carry
-  /// `pendingHostKey` state across the gateway, so the UI never sees a
-  /// prompt and never needs to dispatch a decision. The trust-on-first-use
-  /// cache lives in the task-side controller; cached fingerprints continue
-  /// to authenticate without UI involvement. Surfacing fresh host-key
-  /// prompts to the UI is tracked as a follow-up — when the contract grows
-  /// `SshHostKeyEvent` + `SshHostKeyDecisionCommand`, this method will send
-  /// the accept envelope.
+  /// Accept a pending host-key prompt (#536). Sends a decision command to the
+  /// task side (which trusts the key + resolves the controller's verify
+  /// callback) and clears the local `pendingHostKey` so the dialog dismisses.
   void acceptHostKey() {
-    // intentional no-op pending IPC envelope extension (follow-up to #533)
+    _sendHostKeyDecision(true);
   }
 
-  /// Reject a pending host-key prompt. See [acceptHostKey] for status.
+  /// Reject a pending host-key prompt (#536). The task-side controller aborts
+  /// the connect via its existing "Host key rejected" failure path.
   void rejectHostKey() {
-    // intentional no-op pending IPC envelope extension (follow-up to #533)
+    _sendHostKeyDecision(false);
+  }
+
+  void _sendHostKeyDecision(bool accepted) {
+    if (_disposed) return;
+    if (_data.pendingHostKey == null) return;
+    gateway.send(SshHostKeyDecisionCommand(
+      sessionId: sessionId,
+      accepted: accepted,
+    ).toJson());
+    // Optimistically clear the prompt; the authoritative state (authenticating
+    // / failed) arrives as a follow-up state event from the task side.
+    _data = _data.copyWith(clearPendingHostKey: true);
+    if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
   }
 
   /// Send keystroke / paste bytes to the remote PTY through the gateway.
@@ -224,6 +231,17 @@ class SshSessionProxy {
         _data = _data.copyWith(
           state: SshSessionState.failed,
           error: event.message,
+        );
+        if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
+      case SshHostKeyChallengeEvent():
+        _data = _data.copyWith(
+          state: SshSessionState.awaitingHostKey,
+          pendingHostKey: PendingHostKey(
+            host: event.host,
+            port: event.port,
+            keyType: event.keyType,
+            fingerprint: event.fingerprint,
+          ),
         );
         if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
     }
