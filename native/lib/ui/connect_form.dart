@@ -198,6 +198,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       case SshSessionState.authenticating:
       case SshSessionState.awaitingHostKey:
       case SshSessionState.connected:
+      case SshSessionState.reconnecting:
         return false;
       case SshSessionState.idle:
       case SshSessionState.failed:

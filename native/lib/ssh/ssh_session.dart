@@ -3,11 +3,18 @@
 // Phase 1 (#501): connect, host-key verify (trust-on-first-use prompt),
 // password/key auth, capture banner, expose state transitions. No shell
 // or PTY (Phase 2). No persistence (Phase 3).
+//
+// #517: application-layer keepalive + reconnect-on-transient-socket-error so
+// the user doesn't see raw `SSHSocketError(... errno = 103)` after returning
+// from an app swap. dartssh2 sends keepalive pings; `handleTransportClosed`
+// classifies the close cause and either reconnects (transient) or surfaces
+// the appropriate terminal state.
 
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart';
 
 import 'host_key_store.dart';
 import 'ssh_connect_params.dart';
@@ -29,6 +36,10 @@ enum SshSessionState {
 
   /// Auth succeeded, transport open.
   connected,
+
+  /// Transient socket error after `connected`; controller is auto-retrying.
+  /// UI should show "Reconnecting…" rather than the raw socket error (#517).
+  reconnecting,
 
   /// Auth or transport error — see [SshSessionData.error].
   failed,
@@ -118,6 +129,12 @@ Future<SSHSocket> _defaultSocketOpener(
   return SSHSocket.connect(host, port, timeout: timeout);
 }
 
+/// Optional override for the reconnect attempt itself (test seam).
+/// Returning `true` indicates the reconnect completed successfully and the
+/// controller should resume `connected`. Returning `false` indicates failure
+/// and the controller should count the attempt + retry until exhausted.
+typedef ReconnectAttempt = Future<bool> Function(SshConnectParams params);
+
 /// Drives a single SSH session through its lifecycle.
 ///
 /// Designed to be wrapped by a Riverpod `NotifierProvider` (see
@@ -129,14 +146,37 @@ class SshSessionController {
     HostKeyStore? hostKeyStore,
     SshSocketOpener? socketOpener,
     this.handshakeTimeout = const Duration(seconds: 15),
+    this.keepAliveInterval = const Duration(seconds: 15),
+    this.reconnectDelay = const Duration(seconds: 2),
+    this.maxReconnectAttempts = 5,
+    ReconnectAttempt? reconnectAttemptOverride,
   })  : _hostKeyStore = hostKeyStore ?? HostKeyStore(),
-        _openSocket = socketOpener ?? _defaultSocketOpener;
+        _openSocket = socketOpener ?? _defaultSocketOpener,
+        _reconnectAttempt = reconnectAttemptOverride;
 
   final HostKeyStore _hostKeyStore;
   final SshSocketOpener _openSocket;
+  final ReconnectAttempt? _reconnectAttempt;
 
   /// Timeout for the underlying TCP + SSH handshake.
   final Duration handshakeTimeout;
+
+  /// Interval at which dartssh2 sends application-layer keepalive pings to
+  /// the server. 15s matches the PWA bridge (`server/index.js`) and is
+  /// aggressive enough to keep NAT/Tailscale paths warm during background
+  /// app swaps (#517).
+  final Duration keepAliveInterval;
+
+  /// Delay between transient-socket-error reconnect attempts. Short, fixed —
+  /// the issue's acceptance criteria asks for "Reconnecting…" recovery
+  /// within seconds, not exponential backoff (the PWA reaches the same
+  /// conclusion in `scheduleReconnect`).
+  final Duration reconnectDelay;
+
+  /// Maximum number of consecutive reconnect attempts after a transient
+  /// close. Once exhausted, transition to `failed` so the UI can surface
+  /// the modal-style error.
+  final int maxReconnectAttempts;
 
   final StreamController<SshSessionData> _stateCtrl =
       StreamController<SshSessionData>.broadcast();
@@ -144,6 +184,10 @@ class SshSessionController {
   SshSessionData _data = const SshSessionData();
   SSHClient? _client;
   Completer<bool>? _hostKeyCompleter;
+  SshConnectParams? _lastParams;
+  int _reconnectAttempts = 0;
+  bool _userDisconnected = false;
+  Timer? _reconnectTimer;
 
   /// Most recent state snapshot. Always non-null.
   SshSessionData get data => _data;
@@ -165,9 +209,15 @@ class SshSessionController {
     if (_data.state == SshSessionState.connecting ||
         _data.state == SshSessionState.authenticating ||
         _data.state == SshSessionState.connected ||
-        _data.state == SshSessionState.awaitingHostKey) {
+        _data.state == SshSessionState.awaitingHostKey ||
+        _data.state == SshSessionState.reconnecting) {
       return;
     }
+
+    // Fresh user-initiated connect — clear the disconnect flag so we'll
+    // reconnect again if the socket later flakes (#517).
+    _userDisconnected = false;
+    _lastParams = params;
 
     _emit(SshSessionData(
       state: SshSessionState.connecting,
@@ -197,6 +247,7 @@ class SshSessionController {
       client = SSHClient(
         socket,
         username: params.username,
+        keepAliveInterval: keepAliveInterval,
         onVerifyHostKey: (type, fingerprint) =>
             _onVerifyHostKey(params, type, fingerprint),
         onPasswordRequest: () => _onPasswordRequest(params),
@@ -241,17 +292,128 @@ class SshSessionController {
       clearError: true,
     ));
 
-    // Wire close notification.
-    unawaited(client.done.then((_) {
-      if (_data.state == SshSessionState.connected) {
-        _emit(_data.copyWith(state: SshSessionState.disconnected));
+    // Wire close notification. `handleTransportClosed` classifies the cause
+    // and either reconnects (transient socket error) or transitions to the
+    // appropriate terminal state.
+    final closedClient = client;
+    unawaited(closedClient.done
+        .then((_) => handleTransportClosed(null))
+        .catchError((e) => handleTransportClosed(e)));
+  }
+
+  /// Called when the SSH client's transport future resolves — either cleanly
+  /// (`error == null`) or with a thrown error. Classifies the cause and
+  /// drives the state machine. Public for testing; production callers should
+  /// not invoke this directly.
+  @visibleForTesting
+  void handleTransportClosed(Object? error) {
+    // Ignore stale done-futures from a previously-torn-down client (e.g.,
+    // user called disconnect() and the old client.done resolves later).
+    if (_userDisconnected) return;
+    if (_data.state == SshSessionState.disconnected ||
+        _data.state == SshSessionState.failed) {
+      return;
+    }
+
+    if (error == null) {
+      _emit(_data.copyWith(state: SshSessionState.disconnected));
+      return;
+    }
+
+    final transient = isTransientSocketError(error);
+    if (transient && _lastParams != null) {
+      _scheduleReconnect(error);
+      return;
+    }
+
+    _emit(_data.copyWith(
+      state: SshSessionState.failed,
+      error: 'Transport error: $error',
+    ));
+  }
+
+  /// Classify whether [error] is a transient socket teardown that warrants
+  /// an automatic reconnect (#517). Public for testing.
+  static bool isTransientSocketError(Object error) {
+    if (error is! SSHSocketError) return false;
+    final inner = error.error;
+    if (inner is SocketException) {
+      final code = inner.osError?.errorCode;
+      // Common transient codes on Android/Linux:
+      //   103 = ECONNABORTED (software caused connection abort)
+      //   104 = ECONNRESET
+      //   110 = ETIMEDOUT
+      //   113 = EHOSTUNREACH
+      //   101 = ENETUNREACH
+      //    32 = EPIPE
+      if (code != null) {
+        const transientCodes = <int>{32, 101, 103, 104, 110, 113};
+        return transientCodes.contains(code);
       }
-    }).catchError((e) {
+    }
+    // Generic SSHSocketError without a concrete OSError (transport simply
+    // dropped) — treat as transient too. Worst case we burn N reconnect
+    // attempts before settling on `failed`.
+    return true;
+  }
+
+  void _scheduleReconnect(Object error) {
+    final params = _lastParams;
+    if (params == null) {
       _emit(_data.copyWith(
         state: SshSessionState.failed,
-        error: 'Transport error: $e',
+        error: 'Transport error: $error',
       ));
-    }));
+      return;
+    }
+
+    if (_reconnectAttempts >= maxReconnectAttempts) {
+      _emit(_data.copyWith(
+        state: SshSessionState.failed,
+        error: 'reconnect exhausted after $maxReconnectAttempts attempts: '
+            '$error',
+      ));
+      return;
+    }
+
+    _emit(_data.copyWith(state: SshSessionState.reconnecting));
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(reconnectDelay, () async {
+      if (_userDisconnected) return;
+      _reconnectAttempts += 1;
+      // Detach the now-dead client so a fresh connect() can run.
+      _client = null;
+      // Reset to a state from which connect() will proceed.
+      _data = _data.copyWith(state: SshSessionState.idle);
+      final ok = await _runReconnectAttempt(params);
+      if (!ok && !_userDisconnected) {
+        // Attempt failed — recurse via handleTransportClosed so the counter
+        // continues to climb and we eventually settle on `failed`.
+        handleTransportClosed(error);
+      } else if (ok) {
+        _reconnectAttempts = 0;
+      }
+    });
+  }
+
+  Future<bool> _runReconnectAttempt(SshConnectParams params) async {
+    final override = _reconnectAttempt;
+    if (override != null) {
+      final ok = await override(params);
+      if (ok) {
+        _emit(_data.copyWith(
+          state: SshSessionState.connected,
+          clearError: true,
+        ));
+      }
+      return ok;
+    }
+    try {
+      await connect(params);
+      return _data.state == SshSessionState.connected;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Resolve a pending host-key prompt with `true` (trust + continue).
@@ -285,6 +447,10 @@ class SshSessionController {
 
   /// Disconnect the active session. No-op when not connected.
   Future<void> disconnect() async {
+    _userDisconnected = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectAttempts = 0;
     final client = _client;
     _client = null;
     if (client != null) {
@@ -302,6 +468,21 @@ class SshSessionController {
     if (!_stateCtrl.isClosed) {
       await _stateCtrl.close();
     }
+  }
+
+  /// Seed the controller with a connected state for tests. Production code
+  /// reaches `connected` via [connect]; tests need a shortcut so they can
+  /// exercise [handleTransportClosed] without standing up a real SSH server.
+  @visibleForTesting
+  void debugSetConnectedForTest(SshConnectParams params) {
+    _userDisconnected = false;
+    _lastParams = params;
+    _emit(SshSessionData(
+      state: SshSessionState.connected,
+      host: params.host,
+      port: params.port,
+      username: params.username,
+    ));
   }
 
   // --- private helpers ---

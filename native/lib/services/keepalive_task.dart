@@ -64,6 +64,24 @@ abstract class KeepaliveGateway {
   Future<bool> stopService();
 }
 
+/// Build the `ForegroundTaskOptions` we hand to `FlutterForegroundTask.init`.
+///
+/// Extracted so unit tests can assert on the configuration without binding to
+/// platform method channels — in particular `allowWakeLock: true` is what
+/// keeps the Dart isolate alive during Doze mode (#517). The actual wake-lock
+/// acquisition happens natively (the plugin grabs a `PARTIAL_WAKE_LOCK` when
+/// the foreground service starts); we can only assert here that the flag is
+/// configured.
+ForegroundTaskOptions buildKeepaliveTaskOptions() {
+  return ForegroundTaskOptions(
+    eventAction: ForegroundTaskEventAction.nothing(),
+    autoRunOnBoot: false,
+    autoRunOnMyPackageReplaced: false,
+    allowWakeLock: true,
+    allowWifiLock: false,
+  );
+}
+
 /// Default gateway that talks to the real `FlutterForegroundTask`.
 class FlutterForegroundTaskGateway implements KeepaliveGateway {
   bool _initialized = false;
@@ -91,13 +109,7 @@ class FlutterForegroundTaskGateway implements KeepaliveGateway {
         showNotification: false,
         playSound: false,
       ),
-      foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.nothing(),
-        autoRunOnBoot: false,
-        autoRunOnMyPackageReplaced: false,
-        allowWakeLock: true,
-        allowWifiLock: false,
-      ),
+      foregroundTaskOptions: buildKeepaliveTaskOptions(),
     );
     _initialized = true;
   }
@@ -165,17 +177,25 @@ class KeepaliveController {
   @visibleForTesting
   int get connectedCount => _connectedCount;
 
+  /// Returns true while the given state should hold the foreground service
+  /// open. `reconnecting` (#517) is treated as "still connected" so Android
+  /// doesn't freeze the Dart isolate mid-reconnect.
+  static bool _holdsService(SshSessionState state) {
+    return state == SshSessionState.connected ||
+        state == SshSessionState.reconnecting;
+  }
+
   /// Begin observing the given session controller. Safe to call multiple
   /// times with the same controller.
   void attach(SshSessionController session) {
     if (_subscriptions.containsKey(session)) return;
-    var wasConnected = session.data.state == SshSessionState.connected;
+    var wasConnected = _holdsService(session.data.state);
     if (wasConnected) {
       _connectedCount += 1;
       unawaited(_startIfStopped());
     }
     _subscriptions[session] = session.stream.listen((data) {
-      final isConnected = data.state == SshSessionState.connected;
+      final isConnected = _holdsService(data.state);
       if (isConnected && !wasConnected) {
         _connectedCount += 1;
         unawaited(_startIfStopped());
@@ -193,7 +213,7 @@ class KeepaliveController {
     final sub = _subscriptions.remove(session);
     if (sub == null) return;
     await sub.cancel();
-    if (session.data.state == SshSessionState.connected) {
+    if (_holdsService(session.data.state)) {
       _connectedCount = (_connectedCount - 1).clamp(0, 1 << 30);
       if (_connectedCount == 0) await _stopIfRunning();
     }
