@@ -73,7 +73,10 @@ dependencies:
   # File picker for vault/profile import (#520). Replaces paste-JSON as the
   # primary affordance — users select the backup file the PWA downloaded
   # rather than copy-pasting hundreds of lines of envelope JSON.
-  file_picker: ^8.1.4
+  # Bumped to 11.x because 8.x is compiled against android-34 but transitively
+  # depends on flutter_plugin_android_lifecycle which now requires compileSdk 36.
+  # The 11.x release is compiled against 36 and clears the AAR-metadata check.
+  file_picker: ^11.0.2
 
 dev_dependencies:
   flutter_test:
