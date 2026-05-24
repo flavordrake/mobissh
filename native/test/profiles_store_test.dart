@@ -9,11 +9,16 @@
 //   - rejects unknown export version
 
 import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobissh/storage/profiles_store.dart';
+import 'package:mobissh/storage/secrets_store.dart';
+import 'package:mobissh/storage/vault.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -295,11 +300,12 @@ void main() {
       expect(loaded.single.host, 'ok.example');
     });
 
-    test('ignores credentials silently — they are not part of SavedProfile',
+    test('ignores plaintext credentials silently — only vaultId is kept',
         () async {
       // Belt-and-braces: even if the PWA export had credentials, the
       // SavedProfile.fromJson factory would not read them and they would
-      // never reach storage.
+      // never reach storage. (vaultId IS preserved as of #510 because it's
+      // a reference, not a secret.)
       final store = ProfilesStore();
       const sneaky = '''
 {
@@ -308,7 +314,7 @@ void main() {
     {
       "title": "Sneaky", "host": "evil.example", "port": 22,
       "username": "u",
-      "password": "secret", "privateKey": "PRIVATE", "vaultId": "steal"
+      "password": "secret", "privateKey": "PRIVATE", "vaultId": "v-keep"
     }
   ]
 }
@@ -316,11 +322,220 @@ void main() {
       final result = await store.importFromJson(sneaky);
       expect(result.added, 1);
       final loaded = await store.load();
-      // Serialize to JSON to inspect that credential keys are absent.
       final stored = loaded.single.toJson();
       expect(stored.containsKey('password'), isFalse);
       expect(stored.containsKey('privateKey'), isFalse);
-      expect(stored.containsKey('vaultId'), isFalse);
+      expect(stored['vaultId'], 'v-keep');
+    });
+  });
+
+  group('ProfilesStore.parseImport — backup envelope detection', () {
+    test('detects vault field with encrypted + meta strings', () {
+      const envelope = '''
+{
+  "version": 1,
+  "exportedAt": "2026-05-22T13:00:00.000Z",
+  "profiles": [
+    { "host": "h.example", "port": 22, "username": "u", "vaultId": "v1" }
+  ],
+  "vault": {
+    "encrypted": "{\\"v1\\":{\\"iv\\":\\"aa\\",\\"ct\\":\\"bb\\"}}",
+    "meta": "{\\"salt\\":\\"cc\\"}"
+  }
+}
+''';
+      final parsed = ProfilesStore.parseImport(envelope);
+      expect(parsed.hasVault, isTrue);
+      expect(parsed.profileEntries, hasLength(1));
+      expect(parsed.profileEntries.first['vaultId'], 'v1');
+    });
+
+    test('hasVault is false when vault.encrypted is missing', () {
+      const envelope = '''
+{
+  "version": 1,
+  "profiles": [],
+  "vault": { "meta": "{}" }
+}
+''';
+      final parsed = ProfilesStore.parseImport(envelope);
+      expect(parsed.hasVault, isFalse);
+    });
+
+    test('plain envelope without vault parses to profiles only', () {
+      const envelope = '''
+{
+  "version": 1,
+  "profiles": [
+    { "host": "h.example", "port": 22, "username": "u" }
+  ]
+}
+''';
+      final parsed = ProfilesStore.parseImport(envelope);
+      expect(parsed.hasVault, isFalse);
+      expect(parsed.profileEntries, hasLength(1));
+    });
+  });
+
+  group('ProfilesStore.applyParsedImport — backup envelope round-trip', () {
+    // Build a backup-envelope-shaped string using the same crypto primitives
+    // the PWA emits. Reuses the helper pattern from vault_test.dart with a
+    // lower iteration count for speed.
+    Future<String> buildBackupEnvelope({
+      required String password,
+      required List<Map<String, dynamic>> profiles,
+      required Map<String, Map<String, Object?>> secrets,
+      required Pbkdf2 pbkdf2,
+    }) async {
+      final random = Random.secure();
+      final salt = Uint8List.fromList(
+        List<int>.generate(32, (_) => random.nextInt(256)),
+      );
+      final dekBytes = Uint8List.fromList(
+        List<int>.generate(32, (_) => random.nextInt(256)),
+      );
+      final dek = SecretKey(dekBytes);
+      final kek = await pbkdf2.deriveKey(
+        secretKey: SecretKey(utf8.encode(password)),
+        nonce: salt,
+      );
+      final aesGcm = AesGcm.with256bits();
+
+      final dekWrapIv = Uint8List.fromList(
+        List<int>.generate(12, (_) => random.nextInt(256)),
+      );
+      final dekWrapBox = await aesGcm.encrypt(
+        dekBytes,
+        secretKey: kek,
+        nonce: dekWrapIv,
+      );
+      final dekWrapCt = Uint8List.fromList([
+        ...dekWrapBox.cipherText,
+        ...dekWrapBox.mac.bytes,
+      ]);
+
+      final encrypted = <String, Map<String, String>>{};
+      for (final entry in secrets.entries) {
+        final iv = Uint8List.fromList(
+          List<int>.generate(12, (_) => random.nextInt(256)),
+        );
+        final box = await aesGcm.encrypt(
+          utf8.encode(jsonEncode(entry.value)),
+          secretKey: dek,
+          nonce: iv,
+        );
+        final ct = Uint8List.fromList([
+          ...box.cipherText,
+          ...box.mac.bytes,
+        ]);
+        encrypted[entry.key] = <String, String>{
+          'iv': base64Encode(iv),
+          'ct': base64Encode(ct),
+        };
+      }
+
+      return jsonEncode(<String, Object?>{
+        'version': 1,
+        'exportedAt': '2026-05-22T13:00:00.000Z',
+        'profiles': profiles,
+        'vault': <String, String>{
+          'encrypted': jsonEncode(encrypted),
+          'meta': jsonEncode(<String, Object?>{
+            'salt': base64Encode(salt),
+            'dekPw': <String, String>{
+              'iv': base64Encode(dekWrapIv),
+              'ct': base64Encode(dekWrapCt),
+            },
+          }),
+        },
+      });
+    }
+
+    Pbkdf2 fastPbkdf2() => Pbkdf2(
+          macAlgorithm: Hmac.sha256(),
+          iterations: 1000,
+          bits: 256,
+        );
+
+    test('applies a backup envelope with the right password', () async {
+      final pbkdf2 = fastPbkdf2();
+      final envelope = await buildBackupEnvelope(
+        password: 'master',
+        profiles: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'title': 'Home NAS',
+            'host': 'nas.example',
+            'port': 22,
+            'username': 'me',
+            'authType': 'password',
+            'vaultId': 'v-home',
+          },
+        ],
+        secrets: <String, Map<String, Object?>>{
+          'v-home': <String, Object?>{'password': 'hunter2'},
+        },
+        pbkdf2: pbkdf2,
+      );
+
+      final store = ProfilesStore();
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final parsed = ProfilesStore.parseImport(envelope);
+      expect(parsed.hasVault, isTrue);
+
+      final result = await store.applyParsedImport(
+        parsed,
+        password: 'master',
+        secrets: secrets,
+        decryptor: VaultDecryptor(pbkdf2: pbkdf2),
+      );
+      expect(result.errors, isEmpty);
+      expect(result.added, 1);
+
+      // Profile persisted with vaultId.
+      final loaded = await store.load();
+      expect(loaded.single.vaultId, 'v-home');
+      // Secret available in store.
+      final secret = await secrets.read('v-home');
+      expect(secret, isNotNull);
+      expect(secret!['password'], 'hunter2');
+    });
+
+    test('wrong password reports clear error and writes no state',
+        () async {
+      final pbkdf2 = fastPbkdf2();
+      final envelope = await buildBackupEnvelope(
+        password: 'master',
+        profiles: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'host': 'h.example',
+            'port': 22,
+            'username': 'u',
+            'vaultId': 'v-x',
+          },
+        ],
+        secrets: <String, Map<String, Object?>>{
+          'v-x': <String, Object?>{'password': 'secret'},
+        },
+        pbkdf2: pbkdf2,
+      );
+
+      final store = ProfilesStore();
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final parsed = ProfilesStore.parseImport(envelope);
+
+      final result = await store.applyParsedImport(
+        parsed,
+        password: 'wrong',
+        secrets: secrets,
+        decryptor: VaultDecryptor(pbkdf2: pbkdf2),
+      );
+
+      expect(result.added, 0);
+      expect(result.errors, isNotEmpty);
+      // No profile persisted.
+      expect(await store.load(), isEmpty);
+      // No secret persisted.
+      expect(await secrets.read('v-x'), isNull);
     });
   });
 }
