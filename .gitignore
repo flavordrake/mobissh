@@ -13,6 +13,8 @@ test-results-appium/
 # Compiled TypeScript output (built by tsc, not checked in)
 public/app.js
 public/modules/*.js
+# Native APKs — built by flutter, placed in public/ for container deploy, not checked in
+public/*.apk
 test-data/
 .claude/worktrees/
 .claude/settings.local.json

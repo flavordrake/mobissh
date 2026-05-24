@@ -2,17 +2,27 @@
 //
 // Phase 1 (#501): no profiles, no persistence. Submit calls the SshSession
 // controller; UI mirrors lifecycle state below the form.
+//
+// Profile import (Phase 3 of #501): saved profiles rendered above the form;
+// tapping one populates host/port/username (user still types credentials).
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../diagnostics/crash_reporter.dart';
+
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
+import '../storage/profiles_store.dart';
+import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
+import 'import_profiles_dialog.dart';
+import 'profile_list.dart';
 
 enum _AuthKind { password, key }
 
@@ -65,6 +75,19 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Saved profiles + import action. Collapsed-to-empty-hint when the
+          // user has no imported profiles yet.
+          ProfileList(onSelect: _applyProfileToForm),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const Key('open-import-profiles-dialog'),
+              onPressed: _openImportDialog,
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Import from PWA'),
+            ),
+          ),
+          const SizedBox(height: 4),
           Row(
             children: [
               Expanded(
@@ -158,6 +181,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               icon: const Icon(Icons.link_off),
               label: const Text('Disconnect'),
             ),
+          const SizedBox(height: 8),
+          const DiagnosticsSection(),
         ],
       ),
     );
@@ -209,9 +234,35 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     setState(() => _busy = true);
     try {
       await ref.read(sshSessionControllerProvider).connect(params);
+      // Once we've proven we have network reachability, fire-and-forget a
+      // crash upload sweep. Tailscale being down is the common case at boot
+      // and the second-chance path matters more than blocking the UI.
+      unawaited(CrashReporter.uploadPending());
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Populate the form with metadata from a saved profile. Credentials are
+  /// never auto-filled — the user types password / key per connect.
+  void _applyProfileToForm(SavedProfile profile) {
+    setState(() {
+      _hostCtrl.text = profile.host;
+      _portCtrl.text = profile.port.toString();
+      _userCtrl.text = profile.username;
+    });
+  }
+
+  Future<void> _openImportDialog() async {
+    final result = await showImportProfilesDialog(context);
+    if (!mounted || result == null) return;
+    final msg = result.added > 0
+        ? 'Imported ${result.added} profile${result.added == 1 ? '' : 's'}'
+            '${result.skipped > 0 ? ', ${result.skipped} skipped (duplicate)' : ''}'
+        : result.skipped > 0
+            ? 'No new profiles — all ${result.skipped} were already saved.'
+            : 'No profiles imported.';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {

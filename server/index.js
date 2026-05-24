@@ -797,6 +797,63 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /api/native-crash — auto-upload of native APK crash reports (#501).
+  // Body is a single crash JSON written by either the Dart-side CrashReporter
+  // or the Kotlin-side uncaught-exception handler. We cap at ~1MB (stack
+  // traces should be well under that) and persist into test-results/uploads/
+  // so the existing watcher surfaces it.
+  if (req.method === 'POST' && req.url === '/api/native-crash') {
+    let body = '';
+    let aborted = false;
+    const MAX_BYTES = 1024 * 1024;
+    req.on('data', (chunk) => {
+      if (aborted) return;
+      body += chunk;
+      if (Buffer.byteLength(body, 'utf8') > MAX_BYTES) {
+        aborted = true;
+        try { req.destroy(); } catch (e) {}
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end('{"error":"crash report exceeds 1MB"}');
+      }
+    });
+    req.on('end', () => {
+      if (aborted) return;
+      try {
+        // Validate it's JSON; we re-stringify to normalize formatting on
+        // disk. If parsing fails, save the raw body to a .raw file so we
+        // never lose a crash report.
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
+        fs.mkdirSync(reportDir, { recursive: true });
+        let outFile;
+        let parsed = null;
+        try {
+          parsed = JSON.parse(body);
+        } catch (parseErr) {
+          outFile = path.join(reportDir, `${stamp}-native-crash.raw`);
+          fs.writeFileSync(outFile, body);
+          console.warn(`[native-crash] non-JSON body saved to ${outFile}: ${parseErr.message}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, raw: true, path: path.basename(outFile) }));
+          return;
+        }
+        const kind = (parsed && parsed.kind) || 'unknown';
+        outFile = path.join(reportDir, `${stamp}-native-crash.json`);
+        fs.writeFileSync(outFile, JSON.stringify(parsed, null, 2));
+        const errMsg = (parsed && parsed.error) || '';
+        console.log(`[native-crash] ${stamp} kind="${kind}" error="${errMsg.slice(0, 120)}"`);
+        sseBroadcast('native-crash', { kind, stamp, path: path.basename(outFile) });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, path: path.basename(outFile) }));
+      } catch (err) {
+        console.error('[native-crash] write error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end('{"error":"failed to persist crash"}');
+      }
+    });
+    return;
+  }
+
   // POST /api/bug-report — receive screenshot + logs from client, save to disk.
   if (req.method === 'POST' && req.url === '/api/bug-report') {
     let body = '';
