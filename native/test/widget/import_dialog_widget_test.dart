@@ -1,10 +1,17 @@
-// Widget tests for [ImportProfilesDialog] (#501).
+// Widget tests for [ImportProfilesDialog] (#501, #510, #520).
 //
 // Asserts:
-//   - valid pasted JSON triggers import (store state changes, dialog closes
-//     with non-null ImportResult)
+//   - file picker button exists and is the primary affordance (#520)
+//   - picked file bytes drive the same parseImport/applyParsedImport path
+//     as paste (smoketest, no platform channel binding)
+//   - paste textarea is collapsed behind a disclosure but still works
+//     end-to-end (legacy + power-user path)
 //   - invalid JSON keeps the dialog open and shows an inline error;
 //     store state is unchanged
+//   - vault envelopes prompt for the master password
+
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +23,17 @@ import 'package:mobissh/storage/profiles_store.dart';
 import 'package:mobissh/storage/secrets_store.dart';
 import 'package:mobissh/ui/import_profiles_dialog.dart';
 
+/// Test adapter that returns a pre-configured [PickedFile] (or null for
+/// "user cancelled"). Avoids binding to the `file_picker` platform channel,
+/// which is unavailable in `flutter_test`.
+class _FakeFilePickerAdapter implements FilePickerAdapter {
+  _FakeFilePickerAdapter({this.result});
+  final PickedFile? result;
+
+  @override
+  Future<PickedFile?> pickJsonFile() async => result;
+}
+
 /// Pump a launcher that exposes a button which opens the dialog. Avoids the
 /// "guarded function conflict" trap of launching the dialog from a
 /// postFrameCallback inside the first pumpWidget call.
@@ -23,6 +41,7 @@ Future<ImportResult?> _openDialog(
   WidgetTester tester, {
   required ProfilesStore store,
   SecretsStore? secrets,
+  FilePickerAdapter? pickerAdapter,
   required Future<void> Function(WidgetTester) interact,
 }) async {
   ImportResult? captured;
@@ -40,7 +59,11 @@ Future<ImportResult?> _openDialog(
               child: ElevatedButton(
                 key: const Key('open-button'),
                 onPressed: () async {
-                  captured = await showImportProfilesDialog(context);
+                  captured = await showImportProfilesDialog(
+                    context,
+                    pickerAdapter:
+                        pickerAdapter ?? const DefaultFilePickerAdapter(),
+                  );
                 },
                 child: const Text('Open'),
               ),
@@ -63,11 +86,100 @@ Future<ImportResult?> _openDialog(
   return captured;
 }
 
+/// Tap the paste disclosure to reveal the textarea before driving it.
+/// The two pre-#520 paste tests assume the textarea is visible; #520 moved
+/// it behind an ExpansionTile.
+Future<void> _expandPasteDisclosure(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('import-profiles-paste-disclosure')));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  testWidgets('file picker button is the primary affordance (#520 smoketest)',
+      (tester) async {
+    final store = ProfilesStore();
+
+    await _openDialog(
+      tester,
+      store: store,
+      interact: (t) async {
+        // The picker button is present and visible without any disclosure.
+        expect(
+          find.byKey(const Key('import-profiles-pick-file')),
+          findsOneWidget,
+        );
+
+        // The paste field, by contrast, is hidden until the disclosure
+        // is expanded — the picker is the primary path.
+        expect(
+          find.byKey(const Key('import-profiles-input')),
+          findsNothing,
+        );
+
+        await t.tap(find.byKey(const Key('import-profiles-cancel')));
+      },
+    );
+  });
+
+  testWidgets('picked file bytes drive the same import as paste (#520)',
+      (tester) async {
+    final store = ProfilesStore();
+
+    const validJson = '''
+{
+  "version": 1,
+  "exportedAt": "2026-05-22T13:00:00.000Z",
+  "profiles": [
+    { "title": "Home NAS", "host": "nas.example", "port": 22,
+      "username": "me", "theme": "dark" }
+  ]
+}
+''';
+
+    final fakePicker = _FakeFilePickerAdapter(
+      result: PickedFile(
+        name: 'mobissh-profiles-2026-05-22T13-00-00.json',
+        bytes: Uint8List.fromList(utf8.encode(validJson)),
+      ),
+    );
+
+    final result = await _openDialog(
+      tester,
+      store: store,
+      pickerAdapter: fakePicker,
+      interact: (t) async {
+        await t.tap(find.byKey(const Key('import-profiles-pick-file')));
+        await t.pumpAndSettle();
+
+        // Summary surfaces the selected file's contents.
+        expect(
+          find.byKey(const Key('import-profiles-picked-name')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('import-profiles-picked-summary')),
+          findsOneWidget,
+        );
+        expect(find.textContaining('1 profile'), findsOneWidget);
+
+        await t.tap(find.byKey(const Key('import-profiles-submit')));
+      },
+    );
+
+    // Dialog closed, result matches the paste-path outcome.
+    expect(find.byKey(const Key('import-profiles-dialog')), findsNothing);
+    expect(result, isNotNull);
+    expect(result!.added, 1);
+
+    final loaded = await store.load();
+    expect(loaded, hasLength(1));
+    expect(loaded.single.host, 'nas.example');
   });
 
   testWidgets('valid PWA-envelope JSON imports and closes the dialog',
@@ -79,6 +191,7 @@ void main() {
       store: store,
       interact: (t) async {
         expect(find.byKey(const Key('import-profiles-dialog')), findsOneWidget);
+        await _expandPasteDisclosure(t);
 
         const validJson = '''
 {
@@ -120,6 +233,7 @@ void main() {
       store: store,
       interact: (t) async {
         expect(find.byKey(const Key('import-profiles-dialog')), findsOneWidget);
+        await _expandPasteDisclosure(t);
 
         await t.enterText(
           find.byKey(const Key('import-profiles-input')),
@@ -160,6 +274,7 @@ void main() {
       store: store,
       secrets: secrets,
       interact: (t) async {
+        await _expandPasteDisclosure(t);
         // The vault payload here is intentionally not decryptable — we only
         // care that detection works and the prompt appears, then we cancel.
         const envelopeWithVault = '''
