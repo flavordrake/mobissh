@@ -474,3 +474,87 @@ class ProfilesStore {
     }
   }
 }
+
+/// Decrypted credentials for a saved profile, ready to drop into the connect
+/// form / dartssh2 client. All fields are optional — callers handle null.
+///
+/// `privateKey` is the PEM-encoded key bytes (string form so callers can
+/// utf8-encode it before handing to dartssh2's `SSHKeyPair.fromPem`).
+class ProfileCredentials {
+  ProfileCredentials({this.password, this.privateKey, this.passphrase});
+  final String? password;
+  final String? privateKey;
+  final String? passphrase;
+
+  bool get isEmpty =>
+      password == null && privateKey == null && passphrase == null;
+}
+
+/// Load decrypted credentials for [profile] from [secrets].
+///
+/// Resolves the bug in #519: a `key`-auth profile imported from the PWA has
+/// its private-key blob stored under `profile.keyVaultId` (NOT `vaultId`).
+/// Prior to this helper, the connect path only read `vaultId`, so the key
+/// blob sat unused in flutter_secure_storage and the user was re-prompted.
+///
+/// Shape contract (mirrors PWA `src/modules/profiles.ts:450-493`):
+///   `vault.encrypted[vaultId]`    → `{password?, privateKey?, passphrase?}`
+///   `vault.encrypted[keyVaultId]` → `{data: <PEM>, passphrase?}`
+///
+/// The keyVaultId entry's `data` field holds the PEM-encoded private key.
+/// A legacy `privateKey` field is also accepted to tolerate alternative
+/// import paths. The keyVaultId entry's passphrase takes precedence over
+/// the vaultId entry's passphrase for a `key`-auth profile.
+Future<ProfileCredentials> loadProfileCredentials(
+  SecretsStore secrets,
+  SavedProfile profile,
+) async {
+  String? password;
+  String? privateKey;
+  String? passphrase;
+
+  // Pass 1: vaultId entry (typically `{password, passphrase?}` shape for a
+  // password-auth profile; may also carry a privateKey for legacy profiles
+  // that bundled key + password into one entry).
+  final vaultId = profile.vaultId;
+  if (vaultId != null && vaultId.isNotEmpty) {
+    final entry = await secrets.read(vaultId);
+    if (entry != null) {
+      final pw = entry['password'];
+      if (pw is String && pw.isNotEmpty) password = pw;
+      final pk = entry['privateKey'];
+      if (pk is String && pk.isNotEmpty) privateKey = pk;
+      final pp = entry['passphrase'];
+      if (pp is String && pp.isNotEmpty) passphrase = pp;
+    }
+  }
+
+  // Pass 2: keyVaultId entry (PWA shape: `{data: <PEM>, passphrase?}`).
+  // Overrides any privateKey / passphrase pulled from the vaultId entry,
+  // since this is the key-specific entry by design.
+  final keyVaultId = profile.keyVaultId;
+  if (keyVaultId != null && keyVaultId.isNotEmpty) {
+    final entry = await secrets.read(keyVaultId);
+    if (entry != null) {
+      // PWA canonical key field is `data` (see profiles.ts:482). Fall back
+      // to `privateKey` for resilience against alternative import paths.
+      final data = entry['data'];
+      if (data is String && data.isNotEmpty) {
+        privateKey = data;
+      } else {
+        final legacy = entry['privateKey'];
+        if (legacy is String && legacy.isNotEmpty) {
+          privateKey = legacy;
+        }
+      }
+      final pp = entry['passphrase'];
+      if (pp is String && pp.isNotEmpty) passphrase = pp;
+    }
+  }
+
+  return ProfileCredentials(
+    password: password,
+    privateKey: privateKey,
+    passphrase: passphrase,
+  );
+}
