@@ -61,17 +61,40 @@ class MobisshApp extends StatelessWidget {
 /// session collection. Multi-session (#511): show the terminal screen as
 /// soon as any session reaches `connected`. The terminal screen itself
 /// handles the tab strip and per-session views.
-class RootRouter extends ConsumerWidget {
+class RootRouter extends ConsumerStatefulWidget {
   const RootRouter({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RootRouter> createState() => _RootRouterState();
+}
+
+class _RootRouterState extends ConsumerState<RootRouter> {
+  @override
+  Widget build(BuildContext context) {
     // Touch the keepalive controller so it attaches to the SSH session
     // controller at app start; this is what starts/stops the foreground
     // service in response to session lifecycle changes (#512). It watches
     // the active-session shim — multi-session-wide handover is the follow-up
     // tracked in the #512 TODO.
     ref.watch(keepaliveControllerProvider);
+
+    // Phase 4 (#524) lifecycle hook: on `resumed`, force a rebuild so
+    // session UI repaints from the existing controller state without
+    // reconnecting. The SshSessionController instances live in this isolate
+    // and keep their `_client` references across pause/resume; the
+    // foreground service (started by KeepaliveController on `connected`)
+    // keeps the Dart isolate from being frozen during Doze.
+    ref.listen<AppLifecycleState>(lifecycleProvider, (prev, next) {
+      if (!mounted) return;
+      if (next == AppLifecycleState.resumed) {
+        // The keepalive controller already kept the SSH socket alive (#517
+        // reconnect-on-transient + #512 foreground service). On resume we
+        // just need to repaint — Riverpod watchers will replay the current
+        // session data automatically because we trigger a setState here.
+        setState(() {});
+      }
+    });
+
     final entries = ref.watch(sessionsProvider).entries;
     for (final e in entries) {
       // Watch each session's data so we re-route when any of them connects.
