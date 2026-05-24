@@ -496,6 +496,21 @@ class SshSessionController {
     ));
   }
 
+  /// Drive the host-key verification path directly, bypassing the real SSH
+  /// handshake. Returns the same `Future<bool>` the dartssh2 verify callback
+  /// awaits: it resolves once [acceptHostKey] / [rejectHostKey] is called (or
+  /// immediately `true` for an already-trusted key). Exists so the IPC
+  /// round-trip (#536) can be exercised without a live socket.
+  @visibleForTesting
+  Future<bool> verifyHostKeyForTest(
+    SshConnectParams params,
+    String type,
+    Uint8List fingerprint,
+  ) {
+    _lastParams = params;
+    return _onVerifyHostKey(params, type, fingerprint);
+  }
+
   // --- private helpers ---
 
   void _emit(SshSessionData next) {

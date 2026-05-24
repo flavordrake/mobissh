@@ -100,6 +100,20 @@ class SessionHost {
       case SshRequestSnapshotCommand():
         final s = _sessions[cmd.sessionId];
         if (s != null) _emitSnapshot(cmd.sessionId, s);
+      case SshHostKeyDecisionCommand():
+        _handleHostKeyDecision(cmd);
+    }
+  }
+
+  void _handleHostKeyDecision(SshHostKeyDecisionCommand cmd) {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) return;
+    // The controller owns the pending Completer + trust-on-first-use store;
+    // forward the user's decision so it can resolve `onVerifyHostKey`.
+    if (cmd.accepted) {
+      hosted.controller.acceptHostKey();
+    } else {
+      hosted.controller.rejectHostKey();
     }
   }
 
@@ -121,6 +135,7 @@ class SessionHost {
         hosted.metrics.lastReconnectAtMs =
             DateTime.now().millisecondsSinceEpoch;
       }
+      _maybeEmitHostKeyChallenge(cmd.sessionId, hosted, data);
       _emitStateData(cmd.sessionId, data);
     });
 
@@ -156,6 +171,31 @@ class SessionHost {
       await hosted.controller.dispose();
     } catch (_) {/* ignore */}
     _gateway.send(SshClosedEvent(sessionId: sessionId).toJson());
+  }
+
+  /// Emit a host-key challenge to the UI when the controller surfaces a fresh
+  /// untrusted key (#536). Deduped per pending fingerprint so a single
+  /// awaitingHostKey transition produces exactly one challenge — repeated
+  /// state emits (e.g. banner updates) don't re-prompt.
+  void _maybeEmitHostKeyChallenge(
+    String sessionId,
+    _HostedSession hosted,
+    SshSessionData data,
+  ) {
+    final pending = data.pendingHostKey;
+    if (pending == null) {
+      hosted.challengedFingerprint = null;
+      return;
+    }
+    if (hosted.challengedFingerprint == pending.fingerprint) return;
+    hosted.challengedFingerprint = pending.fingerprint;
+    _gateway.send(SshHostKeyChallengeEvent(
+      sessionId: sessionId,
+      host: pending.host,
+      port: pending.port,
+      keyType: pending.keyType,
+      fingerprint: pending.fingerprint,
+    ).toJson());
   }
 
   void _emitState(String sessionId, SshSessionController controller) {
@@ -292,6 +332,10 @@ class _HostedSession {
   final SshSessionController controller;
   StreamSubscription<SshSessionData>? stateSub;
   final SessionMetrics metrics = SessionMetrics();
+
+  /// Fingerprint of the host-key challenge already forwarded to the UI, so a
+  /// single awaitingHostKey transition emits exactly one challenge (#536).
+  String? challengedFingerprint;
   final BytesBuilder _scrollback = BytesBuilder(copy: false);
 
   /// Append raw bytes to the scrollback cache and cap the buffer at ~4KB
