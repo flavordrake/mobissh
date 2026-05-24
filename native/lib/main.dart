@@ -6,11 +6,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'diagnostics/crash_reporter.dart';
 import 'ssh/ssh_session.dart';
 import 'state/connection_providers.dart';
+import 'state/keepalive_providers.dart';
 import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
@@ -26,6 +28,9 @@ void main() {
     await CrashReporter.bootstrap();
     // Fire-and-forget — don't block first paint on bridge reachability.
     unawaited(CrashReporter.uploadPending());
+    // Open the isolate port so the foreground task isolate can send data
+    // back to the UI (#512). Cheap, idempotent — fine to always call.
+    FlutterForegroundTask.initCommunicationPort();
     runApp(const ProviderScope(child: MobisshApp()));
   });
 }
@@ -58,6 +63,12 @@ class RootRouter extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Touch the keepalive controller so it attaches to the SSH session
+    // controller at app start; this is what starts/stops the foreground
+    // service in response to session lifecycle changes (#512). It watches
+    // the active-session shim — multi-session-wide handover is the follow-up
+    // tracked in the #512 TODO.
+    ref.watch(keepaliveControllerProvider);
     final entries = ref.watch(sessionsProvider).entries;
     for (final e in entries) {
       // Watch each session's data so we re-route when any of them connects.

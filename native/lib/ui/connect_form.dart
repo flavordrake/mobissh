@@ -24,6 +24,7 @@ import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_list.dart';
+import 'settings_panel.dart';
 
 enum _AuthKind { password, key }
 
@@ -183,6 +184,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               label: const Text('Disconnect'),
             ),
           const SizedBox(height: 8),
+          const SettingsPanel(),
           const DiagnosticsSection(),
         ],
       ),
