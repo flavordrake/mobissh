@@ -47,6 +47,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   _AuthKind _authKind = _AuthKind.password;
   bool _busy = false;
 
+  /// Last saved profile applied to the form, if any. Carries the human title
+  /// through to the session (#518). Cleared (effectively) by drift-checking
+  /// host/port/username at submit time so the title doesn't lie about the
+  /// connection target.
+  SavedProfile? _appliedProfile;
+
   @override
   void dispose() {
     _hostCtrl.dispose();
@@ -241,9 +247,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // Multi-session (#511): route through the sessions notifier so we
       // dedupe by host:port:user and create a per-session controller. If a
       // matching session already exists, addOrActivate returns it without
-      // reconnecting (acceptance bullet 4).
-      final entry =
-          ref.read(sessionsProvider.notifier).addOrActivate(params);
+      // reconnecting (acceptance bullet 4). The optional title carries the
+      // saved profile's display name into the session (#518).
+      final title = _profileTitleForCurrentForm();
+      final entry = ref
+          .read(sessionsProvider.notifier)
+          .addOrActivate(params, title: title);
       // Only fire connect for entries that haven't been kicked off yet —
       // idle/failed/disconnected states are safe to re-drive; connected/
       // connecting/authenticating are no-ops inside the controller itself.
@@ -267,6 +276,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// (#519).
   void _applyProfileToForm(SavedProfile profile) {
     setState(() {
+      _appliedProfile = profile;
       _hostCtrl.text = profile.host;
       _portCtrl.text = profile.port.toString();
       _userCtrl.text = profile.username;
@@ -279,6 +289,22 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     if (profile.vaultId != null || profile.keyVaultId != null) {
       unawaited(_prefillFromVault(profile));
     }
+  }
+
+  /// Return the saved profile title to attach to the new session — but only
+  /// if the user hasn't drifted away from the applied profile's host/port/
+  /// username. If they've edited anything, return null so the session falls
+  /// back to `username@host:port` (#518).
+  String? _profileTitleForCurrentForm() {
+    final p = _appliedProfile;
+    if (p == null) return null;
+    final host = _hostCtrl.text.trim();
+    final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
+    final username = _userCtrl.text.trim();
+    if (p.host == host && p.port == port && p.username == username) {
+      return p.title;
+    }
+    return null;
   }
 
   Future<void> _prefillFromVault(SavedProfile profile) async {
