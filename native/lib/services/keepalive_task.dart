@@ -1,14 +1,13 @@
-// Background keep-alive for SSH sessions on Android (#512).
+// Background keep-alive for SSH sessions on Android (#512, #531).
 //
 // When a session enters the `connected` state, start a foreground service so
 // Android won't kill the process while the user swaps to another app. The
 // service is stopped as soon as no session is connected.
 //
-// Single-session for now. TODO(#511): once multi-session lands, the
-// `KeepaliveController` needs to track a *count* of connected sessions and
-// only stop the service when the count drops to zero. The plumbing here is
-// already counted-based (see `_connectedCount`) but only one session can be
-// tracked through `attach()` until the session collection refactor lands.
+// #531: the task handler that runs inside the foreground task's Dart isolate
+// also owns a `SessionHost` so the underlying `SSHClient` instances live in
+// the task isolate, not the UI isolate. If Android kills the UI isolate the
+// socket survives; the UI proxy rebinds on resume.
 
 import 'dart:async';
 
@@ -16,6 +15,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../ssh/ssh_session.dart';
+import 'session_host.dart';
+import 'task_ssh_gateway.dart';
 
 /// Top-level entry point for the foreground task isolate. Must be
 /// `@pragma('vm:entry-point')` so the AOT compiler keeps it.
@@ -24,15 +25,46 @@ void startKeepaliveCallback() {
   FlutterForegroundTask.setTaskHandler(KeepaliveTaskHandler());
 }
 
-/// Minimal task handler — the wake lock on the foreground task is enough to
-/// keep the Dart isolate (and the SSH socket on it) alive. We don't do any
-/// periodic work; the running socket pump is the heartbeat.
+/// Task handler that runs inside the foreground task's Dart isolate (#531).
+///
+/// Hosts a [SessionHost] bound to a [TaskSideForegroundGateway]. Inbound
+/// payloads arrive via [onReceiveData] (delivered by `flutter_foreground_task`
+/// from the UI's `sendDataToTask` calls) and are routed into the gateway's
+/// transport. Outbound payloads (state, output, snapshots) flow back via
+/// `FlutterForegroundTask.sendDataToMain` inside the gateway's `send`.
 class KeepaliveTaskHandler extends TaskHandler {
   DateTime? startedAt;
+
+  /// Factory for the per-handler `SessionHost`. Production uses the default
+  /// which constructs a real host wired to FFT static methods. Tests inject
+  /// a stub host bound to a [StubFftTransport] so the wire contract can be
+  /// exercised without binding to platform channels.
+  KeepaliveTaskHandler({SessionHostBuilder? hostBuilder})
+      : _hostBuilder = hostBuilder ?? _defaultHostBuilder;
+
+  final SessionHostBuilder _hostBuilder;
+  TaskSideFftTransport? _transport;
+  SessionHost? _host;
+
+  /// Visible for testing — exposes the host owned by this handler so widget
+  /// tests can drive it through the gateway pair.
+  @visibleForTesting
+  SessionHost? get hostForTest => _host;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     startedAt = timestamp;
+    final transport = TaskSideFftTransport();
+    final gateway = TaskSideForegroundGateway(transport: transport);
+    _transport = transport;
+    _host = _hostBuilder(gateway);
+  }
+
+  @override
+  void onReceiveData(Object data) {
+    // Forward the UI-side payload into the gateway transport. The gateway
+    // coerces shape; the host dispatches the command.
+    _transport?.deliver(data);
   }
 
   @override
@@ -44,8 +76,25 @@ class KeepaliveTaskHandler extends TaskHandler {
   @override
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
     startedAt = null;
+    final host = _host;
+    _host = null;
+    _transport = null;
+    if (host != null) {
+      // Tear down all hosted sessions cleanly (closes SSHClient + cancels
+      // state subs). Errors here are swallowed — the isolate is going away.
+      try {
+        await host.dispose();
+      } catch (_) {/* ignore */}
+    }
   }
 }
+
+/// Factory injected for tests so a stub `SessionHost` can be hooked into
+/// the [KeepaliveTaskHandler] without binding to FFT statics.
+typedef SessionHostBuilder = SessionHost Function(TaskSshGateway gateway);
+
+SessionHost _defaultHostBuilder(TaskSshGateway gateway) =>
+    SessionHost(gateway: gateway);
 
 /// Thin wrapper over the static `FlutterForegroundTask` API. Lets us inject a
 /// fake in tests so we don't bind to platform method channels.
