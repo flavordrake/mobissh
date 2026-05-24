@@ -1,10 +1,15 @@
-// Riverpod providers exposing the xterm Terminal model + SshShell per-session.
+// Riverpod providers exposing the xterm Terminal model per-session.
 //
 // Phase 2.A (#501): one Terminal per `connected` lifecycle.
 // Phase 4 (#511): keyed by sessionId. Each entry in `sessionsProvider` owns
 // its own Terminal (created up-front in `SessionsNotifier.addOrActivate`).
-// The shell provider is a `FutureProvider.family` keyed by sessionId so each
-// session opens an independent PTY against its own SSHClient.
+// #533: per-session PTY output now flows from [SshSessionProxy.output] →
+// `Terminal.write` directly inside `SessionsNotifier.addOrActivate`. The
+// in-UI `SshShell` path is no longer used in production because the
+// `SSHClient` lives in the task isolate. The shell-opener provider stays as
+// a test seam — widget tests that want to drive byte sequences into the
+// terminal through a fake transport still register one — but production
+// resolves `sshShellProvider` to null.
 //
 // Out of scope:
 //   - Terminal model persistence across reconnects (Phase 2.D)
@@ -17,11 +22,10 @@ import '../ssh/ssh_session.dart';
 import '../ssh/ssh_shell.dart';
 import 'sessions.dart';
 
-/// Function signature for opening a PTY-backed shell transport. The
-/// production implementation reads the per-session `SSHClient` off the
-/// matching `SessionEntry` controller and calls `client.shell(...)`. Widget
-/// tests override this provider with a closure that returns a fake transport
-/// without needing a real session.
+/// Function signature for opening a PTY-backed shell transport. Production
+/// no longer uses this path (#533) — PTY bytes arrive across the task
+/// isolate via [SshSessionProxy.output]. Widget tests that need to push
+/// bytes through a fake transport keep using this seam.
 typedef SshShellOpener = Future<SshShellTransport?> Function(
   Ref ref,
   String sessionId,
@@ -33,21 +37,15 @@ Future<SshShellTransport?> _defaultShellOpener(
   String sessionId,
   Terminal terminal,
 ) async {
-  final entries = ref.read(sessionsProvider).entries;
-  SshSessionController? controller;
-  for (final e in entries) {
-    if (e.id == sessionId) {
-      controller = e.controller;
-      break;
-    }
-  }
-  final client = controller?.client;
-  if (client == null) return null;
-  return openSshShellTransport(client, terminal);
+  // Production path: PTY bytes flow through the proxy → terminal subscription
+  // wired in `SessionsNotifier.addOrActivate`. No local SSHClient to open a
+  // shell on.
+  return null;
 }
 
 /// Test seam: override in `ProviderScope.overrides` to inject a fake
-/// transport. Production sticks with the default (real `client.shell()`).
+/// transport. Production returns null (#533); the PTY pipe lives in the
+/// task isolate.
 final sshShellOpenerProvider =
     Provider<SshShellOpener>((ref) => _defaultShellOpener);
 
@@ -64,23 +62,23 @@ final terminalProvider = Provider.family<Terminal, String>((ref, sessionId) {
   return Terminal(maxLines: 5000);
 });
 
-/// Opens (or returns the existing) PTY shell for [sessionId].
+/// Opens (or returns the existing) PTY shell for [sessionId] via the test
+/// seam. Production resolves to null (#533) — the task isolate owns the
+/// `SSHClient` and PTY bytes flow across the gateway to the proxy.
 ///
-/// Watches the per-session controller's data stream so the shell is created
-/// when the session reaches `connected` and torn down when it leaves.
+/// Watches the per-session proxy's data stream so the shell is created
+/// when the session reaches `connected` (in tests).
 final sshShellProvider =
     FutureProvider.family<SshShell?, String>((ref, sessionId) async {
   final entries = ref.watch(sessionsProvider).entries;
-  SshSessionController? controller;
-  Terminal? terminal;
+  SessionEntry? entry;
   for (final e in entries) {
     if (e.id == sessionId) {
-      controller = e.controller;
-      terminal = e.terminal;
+      entry = e;
       break;
     }
   }
-  if (controller == null || terminal == null) return null;
+  if (entry == null) return null;
 
   // Watch session data — provider rebuilds when state transitions.
   final dataStream = ref.watch(_sessionDataStreamProvider(sessionId));
@@ -89,10 +87,10 @@ final sshShellProvider =
     return null;
   }
   final opener = ref.watch(sshShellOpenerProvider);
-  final transport = await opener(ref, sessionId, terminal);
+  final transport = await opener(ref, sessionId, entry.terminal);
   if (transport == null) return null;
   final shell = SshShell(transport);
-  shell.attach(terminal);
+  shell.attach(entry.terminal);
 
   ref.onDispose(shell.dispose);
   return shell;
@@ -103,30 +101,30 @@ final sshShellProvider =
 final _sessionDataStreamProvider =
     StreamProvider.family<SshSessionData, String>((ref, sessionId) async* {
   final entries = ref.watch(sessionsProvider).entries;
-  SshSessionController? controller;
+  SessionEntry? entry;
   for (final e in entries) {
     if (e.id == sessionId) {
-      controller = e.controller;
+      entry = e;
       break;
     }
   }
-  if (controller == null) return;
-  yield controller.data;
-  yield* controller.stream;
+  if (entry == null) return;
+  yield entry.proxy.data;
+  yield* entry.proxy.stream;
 });
 
 /// Public per-session data accessor for the UI (tab strip + terminal screen).
 final sessionDataProvider =
     StreamProvider.family<SshSessionData, String>((ref, sessionId) async* {
   final entries = ref.watch(sessionsProvider).entries;
-  SshSessionController? controller;
+  SessionEntry? entry;
   for (final e in entries) {
     if (e.id == sessionId) {
-      controller = e.controller;
+      entry = e;
       break;
     }
   }
-  if (controller == null) return;
-  yield controller.data;
-  yield* controller.stream;
+  if (entry == null) return;
+  yield entry.proxy.data;
+  yield* entry.proxy.stream;
 });

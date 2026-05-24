@@ -11,23 +11,16 @@
 // terminal frame that never arrives, matching the keepalive-toggle test
 // pattern.
 
-import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
-import 'package:mobissh/ssh/ssh_session.dart';
+import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
 import 'package:mobissh/ui/session_menu.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-SshSessionController _stubController() => SshSessionController(
-      socketOpener: (host, port, {timeout}) =>
-          Future<SSHSocket>.delayed(const Duration(days: 1), () {
-        throw Exception('not used in widget tests');
-      }),
-    );
 
 Widget _host({required ProviderContainer container}) {
   return UncontrolledProviderScope(
@@ -49,11 +42,16 @@ Widget _host({required ProviderContainer container}) {
 }
 
 ProviderContainer _makeContainer() {
-  return ProviderContainer(
+  final pair = InMemoryGatewayPair();
+  final container = ProviderContainer(
     overrides: [
-      sshSessionControllerFactoryProvider.overrideWithValue(_stubController),
+      taskSshGatewayProvider.overrideWithValue(pair.uiSide),
     ],
   );
+  addTearDown(() async {
+    await pair.dispose();
+  });
+  return container;
 }
 
 Future<void> _pumpFrames(WidgetTester tester, {int count = 8}) async {

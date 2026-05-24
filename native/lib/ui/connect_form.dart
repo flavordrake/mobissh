@@ -186,7 +186,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           if (data.state == SshSessionState.connected)
             OutlinedButton.icon(
               onPressed: () =>
-                  ref.read(sshSessionControllerProvider).disconnect(),
+                  ref.read(sshSessionProxyProvider).disconnect(),
               icon: const Icon(Icons.link_off),
               label: const Text('Disconnect'),
             ),
@@ -245,18 +245,23 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     setState(() => _busy = true);
     try {
       // Multi-session (#511): route through the sessions notifier so we
-      // dedupe by host:port:user and create a per-session controller. If a
+      // dedupe by host:port:user and create a per-session proxy. If a
       // matching session already exists, addOrActivate returns it without
       // reconnecting (acceptance bullet 4). The optional title carries the
       // saved profile's display name into the session (#518).
+      //
+      // #533: connect now dispatches across the task gateway via the per-
+      // session [SshSessionProxy] — the underlying `SshSessionController`
+      // lives in the task isolate, not the UI.
       final title = _profileTitleForCurrentForm();
       final entry = ref
           .read(sessionsProvider.notifier)
           .addOrActivate(params, title: title);
       // Only fire connect for entries that haven't been kicked off yet —
       // idle/failed/disconnected states are safe to re-drive; connected/
-      // connecting/authenticating are no-ops inside the controller itself.
-      await entry.controller.connect(params);
+      // connecting/authenticating are no-ops inside the task-side controller
+      // itself.
+      await entry.proxy.connect(params);
       // Once we've proven we have network reachability, fire-and-forget a
       // crash upload sweep. Tailscale being down is the common case at boot
       // and the second-chance path matters more than blocking the UI.
@@ -338,11 +343,17 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {
     final accepted = await showHostKeyDialog(context, pending: pending);
-    final controller = ref.read(sshSessionControllerProvider);
+    // #533: host-key over-IPC is a follow-up — the proxy's accept/reject
+    // are no-ops today because the gateway envelope contract doesn't carry
+    // `pendingHostKey` state. The trust-on-first-use cache in the task-side
+    // controller handles cached fingerprints; first-time prompts surface
+    // through the dialog but the decision currently round-trips only through
+    // the in-process host. See [SshSessionProxy.acceptHostKey].
+    final proxy = ref.read(sshSessionProxyProvider);
     if (accepted) {
-      controller.acceptHostKey();
+      proxy.acceptHostKey();
     } else {
-      controller.rejectHostKey();
+      proxy.rejectHostKey();
     }
   }
 }

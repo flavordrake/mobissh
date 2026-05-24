@@ -126,7 +126,7 @@ class _SessionRow extends ConsumerWidget {
               leading: const Icon(Icons.link_off),
               title: const Text('Disconnect'),
               onTap: () {
-                entry.controller.disconnect();
+                entry.proxy.disconnect();
                 Navigator.of(ctx).pop();
               },
             ),

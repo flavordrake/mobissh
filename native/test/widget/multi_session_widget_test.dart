@@ -4,13 +4,17 @@
 // Two sessions in the collection → tapping the AppBar menu icon opens a
 // bottom sheet listing both sessions. Tapping the inactive one switches
 // `activeSessionId` and dismisses the menu.
+//
+// #533: sessions are proxy-backed; tests override `taskSshGatewayProvider`
+// with an in-memory gateway pair so the proxy + notifier wiring is exercised
+// end-to-end without binding to FFT statics.
 
-import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
-import 'package:mobissh/ssh/ssh_session.dart';
+import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/state/terminal_providers.dart';
 import 'package:mobissh/ui/terminal_screen.dart';
@@ -18,21 +22,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_ssh_shell_transport.dart';
 
-SshSessionController _stubController() => SshSessionController(
-      socketOpener: (host, port, {timeout}) =>
-          Future<SSHSocket>.delayed(const Duration(days: 1), () {
-        throw Exception('not used in widget tests');
-      }),
-    );
-
 ProviderContainer _makeContainer() {
-  return ProviderContainer(
+  final pair = InMemoryGatewayPair();
+  final container = ProviderContainer(
     overrides: [
-      sshSessionControllerFactoryProvider.overrideWithValue(_stubController),
+      taskSshGatewayProvider.overrideWithValue(pair.uiSide),
       sshShellOpenerProvider.overrideWithValue(
           (ref, sessionId, terminal) async => FakeSshShellTransport()),
     ],
   );
+  addTearDown(() async {
+    await pair.dispose();
+  });
+  return container;
 }
 
 Future<void> _pumpFrames(WidgetTester tester, {int count = 8}) async {

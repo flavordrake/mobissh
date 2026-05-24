@@ -1,16 +1,23 @@
-// Unit tests for the background keep-alive controller (#512).
+// Unit tests for the background keep-alive controller (#512, #533).
 //
 // We never call the real `FlutterForegroundTask` here — instead the
 // `KeepaliveController` is given a `FakeKeepaliveGateway` and we assert that
 // start/stop are called in response to SSH session lifecycle changes and the
 // user-toggle.
+//
+// #533: `KeepaliveController.attach` now accepts either an
+// `SshSessionController` (legacy) or an `SshSessionProxy` (UI consumer path).
+// The proxy-based fixture lives at the bottom of the file.
 
 import 'dart:async';
 
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/keepalive_task.dart';
+import 'package:mobissh/services/session_messages.dart';
+import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_session.dart';
+import 'package:mobissh/ssh/ssh_session_proxy.dart';
 
 class FakeKeepaliveGateway implements KeepaliveGateway {
   bool _initialized = false;
@@ -287,6 +294,90 @@ void main() {
       handler.onRepeatEvent(t); // no-op, just don't throw
       await handler.onDestroy(t, false);
       expect(handler.startedAt, isNull);
+    });
+  });
+
+  group('KeepaliveController (proxy attach — #533)', () {
+    test('starts service when proxy emits connected state', () async {
+      final fakeGateway = FakeKeepaliveGateway();
+      final pair = InMemoryGatewayPair();
+      addTearDown(pair.dispose);
+      final controller = KeepaliveController(gateway: fakeGateway);
+
+      final proxy =
+          SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
+      addTearDown(proxy.dispose);
+      controller.attach(proxy);
+
+      // Push a `connected` state event from the task side.
+      pair.taskSide.send(SshStateEvent(
+        sessionId: 'sid',
+        state: SshSessionState.connected.name,
+      ).toJson());
+      await _drain();
+
+      expect(fakeGateway.calls.first, 'init');
+      expect(fakeGateway.calls.any((c) => c.startsWith('start:')), isTrue);
+      expect(await fakeGateway.isRunningService, isTrue);
+      expect(controller.connectedCount, 1);
+
+      await controller.dispose();
+    });
+
+    test('stops service when proxy emits disconnected', () async {
+      final fakeGateway = FakeKeepaliveGateway();
+      final pair = InMemoryGatewayPair();
+      addTearDown(pair.dispose);
+      final controller = KeepaliveController(gateway: fakeGateway);
+
+      final proxy =
+          SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
+      addTearDown(proxy.dispose);
+      controller.attach(proxy);
+
+      pair.taskSide.send(SshStateEvent(
+        sessionId: 'sid',
+        state: SshSessionState.connected.name,
+      ).toJson());
+      await _drain();
+      expect(await fakeGateway.isRunningService, isTrue);
+
+      pair.taskSide.send(SshClosedEvent(sessionId: 'sid').toJson());
+      await _drain();
+      expect(await fakeGateway.isRunningService, isFalse);
+      expect(controller.connectedCount, 0);
+
+      await controller.dispose();
+    });
+
+    test('reconnecting state holds the service for proxies', () async {
+      final fakeGateway = FakeKeepaliveGateway();
+      final pair = InMemoryGatewayPair();
+      addTearDown(pair.dispose);
+      final controller = KeepaliveController(gateway: fakeGateway);
+
+      final proxy =
+          SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
+      addTearDown(proxy.dispose);
+      controller.attach(proxy);
+
+      pair.taskSide.send(SshStateEvent(
+        sessionId: 'sid',
+        state: SshSessionState.connected.name,
+      ).toJson());
+      await _drain();
+      expect(await fakeGateway.isRunningService, isTrue);
+
+      pair.taskSide.send(SshStateEvent(
+        sessionId: 'sid',
+        state: SshSessionState.reconnecting.name,
+      ).toJson());
+      await _drain();
+      expect(await fakeGateway.isRunningService, isTrue,
+          reason: 'service must stay running across transient reconnects');
+      expect(controller.connectedCount, 1);
+
+      await controller.dispose();
     });
   });
 }

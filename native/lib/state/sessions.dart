@@ -1,8 +1,15 @@
 // Multi-session collection (#511).
 //
-// Each connection lives in its own [SessionEntry] (controller + terminal +
+// Each connection lives in its own [SessionEntry] (proxy + terminal +
 // metadata). [SessionsNotifier] owns the map keyed by session id and tracks
 // the active session.
+//
+// #533: the per-session `SshSessionController` instance was removed from
+// SessionEntry. Sessions are now driven through [SshSessionProxy], which
+// forwards commands across [TaskSshGateway] to a task-isolate-hosted
+// `SessionHost`. The proxy's `output` stream is subscribed to each entry's
+// `Terminal.write(...)` so PTY bytes flow UI-side without an in-UI
+// `SSHClient`.
 //
 // Session id format matches the PWA convention:
 //   `${host}:${port}:${username}:${createdAtMs}`
@@ -10,15 +17,21 @@
 // lets us differentiate two attempts to the same target across time while the
 // `host:port:username` prefix powers dedup (issue #511 acceptance bullet 1).
 
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
+import '../ssh/ssh_session_proxy.dart';
+import 'session_host_providers.dart';
 
 /// One row in the session collection.
 ///
-/// Holds the per-session controller + terminal model. Hidden sessions stay
+/// Holds the per-session proxy + terminal model. Hidden sessions stay
 /// alive in the widget tree (rendered through `IndexedStack`) so their
 /// scrollback continues to fill in the background.
 class SessionEntry {
@@ -27,7 +40,7 @@ class SessionEntry {
     required this.host,
     required this.port,
     required this.username,
-    required this.controller,
+    required this.proxy,
     required this.terminal,
     this.title,
   });
@@ -36,8 +49,17 @@ class SessionEntry {
   final String host;
   final int port;
   final String username;
-  final SshSessionController controller;
+
+  /// UI-side proxy. Forwards commands (`connect`, `disconnect`, `sendInput`,
+  /// `sendResize`) across [TaskSshGateway] and exposes a [data] snapshot +
+  /// state [stream] mirrored from the task isolate's controller.
+  final SshSessionProxy proxy;
+
   final Terminal terminal;
+
+  /// Subscription bridging proxy PTY output → terminal write. Cancelled on
+  /// close.
+  StreamSubscription<Uint8List>? outputSub;
 
   /// Optional human-friendly title from the saved profile (PWA `profile.title`
   /// mirror). When set, it's preferred over `username@host:port` for display
@@ -95,19 +117,23 @@ class SessionsState {
 }
 
 /// Factory injected for tests so they can substitute a controller whose
-/// `connect()` is a no-op (no real network IO).
+/// `connect()` is a no-op (no real network IO). Retained for the task-side
+/// `SessionHost`'s own factory wiring (#533) — UI-side construction no longer
+/// uses this factory directly because sessions are driven through
+/// [SshSessionProxy], not an in-UI controller.
 typedef SshSessionControllerFactory = SshSessionController Function();
 
 SshSessionController _defaultControllerFactory() => SshSessionController();
 
 /// Test seam — override in `ProviderScope.overrides` to inject a stub
 /// factory. Production uses [_defaultControllerFactory] which creates a real
-/// controller with the default socket opener.
+/// controller with the default socket opener. Read by tests that wire a
+/// `SessionHost` directly; UI consumers no longer touch it (#533).
 final sshSessionControllerFactoryProvider =
     Provider<SshSessionControllerFactory>((ref) => _defaultControllerFactory);
 
 /// Owns the multi-session collection. Mutations are synchronous; SSH connect
-/// runs against the per-entry controller after `addOrActivate` returns.
+/// runs against the per-entry proxy after `addOrActivate` returns.
 class SessionsNotifier extends Notifier<SessionsState> {
   @override
   SessionsState build() => const SessionsState();
@@ -127,7 +153,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
 
   /// Add a session for [params] or activate the existing entry that matches
   /// `host:port:username`. Returns the entry the caller should drive
-  /// (`controller.connect(...)` for a fresh entry; no-op for an existing one).
+  /// (`proxy.connect(...)` for a fresh entry; no-op for an existing one).
   ///
   /// The optional [title] carries the saved profile's display title (#518).
   /// When supplied, it becomes the entry's `label` (AppBar + session menu).
@@ -144,19 +170,43 @@ class SessionsNotifier extends Notifier<SessionsState> {
       state = state.copyWith(activeId: existing.id);
       return existing;
     }
-    final controller = ref.read(sshSessionControllerFactoryProvider).call();
-    final terminal = Terminal(maxLines: 5000);
     final id =
         '${params.host}:${params.port}:${params.username}:${DateTime.now().millisecondsSinceEpoch}';
+    final gateway = ref.read(taskSshGatewayProvider);
+    final proxy = SshSessionProxy(sessionId: id, gateway: gateway);
+    final terminal = Terminal(maxLines: 5000);
     final entry = SessionEntry(
       id: id,
       host: params.host,
       port: params.port,
       username: params.username,
-      controller: controller,
+      proxy: proxy,
       terminal: terminal,
       title: title,
     );
+    // Bridge proxy PTY output bytes → terminal.write. The subscription lives
+    // on the entry so close() can cancel it. Malformed UTF-8 is replaced
+    // rather than thrown (same policy as `SshShell.attach`).
+    entry.outputSub = proxy.output.listen((bytes) {
+      try {
+        terminal.write(utf8.decode(bytes, allowMalformed: true));
+      } catch (_) {
+        // Defensive — Terminal.write should not throw on valid UTF-8, but
+        // we never want a PTY byte to crash the session.
+      }
+    });
+    // Wire terminal keystrokes back through the proxy to the task isolate.
+    terminal.onOutput = (data) {
+      proxy.sendInput(Uint8List.fromList(utf8.encode(data)));
+    };
+    terminal.onResize = (width, height, pixelWidth, pixelHeight) {
+      proxy.sendResize(
+        width,
+        height,
+        pixelWidth: pixelWidth,
+        pixelHeight: pixelHeight,
+      );
+    };
     state = state.copyWith(
       entries: [...state.entries, entry],
       activeId: id,
@@ -174,7 +224,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
     }
   }
 
-  /// Remove an entry and dispose its controller + terminal. If the active
+  /// Remove an entry and dispose its proxy + terminal. If the active
   /// session was removed, pick the next remaining entry (or null) as active.
   void close(String id) {
     final remaining = <SessionEntry>[];
@@ -187,9 +237,12 @@ class SessionsNotifier extends Notifier<SessionsState> {
       }
     }
     if (removed == null) return;
-    // Dispose async work (controller.disconnect/close) without blocking the
+    // Dispose async work (proxy.disconnect/close) without blocking the
     // state update. Errors during teardown shouldn't wedge the UI.
-    removed.controller.dispose();
+    removed.outputSub?.cancel();
+    removed.outputSub = null;
+    removed.proxy.disconnect();
+    unawaited(removed.proxy.dispose());
     removed.terminal.onOutput = null;
     removed.terminal.onResize = null;
 

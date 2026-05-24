@@ -69,9 +69,14 @@ class _AuditRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final dataAsync = ref.watch(sessionDataProvider(entry.id));
-    final state = dataAsync.valueOrNull?.state ?? entry.controller.data.state;
-    final reconnectCount = entry.controller.reconnectAttempts;
-    final lastReconnect = entry.controller.lastReconnectAtMs;
+    // #533: state + reconnect counters now flow through the proxy's cached
+    // snapshot rather than an in-UI controller. The snapshot is refreshed by
+    // the task isolate's periodic snapshot tick + by `proxy.rebind()` on
+    // `AppLifecycleState.resumed`.
+    final snapshot = entry.proxy.snapshot;
+    final state = dataAsync.valueOrNull?.state ?? snapshot.state;
+    final reconnectCount = snapshot.reconnectCount;
+    final lastReconnect = snapshot.lastReconnectAtMs;
 
     return Padding(
       key: Key('audit-row-${entry.id}'),

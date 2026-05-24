@@ -1,4 +1,4 @@
-// Unit tests for the multi-session collection (#511).
+// Unit tests for the multi-session collection (#511, #533).
 //
 // Covers the SessionsNotifier contract:
 //   - addOrActivate creates a new entry with the PWA session-id format
@@ -6,30 +6,28 @@
 //   - setActive updates activeSessionId
 //   - close removes an entry and picks the next as active
 //
-// These are pure-state tests — no real SSH connect happens. The notifier's
-// controller factory is overridden with a stub controller that never
-// actually opens a socket.
+// These are pure-state tests — no real SSH connect happens. The notifier
+// constructs a per-session [SshSessionProxy] via [taskSshGatewayProvider];
+// tests override that with an in-memory gateway pair so commands round-trip
+// to a stub `SessionHost` without binding to platform channels (#533).
 
-import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
-import 'package:mobissh/ssh/ssh_session.dart';
+import 'package:mobissh/ssh/ssh_session_proxy.dart';
+import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 
-SshSessionController _stubController() => SshSessionController(
-      // Socket opener that never resolves — keeps the controller parked in
-      // idle for the lifetime of the test.
-      socketOpener: (host, port, {timeout}) =>
-          Future<SSHSocket>.delayed(const Duration(days: 1), () {
-        throw Exception('not used in unit tests');
-      }),
-    );
-
 ProviderContainer _makeContainer() {
-  return ProviderContainer(overrides: [
-    sshSessionControllerFactoryProvider.overrideWithValue(_stubController),
+  final pair = InMemoryGatewayPair();
+  final container = ProviderContainer(overrides: [
+    taskSshGatewayProvider.overrideWithValue(pair.uiSide),
   ]);
+  addTearDown(() async {
+    await pair.dispose();
+  });
+  return container;
 }
 
 SshConnectParams _params({
@@ -72,6 +70,15 @@ void main() {
       final state = c.read(sessionsProvider);
       expect(state.entries, hasLength(1));
       expect(state.activeId, entry.id);
+    });
+
+    test('addOrActivate constructs a SshSessionProxy per entry (#533)', () {
+      final c = _makeContainer();
+      addTearDown(c.dispose);
+      final entry =
+          c.read(sessionsProvider.notifier).addOrActivate(_params());
+      expect(entry.proxy, isA<SshSessionProxy>());
+      expect(entry.proxy.sessionId, entry.id);
     });
 
     test(
