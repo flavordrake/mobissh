@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../diagnostics/crash_reporter.dart';
+import 'connection_audit.dart';
 
 class DiagnosticsSection extends StatefulWidget {
   /// Allows tests to inject a fake share function so we don't open the real
@@ -124,6 +125,19 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
                     onPressed: _forceUpload,
                     icon: const Icon(Icons.cloud_upload_outlined),
                     label: const Text('Force upload pending crashes'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    key: const ValueKey('connection-audit-button'),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const ConnectionAuditScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.show_chart),
+                    label: const Text('Connection Audit'),
                   ),
                 ],
               ),

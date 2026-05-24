@@ -199,6 +199,16 @@ class SshSessionController {
   /// to open a shell session.
   SSHClient? get client => _client;
 
+  /// Total number of consecutive transient-reconnect attempts since the last
+  /// successful connect. Visible for the Connection Audit screen (#524).
+  int get reconnectAttempts => _reconnectAttempts;
+
+  /// Wall-clock timestamp (ms since epoch) of the most recent transition into
+  /// `reconnecting`, or null if none has occurred. Visible for the
+  /// Connection Audit screen (#524).
+  int? get lastReconnectAtMs => _lastReconnectAtMs;
+  int? _lastReconnectAtMs;
+
   /// Host-key trust store. Exposed for tests + future Phase 3 wiring.
   HostKeyStore get hostKeyStore => _hostKeyStore;
 
@@ -377,6 +387,7 @@ class SshSessionController {
     }
 
     _emit(_data.copyWith(state: SshSessionState.reconnecting));
+    _lastReconnectAtMs = DateTime.now().millisecondsSinceEpoch;
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(reconnectDelay, () async {
       if (_userDisconnected) return;
