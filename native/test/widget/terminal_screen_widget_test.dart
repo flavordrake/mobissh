@@ -105,5 +105,16 @@ void main() {
       final iconButton = tester.widget<IconButton>(btn);
       expect(iconButton.onPressed, isNotNull);
     });
+
+    testWidgets('session menu button is present in the AppBar',
+        (tester) async {
+      final transport = FakeSshShellTransport();
+      addTearDown(transport.close);
+      final ({SessionEntry entry, ProviderContainer container}) setup =
+          await _setupSingleSession(tester, transport);
+      addTearDown(setup.container.dispose);
+
+      expect(find.byKey(const Key('session-menu-button')), findsOneWidget);
+    });
   });
 }

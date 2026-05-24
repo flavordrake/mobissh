@@ -29,6 +29,7 @@ class SessionEntry {
     required this.username,
     required this.controller,
     required this.terminal,
+    this.title,
   });
 
   final String id;
@@ -38,11 +39,22 @@ class SessionEntry {
   final SshSessionController controller;
   final Terminal terminal;
 
+  /// Optional human-friendly title from the saved profile (PWA `profile.title`
+  /// mirror). When set, it's preferred over `username@host:port` for display
+  /// in the AppBar and session menu (#518).
+  final String? title;
+
   /// Dedup key — matches the prefix of [id] before `createdAt`.
   String get profileKey => '$host:$port:$username';
 
-  /// Human label shown in the tab strip.
-  String get label => '$username@$host:$port';
+  /// Human label shown in the AppBar / session menu. Prefer the saved
+  /// profile title when present; fall back to `username@host:port` so
+  /// ad-hoc connects still get a meaningful label (#518).
+  String get label {
+    final t = title;
+    if (t != null && t.isNotEmpty) return t;
+    return '$username@$host:$port';
+  }
 }
 
 /// Immutable snapshot of the session collection. The notifier emits a fresh
@@ -117,9 +129,12 @@ class SessionsNotifier extends Notifier<SessionsState> {
   /// `host:port:username`. Returns the entry the caller should drive
   /// (`controller.connect(...)` for a fresh entry; no-op for an existing one).
   ///
+  /// The optional [title] carries the saved profile's display title (#518).
+  /// When supplied, it becomes the entry's `label` (AppBar + session menu).
+  ///
   /// The caller invokes connect explicitly — keeping connect out of this
   /// method means the notifier stays pure-state and easy to test.
-  SessionEntry addOrActivate(SshConnectParams params) {
+  SessionEntry addOrActivate(SshConnectParams params, {String? title}) {
     final existing = findByProfile(
       host: params.host,
       port: params.port,
@@ -140,6 +155,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
       username: params.username,
       controller: controller,
       terminal: terminal,
+      title: title,
     );
     state = state.copyWith(
       entries: [...state.entries, entry],

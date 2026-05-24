@@ -2,10 +2,10 @@
 // `connected` state.
 //
 // Phase 2.A (#501): single session, one xterm.dart `TerminalView`.
-// Phase 4 (#511): multi-session — horizontal tab strip at the top, then an
-// `IndexedStack` of per-session `TerminalView` widgets keyed by session id.
-// Hidden tabs stay alive (subscriptions keep filling their buffer); only the
-// active one paints.
+// Phase 4 (#511): multi-session — horizontal tab strip + `IndexedStack`.
+// #518: tab strip removed; session switching now happens through a session
+// menu (modal bottom sheet, AppBar icon trigger). A bottom keybar with a
+// visibility toggle in the session menu replaces the always-on chrome.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +13,9 @@ import 'package:xterm/xterm.dart';
 
 import '../state/sessions.dart';
 import '../state/terminal_providers.dart';
+import '../state/ui_prefs_providers.dart';
+import 'keybar.dart';
+import 'session_menu.dart';
 
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
@@ -20,8 +23,8 @@ class TerminalScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(sessionsProvider);
+    final keybarVisible = ref.watch(keybarVisibleProvider);
     final entries = sessions.entries;
-    final activeId = sessions.activeId;
 
     if (entries.isEmpty) {
       // Defensive: router should switch back to ConnectHomePage. Render a
@@ -37,7 +40,12 @@ class TerminalScreen extends ConsumerWidget {
         title: Text(
           activeEntry.label,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+        ),
+        leading: IconButton(
+          key: const Key('session-menu-button'),
+          tooltip: 'Sessions',
+          icon: const Icon(Icons.menu),
+          onPressed: () => showSessionMenu(context),
         ),
         actions: [
           IconButton(
@@ -47,109 +55,24 @@ class TerminalScreen extends ConsumerWidget {
             onPressed: () => activeEntry.controller.disconnect(),
           ),
         ],
-        bottom: _SessionTabStrip(
-          entries: entries,
-          activeId: activeId,
-        ),
       ),
       body: SafeArea(
         top: false,
-        child: IndexedStack(
-          index: activeIndex < 0 ? 0 : activeIndex,
-          children: [
-            for (final e in entries)
-              _SessionTerminalBody(
-                key: ValueKey('terminal-body-${e.id}'),
-                sessionId: e.id,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Tab strip rendered as `AppBar.bottom`. Each chip is keyed so widget tests
-/// can locate them. Tap → setActive; long-press → action sheet.
-class _SessionTabStrip extends ConsumerWidget
-    implements PreferredSizeWidget {
-  const _SessionTabStrip({
-    required this.entries,
-    required this.activeId,
-  });
-
-  final List<SessionEntry> entries;
-  final String? activeId;
-
-  @override
-  Size get preferredSize => const Size.fromHeight(40);
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      height: 40,
-      child: ListView.builder(
-        key: const Key('session-tab-strip'),
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        itemCount: entries.length,
-        itemBuilder: (context, i) {
-          final e = entries[i];
-          final isActive = e.id == activeId;
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            child: GestureDetector(
-              key: Key('session-tab-${e.id}'),
-              onTap: () => ref.read(sessionsProvider.notifier).setActive(e.id),
-              onLongPress: () => _showTabActions(context, ref, e),
-              child: Chip(
-                label: Text(
-                  e.label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                    color: isActive
-                        ? theme.colorScheme.onPrimary
-                        : theme.colorScheme.onSurface,
-                  ),
-                ),
-                backgroundColor: isActive
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.surfaceContainerHighest,
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  void _showTabActions(BuildContext context, WidgetRef ref, SessionEntry e) {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) => SafeArea(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              key: const Key('tab-action-disconnect'),
-              leading: const Icon(Icons.link_off),
-              title: const Text('Disconnect'),
-              onTap: () {
-                e.controller.disconnect();
-                Navigator.of(ctx).pop();
-              },
+            Expanded(
+              child: IndexedStack(
+                index: activeIndex < 0 ? 0 : activeIndex,
+                children: [
+                  for (final e in entries)
+                    _SessionTerminalBody(
+                      key: ValueKey('terminal-body-${e.id}'),
+                      sessionId: e.id,
+                    ),
+                ],
+              ),
             ),
-            ListTile(
-              key: const Key('tab-action-close'),
-              leading: const Icon(Icons.close),
-              title: const Text('Close tab'),
-              onTap: () {
-                ref.read(sessionsProvider.notifier).close(e.id);
-                Navigator.of(ctx).pop();
-              },
-            ),
+            if (keybarVisible) Keybar(activeEntry: activeEntry),
           ],
         ),
       ),
