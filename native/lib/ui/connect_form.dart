@@ -257,9 +257,13 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   }
 
   /// Populate the form with metadata from a saved profile. When the
-  /// profile has a `vaultId`, look up the decrypted secret in
-  /// `flutter_secure_storage` and prefill the password / key fields. The
-  /// user can still edit them before submitting.
+  /// profile has a `vaultId` or `keyVaultId`, look up the decrypted secret
+  /// in `flutter_secure_storage` and prefill the password / key fields.
+  /// The user can still edit them before submitting.
+  ///
+  /// Both ids are consulted because a `key`-auth profile imported from the
+  /// PWA stores the private-key blob under `keyVaultId`, not `vaultId`
+  /// (#519).
   void _applyProfileToForm(SavedProfile profile) {
     setState(() {
       _hostCtrl.text = profile.host;
@@ -271,25 +275,25 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         _authKind = _AuthKind.password;
       }
     });
-    if (profile.vaultId != null) {
+    if (profile.vaultId != null || profile.keyVaultId != null) {
       unawaited(_prefillFromVault(profile));
     }
   }
 
   Future<void> _prefillFromVault(SavedProfile profile) async {
     final secrets = ref.read(secretsStoreProvider);
-    final secret = await secrets.read(profile.vaultId!);
-    if (!mounted || secret == null) return;
+    final creds = await loadProfileCredentials(secrets, profile);
+    if (!mounted || creds.isEmpty) return;
     setState(() {
-      final pw = secret['password'];
-      if (pw is String) _passwordCtrl.text = pw;
-      final key = secret['privateKey'];
-      if (key is String && key.isNotEmpty) {
+      final pw = creds.password;
+      if (pw != null) _passwordCtrl.text = pw;
+      final key = creds.privateKey;
+      if (key != null) {
         _keyCtrl.text = key;
         _authKind = _AuthKind.key;
       }
-      final passphrase = secret['passphrase'];
-      if (passphrase is String) _passphraseCtrl.text = passphrase;
+      final passphrase = creds.passphrase;
+      if (passphrase != null) _passphraseCtrl.text = passphrase;
     });
   }
 
