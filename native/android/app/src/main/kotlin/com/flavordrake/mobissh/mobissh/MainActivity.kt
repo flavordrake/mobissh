@@ -1,9 +1,13 @@
 package com.flavordrake.mobissh.mobissh
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -32,9 +36,102 @@ import java.util.TimeZone
 class MainActivity : FlutterActivity() {
     private val tag = "MobiSSHCrash"
 
+    // ── Storage Access Framework file picker (#529 — custom MethodChannel
+    // bypass of the broken `file_picker` package). The bridge between Dart's
+    // `MethodChannelFilePickerAdapter` and Android's `ACTION_OPEN_DOCUMENT`
+    // intent. Result holds the pending MethodChannel result so
+    // `onActivityResult` can complete it asynchronously.
+    private var pendingPickerResult: MethodChannel.Result? = null
+    private val pickerChannel = "mobissh/storage_picker"
+    private val pickerRequestCode = 0xC0DE
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         installNativeCrashHandler()
+        installStoragePickerChannel(flutterEngine)
+    }
+
+    private fun installStoragePickerChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            pickerChannel,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "pickJsonBytes" -> {
+                    if (pendingPickerResult != null) {
+                        result.error("ALREADY_OPEN", "picker already in flight", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingPickerResult = result
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                        // Multiple MIME types because the SAF mime filter is
+                        // strict — "application/json" alone hides files the
+                        // PWA names with .json that Android stamps with the
+                        // generic "application/octet-stream" mime.
+                        putExtra(
+                            Intent.EXTRA_MIME_TYPES,
+                            arrayOf("application/json", "text/plain", "application/octet-stream"),
+                        )
+                    }
+                    try {
+                        startActivityForResult(intent, pickerRequestCode)
+                    } catch (err: Throwable) {
+                        pendingPickerResult = null
+                        result.error(
+                            "NO_PICKER",
+                            "Storage picker unavailable: ${err.message}",
+                            null,
+                        )
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == pickerRequestCode) {
+            val pending = pendingPickerResult
+            pendingPickerResult = null
+            if (resultCode != Activity.RESULT_OK || data == null) {
+                pending?.success(null) // user cancelled
+                return
+            }
+            val uri: Uri? = data.data
+            if (uri == null) {
+                pending?.success(null)
+                return
+            }
+            try {
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes == null) {
+                    pending?.error("READ_FAILED", "Could not read picked URI", uri.toString())
+                    return
+                }
+                val name = displayNameFor(uri) ?: "backup.json"
+                pending?.success(mapOf("name" to name, "bytes" to bytes))
+            } catch (err: Throwable) {
+                pending?.error("READ_FAILED", err.message, uri.toString())
+            }
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    /** Resolve a human-friendly display name for a content URI. SAF returns
+     *  `content://` URIs whose path is opaque; the OpenableColumns query is
+     *  the documented way to recover the original filename. */
+    private fun displayNameFor(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        } catch (err: Throwable) {
+            Log.w(tag, "displayNameFor failed", err)
+            null
+        }
     }
 
     private fun installNativeCrashHandler() {
