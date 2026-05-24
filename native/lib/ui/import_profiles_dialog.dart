@@ -47,13 +47,15 @@ abstract class FilePickerAdapter {
   Future<PickedFile?> pickJsonFile();
 }
 
-/// Real implementation that wraps `FilePicker.platform`.
+/// Real implementation that wraps the static `FilePicker.pickFiles` API.
+/// (file_picker 11.0.0 collapsed the prior `FilePicker.platform.pickFiles`
+/// instance-style call into a static method — see CHANGELOG.)
 class DefaultFilePickerAdapter implements FilePickerAdapter {
   const DefaultFilePickerAdapter();
 
   @override
   Future<PickedFile?> pickJsonFile() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['json'],
       withData: true,
