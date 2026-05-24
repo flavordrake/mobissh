@@ -1,14 +1,7 @@
-// "Import from PWA" dialog (#501, vault decrypt for #510, file picker
-// affordance for #520).
+// "Import from PWA" dialog (#501, vault decrypt for #510).
 //
-// Primary affordance: "Choose backup file…" → opens Android's storage
-// picker (file_picker), reads the chosen JSON's bytes, drives the same
-// parseImport/applyParsedImport pipeline as the paste path. The paste
-// textarea remains as a collapsed disclosure ("Paste JSON instead") so
-// power users and tests can still drive it directly.
-//
-// Two-stage flow (unchanged from #510):
-//   1. User selects a file OR pastes JSON. Submit triggers a sync parse.
+// Two-stage flow:
+//   1. User pastes JSON. Submit triggers a sync parse.
 //   2. If the parsed envelope carries `vault.encrypted`+`vault.meta`, an
 //      additional password field appears (same dialog). Submit then
 //      decrypts + persists.
@@ -18,78 +11,24 @@
 // On parse failure / wrong password / unknown shape: shows the error
 // in-dialog without closing, so the user can fix the input and retry.
 
-import 'dart:convert';
-import 'dart:typed_data';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/profiles_providers.dart';
 import '../storage/profiles_store.dart';
 
-/// Plain-data result of a file pick. Decoupled from `file_picker` so the
-/// widget test can inject a fake without binding to platform channels.
-class PickedFile {
-  PickedFile({required this.name, required this.bytes});
-
-  final String name;
-  final Uint8List bytes;
-}
-
-/// Abstraction over `file_picker` so tests can supply a fake. Production
-/// code uses [DefaultFilePickerAdapter]; widget tests construct
-/// [ImportProfilesDialog] with a custom adapter via [showImportProfilesDialog]
-/// (`pickerAdapter` parameter).
-abstract class FilePickerAdapter {
-  /// Open the storage picker filtered to JSON files. Returns the picked
-  /// file's bytes + display name, or null if the user cancelled.
-  Future<PickedFile?> pickJsonFile();
-}
-
-/// Real implementation that wraps the static `FilePicker.pickFiles` API.
-/// (file_picker 11.0.0 collapsed the prior `FilePicker.platform.pickFiles`
-/// instance-style call into a static method — see CHANGELOG.)
-class DefaultFilePickerAdapter implements FilePickerAdapter {
-  const DefaultFilePickerAdapter();
-
-  @override
-  Future<PickedFile?> pickJsonFile() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['json'],
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return null;
-    final file = result.files.first;
-    final bytes = file.bytes;
-    if (bytes == null) return null;
-    return PickedFile(name: file.name, bytes: bytes);
-  }
-}
-
 /// Show the import dialog. Resolves to the [ImportResult] on success, or
 /// `null` if the user cancelled. Tests can construct
-/// [ImportProfilesDialog] directly instead of going through this helper,
-/// or pass a custom [pickerAdapter] to inject a fake.
-Future<ImportResult?> showImportProfilesDialog(
-  BuildContext context, {
-  FilePickerAdapter pickerAdapter = const DefaultFilePickerAdapter(),
-}) {
+/// [ImportProfilesDialog] directly instead of going through this helper.
+Future<ImportResult?> showImportProfilesDialog(BuildContext context) {
   return showDialog<ImportResult>(
     context: context,
-    builder: (_) => ImportProfilesDialog(pickerAdapter: pickerAdapter),
+    builder: (_) => const ImportProfilesDialog(),
   );
 }
 
 class ImportProfilesDialog extends ConsumerStatefulWidget {
-  const ImportProfilesDialog({
-    super.key,
-    this.pickerAdapter = const DefaultFilePickerAdapter(),
-  });
-
-  /// Adapter used to open the storage picker. Tests pass a fake.
-  final FilePickerAdapter pickerAdapter;
+  const ImportProfilesDialog({super.key});
 
   @override
   ConsumerState<ImportProfilesDialog> createState() =>
@@ -101,13 +40,6 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
   final _passwordCtrl = TextEditingController();
   String? _error;
   bool _busy = false;
-  bool _pasteExpanded = false;
-
-  // Set after a successful file pick. The bytes/name drive the import and
-  // a one-line summary so the user can confirm the selection before tapping
-  // Import.
-  String? _pickedFileName;
-  String? _pickedSummary;
 
   // Stage 2: a parsed envelope carrying a vault. When non-null, the
   // password field is rendered and Submit applies with the password.
@@ -131,66 +63,6 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
     _jsonCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickFile() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    PickedFile? picked;
-    try {
-      picked = await widget.pickerAdapter.pickJsonFile();
-    } on Exception catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _error = 'Could not open file picker: $e';
-      });
-      return;
-    }
-    if (!mounted) return;
-    if (picked == null) {
-      // User cancelled the picker — leave any prior selection intact.
-      setState(() {
-        _busy = false;
-      });
-      return;
-    }
-
-    String text;
-    try {
-      text = utf8.decode(picked.bytes);
-    } on FormatException catch (e) {
-      setState(() {
-        _busy = false;
-        _error = 'Could not read file as UTF-8 text: ${e.message}';
-      });
-      return;
-    }
-
-    // Drive both the underlying paste field (so Submit reuses one code path)
-    // and a user-facing summary that's correct even when paste is collapsed.
-    _jsonCtrl.text = text;
-    final summary = _summarize(text);
-    setState(() {
-      _busy = false;
-      _pickedFileName = picked!.name;
-      _pickedSummary = summary;
-    });
-  }
-
-  /// Build the one-line summary shown under `Selected: <name>`. Uses the
-  /// same envelope-shape detection as `parseImport` so the user can spot
-  /// a wrong file before tapping Import.
-  String _summarize(String text) {
-    final parsed = ProfilesStore.parseImport(text);
-    if (parsed.profileEntries.isEmpty && parsed.errors.isNotEmpty) {
-      return parsed.errors.first;
-    }
-    final n = parsed.profileEntries.length;
-    final vault = parsed.hasVault ? 'vault present' : 'no vault';
-    return '$n profile${n == 1 ? '' : 's'}, $vault';
   }
 
   Future<void> _submit() async {
@@ -225,8 +97,8 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
       return;
     }
 
-    // Stage 1: parse the pasted/loaded JSON. If it carries a vault, switch
-    // the dialog into stage 2 (password prompt) without persisting anything.
+    // Stage 1: parse the pasted JSON. If it carries a vault, switch the
+    // dialog into stage 2 (password prompt) without persisting anything.
     final parsed = ProfilesStore.parseImport(_jsonCtrl.text);
     if (parsed.hasVault) {
       setState(() {
@@ -271,65 +143,24 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
           : 'Import profiles from PWA'),
       content: SizedBox(
         width: 500,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             if (!inVaultStage) ...[
               const Text(
-                'Choose the backup file the PWA downloaded, or paste the '
-                'JSON copied from the PWA "Export to native" button.',
+                'Paste the JSON copied from the PWA "Export to native" button.',
               ),
               const SizedBox(height: 12),
-              FilledButton.tonalIcon(
-                key: const Key('import-profiles-pick-file'),
-                onPressed: _busy ? null : _pickFile,
-                icon: const Icon(Icons.folder_open),
-                label: const Text('Choose backup file…'),
-              ),
-              if (_pickedFileName != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Selected: $_pickedFileName',
-                  key: const Key('import-profiles-picked-name'),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                if (_pickedSummary != null)
-                  Text(
-                    _pickedSummary!,
-                    key: const Key('import-profiles-picked-summary'),
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-              ],
-              const SizedBox(height: 12),
-              // Paste textarea behind a disclosure — fallback path. Same key
-              // as before (`import-profiles-input`) so existing tests work.
-              Theme(
-                data: Theme.of(context).copyWith(
-                  dividerColor: Colors.transparent,
-                ),
-                child: ExpansionTile(
-                  key: const Key('import-profiles-paste-disclosure'),
-                  initiallyExpanded: _pasteExpanded,
-                  onExpansionChanged: (v) =>
-                      setState(() => _pasteExpanded = v),
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: const EdgeInsets.only(top: 8),
-                  title: const Text('Paste JSON instead'),
-                  children: [
-                    TextField(
-                      key: const Key('import-profiles-input'),
-                      controller: _jsonCtrl,
-                      maxLines: 8,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      decoration: const InputDecoration(
-                        hintText: '{ "version": 1, "profiles": [ ... ] }',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
+              TextField(
+                key: const Key('import-profiles-input'),
+                controller: _jsonCtrl,
+                maxLines: 8,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  hintText: '{ "version": 1, "profiles": [ ... ] }',
+                  border: OutlineInputBorder(),
                 ),
               ),
             ] else ...[
@@ -361,8 +192,7 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
                 style: const TextStyle(color: Colors.redAccent),
               ),
             ],
-            ],
-          ),
+          ],
         ),
       ),
       actions: [
