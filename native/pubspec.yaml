@@ -70,6 +70,11 @@ dependencies:
   package_info_plus: ^8.1.2
   share_plus: ^10.1.2
 
+  # File picker for vault/profile import (#520). Replaces paste-JSON as the
+  # primary affordance — users select the backup file the PWA downloaded
+  # rather than copy-pasting hundreds of lines of envelope JSON.
+  file_picker: ^8.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
