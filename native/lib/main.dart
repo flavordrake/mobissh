@@ -13,6 +13,8 @@ import 'diagnostics/crash_reporter.dart';
 import 'ssh/ssh_session.dart';
 import 'state/connection_providers.dart';
 import 'state/keepalive_providers.dart';
+import 'state/sessions.dart';
+import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
 import 'ui/terminal_screen.dart';
 
@@ -53,8 +55,9 @@ class MobisshApp extends StatelessWidget {
 }
 
 /// Switches between the connect form and the live terminal based on the
-/// SSH session lifecycle. Phase 2.A keeps this as a simple boolean swap —
-/// Phase 4 will introduce a tab bar for multiple sessions.
+/// session collection. Multi-session (#511): show the terminal screen as
+/// soon as any session reaches `connected`. The terminal screen itself
+/// handles the tab strip and per-session views.
 class RootRouter extends ConsumerWidget {
   const RootRouter({super.key});
 
@@ -62,13 +65,17 @@ class RootRouter extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // Touch the keepalive controller so it attaches to the SSH session
     // controller at app start; this is what starts/stops the foreground
-    // service in response to session lifecycle changes (#512).
+    // service in response to session lifecycle changes (#512). It watches
+    // the active-session shim — multi-session-wide handover is the follow-up
+    // tracked in the #512 TODO.
     ref.watch(keepaliveControllerProvider);
-    final async = ref.watch(sshSessionDataProvider);
-    final data = async.valueOrNull;
-    final isConnected = data?.state == SshSessionState.connected;
-    if (isConnected) {
-      return const TerminalScreen();
+    final entries = ref.watch(sessionsProvider).entries;
+    for (final e in entries) {
+      // Watch each session's data so we re-route when any of them connects.
+      final data = ref.watch(sessionDataProvider(e.id)).valueOrNull;
+      if (data?.state == SshSessionState.connected) {
+        return const TerminalScreen();
+      }
     }
     return const ConnectHomePage();
   }

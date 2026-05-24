@@ -18,6 +18,7 @@ import '../diagnostics/crash_reporter.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
+import '../state/sessions.dart';
 import '../storage/profiles_store.dart';
 import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
@@ -235,7 +236,16 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
 
     setState(() => _busy = true);
     try {
-      await ref.read(sshSessionControllerProvider).connect(params);
+      // Multi-session (#511): route through the sessions notifier so we
+      // dedupe by host:port:user and create a per-session controller. If a
+      // matching session already exists, addOrActivate returns it without
+      // reconnecting (acceptance bullet 4).
+      final entry =
+          ref.read(sessionsProvider.notifier).addOrActivate(params);
+      // Only fire connect for entries that haven't been kicked off yet —
+      // idle/failed/disconnected states are safe to re-drive; connected/
+      // connecting/authenticating are no-ops inside the controller itself.
+      await entry.controller.connect(params);
       // Once we've proven we have network reachability, fire-and-forget a
       // crash upload sweep. Tailscale being down is the common case at boot
       // and the second-chance path matters more than blocking the UI.
