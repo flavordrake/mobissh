@@ -14,6 +14,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
+import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import 'session_host.dart';
@@ -54,6 +55,7 @@ class KeepaliveTaskHandler extends TaskHandler {
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    ctrace('task', 'onStart: building SessionHost + gateway');
     startedAt = timestamp;
     final transport = TaskSideFftTransport();
     final gateway = TaskSideForegroundGateway(transport: transport);
@@ -62,12 +64,15 @@ class KeepaliveTaskHandler extends TaskHandler {
     // task → UI payload it sends is an `SshTaskReadyEvent`, which the UI-side
     // gateway uses to flush any commands buffered during isolate spin-up.
     _host = _hostBuilder(gateway);
+    ctrace('task', 'onStart: host built (ready event should be sent)');
   }
 
   @override
   void onReceiveData(Object data) {
     // Forward the UI-side payload into the gateway transport. The gateway
     // coerces shape; the host dispatches the command.
+    final t = data is Map ? (data['type'] ?? '?') : data.runtimeType;
+    ctrace('task', 'onReceiveData: type=$t transport=${_transport != null}');
     _transport?.deliver(data);
   }
 
@@ -172,6 +177,23 @@ class FlutterForegroundTaskGateway implements KeepaliveGateway {
     required String notificationTitle,
     required String notificationText,
   }) async {
+    // A foreground service of type `dataSync` cannot post its mandatory
+    // ongoing notification on API 33+ without POST_NOTIFICATIONS. When the
+    // permission is denied, `startService` returns a failure and the task
+    // isolate never boots — the connect command stays buffered and the
+    // session deadlocks at `idle` (#539). Request it (idempotent — no-op if
+    // already granted) before starting. The plugin routes this to the OS
+    // runtime-permission prompt the first time.
+    try {
+      final perm = await FlutterForegroundTask.checkNotificationPermission();
+      if (perm != NotificationPermission.granted) {
+        ctrace('ui.keepalive', 'requesting POST_NOTIFICATIONS (was $perm)');
+        final result = await FlutterForegroundTask.requestNotificationPermission();
+        ctrace('ui.keepalive', 'POST_NOTIFICATIONS → $result');
+      }
+    } catch (e) {
+      ctrace('ui.keepalive', 'notification permission check failed — $e');
+    }
     final result = await FlutterForegroundTask.startService(
       serviceTypes: const [ForegroundServiceTypes.dataSync],
       notificationTitle: notificationTitle,
@@ -260,12 +282,12 @@ class KeepaliveController {
   /// Connect-initiation must not crash on that, so the failure is caught and
   /// logged — the session still connects (just without the keep-alive service).
   Future<void> ensureStarted() async {
+    ctrace('ui.keepalive', 'ensureStarted: begin');
     try {
       await _startIfStopped();
+      ctrace('ui.keepalive', 'ensureStarted: done');
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('KeepaliveController.ensureStarted: service start skipped — $e');
-      }
+      ctrace('ui.keepalive', 'ensureStarted: EXCEPTION — $e');
     }
   }
 
@@ -353,10 +375,21 @@ class KeepaliveController {
   }
 
   Future<void> _startIfStopped() async {
-    if (!_enabled) return;
-    if (!_gateway.isInitialized) _gateway.init();
-    if (await _gateway.isRunningService) return;
-    await _gateway.startService(
+    if (!_enabled) {
+      ctrace('ui.keepalive', '_startIfStopped: disabled — skip');
+      return;
+    }
+    if (!_gateway.isInitialized) {
+      ctrace('ui.keepalive', '_startIfStopped: init()');
+      _gateway.init();
+    }
+    final running = await _gateway.isRunningService;
+    if (running) {
+      ctrace('ui.keepalive', '_startIfStopped: already running — skip');
+      return;
+    }
+    ctrace('ui.keepalive', '_startIfStopped: calling startService...');
+    final ok = await _gateway.startService(
       notificationTitle: 'MobiSSH',
       notificationText: _connectedCount == 0
           ? 'Connecting…'
@@ -364,6 +397,7 @@ class KeepaliveController {
               ? '1 session connected'
               : '$_connectedCount sessions connected',
     );
+    ctrace('ui.keepalive', '_startIfStopped: startService → $ok');
   }
 
   Future<void> _stopIfRunning() async {
