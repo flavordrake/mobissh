@@ -58,6 +58,9 @@ class KeepaliveTaskHandler extends TaskHandler {
     final transport = TaskSideFftTransport();
     final gateway = TaskSideForegroundGateway(transport: transport);
     _transport = transport;
+    // The host announces readiness in its constructor (#539): the first
+    // task → UI payload it sends is an `SshTaskReadyEvent`, which the UI-side
+    // gateway uses to flush any commands buffered during isolate spin-up.
     _host = _hostBuilder(gateway);
   }
 
@@ -230,9 +233,40 @@ class KeepaliveController {
   /// Returns true while the given state should hold the foreground service
   /// open. `reconnecting` (#517) is treated as "still connected" so Android
   /// doesn't freeze the Dart isolate mid-reconnect.
+  ///
+  /// This predicate drives the connected-COUNT (start on 0→1, stop on 1→0).
+  /// The in-flight handshake states (`connecting`, `authenticating`,
+  /// `awaitingHostKey`) deliberately do NOT increment the count — the service
+  /// for those is started explicitly by [ensureStarted] on connect-initiation
+  /// (#539). Because they never increment the count, they also never trigger
+  /// the 1→0 stop, so a session mid-handshake cannot tear the service down.
   static bool _holdsService(SshSessionState state) {
     return state == SshSessionState.connected ||
         state == SshSessionState.reconnecting;
+  }
+
+  /// Start the foreground service immediately, independent of how many
+  /// sessions are connected (#539). Called on connect-initiation so the task
+  /// isolate (and its `SessionHost`) is running BEFORE the first connect
+  /// command is dispatched across the gateway.
+  ///
+  /// Idempotent: guards on [KeepaliveGateway.isRunningService] so calling it
+  /// twice does not start two services. A no-op when the user has disabled the
+  /// keep-alive service.
+  ///
+  /// Tolerant of a missing platform plugin: on a platform where
+  /// `flutter_foreground_task` isn't wired (e.g. the Flutter test host, or a
+  /// desktop build) the underlying channel throws `MissingPluginException`.
+  /// Connect-initiation must not crash on that, so the failure is caught and
+  /// logged — the session still connects (just without the keep-alive service).
+  Future<void> ensureStarted() async {
+    try {
+      await _startIfStopped();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('KeepaliveController.ensureStarted: service start skipped — $e');
+      }
+    }
   }
 
   /// Begin observing the given SSH session view (proxy or controller —
@@ -260,9 +294,23 @@ class KeepaliveController {
       } else if (!isConnected && wasConnected) {
         _connectedCount = (_connectedCount - 1).clamp(0, 1 << 30);
         if (_connectedCount == 0) unawaited(_stopIfRunning());
+      } else if (!isConnected && _connectedCount == 0 && _isTerminal(data.state)) {
+        // #539: the service may have been started explicitly via
+        // ensureStarted() before any session reached `connected` (count still
+        // 0). If the connect then fails / disconnects, tear the service down
+        // so it doesn't leak with no live sessions.
+        unawaited(_stopIfRunning());
       }
       wasConnected = isConnected;
     });
+  }
+
+  /// A terminal session state: the connect attempt is over and not holding the
+  /// service. Used to stop a service started by [ensureStarted] when the
+  /// session never reached `connected`.
+  static bool _isTerminal(SshSessionState state) {
+    return state == SshSessionState.failed ||
+        state == SshSessionState.disconnected;
   }
 
   /// Stop observing the given session. If it was connected, the connected
@@ -310,9 +358,11 @@ class KeepaliveController {
     if (await _gateway.isRunningService) return;
     await _gateway.startService(
       notificationTitle: 'MobiSSH',
-      notificationText: _connectedCount == 1
-          ? '1 session connected'
-          : '$_connectedCount sessions connected',
+      notificationText: _connectedCount == 0
+          ? 'Connecting…'
+          : _connectedCount == 1
+              ? '1 session connected'
+              : '$_connectedCount sessions connected',
     );
   }
 

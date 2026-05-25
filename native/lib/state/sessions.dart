@@ -27,6 +27,7 @@ import 'package:xterm/xterm.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
+import 'keepalive_providers.dart';
 import 'session_host_providers.dart';
 
 /// One row in the session collection.
@@ -170,6 +171,13 @@ class SessionsNotifier extends Notifier<SessionsState> {
       state = state.copyWith(activeId: existing.id);
       return existing;
     }
+    // #539: start the foreground task isolate NOW, before the caller dispatches
+    // `proxy.connect(...)`. The task isolate is where the `SessionHost` turns
+    // the connect command into a real `SSHClient.connect`; if it isn't running,
+    // `sendDataToTask` drops the command and the session deadlocks at `idle`.
+    // The UI-side gateway buffers commands until the task signals readiness, so
+    // it's safe to start the service and connect without awaiting startup here.
+    unawaited(ref.read(keepaliveServiceStarterProvider)());
     final id =
         '${params.host}:${params.port}:${params.username}:${DateTime.now().millisecondsSinceEpoch}';
     final gateway = ref.read(taskSshGatewayProvider);

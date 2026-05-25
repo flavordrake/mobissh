@@ -42,6 +42,12 @@ class SessionHost {
         _factory = controllerFactory ?? _defaultControllerFactory {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
+    // Announce readiness as the FIRST task → UI payload (#539). The host is the
+    // component that actually consumes commands, so its existence is the true
+    // "ready" signal. The UI-side gateway buffers outbound commands until it
+    // sees this and then flushes them in order — without it a connect sent
+    // during task-isolate spin-up is dropped and the session deadlocks at idle.
+    _gateway.send(const SshTaskReadyEvent().toJson());
   }
 
   final TaskSshGateway _gateway;
