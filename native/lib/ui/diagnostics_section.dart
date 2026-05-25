@@ -7,8 +7,10 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import 'connection_audit.dart';
 
@@ -139,12 +141,100 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
                     icon: const Icon(Icons.show_chart),
                     label: const Text('Connection Audit'),
                   ),
+                  const SizedBox(height: 8),
+                  const _ConnectLogTile(),
                 ],
               ),
             ),
           ],
         );
       },
+    );
+  }
+}
+
+/// Expandable tile that surfaces the in-memory connect-trace ring buffer
+/// (#543) so connect issues can be diagnosed on-device without Termux/adb.
+class _ConnectLogTile extends StatelessWidget {
+  const _ConnectLogTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      key: const ValueKey('connect-log-tile'),
+      leading: const Icon(Icons.terminal),
+      title: const Text('Connect log'),
+      childrenPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      children: [
+        ValueListenableBuilder<List<String>>(
+          valueListenable: connectLog,
+          builder: (context, lines, _) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  key: const ValueKey('connect-log-output'),
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: lines.isEmpty
+                      ? const Text(
+                          'No connect trace yet. Start a connection.',
+                          style: TextStyle(fontStyle: FontStyle.italic),
+                        )
+                      : SingleChildScrollView(
+                          reverse: true,
+                          child: Text(
+                            lines.join('\n'),
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('connect-log-copy-button'),
+                        onPressed: lines.isEmpty
+                            ? null
+                            : () async {
+                                await Clipboard.setData(
+                                  ClipboardData(text: lines.join('\n')),
+                                );
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Connect log copied.'),
+                                  ),
+                                );
+                              },
+                        icon: const Icon(Icons.copy),
+                        label: const Text('Copy'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('connect-log-clear-button'),
+                        onPressed: lines.isEmpty ? null : clearConnectLog,
+                        icon: const Icon(Icons.clear_all),
+                        label: const Text('Clear'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      ],
     );
   }
 }
