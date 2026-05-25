@@ -180,6 +180,15 @@ Map<String, dynamic>? _coercePayload(Object? raw) {
 }
 
 /// Production [TaskSshGateway] for the UI isolate side.
+///
+/// #539: `startService` is async and the task isolate's `onStart` (which builds
+/// the `SessionHost` and registers the receiver) runs later still. A command
+/// sent via `sendDataToTask` in that gap is dropped — the task isn't listening
+/// yet — which deadlocked connect at `idle`. To close the gap the gateway
+/// BUFFERS outbound payloads until it has seen the first inbound payload from
+/// the task (typically a [SshTaskReadyEvent]). Once ready, the buffer flushes
+/// front-to-back (preserving connect → input → resize order) and subsequent
+/// sends pass through immediately.
 class FlutterForegroundSshGateway implements TaskSshGateway {
   FlutterForegroundSshGateway({FftTransport? transport})
       : _transport = transport ?? const UiSideFftTransport() {
@@ -192,12 +201,24 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
   void Function()? _cancel;
   bool _disposed = false;
 
+  /// Whether the task has signalled it is listening. Until true, [send]
+  /// queues into [_outboundBuffer] instead of hitting the transport.
+  bool _ready = false;
+
+  /// FIFO queue of payloads sent before the task became ready. Flushed in
+  /// order once the first inbound payload arrives.
+  final List<Map<String, dynamic>> _outboundBuffer = [];
+
   @override
   Stream<Map<String, dynamic>> get incoming => _incoming.stream;
 
   @override
   void send(Map<String, dynamic> payload) {
     if (_disposed) return;
+    if (!_ready) {
+      _outboundBuffer.add(payload);
+      return;
+    }
     _transport.send(payload);
   }
 
@@ -205,6 +226,16 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     if (_disposed) return;
     final map = _coercePayload(data);
     if (map == null) return;
+    // First inbound payload proves the task isolate is alive and listening:
+    // flush anything we buffered during spin-up, in order (#539).
+    if (!_ready) {
+      _ready = true;
+      final buffered = List<Map<String, dynamic>>.from(_outboundBuffer);
+      _outboundBuffer.clear();
+      for (final p in buffered) {
+        _transport.send(p);
+      }
+    }
     if (!_incoming.isClosed) _incoming.add(map);
   }
 
@@ -212,6 +243,7 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _outboundBuffer.clear();
     _cancel?.call();
     _cancel = null;
     if (!_incoming.isClosed) await _incoming.close();

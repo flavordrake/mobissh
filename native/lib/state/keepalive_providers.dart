@@ -74,3 +74,29 @@ final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
   ref.onDispose(() => controller.dispose());
   return controller;
 });
+
+/// Function the session collection calls to start the foreground task isolate
+/// on connect-initiation (#539). Returns a `Future<void>`-producing callback so
+/// `SessionsNotifier.addOrActivate` can `ensureStarted()` BEFORE the caller
+/// dispatches the first connect command across the gateway.
+///
+/// This is a SEPARATE provider from [keepaliveControllerProvider] on purpose:
+/// the lifecycle controller watches `sshSessionProxyProvider` →
+/// `activeSessionEntryProvider` → `sessionsProvider`, so reading it from inside
+/// the `SessionsNotifier` during a state mutation would create a provider read
+/// cycle. The starter's controller does NOT observe any session, so the read is
+/// acyclic. `startService` is idempotent (guards on `isRunningService`), so the
+/// starter and the lifecycle controller never double-start the service; STOP
+/// remains owned by the lifecycle controller's connected-count.
+typedef KeepaliveStarter = Future<void> Function();
+
+final keepaliveServiceStarterProvider = Provider<KeepaliveStarter>((ref) {
+  final controller = KeepaliveController(
+    enabled: ref.read(keepaliveEnabledProvider),
+  );
+  ref.listen<bool>(keepaliveEnabledProvider, (_, next) {
+    controller.enabled = next;
+  });
+  ref.onDispose(controller.dispose);
+  return controller.ensureStarted;
+});

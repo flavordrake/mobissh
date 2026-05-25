@@ -17,6 +17,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import 'session_host.dart';
+import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
 
 /// Top-level entry point for the foreground task isolate. Must be
@@ -59,6 +60,12 @@ class KeepaliveTaskHandler extends TaskHandler {
     final gateway = TaskSideForegroundGateway(transport: transport);
     _transport = transport;
     _host = _hostBuilder(gateway);
+    // Announce readiness now that the host + gateway are wired. The UI-side
+    // gateway buffers commands until it sees this (the first task → UI
+    // payload) and then flushes them in order — without this the connect that
+    // was dispatched during `startService` spin-up is dropped and the session
+    // deadlocks at `idle` (#539).
+    gateway.send(const SshTaskReadyEvent().toJson());
   }
 
   @override
@@ -230,9 +237,28 @@ class KeepaliveController {
   /// Returns true while the given state should hold the foreground service
   /// open. `reconnecting` (#517) is treated as "still connected" so Android
   /// doesn't freeze the Dart isolate mid-reconnect.
+  ///
+  /// This predicate drives the connected-COUNT (start on 0→1, stop on 1→0).
+  /// The in-flight handshake states (`connecting`, `authenticating`,
+  /// `awaitingHostKey`) deliberately do NOT increment the count — the service
+  /// for those is started explicitly by [ensureStarted] on connect-initiation
+  /// (#539). Because they never increment the count, they also never trigger
+  /// the 1→0 stop, so a session mid-handshake cannot tear the service down.
   static bool _holdsService(SshSessionState state) {
     return state == SshSessionState.connected ||
         state == SshSessionState.reconnecting;
+  }
+
+  /// Start the foreground service immediately, independent of how many
+  /// sessions are connected (#539). Called on connect-initiation so the task
+  /// isolate (and its `SessionHost`) is running BEFORE the first connect
+  /// command is dispatched across the gateway.
+  ///
+  /// Idempotent: guards on [KeepaliveGateway.isRunningService] so calling it
+  /// twice does not start two services. A no-op when the user has disabled the
+  /// keep-alive service.
+  Future<void> ensureStarted() async {
+    await _startIfStopped();
   }
 
   /// Begin observing the given SSH session view (proxy or controller —
@@ -260,9 +286,23 @@ class KeepaliveController {
       } else if (!isConnected && wasConnected) {
         _connectedCount = (_connectedCount - 1).clamp(0, 1 << 30);
         if (_connectedCount == 0) unawaited(_stopIfRunning());
+      } else if (!isConnected && _connectedCount == 0 && _isTerminal(data.state)) {
+        // #539: the service may have been started explicitly via
+        // ensureStarted() before any session reached `connected` (count still
+        // 0). If the connect then fails / disconnects, tear the service down
+        // so it doesn't leak with no live sessions.
+        unawaited(_stopIfRunning());
       }
       wasConnected = isConnected;
     });
+  }
+
+  /// A terminal session state: the connect attempt is over and not holding the
+  /// service. Used to stop a service started by [ensureStarted] when the
+  /// session never reached `connected`.
+  static bool _isTerminal(SshSessionState state) {
+    return state == SshSessionState.failed ||
+        state == SshSessionState.disconnected;
   }
 
   /// Stop observing the given session. If it was connected, the connected
@@ -310,9 +350,11 @@ class KeepaliveController {
     if (await _gateway.isRunningService) return;
     await _gateway.startService(
       notificationTitle: 'MobiSSH',
-      notificationText: _connectedCount == 1
-          ? '1 session connected'
-          : '$_connectedCount sessions connected',
+      notificationText: _connectedCount == 0
+          ? 'Connecting…'
+          : _connectedCount == 1
+              ? '1 session connected'
+              : '$_connectedCount sessions connected',
     );
   }
 
