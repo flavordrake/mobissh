@@ -147,6 +147,7 @@ class SshSessionController {
     HostKeyStore? hostKeyStore,
     SshSocketOpener? socketOpener,
     this.handshakeTimeout = const Duration(seconds: 15),
+    this.readyTimeout = const Duration(seconds: 25),
     this.keepAliveInterval = const Duration(seconds: 15),
     this.reconnectDelay = const Duration(seconds: 2),
     this.maxReconnectAttempts = 5,
@@ -159,8 +160,17 @@ class SshSessionController {
   final SshSocketOpener _openSocket;
   final ReconnectAttempt? _reconnectAttempt;
 
-  /// Timeout for the underlying TCP + SSH handshake.
+  /// Timeout for the underlying TCP connect (`SSHSocket.connect`).
   final Duration handshakeTimeout;
+
+  /// Connecting-phase deadline: how long the session may sit in `connecting`
+  /// (TCP open, SSH key-exchange + userauth in flight) before being force-
+  /// failed. Bounds the half-open Tailscale path where TCP SYN is accepted but
+  /// no SSH bytes ever flow — `client.authenticated` would otherwise hang
+  /// forever (#542). Cancelled the instant state leaves `connecting`, so the
+  /// human-paced host-key prompt (`awaitingHostKey`) is never timed out.
+  /// Mirrors the PWA bridge's `readyTimeout` (`server/index.js`).
+  final Duration readyTimeout;
 
   /// Interval at which dartssh2 sends application-layer keepalive pings to
   /// the server. 15s matches the PWA bridge (`server/index.js`) and is
@@ -184,11 +194,13 @@ class SshSessionController {
 
   SshSessionData _data = const SshSessionData();
   SSHClient? _client;
+  SSHSocket? _socket;
   Completer<bool>? _hostKeyCompleter;
   SshConnectParams? _lastParams;
   int _reconnectAttempts = 0;
   bool _userDisconnected = false;
   Timer? _reconnectTimer;
+  Timer? _readyTimer;
 
   /// Most recent state snapshot. Always non-null.
   SshSessionData get data => _data;
@@ -239,6 +251,7 @@ class SshSessionController {
       port: params.port,
       username: params.username,
     ));
+    _armReadyTimer();
 
     SSHSocket socket;
     try {
@@ -247,6 +260,7 @@ class SshSessionController {
         params.port,
         timeout: handshakeTimeout,
       );
+      _socket = socket;
       ctrace('task.ssh', 'connect: socket open OK → SSHClient handshake');
     } catch (e) {
       ctrace('task.ssh', 'connect: TCP connect FAILED — $e');
@@ -469,7 +483,10 @@ class SshSessionController {
     _userDisconnected = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _readyTimer?.cancel();
+    _readyTimer = null;
     _reconnectAttempts = 0;
+    _socket = null;
     final client = _client;
     _client = null;
     if (client != null) {
@@ -522,9 +539,58 @@ class SshSessionController {
   // --- private helpers ---
 
   void _emit(SshSessionData next) {
+    // Cancel the connecting-phase timer the instant state leaves `connecting`.
+    // Centralizing here covers every transition path (awaitingHostKey,
+    // authenticating, connected, failed) — including the human-paced host-key
+    // prompt, which must never be timed out (#542). The timer is (re-)armed
+    // explicitly in connect() after the `connecting` emit, so cancelling on a
+    // `connecting` emit here is harmless.
+    if (next.state != SshSessionState.connecting && _readyTimer != null) {
+      ctrace('task.ssh',
+          'readyTimer: cancelled (state→${next.state.name})');
+      _readyTimer!.cancel();
+      _readyTimer = null;
+    }
     _data = next;
     if (!_stateCtrl.isClosed) {
       _stateCtrl.add(next);
+    }
+  }
+
+  /// Arm the connecting-phase deadline. If the session is STILL `connecting`
+  /// when it fires, force-close the client + socket and surface `failed` (#542).
+  void _armReadyTimer() {
+    _readyTimer?.cancel();
+    final secs = readyTimeout.inMilliseconds / 1000;
+    ctrace('task.ssh', 'readyTimer: armed (${secs}s)');
+    _readyTimer = Timer(readyTimeout, () {
+      _readyTimer = null;
+      if (_data.state != SshSessionState.connecting) return;
+      ctrace('task.ssh',
+          'readyTimer: FIRED while still connecting → force-fail');
+      _forceCloseTransport();
+      _emit(_data.copyWith(
+        state: SshSessionState.failed,
+        error: 'No SSH response in ${secs.round()}s — host may be '
+            'unreachable or asleep',
+      ));
+    });
+  }
+
+  void _forceCloseTransport() {
+    final client = _client;
+    _client = null;
+    if (client != null) {
+      try {
+        client.close();
+      } catch (_) {/* ignore */}
+    }
+    final socket = _socket;
+    _socket = null;
+    if (socket != null) {
+      try {
+        socket.destroy();
+      } catch (_) {/* ignore */}
     }
   }
 
