@@ -102,6 +102,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               Expanded(
                 flex: 3,
                 child: TextField(
+                  key: const Key('connect-host'),
                   controller: _hostCtrl,
                   decoration: const InputDecoration(labelText: 'Host'),
                   textInputAction: TextInputAction.next,
@@ -113,6 +114,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               Expanded(
                 flex: 1,
                 child: TextField(
+                  key: const Key('connect-port'),
                   controller: _portCtrl,
                   decoration: const InputDecoration(labelText: 'Port'),
                   keyboardType: TextInputType.number,
@@ -122,6 +124,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           ),
           const SizedBox(height: 8),
           TextField(
+            key: const Key('connect-username'),
             controller: _userCtrl,
             decoration: const InputDecoration(labelText: 'Username'),
             textInputAction: TextInputAction.next,
@@ -149,6 +152,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           const SizedBox(height: 8),
           if (_authKind == _AuthKind.password)
             TextField(
+              key: const Key('connect-password'),
               controller: _passwordCtrl,
               decoration: const InputDecoration(labelText: 'Password'),
               obscureText: true,
@@ -178,6 +182,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           ],
           const SizedBox(height: 16),
           FilledButton.icon(
+            key: const Key('connect-submit'),
             onPressed: _canSubmit(data) ? () => _submit() : null,
             icon: const Icon(Icons.power_settings_new),
             label: Text(_busy ? 'Connecting...' : 'Connect'),
