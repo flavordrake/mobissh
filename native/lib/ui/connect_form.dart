@@ -231,6 +231,15 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       return;
     }
 
+    // Credential-presence trace (lengths only — never values). Tells us via
+    // the on-device Connect log whether the vault prefill actually populated
+    // the fields: pwLen=0 / keyLen=0 means prefill returned empty (secret not
+    // found / read failed), vs a non-zero length meaning creds are present and
+    // the server rejected them. (#542/#543 diagnosis of "all auth methods
+    // failed after import".)
+    ctrace('ui.form',
+        'auth=${_authKind.name} pwLen=${_passwordCtrl.text.length} '
+        'keyLen=${_keyCtrl.text.length} ppLen=${_passphraseCtrl.text.length}');
     final SshAuth auth;
     if (_authKind == _AuthKind.password) {
       auth = SshAuth.password(_passwordCtrl.text);
@@ -294,11 +303,25 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       _hostCtrl.text = profile.host;
       _portCtrl.text = profile.port.toString();
       _userCtrl.text = profile.username;
+      // Pick the auth mode. Prefer the explicit authType, but if it's missing
+      // or ambiguous (e.g. a profile imported by an older build that persisted
+      // before authType round-tripped), INFER from keyVaultId: a profile that
+      // carries a key-blob reference is a key-auth profile. Without this, such
+      // a profile defaults to password mode with an empty password field and
+      // every connect fails with "all authentication methods failed" against a
+      // publickey-only host.
       if (profile.authType == 'key') {
         _authKind = _AuthKind.key;
       } else if (profile.authType == 'password') {
         _authKind = _AuthKind.password;
+      } else if (profile.keyVaultId != null && profile.keyVaultId!.isNotEmpty) {
+        _authKind = _AuthKind.key;
+      } else {
+        _authKind = _AuthKind.password;
       }
+      ctrace('ui.form',
+          'applyProfile ${profile.host} authType=${profile.authType} '
+          'keyVaultId=${profile.keyVaultId != null} → mode=${_authKind.name}');
     });
     if (profile.vaultId != null || profile.keyVaultId != null) {
       unawaited(_prefillFromVault(profile));

@@ -298,11 +298,16 @@ class SessionHost {
   static SshAuth _decodeAuth(Map<String, dynamic> json) {
     final type = json['type'] as String?;
     if (type == 'password') {
-      return SshAuth.password(json['password'] as String);
+      final pw = json['password'] as String;
+      // Presence trace (length only — never the value): confirms the password
+      // survived the UI→task IPC. Compare against ui.form's pwLen (#542/#543).
+      ctrace('task.host', 'decodeAuth password pwLen=${pw.length}');
+      return SshAuth.password(pw);
     }
     if (type == 'key') {
       final pemB64 = json['pem'] as String;
       final pem = Uint8List.fromList(base64Decode(pemB64));
+      ctrace('task.host', 'decodeAuth key pemBytes=${pem.length}');
       return SshAuth.key(pem, passphrase: json['passphrase'] as String?);
     }
     throw FormatException('unknown auth type: $type');
