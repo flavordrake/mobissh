@@ -244,6 +244,12 @@ class SshSessionProxy {
           ),
         );
         if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
+      case SshTaskReadyEvent():
+        // Task-global readiness signal (#539). Per-session proxies ignore it —
+        // the UI-side gateway already consumed it to flush buffered commands.
+        // It only reaches here for the matching (empty) sessionId, which no
+        // real proxy uses, but handle it for switch exhaustiveness.
+        break;
     }
   }
 

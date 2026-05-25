@@ -32,6 +32,10 @@ enum SshTaskEventKind {
   closed,
   error,
   hostKeyChallenge,
+
+  /// Task isolate finished booting (`SessionHost` + gateway wired). The UI
+  /// gateway flushes any commands it buffered during isolate spin-up (#539).
+  ready,
 }
 
 /// Base for all UI → task command envelopes. Subclasses are concrete records
@@ -292,6 +296,8 @@ sealed class SshTaskEvent {
           keyType: json['keyType'] as String,
           fingerprint: json['fingerprint'] as String,
         );
+      case SshTaskEventKind.ready:
+        return const SshTaskReadyEvent();
     }
   }
 }
@@ -445,5 +451,26 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
         'port': port,
         'keyType': keyType,
         'fingerprint': fingerprint,
+      };
+}
+
+/// Task → UI: the foreground task isolate has finished booting (#539). Sent
+/// once from `KeepaliveTaskHandler.onStart` after the `SessionHost` + gateway
+/// are wired. It is task-global, not per-session, so [sessionId] is an empty
+/// sentinel — the per-session proxy ignores it on the sessionId mismatch.
+///
+/// The UI-side gateway uses the FIRST inbound payload (typically this event) as
+/// the signal to flush any commands it buffered while `startService` was still
+/// spinning up the isolate.
+class SshTaskReadyEvent extends SshTaskEvent {
+  const SshTaskReadyEvent() : super('');
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.ready;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
       };
 }
