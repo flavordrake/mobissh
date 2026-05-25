@@ -91,12 +91,16 @@ final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
 typedef KeepaliveStarter = Future<void> Function();
 
 final keepaliveServiceStarterProvider = Provider<KeepaliveStarter>((ref) {
+  // The starter only ever START the service (idempotently). STOP is owned by
+  // [keepaliveControllerProvider]'s connected-count, so this controller holds
+  // no session subscriptions and must NOT be disposed here — `dispose()` would
+  // call `stopService()`, tearing down a service the lifecycle controller still
+  // wants running.
   final controller = KeepaliveController(
     enabled: ref.read(keepaliveEnabledProvider),
   );
   ref.listen<bool>(keepaliveEnabledProvider, (_, next) {
     controller.enabled = next;
   });
-  ref.onDispose(controller.dispose);
   return controller.ensureStarted;
 });

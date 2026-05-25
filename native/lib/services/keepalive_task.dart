@@ -17,7 +17,6 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import 'session_host.dart';
-import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
 
 /// Top-level entry point for the foreground task isolate. Must be
@@ -59,13 +58,10 @@ class KeepaliveTaskHandler extends TaskHandler {
     final transport = TaskSideFftTransport();
     final gateway = TaskSideForegroundGateway(transport: transport);
     _transport = transport;
+    // The host announces readiness in its constructor (#539): the first
+    // task → UI payload it sends is an `SshTaskReadyEvent`, which the UI-side
+    // gateway uses to flush any commands buffered during isolate spin-up.
     _host = _hostBuilder(gateway);
-    // Announce readiness now that the host + gateway are wired. The UI-side
-    // gateway buffers commands until it sees this (the first task → UI
-    // payload) and then flushes them in order — without this the connect that
-    // was dispatched during `startService` spin-up is dropped and the session
-    // deadlocks at `idle` (#539).
-    gateway.send(const SshTaskReadyEvent().toJson());
   }
 
   @override
@@ -257,8 +253,20 @@ class KeepaliveController {
   /// Idempotent: guards on [KeepaliveGateway.isRunningService] so calling it
   /// twice does not start two services. A no-op when the user has disabled the
   /// keep-alive service.
+  ///
+  /// Tolerant of a missing platform plugin: on a platform where
+  /// `flutter_foreground_task` isn't wired (e.g. the Flutter test host, or a
+  /// desktop build) the underlying channel throws `MissingPluginException`.
+  /// Connect-initiation must not crash on that, so the failure is caught and
+  /// logged — the session still connects (just without the keep-alive service).
   Future<void> ensureStarted() async {
-    await _startIfStopped();
+    try {
+      await _startIfStopped();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('KeepaliveController.ensureStarted: service start skipped — $e');
+      }
+    }
   }
 
   /// Begin observing the given SSH session view (proxy or controller —
