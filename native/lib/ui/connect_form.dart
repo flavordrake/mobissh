@@ -13,6 +13,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 
 import '../ssh/ssh_connect_params.dart';
@@ -258,6 +259,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // #533: connect now dispatches across the task gateway via the per-
       // session [SshSessionProxy] — the underlying `SshSessionController`
       // lives in the task isolate, not the UI.
+      ctrace('ui.form',
+          'submit host=$host port=$port user=$username auth=${_authKind.name}');
       final title = _profileTitleForCurrentForm();
       final entry = ref
           .read(sessionsProvider.notifier)
@@ -266,6 +269,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // idle/failed/disconnected states are safe to re-drive; connected/
       // connecting/authenticating are no-ops inside the task-side controller
       // itself.
+      ctrace('ui.form', 'entry=${entry.id} → proxy.connect()');
       await entry.proxy.connect(params);
       // Once we've proven we have network reachability, fire-and-forget a
       // crash upload sweep. Tailscale being down is the common case at boot

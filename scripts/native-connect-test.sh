@@ -43,10 +43,14 @@ cleanup() {
     fi
     rm -f "$PROXY_PID_FILE"
   fi
+  if [[ -n "${GRANT_WATCHER_PID:-}" ]] && kill -0 "$GRANT_WATCHER_PID" 2>/dev/null; then
+    kill "$GRANT_WATCHER_PID" 2>/dev/null || true
+  fi
   if [[ -n "${DEVICE:-}" ]]; then
     adb -s "$DEVICE" reverse --remove "tcp:${BRIDGE_PORT}" 2>/dev/null || true
   fi
 }
+GRANT_WATCHER_PID=""
 trap cleanup EXIT
 
 # 1. Resolve device.
@@ -77,6 +81,22 @@ sleep 1
 # 4. adb reverse: emulator 127.0.0.1:$BRIDGE_PORT → fd-dev 127.0.0.1:$BRIDGE_PORT.
 log "adb reverse tcp:${BRIDGE_PORT}"
 adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT}" "tcp:${BRIDGE_PORT}"
+
+# 4b. POST_NOTIFICATIONS grant-watcher. The app requests this at first
+#     foreground-service start (real users tap Allow), but the integration
+#     test can't tap a system permission dialog. The app's code checks
+#     `checkNotificationPermission()` first, so pre-granting makes the request
+#     a no-op. The test reinstalls the app itself, so we grant in a loop until
+#     the test process exits — catching the post-install window before the
+#     test taps Connect.
+log "starting POST_NOTIFICATIONS grant-watcher"
+(
+  while true; do
+    adb -s "$DEVICE" shell pm grant com.flavordrake.mobissh android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+    sleep 1
+  done
+) &
+GRANT_WATCHER_PID=$!
 
 # 5. Run the integration test on the device. This builds + installs a debug
 #    APK carrying the integration driver and runs connect_smoke_test.dart,

@@ -59,10 +59,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       // Accept a host-key prompt if it surfaced (new host, trust on first use).
-      final accept = find.text('Accept');
+      // The dialog's confirm button is labelled "Trust + connect"
+      // (host_key_dialog.dart) — NOT "Accept".
+      final accept = find.text('Trust + connect');
       if (accept.evaluate().isNotEmpty) {
         await tester.tap(accept.first);
-        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pump(const Duration(milliseconds: 300));
       }
 
       // The terminal screen replaces the connect form on connect. Its

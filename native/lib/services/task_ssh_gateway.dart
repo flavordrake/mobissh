@@ -16,6 +16,8 @@ import 'dart:async';
 
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
+import '../diagnostics/connect_trace.dart';
+
 /// One half of the UI ↔ task channel. The UI proxy holds the
 /// "ui-side" instance; the task-side session host holds the "task-side"
 /// instance. They share the underlying transport.
@@ -217,24 +219,34 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     if (_disposed) return;
     if (!_ready) {
       _outboundBuffer.add(payload);
+      ctrace('ui.gw',
+          'send ${payload['type'] ?? '?'} BUFFERED (not ready, n=${_outboundBuffer.length})');
       return;
     }
+    ctrace('ui.gw', 'send ${payload['type'] ?? '?'} → transport (ready)');
     _transport.send(payload);
   }
 
   void _onData(Object data) {
     if (_disposed) return;
     final map = _coercePayload(data);
-    if (map == null) return;
+    if (map == null) {
+      ctrace('ui.gw', 'recv: uncoercible payload ${data.runtimeType}');
+      return;
+    }
     // First inbound payload proves the task isolate is alive and listening:
     // flush anything we buffered during spin-up, in order (#539).
     if (!_ready) {
       _ready = true;
       final buffered = List<Map<String, dynamic>>.from(_outboundBuffer);
       _outboundBuffer.clear();
+      ctrace('ui.gw',
+          'recv ${map['type'] ?? '?'} → READY; flushing ${buffered.length} buffered');
       for (final p in buffered) {
         _transport.send(p);
       }
+    } else {
+      ctrace('ui.gw', 'recv ${map['type'] ?? '?'}');
     }
     if (!_incoming.isClosed) _incoming.add(map);
   }

@@ -20,6 +20,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import 'session_messages.dart';
@@ -42,6 +43,7 @@ class SessionHost {
         _factory = controllerFactory ?? _defaultControllerFactory {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
+    ctrace('task.host', 'ctor: listening; sending SshTaskReadyEvent');
     // Announce readiness as the FIRST task → UI payload (#539). The host is the
     // component that actually consumes commands, so its existence is the true
     // "ready" signal. The UI-side gateway buffers outbound commands until it
@@ -75,10 +77,12 @@ class SessionHost {
 
   void _dispatch(Map<String, dynamic> payload) {
     if (_disposed) return;
+    ctrace('task.host', 'dispatch type=${payload['type'] ?? '?'}');
     SshTaskCommand cmd;
     try {
       cmd = SshTaskCommand.fromJson(payload);
     } catch (e) {
+      ctrace('task.host', 'dispatch: malformed — $e');
       // Unknown shape — surface via error event so the UI side can log.
       final sid = payload['sessionId'] as String? ?? '';
       _gateway.send(SshErrorEvent(
@@ -152,6 +156,8 @@ class SessionHost {
       auth: _decodeAuth(cmd.authJson),
     );
     // Fire connect; failures surface through the state stream.
+    ctrace('task.host',
+        'connect sid=${cmd.sessionId} → controller.connect(${cmd.host}:${cmd.port})');
     unawaited(controller.connect(params));
   }
 

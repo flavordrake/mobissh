@@ -36,6 +36,20 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- flutter_foreground_task service + receiver. WITHOUT this <service>
+             element, FlutterForegroundTask.startService() fails with
+             "Unable to start service ... ForegroundService: not found" and
+             returns a ServiceRequestFailure — the task isolate never boots and
+             (post-#533, when SSH lifecycle moved into that isolate) connect
+             deadlocks at State:idle (#539). #512 declared the permissions but
+             omitted this declaration; the bug was latent until #533 made the
+             service load-bearing for connect. foregroundServiceType MUST match
+             the type passed to startService (dataSync). -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

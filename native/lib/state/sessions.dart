@@ -24,6 +24,7 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
@@ -177,11 +178,13 @@ class SessionsNotifier extends Notifier<SessionsState> {
     // `sendDataToTask` drops the command and the session deadlocks at `idle`.
     // The UI-side gateway buffers commands until the task signals readiness, so
     // it's safe to start the service and connect without awaiting startup here.
+    ctrace('ui.sessions', 'addOrActivate: new session → ensureStarted()');
     unawaited(ref.read(keepaliveServiceStarterProvider)());
     final id =
         '${params.host}:${params.port}:${params.username}:${DateTime.now().millisecondsSinceEpoch}';
     final gateway = ref.read(taskSshGatewayProvider);
     final proxy = SshSessionProxy(sessionId: id, gateway: gateway);
+    ctrace('ui.sessions', 'created proxy + gateway for id=$id');
     final terminal = Terminal(maxLines: 5000);
     final entry = SessionEntry(
       id: id,

@@ -16,6 +16,7 @@ import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
+import '../diagnostics/connect_trace.dart';
 import 'host_key_store.dart';
 import 'ssh_connect_params.dart';
 
@@ -221,6 +222,7 @@ class SshSessionController {
         _data.state == SshSessionState.connected ||
         _data.state == SshSessionState.awaitingHostKey ||
         _data.state == SshSessionState.reconnecting) {
+      ctrace('task.ssh', 'connect: no-op (state=${_data.state.name})');
       return;
     }
 
@@ -229,6 +231,8 @@ class SshSessionController {
     _userDisconnected = false;
     _lastParams = params;
 
+    ctrace('task.ssh',
+        'connect: ${params.host}:${params.port} → opening socket');
     _emit(SshSessionData(
       state: SshSessionState.connecting,
       host: params.host,
@@ -243,7 +247,9 @@ class SshSessionController {
         params.port,
         timeout: handshakeTimeout,
       );
+      ctrace('task.ssh', 'connect: socket open OK → SSHClient handshake');
     } catch (e) {
+      ctrace('task.ssh', 'connect: TCP connect FAILED — $e');
       _emit(_data.copyWith(
         state: SshSessionState.failed,
         error: 'TCP connect failed: $e',
@@ -284,6 +290,7 @@ class SshSessionController {
       // If we already transitioned to `failed` (e.g. user rejected the host
       // key) preserve the more-specific error message rather than overwriting
       // it with a generic "auth aborted" reason.
+      ctrace('task.ssh', 'connect: AUTH FAILED — $e');
       if (_data.state != SshSessionState.failed) {
         _emit(_data.copyWith(
           state: SshSessionState.failed,
@@ -296,6 +303,7 @@ class SshSessionController {
       return;
     }
 
+    ctrace('task.ssh', 'connect: authenticated → CONNECTED');
     _emit(_data.copyWith(
       state: SshSessionState.connected,
       remoteVersion: client.remoteVersion,
