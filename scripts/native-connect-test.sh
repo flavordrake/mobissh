@@ -24,6 +24,11 @@ mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 LOGFILE="${MOBISSH_LOGDIR}/native-connect-test.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
+# Which integration test to run. Defaults to the connect smoke (#539 gate);
+# pass a path (relative to native/) as $1 to run a different one over the same
+# socat+adb-reverse bridge. The test-port epic (#548) reuses this harness.
+TEST_FILE="${1:-integration_test/connect_smoke_test.dart}"
+
 NATIVE_DIR="${REPO_ROOT}/native"
 PROXY_PID_FILE="${MOBISSH_TMPDIR}/connect-test-socat.pid"
 SSHD_HOST="test-sshd"
@@ -102,12 +107,12 @@ GRANT_WATCHER_PID=$!
 #    APK carrying the integration driver and runs connect_smoke_test.dart,
 #    which fills the form (127.0.0.1:2222 / testuser / testpass), taps Connect,
 #    accepts the host key, and asserts the terminal screen mounts.
-log "running integration test on device (this builds + installs)..."
+log "running integration test on device ($TEST_FILE) (this builds + installs)..."
 if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" test \
-    integration_test/connect_smoke_test.dart -d "$DEVICE"; then
-  echo "+ CONNECT TEST PASSED — session reached connected"
+    "$TEST_FILE" -d "$DEVICE"; then
+  echo "+ TEST PASSED — $TEST_FILE"
   exit 0
 else
-  echo "! CONNECT TEST FAILED — connect did not complete (see #539 deadlock signature)"
+  echo "! TEST FAILED — $TEST_FILE (see #539 deadlock signature if connect)"
   exit 1
 fi
