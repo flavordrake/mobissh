@@ -216,7 +216,8 @@ void main() {
       expect(loaded[1].theme, 'nord');
     });
 
-    test('dedupes on (host:port:username) when re-importing', () async {
+    test('upserts existing (host:port:username) when re-importing (#547)',
+        () async {
       final store = ProfilesStore();
       await store.save(<SavedProfile>[
         SavedProfile(
@@ -226,13 +227,17 @@ void main() {
       ]);
       final result = await store.importFromJson(pwaExportFixture);
       expect(result.added, 1, reason: 'only "Build box" is new');
-      expect(result.skipped, 1, reason: 'nas already exists');
+      expect(result.updated, 1, reason: 'nas already exists → upsert, not skip');
+      expect(result.skipped, 0);
 
       final loaded = await store.load();
       expect(loaded, hasLength(2));
-      // Existing profile keeps its original title — import does not clobber.
+      // Existing profile keeps its original title — import does not clobber it.
       final existing = loaded.firstWhere((p) => p.host == 'nas.tail123.ts.net');
       expect(existing.title, 'Old Name');
+      // ...but its visual identity IS refreshed from the import.
+      expect(existing.theme, 'dark');
+      expect(existing.color, '#88ccff');
     });
 
     test('rejects unknown export version', () async {
@@ -498,6 +503,79 @@ void main() {
       final secret = await secrets.read('v-home');
       expect(secret, isNotNull);
       expect(secret!['password'], 'hunter2');
+    });
+
+    test(
+        're-import over a stale identity-only profile UPDATES authType/'
+        'vaultId/keyVaultId AND re-stores vault secrets (#547)', () async {
+      // Simulate the device-confirmed bug: a pre-#510 build persisted an
+      // identity-only profile (no authType, no vault refs). Re-importing a
+      // backup envelope that carries the same identity must upgrade it in
+      // place AND land the decrypted secret in the SecretsStore.
+      final store = ProfilesStore();
+      await store.save(<SavedProfile>[
+        SavedProfile(
+          title: 'My Box',
+          host: 'box.example',
+          port: 22,
+          username: 'me',
+        ),
+      ]);
+
+      final pbkdf2 = fastPbkdf2();
+      final envelope = await buildBackupEnvelope(
+        password: 'master',
+        profiles: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'title': 'My Box (re-export)',
+            'host': 'box.example',
+            'port': 22,
+            'username': 'me',
+            'authType': 'key',
+            'vaultId': 'v-box',
+            'keyVaultId': 'k-box',
+          },
+        ],
+        secrets: <String, Map<String, Object?>>{
+          'v-box': <String, Object?>{'password': 'fallbackpw'},
+          'k-box': <String, Object?>{'data': '-----BEGIN KEY-----\\nabc\\n'},
+        },
+        pbkdf2: pbkdf2,
+      );
+
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final parsed = ProfilesStore.parseImport(envelope);
+      final result = await store.applyParsedImport(
+        parsed,
+        password: 'master',
+        secrets: secrets,
+        decryptor: VaultDecryptor(pbkdf2: pbkdf2),
+      );
+
+      expect(result.errors, isEmpty);
+      expect(result.added, 0, reason: 'identity already existed');
+      expect(result.updated, 1, reason: 'upserted in place');
+      expect(result.skipped, 0);
+
+      // Profile upgraded in place — title preserved, refs refreshed.
+      final loaded = await store.load();
+      expect(loaded, hasLength(1));
+      final upserted = loaded.single;
+      expect(upserted.title, 'My Box', reason: 'user title not clobbered');
+      expect(upserted.authType, 'key');
+      expect(upserted.vaultId, 'v-box');
+      expect(upserted.keyVaultId, 'k-box');
+
+      // Secrets re-stored for the matched (updated) profile, not just added.
+      final keySecret = await secrets.read('k-box');
+      expect(keySecret, isNotNull);
+      expect(keySecret!['data'], '-----BEGIN KEY-----\\nabc\\n');
+
+      // The credential loader can now resolve a non-empty private key —
+      // the connect path will run in key mode rather than re-prompting.
+      final creds = await loadProfileCredentials(secrets, upserted);
+      expect(creds.privateKey, isNotNull);
+      expect(creds.privateKey, isNotEmpty);
     });
 
     test('wrong password reports clear error and writes no state',
