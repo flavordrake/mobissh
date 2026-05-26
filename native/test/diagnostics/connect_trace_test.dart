@@ -58,6 +58,45 @@ void main() {
         reason: 'value must be a new list so ValueListenableBuilder rebuilds');
   });
 
+  test('consecutive identical lines collapse into one with a ×N count', () {
+    ctrace('ui.gw', 'recv output');
+    ctrace('ui.gw', 'recv output');
+    ctrace('ui.gw', 'recv output');
+
+    final lines = connectLog.value;
+    expect(lines.length, 1, reason: 'three identical lines collapse to one');
+    expect(lines.single, contains('[ui.gw] recv output (×3)'));
+  });
+
+  test('a different line breaks the run and starts a fresh entry', () {
+    ctrace('ui.gw', 'recv output');
+    ctrace('ui.gw', 'recv output');
+    ctrace('ui.gw', 'send input');
+    ctrace('ui.gw', 'recv output'); // same text, but run was broken
+
+    final lines = connectLog.value;
+    expect(lines.length, 3);
+    expect(lines[0], contains('[ui.gw] recv output (×2)'));
+    expect(lines[1], contains('[ui.gw] send input'));
+    expect(lines[1], isNot(contains('×')),
+        reason: 'a single occurrence has no count suffix');
+    expect(lines[2], contains('[ui.gw] recv output'));
+    expect(lines[2], isNot(contains('×')));
+  });
+
+  test('collapsing notifies listeners so the count updates live', () {
+    var notifications = 0;
+    void listener() => notifications++;
+    connectLog.addListener(listener);
+    addTearDown(() => connectLog.removeListener(listener));
+
+    ctrace('ui.gw', 'recv output');
+    ctrace('ui.gw', 'recv output');
+
+    expect(notifications, 2,
+        reason: 'each call notifies, even when collapsing the line');
+  });
+
   test('clearConnectLog empties the buffer and notifies', () {
     ctrace('ui.form', 'a');
     ctrace('ui.form', 'b');

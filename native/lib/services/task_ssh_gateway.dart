@@ -220,10 +220,11 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     if (!_ready) {
       _outboundBuffer.add(payload);
       ctrace('ui.gw',
-          'send ${payload['type'] ?? '?'} BUFFERED (not ready, n=${_outboundBuffer.length})');
+          'send ${payload['kind'] ?? payload['type'] ?? '?'} BUFFERED (not ready, n=${_outboundBuffer.length})');
       return;
     }
-    ctrace('ui.gw', 'send ${payload['type'] ?? '?'} → transport (ready)');
+    ctrace('ui.gw',
+        'send ${payload['kind'] ?? payload['type'] ?? '?'} → transport (ready)');
     _transport.send(payload);
   }
 
@@ -241,12 +242,12 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
       final buffered = List<Map<String, dynamic>>.from(_outboundBuffer);
       _outboundBuffer.clear();
       ctrace('ui.gw',
-          'recv ${map['type'] ?? '?'} → READY; flushing ${buffered.length} buffered');
+          'recv ${map['kind'] ?? map['type'] ?? '?'} → READY; flushing ${buffered.length} buffered');
       for (final p in buffered) {
         _transport.send(p);
       }
     } else {
-      ctrace('ui.gw', 'recv ${map['type'] ?? '?'}');
+      ctrace('ui.gw', 'recv ${map['kind'] ?? map['type'] ?? '?'}');
     }
     if (!_incoming.isClosed) _incoming.add(map);
   }

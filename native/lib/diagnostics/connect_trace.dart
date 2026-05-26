@@ -29,6 +29,13 @@ const int connectLogCapacity = 200;
 
 final List<String> _ring = <String>[];
 
+// Consecutive-duplicate suppression: when the same `[where] msg` repeats
+// back-to-back (e.g. keepalive `recv`/`send` pings), collapse it into the last
+// line as ` (×N)` instead of spamming a new line per occurrence — both in the
+// on-device ring and in logcat.
+String? _lastKey;
+int _lastCount = 0;
+
 final ValueNotifier<List<String>> _connectLog =
     ValueNotifier<List<String>>(const <String>[]);
 
@@ -44,9 +51,22 @@ String _timestamp(DateTime now) {
 }
 
 void ctrace(String where, String msg) {
-  debugPrint('[CONNECT][$where] $msg');
+  final key = '[$where] $msg';
+  final ts = _timestamp(DateTime.now());
 
-  _ring.add('${_timestamp(DateTime.now())} [$where] $msg');
+  // Collapse a run of identical lines into the most recent entry as ` (×N)`.
+  if (key == _lastKey && _ring.isNotEmpty) {
+    _lastCount++;
+    _ring[_ring.length - 1] = '$ts $key (×$_lastCount)';
+    _connectLog.value = List<String>.unmodifiable(_ring);
+    return;
+  }
+
+  _lastKey = key;
+  _lastCount = 1;
+  debugPrint('[CONNECT]$key');
+
+  _ring.add('$ts $key');
   while (_ring.length > connectLogCapacity) {
     _ring.removeAt(0);
   }
@@ -58,5 +78,7 @@ void ctrace(String where, String msg) {
 /// Clears the on-device connect-log ring buffer. Does not affect logcat.
 void clearConnectLog() {
   _ring.clear();
+  _lastKey = null;
+  _lastCount = 0;
   _connectLog.value = const <String>[];
 }
