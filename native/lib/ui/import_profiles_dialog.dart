@@ -220,7 +220,7 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
         });
         return;
       }
-      if (result.added > 0) {
+      if (result.added > 0 || result.updated > 0) {
         ref.invalidate(savedProfilesProvider);
       }
       Navigator.of(context).pop(result);
@@ -248,7 +248,7 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
       });
       return;
     }
-    if (result.added > 0) {
+    if (result.added > 0 || result.updated > 0) {
       ref.invalidate(savedProfilesProvider);
     }
     Navigator.of(context).pop(result);
