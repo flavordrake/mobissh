@@ -17,6 +17,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../diagnostics/connect_trace.dart';
 import 'secrets_store.dart';
 import 'vault.dart';
 
@@ -190,9 +191,20 @@ class SavedProfile {
 
 /// Result of an import operation. Mirrors the PWA's `ImportResult` shape so
 /// the UI can show parallel toast messages.
+///
+/// `updated` (#547) counts existing profiles that were upserted in place — an
+/// incoming entry whose identity (host:port:username) matched a stored profile
+/// and refreshed its authType/vaultId/keyVaultId/theme/color/initialCommand.
+/// It is additive: existing callers that read [added]/[skipped] keep working.
 class ImportResult {
-  ImportResult({this.added = 0, this.skipped = 0, this.errors = const []});
+  ImportResult({
+    this.added = 0,
+    this.updated = 0,
+    this.skipped = 0,
+    this.errors = const [],
+  });
   final int added;
+  final int updated;
   final int skipped;
   final List<String> errors;
 }
@@ -399,41 +411,83 @@ class ProfilesStore {
     }
 
     final existing = await load();
-    final existingKeys = existing.map((p) => p.identityKey).toSet();
+    // Index existing profiles by identity for in-place upsert (#547).
+    final byIdentity = <String, int>{
+      for (var i = 0; i < existing.length; i++) existing[i].identityKey: i,
+    };
     final errors = <String>[...parsed.errors];
     int added = 0;
-    int skipped = 0;
+    int updated = 0;
+    int withVault = 0;
+    int withKeyVaultId = 0;
+    int withAuthType = 0;
 
     for (final entry in parsed.profileEntries) {
       try {
         final profile = SavedProfile.fromJson(entry);
-        if (existingKeys.contains(profile.identityKey)) {
-          skipped++;
+        if (profile.authType != null) withAuthType++;
+        if (profile.vaultId != null) withVault++;
+        if (profile.keyVaultId != null) withKeyVaultId++;
+
+        final existingIndex = byIdentity[profile.identityKey];
+        if (existingIndex != null) {
+          // #547: re-import over a (possibly stale identity-only) profile is an
+          // UPSERT, not a skip. Refresh the auth/vault references and visual
+          // identity so a pre-#510 profile gains the data it was missing.
+          // Preserve the user's existing title — import never clobbers it.
+          final prior = existing[existingIndex];
+          existing[existingIndex] = SavedProfile(
+            title: prior.title,
+            host: prior.host,
+            port: prior.port,
+            username: prior.username,
+            theme: profile.theme,
+            color: profile.color,
+            authType: profile.authType,
+            vaultId: profile.vaultId,
+            keyVaultId: profile.keyVaultId,
+            initialCommand: profile.initialCommand,
+          );
+          updated++;
           continue;
         }
         existing.add(profile);
-        existingKeys.add(profile.identityKey);
+        byIdentity[profile.identityKey] = existing.length - 1;
         added++;
       } on FormatException catch (e) {
         errors.add(e.message);
       }
     }
 
+    ctrace(
+      'ui.import',
+      'profiles=${parsed.profileEntries.length} added=$added '
+          'updated=$updated withVault=$withVault '
+          'withKeyVaultId=$withKeyVaultId withAuthType=$withAuthType',
+    );
+
     // Persist secrets before profiles. If profile save fails (it shouldn't),
     // we'd rather leak an extra secret blob than have a profile without its
     // secret. Either way, the same vaultId would just be overwritten on a
-    // re-import.
+    // re-import. Secrets are written for BOTH added and updated profiles —
+    // an upserted key profile that just gained its keyVaultId needs the secret
+    // re-stored, not only freshly-added ones (#547).
     if (secrets != null) {
       for (final entry in decryptedVault.entries) {
         await secrets.write(entry.key, entry.value);
       }
     }
 
-    if (added > 0) {
+    if (added > 0 || updated > 0) {
       await save(existing);
     }
 
-    return ImportResult(added: added, skipped: skipped, errors: errors);
+    return ImportResult(
+      added: added,
+      updated: updated,
+      skipped: 0,
+      errors: errors,
+    );
   }
 
   /// Backwards-compatible single-shot importer. Accepts the

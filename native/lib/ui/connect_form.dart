@@ -162,6 +162,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             )
           else ...[
             TextField(
+              key: const Key('connect-key'),
               controller: _keyCtrl,
               decoration: const InputDecoration(
                 labelText: 'Private key (PEM)',
@@ -364,12 +365,16 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   Future<void> _openImportDialog() async {
     final result = await showImportProfilesDialog(context);
     if (!mounted || result == null) return;
-    final msg = result.added > 0
-        ? 'Imported ${result.added} profile${result.added == 1 ? '' : 's'}'
-            '${result.skipped > 0 ? ', ${result.skipped} skipped (duplicate)' : ''}'
-        : result.skipped > 0
-            ? 'No new profiles — all ${result.skipped} were already saved.'
-            : 'No profiles imported.';
+    final parts = <String>[];
+    if (result.added > 0) {
+      parts.add('${result.added} added');
+    }
+    if (result.updated > 0) {
+      parts.add('${result.updated} updated');
+    }
+    final msg = parts.isNotEmpty
+        ? 'Imported ${parts.join(', ')}'
+        : 'No profiles imported.';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
