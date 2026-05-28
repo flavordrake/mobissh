@@ -31,9 +31,16 @@ TEST_FILE="${1:-integration_test/connect_smoke_test.dart}"
 
 NATIVE_DIR="${REPO_ROOT}/native"
 PROXY_PID_FILE="${MOBISSH_TMPDIR}/connect-test-socat.pid"
+PROXY2_PID_FILE="${MOBISSH_TMPDIR}/connect-test-socat2.pid"
 SSHD_HOST="test-sshd"
 SSHD_PORT="22"
 BRIDGE_PORT="2222"
+# Optional second bridge port → same test-sshd. When set, the emulator can
+# reach a SECOND distinct host:port:username tuple (127.0.0.1:$BRIDGE_PORT2),
+# which the multi-session lifecycle test needs to create two real sessions
+# without a second sshd container. Off by default so the connect smoke is
+# unaffected.
+BRIDGE_PORT2="${BRIDGE_PORT2:-}"
 
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
@@ -48,11 +55,22 @@ cleanup() {
     fi
     rm -f "$PROXY_PID_FILE"
   fi
+  if [[ -f "$PROXY2_PID_FILE" ]]; then
+    local pid2
+    pid2="$(cat "$PROXY2_PID_FILE")"
+    if kill -0 "$pid2" 2>/dev/null; then
+      kill "$pid2" 2>/dev/null || true
+    fi
+    rm -f "$PROXY2_PID_FILE"
+  fi
   if [[ -n "${GRANT_WATCHER_PID:-}" ]] && kill -0 "$GRANT_WATCHER_PID" 2>/dev/null; then
     kill "$GRANT_WATCHER_PID" 2>/dev/null || true
   fi
   if [[ -n "${DEVICE:-}" ]]; then
     adb -s "$DEVICE" reverse --remove "tcp:${BRIDGE_PORT}" 2>/dev/null || true
+    if [[ -n "$BRIDGE_PORT2" ]]; then
+      adb -s "$DEVICE" reverse --remove "tcp:${BRIDGE_PORT2}" 2>/dev/null || true
+    fi
   fi
 }
 GRANT_WATCHER_PID=""
@@ -86,6 +104,17 @@ sleep 1
 # 4. adb reverse: emulator 127.0.0.1:$BRIDGE_PORT → fd-dev 127.0.0.1:$BRIDGE_PORT.
 log "adb reverse tcp:${BRIDGE_PORT}"
 adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT}" "tcp:${BRIDGE_PORT}"
+
+# 3b/4b. Optional second bridge (same test-sshd, different loopback port) so a
+#        second distinct host:port:username session is reachable on-device.
+if [[ -n "$BRIDGE_PORT2" ]]; then
+  log "starting socat 127.0.0.1:${BRIDGE_PORT2} → ${SSHD_HOST}:${SSHD_PORT}"
+  socat "TCP-LISTEN:${BRIDGE_PORT2},fork,reuseaddr,bind=127.0.0.1" "TCP:${SSHD_HOST}:${SSHD_PORT}" &
+  echo $! > "$PROXY2_PID_FILE"
+  sleep 1
+  log "adb reverse tcp:${BRIDGE_PORT2}"
+  adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT2}" "tcp:${BRIDGE_PORT2}"
+fi
 
 # 4b. POST_NOTIFICATIONS grant-watcher. The app requests this at first
 #     foreground-service start (real users tap Allow), but the integration

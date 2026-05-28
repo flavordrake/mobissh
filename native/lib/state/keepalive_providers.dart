@@ -2,13 +2,15 @@
 //
 // `keepaliveEnabledProvider` exposes the user-facing toggle (persisted via
 // SharedPreferences). `keepaliveControllerProvider` lazily constructs the
-// `KeepaliveController` and attaches it to the SSH session controller.
+// `KeepaliveController` and attaches it to every session in the collection.
+
+import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/keepalive_task.dart';
-import 'connection_providers.dart';
+import 'sessions.dart';
 
 /// SharedPreferences key. Matches the PWA's localStorage key naming style.
 const String keepaliveEnabledPrefKey = 'mobissh.keepalive.enabled';
@@ -23,8 +25,8 @@ const bool keepaliveEnabledDefault = true;
 /// SharedPreferences and propagate to the `KeepaliveController`.
 class KeepaliveEnabledNotifier extends StateNotifier<bool> {
   KeepaliveEnabledNotifier({Future<SharedPreferences>? prefs})
-      : _prefs = prefs ?? SharedPreferences.getInstance(),
-        super(keepaliveEnabledDefault) {
+    : _prefs = prefs ?? SharedPreferences.getInstance(),
+      super(keepaliveEnabledDefault) {
     _hydrate();
   }
 
@@ -54,19 +56,60 @@ class KeepaliveEnabledNotifier extends StateNotifier<bool> {
 
 final keepaliveEnabledProvider =
     StateNotifierProvider<KeepaliveEnabledNotifier, bool>((ref) {
-  return KeepaliveEnabledNotifier();
-});
+      return KeepaliveEnabledNotifier();
+    });
 
-/// Singleton KeepaliveController, attached to the active session's proxy
-/// (#533 — was the in-UI controller; sessions now run task-side via
-/// [SshSessionProxy]). Recreated only when the provider container is
-/// disposed.
+/// Singleton KeepaliveController, attached to EVERY session in the collection.
+///
+/// Multi-session correctness: this provider used to `ref.watch` the active
+/// session's proxy, which made it rebuild whenever the active session
+/// changed. The old controller's `dispose` calls `_stopIfRunning` → stops the
+/// foreground service → `onDestroy` disposes the task-side session host →
+/// every hosted session emits `SshClosedEvent`. The result: starting a second
+/// session terminated the first one mid-handshake (and the second along with
+/// it). The fix is to keep ONE controller for the container's lifetime and
+/// reconcile its attached subscriptions as sessions come and go — the
+/// controller's `_connectedCount` already supports multiple concurrent
+/// sessions; only the wiring was single-session.
 final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
-  final proxy = ref.watch(sshSessionProxyProvider);
   final controller = KeepaliveController(
     enabled: ref.read(keepaliveEnabledProvider),
   );
-  controller.attach(proxy);
+  // Initial attach for whatever sessions already exist when this controller
+  // is first read (typically zero on cold start, but the proxy/session
+  // collection survives provider container teardown in some flows).
+  final initialIds = <String>{};
+  for (final e in ref.read(sessionsProvider).entries) {
+    controller.attach(e.proxy);
+    initialIds.add(e.id);
+  }
+  // Reconcile attach/detach as sessions are added or closed. ref.listen
+  // (vs watch) means this provider itself is NOT rebuilt on session-list
+  // changes — the controller and the service it owns stay alive.
+  final attached = initialIds;
+  ref.listen<SessionsState>(sessionsProvider, (prev, next) {
+    final nextIds = <String, SessionEntry>{
+      for (final e in next.entries) e.id: e,
+    };
+    // Detach sessions that were removed.
+    for (final id in attached.toList()) {
+      if (!nextIds.containsKey(id)) {
+        // Find the proxy from the prev list (it's gone from next).
+        final removed = prev?.entries.where((e) => e.id == id).toList();
+        if (removed != null && removed.isNotEmpty) {
+          unawaited(controller.detach(removed.first.proxy));
+        }
+        attached.remove(id);
+      }
+    }
+    // Attach newly added sessions.
+    for (final entry in nextIds.entries) {
+      if (!attached.contains(entry.key)) {
+        controller.attach(entry.value.proxy);
+        attached.add(entry.key);
+      }
+    }
+  });
   // Mirror toggle changes into the controller.
   ref.listen<bool>(keepaliveEnabledProvider, (_, next) {
     controller.enabled = next;

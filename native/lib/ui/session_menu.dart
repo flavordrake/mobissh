@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import 'connect_form.dart';
 
 /// Opens the session menu as a modal bottom sheet. Returns once dismissed.
 Future<void> showSessionMenu(BuildContext context) {
@@ -33,39 +34,56 @@ class SessionMenu extends ConsumerWidget {
 
     return SafeArea(
       top: false,
-      child: Column(
-        key: const Key('session-menu'),
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(
-              'Sessions',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ),
-          if (sessions.entries.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('No sessions yet.'),
-            )
-          else
-            for (final e in sessions.entries)
-              _SessionRow(
-                entry: e,
-                isActive: e.id == sessions.activeId,
+      // Scrollable so a long session list (+ the New session / keybar rows)
+      // never overflows the sheet on short viewports — the Column is
+      // mainAxisSize.min, so it only scrolls when it has to.
+      child: SingleChildScrollView(
+        child: Column(
+          key: const Key('session-menu'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                'Sessions',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-          const Divider(height: 1),
-          SwitchListTile(
-            key: const Key('session-menu-keybar-toggle'),
-            title: const Text('Show keybar'),
-            subtitle: const Text('Bottom row with Esc, Tab, arrows, Ctrl-C'),
-            value: keybarVisible,
-            onChanged: (v) =>
-                ref.read(keybarVisibleProvider.notifier).set(v),
-          ),
-        ],
+            ),
+            if (sessions.entries.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('No sessions yet.'),
+              )
+            else
+              for (final e in sessions.entries)
+                _SessionRow(entry: e, isActive: e.id == sessions.activeId),
+            // Start an additional session. Closes the menu sheet and pushes the
+            // connect form on top of the terminal screen (the goal's leg 2).
+            ListTile(
+              key: const Key('session-menu-new'),
+              leading: const Icon(Icons.add),
+              title: const Text('New session'),
+              onTap: () {
+                final navigator = Navigator.of(context);
+                navigator.pop();
+                navigator.push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const NewSessionPage(),
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 1),
+            SwitchListTile(
+              key: const Key('session-menu-keybar-toggle'),
+              title: const Text('Show keybar'),
+              subtitle: const Text('Bottom row with Esc, Tab, arrows, Ctrl-C'),
+              value: keybarVisible,
+              onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
+            ),
+          ],
+        ),
       ),
     );
   }

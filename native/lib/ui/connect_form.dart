@@ -48,6 +48,13 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   _AuthKind _authKind = _AuthKind.password;
   bool _busy = false;
 
+  /// Active subscription / completer for the "pop on connected" wait. Stored
+  /// so [dispose] can tear them down cleanly when the form unmounts before the
+  /// session reaches `connected` (otherwise the test binding flags a pending
+  /// timer or the awaiter hangs forever).
+  StreamSubscription<SshSessionData>? _connectedSub;
+  Completer<bool>? _connectedCompleter;
+
   /// Last saved profile applied to the form, if any. Carries the human title
   /// through to the session (#518). Cleared (effectively) by drift-checking
   /// host/port/username at submit time so the title doesn't lie about the
@@ -56,6 +63,15 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
 
   @override
   void dispose() {
+    ctrace('ui.form', 'dispose: ConnectForm state being torn down');
+    // Unblock any in-flight "wait for connected" await BEFORE the controllers
+    // tear down, so _popWhenConnected's continuation runs against a dead
+    // widget but doesn't leak a Stream subscription or hang the future.
+    if (_connectedCompleter != null && !_connectedCompleter!.isCompleted) {
+      _connectedCompleter!.complete(false);
+    }
+    _connectedSub?.cancel();
+    _connectedSub = null;
     _hostCtrl.dispose();
     _portCtrl.dispose();
     _userCtrl.dispose();
@@ -68,17 +84,16 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   @override
   Widget build(BuildContext context) {
     // Watch for host-key prompts; show dialog when one appears.
-    ref.listen<AsyncValue<SshSessionData>>(sshSessionDataProvider,
-        (prev, next) {
+    ref.listen<AsyncValue<SshSessionData>>(sshSessionDataProvider, (
+      prev,
+      next,
+    ) {
       final pending = next.valueOrNull?.pendingHostKey;
       final prevPending = prev?.valueOrNull?.pendingHostKey;
       if (pending != null && prevPending == null) {
         _handleHostKeyPrompt(pending);
       }
     });
-
-    final data = ref.watch(sshSessionDataProvider).valueOrNull ??
-        const SshSessionData();
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -147,8 +162,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               ),
             ],
             selected: {_authKind},
-            onSelectionChanged: (s) =>
-                setState(() => _authKind = s.first),
+            onSelectionChanged: (s) => setState(() => _authKind = s.first),
           ),
           const SizedBox(height: 8),
           if (_authKind == _AuthKind.password)
@@ -175,8 +189,9 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             const SizedBox(height: 8),
             TextField(
               controller: _passphraseCtrl,
-              decoration:
-                  const InputDecoration(labelText: 'Key passphrase (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Key passphrase (optional)',
+              ),
               obscureText: true,
               autocorrect: false,
               enableSuggestions: false,
@@ -185,18 +200,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           const SizedBox(height: 16),
           FilledButton.icon(
             key: const Key('connect-submit'),
-            onPressed: _canSubmit(data) ? () => _submit() : null,
+            onPressed: _canSubmit() ? () => _submit() : null,
             icon: const Icon(Icons.power_settings_new),
             label: Text(_busy ? 'Connecting...' : 'Connect'),
           ),
-          const SizedBox(height: 4),
-          if (data.state == SshSessionState.connected)
-            OutlinedButton.icon(
-              onPressed: () =>
-                  ref.read(sshSessionProxyProvider).disconnect(),
-              icon: const Icon(Icons.link_off),
-              label: const Text('Disconnect'),
-            ),
           const SizedBox(height: 8),
           const SettingsPanel(),
           const DiagnosticsSection(),
@@ -205,20 +212,16 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     );
   }
 
-  bool _canSubmit(SshSessionData data) {
-    switch (data.state) {
-      case SshSessionState.connecting:
-      case SshSessionState.authenticating:
-      case SshSessionState.awaitingHostKey:
-      case SshSessionState.connected:
-      case SshSessionState.reconnecting:
-        return false;
-      case SshSessionState.idle:
-      case SshSessionState.failed:
-      case SshSessionState.disconnected:
-        return !_busy;
-    }
-  }
+  /// Whether the Connect button is enabled. Gated only on this form's own
+  /// in-flight submit (`_busy`) — NOT on any global/active session state.
+  ///
+  /// Multi-session: the form may be a pushed "New session" page opened while
+  /// other sessions are already `connected`. Gating on the legacy single-
+  /// session shim (`sshSessionDataProvider`) disabled the button whenever any
+  /// session was connected, making it impossible to start a 2nd session.
+  /// `addOrActivate` dedups by host:port:username and the task-side controller
+  /// no-ops a re-connect, so an always-enabled button is safe.
+  bool _canSubmit() => !_busy;
 
   Future<void> _submit() async {
     final host = _hostCtrl.text.trim();
@@ -238,9 +241,11 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     // found / read failed), vs a non-zero length meaning creds are present and
     // the server rejected them. (#542/#543 diagnosis of "all auth methods
     // failed after import".)
-    ctrace('ui.form',
-        'auth=${_authKind.name} pwLen=${_passwordCtrl.text.length} '
-        'keyLen=${_keyCtrl.text.length} ppLen=${_passphraseCtrl.text.length}');
+    ctrace(
+      'ui.form',
+      'auth=${_authKind.name} pwLen=${_passwordCtrl.text.length} '
+          'keyLen=${_keyCtrl.text.length} ppLen=${_passphraseCtrl.text.length}',
+    );
     final SshAuth auth;
     if (_authKind == _AuthKind.password) {
       auth = SshAuth.password(_passwordCtrl.text);
@@ -258,6 +263,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       auth: auth,
     );
 
+    // Captured before the async gap so we can pop a pushed "New session"
+    // route after dispatching connect without touching `context` post-await.
+    final navigator = Navigator.of(context);
+
     setState(() => _busy = true);
     try {
       // Multi-session (#511): route through the sessions notifier so we
@@ -269,8 +278,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // #533: connect now dispatches across the task gateway via the per-
       // session [SshSessionProxy] — the underlying `SshSessionController`
       // lives in the task isolate, not the UI.
-      ctrace('ui.form',
-          'submit host=$host port=$port user=$username auth=${_authKind.name}');
+      ctrace(
+        'ui.form',
+        'submit host=$host port=$port user=$username auth=${_authKind.name}',
+      );
       final title = _profileTitleForCurrentForm();
       final entry = ref
           .read(sessionsProvider.notifier)
@@ -285,8 +296,64 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // crash upload sweep. Tailscale being down is the common case at boot
       // and the second-chance path matters more than blocking the UI.
       unawaited(CrashReporter.uploadPending());
+      // When this form was pushed as a "New session" route (over a live
+      // TerminalScreen), return to the terminal once the session CONNECTS —
+      // not on dispatch. Popping early would unmount the form mid-handshake,
+      // so a host-key prompt for the new session would have no form to render
+      // on (and touching `ref` after dispose throws). Staying mounted lets the
+      // form show the trust prompt; once connected we pop back to the terminal.
+      // The root form (ConnectHomePage) can't pop, so this is skipped there —
+      // the router swaps to the terminal screen on `connected` as before.
+      if (navigator.canPop()) {
+        await _popWhenConnected(entry, navigator);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Wait for the new session's proxy to reach `connected`, then pop the
+  /// pushed "New session" route back to the terminal. Stays mounted while
+  /// waiting so host-key prompts still render on this form. On `failed` we
+  /// stop and stay put so the user sees the error and can retry. On dispose
+  /// (e.g. the user backs out), the completer is short-circuited so the
+  /// awaiter unblocks without leaking the subscription.
+  Future<void> _popWhenConnected(
+    SessionEntry entry,
+    NavigatorState navigator,
+  ) async {
+    ctrace(
+      'ui.form',
+      'popWhenConnected: enter sid=${entry.id} state=${entry.proxy.data.state.name}',
+    );
+    // Already there? Pop now.
+    if (entry.proxy.data.state == SshSessionState.connected) {
+      ctrace('ui.form', 'popWhenConnected: already connected → pop');
+      if (mounted && navigator.canPop()) navigator.pop();
+      return;
+    }
+    final completer = Completer<bool>();
+    _connectedCompleter = completer;
+    _connectedSub = entry.proxy.stream.listen((data) {
+      ctrace('ui.form', 'popWhenConnected: state=${data.state.name}');
+      if (completer.isCompleted) return;
+      if (data.state == SshSessionState.connected) {
+        completer.complete(true);
+      } else if (data.state == SshSessionState.failed) {
+        completer.complete(false);
+      }
+    });
+    final connected = await completer.future;
+    ctrace(
+      'ui.form',
+      'popWhenConnected: completer=$connected mounted=$mounted canPop=${navigator.canPop()}',
+    );
+    await _connectedSub?.cancel();
+    _connectedSub = null;
+    _connectedCompleter = null;
+    if (connected && mounted && navigator.canPop()) {
+      ctrace('ui.form', 'popWhenConnected: navigator.pop() now');
+      navigator.pop();
     }
   }
 
@@ -320,9 +387,11 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       } else {
         _authKind = _AuthKind.password;
       }
-      ctrace('ui.form',
-          'applyProfile ${profile.host} authType=${profile.authType} '
-          'keyVaultId=${profile.keyVaultId != null} → mode=${_authKind.name}');
+      ctrace(
+        'ui.form',
+        'applyProfile ${profile.host} authType=${profile.authType} '
+            'keyVaultId=${profile.keyVaultId != null} → mode=${_authKind.name}',
+      );
     });
     if (profile.vaultId != null || profile.keyVaultId != null) {
       unawaited(_prefillFromVault(profile));
@@ -380,6 +449,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {
     final accepted = await showHostKeyDialog(context, pending: pending);
+    // Defensive — the form can be popped (e.g. New session route) while the
+    // dialog is in-flight. Touching `ref` after dispose throws StateError.
+    // The new-session flow now stays mounted until connected, so this only
+    // fires on edge cases (user backs out mid-handshake); skipping the
+    // decision lets the task-side controller fall through its own timeout.
+    if (!mounted) return;
     // #533: host-key over-IPC is a follow-up — the proxy's accept/reject
     // are no-ops today because the gateway envelope contract doesn't carry
     // `pendingHostKey` state. The trust-on-first-use cache in the task-side
@@ -392,5 +467,31 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     } else {
       proxy.rejectHostKey();
     }
+  }
+}
+
+/// Full-screen page hosting a [ConnectForm] for starting an ADDITIONAL session
+/// while others are already connected. Pushed from the session menu's
+/// "New session" tile (the goal's leg 2: connect a second session).
+///
+/// Without this, the `RootRouter` shows the terminal screen the moment any
+/// session connects, so there's no way back to the connect form to start a
+/// second one. The form pops this route itself once connect is dispatched
+/// (see [_ConnectFormState._submit]), landing back on the terminal screen with
+/// the new session active.
+class NewSessionPage extends StatelessWidget {
+  const NewSessionPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('new-session-page'),
+      appBar: AppBar(title: const Text('New session')),
+      body: const SafeArea(
+        child: SingleChildScrollView(
+          child: ConnectForm(key: Key('new-session-form')),
+        ),
+      ),
+    );
   }
 }

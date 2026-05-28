@@ -18,6 +18,24 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../diagnostics/connect_trace.dart';
 
+/// Build a one-line trace label for a gateway payload. Includes the message
+/// `kind` and (when present) the `host:port` portion of the sessionId so
+/// multi-session traces show which session each event belongs to —
+/// previously every `recv state` / `recv closed` looked identical regardless
+/// of session, making it impossible to tell which session dropped.
+String _gwLabel(Map<String, dynamic> p) {
+  final kind = p['kind'] ?? p['type'] ?? '?';
+  final sid = p['sessionId'];
+  if (sid is String && sid.isNotEmpty) {
+    final parts = sid.split(':');
+    // sessionId format: host:port:user:createdAtMs — host:port is the unique
+    // human-readable handle that maps cleanly to a profile.
+    if (parts.length >= 2) return '$kind sid=${parts[0]}:${parts[1]}';
+    return '$kind sid=$sid';
+  }
+  return '$kind';
+}
+
 /// One half of the UI ↔ task channel. The UI proxy holds the
 /// "ui-side" instance; the task-side session host holds the "task-side"
 /// instance. They share the underlying transport.
@@ -40,8 +58,8 @@ abstract class TaskSshGateway {
 /// makes the *future* split possible without rewiring callers.
 class InMemoryGatewayPair {
   InMemoryGatewayPair()
-      : _toTask = StreamController<Map<String, dynamic>>.broadcast(),
-        _toUi = StreamController<Map<String, dynamic>>.broadcast();
+    : _toTask = StreamController<Map<String, dynamic>>.broadcast(),
+      _toUi = StreamController<Map<String, dynamic>>.broadcast();
 
   final StreamController<Map<String, dynamic>> _toTask;
   final StreamController<Map<String, dynamic>> _toUi;
@@ -74,8 +92,8 @@ class _InMemoryGateway implements TaskSshGateway {
   _InMemoryGateway({
     required StreamController<Map<String, dynamic>> sender,
     required Stream<Map<String, dynamic>> receiver,
-  })  : _sender = sender,
-        incoming = receiver;
+  }) : _sender = sender,
+       incoming = receiver;
 
   final StreamController<Map<String, dynamic>> _sender;
 
@@ -193,7 +211,7 @@ Map<String, dynamic>? _coercePayload(Object? raw) {
 /// sends pass through immediately.
 class FlutterForegroundSshGateway implements TaskSshGateway {
   FlutterForegroundSshGateway({FftTransport? transport})
-      : _transport = transport ?? const UiSideFftTransport() {
+    : _transport = transport ?? const UiSideFftTransport() {
     _cancel = _transport.registerReceiver(_onData);
   }
 
@@ -219,12 +237,13 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     if (_disposed) return;
     if (!_ready) {
       _outboundBuffer.add(payload);
-      ctrace('ui.gw',
-          'send ${payload['kind'] ?? payload['type'] ?? '?'} BUFFERED (not ready, n=${_outboundBuffer.length})');
+      ctrace(
+        'ui.gw',
+        'send ${_gwLabel(payload)} BUFFERED (not ready, n=${_outboundBuffer.length})',
+      );
       return;
     }
-    ctrace('ui.gw',
-        'send ${payload['kind'] ?? payload['type'] ?? '?'} → transport (ready)');
+    ctrace('ui.gw', 'send ${_gwLabel(payload)} → transport (ready)');
     _transport.send(payload);
   }
 
@@ -241,13 +260,15 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
       _ready = true;
       final buffered = List<Map<String, dynamic>>.from(_outboundBuffer);
       _outboundBuffer.clear();
-      ctrace('ui.gw',
-          'recv ${map['kind'] ?? map['type'] ?? '?'} → READY; flushing ${buffered.length} buffered');
+      ctrace(
+        'ui.gw',
+        'recv ${_gwLabel(map)} → READY; flushing ${buffered.length} buffered',
+      );
       for (final p in buffered) {
         _transport.send(p);
       }
     } else {
-      ctrace('ui.gw', 'recv ${map['kind'] ?? map['type'] ?? '?'}');
+      ctrace('ui.gw', 'recv ${_gwLabel(map)}');
     }
     if (!_incoming.isClosed) _incoming.add(map);
   }
@@ -269,7 +290,7 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
 /// [TaskSideFftTransport.deliver].
 class TaskSideForegroundGateway implements TaskSshGateway {
   TaskSideForegroundGateway({required TaskSideFftTransport transport})
-      : _transport = transport {
+    : _transport = transport {
     _cancel = _transport.registerReceiver(_onData);
   }
 
@@ -344,8 +365,8 @@ class StubFftTransport implements FftTransport {
 /// end-to-end.
 class StubFftTransportPair {
   StubFftTransportPair()
-      : _uiOutbound = StreamController<Object>.broadcast(),
-        _taskOutbound = StreamController<Object>.broadcast() {
+    : _uiOutbound = StreamController<Object>.broadcast(),
+      _taskOutbound = StreamController<Object>.broadcast() {
     uiSide = StubFftTransport._(_uiOutbound, _taskOutbound.stream);
     taskSide = StubFftTransport._(_taskOutbound, _uiOutbound.stream);
   }
