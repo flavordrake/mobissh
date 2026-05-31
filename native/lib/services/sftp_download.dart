@@ -36,7 +36,8 @@ abstract class FileDownloadSink {
 /// Resolves the destination sink for a download. Injected into the browser so
 /// widget tests substitute an in-memory sink (no real filesystem). Production
 /// resolves to an [AppDownloadsSink].
-typedef DownloadSinkFactory = Future<FileDownloadSink> Function(String fileName);
+typedef DownloadSinkFactory =
+    Future<FileDownloadSink> Function(String fileName);
 
 /// Production factory: app-scoped Downloads directory via path_provider.
 Future<FileDownloadSink> defaultDownloadSinkFactory(String fileName) async {
@@ -107,9 +108,67 @@ class AppDownloadsSink implements FileDownloadSink {
   Future<void> abort() async {
     try {
       await _sink.close();
-    } catch (_) {/* ignore */}
+    } catch (_) {
+      /* ignore */
+    }
     try {
       if (await _file.exists()) await _file.delete();
-    } catch (_) {/* ignore */}
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+/// Writes a download into a private app TEMP directory rather than Downloads.
+/// Used by the in-app PDF viewer (#557): the file is fetched to temp, rendered,
+/// then deleted on close. [finish] returns the temp file path; [file] exposes
+/// the [File] so the caller can delete it explicitly.
+class TempFileSink implements FileDownloadSink {
+  TempFileSink._(this.file, this._sink);
+
+  /// The temp file being written. The caller deletes this when done.
+  final File file;
+  final IOSink _sink;
+
+  static Future<TempFileSink> create(String fileName) async {
+    final base = await getTemporaryDirectory();
+    final dir = await Directory(
+      '${base.path}/mobissh_pdf',
+    ).create(recursive: true);
+    final safeName = _sanitizeTemp(fileName);
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final file = File('${dir.path}/$stamp-$safeName');
+    return TempFileSink._(file, file.openWrite());
+  }
+
+  static String _sanitizeTemp(String name) {
+    final base = name.split('/').last.split('\\').last;
+    return base.isEmpty ? 'preview.pdf' : base;
+  }
+
+  @override
+  Future<void> addChunk(Uint8List bytes) async {
+    _sink.add(bytes);
+  }
+
+  @override
+  Future<String> finish() async {
+    await _sink.flush();
+    await _sink.close();
+    return file.path;
+  }
+
+  @override
+  Future<void> abort() async {
+    try {
+      await _sink.close();
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      /* ignore */
+    }
   }
 }

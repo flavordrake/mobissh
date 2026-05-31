@@ -60,6 +60,10 @@ dependencies:
   # flutter_test without a device.
   cryptography: ^2.7.0
 
+  # In-app PDF viewer (#557). pdfium-backed, maintained, null-safe. Renders the
+  # SFTP-fetched temp PDF in the file explorer's preview route.
+  pdfrx: ^1.0.0
+
   # Crash telemetry pipeline (#501 crash-on-launch).
   # http: bridge upload. path_provider: app-docs dir shared with the Kotlin
   # crash writer. device_info_plus + package_info_plus: enrich crash JSON.

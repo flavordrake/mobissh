@@ -17,10 +17,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/pdf_detect.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_download.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
+import 'pdf_viewer_screen.dart';
 
 /// Resolves the destination sink for downloads. Overridden in widget tests to
 /// avoid touching the real filesystem; production uses the app Downloads dir.
@@ -28,12 +30,26 @@ final downloadSinkFactoryProvider = Provider<DownloadSinkFactory>(
   (ref) => defaultDownloadSinkFactory,
 );
 
-/// Optional `.pdf` tap interceptor (#557 seam). When non-null, tapping a
-/// `.pdf` file invokes this instead of downloading. The PDF viewer feature
-/// overrides this provider to push its preview route.
-typedef PdfTapInterceptor = void Function(BuildContext context, SftpEntry entry);
+/// `.pdf` tap interceptor (#557). When non-null, tapping a PDF file invokes
+/// this instead of downloading. Receives the [sessionId] so it can resolve the
+/// proxy for the in-app fetch. Defaults to [_pushPdfViewer], which opens the
+/// in-app viewer route; tests override it with null (fall through to download)
+/// or a spy.
+typedef PdfTapInterceptor =
+    void Function(BuildContext context, String sessionId, SftpEntry entry);
 
-final pdfTapInterceptorProvider = Provider<PdfTapInterceptor?>((ref) => null);
+/// Default interceptor: push the in-app PDF viewer route.
+void _pushPdfViewer(BuildContext context, String sessionId, SftpEntry entry) {
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => PdfViewerScreen(sessionId: sessionId, entry: entry),
+    ),
+  );
+}
+
+final pdfTapInterceptorProvider = Provider<PdfTapInterceptor?>(
+  (ref) => _pushPdfViewer,
+);
 
 /// Push the file browser for [sessionId]. The session menu's "Files" item and
 /// any future caller use this single entry point (#559 bullet 4).
@@ -232,7 +248,9 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _onEntryTap(SftpEntry entry) {
@@ -244,11 +262,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   }
 
   void _onFileTap(SftpEntry entry) {
-    // #557 seam: a registered PDF interceptor handles `.pdf` files (e.g. opens
-    // an in-app preview) instead of downloading. Falls through otherwise.
+    // #557: a registered PDF interceptor handles `.pdf` files (opens the in-app
+    // preview) instead of downloading. Falls through to download otherwise.
     final pdfHandler = ref.read(pdfTapInterceptorProvider);
-    if (pdfHandler != null && entry.name.toLowerCase().endsWith('.pdf')) {
-      pdfHandler(context, entry);
+    if (pdfHandler != null && isPdfEntry(entry)) {
+      pdfHandler(context, widget.sessionId, entry);
       return;
     }
     unawaited(_startDownload(entry));
@@ -350,17 +368,18 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       itemCount: _entries.length,
       itemBuilder: (context, i) {
         final e = _entries[i];
-        return _EntryTile(
-          entry: e,
-          onTap: () => _onEntryTap(e),
-        );
+        return _EntryTile(entry: e, onTap: () => _onEntryTap(e));
       },
     );
   }
 }
 
 class _PathBar extends StatelessWidget {
-  const _PathBar({required this.path, required this.canGoUp, required this.onUp});
+  const _PathBar({
+    required this.path,
+    required this.canGoUp,
+    required this.onUp,
+  });
 
   final String path;
   final bool canGoUp;
@@ -408,9 +427,7 @@ class _EntryTile extends StatelessWidget {
       key: Key('file-entry-${entry.name}'),
       leading: Icon(icon),
       title: Text(entry.name, overflow: TextOverflow.ellipsis),
-      subtitle: entry.isDirectory
-          ? null
-          : Text(_formatSize(entry.size)),
+      subtitle: entry.isDirectory ? null : Text(_formatSize(entry.size)),
       trailing: entry.isDirectory ? const Icon(Icons.chevron_right) : null,
       onTap: onTap,
     );
@@ -448,8 +465,10 @@ class _DownloadProgress extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Downloading $name…',
-              style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            'Downloading $name…',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 4),
           LinearProgressIndicator(value: value),
         ],
