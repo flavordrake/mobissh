@@ -20,9 +20,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:dartssh2/dartssh2.dart';
+
 import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
+import '../ssh/sftp_session.dart';
 import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
 
@@ -38,9 +41,11 @@ class SessionHost {
   SessionHost({
     required TaskSshGateway gateway,
     SshControllerFactory? controllerFactory,
+    SftpSessionOpener? sftpOpener,
     this.snapshotInterval = const Duration(seconds: 2),
   })  : _gateway = gateway,
-        _factory = controllerFactory ?? _defaultControllerFactory {
+        _factory = controllerFactory ?? _defaultControllerFactory,
+        _sftpOpener = sftpOpener {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
     ctrace('task.host', 'ctor: listening; sending SshTaskReadyEvent');
@@ -54,6 +59,11 @@ class SessionHost {
 
   final TaskSshGateway _gateway;
   final SshControllerFactory _factory;
+
+  /// Opens an [SftpSession] for a session id (#559). Null in production →
+  /// [_defaultSftpOpener] opens an SFTP subsystem over the live `SSHClient`.
+  /// Tests inject a fake so the handlers run without a real socket.
+  final SftpSessionOpener? _sftpOpener;
 
   /// How often a snapshot is pushed to the UI side. Tests use a short
   /// interval; production defaults to two seconds.
@@ -112,6 +122,10 @@ class SessionHost {
         if (s != null) _emitSnapshot(cmd.sessionId, s);
       case SshHostKeyDecisionCommand():
         _handleHostKeyDecision(cmd);
+      case SftpListCommand():
+        _handleSftpList(cmd);
+      case SftpDownloadCommand():
+        _handleSftpDownload(cmd);
     }
   }
 
@@ -181,10 +195,119 @@ class SessionHost {
   Future<void> _teardown(String sessionId, _HostedSession hosted) async {
     await hosted.stateSub?.cancel();
     hosted.stateSub = null;
+    final sftp = hosted.sftp;
+    hosted.sftp = null;
+    if (sftp != null) {
+      try {
+        await sftp.close();
+      } catch (_) {/* ignore */}
+    }
     try {
       await hosted.controller.dispose();
     } catch (_) {/* ignore */}
     _gateway.send(SshClosedEvent(sessionId: sessionId).toJson());
+  }
+
+  // -------------------------------------------------------------------------
+  // SFTP region (#559) — additive. Sits alongside the connect/keepalive/
+  // reconnect handlers above and never mutates the SSH lifecycle state machine.
+  // Each op opens (lazily) an [SftpSession] over the session's authenticated
+  // `SSHClient` and routes results back as request-id-scoped events so a failed
+  // list/download surfaces in the browser without disturbing the live shell.
+  // -------------------------------------------------------------------------
+
+  /// Open (or reuse) the [SftpSession] for [sessionId]. Returns null if the
+  /// session isn't hosted or has no authenticated client yet.
+  Future<SftpSession?> _ensureSftp(String sessionId) async {
+    final hosted = _sessions[sessionId];
+    if (hosted == null) return null;
+    if (hosted.sftp != null) return hosted.sftp;
+    final opener = _sftpOpener ?? _defaultSftpOpener;
+    final session = await opener(sessionId);
+    // Re-check: an interleaved open could have set it; the controller may also
+    // have been torn down while we awaited. Prefer the already-cached one.
+    if (hosted.sftp != null) {
+      if (session != null) await session.close();
+      return hosted.sftp;
+    }
+    hosted.sftp = session;
+    return session;
+  }
+
+  /// Default opener: grab the authenticated `SSHClient` from the controller and
+  /// open an SFTP subsystem channel over it. Returns null when the session
+  /// isn't connected (no client) so the caller emits a friendly error.
+  Future<SftpSession?> _defaultSftpOpener(String sessionId) async {
+    final hosted = _sessions[sessionId];
+    final client = hosted?.controller.client;
+    if (client == null) return null;
+    final SftpClient sftp = await client.sftp();
+    return DartSshSftpSession(sftp);
+  }
+
+  Future<void> _handleSftpList(SftpListCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      final entries = await sftp.list(cmd.path);
+      if (_disposed) return;
+      _gateway.send(SftpListingEvent(
+        sessionId: cmd.sessionId,
+        requestId: cmd.requestId,
+        path: cmd.path,
+        entries: entries,
+      ).toJson());
+    } catch (e) {
+      ctrace('task.host', 'sftp ls FAILED path=${cmd.path} — $e');
+      _emitSftpError(cmd.sessionId, cmd.requestId, 'List failed: $e');
+    }
+  }
+
+  Future<void> _handleSftpDownload(SftpDownloadCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      // Resolve the size up front so the UI can render a determinate bar; a
+      // null size just means an indeterminate spinner.
+      final totalBytes = await sftp.sizeOf(cmd.path);
+      final written = await sftp.download(
+        cmd.path,
+        onChunk: (chunk, offset) {
+          if (_disposed) return;
+          _gateway.send(SftpDownloadChunkEvent(
+            sessionId: cmd.sessionId,
+            requestId: cmd.requestId,
+            bytes: chunk,
+            offset: offset,
+            totalBytes: totalBytes,
+          ).toJson());
+        },
+      );
+      if (_disposed) return;
+      _gateway.send(SftpDownloadDoneEvent(
+        sessionId: cmd.sessionId,
+        requestId: cmd.requestId,
+        totalBytes: written,
+      ).toJson());
+    } catch (e) {
+      ctrace('task.host', 'sftp download FAILED path=${cmd.path} — $e');
+      _emitSftpError(cmd.sessionId, cmd.requestId, 'Download failed: $e');
+    }
+  }
+
+  void _emitSftpError(String sessionId, String requestId, String message) {
+    if (_disposed) return;
+    _gateway.send(SftpErrorEvent(
+      sessionId: sessionId,
+      requestId: requestId,
+      message: message,
+    ).toJson());
   }
 
   /// Emit a host-key challenge to the UI when the controller surfaces a fresh
@@ -290,9 +413,11 @@ class SessionHost {
     for (final hosted in _sessions.values) {
       hosted.stateSub?.cancel();
       hosted.stateSub = null;
-      // Don't await controller.dispose — let GC handle it. Tests that
-      // construct controllers via the stub factory have no live SSHClient
-      // anyway.
+      // Cancel the controller's own timers (ready/reconnect) so the framework's
+      // pending-timer invariant doesn't fire. `disconnect()` is sync when no
+      // live SSHClient exists (the stub factory's socket never opens), so the
+      // fire-and-forget is safe and complete by the time the test body ends.
+      unawaited(hosted.controller.disconnect());
     }
     _sessions.clear();
   }
@@ -356,6 +481,11 @@ class _HostedSession {
   final SshSessionController controller;
   StreamSubscription<SshSessionData>? stateSub;
   final SessionMetrics metrics = SessionMetrics();
+
+  /// Lazily-opened SFTP subsystem over this session's `SSHClient` (#559).
+  /// Opened on the first list/download command, reused after, closed on
+  /// teardown. Null until the first SFTP op.
+  SftpSession? sftp;
 
   /// Fingerprint of the host-key challenge already forwarded to the UI, so a
   /// single awaitingHostKey transition emits exactly one challenge (#536).

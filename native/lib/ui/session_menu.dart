@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import 'connect_form.dart';
+import 'file_browser_screen.dart';
 
 /// Opens the session menu as a modal bottom sheet. Returns once dismissed.
 Future<void> showSessionMenu(BuildContext context) {
@@ -92,6 +93,24 @@ class SessionMenu extends ConsumerWidget {
               subtitle: Text(palette.label),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => ref.read(terminalThemeProvider.notifier).cycle(),
+            ),
+            // Browse / download remote files over SFTP for the active session
+            // (#559). Disabled when there's no active session.
+            ListTile(
+              key: const Key('session-menu-files'),
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Files'),
+              subtitle: const Text('Browse and download remote files (SFTP)'),
+              trailing: const Icon(Icons.chevron_right),
+              enabled: sessions.activeId != null,
+              onTap: sessions.activeId == null
+                  ? null
+                  : () {
+                      final sessionId = sessions.activeId!;
+                      final navigator = Navigator.of(context);
+                      navigator.pop();
+                      openFileBrowser(navigator.context, sessionId);
+                    },
             ),
           ],
         ),

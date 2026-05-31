@@ -22,6 +22,13 @@ enum SshTaskCommandKind {
   resize,
   requestSnapshot,
   hostKeyDecision,
+
+  // --- SFTP (#559) ---
+  /// List a remote directory over the session's SftpClient.
+  sftpList,
+
+  /// Download a single remote file; the task streams chunks back.
+  sftpDownload,
 }
 
 /// Envelope kind discriminator for task → UI events.
@@ -36,6 +43,66 @@ enum SshTaskEventKind {
   /// Task isolate finished booting (`SessionHost` + gateway wired). The UI
   /// gateway flushes any commands it buffered during isolate spin-up (#539).
   ready,
+
+  // --- SFTP (#559) ---
+  /// A directory listing result (entries for one path).
+  sftpListing,
+
+  /// One chunk of a file being downloaded (base64 bytes + running offset).
+  sftpDownloadChunk,
+
+  /// A download finished — total bytes + the request id.
+  sftpDownloadDone,
+
+  /// An SFTP operation failed (list or download). Carries the request id so
+  /// the UI can match it to the in-flight op without tearing down the session.
+  sftpError,
+}
+
+/// One remote filesystem entry surfaced to the file browser (#559). Kept small
+/// and Dart-serializable so it round-trips across the UI ↔ task IPC boundary.
+/// Mirrors the fields the PWA file explorer renders (name, dir flag, size,
+/// mtime). `path` is the absolute remote path (parent + name) so the UI can
+/// navigate / download without re-joining paths itself.
+class SftpEntry {
+  const SftpEntry({
+    required this.name,
+    required this.path,
+    required this.isDirectory,
+    this.size,
+    this.modifyTime,
+    this.isSymlink = false,
+  });
+
+  final String name;
+  final String path;
+  final bool isDirectory;
+
+  /// Size in bytes (null for directories / when the server omits it).
+  final int? size;
+
+  /// Modification time in seconds since epoch (null when omitted).
+  final int? modifyTime;
+
+  final bool isSymlink;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'path': path,
+        'isDirectory': isDirectory,
+        if (size != null) 'size': size,
+        if (modifyTime != null) 'modifyTime': modifyTime,
+        if (isSymlink) 'isSymlink': true,
+      };
+
+  factory SftpEntry.fromJson(Map<String, dynamic> json) => SftpEntry(
+        name: json['name'] as String,
+        path: json['path'] as String,
+        isDirectory: json['isDirectory'] as bool,
+        size: json['size'] as int?,
+        modifyTime: json['modifyTime'] as int?,
+        isSymlink: (json['isSymlink'] as bool?) ?? false,
+      );
 }
 
 /// Base for all UI → task command envelopes. Subclasses are concrete records
@@ -95,8 +162,74 @@ sealed class SshTaskCommand {
           sessionId: sessionId,
           accepted: json['accepted'] as bool,
         );
+      case SshTaskCommandKind.sftpList:
+        return SftpListCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+        );
+      case SshTaskCommandKind.sftpDownload:
+        return SftpDownloadCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+        );
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// SFTP commands (#559)
+// ---------------------------------------------------------------------------
+
+/// UI → task: list the remote directory at [path]. The task replies with a
+/// matching [SftpListingEvent] (or [SftpErrorEvent]) carrying [requestId] so
+/// the browser can ignore stale listings after a fast navigation.
+class SftpListCommand extends SshTaskCommand {
+  const SftpListCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpList;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'path': path,
+      };
+}
+
+/// UI → task: download the single remote file at [path]. The task streams
+/// [SftpDownloadChunkEvent]s and a terminal [SftpDownloadDoneEvent], all keyed
+/// by [requestId]. Folder/recursive download is Slice 2 — this is one file.
+class SftpDownloadCommand extends SshTaskCommand {
+  const SftpDownloadCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpDownload;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'path': path,
+      };
 }
 
 class SshConnectCommand extends SshTaskCommand {
@@ -298,6 +431,36 @@ sealed class SshTaskEvent {
         );
       case SshTaskEventKind.ready:
         return const SshTaskReadyEvent();
+      case SshTaskEventKind.sftpListing:
+        final rawEntries = (json['entries'] as List)
+            .map((e) => SftpEntry.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList();
+        return SftpListingEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+          entries: rawEntries,
+        );
+      case SshTaskEventKind.sftpDownloadChunk:
+        return SftpDownloadChunkEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          bytes: Uint8List.fromList(base64Decode(json['bytes'] as String)),
+          offset: json['offset'] as int,
+          totalBytes: json['totalBytes'] as int?,
+        );
+      case SshTaskEventKind.sftpDownloadDone:
+        return SftpDownloadDoneEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          totalBytes: json['totalBytes'] as int,
+        );
+      case SshTaskEventKind.sftpError:
+        return SftpErrorEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          message: json['message'] as String,
+        );
     }
   }
 }
@@ -472,5 +635,116 @@ class SshTaskReadyEvent extends SshTaskEvent {
   Map<String, dynamic> toJson() => {
         'kind': kind.name,
         'sessionId': sessionId,
+      };
+}
+
+// ---------------------------------------------------------------------------
+// SFTP events (#559)
+// ---------------------------------------------------------------------------
+
+/// Task → UI: the directory listing for [path]. [requestId] matches the
+/// originating [SftpListCommand] so the browser can drop stale results.
+class SftpListingEvent extends SshTaskEvent {
+  const SftpListingEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+    required this.entries,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+  final List<SftpEntry> entries;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpListing;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'path': path,
+        'entries': entries.map((e) => e.toJson()).toList(),
+      };
+}
+
+/// Task → UI: one chunk of a downloading file. Streamed in order; the UI
+/// assembles them into the destination sink. [offset] is the byte offset of
+/// this chunk's first byte; [totalBytes] (when known) drives the progress bar.
+class SftpDownloadChunkEvent extends SshTaskEvent {
+  SftpDownloadChunkEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.bytes,
+    required this.offset,
+    this.totalBytes,
+  }) : super(sessionId);
+
+  final String requestId;
+  final Uint8List bytes;
+  final int offset;
+  final int? totalBytes;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpDownloadChunk;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'bytes': base64Encode(bytes),
+        'offset': offset,
+        if (totalBytes != null) 'totalBytes': totalBytes,
+      };
+}
+
+/// Task → UI: a download completed successfully. [totalBytes] is the full
+/// transferred size; the UI flushes + closes its destination sink on this.
+class SftpDownloadDoneEvent extends SshTaskEvent {
+  const SftpDownloadDoneEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.totalBytes,
+  }) : super(sessionId);
+
+  final String requestId;
+  final int totalBytes;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpDownloadDone;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'totalBytes': totalBytes,
+      };
+}
+
+/// Task → UI: an SFTP list/download op failed. Scoped to [requestId] so it
+/// surfaces as an in-browser error (snackbar) without disturbing the SSH
+/// session itself.
+class SftpErrorEvent extends SshTaskEvent {
+  const SftpErrorEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.message,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String message;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpError;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'message': message,
       };
 }

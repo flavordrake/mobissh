@@ -56,6 +56,12 @@ class SshSessionProxy {
   final StreamController<Uint8List> _outputCtrl =
       StreamController<Uint8List>.broadcast();
 
+  /// SFTP events (#559): directory listings, download chunks/done, errors —
+  /// all keyed by `requestId`. The file browser subscribes and filters by its
+  /// own in-flight request id.
+  final StreamController<SshTaskEvent> _sftpCtrl =
+      StreamController<SshTaskEvent>.broadcast();
+
   SshSessionData _data = const SshSessionData();
   ProxySnapshot _snapshot =
       const ProxySnapshot(state: SshSessionState.idle);
@@ -72,6 +78,11 @@ class SshSessionProxy {
   /// PTY output bytes streamed from the task side. Subscribers feed these
   /// into `Terminal.write(...)`.
   Stream<Uint8List> get output => _outputCtrl.stream;
+
+  /// SFTP events from the task side (#559). Emits [SftpListingEvent],
+  /// [SftpDownloadChunkEvent], [SftpDownloadDoneEvent], [SftpErrorEvent].
+  /// The file browser filters by request id.
+  Stream<SshTaskEvent> get sftpEvents => _sftpCtrl.stream;
 
   /// Latest snapshot received from the task side. Used by the audit screen
   /// and by `rebind()` to redraw without waiting for the next emit.
@@ -168,6 +179,27 @@ class SshSessionProxy {
     ).toJson());
   }
 
+  /// Request a directory listing over SFTP (#559). The matching
+  /// [SftpListingEvent] (or [SftpErrorEvent]) arrives on [sftpEvents] with the
+  /// same [requestId].
+  void sftpList({required String requestId, required String path}) {
+    gateway.send(SftpListCommand(
+      sessionId: sessionId,
+      requestId: requestId,
+      path: path,
+    ).toJson());
+  }
+
+  /// Request a single-file download over SFTP (#559). Chunks + completion
+  /// arrive on [sftpEvents] keyed by [requestId].
+  void sftpDownload({required String requestId, required String path}) {
+    gateway.send(SftpDownloadCommand(
+      sessionId: sessionId,
+      requestId: requestId,
+      path: path,
+    ).toJson());
+  }
+
   /// Send a PTY resize to the remote.
   void sendResize(int cols, int rows, {int pixelWidth = 0, int pixelHeight = 0}) {
     gateway.send(SshResizeCommand(
@@ -188,6 +220,7 @@ class SshSessionProxy {
     _eventSub = null;
     if (!_dataCtrl.isClosed) await _dataCtrl.close();
     if (!_outputCtrl.isClosed) await _outputCtrl.close();
+    if (!_sftpCtrl.isClosed) await _sftpCtrl.close();
   }
 
   void _handleEvent(Map<String, dynamic> payload) {
@@ -250,6 +283,13 @@ class SshSessionProxy {
         // It only reaches here for the matching (empty) sessionId, which no
         // real proxy uses, but handle it for switch exhaustiveness.
         break;
+      case SftpListingEvent():
+      case SftpDownloadChunkEvent():
+      case SftpDownloadDoneEvent():
+      case SftpErrorEvent():
+        // SFTP results (#559) — forward to the file browser, which matches by
+        // request id. They never touch the SSH lifecycle state.
+        if (!_sftpCtrl.isClosed) _sftpCtrl.add(event);
     }
   }
 
