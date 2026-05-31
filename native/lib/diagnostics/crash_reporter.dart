@@ -46,8 +46,8 @@ class _ReporterState {
     required this.env,
     required this.httpClient,
     required this.endpoint,
-  })  : bootstrapped = false,
-        uploadInFlight = false;
+  }) : bootstrapped = false,
+       uploadInFlight = false;
 }
 
 /// Top-level crash capture + auto-upload pipeline.
@@ -120,21 +120,25 @@ class CrashReporter {
         // want the framework error to scroll past.
         FlutterError.presentError(details);
         // Fire-and-forget; do NOT await inside an error handler.
-        unawaited(_recordError(
-          error: details.exception,
-          stack: details.stack,
-          context: details.context?.toDescription() ?? 'flutter',
-          kind: 'flutter',
-        ));
+        unawaited(
+          _recordError(
+            error: details.exception,
+            stack: details.stack,
+            context: details.context?.toDescription() ?? 'flutter',
+            kind: 'flutter',
+          ),
+        );
       };
 
       PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
-        unawaited(_recordError(
-          error: error,
-          stack: stack,
-          context: 'platform-dispatcher',
-          kind: 'dart',
-        ));
+        unawaited(
+          _recordError(
+            error: error,
+            stack: stack,
+            context: 'platform-dispatcher',
+            kind: 'dart',
+          ),
+        );
         // Return true: we've handled it. Don't surface to the engine, which
         // would terminate the isolate.
         return true;
@@ -149,16 +153,21 @@ class CrashReporter {
   /// it is still covered.
   static R? runGuarded<R>(R Function() body) {
     R? result;
-    runZonedGuarded<void>(() {
-      result = body();
-    }, (Object error, StackTrace stack) {
-      unawaited(_recordError(
-        error: error,
-        stack: stack,
-        context: 'zone-guard',
-        kind: 'dart',
-      ));
-    });
+    runZonedGuarded<void>(
+      () {
+        result = body();
+      },
+      (Object error, StackTrace stack) {
+        unawaited(
+          _recordError(
+            error: error,
+            stack: stack,
+            context: 'zone-guard',
+            kind: 'dart',
+          ),
+        );
+      },
+    );
     return result;
   }
 
@@ -310,11 +319,7 @@ class CrashReporter {
     } finally {
       state.uploadInFlight = false;
     }
-    return UploadSummary(
-      uploaded: uploaded,
-      failed: failed,
-      scanned: scanned,
-    );
+    return UploadSummary(uploaded: uploaded, failed: failed, scanned: scanned);
   }
 
   /// Returns the most recently-modified crash file under the crashes dir, or
@@ -357,6 +362,38 @@ class CrashReporter {
           .length;
     } catch (_) {
       return 0;
+    }
+  }
+
+  /// Device + build snapshot (app version, git hash, platform, model) from the
+  /// configured [CrashEnvironment]. Used by the feedback bundle assembler
+  /// (#553) so it doesn't need its own platform-channel plumbing. Returns a
+  /// best-effort empty snapshot on any failure.
+  static Future<CrashEnvironmentInfo> environmentSnapshot() async {
+    final state = _ensureState();
+    try {
+      return await state.env.snapshot();
+    } catch (err, st) {
+      _safeLog('environmentSnapshot failed: $err\n$st');
+      return const CrashEnvironmentInfo(
+        appVersion: '',
+        buildSha: '',
+        platformVersion: '',
+        deviceModel: '',
+      );
+    }
+  }
+
+  /// Raw text of the most recent crash report file, or null if none exists.
+  /// Used by the feedback bundle (#553) to embed the last crash. Never throws.
+  static Future<String?> latestCrashContent() async {
+    try {
+      final file = await latestCrashFile();
+      if (file == null) return null;
+      return await file.readAsString();
+    } catch (err, st) {
+      _safeLog('latestCrashContent failed: $err\n$st');
+      return null;
     }
   }
 
