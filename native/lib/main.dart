@@ -10,6 +10,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'diagnostics/crash_reporter.dart';
+import 'platform/desktop.dart';
 import 'ssh/ssh_session.dart';
 import 'state/connection_providers.dart';
 import 'state/keepalive_providers.dart';
@@ -30,8 +31,12 @@ void main() {
     // Fire-and-forget — don't block first paint on bridge reachability.
     unawaited(CrashReporter.uploadPending());
     // Open the isolate port so the foreground task isolate can send data
-    // back to the UI (#512). Cheap, idempotent — fine to always call.
-    FlutterForegroundTask.initCommunicationPort();
+    // back to the UI (#512). Android-only: `flutter_foreground_task` is not
+    // available on desktop (macOS / Linux / Windows, #577) where there is no
+    // task isolate — calling it would throw `MissingPluginException` at boot.
+    if (!kIsDesktop) {
+      FlutterForegroundTask.initCommunicationPort();
+    }
     runApp(const ProviderScope(child: MobisshApp()));
   });
 }
