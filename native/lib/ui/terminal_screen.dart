@@ -46,28 +46,12 @@ class TerminalScreen extends ConsumerWidget {
     final activeEntry = sessions.active ?? entries.first;
     final activeIndex = entries.indexWhere((e) => e.id == activeEntry.id);
 
+    // No top AppBar (#566 follow-up): terminal real estate is at a premium and
+    // the PWA is a full-screen terminal with bottom-only chrome. The session
+    // label + menu + disconnect all live on the bottom session bar; the
+    // terminal fills from the status bar down.
     return Scaffold(
-      appBar: AppBar(
-        title: Text(activeEntry.label, overflow: TextOverflow.ellipsis),
-        actions: [
-          IconButton(
-            key: const Key('terminal-disconnect-button'),
-            tooltip: 'Disconnect',
-            icon: const Icon(Icons.link_off),
-            // Fully close the session (disconnect + dispose + REMOVE the entry),
-            // not just proxy.disconnect(). Leaving the dead entry in the
-            // collection made the next connect dedup to it in addOrActivate and
-            // skip ensureStarted(), so after the foreground task isolate stopped
-            // (last session gone) a re-connect went nowhere and stuck at idle
-            // (#564). A fresh connect now re-creates the entry + restarts the
-            // service cleanly.
-            onPressed: () =>
-                ref.read(sessionsProvider.notifier).close(activeEntry.id),
-          ),
-        ],
-      ),
       body: SafeArea(
-        top: false,
         child: Column(
           children: [
             Expanded(
@@ -84,11 +68,16 @@ class TerminalScreen extends ConsumerWidget {
             ),
             if (keybarVisible) Keybar(activeEntry: activeEntry),
             // Bottom session bar (#566): the thumb-reachable trigger for the
-            // session menu. Sits below the keybar so the menu sheet rises from
-            // immediately above the affordance that summoned it. A single
-            // full-width tap target leaves a clean seam for swipe-to-switch
-            // (#568) without committing to a gesture here.
-            _SessionBar(label: activeEntry.label, sessionCount: entries.length),
+            // session menu (tap the label area) + a disconnect affordance at the
+            // right edge. Sits below the keybar so the menu sheet rises from
+            // immediately above the affordance that summoned it. The label tap
+            // target leaves a clean seam for swipe-to-switch (#568).
+            _SessionBar(
+              label: activeEntry.label,
+              sessionCount: entries.length,
+              onDisconnect: () =>
+                  ref.read(sessionsProvider.notifier).close(activeEntry.id),
+            ),
           ],
         ),
       ),
@@ -100,10 +89,15 @@ class TerminalScreen extends ConsumerWidget {
 /// persistent session bar: active session label + a count badge when more than
 /// one session is open, tappable across its full width.
 class _SessionBar extends StatelessWidget {
-  const _SessionBar({required this.label, required this.sessionCount});
+  const _SessionBar({
+    required this.label,
+    required this.sessionCount,
+    required this.onDisconnect,
+  });
 
   final String label;
   final int sessionCount;
+  final VoidCallback onDisconnect;
 
   @override
   Widget build(BuildContext context) {
@@ -111,51 +105,68 @@ class _SessionBar extends StatelessWidget {
     return Material(
       key: const Key('session-bar'),
       color: theme.colorScheme.surfaceContainerHighest,
-      child: InkWell(
-        // `session-menu-button` is retained as the stable terminal-screen-
-        // mounted marker that smoke/integration tests poll for; it just moved
-        // from the AppBar to the bottom bar. `session-bar-open-menu` is the
-        // screenshot/test-addressable name for the new affordance.
-        key: const Key('session-bar-open-menu'),
-        onTap: () => showSessionMenu(context),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            key: const Key('session-menu-button'),
-            children: [
-              const Icon(Icons.menu, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium,
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              // `session-menu-button` is retained as the stable terminal-screen-
+              // mounted marker that smoke/integration tests poll for; it moved
+              // from the AppBar to the bottom bar. `session-bar-open-menu` is the
+              // screenshot/test-addressable name for the menu affordance.
+              key: const Key('session-bar-open-menu'),
+              onTap: () => showSessionMenu(context),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Row(
+                  key: const Key('session-menu-button'),
+                  children: [
+                    const Icon(Icons.menu, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        label,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
+                    if (sessionCount > 1)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '$sessionCount',
+                          style: TextStyle(
+                            color: theme.colorScheme.onPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.expand_less, size: 18),
+                  ],
                 ),
               ),
-              if (sessionCount > 1)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '$sessionCount',
-                    style: TextStyle(
-                      color: theme.colorScheme.onPrimary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              const SizedBox(width: 6),
-              const Icon(Icons.expand_less, size: 18),
-            ],
+            ),
           ),
-        ),
+          IconButton(
+            key: const Key('terminal-disconnect-button'),
+            tooltip: 'Disconnect',
+            icon: const Icon(Icons.link_off, size: 18),
+            // Fully close the session (disconnect + dispose + REMOVE the entry)
+            // so a re-connect re-creates it + restarts the service (#564).
+            onPressed: onDisconnect,
+          ),
+        ],
       ),
     );
   }

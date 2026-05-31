@@ -87,7 +87,9 @@ void main() {
       expect(find.byType(TerminalView), findsWidgets);
     });
 
-    testWidgets('shows host@user:port in the AppBar title', (tester) async {
+    testWidgets('shows host@user:port label on the bottom session bar', (
+      tester,
+    ) async {
       final transport = FakeSshShellTransport();
       addTearDown(transport.close);
       final ({SessionEntry entry, ProviderContainer container}) setup =
@@ -103,7 +105,9 @@ void main() {
       expect(find.text('alice@sshd.example:2222'), findsWidgets);
     });
 
-    testWidgets('disconnect button is present in the AppBar', (tester) async {
+    testWidgets('disconnect button is on the bottom session bar', (
+      tester,
+    ) async {
       final transport = FakeSshShellTransport();
       addTearDown(transport.close);
       final ({SessionEntry entry, ProviderContainer container}) setup =
@@ -112,6 +116,13 @@ void main() {
 
       final btn = find.byKey(const Key('terminal-disconnect-button'));
       expect(btn, findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('session-bar')),
+          matching: btn,
+        ),
+        findsOneWidget,
+      );
       final iconButton = tester.widget<IconButton>(btn);
       expect(iconButton.onPressed, isNotNull);
     });
@@ -130,7 +141,7 @@ void main() {
     );
 
     testWidgets(
-      'session-menu trigger is NOT in the AppBar leading slot (#566)',
+      'terminal screen has NO top AppBar — full-height terminal (#566)',
       (tester) async {
         final transport = FakeSshShellTransport();
         addTearDown(transport.close);
@@ -138,17 +149,16 @@ void main() {
             await _setupSingleSession(tester, transport);
         addTearDown(setup.container.dispose);
 
-        // The bar is rendered as a descendant of the SafeArea body Column, not
-        // inside the AppBar — guard against a regression that re-adds a leading
-        // AppBar trigger.
-        final appBar = find.byType(AppBar);
-        expect(appBar, findsOneWidget);
+        // Terminal real estate is at a premium: there is NO AppBar; the
+        // session label + menu trigger + disconnect all live on the bottom
+        // session bar. Guard against a regression that re-adds a top AppBar.
+        expect(find.byType(AppBar), findsNothing);
         expect(
           find.descendant(
-            of: appBar,
+            of: find.byKey(const Key('session-bar')),
             matching: find.byKey(const Key('session-menu-button')),
           ),
-          findsNothing,
+          findsOneWidget,
         );
       },
     );
