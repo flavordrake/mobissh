@@ -142,6 +142,37 @@ ForegroundTaskOptions buildKeepaliveTaskOptions() {
   );
 }
 
+/// No-op keep-alive gateway for desktop (macOS / Linux / Windows, #577).
+///
+/// `flutter_foreground_task` is an Android/iOS-only plugin: its method-channel
+/// calls throw `MissingPluginException` on desktop. Desktop processes are not
+/// killed by the OS, so no keep-alive service is needed — the SSH socket lives
+/// in the in-process `SessionHost` for the lifetime of the app. This gateway
+/// reports "initialized, never running" and treats start/stop as successful
+/// no-ops so [KeepaliveController] short-circuits cleanly without ever touching
+/// the FFT statics.
+class NoopKeepaliveGateway implements KeepaliveGateway {
+  const NoopKeepaliveGateway();
+
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<bool> get isRunningService async => false;
+
+  @override
+  void init() {}
+
+  @override
+  Future<bool> startService({
+    required String notificationTitle,
+    required String notificationText,
+  }) async => true;
+
+  @override
+  Future<bool> stopService() async => true;
+}
+
 /// Default gateway that talks to the real `FlutterForegroundTask`.
 class FlutterForegroundTaskGateway implements KeepaliveGateway {
   bool _initialized = false;

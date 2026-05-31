@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<!-- Flutter debug/profile VM service + DDS run a local server. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- #577: outbound SSH connections (dartssh2 over dart:io sockets). -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- #577: flutter_secure_storage stores the credential vault in the macOS
+	     Keychain. App-sandboxed apps must declare their keychain access group. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.flavordrake.mobissh</string>
+	</array>
+</dict>
+</plist>

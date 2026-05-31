@@ -9,9 +9,20 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../platform/desktop.dart';
 import '../services/keepalive_task.dart';
 import 'session_host_providers.dart';
 import 'sessions.dart';
+
+/// Selects the keep-alive gateway for the current platform (#577). Desktop has
+/// no foreground service (the process persists), so it uses a no-op gateway;
+/// Android uses the real `flutter_foreground_task`-backed gateway. Reading this
+/// keeps the FFT statics out of the desktop code path entirely.
+KeepaliveGateway _keepaliveGatewayFor(Ref ref) {
+  return ref.watch(isDesktopProvider)
+      ? const NoopKeepaliveGateway()
+      : FlutterForegroundTaskGateway();
+}
 
 /// SharedPreferences key. Matches the PWA's localStorage key naming style.
 const String keepaliveEnabledPrefKey = 'mobissh.keepalive.enabled';
@@ -74,6 +85,7 @@ final keepaliveEnabledProvider =
 /// sessions; only the wiring was single-session.
 final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
   final controller = KeepaliveController(
+    gateway: _keepaliveGatewayFor(ref),
     enabled: ref.read(keepaliveEnabledProvider),
     onServiceStopped: () =>
         ref.read(taskSshGatewayProvider).markServiceStopped(),
@@ -143,6 +155,7 @@ final keepaliveServiceStarterProvider = Provider<KeepaliveStarter>((ref) {
   // call `stopService()`, tearing down a service the lifecycle controller still
   // wants running.
   final controller = KeepaliveController(
+    gateway: _keepaliveGatewayFor(ref),
     enabled: ref.read(keepaliveEnabledProvider),
     onServiceStopped: () =>
         ref.read(taskSshGatewayProvider).markServiceStopped(),

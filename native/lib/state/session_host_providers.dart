@@ -18,6 +18,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../platform/desktop.dart';
 import '../services/session_host.dart';
 import '../services/task_ssh_gateway.dart';
 
@@ -29,10 +30,36 @@ final gatewayPairProvider = Provider<InMemoryGatewayPair>((ref) {
   return pair;
 });
 
-/// UI-side gateway the proxy + UI consumers talk to. Production resolves to a
-/// [FlutterForegroundSshGateway] bound to FFT statics; tests override this
-/// provider with a [TaskSshGateway] backed by `InMemoryGatewayPair.uiSide`.
+/// UI-side gateway the proxy + UI consumers talk to.
+///
+/// Two production flavors, selected by [isDesktopProvider]:
+///
+///   - **Android**: [FlutterForegroundSshGateway] bound to FFT statics. The
+///     `SessionHost` (and its `SSHClient`s) lives in the foreground-task
+///     isolate so the socket survives the UI isolate being killed (#531).
+///
+///   - **Desktop** (macOS / Linux / Windows, #577): an IN-PROCESS setup. The
+///     OS doesn't kill desktop processes, so there's no foreground service and
+///     no task isolate — we build an [InMemoryGatewayPair] and host a live
+///     [SessionHost] on its task side in the same isolate, returning the UI
+///     side. This reuses the exact in-process path the unit tests exercise.
+///     dartssh2 connects directly over dart:io (no WS bridge).
+///
+/// Tests override this provider with a [TaskSshGateway] backed by
+/// `InMemoryGatewayPair.uiSide`, OR override [isDesktopProvider] to force a
+/// platform path deterministically.
 final taskSshGatewayProvider = Provider<TaskSshGateway>((ref) {
+  if (ref.watch(isDesktopProvider)) {
+    // Desktop: host the SessionHost in-process. No FFT, no task isolate.
+    final pair = InMemoryGatewayPair();
+    final host = SessionHost(gateway: pair.taskSide);
+    ref.onDispose(() async {
+      await host.dispose();
+      await pair.dispose();
+    });
+    return pair.uiSide;
+  }
+  // Android: talk across the UI↔task gateway to the FFT-hosted SessionHost.
   final gateway = FlutterForegroundSshGateway();
   ref.onDispose(gateway.dispose);
   return gateway;
