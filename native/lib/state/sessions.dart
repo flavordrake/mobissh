@@ -84,10 +84,7 @@ class SessionEntry {
 /// Immutable snapshot of the session collection. The notifier emits a fresh
 /// copy on each mutation so Riverpod consumers re-render.
 class SessionsState {
-  const SessionsState({
-    this.entries = const [],
-    this.activeId,
-  });
+  const SessionsState({this.entries = const [], this.activeId});
 
   /// Insertion-ordered list of entries (tab strip renders in this order).
   final List<SessionEntry> entries;
@@ -218,10 +215,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
         pixelHeight: pixelHeight,
       );
     };
-    state = state.copyWith(
-      entries: [...state.entries, entry],
-      activeId: id,
-    );
+    state = state.copyWith(entries: [...state.entries, entry], activeId: id);
     return entry;
   }
 
@@ -265,9 +259,92 @@ class SessionsNotifier extends Notifier<SessionsState> {
   }
 }
 
+/// Fires a profile's "initial command" (#558) exactly once per session, on the
+/// FIRST transition to `connected`.
+///
+/// The command is sent UI-side through the existing PTY input path
+/// (`proxy.sendInput(utf8.encode(cmd + "\n"))`) — deliberately NOT through
+/// `session_host.dart` / `ssh_session.dart`, which are owned by the parallel
+/// SFTP work. Sending via the proxy is equivalent to the user typing the
+/// command into the terminal and pressing Enter.
+///
+/// The once-only guard is the crux: the merged reconnect work (#551) rebinds
+/// the proxy on resume and may RE-EMIT `connected`. Without a guard the
+/// command would re-run on every background→resume. We track which session
+/// ids have already fired in [_fired]; a fired id never fires again for the
+/// life of the runner, regardless of how many `connected` events arrive.
+class InitialCommandRunner {
+  InitialCommandRunner();
+
+  /// Session ids whose initial command has already been sent. Keyed by the
+  /// full session id (`host:port:user:createdAtMs`) so two distinct connects
+  /// to the same target each get their own one-shot.
+  final Set<String> _fired = <String>{};
+
+  final List<StreamSubscription<SshSessionData>> _subs = [];
+
+  /// True once the initial command has fired for [sessionId]. Test seam.
+  bool hasFired(String sessionId) => _fired.contains(sessionId);
+
+  /// Arm a one-shot: when [proxy] first reaches `connected`, send
+  /// `command + "\n"` through its input path. No-op when [command] is empty
+  /// or the session has already fired.
+  ///
+  /// If the proxy is ALREADY `connected` at arm time (e.g. a dedup
+  /// re-activate of a live session), this does NOT fire — the command applies
+  /// to a fresh connect only, matching the PWA's "run after the shell opens"
+  /// behavior and the acceptance bullet "does not re-run on resume".
+  void arm({
+    required String sessionId,
+    required SshSessionProxy proxy,
+    required String? command,
+  }) {
+    final cmd = command?.trim() ?? '';
+    if (cmd.isEmpty) return;
+    if (_fired.contains(sessionId)) return;
+    // Already connected when armed → this is a re-activate of a live session,
+    // not a fresh connect. Don't fire (and don't arm a listener that would
+    // fire on a future reconnect's re-emit).
+    if (proxy.data.state == SshSessionState.connected) return;
+
+    late final StreamSubscription<SshSessionData> sub;
+    sub = proxy.stream.listen((data) {
+      if (data.state != SshSessionState.connected) return;
+      if (_fired.contains(sessionId)) return;
+      _fired.add(sessionId);
+      ctrace('ui.initcmd', 'firing initial command for sid=$sessionId');
+      proxy.sendInput(Uint8List.fromList(utf8.encode('$cmd\n')));
+      // One-shot: stop listening so a later rebind/reconnect re-emit of
+      // `connected` (#551) can't re-trigger.
+      sub.cancel();
+      _subs.remove(sub);
+    });
+    _subs.add(sub);
+  }
+
+  /// Cancel any still-armed listeners. Fired runners have already self-
+  /// cancelled; this cleans up sessions that never reached `connected`.
+  void dispose() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
+  }
+}
+
+/// App-wide [InitialCommandRunner]. A single instance so the once-only guard
+/// survives form rebuilds and the "New session" push/pop lifecycle — a new
+/// `ConnectForm` state must not get a fresh guard set and re-fire.
+final initialCommandRunnerProvider = Provider<InitialCommandRunner>((ref) {
+  final runner = InitialCommandRunner();
+  ref.onDispose(runner.dispose);
+  return runner;
+});
+
 /// Top-level provider for the session collection.
-final sessionsProvider =
-    NotifierProvider<SessionsNotifier, SessionsState>(SessionsNotifier.new);
+final sessionsProvider = NotifierProvider<SessionsNotifier, SessionsState>(
+  SessionsNotifier.new,
+);
 
 /// Active session id (null when no sessions exist).
 final activeSessionIdProvider = Provider<String?>((ref) {

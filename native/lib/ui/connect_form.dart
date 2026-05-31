@@ -44,6 +44,9 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   final _passwordCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
   final _passphraseCtrl = TextEditingController();
+  // Optional command run once after the session connects (#558). Prefilled
+  // from an applied profile's `initialCommand`; empty by default.
+  final _initialCommandCtrl = TextEditingController();
 
   _AuthKind _authKind = _AuthKind.password;
   bool _busy = false;
@@ -78,6 +81,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     _passwordCtrl.dispose();
     _keyCtrl.dispose();
     _passphraseCtrl.dispose();
+    _initialCommandCtrl.dispose();
     super.dispose();
   }
 
@@ -197,6 +201,17 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               enableSuggestions: false,
             ),
           ],
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('connect-initial-command'),
+            controller: _initialCommandCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Initial command (optional)',
+              hintText: 'e.g. tmux attach || tmux',
+            ),
+            autocorrect: false,
+            enableSuggestions: false,
+          ),
           const SizedBox(height: 16),
           FilledButton.icon(
             key: const Key('connect-submit'),
@@ -291,6 +306,18 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // connecting/authenticating are no-ops inside the task-side controller
       // itself.
       ctrace('ui.form', 'entry=${entry.id} → proxy.connect()');
+      // Arm the run-on-connect command (#558) BEFORE dispatching connect, so
+      // the one-shot listener is attached before the task side can emit
+      // `connected`. The runner fires exactly once on the first `connected`
+      // transition for this session id and guards against re-fire on the
+      // #551 reconnect rebind. No-op when the field is empty.
+      ref
+          .read(initialCommandRunnerProvider)
+          .arm(
+            sessionId: entry.id,
+            proxy: entry.proxy,
+            command: _initialCommandCtrl.text,
+          );
       await entry.proxy.connect(params);
       // Once we've proven we have network reachability, fire-and-forget a
       // crash upload sweep. Tailscale being down is the common case at boot
@@ -371,6 +398,9 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       _hostCtrl.text = profile.host;
       _portCtrl.text = profile.port.toString();
       _userCtrl.text = profile.username;
+      // Prefill the optional run-on-connect command (#558). Empty when the
+      // profile carries none.
+      _initialCommandCtrl.text = profile.initialCommand ?? '';
       // Pick the auth mode. Prefer the explicit authType, but if it's missing
       // or ambiguous (e.g. a profile imported by an older build that persisted
       // before authType round-tripped), INFER from keyVaultId: a profile that
