@@ -99,6 +99,17 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Bundled terminal font (#552). JetBrains Mono (OFL-1.1, vendored under
+  # assets/fonts/ with OFL.txt). Applied to the xterm TerminalView via
+  # TerminalStyle(fontFamily: 'JetBrainsMono'). Regular + Bold so bold SGR
+  # attributes render with a real bold face instead of synthetic faux-bold.
+  fonts:
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

@@ -17,6 +17,11 @@ import '../state/ui_prefs_providers.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
 
+/// Bundled monospace family declared in `pubspec.yaml` (#552). The xterm
+/// `TerminalStyle.fontFamilyFallback` (platform monospace) covers glyphs the
+/// bundled face is missing, so this stays robust even if the asset is absent.
+const String kTerminalFontFamily = 'JetBrainsMono';
+
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
 
@@ -37,10 +42,7 @@ class TerminalScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          activeEntry.label,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: Text(activeEntry.label, overflow: TextOverflow.ellipsis),
         leading: IconButton(
           key: const Key('session-menu-button'),
           tooltip: 'Sessions',
@@ -92,6 +94,8 @@ class _SessionTerminalBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final terminal = ref.watch(terminalProvider(sessionId));
     final shellAsync = ref.watch(sshShellProvider(sessionId));
+    final fontSize = ref.watch(fontSizeProvider);
+    final palette = ref.watch(activeTerminalThemeProvider);
 
     return Column(
       children: [
@@ -99,8 +103,7 @@ class _SessionTerminalBody extends ConsumerWidget {
           Container(
             width: double.infinity,
             color: Colors.red.shade900,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Text(
               'Shell error: ${shellAsync.error}',
               style: const TextStyle(color: Colors.white, fontSize: 12),
@@ -112,6 +115,11 @@ class _SessionTerminalBody extends ConsumerWidget {
             key: Key('terminal-view-$sessionId'),
             autofocus: false,
             padding: const EdgeInsets.all(4),
+            theme: palette.theme,
+            textStyle: TerminalStyle(
+              fontSize: fontSize,
+              fontFamily: kTerminalFontFamily,
+            ),
           ),
         ),
       ],
