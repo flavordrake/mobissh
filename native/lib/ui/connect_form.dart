@@ -25,6 +25,7 @@ import '../storage/profiles_store.dart';
 import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
+import 'profile_editor.dart';
 import 'profile_list.dart';
 import 'settings_panel.dart';
 
@@ -106,7 +107,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         children: [
           // Saved profiles + import action. Collapsed-to-empty-hint when the
           // user has no imported profiles yet.
-          ProfileList(onSelect: _applyProfileToForm),
+          ProfileList(onConnect: _connectFromProfile, onEdit: _editProfile),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
@@ -278,6 +279,31 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       auth: auth,
     );
 
+    ctrace(
+      'ui.form',
+      'submit host=$host port=$port user=$username auth=${_authKind.name}',
+    );
+    await _connectWithParams(
+      params,
+      title: _profileTitleForCurrentForm(),
+      initialCommand: _initialCommandCtrl.text,
+    );
+  }
+
+  /// Shared connect path used by BOTH the form Submit and a saved-profile row
+  /// tap (#579). Routes through the sessions notifier (dedupe by
+  /// host:port:user, per-session proxy), arms the run-on-connect command, then
+  /// dispatches `proxy.connect`. When this form was pushed as a "New session"
+  /// route, it pops back to the terminal once the session CONNECTS.
+  ///
+  /// Keeping this separate from [_submit] means tapping a profile reuses the
+  /// exact same connect machinery as the manual form — no second code path to
+  /// drift.
+  Future<void> _connectWithParams(
+    SshConnectParams params, {
+    String? title,
+    required String initialCommand,
+  }) async {
     // Captured before the async gap so we can pop a pushed "New session"
     // route after dispatching connect without touching `context` post-await.
     final navigator = Navigator.of(context);
@@ -293,11 +319,6 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // #533: connect now dispatches across the task gateway via the per-
       // session [SshSessionProxy] — the underlying `SshSessionController`
       // lives in the task isolate, not the UI.
-      ctrace(
-        'ui.form',
-        'submit host=$host port=$port user=$username auth=${_authKind.name}',
-      );
-      final title = _profileTitleForCurrentForm();
       final entry = ref
           .read(sessionsProvider.notifier)
           .addOrActivate(params, title: title);
@@ -316,7 +337,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           .arm(
             sessionId: entry.id,
             proxy: entry.proxy,
-            command: _initialCommandCtrl.text,
+            command: initialCommand,
           );
       await entry.proxy.connect(params);
       // Once we've proven we have network reachability, fire-and-forget a
@@ -425,6 +446,92 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     });
     if (profile.vaultId != null || profile.keyVaultId != null) {
       unawaited(_prefillFromVault(profile));
+    }
+  }
+
+  /// #579 tap-to-connect. Resolve the profile's connection params + stored
+  /// credentials, then connect immediately via the shared connect path — no
+  /// separate Connect tap, no form round-trip.
+  ///
+  /// Credential resolution mirrors the PWA's `connectFromProfile`: load creds
+  /// from the vault by vaultId/keyVaultId. If NO stored credentials are found
+  /// (nothing saved on this device, or the secret read came back empty), fall
+  /// back to populating the form + a snackbar so the user can type them — we
+  /// never silently no-op.
+  Future<void> _connectFromProfile(SavedProfile profile) async {
+    final secrets = ref.read(secretsStoreProvider);
+    final creds = await loadProfileCredentials(secrets, profile);
+    if (!mounted) return;
+
+    // Decide auth kind: explicit authType wins, else infer from what the vault
+    // returned / the keyVaultId reference.
+    final wantsKey =
+        profile.authType == 'key' ||
+        (profile.authType == null &&
+            (creds.privateKey != null ||
+                (profile.keyVaultId != null &&
+                    profile.keyVaultId!.isNotEmpty)));
+
+    final hasUsableCreds = wantsKey
+        ? (creds.privateKey != null && creds.privateKey!.isNotEmpty)
+        : (creds.password != null && creds.password!.isNotEmpty);
+
+    if (!hasUsableCreds) {
+      // No stored secret — fall back to the manual form (prefilled metadata)
+      // so the user can enter credentials. Matches the PWA "not saved on this
+      // browser" branch. NOT a silent failure.
+      ctrace(
+        'ui.form',
+        'connectFromProfile ${profile.host}: no stored creds → form fallback',
+      );
+      _applyProfileToForm(profile);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No saved credentials — enter them to connect.'),
+        ),
+      );
+      return;
+    }
+
+    final SshAuth auth;
+    if (wantsKey) {
+      auth = SshAuth.key(
+        Uint8List.fromList(utf8.encode(creds.privateKey!)),
+        passphrase: (creds.passphrase == null || creds.passphrase!.isEmpty)
+            ? null
+            : creds.passphrase,
+      );
+    } else {
+      auth = SshAuth.password(creds.password!);
+    }
+
+    final params = SshConnectParams(
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      auth: auth,
+    );
+    ctrace(
+      'ui.form',
+      'connectFromProfile ${profile.host} authType=${wantsKey ? 'key' : 'password'} → connect',
+    );
+    // Reflect the chosen profile in the form (and remember it for the session
+    // title) so the UI stays consistent if the user backs out.
+    _applyProfileToForm(profile);
+    await _connectWithParams(
+      params,
+      title: profile.title,
+      initialCommand: profile.initialCommand ?? '',
+    );
+  }
+
+  /// #579 edit pencil. Open the full profile editor; on save, refresh the
+  /// saved-profile list.
+  Future<void> _editProfile(SavedProfile profile) async {
+    final saved = await showProfileEditor(context, profile);
+    if (!mounted) return;
+    if (saved == true) {
+      ref.invalidate(savedProfilesProvider);
     }
   }
 
