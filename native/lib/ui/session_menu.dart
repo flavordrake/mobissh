@@ -31,6 +31,7 @@ class SessionMenu extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(sessionsProvider);
     final keybarVisible = ref.watch(keybarVisibleProvider);
+    final palette = ref.watch(activeTerminalThemeProvider);
 
     return SafeArea(
       top: false,
@@ -81,6 +82,16 @@ class SessionMenu extends ConsumerWidget {
               subtitle: const Text('Bottom row with Esc, Tab, arrows, Ctrl-C'),
               value: keybarVisible,
               onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
+            ),
+            // Cycle the terminal palette (#552). Tapping advances to the next
+            // ported theme, wrapping at the end; the selection persists.
+            ListTile(
+              key: const Key('session-menu-theme-cycle'),
+              leading: const Icon(Icons.palette_outlined),
+              title: const Text('Terminal theme'),
+              subtitle: Text(palette.label),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => ref.read(terminalThemeProvider.notifier).cycle(),
             ),
           ],
         ),
