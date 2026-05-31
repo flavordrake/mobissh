@@ -36,12 +36,19 @@ final List<String> _ring = <String>[];
 String? _lastKey;
 int _lastCount = 0;
 
-final ValueNotifier<List<String>> _connectLog =
-    ValueNotifier<List<String>>(const <String>[]);
+final ValueNotifier<List<String>> _connectLog = ValueNotifier<List<String>>(
+  const <String>[],
+);
 
 /// Live, read-only view of the connect-trace ring buffer. The newest line is
 /// last. Rebuilds whenever a new trace line is appended or the log is cleared.
 ValueListenable<List<String>> get connectLog => _connectLog;
+
+/// Read-only snapshot of the current connect-trace ring buffer, newest line
+/// last. Returned as an unmodifiable copy so callers (e.g. the feedback bundle
+/// assembler, #553) can read the log without holding a listener or mutating
+/// the underlying ring.
+List<String> connectLogSnapshot() => List<String>.unmodifiable(_ring);
 
 String _timestamp(DateTime now) {
   String two(int n) => n.toString().padLeft(2, '0');

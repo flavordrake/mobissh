@@ -12,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
+import '../diagnostics/feedback_bundle.dart';
 import 'connection_audit.dart';
 
 class DiagnosticsSection extends StatefulWidget {
@@ -19,7 +20,12 @@ class DiagnosticsSection extends StatefulWidget {
   /// platform share sheet.
   final Future<void> Function(File file)? onShare;
 
-  const DiagnosticsSection({super.key, this.onShare});
+  /// Allows tests to intercept the assembled feedback-bundle text so we don't
+  /// open the real platform share sheet (#553). Receives the assembled JSON
+  /// blob. When null, production shares a temp `.json` file via share_plus.
+  final Future<void> Function(String bundle)? onShareFeedback;
+
+  const DiagnosticsSection({super.key, this.onShare, this.onShareFeedback});
 
   @override
   State<DiagnosticsSection> createState() => _DiagnosticsSectionState();
@@ -60,9 +66,56 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
       );
     } catch (err) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Share failed: $err')),
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Share failed: $err')));
+    }
+  }
+
+  /// Assemble the full feedback bundle (connect log + last crash + env +
+  /// version/git-hash + device/OS) and share it off the device (#553).
+  ///
+  /// Defensive: any failure surfaces a snackbar instead of crashing the form.
+  /// Network is never blocking — the share sheet is the primary path; an
+  /// optional upload is fire-and-forget elsewhere.
+  Future<void> _shareFeedback() async {
+    try {
+      final info = await CrashReporter.environmentSnapshot();
+      final crashJson = await CrashReporter.latestCrashContent();
+      final bundle = assembleFeedbackBundle(
+        info: info,
+        connectLog: connectLogSnapshot(),
+        crashJson: crashJson,
       );
+
+      final handler = widget.onShareFeedback;
+      if (handler != null) {
+        await handler(bundle);
+        return;
+      }
+
+      // Write to a temp .json file so the share sheet offers a real attachment
+      // (email, Drive, etc.) rather than a giant inline text payload.
+      final dir = Directory.systemTemp;
+      final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+        RegExp(r'[:.]'),
+        '-',
+      );
+      final file = File(
+        '${dir.path}${Platform.pathSeparator}'
+        'mobissh-feedback-$stamp.json',
+      );
+      await file.writeAsString(bundle);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/json')],
+        subject: 'MobiSSH feedback',
+        text: 'MobiSSH feedback bundle (#553): connect log + diagnostics.',
+      );
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Share feedback failed: $err')));
     }
   }
 
@@ -73,15 +126,15 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
     } catch (err) {
       summary = const UploadSummary();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $err')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Upload failed: $err')));
       }
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(summary.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(summary.toString())));
     }
     _refresh();
   }
@@ -109,6 +162,13 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  FilledButton.icon(
+                    key: const ValueKey('share-feedback-button'),
+                    onPressed: _shareFeedback,
+                    icon: const Icon(Icons.ios_share),
+                    label: const Text('Share feedback'),
+                  ),
+                  const SizedBox(height: 8),
                   if (latest != null)
                     OutlinedButton.icon(
                       key: const ValueKey('share-last-crash-button'),
@@ -177,7 +237,9 @@ class _ConnectLogTile extends StatelessWidget {
                   constraints: const BoxConstraints(maxHeight: 200),
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: lines.isEmpty
