@@ -179,7 +179,14 @@ void main() {
       await controller.dispose();
     });
 
-    test('non-transient close goes straight to disconnected', () async {
+    test(
+        'clean close while connected soft-disconnects then auto-reconnects '
+        '(#551 behavior change)', () async {
+      // Pre-#551 this asserted "clean close → disconnected, no reconnect".
+      // #551 redefines a clean server-initiated close while `connected` as a
+      // soft disconnect that auto-reconnects (creds are still valid). The
+      // straight-to-disconnected path now only applies when we were NOT
+      // connected — see the dedicated test in ssh_session_test.dart.
       var reconnectCalled = false;
       final controller = SshSessionController(
         reconnectDelay: Duration.zero,
@@ -199,10 +206,14 @@ void main() {
       // Clean close — no error.
       controller.handleTransportClosed(null);
 
-      await Future<void>.delayed(Duration.zero);
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+        if (controller.data.state == SshSessionState.connected) break;
+      }
 
-      expect(reconnectCalled, isFalse);
-      expect(controller.data.state, SshSessionState.disconnected);
+      expect(reconnectCalled, isTrue,
+          reason: 'clean close while connected must auto-reconnect (#551)');
+      expect(controller.data.state, SshSessionState.connected);
 
       await controller.dispose();
     });

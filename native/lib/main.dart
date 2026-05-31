@@ -78,6 +78,12 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     // tracked in the #512 TODO.
     ref.watch(keepaliveControllerProvider);
 
+    // #551: keep the always-on resume-rebind listener alive for the lifetime
+    // of the app. Unlike the inline `ref.listen` below (which dies when this
+    // router unmounts to show TerminalScreen), this provider rebinds every
+    // live session on resume even while the user is on the terminal screen.
+    ref.watch(resumeRebindListenerProvider);
+
     // Phase 4 (#524) lifecycle hook: on `resumed`, force a rebuild so
     // session UI repaints from the existing controller state without
     // reconnecting. The SshSessionController instances live in this isolate
