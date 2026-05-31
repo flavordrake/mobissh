@@ -33,6 +33,13 @@ const String _defaultEndpoint =
 /// JSON file extension we expect under the crashes dir.
 const String _crashFileSuffix = '.json';
 
+/// Monotonic per-process counter that disambiguates crash filenames written
+/// within the same millisecond. Without it, two errors recorded in the same
+/// ms produced the same `$stamp-$kind.json` name and the second OVERWROTE the
+/// first — lost crash reports + a flaky pendingCrashCount. Zero-padded so the
+/// lexicographic "latest file" ordering still holds within a single stamp.
+int _crashSeq = 0;
+
 /// Internal singleton holding configuration + collaborators. Tests inject
 /// their own values via [CrashReporter.configure] / [CrashReporter.reset].
 class _ReporterState {
@@ -204,8 +211,9 @@ class CrashReporter {
         await docs.create(recursive: true);
       }
       final stamp = _compactStamp(DateTime.now().toUtc());
+      final seq = (_crashSeq++).toString().padLeft(6, '0');
       final file = File(
-        '${docs.path}${Platform.pathSeparator}$stamp-$kind$_crashFileSuffix',
+        '${docs.path}${Platform.pathSeparator}$stamp-$seq-$kind$_crashFileSuffix',
       );
       final body = await _serialize(
         env: state.env,
