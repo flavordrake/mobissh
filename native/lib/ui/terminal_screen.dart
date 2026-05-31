@@ -12,8 +12,17 @@
 // session bar (`#sessionMenuBtn` in the bottom handle strip). The bar is
 // deliberately a single full-width tap target, leaving a clean seam for a
 // future swipe-to-switch gesture (#568). #567: the sheet itself is slimmed.
+// #568: that seam is now wired — a horizontal swipe on the bottom session bar
+// switches the active session (ring-wrap, haptic), and a long-press on the
+// terminal opens a Copy / Select all / Paste context menu. The swipe handler
+// lives on the bar (NOT the TerminalView) so it never steals the terminal's
+// hardcoded vertical-scroll gesture; selection stays xterm.dart's domain (no
+// custom overlay — see terminal_context_menu.dart for the rationale).
+
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
@@ -22,6 +31,12 @@ import '../state/terminal_providers.dart';
 import '../state/ui_prefs_providers.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
+import 'terminal_context_menu.dart';
+
+/// Minimum horizontal travel (logical px) before a drag on the session bar is
+/// treated as a swipe-to-switch. Matches the ~50px threshold in the design so
+/// a small horizontal wobble during a tap doesn't switch sessions.
+const double kSessionSwipeThreshold = 50;
 
 /// Bundled monospace family declared in `pubspec.yaml` (#552). The xterm
 /// `TerminalStyle.fontFamilyFallback` (platform monospace) covers glyphs the
@@ -75,6 +90,19 @@ class TerminalScreen extends ConsumerWidget {
             _SessionBar(
               label: activeEntry.label,
               sessionCount: entries.length,
+              // Swipe left → next session, swipe right → previous, wrapping
+              // around the session ring (#568). No-op with a single session.
+              onSwipe: (delta) {
+                if (entries.length < 2) return;
+                final from = activeIndex < 0 ? 0 : activeIndex;
+                final count = entries.length;
+                final target = (from + delta) % count;
+                final nextIndex = target < 0 ? target + count : target;
+                ref
+                    .read(sessionsProvider.notifier)
+                    .setActive(entries[nextIndex].id);
+                HapticFeedback.lightImpact();
+              },
               onDisconnect: () =>
                   ref.read(sessionsProvider.notifier).close(activeEntry.id),
             ),
@@ -88,20 +116,68 @@ class TerminalScreen extends ConsumerWidget {
 /// Slim bottom bar that opens the session menu (#566). Mirrors the PWA's
 /// persistent session bar: active session label + a count badge when more than
 /// one session is open, tappable across its full width.
-class _SessionBar extends StatelessWidget {
+///
+/// #568: a horizontal swipe across the bar switches sessions. The drag
+/// recognizer lives here (a sibling of the TerminalView, not its parent) so it
+/// can never steal the terminal's hardcoded vertical-scroll gesture. A swipe
+/// suppresses the immediately-following tap so a swipe doesn't also open the
+/// session menu.
+class _SessionBar extends StatefulWidget {
   const _SessionBar({
     required this.label,
     required this.sessionCount,
+    required this.onSwipe,
     required this.onDisconnect,
   });
 
   final String label;
   final int sessionCount;
+
+  /// Called when a horizontal swipe crosses the threshold. `delta` is `+1` for
+  /// a left swipe (next session) and `-1` for a right swipe (previous).
+  final ValueChanged<int> onSwipe;
+
   final VoidCallback onDisconnect;
+
+  @override
+  State<_SessionBar> createState() => _SessionBarState();
+}
+
+class _SessionBarState extends State<_SessionBar> {
+  /// Accumulated horizontal travel for the in-flight drag.
+  double _dragDx = 0;
+
+  /// Set true once a drag crosses [kSessionSwipeThreshold] so the InkWell's
+  /// `onTap` (which fires after the gesture resolves) doesn't also open the
+  /// session menu. Reset on the next drag start.
+  bool _swipeOccurred = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    return GestureDetector(
+      // Opaque so the bar consumes the drag early rather than leaking it to
+      // ancestors, and so the whole bar width is a swipe target.
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragStart: (_) {
+        _dragDx = 0;
+        _swipeOccurred = false;
+      },
+      onHorizontalDragUpdate: (details) {
+        _dragDx += details.delta.dx;
+      },
+      onHorizontalDragEnd: (_) {
+        if (_dragDx.abs() < kSessionSwipeThreshold) return;
+        _swipeOccurred = true;
+        // Moving content left (negative dx) advances to the next session;
+        // moving right (positive dx) goes to the previous one.
+        widget.onSwipe(_dragDx < 0 ? 1 : -1);
+      },
+      child: _buildBar(context, theme),
+    );
+  }
+
+  Widget _buildBar(BuildContext context, ThemeData theme) {
     return Material(
       key: const Key('session-bar'),
       color: theme.colorScheme.surfaceContainerHighest,
@@ -114,7 +190,15 @@ class _SessionBar extends StatelessWidget {
               // from the AppBar to the bottom bar. `session-bar-open-menu` is the
               // screenshot/test-addressable name for the menu affordance.
               key: const Key('session-bar-open-menu'),
-              onTap: () => showSessionMenu(context),
+              onTap: () {
+                // Suppress the tap that fires at the tail of a swipe so a
+                // swipe-to-switch doesn't also pop the session menu (#568).
+                if (_swipeOccurred) {
+                  _swipeOccurred = false;
+                  return;
+                }
+                showSessionMenu(context);
+              },
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -127,12 +211,12 @@ class _SessionBar extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        label,
+                        widget.label,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodyMedium,
                       ),
                     ),
-                    if (sessionCount > 1)
+                    if (widget.sessionCount > 1)
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -143,7 +227,7 @@ class _SessionBar extends StatelessWidget {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(
-                          '$sessionCount',
+                          '${widget.sessionCount}',
                           style: TextStyle(
                             color: theme.colorScheme.onPrimary,
                             fontSize: 12,
@@ -164,7 +248,7 @@ class _SessionBar extends StatelessWidget {
             icon: const Icon(Icons.link_off, size: 18),
             // Fully close the session (disconnect + dispose + REMOVE the entry)
             // so a re-connect re-creates it + restarts the service (#564).
-            onPressed: onDisconnect,
+            onPressed: widget.onDisconnect,
           ),
         ],
       ),
@@ -175,15 +259,75 @@ class _SessionBar extends StatelessWidget {
 /// One session's terminal body. Watches the shell provider so the PTY opens
 /// when the session reaches `connected`. Hidden tabs still subscribe — their
 /// `Terminal` buffer fills in the background.
-class _SessionTerminalBody extends ConsumerWidget {
+///
+/// #568: owns a per-session [TerminalController] so the long-press context
+/// menu can READ the current selection (`terminal.buffer.getText(...)`) and
+/// drive `setSelection` / `clearSelection`. We never render selection
+/// ourselves — that stays xterm.dart's canvas.
+class _SessionTerminalBody extends ConsumerStatefulWidget {
   const _SessionTerminalBody({super.key, required this.sessionId});
 
   final String sessionId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final terminal = ref.watch(terminalProvider(sessionId));
-    final shellAsync = ref.watch(sshShellProvider(sessionId));
+  ConsumerState<_SessionTerminalBody> createState() =>
+      _SessionTerminalBodyState();
+}
+
+class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
+  final TerminalController _terminalController = TerminalController();
+
+  @override
+  void dispose() {
+    _terminalController.dispose();
+    super.dispose();
+  }
+
+  /// Long-press / right-click on the terminal → Copy / Select all / Paste.
+  /// Copy and Paste both route through xterm.dart's own buffer + the session
+  /// proxy; nothing here renders or mirrors selection state.
+  Future<void> _onSecondaryTapDown(
+    TapDownDetails details,
+    Terminal terminal,
+  ) async {
+    final selection = _terminalController.selection;
+    showTerminalContextMenu(
+      context,
+      globalPosition: details.globalPosition,
+      actions: TerminalContextMenuActions(
+        hasSelection: selection != null,
+        onCopy: () {
+          final range = _terminalController.selection;
+          if (range == null) return;
+          final text = terminal.buffer.getText(range);
+          Clipboard.setData(ClipboardData(text: text));
+        },
+        onSelectAll: () {
+          final buffer = terminal.buffer;
+          _terminalController.setSelection(
+            buffer.createAnchor(0, buffer.height - terminal.viewHeight),
+            buffer.createAnchor(terminal.viewWidth, buffer.height - 1),
+            mode: SelectionMode.line,
+          );
+        },
+        onPaste: () async {
+          final data = await Clipboard.getData(Clipboard.kTextPlain);
+          final text = data?.text;
+          if (text == null || text.isEmpty) return;
+          // Route paste through the active session proxy (same path as typed
+          // keystrokes) rather than terminal.paste() so bytes reach the SSH
+          // PTY hosted in the task isolate (#568 spec).
+          final entry = ref.read(sessionsProvider).active;
+          entry?.proxy.sendInput(Uint8List.fromList(utf8.encode(text)));
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final terminal = ref.watch(terminalProvider(widget.sessionId));
+    final shellAsync = ref.watch(sshShellProvider(widget.sessionId));
     final fontSize = ref.watch(fontSizeProvider);
     final palette = ref.watch(activeTerminalThemeProvider);
 
@@ -202,7 +346,8 @@ class _SessionTerminalBody extends ConsumerWidget {
         Expanded(
           child: TerminalView(
             terminal,
-            key: Key('terminal-view-$sessionId'),
+            key: Key('terminal-view-${widget.sessionId}'),
+            controller: _terminalController,
             autofocus: false,
             padding: const EdgeInsets.all(4),
             theme: palette.theme,
@@ -210,6 +355,8 @@ class _SessionTerminalBody extends ConsumerWidget {
               fontSize: fontSize,
               fontFamily: kTerminalFontFamily,
             ),
+            onSecondaryTapDown: (details, _) =>
+                _onSecondaryTapDown(details, terminal),
           ),
         ),
       ],
