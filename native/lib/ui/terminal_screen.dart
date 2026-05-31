@@ -54,7 +54,15 @@ class TerminalScreen extends ConsumerWidget {
             key: const Key('terminal-disconnect-button'),
             tooltip: 'Disconnect',
             icon: const Icon(Icons.link_off),
-            onPressed: () => activeEntry.proxy.disconnect(),
+            // Fully close the session (disconnect + dispose + REMOVE the entry),
+            // not just proxy.disconnect(). Leaving the dead entry in the
+            // collection made the next connect dedup to it in addOrActivate and
+            // skip ensureStarted(), so after the foreground task isolate stopped
+            // (last session gone) a re-connect went nowhere and stuck at idle
+            // (#564). A fresh connect now re-creates the entry + restarts the
+            // service cleanly.
+            onPressed: () =>
+                ref.read(sessionsProvider.notifier).close(activeEntry.id),
           ),
         ],
       ),

@@ -42,7 +42,7 @@ class KeepaliveTaskHandler extends TaskHandler {
   /// a stub host bound to a [StubFftTransport] so the wire contract can be
   /// exercised without binding to platform channels.
   KeepaliveTaskHandler({SessionHostBuilder? hostBuilder})
-      : _hostBuilder = hostBuilder ?? _defaultHostBuilder;
+    : _hostBuilder = hostBuilder ?? _defaultHostBuilder;
 
   final SessionHostBuilder _hostBuilder;
   TaskSideFftTransport? _transport;
@@ -93,7 +93,9 @@ class KeepaliveTaskHandler extends TaskHandler {
       // state subs). Errors here are swallowed — the isolate is going away.
       try {
         await host.dispose();
-      } catch (_) {/* ignore */}
+      } catch (_) {
+        /* ignore */
+      }
     }
   }
 }
@@ -188,7 +190,8 @@ class FlutterForegroundTaskGateway implements KeepaliveGateway {
       final perm = await FlutterForegroundTask.checkNotificationPermission();
       if (perm != NotificationPermission.granted) {
         ctrace('ui.keepalive', 'requesting POST_NOTIFICATIONS (was $perm)');
-        final result = await FlutterForegroundTask.requestNotificationPermission();
+        final result =
+            await FlutterForegroundTask.requestNotificationPermission();
         ctrace('ui.keepalive', 'POST_NOTIFICATIONS → $result');
       }
     } catch (e) {
@@ -223,15 +226,22 @@ class KeepaliveController {
   KeepaliveController({
     KeepaliveGateway? gateway,
     bool enabled = true,
-  }) : _gateway = gateway ?? FlutterForegroundTaskGateway() {
+    void Function()? onServiceStopped,
+  }) : _gateway = gateway ?? FlutterForegroundTaskGateway(),
+       // ignore: prefer_initializing_formals
+       _onServiceStopped = onServiceStopped {
     _enabled = enabled;
   }
 
   final KeepaliveGateway _gateway;
+
+  /// Called after the foreground task isolate is actually stopped, so the
+  /// UI↔task gateway can reset to not-ready and re-buffer commands until the
+  /// next isolate generation re-handshakes (#564 reconnect fix).
+  final void Function()? _onServiceStopped;
   bool _enabled = true;
   int _connectedCount = 0;
-  final Map<Object, StreamSubscription<SshSessionData>>
-      _subscriptions = {};
+  final Map<Object, StreamSubscription<SshSessionData>> _subscriptions = {};
 
   /// Whether the keep-alive service is allowed to run at all. Setting this
   /// to false stops a running service immediately; setting back to true
@@ -316,7 +326,9 @@ class KeepaliveController {
       } else if (!isConnected && wasConnected) {
         _connectedCount = (_connectedCount - 1).clamp(0, 1 << 30);
         if (_connectedCount == 0) unawaited(_stopIfRunning());
-      } else if (!isConnected && _connectedCount == 0 && _isTerminal(data.state)) {
+      } else if (!isConnected &&
+          _connectedCount == 0 &&
+          _isTerminal(data.state)) {
         // #539: the service may have been started explicitly via
         // ensureStarted() before any session reached `connected` (count still
         // 0). If the connect then fails / disconnects, tear the service down
@@ -361,7 +373,8 @@ class KeepaliveController {
       return (session.stream, () => session.data);
     }
     throw ArgumentError(
-        'KeepaliveController.attach: unsupported session type ${session.runtimeType}');
+      'KeepaliveController.attach: unsupported session type ${session.runtimeType}',
+    );
   }
 
   /// Release all session subscriptions and stop the service if running.
@@ -371,7 +384,11 @@ class KeepaliveController {
     }
     _subscriptions.clear();
     _connectedCount = 0;
-    await _stopIfRunning();
+    // notifyGateway: false — on dispose the whole ProviderContainer is tearing
+    // down, so reading taskSshGatewayProvider from the callback would throw
+    // "provider read after dispose". The gateway is disposed alongside us; no
+    // point resetting its readiness. Only runtime stops notify the gateway.
+    await _stopIfRunning(notifyGateway: false);
   }
 
   Future<void> _startIfStopped() async {
@@ -394,15 +411,19 @@ class KeepaliveController {
       notificationText: _connectedCount == 0
           ? 'Connecting…'
           : _connectedCount == 1
-              ? '1 session connected'
-              : '$_connectedCount sessions connected',
+          ? '1 session connected'
+          : '$_connectedCount sessions connected',
     );
     ctrace('ui.keepalive', '_startIfStopped: startService → $ok');
   }
 
-  Future<void> _stopIfRunning() async {
+  Future<void> _stopIfRunning({bool notifyGateway = true}) async {
     if (!_gateway.isInitialized) return;
     if (!await _gateway.isRunningService) return;
     await _gateway.stopService();
+    // The task isolate is gone — tell the UI↔task gateway to re-buffer until a
+    // fresh isolate re-handshakes, so a later reconnect isn't sent into the
+    // void (#564). Skipped on dispose (container teardown — see dispose()).
+    if (notifyGateway) _onServiceStopped?.call();
   }
 }

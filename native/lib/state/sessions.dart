@@ -166,6 +166,12 @@ class SessionsNotifier extends Notifier<SessionsState> {
       username: params.username,
     );
     if (existing != null) {
+      // Re-activating an existing entry: make sure the foreground task isolate
+      // is running before the caller re-drives `proxy.connect`. If the entry
+      // lingered after a disconnect that stopped the service (last session
+      // gone), the re-connect command would otherwise hit a dead isolate and
+      // stick at idle (#564). ensureStarted is idempotent.
+      unawaited(ref.read(keepaliveServiceStarterProvider)());
       state = state.copyWith(activeId: existing.id);
       return existing;
     }

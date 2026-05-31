@@ -46,6 +46,13 @@ abstract class TaskSshGateway {
   /// Inbound payloads from the other side.
   Stream<Map<String, dynamic>> get incoming;
 
+  /// Signal that the foreground task isolate was STOPPED. The next isolate
+  /// generation is a fresh process that re-sends its readiness handshake, so
+  /// the gateway must go back to not-ready and re-buffer outbound commands
+  /// until that handshake arrives — otherwise a reconnect fires its `connect`
+  /// at the dead transport and is lost (#564). No-op for in-isolate test pairs.
+  void markServiceStopped() {}
+
   /// Tear down. After dispose, [send] is a no-op and [incoming] is closed.
   Future<void> dispose();
 }
@@ -107,6 +114,11 @@ class _InMemoryGateway implements TaskSshGateway {
     if (_disposed) return;
     if (_sender.isClosed) return;
     _sender.add(payload);
+  }
+
+  @override
+  void markServiceStopped() {
+    // In-isolate test pair: no real service to stop, nothing to re-buffer.
   }
 
   @override
@@ -274,6 +286,23 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
   }
 
   @override
+  void markServiceStopped() {
+    // The isolate that proved us "ready" is gone. Re-buffer until the NEXT
+    // isolate generation re-handshakes (its first inbound flips _ready again
+    // and flushes). Clear any stale buffer — those commands targeted the dead
+    // isolate. Without this, a reconnect's `connect` is sent to a dead
+    // transport and lost → stuck idle (#564).
+    if (!_ready && _outboundBuffer.isEmpty) return;
+    ctrace(
+      'ui.gw',
+      'markServiceStopped → not-ready (was ready=$_ready, '
+          'dropping ${_outboundBuffer.length} buffered)',
+    );
+    _ready = false;
+    _outboundBuffer.clear();
+  }
+
+  @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
@@ -307,6 +336,11 @@ class TaskSideForegroundGateway implements TaskSshGateway {
   void send(Map<String, dynamic> payload) {
     if (_disposed) return;
     _transport.send(payload);
+  }
+
+  @override
+  void markServiceStopped() {
+    // Task side IS the service; its own teardown is onDestroy. No-op here.
   }
 
   void _onData(Object data) {

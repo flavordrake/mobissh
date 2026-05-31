@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/keepalive_task.dart';
+import 'session_host_providers.dart';
 import 'sessions.dart';
 
 /// SharedPreferences key. Matches the PWA's localStorage key naming style.
@@ -74,6 +75,8 @@ final keepaliveEnabledProvider =
 final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
   final controller = KeepaliveController(
     enabled: ref.read(keepaliveEnabledProvider),
+    onServiceStopped: () =>
+        ref.read(taskSshGatewayProvider).markServiceStopped(),
   );
   // Initial attach for whatever sessions already exist when this controller
   // is first read (typically zero on cold start, but the proxy/session
@@ -141,6 +144,8 @@ final keepaliveServiceStarterProvider = Provider<KeepaliveStarter>((ref) {
   // wants running.
   final controller = KeepaliveController(
     enabled: ref.read(keepaliveEnabledProvider),
+    onServiceStopped: () =>
+        ref.read(taskSshGatewayProvider).markServiceStopped(),
   );
   ref.listen<bool>(keepaliveEnabledProvider, (_, next) {
     controller.enabled = next;
