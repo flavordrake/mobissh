@@ -283,6 +283,14 @@ class SshSessionController {
     );
     _armReadyTimer();
 
+    // Hydrate persisted host-key trust before the handshake so the verify
+    // callback sees previously-accepted fingerprints and never re-prompts for
+    // a known host:port (#565). Cheap (a SharedPreferences read) and only the
+    // first connect pays it; subsequent connects find it already hydrated.
+    if (!_hostKeyStore.isHydrated) {
+      await _hostKeyStore.ready;
+    }
+
     // Fail fast on an unusable private key BEFORE touching the network. A
     // passphrase-encrypted key with the wrong passphrase (or a blob mangled on
     // the vault/import round-trip) makes `SSHKeyPair.fromPem` throw. Previously
@@ -784,6 +792,11 @@ class SshSessionController {
     Uint8List fingerprint,
   ) async {
     final hex = _fingerprintHex(fingerprint);
+    // Persisted trust is hydrated in connect() (before the SSHClient is built),
+    // so by the time dartssh2 invokes this callback the in-memory map already
+    // reflects previously-accepted fingerprints (#565). This method stays
+    // synchronous in its emit timing — it must reach `awaitingHostKey` in the
+    // same turn so the connecting-phase timer is cancelled (#542).
     if (_hostKeyStore.isTrusted(params.host, params.port, hex)) {
       _emit(_data.copyWith(state: SshSessionState.authenticating));
       return true;

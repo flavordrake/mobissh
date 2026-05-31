@@ -170,11 +170,80 @@ void main() {
     });
 
     test('hostKeyStore is exposed for inspection', () {
-      final store = HostKeyStore();
+      final store = HostKeyStore(backend: InMemoryHostKeyBackend());
       final controller = SshSessionController(hostKeyStore: store);
       expect(identical(controller.hostKeyStore, store), isTrue);
       controller.dispose();
     });
+
+    test('verify on an already-trusted host skips the prompt '
+        '(connecting -> authenticating, NO awaitingHostKey) — #565', () async {
+      const params = SshConnectParams(
+        host: 'trusted.example',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      );
+      // Seed persisted trust for the exact fingerprint the verify path will
+      // compute from these bytes (hex of [0xDE,0xAD,0xBE,0xEF]).
+      final backend = InMemoryHostKeyBackend(<String, String>{
+        'trusted.example:22': 'deadbeef',
+      });
+      final store = HostKeyStore(backend: backend);
+      await store.ready;
+
+      final controller = SshSessionController(hostKeyStore: store);
+      final transitions = <SshSessionState>[];
+      final sub = controller.stream.listen((d) => transitions.add(d.state));
+
+      final trusted = await controller.verifyHostKeyForTest(
+        params,
+        'ssh-ed25519',
+        Uint8List.fromList(<int>[0xDE, 0xAD, 0xBE, 0xEF]),
+      );
+
+      expect(trusted, isTrue, reason: 'persisted-trust host must not prompt');
+      expect(controller.data.state, SshSessionState.authenticating);
+      expect(controller.data.pendingHostKey, isNull);
+      expect(
+        transitions,
+        isNot(contains(SshSessionState.awaitingHostKey)),
+        reason: 'a trusted host must NEVER enter the prompt state (#565)',
+      );
+
+      await sub.cancel();
+      await controller.dispose();
+    });
+
+    test(
+      'verify on an UNtrusted host still prompts (awaitingHostKey) — #565 guard',
+      () async {
+        const params = SshConnectParams(
+          host: 'new.example',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        );
+        final store = HostKeyStore(backend: InMemoryHostKeyBackend());
+        final controller = SshSessionController(hostKeyStore: store);
+
+        // ignore: unawaited_futures
+        controller.verifyHostKeyForTest(
+          params,
+          'ssh-ed25519',
+          Uint8List.fromList(<int>[0x01, 0x02]),
+        );
+        // Let the awaited ready + emit settle.
+        await Future<void>.delayed(Duration.zero);
+
+        expect(controller.data.state, SshSessionState.awaitingHostKey);
+        expect(controller.data.pendingHostKey, isNotNull);
+
+        // Resolve the pending completer so it doesn't leak past teardown.
+        controller.rejectHostKey();
+        await controller.dispose();
+      },
+    );
 
     test('SshSessionData.copyWith respects clear flags', () {
       const data = SshSessionData(
