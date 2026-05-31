@@ -283,17 +283,23 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
     super.dispose();
   }
 
-  /// Long-press / right-click on the terminal → Copy / Select all / Paste.
-  /// Copy and Paste both route through xterm.dart's own buffer + the session
-  /// proxy; nothing here renders or mirrors selection state.
-  Future<void> _onSecondaryTapDown(
-    TapDownDetails details,
+  /// Long-press (touch) or right-click (desktop) on the terminal →
+  /// Copy / Select all / Paste. Copy and Paste both route through xterm.dart's
+  /// own buffer + the session proxy; nothing here renders or mirrors selection
+  /// state.
+  ///
+  /// #584: this is now bound to BOTH a real long-press recognizer (touch) and
+  /// the TerminalView's `onSecondaryTapDown` (desktop right-click). It was
+  /// previously secondary-tap-only, so a touch long-press never opened it —
+  /// the menu was invisible on a phone.
+  Future<void> _showContextMenu(
+    Offset globalPosition,
     Terminal terminal,
   ) async {
     final selection = _terminalController.selection;
     showTerminalContextMenu(
       context,
-      globalPosition: details.globalPosition,
+      globalPosition: globalPosition,
       actions: TerminalContextMenuActions(
         hasSelection: selection != null,
         onCopy: () {
@@ -344,19 +350,31 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
             ),
           ),
         Expanded(
-          child: TerminalView(
-            terminal,
-            key: Key('terminal-view-${widget.sessionId}'),
-            controller: _terminalController,
-            autofocus: false,
-            padding: const EdgeInsets.all(4),
-            theme: palette.theme,
-            textStyle: TerminalStyle(
-              fontSize: fontSize,
-              fontFamily: kTerminalFontFamily,
+          // #584: a long-press recognizer wraps the TerminalView so a touch
+          // long-press opens the context menu. A LongPressGestureRecognizer is
+          // distinct from xterm's tap + vertical-scroll-drag recognizers in the
+          // gesture arena, so it only wins for a stationary press and never
+          // steals the terminal's scroll. `deferToChild` keeps the opaque
+          // TerminalView the hit-test target; the ancestor detector still
+          // participates in the arena for that pointer.
+          child: GestureDetector(
+            behavior: HitTestBehavior.deferToChild,
+            onLongPressStart: (details) =>
+                _showContextMenu(details.globalPosition, terminal),
+            child: TerminalView(
+              terminal,
+              key: Key('terminal-view-${widget.sessionId}'),
+              controller: _terminalController,
+              autofocus: false,
+              padding: const EdgeInsets.all(4),
+              theme: palette.theme,
+              textStyle: TerminalStyle(
+                fontSize: fontSize,
+                fontFamily: kTerminalFontFamily,
+              ),
+              onSecondaryTapDown: (details, _) =>
+                  _showContextMenu(details.globalPosition, terminal),
             ),
-            onSecondaryTapDown: (details, _) =>
-                _onSecondaryTapDown(details, terminal),
           ),
         ),
       ],

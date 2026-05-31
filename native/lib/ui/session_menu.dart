@@ -20,12 +20,22 @@ import 'connect_form.dart';
 import 'file_browser_screen.dart';
 
 /// Opens the session menu as a modal bottom sheet. Returns once dismissed.
-Future<void> showSessionMenu(BuildContext context) {
-  return showModalBottomSheet<void>(
+///
+/// #585: pushing a modal route pulls primary focus off the terminal's text
+/// input, so the soft keyboard collapses and the terminal reflows (the
+/// "jumpiness" the owner sees when opening the menu mid-typing). We capture the
+/// editable that was focused before the sheet opens and re-request it on
+/// dismiss, so the keyboard returns to where it was instead of leaving the user
+/// with a dropped keyboard after every menu interaction. (Eliminating the
+/// dismiss-on-OPEN reflow needs a non-modal overlay menu — tracked in #585.)
+Future<void> showSessionMenu(BuildContext context) async {
+  final previousFocus = FocusManager.instance.primaryFocus;
+  await showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
     builder: (ctx) => const SessionMenu(),
   );
+  previousFocus?.requestFocus();
 }
 
 class SessionMenu extends ConsumerWidget {
