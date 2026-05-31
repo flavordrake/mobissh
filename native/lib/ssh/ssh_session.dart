@@ -122,11 +122,8 @@ class SshSessionData {
 
 /// Function signature for opening the raw SSH socket. Override in tests to
 /// avoid real network IO.
-typedef SshSocketOpener = Future<SSHSocket> Function(
-  String host,
-  int port, {
-  Duration? timeout,
-});
+typedef SshSocketOpener =
+    Future<SSHSocket> Function(String host, int port, {Duration? timeout});
 
 Future<SSHSocket> _defaultSocketOpener(
   String host,
@@ -161,9 +158,9 @@ class SshSessionController {
     this.reconnectBackoffCap = const Duration(seconds: 30),
     this.unreachableReconnectInterval = const Duration(milliseconds: 1500),
     ReconnectAttempt? reconnectAttemptOverride,
-  })  : _hostKeyStore = hostKeyStore ?? HostKeyStore(),
-        _openSocket = socketOpener ?? _defaultSocketOpener,
-        _reconnectAttempt = reconnectAttemptOverride;
+  }) : _hostKeyStore = hostKeyStore ?? HostKeyStore(),
+       _openSocket = socketOpener ?? _defaultSocketOpener,
+       _reconnectAttempt = reconnectAttemptOverride;
 
   final HostKeyStore _hostKeyStore;
   final SshSocketOpener _openSocket;
@@ -272,15 +269,62 @@ class SshSessionController {
     _userDisconnected = false;
     _lastParams = params;
 
-    ctrace('task.ssh',
-        'connect: ${params.host}:${params.port} → opening socket');
-    _emit(SshSessionData(
-      state: SshSessionState.connecting,
-      host: params.host,
-      port: params.port,
-      username: params.username,
-    ));
+    ctrace(
+      'task.ssh',
+      'connect: ${params.host}:${params.port} → opening socket',
+    );
+    _emit(
+      SshSessionData(
+        state: SshSessionState.connecting,
+        host: params.host,
+        port: params.port,
+        username: params.username,
+      ),
+    );
     _armReadyTimer();
+
+    // Fail fast on an unusable private key BEFORE touching the network. A
+    // passphrase-encrypted key with the wrong passphrase (or a blob mangled on
+    // the vault/import round-trip) makes `SSHKeyPair.fromPem` throw. Previously
+    // `_identitiesFor` swallowed that to `null`; for key auth there's no
+    // password fallback, so dartssh2 was handed no auth method and
+    // `client.authenticated` hung forever — host key accepted, login never
+    // completed (the device key-auth hang). Parse here, reuse below, and on
+    // failure surface a clear `failed` instead of a silent hang.
+    List<SSHKeyPair>? identities;
+    final auth = params.auth;
+    if (auth is SshAuthKey) {
+      try {
+        identities = SSHKeyPair.fromPem(
+          String.fromCharCodes(auth.pem),
+          auth.passphrase,
+        );
+      } catch (e) {
+        _readyTimer?.cancel();
+        _readyTimer = null;
+        ctrace('task.ssh', 'connect: key parse FAILED — $e');
+        _emit(
+          _data.copyWith(
+            state: SshSessionState.failed,
+            error:
+                'Could not load private key — wrong passphrase or '
+                'unsupported key format ($e)',
+          ),
+        );
+        return;
+      }
+      if (identities.isEmpty) {
+        _readyTimer?.cancel();
+        _readyTimer = null;
+        _emit(
+          _data.copyWith(
+            state: SshSessionState.failed,
+            error: 'Private key contained no usable identity',
+          ),
+        );
+        return;
+      }
+    }
 
     SSHSocket socket;
     try {
@@ -293,10 +337,12 @@ class SshSessionController {
       ctrace('task.ssh', 'connect: socket open OK → SSHClient handshake');
     } catch (e) {
       ctrace('task.ssh', 'connect: TCP connect FAILED — $e');
-      _emit(_data.copyWith(
-        state: SshSessionState.failed,
-        error: 'TCP connect failed: $e',
-      ));
+      _emit(
+        _data.copyWith(
+          state: SshSessionState.failed,
+          error: 'TCP connect failed: $e',
+        ),
+      );
       return;
     }
 
@@ -310,7 +356,7 @@ class SshSessionController {
         onVerifyHostKey: (type, fingerprint) =>
             _onVerifyHostKey(params, type, fingerprint),
         onPasswordRequest: () => _onPasswordRequest(params),
-        identities: _identitiesFor(params),
+        identities: identities,
         onUserauthBanner: (banner) {
           bannerBuffer.write(banner);
           _emit(_data.copyWith(banner: bannerBuffer.toString()));
@@ -318,10 +364,12 @@ class SshSessionController {
       );
       _client = client;
     } catch (e) {
-      _emit(_data.copyWith(
-        state: SshSessionState.failed,
-        error: 'SSHClient construction failed: $e',
-      ));
+      _emit(
+        _data.copyWith(
+          state: SshSessionState.failed,
+          error: 'SSHClient construction failed: $e',
+        ),
+      );
       return;
     }
 
@@ -335,31 +383,39 @@ class SshSessionController {
       // it with a generic "auth aborted" reason.
       ctrace('task.ssh', 'connect: AUTH FAILED — $e');
       if (_data.state != SshSessionState.failed) {
-        _emit(_data.copyWith(
-          state: SshSessionState.failed,
-          error: 'Authentication failed: $e',
-        ));
+        _emit(
+          _data.copyWith(
+            state: SshSessionState.failed,
+            error: 'Authentication failed: $e',
+          ),
+        );
       }
       try {
         client.close();
-      } catch (_) {/* ignore */}
+      } catch (_) {
+        /* ignore */
+      }
       return;
     }
 
     ctrace('task.ssh', 'connect: authenticated → CONNECTED');
-    _emit(_data.copyWith(
-      state: SshSessionState.connected,
-      remoteVersion: client.remoteVersion,
-      clearError: true,
-    ));
+    _emit(
+      _data.copyWith(
+        state: SshSessionState.connected,
+        remoteVersion: client.remoteVersion,
+        clearError: true,
+      ),
+    );
 
     // Wire close notification. `handleTransportClosed` classifies the cause
     // and either reconnects (transient socket error) or transitions to the
     // appropriate terminal state.
     final closedClient = client;
-    unawaited(closedClient.done
-        .then((_) => handleTransportClosed(null))
-        .catchError((e) => handleTransportClosed(e)));
+    unawaited(
+      closedClient.done
+          .then((_) => handleTransportClosed(null))
+          .catchError((e) => handleTransportClosed(e)),
+    );
   }
 
   /// Called when the SSH client's transport future resolves — either cleanly
@@ -399,10 +455,12 @@ class SshSessionController {
       return;
     }
 
-    _emit(_data.copyWith(
-      state: SshSessionState.failed,
-      error: 'Transport error: $error',
-    ));
+    _emit(
+      _data.copyWith(
+        state: SshSessionState.failed,
+        error: 'Transport error: $error',
+      ),
+    );
   }
 
   /// Classify whether [error] is a transient socket teardown that warrants
@@ -485,26 +543,35 @@ class SshSessionController {
   void _scheduleReconnect(Object? error) {
     final params = _lastParams;
     if (params == null) {
-      _emit(_data.copyWith(
-        state: SshSessionState.failed,
-        error: 'Transport error: $error',
-      ));
+      _emit(
+        _data.copyWith(
+          state: SshSessionState.failed,
+          error: 'Transport error: $error',
+        ),
+      );
       return;
     }
 
     final unreachable = _lastErrorUnreachable;
-    final ceiling =
-        unreachable ? maxUnreachableReconnectAttempts : maxReconnectAttempts;
+    final ceiling = unreachable
+        ? maxUnreachableReconnectAttempts
+        : maxReconnectAttempts;
     if (_reconnectAttempts >= ceiling) {
-      _emit(_data.copyWith(
-        state: SshSessionState.failed,
-        error: 'reconnect exhausted after $ceiling attempts: '
-            '${error ?? 'server disconnect'}',
-      ));
+      _emit(
+        _data.copyWith(
+          state: SshSessionState.failed,
+          error:
+              'reconnect exhausted after $ceiling attempts: '
+              '${error ?? 'server disconnect'}',
+        ),
+      );
       return;
     }
 
-    final delay = reconnectDelayFor(_reconnectAttempts, unreachable: unreachable);
+    final delay = reconnectDelayFor(
+      _reconnectAttempts,
+      unreachable: unreachable,
+    );
     _emit(_data.copyWith(state: SshSessionState.reconnecting));
     _lastReconnectAtMs = DateTime.now().millisecondsSinceEpoch;
     _reconnectTimer?.cancel();
@@ -535,10 +602,9 @@ class SshSessionController {
     if (override != null) {
       final ok = await override(params);
       if (ok) {
-        _emit(_data.copyWith(
-          state: SshSessionState.connected,
-          clearError: true,
-        ));
+        _emit(
+          _data.copyWith(state: SshSessionState.connected, clearError: true),
+        );
       }
       return ok;
     }
@@ -558,10 +624,12 @@ class SshSessionController {
       return;
     }
     _hostKeyStore.trust(pending.host, pending.port, pending.fingerprint);
-    _emit(_data.copyWith(
-      state: SshSessionState.authenticating,
-      clearPendingHostKey: true,
-    ));
+    _emit(
+      _data.copyWith(
+        state: SshSessionState.authenticating,
+        clearPendingHostKey: true,
+      ),
+    );
     completer.complete(true);
   }
 
@@ -571,11 +639,13 @@ class SshSessionController {
     if (completer == null || completer.isCompleted) {
       return;
     }
-    _emit(_data.copyWith(
-      state: SshSessionState.failed,
-      error: 'Host key rejected by user',
-      clearPendingHostKey: true,
-    ));
+    _emit(
+      _data.copyWith(
+        state: SshSessionState.failed,
+        error: 'Host key rejected by user',
+        clearPendingHostKey: true,
+      ),
+    );
     completer.complete(false);
   }
 
@@ -595,7 +665,9 @@ class SshSessionController {
       try {
         client.close();
         await client.done;
-      } catch (_) {/* ignore */}
+      } catch (_) {
+        /* ignore */
+      }
     }
     _emit(_data.copyWith(state: SshSessionState.disconnected));
   }
@@ -615,12 +687,14 @@ class SshSessionController {
   void debugSetConnectedForTest(SshConnectParams params) {
     _userDisconnected = false;
     _lastParams = params;
-    _emit(SshSessionData(
-      state: SshSessionState.connected,
-      host: params.host,
-      port: params.port,
-      username: params.username,
-    ));
+    _emit(
+      SshSessionData(
+        state: SshSessionState.connected,
+        host: params.host,
+        port: params.port,
+        username: params.username,
+      ),
+    );
   }
 
   /// Drive the host-key verification path directly, bypassing the real SSH
@@ -648,8 +722,7 @@ class SshSessionController {
     // explicitly in connect() after the `connecting` emit, so cancelling on a
     // `connecting` emit here is harmless.
     if (next.state != SshSessionState.connecting && _readyTimer != null) {
-      ctrace('task.ssh',
-          'readyTimer: cancelled (state→${next.state.name})');
+      ctrace('task.ssh', 'readyTimer: cancelled (state→${next.state.name})');
       _readyTimer!.cancel();
       _readyTimer = null;
     }
@@ -668,14 +741,19 @@ class SshSessionController {
     _readyTimer = Timer(readyTimeout, () {
       _readyTimer = null;
       if (_data.state != SshSessionState.connecting) return;
-      ctrace('task.ssh',
-          'readyTimer: FIRED while still connecting → force-fail');
+      ctrace(
+        'task.ssh',
+        'readyTimer: FIRED while still connecting → force-fail',
+      );
       _forceCloseTransport();
-      _emit(_data.copyWith(
-        state: SshSessionState.failed,
-        error: 'No SSH response in ${secs.round()}s — host may be '
-            'unreachable or asleep',
-      ));
+      _emit(
+        _data.copyWith(
+          state: SshSessionState.failed,
+          error:
+              'No SSH response in ${secs.round()}s — host may be '
+              'unreachable or asleep',
+        ),
+      );
     });
   }
 
@@ -685,14 +763,18 @@ class SshSessionController {
     if (client != null) {
       try {
         client.close();
-      } catch (_) {/* ignore */}
+      } catch (_) {
+        /* ignore */
+      }
     }
     final socket = _socket;
     _socket = null;
     if (socket != null) {
       try {
         socket.destroy();
-      } catch (_) {/* ignore */}
+      } catch (_) {
+        /* ignore */
+      }
     }
   }
 
@@ -709,15 +791,17 @@ class SshSessionController {
 
     final completer = Completer<bool>();
     _hostKeyCompleter = completer;
-    _emit(_data.copyWith(
-      state: SshSessionState.awaitingHostKey,
-      pendingHostKey: PendingHostKey(
-        host: params.host,
-        port: params.port,
-        keyType: type,
-        fingerprint: hex,
+    _emit(
+      _data.copyWith(
+        state: SshSessionState.awaitingHostKey,
+        pendingHostKey: PendingHostKey(
+          host: params.host,
+          port: params.port,
+          keyType: type,
+          fingerprint: hex,
+        ),
       ),
-    ));
+    );
     return completer.future;
   }
 
@@ -725,18 +809,6 @@ class SshSessionController {
     final auth = params.auth;
     if (auth is SshAuthPassword) return auth.password;
     return null;
-  }
-
-  List<SSHKeyPair>? _identitiesFor(SshConnectParams params) {
-    final auth = params.auth;
-    if (auth is! SshAuthKey) return null;
-    try {
-      final pemString = String.fromCharCodes(auth.pem);
-      return SSHKeyPair.fromPem(pemString, auth.passphrase);
-    } catch (e) {
-      // Defer: surface as auth failure via onPasswordRequest fallback.
-      return null;
-    }
   }
 
   static String _fingerprintHex(Uint8List bytes) {
