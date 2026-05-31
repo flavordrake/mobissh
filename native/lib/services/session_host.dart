@@ -145,6 +145,8 @@ class SessionHost {
         hosted.metrics.lastReconnectAtMs =
             DateTime.now().millisecondsSinceEpoch;
       }
+      // Surface the unreachable classification for the audit screen (#551).
+      hosted.metrics.lastErrorUnreachable = controller.lastErrorUnreachable;
       _maybeEmitHostKeyChallenge(cmd.sessionId, hosted, data);
       _emitStateData(cmd.sessionId, data);
     });
@@ -339,6 +341,11 @@ class SessionMetrics {
   int? lastKeepaliveRttMs;
   int reconnectCount = 0;
   int? lastReconnectAtMs;
+
+  /// Whether the most recent reconnect was triggered by a host-unreachable
+  /// error (no route / refused / timed out / "no SSH response"). The audit
+  /// screen distinguishes "host asleep, fast-retrying" from a generic blip (#551).
+  bool lastErrorUnreachable = false;
   int? lastCols;
   int? lastRows;
 }

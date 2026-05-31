@@ -38,6 +38,12 @@ enum SshSessionState {
   /// Auth succeeded, transport open.
   connected,
 
+  /// Server-initiated clean transport close while we were `connected` (#551).
+  /// Distinct from a socket error: the connection was working, the peer closed
+  /// it. The controller auto-schedules a reconnect immediately after emitting
+  /// this so the user feels "always connected as long as creds are valid".
+  softDisconnected,
+
   /// Transient socket error after `connected`; controller is auto-retrying.
   /// UI should show "Reconnecting…" rather than the raw socket error (#517).
   reconnecting,
@@ -150,7 +156,10 @@ class SshSessionController {
     this.readyTimeout = const Duration(seconds: 25),
     this.keepAliveInterval = const Duration(seconds: 15),
     this.reconnectDelay = const Duration(seconds: 2),
-    this.maxReconnectAttempts = 5,
+    this.maxReconnectAttempts = 10,
+    this.maxUnreachableReconnectAttempts = 60,
+    this.reconnectBackoffCap = const Duration(seconds: 30),
+    this.unreachableReconnectInterval = const Duration(milliseconds: 1500),
     ReconnectAttempt? reconnectAttemptOverride,
   })  : _hostKeyStore = hostKeyStore ?? HostKeyStore(),
         _openSocket = socketOpener ?? _defaultSocketOpener,
@@ -178,16 +187,28 @@ class SshSessionController {
   /// app swaps (#517).
   final Duration keepAliveInterval;
 
-  /// Delay between transient-socket-error reconnect attempts. Short, fixed —
-  /// the issue's acceptance criteria asks for "Reconnecting…" recovery
-  /// within seconds, not exponential backoff (the PWA reaches the same
-  /// conclusion in `scheduleReconnect`).
+  /// Base delay for the exponential transient-reconnect backoff (#551).
+  /// Attempt `n` (0-based) waits `min(reconnectDelay * 1.5^n, reconnectBackoffCap)`.
+  /// The PWA reaches the same 2s→30s schedule in `scheduleReconnect`.
   final Duration reconnectDelay;
 
-  /// Maximum number of consecutive reconnect attempts after a transient
-  /// close. Once exhausted, transition to `failed` so the UI can surface
-  /// the modal-style error.
+  /// Ceiling for the exponential transient backoff. Delays never exceed this
+  /// regardless of attempt count (#551).
+  final Duration reconnectBackoffCap;
+
+  /// Fixed retry interval for an unreachable host (#551). No backoff — a
+  /// sleeping Tailscale peer or a network that's about to come back benefits
+  /// from a tight, constant cadence rather than progressive slowdown.
+  final Duration unreachableReconnectInterval;
+
+  /// Maximum number of consecutive reconnect attempts after a NON-unreachable
+  /// transient close. Once exhausted, transition to `failed` so the UI can
+  /// surface the modal-style error (#551: 10).
   final int maxReconnectAttempts;
+
+  /// Maximum number of consecutive reconnect attempts when the last error was
+  /// classified as host-unreachable (#551: 60 → ~90s of fixed 1.5s retries).
+  final int maxUnreachableReconnectAttempts;
 
   final StreamController<SshSessionData> _stateCtrl =
       StreamController<SshSessionData>.broadcast();
@@ -222,6 +243,13 @@ class SshSessionController {
   int? get lastReconnectAtMs => _lastReconnectAtMs;
   int? _lastReconnectAtMs;
 
+  /// Whether the most recent reconnect-triggering error was classified as a
+  /// host-unreachable condition (no route, refused, timed out, "no SSH
+  /// response"). Drives the fixed-interval fast-retry policy and is surfaced to
+  /// the Connection Audit screen via `SessionMetrics` (#551).
+  bool get lastErrorUnreachable => _lastErrorUnreachable;
+  bool _lastErrorUnreachable = false;
+
   /// Host-key trust store. Exposed for tests + future Phase 3 wiring.
   HostKeyStore get hostKeyStore => _hostKeyStore;
 
@@ -233,6 +261,7 @@ class SshSessionController {
         _data.state == SshSessionState.authenticating ||
         _data.state == SshSessionState.connected ||
         _data.state == SshSessionState.awaitingHostKey ||
+        _data.state == SshSessionState.softDisconnected ||
         _data.state == SshSessionState.reconnecting) {
       ctrace('task.ssh', 'connect: no-op (state=${_data.state.name})');
       return;
@@ -348,12 +377,24 @@ class SshSessionController {
     }
 
     if (error == null) {
+      // Clean transport close. If we were `connected`, the server (or a clean
+      // network teardown) dropped a working session — surface
+      // `softDisconnected` and auto-reconnect so the user feels "always
+      // connected as long as creds are valid" (#551). Any other state (never
+      // reached `connected`, or already mid-reconnect) is a real close.
+      if (_data.state == SshSessionState.connected && _lastParams != null) {
+        _lastErrorUnreachable = false;
+        _emit(_data.copyWith(state: SshSessionState.softDisconnected));
+        _scheduleReconnect(null);
+        return;
+      }
       _emit(_data.copyWith(state: SshSessionState.disconnected));
       return;
     }
 
     final transient = isTransientSocketError(error);
     if (transient && _lastParams != null) {
+      _lastErrorUnreachable = isUnreachableError(error);
       _scheduleReconnect(error);
       return;
     }
@@ -389,7 +430,59 @@ class SshSessionController {
     return true;
   }
 
-  void _scheduleReconnect(Object error) {
+  /// Classify whether [error] indicates the host is unreachable rather than a
+  /// mid-session blip (#551). Unreachable errors get a fixed fast-retry cadence
+  /// (a sleeping Tailscale peer / network coming back benefits from a tight,
+  /// constant interval) with a much higher attempt ceiling than a generic
+  /// transient drop. Matches on errno (no-route / refused / timed-out / net-
+  /// unreach) AND on message text so the `readyTimeout` "No SSH response"
+  /// failure and bare `SSHSocketError`s without an OSError are caught. Public
+  /// for testing.
+  static bool isUnreachableError(Object error) {
+    if (error is SSHSocketError) {
+      final inner = error.error;
+      if (inner is SocketException) {
+        final code = inner.osError?.errorCode;
+        if (code != null) {
+          // 101 ENETUNREACH, 110 ETIMEDOUT, 111 ECONNREFUSED, 113 EHOSTUNREACH
+          const unreachableCodes = <int>{101, 110, 111, 113};
+          return unreachableCodes.contains(code);
+        }
+      }
+    }
+    final msg = error.toString().toLowerCase();
+    return msg.contains('unreachable') ||
+        msg.contains('no ssh response') ||
+        msg.contains('no route to host') ||
+        msg.contains('econnrefused') ||
+        msg.contains('connection refused') ||
+        msg.contains('etimedout');
+  }
+
+  /// Compute the reconnect delay for [attempt] (0-based) under the #551 policy.
+  /// Unreachable → fixed [unreachableReconnectInterval]; otherwise exponential
+  /// `reconnectDelay * 1.5^attempt` clamped to [reconnectBackoffCap]. Public
+  /// for testing the backoff progression without real wall-clock timers.
+  @visibleForTesting
+  Duration reconnectDelayFor(int attempt, {required bool unreachable}) {
+    if (unreachable) return unreachableReconnectInterval;
+    final baseMs = reconnectDelay.inMilliseconds;
+    final scaled = baseMs * _pow1_5(attempt);
+    final capped = scaled > reconnectBackoffCap.inMilliseconds
+        ? reconnectBackoffCap.inMilliseconds
+        : scaled.round();
+    return Duration(milliseconds: capped);
+  }
+
+  static double _pow1_5(int n) {
+    var v = 1.0;
+    for (var i = 0; i < n; i++) {
+      v *= 1.5;
+    }
+    return v;
+  }
+
+  void _scheduleReconnect(Object? error) {
     final params = _lastParams;
     if (params == null) {
       _emit(_data.copyWith(
@@ -399,19 +492,23 @@ class SshSessionController {
       return;
     }
 
-    if (_reconnectAttempts >= maxReconnectAttempts) {
+    final unreachable = _lastErrorUnreachable;
+    final ceiling =
+        unreachable ? maxUnreachableReconnectAttempts : maxReconnectAttempts;
+    if (_reconnectAttempts >= ceiling) {
       _emit(_data.copyWith(
         state: SshSessionState.failed,
-        error: 'reconnect exhausted after $maxReconnectAttempts attempts: '
-            '$error',
+        error: 'reconnect exhausted after $ceiling attempts: '
+            '${error ?? 'server disconnect'}',
       ));
       return;
     }
 
+    final delay = reconnectDelayFor(_reconnectAttempts, unreachable: unreachable);
     _emit(_data.copyWith(state: SshSessionState.reconnecting));
     _lastReconnectAtMs = DateTime.now().millisecondsSinceEpoch;
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(reconnectDelay, () async {
+    _reconnectTimer = Timer(delay, () async {
       if (_userDisconnected) return;
       _reconnectAttempts += 1;
       // Detach the now-dead client so a fresh connect() can run.
@@ -420,11 +517,15 @@ class SshSessionController {
       _data = _data.copyWith(state: SshSessionState.idle);
       final ok = await _runReconnectAttempt(params);
       if (!ok && !_userDisconnected) {
-        // Attempt failed — recurse via handleTransportClosed so the counter
-        // continues to climb and we eventually settle on `failed`.
-        handleTransportClosed(error);
+        // Attempt failed — re-schedule directly (not via handleTransportClosed,
+        // whose null-error path would treat the idle reset as a clean close and
+        // bail). The counter keeps climbing under the same ceiling/backoff until
+        // we settle on `failed`. Preserves `_lastErrorUnreachable` so the policy
+        // (fixed-interval vs. exponential) stays stable across attempts.
+        _scheduleReconnect(error);
       } else if (ok) {
         _reconnectAttempts = 0;
+        _lastErrorUnreachable = false;
       }
     });
   }
@@ -486,6 +587,7 @@ class SshSessionController {
     _readyTimer?.cancel();
     _readyTimer = null;
     _reconnectAttempts = 0;
+    _lastErrorUnreachable = false;
     _socket = null;
     final client = _client;
     _client = null;
