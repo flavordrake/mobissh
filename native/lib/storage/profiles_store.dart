@@ -155,11 +155,7 @@ class SavedProfile {
     );
   }
 
-  SavedProfile copyWith({
-    String? title,
-    String? vaultId,
-    String? keyVaultId,
-  }) {
+  SavedProfile copyWith({String? title, String? vaultId, String? keyVaultId}) {
     return SavedProfile(
       title: title ?? this.title,
       host: host,
@@ -235,8 +231,7 @@ class ParsedImport {
 
   /// True when this envelope carries an encrypted vault — caller must prompt
   /// for the master password before [ProfilesStore.applyParsedImport].
-  bool get hasVault =>
-      vaultEncryptedJson != null && vaultMetaJson != null;
+  bool get hasVault => vaultEncryptedJson != null && vaultMetaJson != null;
 }
 
 /// shared_preferences key. Versioned so a future schema change can migrate
@@ -311,15 +306,15 @@ class ProfilesStore {
     }
 
     if (decoded is List) {
-      return ParsedImport(
-        profileEntries: _coerceEntries(decoded),
-      );
+      return ParsedImport(profileEntries: _coerceEntries(decoded));
     }
 
     if (decoded is! Map) {
       return ParsedImport(
         profileEntries: const [],
-        errors: ['Wrong file shape — expected an export envelope or profile array.'],
+        errors: [
+          'Wrong file shape — expected an export envelope or profile array.',
+        ],
       );
     }
 
@@ -327,7 +322,9 @@ class ProfilesStore {
     if (version != null && version != 1) {
       return ParsedImport(
         profileEntries: const [],
-        errors: ['Unsupported export version: $version (this client supports v1).'],
+        errors: [
+          'Unsupported export version: $version (this client supports v1).',
+        ],
       );
     }
 
@@ -347,7 +344,10 @@ class ProfilesStore {
       final meta = vaultRaw['meta'];
       // Both fields must be strings for the envelope to be useful; if either
       // is missing we treat the envelope as "metadata-only" and fall through.
-      if (enc is String && enc.isNotEmpty && meta is String && meta.isNotEmpty) {
+      if (enc is String &&
+          enc.isNotEmpty &&
+          meta is String &&
+          meta.isNotEmpty) {
         vaultEncryptedJson = enc;
         vaultMetaJson = meta;
       }
@@ -392,7 +392,9 @@ class ProfilesStore {
         <String, Map<String, Object?>>{};
     if (parsed.hasVault) {
       if (password == null || password.isEmpty) {
-        return ImportResult(errors: ['Master password required to decrypt vault.']);
+        return ImportResult(
+          errors: ['Master password required to decrypt vault.'],
+        );
       }
       if (secrets == null) {
         return ImportResult(errors: ['Secrets store unavailable.']);
@@ -406,7 +408,9 @@ class ProfilesStore {
       } on VaultDecryptException catch (e) {
         return ImportResult(errors: [e.message]);
       } on VaultEnvelopeException catch (e) {
-        return ImportResult(errors: ['Vault envelope is malformed: ${e.message}']);
+        return ImportResult(
+          errors: ['Vault envelope is malformed: ${e.message}'],
+        );
       }
     }
 
@@ -506,10 +510,43 @@ class ProfilesStore {
     // Without a password we cannot decrypt; the UI is expected to use the
     // two-stage path for vault envelopes. Re-emit a non-vault parsed import
     // so the existing call sites keep their behavior.
-    return applyParsedImport(ParsedImport(
-      profileEntries: parsed.profileEntries,
-      errors: parsed.errors,
-    ));
+    return applyParsedImport(
+      ParsedImport(
+        profileEntries: parsed.profileEntries,
+        errors: parsed.errors,
+      ),
+    );
+  }
+
+  /// Upsert a single profile by identity (#579 profile editor).
+  ///
+  /// When [previousIdentityKey] is supplied and differs from the incoming
+  /// profile's identity, the old entry (matched by that key) is removed first
+  /// — this is the rename case where the editor changed host/port/username.
+  /// Otherwise the matching identity is updated in place; a brand-new identity
+  /// is appended. Mirrors the import upsert semantics (identity-keyed).
+  Future<void> upsert(
+    SavedProfile profile, {
+    String? previousIdentityKey,
+  }) async {
+    final list = await load();
+    final prevKey = previousIdentityKey ?? profile.identityKey;
+    final idx = list.indexWhere((p) => p.identityKey == prevKey);
+    if (idx >= 0) {
+      list[idx] = profile;
+    } else {
+      // Identity didn't match the previous key — maybe the new identity
+      // already exists (collision). Update that in place if so, else append.
+      final collision = list.indexWhere(
+        (p) => p.identityKey == profile.identityKey,
+      );
+      if (collision >= 0) {
+        list[collision] = profile;
+      } else {
+        list.add(profile);
+      }
+    }
+    await save(list);
   }
 
   /// Delete a single profile by identity. Persists if anything was removed.
