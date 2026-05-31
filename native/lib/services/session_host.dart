@@ -25,6 +25,7 @@ import 'package:dartssh2/dartssh2.dart';
 import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
+import '../ssh/ssh_shell.dart';
 import '../ssh/sftp_session.dart';
 import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
@@ -32,6 +33,19 @@ import 'task_ssh_gateway.dart';
 /// Factory injected by the UI / tests. Production uses the default which
 /// returns a real `SshSessionController` with the default socket opener.
 typedef SshControllerFactory = SshSessionController Function();
+
+/// Opens a PTY shell transport over an authenticated client. Production uses
+/// [openSshShellTransportSized]; tests inject a fake so the output→event and
+/// input→shell wiring runs without a real socket. Returns null if no shell
+/// could be opened (caller leaves the terminal idle).
+typedef HostShellOpener =
+    Future<SshShellTransport?> Function(SSHClient client, int cols, int rows);
+
+Future<SshShellTransport?> _defaultShellOpener(
+  SSHClient client,
+  int cols,
+  int rows,
+) => openSshShellTransportSized(client, width: cols, height: rows);
 
 SshSessionController _defaultControllerFactory() => SshSessionController();
 
@@ -42,10 +56,12 @@ class SessionHost {
     required TaskSshGateway gateway,
     SshControllerFactory? controllerFactory,
     SftpSessionOpener? sftpOpener,
+    HostShellOpener? shellOpener,
     this.snapshotInterval = const Duration(seconds: 2),
-  })  : _gateway = gateway,
-        _factory = controllerFactory ?? _defaultControllerFactory,
-        _sftpOpener = sftpOpener {
+  }) : _gateway = gateway,
+       _factory = controllerFactory ?? _defaultControllerFactory,
+       _sftpOpener = sftpOpener,
+       _shellOpener = shellOpener ?? _defaultShellOpener {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
     ctrace('task.host', 'ctor: listening; sending SshTaskReadyEvent');
@@ -64,6 +80,9 @@ class SessionHost {
   /// [_defaultSftpOpener] opens an SFTP subsystem over the live `SSHClient`.
   /// Tests inject a fake so the handlers run without a real socket.
   final SftpSessionOpener? _sftpOpener;
+
+  /// Opens the PTY shell once a session reaches `connected`.
+  final HostShellOpener _shellOpener;
 
   /// How often a snapshot is pushed to the UI side. Tests use a short
   /// interval; production defaults to two seconds.
@@ -95,10 +114,12 @@ class SessionHost {
       ctrace('task.host', 'dispatch: malformed — $e');
       // Unknown shape — surface via error event so the UI side can log.
       final sid = payload['sessionId'] as String? ?? '';
-      _gateway.send(SshErrorEvent(
-        sessionId: sid,
-        message: 'malformed command: $e',
-      ).toJson());
+      _gateway.send(
+        SshErrorEvent(
+          sessionId: sid,
+          message: 'malformed command: $e',
+        ).toJson(),
+      );
       return;
     }
     switch (cmd) {
@@ -109,13 +130,16 @@ class SessionHost {
       case SshInputCommand():
         _handleInput(cmd);
       case SshResizeCommand():
-        // Resize commands are accepted but the actual PTY plumbing is a
-        // follow-up; the host records the last requested dims so the audit
-        // snapshot can show them.
         final s = _sessions[cmd.sessionId];
         if (s != null) {
           s.metrics.lastCols = cmd.cols;
           s.metrics.lastRows = cmd.rows;
+          // Resize the live PTY so the remote shell wraps to the viewport.
+          try {
+            s.shell?.resize(cmd.cols, cmd.rows);
+          } catch (_) {
+            // dartssh2 throws on non-positive dims; the next real resize fixes it.
+          }
         }
       case SshRequestSnapshotCommand():
         final s = _sessions[cmd.sessionId];
@@ -152,6 +176,7 @@ class SessionHost {
     _sessions[cmd.sessionId] = hosted;
 
     // Forward state transitions back as events.
+    var prevState = SshSessionState.idle;
     hosted.stateSub = controller.stream.listen((data) {
       hosted.metrics.state = data.state.name;
       if (data.state == SshSessionState.reconnecting) {
@@ -163,6 +188,21 @@ class SessionHost {
       hosted.metrics.lastErrorUnreachable = controller.lastErrorUnreachable;
       _maybeEmitHostKeyChallenge(cmd.sessionId, hosted, data);
       _emitStateData(cmd.sessionId, data);
+      // Verbose connect logging in the terminal itself: surface each phase so
+      // a stall shows WHERE it stopped instead of a blank cursor.
+      if (data.state != prevState) {
+        _emitConnectStatus(cmd.sessionId, data);
+        prevState = data.state;
+      }
+      // Open the PTY shell the first time we reach `connected` (and re-open
+      // after a reconnect, which re-enters `connected`). Without this the
+      // terminal screen mounts but never receives a single byte — the device
+      // "blank terminal with a cursor" hang. The in-UI SshShell path was
+      // disabled by the #533 task-isolate migration and the task-side shell
+      // was never wired until now.
+      if (data.state == SshSessionState.connected) {
+        unawaited(_ensureShell(cmd.sessionId, hosted));
+      }
     });
 
     final params = SshConnectParams(
@@ -172,8 +212,10 @@ class SessionHost {
       auth: _decodeAuth(cmd.authJson),
     );
     // Fire connect; failures surface through the state stream.
-    ctrace('task.host',
-        'connect sid=${cmd.sessionId} → controller.connect(${cmd.host}:${cmd.port})');
+    ctrace(
+      'task.host',
+      'connect sid=${cmd.sessionId} → controller.connect(${cmd.host}:${cmd.port})',
+    );
     unawaited(controller.connect(params));
   }
 
@@ -186,26 +228,134 @@ class SessionHost {
   void _handleInput(SshInputCommand cmd) {
     final hosted = _sessions[cmd.sessionId];
     if (hosted == null) return;
-    // Track bytes-out and record into scrollback "echo" so the audit can
-    // surface activity even before a PTY pipe is wired through the gateway.
     hosted.metrics.bytesOut += cmd.bytes.length;
-    hosted.appendScrollback(cmd.bytes);
+    // Write keystrokes to the live PTY. Before the shell is open we drop into
+    // the scrollback "echo" so the audit still shows activity.
+    final shell = hosted.shell;
+    if (shell != null) {
+      shell.send(cmd.bytes);
+    } else {
+      hosted.appendScrollback(cmd.bytes);
+    }
   }
 
   Future<void> _teardown(String sessionId, _HostedSession hosted) async {
     await hosted.stateSub?.cancel();
     hosted.stateSub = null;
+    await hosted.shellSub?.cancel();
+    hosted.shellSub = null;
+    final shell = hosted.shell;
+    hosted.shell = null;
+    if (shell != null) {
+      try {
+        shell.close();
+      } catch (_) {
+        /* ignore */
+      }
+    }
     final sftp = hosted.sftp;
     hosted.sftp = null;
     if (sftp != null) {
       try {
         await sftp.close();
-      } catch (_) {/* ignore */}
+      } catch (_) {
+        /* ignore */
+      }
     }
     try {
       await hosted.controller.dispose();
-    } catch (_) {/* ignore */}
+    } catch (_) {
+      /* ignore */
+    }
     _gateway.send(SshClosedEvent(sessionId: sessionId).toJson());
+  }
+
+  /// Open the PTY shell for [sessionId] once authenticated, and pipe its
+  /// output back to the UI terminal as [SshOutputEvent]s. Idempotent: a second
+  /// call while a shell is open or opening is a no-op (covers the reconnect
+  /// re-enter-connected case). On open failure the error is surfaced in the
+  /// terminal so the user sees it instead of a blank cursor.
+  Future<void> _ensureShell(String sessionId, _HostedSession hosted) async {
+    if (hosted.shell != null || hosted.shellOpening) return;
+    final client = hosted.controller.client;
+    if (client == null) return;
+    hosted.shellOpening = true;
+    try {
+      final cols = hosted.metrics.lastCols ?? 80;
+      final rows = hosted.metrics.lastRows ?? 24;
+      final transport = await _shellOpener(client, cols, rows);
+      if (transport == null) {
+        _emitStatus(sessionId, '\r\n[mobissh] no shell channel available\r\n');
+        return;
+      }
+      // The session may have been torn down while we awaited the channel.
+      if (!_sessions.containsKey(sessionId)) {
+        try {
+          transport.close();
+        } catch (_) {
+          /* ignore */
+        }
+        return;
+      }
+      hosted.shell = transport;
+      hosted.shellSub = transport.output.listen(
+        (bytes) {
+          hosted.metrics.bytesIn += bytes.length;
+          hosted.appendScrollback(bytes);
+          _gateway.send(
+            SshOutputEvent(sessionId: sessionId, bytes: bytes).toJson(),
+          );
+        },
+        onError: (Object e, StackTrace st) {
+          _emitStatus(sessionId, '\r\n[mobissh] shell stream error: $e\r\n');
+        },
+      );
+      // Drop the shell when the remote channel closes so a reconnect re-opens.
+      unawaited(
+        transport.done.then((_) {
+          hosted.shellSub?.cancel();
+          hosted.shellSub = null;
+          hosted.shell = null;
+        }),
+      );
+    } catch (e) {
+      _emitStatus(sessionId, '\r\n[mobissh] could not open shell: $e\r\n');
+    } finally {
+      hosted.shellOpening = false;
+    }
+  }
+
+  /// Emit a human-readable status line into the terminal stream (verbose
+  /// connect logging). Routed through [SshOutputEvent] so it appears in the
+  /// UI terminal exactly where the shell output would.
+  void _emitStatus(String sessionId, String text) {
+    _gateway.send(
+      SshOutputEvent(
+        sessionId: sessionId,
+        bytes: Uint8List.fromList(utf8.encode(text)),
+      ).toJson(),
+    );
+  }
+
+  /// One concise terminal line per connect phase so a stall is visible.
+  void _emitConnectStatus(String sessionId, SshSessionData data) {
+    final String? line;
+    switch (data.state) {
+      case SshSessionState.connecting:
+        line =
+            '[mobissh] connecting to ${data.host ?? '?'}:${data.port ?? '?'}…';
+      case SshSessionState.authenticating:
+        line = '[mobissh] host key OK — authenticating…';
+      case SshSessionState.connected:
+        line = '[mobissh] authenticated — opening shell…';
+      case SshSessionState.reconnecting:
+        line = '[mobissh] connection dropped — reconnecting…';
+      case SshSessionState.failed:
+        line = '[mobissh] failed: ${data.error ?? 'unknown error'}';
+      default:
+        line = null;
+    }
+    if (line != null) _emitStatus(sessionId, '$line\r\n');
   }
 
   // -------------------------------------------------------------------------
@@ -254,12 +404,14 @@ class SessionHost {
       }
       final entries = await sftp.list(cmd.path);
       if (_disposed) return;
-      _gateway.send(SftpListingEvent(
-        sessionId: cmd.sessionId,
-        requestId: cmd.requestId,
-        path: cmd.path,
-        entries: entries,
-      ).toJson());
+      _gateway.send(
+        SftpListingEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          path: cmd.path,
+          entries: entries,
+        ).toJson(),
+      );
     } catch (e) {
       ctrace('task.host', 'sftp ls FAILED path=${cmd.path} — $e');
       _emitSftpError(cmd.sessionId, cmd.requestId, 'List failed: $e');
@@ -280,21 +432,25 @@ class SessionHost {
         cmd.path,
         onChunk: (chunk, offset) {
           if (_disposed) return;
-          _gateway.send(SftpDownloadChunkEvent(
-            sessionId: cmd.sessionId,
-            requestId: cmd.requestId,
-            bytes: chunk,
-            offset: offset,
-            totalBytes: totalBytes,
-          ).toJson());
+          _gateway.send(
+            SftpDownloadChunkEvent(
+              sessionId: cmd.sessionId,
+              requestId: cmd.requestId,
+              bytes: chunk,
+              offset: offset,
+              totalBytes: totalBytes,
+            ).toJson(),
+          );
         },
       );
       if (_disposed) return;
-      _gateway.send(SftpDownloadDoneEvent(
-        sessionId: cmd.sessionId,
-        requestId: cmd.requestId,
-        totalBytes: written,
-      ).toJson());
+      _gateway.send(
+        SftpDownloadDoneEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          totalBytes: written,
+        ).toJson(),
+      );
     } catch (e) {
       ctrace('task.host', 'sftp download FAILED path=${cmd.path} — $e');
       _emitSftpError(cmd.sessionId, cmd.requestId, 'Download failed: $e');
@@ -303,11 +459,13 @@ class SessionHost {
 
   void _emitSftpError(String sessionId, String requestId, String message) {
     if (_disposed) return;
-    _gateway.send(SftpErrorEvent(
-      sessionId: sessionId,
-      requestId: requestId,
-      message: message,
-    ).toJson());
+    _gateway.send(
+      SftpErrorEvent(
+        sessionId: sessionId,
+        requestId: requestId,
+        message: message,
+      ).toJson(),
+    );
   }
 
   /// Emit a host-key challenge to the UI when the controller surfaces a fresh
@@ -326,13 +484,15 @@ class SessionHost {
     }
     if (hosted.challengedFingerprint == pending.fingerprint) return;
     hosted.challengedFingerprint = pending.fingerprint;
-    _gateway.send(SshHostKeyChallengeEvent(
-      sessionId: sessionId,
-      host: pending.host,
-      port: pending.port,
-      keyType: pending.keyType,
-      fingerprint: pending.fingerprint,
-    ).toJson());
+    _gateway.send(
+      SshHostKeyChallengeEvent(
+        sessionId: sessionId,
+        host: pending.host,
+        port: pending.port,
+        keyType: pending.keyType,
+        fingerprint: pending.fingerprint,
+      ).toJson(),
+    );
   }
 
   void _emitState(String sessionId, SshSessionController controller) {
@@ -340,14 +500,16 @@ class SessionHost {
   }
 
   void _emitStateData(String sessionId, SshSessionData data) {
-    _gateway.send(SshStateEvent(
-      sessionId: sessionId,
-      state: data.state.name,
-      error: data.error,
-      host: data.host,
-      port: data.port,
-      username: data.username,
-    ).toJson());
+    _gateway.send(
+      SshStateEvent(
+        sessionId: sessionId,
+        state: data.state.name,
+        error: data.error,
+        host: data.host,
+        port: data.port,
+        username: data.username,
+      ).toJson(),
+    );
   }
 
   void _pushSnapshots() {
@@ -358,16 +520,18 @@ class SessionHost {
   }
 
   void _emitSnapshot(String sessionId, _HostedSession hosted) {
-    _gateway.send(SshSnapshotEvent(
-      sessionId: sessionId,
-      state: hosted.controller.data.state.name,
-      bytesIn: hosted.metrics.bytesIn,
-      bytesOut: hosted.metrics.bytesOut,
-      lastKeepaliveRttMs: hosted.metrics.lastKeepaliveRttMs,
-      reconnectCount: hosted.metrics.reconnectCount,
-      lastReconnectAtMs: hosted.metrics.lastReconnectAtMs,
-      scrollbackTail: hosted.scrollbackTailString(),
-    ).toJson());
+    _gateway.send(
+      SshSnapshotEvent(
+        sessionId: sessionId,
+        state: hosted.controller.data.state.name,
+        bytesIn: hosted.metrics.bytesIn,
+        bytesOut: hosted.metrics.bytesOut,
+        lastKeepaliveRttMs: hosted.metrics.lastKeepaliveRttMs,
+        reconnectCount: hosted.metrics.reconnectCount,
+        lastReconnectAtMs: hosted.metrics.lastReconnectAtMs,
+        scrollbackTail: hosted.scrollbackTailString(),
+      ).toJson(),
+    );
   }
 
   /// Inject output bytes from the SSH session's PTY into the host so the
@@ -379,10 +543,7 @@ class SessionHost {
     if (hosted == null) return;
     hosted.metrics.bytesIn += bytes.length;
     hosted.appendScrollback(bytes);
-    _gateway.send(SshOutputEvent(
-      sessionId: sessionId,
-      bytes: bytes,
-    ).toJson());
+    _gateway.send(SshOutputEvent(sessionId: sessionId, bytes: bytes).toJson());
   }
 
   Future<void> dispose() async {
@@ -486,6 +647,13 @@ class _HostedSession {
   /// Opened on the first list/download command, reused after, closed on
   /// teardown. Null until the first SFTP op.
   SftpSession? sftp;
+
+  /// Live PTY shell channel, opened on first `connected`. Output is piped to
+  /// the UI terminal via SshOutputEvent; input commands write here. Null until
+  /// the shell is open (and again after the channel closes).
+  SshShellTransport? shell;
+  StreamSubscription<Uint8List>? shellSub;
+  bool shellOpening = false;
 
   /// Fingerprint of the host-key challenge already forwarded to the UI, so a
   /// single awaitingHostKey transition emits exactly one challenge (#536).

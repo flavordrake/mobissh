@@ -44,10 +44,14 @@ class MobisshApp extends StatelessWidget {
     return AppLifecycleObserver(
       child: MaterialApp(
         title: 'MobiSSH',
+        // Default LIGHT (temporary, this build): an unmistakable visual signal
+        // that a fresh APK actually installed/updated, so we can separate
+        // "build didn't update" from "feature still broken" while closing the
+        // device-bug loop. Terminal palette is independent (terminalThemeProvider).
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(
             seedColor: Colors.indigo,
-            brightness: Brightness.dark,
+            brightness: Brightness.light,
           ),
           useMaterial3: true,
         ),
@@ -133,17 +137,11 @@ class ConnectHomePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('MobiSSH'),
-      ),
+      appBar: AppBar(title: const Text('MobiSSH')),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(
-            children: const [
-              ConnectForm(),
-              Divider(),
-              _StatusPanel(),
-            ],
+            children: const [ConnectForm(), Divider(), _StatusPanel()],
           ),
         ),
       ),
@@ -171,8 +169,10 @@ class _StatusPanel extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('State: ${data.state.name}',
-                style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'State: ${data.state.name}',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             if (data.host != null)
               Text('Target: ${data.username}@${data.host}:${data.port}'),
             if (data.remoteVersion != null)
@@ -187,8 +187,10 @@ class _StatusPanel extends ConsumerWidget {
             ],
             if (data.error != null) ...[
               const SizedBox(height: 8),
-              Text('Error: ${data.error}',
-                  style: const TextStyle(color: Colors.redAccent)),
+              Text(
+                'Error: ${data.error}',
+                style: const TextStyle(color: Colors.redAccent),
+              ),
             ],
           ],
         ),

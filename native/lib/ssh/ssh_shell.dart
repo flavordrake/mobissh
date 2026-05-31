@@ -48,8 +48,7 @@ abstract class SshShellTransport {
 
 /// Adapter from [SshShellTransport] to `dartssh2.SSHSession`.
 class _SshSessionTransport implements SshShellTransport {
-  _SshSessionTransport(this._session)
-      : output = _mergeStdoutStderr(_session);
+  _SshSessionTransport(this._session) : output = _mergeStdoutStderr(_session);
 
   final ssh.SSHSession _session;
 
@@ -80,14 +79,8 @@ class _SshSessionTransport implements SshShellTransport {
   /// way.
   static Stream<Uint8List> _mergeStdoutStderr(ssh.SSHSession session) {
     final ctrl = StreamController<Uint8List>.broadcast();
-    final stdoutSub = session.stdout.listen(
-      ctrl.add,
-      onError: ctrl.addError,
-    );
-    final stderrSub = session.stderr.listen(
-      ctrl.add,
-      onError: ctrl.addError,
-    );
+    final stdoutSub = session.stdout.listen(ctrl.add, onError: ctrl.addError);
+    final stderrSub = session.stderr.listen(ctrl.add, onError: ctrl.addError);
     Future<void> closeOnDone() async {
       await session.done;
       await stdoutSub.cancel();
@@ -109,11 +102,23 @@ Future<SshShellTransport> openSshShellTransport(
   ssh.SSHClient client,
   Terminal terminal,
 ) async {
+  return openSshShellTransportSized(
+    client,
+    width: terminal.viewWidth,
+    height: terminal.viewHeight,
+  );
+}
+
+/// Open a PTY shell with explicit dimensions — for the task isolate, which
+/// hosts the `SSHClient` but has no UI [Terminal] to read size from. The UI's
+/// first resize command (sent on attach) corrects the dims immediately.
+Future<SshShellTransport> openSshShellTransportSized(
+  ssh.SSHClient client, {
+  int width = 80,
+  int height = 24,
+}) async {
   final session = await client.shell(
-    pty: ssh.SSHPtyConfig(
-      width: terminal.viewWidth,
-      height: terminal.viewHeight,
-    ),
+    pty: ssh.SSHPtyConfig(width: width, height: height),
   );
   return _SshSessionTransport(session);
 }
@@ -153,7 +158,9 @@ class SshShell {
     }
     if (_terminal != null) {
       if (identical(_terminal, terminal)) return;
-      throw StateError('SshShell.attach: already attached to a different terminal');
+      throw StateError(
+        'SshShell.attach: already attached to a different terminal',
+      );
     }
     _terminal = terminal;
 
@@ -199,12 +206,16 @@ class SshShell {
     // viewport before the first shell prompt is rendered.
     try {
       transport.resize(terminal.viewWidth, terminal.viewHeight);
-    } catch (_) {/* see above */}
+    } catch (_) {
+      /* see above */
+    }
 
     // Auto-dispose when the remote channel closes.
-    unawaited(transport.done.then((_) {
-      if (!_disposed) dispose();
-    }));
+    unawaited(
+      transport.done.then((_) {
+        if (!_disposed) dispose();
+      }),
+    );
   }
 
   /// Detach + close the transport. Safe to call multiple times.
@@ -221,6 +232,8 @@ class SshShell {
     _terminal = null;
     try {
       transport.close();
-    } catch (_) {/* ignore */}
+    } catch (_) {
+      /* ignore */
+    }
   }
 }
