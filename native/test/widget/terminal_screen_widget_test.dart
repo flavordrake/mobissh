@@ -18,6 +18,7 @@ import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/state/terminal_providers.dart';
 import 'package:mobissh/ui/terminal_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
 import '../support/fake_ssh_shell_transport.dart';
@@ -47,12 +48,14 @@ Future<({SessionEntry entry, ProviderContainer container})> _setupSingleSession(
 
   final entry = container
       .read(sessionsProvider.notifier)
-      .addOrActivate(SshConnectParams(
-        host: host,
-        port: port,
-        username: username,
-        auth: const SshAuth.password('p'),
-      ));
+      .addOrActivate(
+        SshConnectParams(
+          host: host,
+          port: port,
+          username: username,
+          auth: const SshAuth.password('p'),
+        ),
+      );
 
   await tester.pumpWidget(
     UncontrolledProviderScope(
@@ -69,6 +72,10 @@ Future<({SessionEntry entry, ProviderContainer container})> _setupSingleSession(
 }
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   group('TerminalScreen', () {
     testWidgets('renders a TerminalView', (tester) async {
       final transport = FakeSshShellTransport();
@@ -85,19 +92,18 @@ void main() {
       addTearDown(transport.close);
       final ({SessionEntry entry, ProviderContainer container}) setup =
           await _setupSingleSession(
-        tester,
-        transport,
-        host: 'sshd.example',
-        port: 2222,
-        username: 'alice',
-      );
+            tester,
+            transport,
+            host: 'sshd.example',
+            port: 2222,
+            username: 'alice',
+          );
       addTearDown(setup.container.dispose);
 
       expect(find.text('alice@sshd.example:2222'), findsWidgets);
     });
 
-    testWidgets('disconnect button is present in the AppBar',
-        (tester) async {
+    testWidgets('disconnect button is present in the AppBar', (tester) async {
       final transport = FakeSshShellTransport();
       addTearDown(transport.close);
       final ({SessionEntry entry, ProviderContainer container}) setup =
@@ -110,15 +116,74 @@ void main() {
       expect(iconButton.onPressed, isNotNull);
     });
 
-    testWidgets('session menu button is present in the AppBar',
-        (tester) async {
+    testWidgets(
+      'session menu button is present (now on the bottom bar, #566)',
+      (tester) async {
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        final ({SessionEntry entry, ProviderContainer container}) setup =
+            await _setupSingleSession(tester, transport);
+        addTearDown(setup.container.dispose);
+
+        expect(find.byKey(const Key('session-menu-button')), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'session-menu trigger is NOT in the AppBar leading slot (#566)',
+      (tester) async {
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        final ({SessionEntry entry, ProviderContainer container}) setup =
+            await _setupSingleSession(tester, transport);
+        addTearDown(setup.container.dispose);
+
+        // The bar is rendered as a descendant of the SafeArea body Column, not
+        // inside the AppBar — guard against a regression that re-adds a leading
+        // AppBar trigger.
+        final appBar = find.byType(AppBar);
+        expect(appBar, findsOneWidget);
+        expect(
+          find.descendant(
+            of: appBar,
+            matching: find.byKey(const Key('session-menu-button')),
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets('bottom session bar is present and addressable (#566)', (
+      tester,
+    ) async {
       final transport = FakeSshShellTransport();
       addTearDown(transport.close);
       final ({SessionEntry entry, ProviderContainer container}) setup =
           await _setupSingleSession(tester, transport);
       addTearDown(setup.container.dispose);
 
-      expect(find.byKey(const Key('session-menu-button')), findsOneWidget);
+      expect(find.byKey(const Key('session-bar')), findsOneWidget);
+      expect(find.byKey(const Key('session-bar-open-menu')), findsOneWidget);
     });
+
+    testWidgets(
+      'tapping the bottom session bar opens the session menu (#566)',
+      (tester) async {
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        final ({SessionEntry entry, ProviderContainer container}) setup =
+            await _setupSingleSession(tester, transport);
+        addTearDown(setup.container.dispose);
+
+        expect(find.byKey(const Key('session-menu')), findsNothing);
+
+        await tester.tap(find.byKey(const Key('session-bar-open-menu')));
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+
+        expect(find.byKey(const Key('session-menu')), findsOneWidget);
+      },
+    );
   });
 }

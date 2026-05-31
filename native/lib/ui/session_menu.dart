@@ -1,9 +1,12 @@
 // Session menu (#518) — replaces the chip-row tab strip with a modal
 // bottom sheet that mirrors the PWA's `renderSessionList` / `initSessionMenu`.
 //
-// Contents:
+// #567: slimmed to the session-menu-slim direction — terminal real estate is
+// at a premium, so the sheet keeps only what belongs:
 //   1. List of active sessions (tap to switch, long-press for actions).
-//   2. A "Show keybar" toggle that flips the global `keybarVisibleProvider`.
+//   2. "New session".
+//   3. A compact secondary row of session controls (keybar toggle, theme,
+//      files) — no verbose subtitles, no oversized header.
 //
 // Tap-to-switch dismisses the menu. Long-press opens a contextual menu with
 // Disconnect / Close — same actions the PWA exposes on the session row.
@@ -45,13 +48,6 @@ class SessionMenu extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                'Sessions',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
             if (sessions.entries.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(16),
@@ -64,6 +60,7 @@ class SessionMenu extends ConsumerWidget {
             // connect form on top of the terminal screen (the goal's leg 2).
             ListTile(
               key: const Key('session-menu-new'),
+              dense: true,
               leading: const Icon(Icons.add),
               title: const Text('New session'),
               onTap: () {
@@ -77,10 +74,14 @@ class SessionMenu extends ConsumerWidget {
               },
             ),
             const Divider(height: 1),
+            // Slim secondary controls (#567): no subtitles, dense rows. These
+            // are session-scoped controls that belong in the sheet — keybar
+            // visibility, terminal theme, and SFTP files.
             SwitchListTile(
               key: const Key('session-menu-keybar-toggle'),
-              title: const Text('Show keybar'),
-              subtitle: const Text('Bottom row with Esc, Tab, arrows, Ctrl-C'),
+              dense: true,
+              secondary: const Icon(Icons.keyboard_outlined),
+              title: const Text('Keybar'),
               value: keybarVisible,
               onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
             ),
@@ -88,19 +89,22 @@ class SessionMenu extends ConsumerWidget {
             // ported theme, wrapping at the end; the selection persists.
             ListTile(
               key: const Key('session-menu-theme-cycle'),
+              dense: true,
               leading: const Icon(Icons.palette_outlined),
-              title: const Text('Terminal theme'),
-              subtitle: Text(palette.label),
-              trailing: const Icon(Icons.chevron_right),
+              title: const Text('Theme'),
+              trailing: Text(
+                palette.label,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
               onTap: () => ref.read(terminalThemeProvider.notifier).cycle(),
             ),
             // Browse / download remote files over SFTP for the active session
             // (#559). Disabled when there's no active session.
             ListTile(
               key: const Key('session-menu-files'),
+              dense: true,
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Files'),
-              subtitle: const Text('Browse and download remote files (SFTP)'),
               trailing: const Icon(Icons.chevron_right),
               enabled: sessions.activeId != null,
               onTap: sessions.activeId == null

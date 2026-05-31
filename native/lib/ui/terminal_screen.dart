@@ -4,8 +4,14 @@
 // Phase 2.A (#501): single session, one xterm.dart `TerminalView`.
 // Phase 4 (#511): multi-session — horizontal tab strip + `IndexedStack`.
 // #518: tab strip removed; session switching now happens through a session
-// menu (modal bottom sheet, AppBar icon trigger). A bottom keybar with a
-// visibility toggle in the session menu replaces the always-on chrome.
+// menu (modal bottom sheet). A bottom keybar with a visibility toggle in the
+// session menu replaces the always-on chrome.
+// #566: the session-menu trigger moved OFF the top-left AppBar to a slim
+// BOTTOM session bar (thumb-reachable on a phone). The bar shows the active
+// session label and opens the bottom sheet — mirroring the PWA's persistent
+// session bar (`#sessionMenuBtn` in the bottom handle strip). The bar is
+// deliberately a single full-width tap target, leaving a clean seam for a
+// future swipe-to-switch gesture (#568). #567: the sheet itself is slimmed.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,12 +49,6 @@ class TerminalScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(activeEntry.label, overflow: TextOverflow.ellipsis),
-        leading: IconButton(
-          key: const Key('session-menu-button'),
-          tooltip: 'Sessions',
-          icon: const Icon(Icons.menu),
-          onPressed: () => showSessionMenu(context),
-        ),
         actions: [
           IconButton(
             key: const Key('terminal-disconnect-button'),
@@ -83,7 +83,78 @@ class TerminalScreen extends ConsumerWidget {
               ),
             ),
             if (keybarVisible) Keybar(activeEntry: activeEntry),
+            // Bottom session bar (#566): the thumb-reachable trigger for the
+            // session menu. Sits below the keybar so the menu sheet rises from
+            // immediately above the affordance that summoned it. A single
+            // full-width tap target leaves a clean seam for swipe-to-switch
+            // (#568) without committing to a gesture here.
+            _SessionBar(label: activeEntry.label, sessionCount: entries.length),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Slim bottom bar that opens the session menu (#566). Mirrors the PWA's
+/// persistent session bar: active session label + a count badge when more than
+/// one session is open, tappable across its full width.
+class _SessionBar extends StatelessWidget {
+  const _SessionBar({required this.label, required this.sessionCount});
+
+  final String label;
+  final int sessionCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      key: const Key('session-bar'),
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: InkWell(
+        // `session-menu-button` is retained as the stable terminal-screen-
+        // mounted marker that smoke/integration tests poll for; it just moved
+        // from the AppBar to the bottom bar. `session-bar-open-menu` is the
+        // screenshot/test-addressable name for the new affordance.
+        key: const Key('session-bar-open-menu'),
+        onTap: () => showSessionMenu(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            key: const Key('session-menu-button'),
+            children: [
+              const Icon(Icons.menu, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+              if (sessionCount > 1)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$sessionCount',
+                    style: TextStyle(
+                      color: theme.colorScheme.onPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 6),
+              const Icon(Icons.expand_less, size: 18),
+            ],
+          ),
         ),
       ),
     );
