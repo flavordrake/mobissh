@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-cycle-ux-bugs-2-023735/` — UX bug cycle 2
+> **Active TRACE**: `.traces/trace-native-pwa-parity-045532/` — native Flutter PWA-parity arc (reconnect, profiles/keys/default-cmd, SFTP file explorer, session-menu parity, fonts, themes, settings, feedback upload). Breadth-first slices.
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
