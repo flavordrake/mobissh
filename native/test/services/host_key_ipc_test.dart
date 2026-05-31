@@ -40,10 +40,12 @@ void main() {
 
     test('SshHostKeyDecisionCommand preserves accepted flag', () {
       for (final accepted in [true, false]) {
-        final cmd =
-            SshHostKeyDecisionCommand(sessionId: 'sid', accepted: accepted);
-        final restored = SshTaskCommand.fromJson(cmd.toJson())
-            as SshHostKeyDecisionCommand;
+        final cmd = SshHostKeyDecisionCommand(
+          sessionId: 'sid',
+          accepted: accepted,
+        );
+        final restored =
+            SshTaskCommand.fromJson(cmd.toJson()) as SshHostKeyDecisionCommand;
         expect(restored.sessionId, 'sid');
         expect(restored.accepted, accepted);
       }
@@ -57,7 +59,9 @@ void main() {
     late List<HostKeyStore> stores;
 
     SshSessionController makeController() {
-      final store = HostKeyStore();
+      // In-memory backend: no platform channel in flutter_test, and each
+      // controller gets its own isolated trust store (#565).
+      final store = HostKeyStore(backend: InMemoryHostKeyBackend());
       // socketOpener never resolves so connect() parks in `connecting` and we
       // drive the host-key verify path directly via verifyHostKeyForTest —
       // no real TCP attempt that would race the controller to `failed`.
@@ -95,12 +99,14 @@ void main() {
 
       // Spin up the hosted controller (its connect socketOpener never resolves,
       // so we drive the verify path directly via the test seam below).
-      proxy.connect(const SshConnectParams(
-        host: 'newhost',
-        port: 22,
-        username: 'u',
-        auth: SshAuth.password('p'),
-      ));
+      proxy.connect(
+        const SshConnectParams(
+          host: 'newhost',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(created, hasLength(1));
       final controller = created.first;
@@ -149,12 +155,14 @@ void main() {
       final proxy = SshSessionProxy(sessionId: 'sid-r', gateway: pair.uiSide);
       addTearDown(proxy.dispose);
 
-      proxy.connect(const SshConnectParams(
-        host: 'rejhost',
-        port: 22,
-        username: 'u',
-        auth: SshAuth.password('p'),
-      ));
+      proxy.connect(
+        const SshConnectParams(
+          host: 'rejhost',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       final controller = created.first;
       final store = stores.first;
@@ -219,9 +227,15 @@ void main() {
       final storeB = stores[1];
 
       final fA = ctrlA.verifyHostKeyForTest(
-          paramsA, 'ssh-ed25519', fp([0xAA, 0xAA]));
+        paramsA,
+        'ssh-ed25519',
+        fp([0xAA, 0xAA]),
+      );
       final fB = ctrlB.verifyHostKeyForTest(
-          paramsB, 'ssh-ed25519', fp([0xBB, 0xBB]));
+        paramsB,
+        'ssh-ed25519',
+        fp([0xBB, 0xBB]),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(proxyA.data.pendingHostKey!.fingerprint, 'aaaa');
