@@ -271,8 +271,18 @@ class SessionsNotifier extends Notifier<SessionsState> {
   }
 }
 
-/// Fires a profile's "initial command" (#558) exactly once per session, on the
-/// FIRST transition to `connected`.
+/// Fires a profile's "initial command" (#558) exactly once per session, when
+/// the PTY shell first becomes ready — NOT on the bare `connected` STATE.
+///
+/// #619: gating on `connected` raced the shell open. The task-side shell
+/// (`session_host.dart` `_ensureShell`) opens ASYNCHRONOUSLY after `connected`;
+/// on a slow host (the owner's "ra-server") the command's `sendInput` reached
+/// the task before `hosted.shell` was wired, so `_handleInput` dropped the
+/// bytes into scrollback instead of the live shell — the command silently
+/// vanished. Fast hosts opened the shell in time and the command landed,
+/// explaining the per-host inconsistency. We now wait for the task's explicit
+/// shell-ready signal ([SshSessionProxy.shellReady]) so stdin is provably
+/// writable before we send.
 ///
 /// The command is sent UI-side through the existing PTY input path
 /// (`proxy.sendInput(utf8.encode(cmd + "\n"))`) — deliberately NOT through
@@ -280,11 +290,11 @@ class SessionsNotifier extends Notifier<SessionsState> {
 /// SFTP work. Sending via the proxy is equivalent to the user typing the
 /// command into the terminal and pressing Enter.
 ///
-/// The once-only guard is the crux: the merged reconnect work (#551) rebinds
-/// the proxy on resume and may RE-EMIT `connected`. Without a guard the
-/// command would re-run on every background→resume. We track which session
+/// The once-only guard is the crux: the merged reconnect work (#551) re-opens
+/// the shell on resume, which RE-EMITS shell-ready. Without a guard the command
+/// would re-run on every background→resume / reconnect. We track which session
 /// ids have already fired in [_fired]; a fired id never fires again for the
-/// life of the runner, regardless of how many `connected` events arrive.
+/// life of the runner, regardless of how many shell-ready ticks arrive.
 class InitialCommandRunner {
   InitialCommandRunner();
 
@@ -293,19 +303,26 @@ class InitialCommandRunner {
   /// to the same target each get their own one-shot.
   final Set<String> _fired = <String>{};
 
-  final List<StreamSubscription<SshSessionData>> _subs = [];
+  final List<StreamSubscription<void>> _subs = [];
 
   /// True once the initial command has fired for [sessionId]. Test seam.
   bool hasFired(String sessionId) => _fired.contains(sessionId);
 
-  /// Arm a one-shot: when [proxy] first reaches `connected`, send
+  /// Arm a one-shot: when [proxy] reports the PTY shell is ready (#619), send
   /// `command + "\n"` through its input path. No-op when [command] is empty
   /// or the session has already fired.
   ///
-  /// If the proxy is ALREADY `connected` at arm time (e.g. a dedup
-  /// re-activate of a live session), this does NOT fire — the command applies
-  /// to a fresh connect only, matching the PWA's "run after the shell opens"
-  /// behavior and the acceptance bullet "does not re-run on resume".
+  /// Gating on shell-ready (not the bare `connected` state) is the fix for the
+  /// slow-host drop: the task-side shell opens asynchronously after `connected`
+  /// and `_handleInput` discards input that arrives before the shell is wired.
+  ///
+  /// If the proxy is ALREADY `connected` at arm time (e.g. a dedup re-activate
+  /// of a live session whose shell is long since open), this does NOT arm — the
+  /// command applies to a fresh connect only, matching the PWA's "run after the
+  /// shell opens" behavior and the acceptance bullet "does not re-run on
+  /// resume". A live session won't re-tick shell-ready unless it reconnects, and
+  /// the one-shot guard would suppress that anyway, but skipping the arm keeps
+  /// the intent explicit.
   void arm({
     required String sessionId,
     required SshSessionProxy proxy,
@@ -316,18 +333,17 @@ class InitialCommandRunner {
     if (_fired.contains(sessionId)) return;
     // Already connected when armed → this is a re-activate of a live session,
     // not a fresh connect. Don't fire (and don't arm a listener that would
-    // fire on a future reconnect's re-emit).
+    // fire on a future reconnect's shell re-open).
     if (proxy.data.state == SshSessionState.connected) return;
 
-    late final StreamSubscription<SshSessionData> sub;
-    sub = proxy.stream.listen((data) {
-      if (data.state != SshSessionState.connected) return;
+    late final StreamSubscription<void> sub;
+    sub = proxy.shellReady.listen((_) {
       if (_fired.contains(sessionId)) return;
       _fired.add(sessionId);
       ctrace('ui.initcmd', 'firing initial command for sid=$sessionId');
       proxy.sendInput(Uint8List.fromList(utf8.encode('$cmd\n')));
-      // One-shot: stop listening so a later rebind/reconnect re-emit of
-      // `connected` (#551) can't re-trigger.
+      // One-shot: stop listening so a later reconnect shell re-open (#551)
+      // can't re-trigger.
       sub.cancel();
       _subs.remove(sub);
     });
@@ -335,7 +351,7 @@ class InitialCommandRunner {
   }
 
   /// Cancel any still-armed listeners. Fired runners have already self-
-  /// cancelled; this cleans up sessions that never reached `connected`.
+  /// cancelled; this cleans up sessions whose shell never opened.
   void dispose() {
     for (final s in _subs) {
       s.cancel();

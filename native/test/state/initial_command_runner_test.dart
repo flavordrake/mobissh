@@ -1,14 +1,16 @@
 // Unit tests for the run-on-connect "initial command" once-only fire (#558).
 //
 // The runner arms a one-shot listener on a session's [SshSessionProxy]. On the
-// FIRST `connected` transition it sends `command + "\n"` through the proxy's
-// PTY input path (`sendInput`). It must NOT re-fire when the #551 reconnect
-// work rebinds and re-emits `connected` on a background→resume.
+// first SHELL-READY signal (#619 — NOT the bare `connected` state, which raced
+// the async shell open on slow hosts) it sends `command + "\n"` through the
+// proxy's PTY input path (`sendInput`). It must NOT re-fire when the #551
+// reconnect work re-opens the shell on a background→resume.
 //
 // We drive a REAL proxy via an [InMemoryGatewayPair]: state events injected
-// from the task side flip the proxy to `connected`; input commands the proxy
-// sends are observed back on the task side, so we assert on the exact wire
-// bytes (`base64(utf8(cmd + "\n"))`).
+// from the task side flip the proxy to `connected`; a [SshShellReadyEvent]
+// signals the shell is writable; input commands the proxy sends are observed
+// back on the task side, so we assert on the exact wire bytes
+// (`base64(utf8(cmd + "\n"))`).
 
 import 'dart:async';
 import 'dart:convert';
@@ -60,7 +62,15 @@ void main() {
       await Future<void>.delayed(Duration.zero);
     }
 
-    test('sends command + newline once on first connected', () async {
+    // Signal the task-side PTY shell is open + writable (#619). The runner
+    // gates the initial command on THIS, not the bare `connected` state.
+    Future<void> emitShellReady() async {
+      pair.taskSide.send(SshShellReadyEvent(sessionId: sid).toJson());
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    test('sends command + newline once on first shell-ready', () async {
       final runner = InitialCommandRunner();
       addTearDown(runner.dispose);
       runner.arm(sessionId: sid, proxy: proxy, command: 'tmux attach');
@@ -68,25 +78,37 @@ void main() {
       await emitState(SshSessionState.connecting);
       expect(sentInputs, isEmpty, reason: 'not fired before connected');
 
+      // #619: reaching `connected` is NOT enough — the shell opens async after
+      // it. The command must wait for shell-ready, not fire on `connected`.
       await emitState(SshSessionState.connected);
+      expect(
+        sentInputs,
+        isEmpty,
+        reason: 'must NOT fire on bare connected — shell may not be open yet',
+      );
+
+      await emitShellReady();
       expect(sentInputs, ['tmux attach\n']);
       expect(runner.hasFired(sid), isTrue);
     });
 
     test(
-      'does NOT re-fire on a second connected (reconnect rebind #551)',
+      'does NOT re-fire on a second shell-ready (reconnect re-open #551)',
       () async {
         final runner = InitialCommandRunner();
         addTearDown(runner.dispose);
         runner.arm(sessionId: sid, proxy: proxy, command: 'echo hi');
 
         await emitState(SshSessionState.connected);
+        await emitShellReady();
         expect(sentInputs, ['echo hi\n']);
 
-        // Simulate background→resume: soft-disconnect, reconnect, re-emit.
+        // Simulate background→resume: soft-disconnect, reconnect, shell re-open
+        // (which re-emits shell-ready). The one-shot must suppress the re-fire.
         await emitState(SshSessionState.softDisconnected);
         await emitState(SshSessionState.reconnecting);
         await emitState(SshSessionState.connected);
+        await emitShellReady();
 
         expect(sentInputs, [
           'echo hi\n',
@@ -101,6 +123,7 @@ void main() {
       runner.arm(sessionId: sid, proxy: proxy, command: null);
 
       await emitState(SshSessionState.connected);
+      await emitShellReady();
       expect(sentInputs, isEmpty);
       expect(runner.hasFired(sid), isFalse);
     });
@@ -111,6 +134,7 @@ void main() {
       runner.arm(sessionId: sid, proxy: proxy, command: '  ls -la  ');
 
       await emitState(SshSessionState.connected);
+      await emitShellReady();
       expect(sentInputs, ['ls -la\n']);
     });
 
