@@ -15,6 +15,8 @@ public/app.js
 public/modules/*.js
 # Native APKs — built by flutter, placed in public/ for container deploy, not checked in
 public/*.apk
+# Generated APK install landing page (regenerated every release by gen-apk-install-page.sh)
+public/native.html
 test-data/
 .claude/worktrees/
 .claude/settings.local.json
