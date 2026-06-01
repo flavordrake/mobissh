@@ -26,6 +26,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../ssh/ssh_session.dart';
 import '../state/sessions.dart';
 import '../state/terminal_providers.dart';
 import '../state/ui_prefs_providers.dart';
@@ -363,9 +364,18 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
     // ITS OWN palette + font size, so two visible sessions can differ.
     final fontSize = ref.watch(sessionFontSizeProvider(widget.sessionId));
     final palette = ref.watch(sessionTerminalThemeProvider(widget.sessionId));
+    // #624: state-driven disconnect indicator. Reads the session lifecycle enum
+    // directly (no parallel boolean — rules/state-management.md). The banner is
+    // shown only for "was-live-then-dropped" states so it never flashes during
+    // the initial connect handshake (idle/connecting/authenticating).
+    final sessionState =
+        ref.watch(sessionDataProvider(widget.sessionId)).valueOrNull?.state ??
+        SshSessionState.idle;
 
     return Column(
       children: [
+        if (_isDisconnected(sessionState))
+          _DisconnectBanner(state: sessionState),
         if (shellAsync.hasError)
           Container(
             width: double.infinity,
@@ -395,6 +405,68 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// True when [state] is a "was-live-then-dropped" lifecycle state that warrants
+/// a disconnect indicator (#624). Pre-first-connect states
+/// (idle/connecting/authenticating/awaitingHostKey) and `connected` show no
+/// banner — the banner means "this terminal is not live".
+bool _isDisconnected(SshSessionState state) {
+  switch (state) {
+    case SshSessionState.softDisconnected:
+    case SshSessionState.reconnecting:
+    case SshSessionState.failed:
+    case SshSessionState.disconnected:
+      return true;
+    case SshSessionState.idle:
+    case SshSessionState.connecting:
+    case SshSessionState.awaitingHostKey:
+    case SshSessionState.authenticating:
+    case SshSessionState.connected:
+      return false;
+  }
+}
+
+/// Slim, state-driven banner shown across the top of the terminal body when the
+/// session is no longer live (#624). Distinct copy for reconnecting vs. fully
+/// disconnected so the user knows whether the app is auto-retrying.
+class _DisconnectBanner extends StatelessWidget {
+  const _DisconnectBanner({required this.state});
+
+  final SshSessionState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final reconnecting =
+        state == SshSessionState.reconnecting ||
+        state == SshSessionState.softDisconnected;
+    final text = reconnecting ? 'Disconnected — reconnecting…' : 'Disconnected';
+    return Container(
+      key: const Key('terminal-disconnect-banner'),
+      width: double.infinity,
+      color: reconnecting ? Colors.orange.shade900 : Colors.red.shade900,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            reconnecting ? Icons.sync_problem : Icons.link_off,
+            size: 14,
+            color: Colors.white,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
