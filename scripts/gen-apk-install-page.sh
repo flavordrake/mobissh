@@ -126,6 +126,38 @@ if [ -z "$NOTES_HTML" ]; then
   NOTES_HTML="    <li>(curate user-facing notes in native-release-notes.md)</li>"$'\n'
 fi
 
+# Changelog: render EVERY `## ` section AFTER the first as collapsible history,
+# so the page shows build-to-build deltas (the owner couldn't tell the notes had
+# gone stale because only the latest section was shown). Each older section is a
+# <details> (no JS needed). Skips the file's intro prose before the first `## `.
+CHANGELOG_HTML=""
+section=0
+cur_title=""
+cur_items=""
+flush_section() {
+  [ -z "$cur_title" ] && return
+  CHANGELOG_HTML="${CHANGELOG_HTML}  <details class=\"clog\"><summary>${cur_title}</summary><ul>"$'\n'"${cur_items}  </ul></details>"$'\n'
+  cur_title=""
+  cur_items=""
+}
+while IFS= read -r line; do
+  case "$line" in
+    '## '*)
+      flush_section
+      section=$((section + 1))
+      if [ "$section" -ge 2 ]; then
+        cur_title="$(printf '%s' "${line#'## '}" | esc)"
+      fi
+      ;;
+    '- '*)
+      if [ "$section" -ge 2 ]; then
+        cur_items="${cur_items}    <li>$(printf '%s' "${line#'- '}" | esc)</li>"$'\n'
+      fi
+      ;;
+  esac
+done < "$NOTES_FILE"
+flush_section
+
 cat > "$OUT" <<HTMLEOF
 <!DOCTYPE html>
 <html lang="en">
@@ -164,6 +196,10 @@ cat > "$OUT" <<HTMLEOF
   li { margin: 4px 0; }
   .permalink { display: block; margin-top: 16px; color: #58a6ff; text-decoration: none; font-size: 0.9rem; word-break: break-all; }
   .note { color: #8b949e; font-size: 0.82rem; margin-top: 28px; border-top: 1px solid #30363d; padding-top: 14px; }
+  .clog { margin: 6px 0; }
+  .clog summary { cursor: pointer; color: #8b949e; font-size: 0.9rem; padding: 4px 0; }
+  .clog ul { margin: 4px 0 8px; }
+  .clog li { color: #8b949e; font-size: 0.88rem; }
   .fb { margin-top: 28px; border-top: 1px solid #30363d; padding-top: 18px; }
   .fb textarea {
     width: 100%; min-height: 84px; resize: vertical; box-sizing: border-box;
@@ -209,6 +245,8 @@ cat > "$OUT" <<HTMLEOF
   <ul>
 ${NOTES_HTML}  </ul>
 
+  <h2>Changelog</h2>
+${CHANGELOG_HTML}
   <a class="permalink" href="./${STAMPED_APK}" download>Permalink to this exact build: ${STAMPED_APK}</a>
 
   <p class="note">This page is served with no-store caching, so a refresh always reflects the live build. The green button always points at the newest APK; the permalink pins this specific build.</p>
