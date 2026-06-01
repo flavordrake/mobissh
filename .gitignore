@@ -20,3 +20,6 @@ test-data/
 .claude/settings.local.json
 test-history/
 .traces/
+
+# lsmcp cache
+.lsmcp/cache

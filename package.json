@@ -29,9 +29,11 @@
     "semgrep": "semgrep --config .semgrep/rules.yml --config .semgrep/playwright-traps.yml --config p/typescript --config p/javascript src/ tests/ --no-git-ignore --error --severity WARNING"
   },
   "devDependencies": {
+    "@mizchi/lsmcp": "^0.9.4",
     "@playwright/test": "^1.58.2",
     "@typescript-eslint/eslint-plugin": "^8.56.1",
     "@typescript-eslint/parser": "^8.56.1",
+    "@typescript/native-preview": "^7.0.0-dev.20260527.2",
     "@xterm/xterm": "^6.0.0",
     "browserstack-node-sdk": "^1.38.0",
     "eslint": "^8.57.1",
