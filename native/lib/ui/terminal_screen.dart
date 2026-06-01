@@ -130,6 +130,9 @@ class TerminalScreen extends ConsumerWidget {
               ComposeBar(
                 key: ValueKey('compose-bar-${activeEntry.id}'),
                 terminal: activeEntry.terminal,
+                // Reserve the bottom chrome so a bottom-docked panel never hides
+                // the session bar (#610). Session bar ≈ 48; keybar ≈ 96 when on.
+                bottomReserve: 48 + (keybarVisible ? 96 : 0),
                 onClose: () =>
                     ref.read(composeBarVisibleProvider.notifier).set(false),
               ),

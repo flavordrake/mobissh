@@ -35,8 +35,19 @@ const String _bracketedPasteEnd = '\x1b[201~';
 /// [terminal]. Nothing reaches the SSH session until commit/submit — text
 /// accumulates locally first, so swipe/voice composition (a stream) lands
 /// intact with spaces.
+/// Which edge the compose panel docks to (#610). The anchor is a FIXED margin
+/// from that edge — it does NOT chase the keyboard. Dock TOP to compose with the
+/// keyboard up (panel stays fully visible above it); dock BOTTOM to sit just
+/// above the session bar.
+enum ComposeDock { top, bottom }
+
 class ComposeBar extends StatefulWidget {
-  const ComposeBar({super.key, required this.terminal, required this.onClose});
+  const ComposeBar({
+    super.key,
+    required this.terminal,
+    required this.onClose,
+    this.bottomReserve = 0,
+  });
 
   /// The active session's terminal. Committed text is sent via
   /// `terminal.textInput` (onOutput → proxy.sendInput → PTY), like the keybar.
@@ -44,6 +55,12 @@ class ComposeBar extends StatefulWidget {
 
   /// Hides the compose bar (clears `composeBarVisibleProvider`).
   final VoidCallback onClose;
+
+  /// Height (logical px) of the chrome pinned to the bottom of the terminal
+  /// screen (session bar + keybar, if visible). The bottom-docked panel sits
+  /// ABOVE this so it never hides the session bar (#610 — owner: "hides bottom
+  /// bar entirely"). Passed by terminal_screen, which knows the keybar state.
+  final double bottomReserve;
 
   @override
   State<ComposeBar> createState() => _ComposeBarState();
@@ -53,9 +70,10 @@ class _ComposeBarState extends State<ComposeBar> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
-  /// Panel top-left offset within the Stack. Null until first laid out, then
-  /// driven by the drag grip. Clamped to the screen in [build].
-  Offset? _pos;
+  /// Which edge the panel is docked to. Default TOP so it stays fully visible
+  /// while the keyboard is up (the common swipe/voice compose case). Double-tap
+  /// the grip toggles top↔bottom.
+  ComposeDock _dock = ComposeDock.top;
 
   @override
   void initState() {
@@ -102,7 +120,6 @@ class _ComposeBarState extends State<ComposeBar> {
     final theme = Theme.of(context);
     final media = MediaQuery.of(context);
     final size = media.size;
-    final keyboardInset = media.viewInsets.bottom;
 
     // Panel width: most of the screen, capped so it reads as a panel.
     final panelWidth = size.width - 24;
@@ -110,24 +127,29 @@ class _ComposeBarState extends State<ComposeBar> {
     // submit) WITHOUT overflow — an overflowing Column under Clip.antiAlias
     // clips the bottom buttons so their taps don't land.
     const panelHeight = 196.0;
+    const margin = 12.0;
+    final left = (size.width - panelWidth) / 2;
 
-    // Default position: docked near the bottom, just above the keyboard, until
-    // the user drags it. Recomputed each build so it tracks keyboard show/hide
-    // while still honoring a user drag (we clamp the dragged value).
-    final defaultTop = size.height - keyboardInset - panelHeight - 12;
-    final top = (_pos?.dy ?? defaultTop).clamp(
-      8.0,
-      // Keep it above the keyboard and on-screen.
-      (size.height - keyboardInset - panelHeight - 4).clamp(8.0, size.height),
-    );
-    final left = (_pos?.dx ?? 12.0).clamp(
-      0.0,
-      (size.width - panelWidth).clamp(0.0, size.width),
-    );
+    // #610: anchor to a FIXED margin from the docked edge — do NOT chase the
+    // keyboard inset. The old `height - keyboardInset - panelHeight` math put
+    // the panel off-screen when the keyboard was hidden and let it cover the
+    // session bar. Top dock = fixed top margin; bottom dock = above the session
+    // bar (bottomReserve) by a fixed margin. The OS keeps the focused field
+    // reachable; the panel's ANCHOR stays put regardless of keyboard state.
+    final double? topPos;
+    final double? bottomPos;
+    if (_dock == ComposeDock.top) {
+      topPos = margin;
+      bottomPos = null;
+    } else {
+      topPos = null;
+      bottomPos = widget.bottomReserve + margin;
+    }
 
     return Positioned(
       left: left,
-      top: top,
+      top: topPos,
+      bottom: bottomPos,
       width: panelWidth,
       child: Material(
         key: const Key('compose-bar'),
@@ -140,19 +162,22 @@ class _ComposeBarState extends State<ComposeBar> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Drag grip (left edge): move the panel; double-tap snaps it
-              // between bottom and top so the cursor stays visible.
+              // Dock grip (left edge): toggle the panel between the TOP and
+              // BOTTOM margin so the user can keep the terminal cursor visible.
+              // Double-tap or a vertical drag flips the dock; the anchor is
+              // always a fixed margin (#610) — never free-floating off-screen.
               GestureDetector(
                 key: const Key('compose-bar-drag'),
                 behavior: HitTestBehavior.opaque,
-                onPanUpdate: (d) => setState(() {
-                  final base = _pos ?? Offset(left, top);
-                  _pos = base + d.delta;
-                }),
+                onVerticalDragEnd: (d) {
+                  final v = d.primaryVelocity ?? 0;
+                  if (v < 0) setState(() => _dock = ComposeDock.top);
+                  if (v > 0) setState(() => _dock = ComposeDock.bottom);
+                },
                 onDoubleTap: () => setState(() {
-                  // Snap top↔bottom third.
-                  final atTop = (top) < size.height / 2;
-                  _pos = Offset(left, atTop ? defaultTop : 24);
+                  _dock = _dock == ComposeDock.top
+                      ? ComposeDock.bottom
+                      : ComposeDock.top;
                 }),
                 child: Container(
                   width: 28,
