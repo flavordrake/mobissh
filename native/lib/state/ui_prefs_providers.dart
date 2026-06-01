@@ -68,6 +68,55 @@ final keybarVisibleProvider =
       return KeybarVisibleNotifier();
     });
 
+// ── Compose bar / IME editor (#599) ───────────────────────────────────────
+
+/// SharedPreferences key for the compose-bar (IME editor) visibility.
+const String composeBarVisiblePrefKey = 'mobissh.ui.composeBarVisible';
+
+/// Default OFF — the compose bar is an opt-in surface (the terminal still
+/// accepts hardware-keyboard / keybar input without it). Turned on from the
+/// session menu. When on, it's the swipe/voice/IME composing surface (xterm's
+/// own input disables composing, so swipe-typing + voice need this editable).
+const bool composeBarVisibleDefault = false;
+
+/// User toggle for the compose bar (IME editor). Mirrors [KeybarVisibleNotifier].
+class ComposeBarVisibleNotifier extends StateNotifier<bool> {
+  ComposeBarVisibleNotifier({Future<SharedPreferences>? prefs})
+    : _prefs = prefs ?? SharedPreferences.getInstance(),
+      super(composeBarVisibleDefault) {
+    _hydrate();
+  }
+
+  final Future<SharedPreferences> _prefs;
+
+  Future<void> _hydrate() async {
+    try {
+      final prefs = await _prefs;
+      final stored = prefs.getBool(composeBarVisiblePrefKey);
+      if (stored != null && stored != state) state = stored;
+    } catch (_) {
+      // best-effort; keep default if prefs unavailable (tests).
+    }
+  }
+
+  Future<void> set(bool value) async {
+    state = value;
+    try {
+      final prefs = await _prefs;
+      await prefs.setBool(composeBarVisiblePrefKey, value);
+    } catch (_) {
+      // best-effort persistence
+    }
+  }
+
+  void toggle() => set(!state);
+}
+
+final composeBarVisibleProvider =
+    StateNotifierProvider<ComposeBarVisibleNotifier, bool>((ref) {
+      return ComposeBarVisibleNotifier();
+    });
+
 // ── Terminal font size (#552) ─────────────────────────────────────────────
 
 /// SharedPreferences key for the terminal font size.

@@ -112,6 +112,7 @@ class SessionMenu extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(sessionsProvider);
     final keybarVisible = ref.watch(keybarVisibleProvider);
+    final composeBarVisible = ref.watch(composeBarVisibleProvider);
     // Theme + font are PER-SESSION (#601, #571): the menu rows read and mutate
     // the ACTIVE session only. With no active session (empty list) these resolve
     // to the global default so the rows still render sensibly.
@@ -176,6 +177,21 @@ class SessionMenu extends ConsumerWidget {
             title: const Text('Keybar'),
             value: keybarVisible,
             onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
+          ),
+          // Compose bar (#599): the swipe / voice / IME composing surface. Off
+          // by default; turning it on docks an editable above the keybar where
+          // swipe-typing and voice dictation work (xterm's own input can't
+          // compose). Closes the menu so the field can take focus.
+          SwitchListTile(
+            key: const Key('session-menu-compose-toggle'),
+            dense: true,
+            secondary: const Icon(Icons.edit_note_outlined),
+            title: const Text('Compose bar (swipe / voice)'),
+            value: composeBarVisible,
+            onChanged: (v) {
+              ref.read(composeBarVisibleProvider.notifier).set(v);
+              if (v) onClose();
+            },
           ),
           // Cycle the ACTIVE session's terminal palette (#601, #571). Tapping
           // advances to the next ported theme, wrapping at the end. Per-session:

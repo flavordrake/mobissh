@@ -29,6 +29,7 @@ import 'package:xterm/xterm.dart';
 import '../state/sessions.dart';
 import '../state/terminal_providers.dart';
 import '../state/ui_prefs_providers.dart';
+import 'compose_bar.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
 import 'terminal_context_menu.dart';
@@ -50,6 +51,7 @@ class TerminalScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(sessionsProvider);
     final keybarVisible = ref.watch(keybarVisibleProvider);
+    final composeBarVisible = ref.watch(composeBarVisibleProvider);
     final entries = sessions.entries;
 
     if (entries.isEmpty) {
@@ -81,6 +83,15 @@ class TerminalScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            // Compose bar (#599): the swipe/voice/IME composing surface, above
+            // the keybar so both are reachable. Keyed by the active session so
+            // switching sessions gives a fresh field bound to the right
+            // terminal. Opt-in via the session menu.
+            if (composeBarVisible)
+              ComposeBar(
+                key: ValueKey('compose-bar-${activeEntry.id}'),
+                terminal: activeEntry.terminal,
+              ),
             if (keybarVisible) Keybar(activeEntry: activeEntry),
             // Bottom session bar (#566): the thumb-reachable trigger for the
             // session menu (tap the label area) + a disconnect affordance at the
