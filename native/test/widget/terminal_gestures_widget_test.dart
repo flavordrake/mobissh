@@ -1,4 +1,4 @@
-// Widget tests for terminal gestures (#568, Phases 1 + 2).
+// Widget tests for terminal gestures (#568).
 //
 // Phase 1: a horizontal swipe on the bottom session bar switches the active
 // session, wrapping around the session ring. A single-session swipe is a
@@ -6,18 +6,12 @@
 // actual touch feel (velocity, arena negotiation vs. the terminal's vertical
 // scroll) requires real-device validation, which a widget test can't cover.
 //
-// Phase 2: the long-press context menu surfaces Copy / Select all / Paste, and
-// Paste routes clipboard text through the session proxy (the same wire path as
-// typed keystrokes). We drive the menu via `showTerminalContextMenu` directly
-// — xterm.dart's internal long-press → onSecondaryTapDown recognizer is not
-// reliably mounted in the widget-test harness (same caveat the keystroke pipe
-// test documents), so we exercise the menu + its wiring at the layer where a
-// regression would actually manifest.
-
-import 'dart:convert';
+// #617: the Phase 2 long-press context menu was removed (owner: useless /
+// didn't reliably select-copy), so its tests are gone. tmux scrollback (the
+// gesture the menu used to compete with) is now covered by the on-emulator
+// integration_test/tmux_scrollback_test.dart.
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
@@ -25,7 +19,6 @@ import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/state/terminal_providers.dart';
-import 'package:mobissh/ui/terminal_context_menu.dart';
 import 'package:mobissh/ui/terminal_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -197,152 +190,6 @@ void main() {
       await _pumpFrames(tester);
 
       expect(container.read(sessionsProvider).activeId, b.id);
-    });
-  });
-
-  group('Phase 2 — long-press context menu', () {
-    testWidgets(
-      'context menu shows Select all + Paste, and Copy when a selection '
-      'exists',
-      (tester) async {
-        var copied = false;
-        var selectedAll = false;
-        var pasted = false;
-
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: Builder(
-                builder: (context) => Center(
-                  child: ElevatedButton(
-                    key: const Key('open-ctx'),
-                    onPressed: () => showTerminalContextMenu(
-                      context,
-                      globalPosition: const Offset(100, 100),
-                      actions: TerminalContextMenuActions(
-                        hasSelection: true,
-                        onCopy: () => copied = true,
-                        onSelectAll: () => selectedAll = true,
-                        onPaste: () => pasted = true,
-                      ),
-                    ),
-                    child: const Text('open'),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-
-        await tester.tap(find.byKey(const Key('open-ctx')));
-        await tester.pumpAndSettle();
-
-        expect(find.byKey(const Key('terminal-ctx-copy')), findsOneWidget);
-        expect(
-          find.byKey(const Key('terminal-ctx-select-all')),
-          findsOneWidget,
-        );
-        expect(find.byKey(const Key('terminal-ctx-paste')), findsOneWidget);
-
-        await tester.tap(find.byKey(const Key('terminal-ctx-copy')));
-        await tester.pumpAndSettle();
-
-        expect(copied, isTrue);
-        expect(selectedAll, isFalse);
-        expect(pasted, isFalse);
-      },
-    );
-
-    testWidgets('Copy is hidden when there is no selection', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => Center(
-                child: ElevatedButton(
-                  key: const Key('open-ctx'),
-                  onPressed: () => showTerminalContextMenu(
-                    context,
-                    globalPosition: const Offset(100, 100),
-                    actions: TerminalContextMenuActions(
-                      hasSelection: false,
-                      onCopy: () {},
-                      onSelectAll: () {},
-                      onPaste: () {},
-                    ),
-                  ),
-                  child: const Text('open'),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      await tester.tap(find.byKey(const Key('open-ctx')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('terminal-ctx-copy')), findsNothing);
-      expect(find.byKey(const Key('terminal-ctx-select-all')), findsOneWidget);
-      expect(find.byKey(const Key('terminal-ctx-paste')), findsOneWidget);
-    });
-
-    testWidgets('Paste routes clipboard text through the session proxy', (
-      tester,
-    ) async {
-      // Spy on the clipboard read so Paste has content without a real platform
-      // clipboard.
-      const channel = SystemChannels.platform;
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
-        call,
-      ) async {
-        if (call.method == 'Clipboard.getData') {
-          return <String, dynamic>{'text': 'pasted-text'};
-        }
-        return null;
-      });
-      addTearDown(() {
-        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          channel,
-          null,
-        );
-      });
-
-      final pair = InMemoryGatewayPair();
-      final container = ProviderContainer(
-        overrides: [
-          taskSshGatewayProvider.overrideWithValue(pair.uiSide),
-          sshShellOpenerProvider.overrideWithValue(
-            (ref, sessionId, terminal) async => FakeSshShellTransport(),
-          ),
-        ],
-      );
-      addTearDown(container.dispose);
-      addTearDown(() async => pair.dispose());
-
-      final entry = container
-          .read(sessionsProvider.notifier)
-          .addOrActivate(_params('host-a'));
-
-      // Capture input commands the proxy forwards toward the task isolate.
-      // SshInputCommand serializes `bytes` as a base64 string (see
-      // session_messages.dart), so decode that back to text.
-      final inputs = <String>[];
-      pair.taskSide.incoming.listen((payload) {
-        if (payload['kind'] == 'input') {
-          inputs.add(utf8.decode(base64Decode(payload['bytes'] as String)));
-        }
-      });
-
-      // Drive the paste action exactly as the context menu's onPaste does.
-      final data = await Clipboard.getData(Clipboard.kTextPlain);
-      final text = data?.text;
-      expect(text, 'pasted-text');
-      entry.proxy.sendInput(Uint8List.fromList(utf8.encode(text!)));
-
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(inputs, contains('pasted-text'));
     });
   });
 }

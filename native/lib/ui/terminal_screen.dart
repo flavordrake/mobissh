@@ -13,16 +13,14 @@
 // deliberately a single full-width tap target, leaving a clean seam for a
 // future swipe-to-switch gesture (#568). #567: the sheet itself is slimmed.
 // #568: that seam is now wired — a horizontal swipe on the bottom session bar
-// switches the active session (ring-wrap, haptic), and a long-press on the
-// terminal opens a Copy / Select all / Paste context menu. The swipe handler
-// lives on the bar (NOT the TerminalView) so it never steals the terminal's
-// hardcoded vertical-scroll gesture; selection stays xterm.dart's domain (no
-// custom overlay — see terminal_context_menu.dart for the rationale).
+// switches the active session (ring-wrap, haptic). The swipe handler lives on
+// the bar (NOT the TerminalView) so it never steals the terminal's hardcoded
+// vertical-scroll gesture.
+// #617: the long-press selection context menu was REMOVED (owner: useless,
+// didn't reliably select/copy). Removing it also drops the `Listener` wrapper
+// that was a candidate for blocking the terminal's vertical scrollback drag.
+// Paste stays available via the keybar.
 
-import 'dart:async';
-import 'dart:convert';
-
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,7 +32,6 @@ import '../state/ui_prefs_providers.dart';
 import 'compose_bar.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
-import 'terminal_context_menu.dart';
 
 /// Minimum horizontal travel (logical px) before a drag on the session bar is
 /// treated as a swipe-to-switch. Matches the ~50px threshold in the design so
@@ -333,10 +330,10 @@ class _MenuIconWithCount extends StatelessWidget {
 /// when the session reaches `connected`. Hidden tabs still subscribe — their
 /// `Terminal` buffer fills in the background.
 ///
-/// #568: owns a per-session [TerminalController] so the long-press context
-/// menu can READ the current selection (`terminal.buffer.getText(...)`) and
-/// drive `setSelection` / `clearSelection`. We never render selection
-/// ourselves — that stays xterm.dart's canvas.
+/// #617: the long-press context menu (and its `Listener`/`TerminalController`
+/// selection plumbing) was removed. Selection stays entirely xterm.dart's
+/// domain and the terminal's own vertical-scroll gesture is unobstructed, which
+/// (with the #617 wheel-SGR fix) drives tmux scrollback.
 class _SessionTerminalBody extends ConsumerStatefulWidget {
   const _SessionTerminalBody({super.key, required this.sessionId});
 
@@ -348,110 +345,14 @@ class _SessionTerminalBody extends ConsumerStatefulWidget {
 }
 
 class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
-  final TerminalController _terminalController = TerminalController();
-
   /// Passed to TerminalView so we own the scrollback Scrollable (#605). Having
   /// an explicit controller also lets future work jump-to-bottom on new output.
   final ScrollController _scrollController = ScrollController();
 
-  // ── Listener-based long-press (#605) ──────────────────────────────────────
-  // We detect a stationary hold via raw pointer events instead of a
-  // GestureDetector, so we never enter the gesture arena and never compete
-  // with xterm's vertical scroll. A hold fires the context menu only if the
-  // pointer stays within [_kLongPressSlop] for [_kLongPressDuration].
-  static const Duration _kLongPressDuration = Duration(milliseconds: 500);
-  static const double _kLongPressSlop = 12;
-  Timer? _longPressTimer;
-  Offset? _pointerDownPos;
-  Terminal? _pendingMenuTerminal;
-
-  void _onPointerDown(PointerDownEvent e) {
-    // Only touch holds open the menu; mouse uses onSecondaryTapDown.
-    if (e.kind != PointerDeviceKind.touch) return;
-    _pointerDownPos = e.position;
-    _pendingMenuTerminal = ref.read(terminalProvider(widget.sessionId));
-    _longPressTimer?.cancel();
-    _longPressTimer = Timer(_kLongPressDuration, () {
-      final pos = _pointerDownPos;
-      final terminal = _pendingMenuTerminal;
-      if (pos != null && terminal != null && mounted) {
-        _showContextMenu(pos, terminal);
-      }
-      _cancelLongPress();
-    });
-  }
-
-  void _onPointerMove(PointerMoveEvent e) {
-    // A drag past the slop is a scroll, not a hold — cancel the pending menu so
-    // scrollback scrolling is never interrupted.
-    final down = _pointerDownPos;
-    if (down != null && (e.position - down).distance > _kLongPressSlop) {
-      _cancelLongPress();
-    }
-  }
-
-  void _onPointerUp(PointerUpEvent e) => _cancelLongPress();
-
-  void _cancelLongPress() {
-    _longPressTimer?.cancel();
-    _longPressTimer = null;
-    _pointerDownPos = null;
-    _pendingMenuTerminal = null;
-  }
-
   @override
   void dispose() {
-    _longPressTimer?.cancel();
     _scrollController.dispose();
-    _terminalController.dispose();
     super.dispose();
-  }
-
-  /// Long-press (touch) or right-click (desktop) on the terminal →
-  /// Copy / Select all / Paste. Copy and Paste both route through xterm.dart's
-  /// own buffer + the session proxy; nothing here renders or mirrors selection
-  /// state.
-  ///
-  /// #584: this is now bound to BOTH a real long-press recognizer (touch) and
-  /// the TerminalView's `onSecondaryTapDown` (desktop right-click). It was
-  /// previously secondary-tap-only, so a touch long-press never opened it —
-  /// the menu was invisible on a phone.
-  Future<void> _showContextMenu(
-    Offset globalPosition,
-    Terminal terminal,
-  ) async {
-    final selection = _terminalController.selection;
-    showTerminalContextMenu(
-      context,
-      globalPosition: globalPosition,
-      actions: TerminalContextMenuActions(
-        hasSelection: selection != null,
-        onCopy: () {
-          final range = _terminalController.selection;
-          if (range == null) return;
-          final text = terminal.buffer.getText(range);
-          Clipboard.setData(ClipboardData(text: text));
-        },
-        onSelectAll: () {
-          final buffer = terminal.buffer;
-          _terminalController.setSelection(
-            buffer.createAnchor(0, buffer.height - terminal.viewHeight),
-            buffer.createAnchor(terminal.viewWidth, buffer.height - 1),
-            mode: SelectionMode.line,
-          );
-        },
-        onPaste: () async {
-          final data = await Clipboard.getData(Clipboard.kTextPlain);
-          final text = data?.text;
-          if (text == null || text.isEmpty) return;
-          // Route paste through the active session proxy (same path as typed
-          // keystrokes) rather than terminal.paste() so bytes reach the SSH
-          // PTY hosted in the task isolate (#568 spec).
-          final entry = ref.read(sessionsProvider).active;
-          entry?.proxy.sendInput(Uint8List.fromList(utf8.encode(text)));
-        },
-      ),
-    );
   }
 
   @override
@@ -476,36 +377,20 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
             ),
           ),
         Expanded(
-          // #605 scrollback fix: the long-press context menu is driven by a
-          // `Listener` (raw pointer events), NOT a wrapping GestureDetector.
-          //
-          // The old GestureDetector(onLongPressStart) added a
-          // LongPressGestureRecognizer that COMPETED with xterm's internal
-          // vertical-scroll recognizer in the gesture arena — `deferToChild`
-          // only changes hit-testing, not arena competition — so a slow drag
-          // would lose to the pending 500ms long-press and scrollback drag
-          // failed intermittently. A Listener observes pointer down/move/up
-          // WITHOUT entering the arena, so xterm's scroll always wins; we time
-          // the press ourselves and fire the menu only on a stationary hold.
-          child: Listener(
-            onPointerDown: _onPointerDown,
-            onPointerMove: _onPointerMove,
-            onPointerUp: _onPointerUp,
-            onPointerCancel: (_) => _cancelLongPress(),
-            child: TerminalView(
-              terminal,
-              key: Key('terminal-view-${widget.sessionId}'),
-              controller: _terminalController,
-              scrollController: _scrollController,
-              autofocus: false,
-              padding: const EdgeInsets.all(4),
-              theme: palette.theme,
-              textStyle: TerminalStyle(
-                fontSize: fontSize,
-                fontFamily: kTerminalFontFamily,
-              ),
-              onSecondaryTapDown: (details, _) =>
-                  _showContextMenu(details.globalPosition, terminal),
+          // #617: no wrapping Listener/GestureDetector. The terminal's own
+          // vertical-scroll gesture (xterm's alt-buffer scroll handler →
+          // corrected wheel SGR via WheelFixMouseHandler) drives tmux
+          // scrollback unobstructed. The long-press selection menu was removed.
+          child: TerminalView(
+            terminal,
+            key: Key('terminal-view-${widget.sessionId}'),
+            scrollController: _scrollController,
+            autofocus: false,
+            padding: const EdgeInsets.all(4),
+            theme: palette.theme,
+            textStyle: TerminalStyle(
+              fontSize: fontSize,
+              fontFamily: kTerminalFontFamily,
             ),
           ),
         ),
