@@ -41,23 +41,56 @@ class KeybarKey {
   final IconData? icon;
 }
 
-/// Default key layout — one flat line (scrolls horizontally), same key set and
-/// order as the PWA's `DEFAULT_KEY_BAR_CONFIG` in `src/modules/keybar-config.ts`.
+/// Default key layout — one flat line (scrolls horizontally), mirroring the
+/// PWA's `DEFAULT_KEY_BAR_CONFIG` (src/modules/keybar-config.ts) as the
+/// AUTHORITATIVE key SET.
+///
+/// ORDER CONTRACT (do not regress — this keeps drifting): navigation and
+/// symbol keys come FIRST, and the control sequences (^C / ^Z / ^B / ^D) are
+/// grouped LAST at the END of the bar. The PWA config is the spec for which
+/// keys exist; the control-keys-last grouping is owner-mandated (repeat
+/// correction). If you add a control sequence, append it to the control group
+/// at the end — never interspersed among the nav/symbol keys.
+///
+/// All four arrows use monochrome Material `Icon`s (theme-tinted via the
+/// [KeybarKey.icon] path) instead of the unicode ◀▲▼▶ glyphs, which the
+/// platform colorizes inconsistently (emoji-style fills). No colorful/emoji
+/// glyphs — see memory feedback_monochrome_icons_no_emoji.
 const List<KeybarKey> kDefaultKeybarKeys = [
+  // --- nav / symbol keys first ---
   KeybarKey(id: 'keyEsc', label: 'Esc', sequence: '\x1b'),
   KeybarKey(id: 'keyTab', label: '↹', sequence: '\t'),
   KeybarKey(id: 'keySlash', label: '/', sequence: '/'),
   KeybarKey(id: 'keyDash', label: '-', sequence: '-'),
   KeybarKey(id: 'keyPipe', label: '|', sequence: '|'),
-  KeybarKey(id: 'keyCtrlC', label: '^C', sequence: '\x03'),
-  KeybarKey(id: 'keyCtrlZ', label: '^Z', sequence: '\x1a'),
-  KeybarKey(id: 'keyCtrlD', label: '^D', sequence: '\x04'),
-  KeybarKey(id: 'keyLeft', label: '◀', sequence: '\x1b[D'),
-  KeybarKey(id: 'keyUp', label: '▲', sequence: '\x1b[A'),
-  KeybarKey(id: 'keyDown', label: '▼', sequence: '\x1b[B'),
-  KeybarKey(id: 'keyRight', label: '▶', sequence: '\x1b[C'),
+  KeybarKey(
+    id: 'keyLeft',
+    label: 'Left',
+    sequence: '\x1b[D',
+    icon: Icons.keyboard_arrow_left,
+  ),
+  KeybarKey(
+    id: 'keyUp',
+    label: 'Up',
+    sequence: '\x1b[A',
+    icon: Icons.keyboard_arrow_up,
+  ),
+  KeybarKey(
+    id: 'keyDown',
+    label: 'Down',
+    sequence: '\x1b[B',
+    icon: Icons.keyboard_arrow_down,
+  ),
+  KeybarKey(
+    id: 'keyRight',
+    label: 'Right',
+    sequence: '\x1b[C',
+    icon: Icons.keyboard_arrow_right,
+  ),
   KeybarKey(id: 'keyHome', label: 'Home', sequence: '\x1b[H'),
   KeybarKey(id: 'keyEnd', label: 'End', sequence: '\x1b[F'),
+  KeybarKey(id: 'keyPgUp', label: 'PgUp', sequence: '\x1b[5~'),
+  KeybarKey(id: 'keyPgDn', label: 'PgDn', sequence: '\x1b[6~'),
   KeybarKey(id: 'keyEnter', label: '↵', sequence: '\r'),
   KeybarKey(
     id: 'keyPaste',
@@ -65,6 +98,11 @@ const List<KeybarKey> kDefaultKeybarKeys = [
     sequence: '', // handled out-of-band
     icon: Icons.content_paste,
   ),
+  // --- control sequences grouped LAST (owner-mandated, do not intersperse) ---
+  KeybarKey(id: 'keyCtrlC', label: '^C', sequence: '\x03'),
+  KeybarKey(id: 'keyCtrlZ', label: '^Z', sequence: '\x1a'),
+  KeybarKey(id: 'keyCtrlB', label: '^B', sequence: '\x02'),
+  KeybarKey(id: 'keyCtrlD', label: '^D', sequence: '\x04'),
 ];
 
 class Keybar extends ConsumerWidget {
@@ -150,6 +188,10 @@ class _KeybarButton extends StatelessWidget {
         // tap target) instead of squeezing N keys to fit the viewport width.
         minimumSize: const Size(48, 44),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        // Squarer look matching the PWA keybar — subtle rounding, not pill.
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(6)),
+        ),
       ),
       child: child,
     );
