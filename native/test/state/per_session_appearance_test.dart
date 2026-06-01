@@ -182,5 +182,59 @@ void main() {
       expect(c.read(sessionFontSizeProvider(b.id)), fontSizeDefault);
       expect(c.read(sessionThemeProvider(b.id)), terminalThemeDefault);
     });
+
+    // #616: the global default can change AFTER a session's terminal first
+    // reads its per-session font — most importantly when the persisted default
+    // hydrates from SharedPreferences asynchronously on a real device (the test
+    // harness mocks prefs synchronously to empty, so this never reproduced
+    // headlessly before). An un-customized session must TRACK the global
+    // default: the family provider has to rebuild when the global notifier
+    // changes, not just when the per-session map changes. On the old code these
+    // are RED — the family providers only `watch` the map and `read` the
+    // globals, so they never rebuild on a global change.
+    test('an un-customized session tracks a later global font-size change', () {
+      final c = _makeContainer();
+      final a = _add(c, 'host-a');
+      expect(c.read(sessionFontSizeProvider(a.id)), fontSizeDefault);
+
+      // Global default changes (e.g. async prefs hydration / a future global
+      // settings control). The session has no override, so it must follow.
+      c.read(fontSizeProvider.notifier).set(20);
+      expect(
+        c.read(sessionFontSizeProvider(a.id)),
+        20,
+        reason: 'an un-customized session must reflect the new global default',
+      );
+
+      // Once the session HAS its own override, the global no longer leaks in.
+      c.read(sessionAppearanceProvider.notifier).setFontSize(a.id, 11);
+      c.read(fontSizeProvider.notifier).set(24);
+      expect(
+        c.read(sessionFontSizeProvider(a.id)),
+        11,
+        reason: 'a per-session override pins the value against global changes',
+      );
+    });
+
+    test('an un-customized session tracks a later global theme change', () {
+      final c = _makeContainer();
+      final a = _add(c, 'host-a');
+      expect(c.read(sessionThemeProvider(a.id)), terminalThemeDefault);
+
+      c.read(terminalThemeProvider.notifier).set(1);
+      expect(
+        c.read(sessionThemeProvider(a.id)),
+        1,
+        reason: 'an un-customized session must reflect the new global theme',
+      );
+
+      c.read(sessionAppearanceProvider.notifier).setTheme(a.id, 0);
+      c.read(terminalThemeProvider.notifier).set(2);
+      expect(
+        c.read(sessionThemeProvider(a.id)),
+        0,
+        reason: 'a per-session override pins the value against global changes',
+      );
+    });
   });
 }
