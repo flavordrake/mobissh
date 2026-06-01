@@ -271,8 +271,20 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
   @override
   Widget build(BuildContext context) {
     final isKey = _authKind == _AuthKind.key;
+    // Keyboard height. We size and float the action bar against this ourselves
+    // (resizeToAvoidBottomInset:false below) so the buttons stay directly above
+    // the soft keyboard and remain hit-testable — the #585 session-menu pattern
+    // applied to the editor footer (#594). A device-real keyboard occupies the
+    // lower viewport; if the buttons lived at the bottom of the scrolling form
+    // they'd sit behind it and ad-hoc connect would be unreachable.
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return Scaffold(
       key: const Key('profile-editor'),
+      // We manage the keyboard inset manually in the footer so the action bar
+      // floats above the keyboard without the Scaffold also reserving for it
+      // (which would double-count). The scroll body gets bottom padding to clear
+      // both the keyboard and the fixed footer.
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: Text(widget.isNew ? 'New connection' : 'Edit profile'),
         actions: [
@@ -286,9 +298,22 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
             ),
         ],
       ),
+      // Fixed action footer (#594). Floats above the keyboard via the
+      // viewInsets padding so Save & Save&connect are always reachable with the
+      // keyboard up. Mirrors the PWA editor where the connect/save action is
+      // always reachable.
+      bottomNavigationBar: _ActionBar(
+        key: const Key('profile-editor-action-bar'),
+        busy: _busy,
+        keyboardInset: keyboardInset,
+        onConnect: _busy ? null : _saveAndConnect,
+        onSave: _busy ? null : _save,
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          // Bottom padding clears the keyboard AND the fixed action footer so
+          // the last field can scroll into the keyboard-free area.
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + keyboardInset + 120),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -420,26 +445,76 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
                 autocorrect: false,
                 enableSuggestions: false,
               ),
-              const SizedBox(height: 20),
-              // Save & connect (#583): the editor is the new-connection entry
-              // now that the inline form is gone. `connect-submit` key keeps the
-              // emulator connect smokes addressable. Connects via the chooser's
-              // shared path (host-key prompt + initial-command arming).
-              FilledButton.icon(
-                key: const Key('connect-submit'),
-                onPressed: _busy ? null : _saveAndConnect,
-                icon: const Icon(Icons.power_settings_new),
-                label: Text(_busy ? 'Connecting…' : 'Save & connect'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                key: const Key('profile-editor-save'),
-                onPressed: _busy ? null : _save,
-                icon: const Icon(Icons.save),
-                label: Text(_busy ? 'Saving…' : 'Save'),
-              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Fixed action footer for the editor (#594). Holds the two actions
+/// (`connect-submit` = Save & connect, `profile-editor-save` = Save) and floats
+/// directly above the soft keyboard by padding itself with the current
+/// keyboard inset. Because the parent Scaffold uses
+/// `resizeToAvoidBottomInset:false`, this widget owns the inset entirely, so the
+/// buttons stay on-screen and hit-testable with the keyboard up — mirroring the
+/// #585 session-menu overlay pattern and the always-reachable PWA editor action.
+class _ActionBar extends StatelessWidget {
+  const _ActionBar({
+    super.key,
+    required this.busy,
+    required this.keyboardInset,
+    required this.onConnect,
+    required this.onSave,
+  });
+
+  final bool busy;
+  final double keyboardInset;
+  final VoidCallback? onConnect;
+  final VoidCallback? onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      // Opaque surface so the floating bar reads as a footer, not transparent
+      // over the scrolling fields beneath it.
+      color: Theme.of(context).colorScheme.surface,
+      elevation: 8,
+      child: Padding(
+        // bottom: keyboardInset floats the bar above the keyboard; when the
+        // keyboard is down it falls back to the safe-area inset.
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          12 +
+              (keyboardInset > 0
+                  ? keyboardInset
+                  : MediaQuery.paddingOf(context).bottom),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Save & connect (#583): the editor is the new-connection entry now
+            // that the inline form is gone. `connect-submit` key keeps the
+            // emulator connect smokes addressable. Connects via the chooser's
+            // shared path (host-key prompt + initial-command arming).
+            FilledButton.icon(
+              key: const Key('connect-submit'),
+              onPressed: onConnect,
+              icon: const Icon(Icons.power_settings_new),
+              label: Text(busy ? 'Connecting…' : 'Save & connect'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('profile-editor-save'),
+              onPressed: onSave,
+              icon: const Icon(Icons.save),
+              label: Text(busy ? 'Saving…' : 'Save'),
+            ),
+          ],
         ),
       ),
     );
