@@ -96,6 +96,12 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   FileDownloadSink? _downloadSink;
   String? _downloadName;
 
+  /// Serializes sink writes so a `done` event flushes only after every chunk
+  /// write has completed. Chunks can arrive reordered over the gateway (#591);
+  /// the sink writes each at its byte offset so order doesn't affect the bytes,
+  /// but chaining keeps `finish` strictly after the last write.
+  Future<void> _downloadWrites = Future<void>.value();
+
   bool _attached = false;
 
   @override
@@ -174,7 +180,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         });
       case SftpDownloadChunkEvent():
         if (event.requestId != _downloadRequestId) return;
-        unawaited(_onChunk(event));
+        _onChunk(event);
       case SftpDownloadDoneEvent():
         if (event.requestId != _downloadRequestId) return;
         unawaited(_onDownloadDone(event));
@@ -185,13 +191,17 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     }
   }
 
-  Future<void> _onChunk(SftpDownloadChunkEvent event) async {
+  void _onChunk(SftpDownloadChunkEvent event) {
     final sink = _downloadSink;
     if (sink == null) return;
-    await sink.addChunk(event.bytes);
+    final bytes = event.bytes;
+    final offset = event.offset;
+    // Write at the chunk's byte offset (#591). Chain writes so `done` only
+    // flushes after they all complete.
+    _downloadWrites = _downloadWrites.then((_) => sink.addChunk(bytes, offset));
     if (!mounted) return;
     setState(() {
-      _downloadReceived += event.bytes.length;
+      _downloadReceived += bytes.length;
       _downloadTotal = event.totalBytes;
     });
   }
@@ -201,13 +211,20 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     final name = _downloadName ?? 'file';
     _downloadSink = null;
     String? location;
+    var failed = false;
     if (sink != null) {
       try {
-        location = await sink.finish();
+        await _downloadWrites; // drain all chunk writes first
+        location = await sink.finish(expectedTotal: event.totalBytes);
       } catch (e) {
+        // Length mismatch / write failure → the file is corrupt. Clean up and
+        // report failure rather than claiming a successful download (#591).
+        failed = true;
+        await sink.abort();
         location = null;
       }
     }
+    _downloadWrites = Future<void>.value();
     if (!mounted) return;
     setState(() {
       _downloadRequestId = null;
@@ -215,6 +232,10 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       _downloadTotal = null;
       _downloadName = null;
     });
+    if (failed) {
+      _snack('Download failed: $name was incomplete');
+      return;
+    }
     final msg = location != null
         ? 'Downloaded $name → $location'
         : 'Downloaded $name';

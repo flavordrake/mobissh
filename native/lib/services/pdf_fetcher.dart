@@ -54,6 +54,12 @@ class ProxyPdfFetcher implements PdfFetcher {
     final completer = Completer<File>();
     var received = 0;
 
+    // Serialize sink writes through a single Future chain. Chunks can arrive
+    // reordered over the gateway (#591); the sink writes each at its offset, so
+    // ordering doesn't affect correctness, but we still chain so `done` runs
+    // AFTER every chunk write has completed and so write errors surface.
+    Future<void> pending = Future<void>.value();
+
     late final StreamSubscription<SshTaskEvent> sub;
     Future<void> cleanupAndFail(Object error) async {
       await sink.abort();
@@ -66,13 +72,16 @@ class ProxyPdfFetcher implements PdfFetcher {
           if (event.requestId != requestId) return;
           received += event.bytes.length;
           onProgress?.call(received, event.totalBytes);
-          // addChunk is fire-and-forget ordered; await via microtask chain.
-          unawaited(sink.addChunk(event.bytes));
+          final bytes = event.bytes;
+          final offset = event.offset;
+          pending = pending.then((_) => sink.addChunk(bytes, offset));
         case SftpDownloadDoneEvent():
           if (event.requestId != requestId) return;
+          final expected = event.totalBytes;
           unawaited(() async {
             try {
-              await sink.finish();
+              await pending; // drain all chunk writes first
+              await sink.finish(expectedTotal: expected);
               if (!completer.isCompleted) completer.complete(sink.file);
             } catch (e) {
               await cleanupAndFail(e);
