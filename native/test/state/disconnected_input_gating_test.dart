@@ -8,8 +8,6 @@
 // the terminal emits output via its `onOutput` callback — the same callback
 // SessionsNotifier wires to forward bytes to the PTY.
 
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/session_messages.dart';
