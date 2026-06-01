@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-01h — disconnect indicator, auth timeout, home reshape
+- Disconnected terminal now shows a clear indicator; scroll gestures no longer dump stray characters while a session is down.
+- A stuck SSH login now times out instead of hanging forever.
+- Home is just your profiles + one-tap connect — Settings and Diagnostics moved to a bottom nav with their own views.
+
 ## Build 2026-06-01g — run-on-connect command + per-session font fixes
 - Run-on-connect command now fires reliably, including on slow hosts (e.g. ra-server) where it was being dropped.
 - Per-session font size now sticks and applies to the right terminal.
