@@ -870,23 +870,34 @@ final sessionAppearanceProvider =
       SessionAppearanceNotifier.new,
     );
 
-/// Per-session palette index. Falls back to the current default for an
-/// un-customized session. Rebuilds when that session's entry changes.
+/// Per-session palette index. Falls back to the current GLOBAL default for an
+/// un-customized session. Rebuilds when that session's entry changes AND when
+/// the global default changes (#616): a session WITHOUT its own override must
+/// track the global default — most importantly when the persisted default
+/// hydrates from SharedPreferences asynchronously, AFTER the terminal first
+/// rendered. Watching [terminalThemeProvider] (not just reading it via the
+/// notifier's `_default`) is what makes that rebuild happen. Once the session
+/// HAS an entry in the map, that entry wins and the global no longer leaks in.
 final sessionThemeProvider = Provider.family<int, String>((ref, sessionId) {
   ref.watch(sessionAppearanceProvider);
+  ref.watch(terminalThemeProvider); // rebuild on global-default change (#616)
   return ref
       .read(sessionAppearanceProvider.notifier)
       .appearanceOf(sessionId)
       .themeIndex;
 });
 
-/// Per-session font size. Falls back to the current default for an
-/// un-customized session.
+/// Per-session font size. Falls back to the current GLOBAL default for an
+/// un-customized session, and tracks the global default until the session is
+/// customized (#616) — see [sessionThemeProvider] for the rationale. Watching
+/// [fontSizeProvider] makes an un-customized session pick up the global default
+/// the moment it hydrates / changes.
 final sessionFontSizeProvider = Provider.family<double, String>((
   ref,
   sessionId,
 ) {
   ref.watch(sessionAppearanceProvider);
+  ref.watch(fontSizeProvider); // rebuild on global-default change (#616)
   return ref
       .read(sessionAppearanceProvider.notifier)
       .appearanceOf(sessionId)
