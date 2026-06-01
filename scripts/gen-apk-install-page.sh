@@ -40,6 +40,28 @@ STAMPED_APK="${3:?stamped apk filename required}"
 
 GIT_HASH="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
+# Derive an absolute human time + a unix epoch from the compact build stamp
+# (YYYYMMDDThhmmss+zzzz) so the page can show BOTH "how new" forms (owner ask):
+#   - absolute: "2026-06-01 12:32 UTC" (always correct, no JS)
+#   - relative: "3 minutes ago" (computed client-side from the embedded epoch by
+#     native-time.js — CSP blocks inline JS but allows a same-origin script).
+# Reformat the stamp to ISO-8601 with separators so `date -d` can parse it.
+iso_ts() {
+  # 20260601T123246+0000 → 2026-06-01T12:32:46+0000
+  local t="$1"
+  printf '%s-%s-%sT%s:%s:%s%s\n' \
+    "${t:0:4}" "${t:4:2}" "${t:6:2}" \
+    "${t:9:2}" "${t:11:2}" "${t:13:2}" "${t:15}"
+}
+BUILD_ISO="$(iso_ts "$TS")"
+if BUILD_EPOCH="$(date -d "$BUILD_ISO" +%s 2>/dev/null)"; then
+  BUILD_HUMAN="$(date -u -d "@${BUILD_EPOCH}" '+%Y-%m-%d %H:%M UTC')"
+else
+  # Fallback if the stamp can't be parsed: show the raw stamp, no relative time.
+  BUILD_EPOCH=""
+  BUILD_HUMAN="$TS"
+fi
+
 NOTES_FILE="${REPO_ROOT}/native-release-notes.md"
 
 # Minimal HTML escape (& < >).
@@ -78,9 +100,6 @@ if [ -z "$NOTES_HTML" ]; then
   NOTES_HTML="    <li>(curate user-facing notes in native-release-notes.md)</li>"$'\n'
 fi
 
-# Human-readable build time from the compact stamp (best-effort; show raw too).
-BUILD_LINE="${TS}"
-
 cat > "$OUT" <<HTMLEOF
 <!DOCTYPE html>
 <html lang="en">
@@ -112,6 +131,8 @@ cat > "$OUT" <<HTMLEOF
   .meta dt { color: #8b949e; font-size: 0.8rem; text-transform: uppercase; letter-spacing: .04em; }
   .meta dd { margin: 2px 0 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-all; }
   .meta dd:last-child { margin-bottom: 0; }
+  .rel { color: #3fb950; font-family: -apple-system, system-ui, sans-serif; }
+  .rel.stale { color: #d29922; }
   h2 { font-size: 0.95rem; color: #8b949e; text-transform: uppercase; letter-spacing: .04em; margin: 24px 0 8px; }
   ul { margin: 0; padding-left: 20px; }
   li { margin: 4px 0; }
@@ -126,7 +147,11 @@ cat > "$OUT" <<HTMLEOF
   <a class="install" href="./${STABLE_APK}" download>⬇︎ Install latest APK</a>
 
   <dl class="meta">
-    <dt>Build</dt><dd>${BUILD_LINE}</dd>
+    <dt>Build</dt>
+    <dd>
+      ${BUILD_HUMAN}
+      <span class="rel" id="build-rel" data-epoch="${BUILD_EPOCH}"></span>
+    </dd>
     <dt>Commit</dt><dd>${GIT_HASH}</dd>
   </dl>
 
@@ -137,6 +162,10 @@ ${NOTES_HTML}  </ul>
   <a class="permalink" href="./${STAMPED_APK}" download>Permalink to this exact build: ${STAMPED_APK}</a>
 
   <p class="note">This page is served with no-store caching, so a refresh always reflects the live build. The green button always points at the newest APK; the permalink pins this specific build.</p>
+
+  <!-- Relative "X ago" is computed client-side from the embedded build epoch.
+       Same-origin script (CSP: script-src 'self'); inline JS is blocked. -->
+  <script src="./native-time.js"></script>
 </body>
 </html>
 HTMLEOF

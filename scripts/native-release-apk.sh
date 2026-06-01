@@ -58,6 +58,7 @@ log "copying APKs + install page into ${PROD_CONTAINER}:${PROD_PUBLIC}/ (live se
 docker cp "${PUBLIC_DIR}/${STAMPED}" "${PROD_CONTAINER}:${PROD_PUBLIC}/${STAMPED}"
 docker cp "${PUBLIC_DIR}/${STABLE}" "${PROD_CONTAINER}:${PROD_PUBLIC}/${STABLE}"
 docker cp "${PUBLIC_DIR}/native.html" "${PROD_CONTAINER}:${PROD_PUBLIC}/native.html"
+docker cp "${PUBLIC_DIR}/native-time.js" "${PROD_CONTAINER}:${PROD_PUBLIC}/native-time.js"
 
 echo "+ PUBLISHED"
 echo "+ install page (bookmark this, refresh for latest):"

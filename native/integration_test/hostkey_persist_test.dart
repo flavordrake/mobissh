@@ -124,7 +124,11 @@ void main() {
         reason: 'first connect to a brand-new host should prompt to trust',
       );
 
-      // Disconnect → removes the session + its controller/store.
+      // Disconnect → removes the session + its controller/store. #607: the
+      // disconnect action moved from the session BAR into the session MENU, so
+      // open the menu first, then tap Disconnect.
+      await tester.tap(find.byKey(const Key('session-bar-open-menu')));
+      await tester.pumpAndSettle(const Duration(milliseconds: 300));
       await tester.tap(find.byKey(const Key('terminal-disconnect-button')));
       var backAtChooser = false;
       for (var i = 0; i < 30; i++) {

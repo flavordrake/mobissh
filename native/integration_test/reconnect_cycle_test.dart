@@ -93,9 +93,12 @@ void main() {
       reason: 'first connect did not reach a live shell on a single tap',
     );
 
-    // Disconnect via the AppBar button → should remove the session + return to
-    // the chooser (#583: the home view is the chooser, signalled by the
-    // "New connection" affordance).
+    // Disconnect → should remove the session + return to the chooser (#583:
+    // the home view is the chooser, signalled by the "New connection"
+    // affordance). #607: disconnect moved from the session BAR into the session
+    // MENU — open the menu first, then tap Disconnect.
+    await tester.tap(find.byKey(const Key('session-bar-open-menu')));
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const Key('terminal-disconnect-button')));
     var backAtChooser = false;
     for (var i = 0; i < 30; i++) {
