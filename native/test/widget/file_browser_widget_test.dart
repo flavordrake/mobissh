@@ -62,17 +62,31 @@ class _ScriptedSftpSession implements SftpSession {
   Future<void> close() async {}
 }
 
-/// In-memory sink so the download path runs without a real filesystem.
+/// In-memory sink so the download path runs without a real filesystem. Honors
+/// the chunk byte offset (#591) by writing into an offset-indexed buffer, so it
+/// faithfully mirrors the real [OffsetFileSink] semantics.
 class _MemSink implements FileDownloadSink {
-  final BytesBuilder _b = BytesBuilder();
+  final List<int> _buf = <int>[];
   bool finished = false;
+  int? finishExpectedTotal;
 
   @override
-  Future<void> addChunk(Uint8List bytes) async => _b.add(bytes);
+  Future<void> addChunk(Uint8List bytes, int offset) async {
+    final end = offset + bytes.length;
+    while (_buf.length < end) {
+      _buf.add(0);
+    }
+    for (var i = 0; i < bytes.length; i++) {
+      _buf[offset + i] = bytes[i];
+    }
+  }
+
+  Uint8List toBytes() => Uint8List.fromList(_buf);
 
   @override
-  Future<String> finish() async {
+  Future<String> finish({int? expectedTotal}) async {
     finished = true;
+    finishExpectedTotal = expectedTotal;
     return '/test/Download/captured';
   }
 
@@ -93,24 +107,27 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('lists entries; navigates into a dir; tapping a file downloads',
-      (tester) async {
+  testWidgets('lists entries; navigates into a dir; tapping a file downloads', (
+    tester,
+  ) async {
     final pair = InMemoryGatewayPair();
     addTearDown(pair.dispose);
 
     final fileBytes = List<int>.generate(12, (i) => i + 1);
-    final fake = _ScriptedSftpSession(
-      {
-        '/': const [
-          SftpEntry(name: 'docs', path: '/docs', isDirectory: true),
-          SftpEntry(name: 'a.txt', path: '/a.txt', isDirectory: false, size: 12),
-        ],
-        '/docs': const [
-          SftpEntry(name: 'inner.bin', path: '/docs/inner.bin', isDirectory: false, size: 12),
-        ],
-      },
-      fileBytes,
-    );
+    final fake = _ScriptedSftpSession({
+      '/': const [
+        SftpEntry(name: 'docs', path: '/docs', isDirectory: true),
+        SftpEntry(name: 'a.txt', path: '/a.txt', isDirectory: false, size: 12),
+      ],
+      '/docs': const [
+        SftpEntry(
+          name: 'inner.bin',
+          path: '/docs/inner.bin',
+          isDirectory: false,
+          size: 12,
+        ),
+      ],
+    }, fileBytes);
 
     final host = SessionHost(
       gateway: pair.taskSide,
@@ -123,8 +140,7 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         taskSshGatewayProvider.overrideWithValue(pair.uiSide),
-        downloadSinkFactoryProvider
-            .overrideWithValue((name) async => memSink),
+        downloadSinkFactoryProvider.overrideWithValue((name) async => memSink),
       ],
     );
     addTearDown(container.dispose);
@@ -135,8 +151,9 @@ void main() {
       username: 'u',
       auth: SshAuth.password('p'),
     );
-    final entry =
-        container.read(sessionsProvider.notifier).addOrActivate(params);
+    final entry = container
+        .read(sessionsProvider.notifier)
+        .addOrActivate(params);
     // Register the session on the host so its SFTP opener can resolve. (The
     // controller's connect never reaches a real socket; we only need the host
     // to hold the session entry.)
@@ -145,9 +162,7 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: MaterialApp(
-          home: FileBrowserScreen(sessionId: entry.id),
-        ),
+        child: MaterialApp(home: FileBrowserScreen(sessionId: entry.id)),
       ),
     );
     await _pump(tester);
@@ -173,7 +188,7 @@ void main() {
     await _pump(tester);
 
     expect(memSink.finished, isTrue);
-    expect(memSink._b.toBytes(), Uint8List.fromList(fileBytes));
+    expect(memSink.toBytes(), Uint8List.fromList(fileBytes));
     // Success snackbar.
     expect(find.textContaining('Downloaded a.txt'), findsOneWidget);
 
@@ -194,9 +209,7 @@ void main() {
     );
 
     final container = ProviderContainer(
-      overrides: [
-        taskSshGatewayProvider.overrideWithValue(pair.uiSide),
-      ],
+      overrides: [taskSshGatewayProvider.overrideWithValue(pair.uiSide)],
     );
     addTearDown(container.dispose);
 
@@ -206,8 +219,9 @@ void main() {
       username: 'u',
       auth: SshAuth.password('p'),
     );
-    final entry =
-        container.read(sessionsProvider.notifier).addOrActivate(params);
+    final entry = container
+        .read(sessionsProvider.notifier)
+        .addOrActivate(params);
     entry.proxy.connect(params);
 
     await tester.pumpWidget(
@@ -230,10 +244,11 @@ class _ThrowingSftpSession implements SftpSession {
   @override
   Future<int?> sizeOf(String path) async => null;
   @override
-  Future<int> download(String path,
-          {required void Function(Uint8List chunk, int offset) onChunk,
-          int chunkSize = 64 * 1024}) async =>
-      0;
+  Future<int> download(
+    String path, {
+    required void Function(Uint8List chunk, int offset) onChunk,
+    int chunkSize = 64 * 1024,
+  }) async => 0;
   @override
   Future<void> close() async {}
 }
