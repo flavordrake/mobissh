@@ -18,6 +18,8 @@ import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import 'session_host.dart';
+import 'session_notification.dart';
+import 'session_notification_poster.dart';
 import 'task_ssh_gateway.dart';
 
 /// Top-level entry point for the foreground task isolate. Must be
@@ -41,10 +43,19 @@ class KeepaliveTaskHandler extends TaskHandler {
   /// which constructs a real host wired to FFT static methods. Tests inject
   /// a stub host bound to a [StubFftTransport] so the wire contract can be
   /// exercised without binding to platform channels.
-  KeepaliveTaskHandler({SessionHostBuilder? hostBuilder})
-    : _hostBuilder = hostBuilder ?? _defaultHostBuilder;
+  ///
+  /// [notificationPoster] (#575) surfaces tappable session notifications + owns
+  /// the tap → pending-focus hand-off. Production uses the default FFT-backed
+  /// poster; tests can inject a fake or leave it null (no notifications).
+  KeepaliveTaskHandler({
+    SessionHostBuilder? hostBuilder,
+    SessionNotificationPoster? notificationPoster,
+  }) : _injectedHostBuilder = hostBuilder,
+       // ignore: prefer_initializing_formals
+       _notificationPoster = notificationPoster;
 
-  final SessionHostBuilder _hostBuilder;
+  final SessionHostBuilder? _injectedHostBuilder;
+  SessionNotificationPoster? _notificationPoster;
   TaskSideFftTransport? _transport;
   SessionHost? _host;
 
@@ -60,11 +71,30 @@ class KeepaliveTaskHandler extends TaskHandler {
     final transport = TaskSideFftTransport();
     final gateway = TaskSideForegroundGateway(transport: transport);
     _transport = transport;
+    // #575: build the notification poster if one wasn't injected. It surfaces
+    // tappable session notifications and records the originating session so a
+    // tap (onNotificationPressed) returns the user there.
+    _notificationPoster ??= _defaultNotificationPoster();
     // The host announces readiness in its constructor (#539): the first
     // task → UI payload it sends is an `SshTaskReadyEvent`, which the UI-side
     // gateway uses to flush any commands buffered during isolate spin-up.
-    _host = _hostBuilder(gateway);
+    final builder = _injectedHostBuilder;
+    _host = builder != null
+        ? builder(gateway)
+        : SessionHost(
+            gateway: gateway,
+            notificationPoster: _notificationPoster,
+          );
     ctrace('task', 'onStart: host built (ready event should be sent)');
+  }
+
+  @override
+  void onNotificationPressed() {
+    // #575: the user tapped the session notification. Record the originating
+    // session as the pending focus + bring the app to the foreground; the UI
+    // isolate routes to that session on resume.
+    ctrace('task', 'onNotificationPressed → routing to originating session');
+    unawaited(_notificationPoster?.onTapped());
   }
 
   @override
@@ -104,8 +134,40 @@ class KeepaliveTaskHandler extends TaskHandler {
 /// the [KeepaliveTaskHandler] without binding to FFT statics.
 typedef SessionHostBuilder = SessionHost Function(TaskSshGateway gateway);
 
-SessionHost _defaultHostBuilder(TaskSshGateway gateway) =>
-    SessionHost(gateway: gateway);
+/// Build the production notification poster (#575), bound to FFT statics:
+/// updates the foreground-service notification, persists the pending focus via
+/// `saveData` (survives process death → cold-start tap routing), and launches
+/// the app on tap. Runs inside the task isolate.
+SessionNotificationPoster _defaultNotificationPoster() {
+  return SessionNotificationPoster(
+    bridge: PendingFocusBridge(const _FftTaskKeyValueStore()),
+    update: ({required String title, required String text}) async {
+      await FlutterForegroundTask.updateService(
+        notificationTitle: title,
+        notificationText: text,
+      );
+    },
+    launch: FlutterForegroundTask.launchApp,
+  );
+}
+
+/// Task-isolate [KeyValueStore] over `FlutterForegroundTask.saveData/getData`.
+/// Mirrors the UI-side `FftKeyValueStore` (in notification_providers.dart) so
+/// both isolates read/write the SAME persistent store.
+class _FftTaskKeyValueStore implements KeyValueStore {
+  const _FftTaskKeyValueStore();
+
+  @override
+  Future<String?> getString(String key) =>
+      FlutterForegroundTask.getData<String>(key: key);
+
+  @override
+  Future<void> setString(String key, String value) =>
+      FlutterForegroundTask.saveData(key: key, value: value);
+
+  @override
+  Future<void> remove(String key) => FlutterForegroundTask.removeData(key: key);
+}
 
 /// Thin wrapper over the static `FlutterForegroundTask` API. Lets us inject a
 /// fake in tests so we don't bind to platform method channels.
