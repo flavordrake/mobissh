@@ -185,7 +185,13 @@ final fontSizeProvider = StateNotifierProvider<FontSizeNotifier, double>((ref) {
 /// A named terminal palette: a label for the UI + the xterm `TerminalTheme`.
 @immutable
 class NamedTerminalTheme {
-  const NamedTerminalTheme(this.label, this.theme);
+  const NamedTerminalTheme(this.key, this.label, this.theme);
+
+  /// The PWA `ThemeName` (e.g. 'dark', 'dracula', 'tokyoNight') — the stable
+  /// identity that makes a profile's saved/imported `theme` mappable to a native
+  /// palette via [paletteIndexForThemeName]. Mirrors the object KEY in the PWA
+  /// `THEMES` map (src/modules/constants.ts).
+  final String key;
 
   final String label;
   final TerminalTheme theme;
@@ -245,13 +251,19 @@ Color _hexa(String rgba) {
   return Color((a << 24) | rgb);
 }
 
-/// Ported terminal palettes (#552). Mapped from the PWA `THEMES` map in
-/// `src/modules/terminal.ts`. Keep this list ordered and extensible — adding
-/// a palette is a one-line append, and the theme-cycle menu item wraps over
-/// the whole list. Slice 2 (#552 notes) adds the remaining PWA palettes.
+/// Ported terminal palettes (#552, #613). Mapped from the PWA `THEMES` map in
+/// `src/modules/constants.ts` (the AUTHORITATIVE source), ordered to match
+/// `THEME_ORDER`. Each entry carries the PWA `ThemeName` as its [key] so a
+/// profile's saved/imported `theme` is mappable to a palette via
+/// [paletteIndexForThemeName]. Only the fields the PWA themes actually specify
+/// (background/foreground/cursor/selectionBackground + optional white/
+/// brightWhite on light themes) are overridden; the rest reuse the xterm.dart
+/// default ANSI set (see [_ansi]). The PWA `app:` chrome block is intentionally
+/// ignored (it styles the PWA shell, not the terminal). Adding a palette is a
+/// one-line append; the theme-cycle wraps over the whole list.
 final List<NamedTerminalTheme> terminalPalettes = [
-  // PWA `dark`
   NamedTerminalTheme(
+    'dark',
     'Dark',
     _ansi(
       background: _hex('#000000'),
@@ -260,8 +272,20 @@ final List<NamedTerminalTheme> terminalPalettes = [
       selection: _hexa('#00ff8844'),
     ),
   ),
-  // PWA `solarizedDark`
   NamedTerminalTheme(
+    'light',
+    'Light',
+    _ansi(
+      background: _hex('#ffffff'),
+      foreground: _hex('#1a1a1a'),
+      cursor: _hex('#0055cc'),
+      selection: _hexa('#0055cc44'),
+      white: _hex('#e8e8ec'),
+      brightWhite: _hex('#d8d8df'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'solarizedDark',
     'Solarized Dark',
     _ansi(
       background: _hex('#002b36'),
@@ -270,7 +294,401 @@ final List<NamedTerminalTheme> terminalPalettes = [
       selection: _hexa('#268bd244'),
     ),
   ),
+  NamedTerminalTheme(
+    'solarizedLight',
+    'Solarized Light',
+    _ansi(
+      background: _hex('#fdf6e3'),
+      foreground: _hex('#657b83'),
+      cursor: _hex('#268bd2'),
+      selection: _hexa('#268bd244'),
+      white: _hex('#eee8d5'),
+      brightWhite: _hex('#d3c8a8'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'highContrast',
+    'High Contrast',
+    _ansi(
+      background: _hex('#000000'),
+      foreground: _hex('#ffffff'),
+      cursor: _hex('#ffff00'),
+      selection: _hexa('#ffff0044'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'highContrastLight',
+    'High Contrast Light',
+    _ansi(
+      background: _hex('#ffffff'),
+      foreground: _hex('#000000'),
+      cursor: _hex('#0000ff'),
+      selection: _hexa('#0000ff44'),
+      white: _hex('#e0e0e0'),
+      brightWhite: _hex('#c0c0c0'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'dracula',
+    'Dracula',
+    _ansi(
+      background: _hex('#282a36'),
+      foreground: _hex('#f8f8f2'),
+      cursor: _hex('#f8f8f2'),
+      selection: _hex('#44475a'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'draculaLight',
+    'Dracula Light',
+    _ansi(
+      background: _hex('#f8f8f2'),
+      foreground: _hex('#282a36'),
+      cursor: _hex('#bd93f9'),
+      selection: _hexa('#bd93f944'),
+      white: _hex('#e8e8e0'),
+      brightWhite: _hex('#d8d8d0'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'nord',
+    'Nord',
+    _ansi(
+      background: _hex('#2e3440'),
+      foreground: _hex('#d8dee9'),
+      cursor: _hex('#d8dee9'),
+      selection: _hex('#434c5e'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'nordLight',
+    'Nord Light',
+    _ansi(
+      background: _hex('#eceff4'),
+      foreground: _hex('#2e3440'),
+      cursor: _hex('#5e81ac'),
+      selection: _hexa('#5e81ac33'),
+      white: _hex('#dde2e8'),
+      brightWhite: _hex('#c8d0d8'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'gruvboxDark',
+    'Gruvbox Dark',
+    _ansi(
+      background: _hex('#282828'),
+      foreground: _hex('#ebdbb2'),
+      cursor: _hex('#ebdbb2'),
+      selection: _hex('#504945'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'gruvboxLight',
+    'Gruvbox Light',
+    _ansi(
+      background: _hex('#fbf1c7'),
+      foreground: _hex('#3c3836'),
+      cursor: _hex('#9d0006'),
+      selection: _hexa('#9d000633'),
+      white: _hex('#ebdbb2'),
+      brightWhite: _hex('#d5c4a1'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'monokai',
+    'Monokai',
+    _ansi(
+      background: _hex('#272822'),
+      foreground: _hex('#f8f8f2'),
+      cursor: _hex('#f8f8f2'),
+      selection: _hex('#49483e'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'monokaiLight',
+    'Monokai Light',
+    _ansi(
+      background: _hex('#fafafa'),
+      foreground: _hex('#272822'),
+      cursor: _hex('#75af00'),
+      selection: _hexa('#75af0033'),
+      white: _hex('#e8e8e0'),
+      brightWhite: _hex('#d0d0c8'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'tokyoNight',
+    'Tokyo Night',
+    _ansi(
+      background: _hex('#1a1b26'),
+      foreground: _hex('#a9b1d6'),
+      cursor: _hex('#c0caf5'),
+      selection: _hex('#33467c'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'tokyoNightDay',
+    'Tokyo Night Day',
+    _ansi(
+      background: _hex('#e1e2e7'),
+      foreground: _hex('#3760bf'),
+      cursor: _hex('#2e7de9'),
+      selection: _hexa('#2e7de933'),
+      white: _hex('#cfd0d6'),
+      brightWhite: _hex('#b8b9c0'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'ocean',
+    'Ocean',
+    _ansi(
+      background: _hex('#050d18'),
+      foreground: _hex('#b2d8f0'),
+      cursor: _hex('#00bcd4'),
+      selection: _hexa('#00bcd444'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'oceanLight',
+    'Ocean Light',
+    _ansi(
+      background: _hex('#e8f4fa'),
+      foreground: _hex('#0d3b54'),
+      cursor: _hex('#00838f'),
+      selection: _hexa('#00838f33'),
+      white: _hex('#d0e4ee'),
+      brightWhite: _hex('#b6cfdc'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'ember',
+    'Ember',
+    _ansi(
+      background: _hex('#1a0a0a'),
+      foreground: _hex('#f0c8b0'),
+      cursor: _hex('#ff5722'),
+      selection: _hexa('#ff572244'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'emberLight',
+    'Ember Light',
+    _ansi(
+      background: _hex('#fdf2eb'),
+      foreground: _hex('#5a2410'),
+      cursor: _hex('#d84315'),
+      selection: _hexa('#d8431533'),
+      white: _hex('#f5e2d3'),
+      brightWhite: _hex('#e8cab2'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'forest',
+    'Forest',
+    _ansi(
+      background: _hex('#0a1a0a'),
+      foreground: _hex('#b8d8b0'),
+      cursor: _hex('#4caf50'),
+      selection: _hexa('#4caf5044'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'forestLight',
+    'Forest Light',
+    _ansi(
+      background: _hex('#f0f5ec'),
+      foreground: _hex('#1b3a1b'),
+      cursor: _hex('#2e7d32'),
+      selection: _hexa('#2e7d3233'),
+      white: _hex('#dfe9da'),
+      brightWhite: _hex('#c5d3bd'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'sunset',
+    'Sunset',
+    _ansi(
+      background: _hex('#1a0f1e'),
+      foreground: _hex('#e8c8e0'),
+      cursor: _hex('#ff9800'),
+      selection: _hexa('#ff980044'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'sunsetLight',
+    'Sunset Light',
+    _ansi(
+      background: _hex('#fdf3ea'),
+      foreground: _hex('#4a2510'),
+      cursor: _hex('#e65100'),
+      selection: _hexa('#e6510033'),
+      white: _hex('#f4e2d4'),
+      brightWhite: _hex('#e8c9b3'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'synthwave',
+    'Synthwave',
+    _ansi(
+      background: _hex('#0f0a1a'),
+      foreground: _hex('#e0d0f0'),
+      cursor: _hex('#ff00ff'),
+      selection: _hexa('#ff00ff33'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'synthwaveLight',
+    'Synthwave Light',
+    _ansi(
+      background: _hex('#f5ebff'),
+      foreground: _hex('#3a1058'),
+      cursor: _hex('#c800c8'),
+      selection: _hexa('#c800c833'),
+      white: _hex('#e3d4f2'),
+      brightWhite: _hex('#cdb6e3'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'commodore',
+    'Commodore',
+    _ansi(
+      background: _hex('#3a3ac8'),
+      foreground: _hex('#ffffff'),
+      cursor: _hex('#ffff55'),
+      selection: _hexa('#ffffff44'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'commodoreLight',
+    'Commodore Light',
+    _ansi(
+      background: _hex('#d8d8e8'),
+      foreground: _hex('#2828a0'),
+      cursor: _hex('#a83a3a'),
+      selection: _hexa('#a83a3a33'),
+      white: _hex('#c8c8d8'),
+      brightWhite: _hex('#b0b0c8'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'terminal',
+    'Terminal',
+    _ansi(
+      background: _hex('#21388a'),
+      foreground: _hex('#ffffff'),
+      cursor: _hex('#ffffff'),
+      selection: _hexa('#ffffff44'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'terminalLight',
+    'Terminal Light',
+    _ansi(
+      background: _hex('#e8edf8'),
+      foreground: _hex('#192c70'),
+      cursor: _hex('#9c6800'),
+      selection: _hexa('#9c680033'),
+      white: _hex('#d2dbeb'),
+      brightWhite: _hex('#b8c5dc'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'borland',
+    'Borland',
+    _ansi(
+      background: _hex('#0000aa'),
+      foreground: _hex('#ffff55'),
+      cursor: _hex('#ffffff'),
+      selection: _hex('#00aaaa'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'borlandLight',
+    'Borland Light',
+    _ansi(
+      background: _hex('#fff8d8'),
+      foreground: _hex('#000088'),
+      cursor: _hex('#005577'),
+      selection: _hexa('#00aaaa55'),
+      white: _hex('#f0e8c0'),
+      brightWhite: _hex('#d8cfa0'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'arcticDark',
+    'Arctic Dark',
+    _ansi(
+      background: _hex('#0a1828'),
+      foreground: _hex('#a8c8e8'),
+      cursor: _hex('#3399ff'),
+      selection: _hexa('#3399ff33'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'arctic',
+    'Arctic',
+    _ansi(
+      background: _hex('#e8f0f8'),
+      foreground: _hex('#1a3050'),
+      cursor: _hex('#0066cc'),
+      selection: _hexa('#0066cc33'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'cobalt',
+    'Cobalt',
+    _ansi(
+      background: _hex('#002240'),
+      foreground: _hex('#ffffff'),
+      cursor: _hex('#ffcc00'),
+      selection: _hexa('#ffcc0033'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'cobaltLight',
+    'Cobalt Light',
+    _ansi(
+      background: _hex('#e6f1fb'),
+      foreground: _hex('#002240'),
+      cursor: _hex('#a87600'),
+      selection: _hexa('#a8760033'),
+      white: _hex('#cfdfee'),
+      brightWhite: _hex('#b5cadd'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'matrix',
+    'Matrix',
+    _ansi(
+      background: _hex('#000800'),
+      foreground: _hex('#00ff41'),
+      cursor: _hex('#00ff41'),
+      selection: _hexa('#00ff4133'),
+    ),
+  ),
+  NamedTerminalTheme(
+    'matrixLight',
+    'Matrix Light',
+    _ansi(
+      background: _hex('#f0fff0'),
+      foreground: _hex('#003300'),
+      cursor: _hex('#008822'),
+      selection: _hexa('#00882233'),
+      white: _hex('#daefdc'),
+      brightWhite: _hex('#bcd9c1'),
+    ),
+  ),
 ];
+
+/// PWA→native theme map (#613): resolve a profile's `theme` (a PWA `ThemeName`)
+/// to an index into [terminalPalettes]. Unknown or null names fall back to the
+/// default palette ([terminalThemeDefault], index 0 → 'dark') so a stale/typo
+/// theme never crashes the session.
+int paletteIndexForThemeName(String? name) {
+  if (name == null) return terminalThemeDefault;
+  final i = terminalPalettes.indexWhere((p) => p.key == name);
+  return i >= 0 ? i : terminalThemeDefault;
+}
 
 /// SharedPreferences key for the selected terminal palette index.
 const String terminalThemePrefKey = 'mobissh.ui.terminalThemeIndex';

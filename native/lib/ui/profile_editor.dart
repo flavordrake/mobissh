@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../state/profiles_providers.dart';
+import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
 
 enum _AuthKind { password, key }
@@ -96,8 +97,13 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
   late final TextEditingController _portCtrl;
   late final TextEditingController _userCtrl;
   late final TextEditingController _initialCommandCtrl;
-  late final TextEditingController _themeCtrl;
   late final TextEditingController _colorCtrl;
+
+  /// Selected theme = a PWA `ThemeName` key from [terminalPalettes] (#613). The
+  /// editor shows the palette LABEL but stores the KEY into [SavedProfile.theme]
+  /// so connect can map it back via [paletteIndexForThemeName]. Defaults to the
+  /// profile's current theme key, falling back to the default palette key.
+  late String _themeKey;
   final _passwordCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
   final _passphraseCtrl = TextEditingController();
@@ -119,8 +125,12 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     _portCtrl = TextEditingController(text: p.port.toString());
     _userCtrl = TextEditingController(text: p.username);
     _initialCommandCtrl = TextEditingController(text: p.initialCommand ?? '');
-    _themeCtrl = TextEditingController(text: p.theme ?? '');
     _colorCtrl = TextEditingController(text: p.color ?? '');
+    // Seed the picker from the profile's stored theme key when it maps to a
+    // known palette; otherwise fall back to the default palette's key.
+    final known =
+        p.theme != null && terminalPalettes.any((t) => t.key == p.theme);
+    _themeKey = known ? p.theme! : terminalPalettes[terminalThemeDefault].key;
     // Prefer the explicit authType; infer `key` when only a keyVaultId is
     // present (mirrors the connect form's inference for older profiles).
     if (p.authType == 'key') {
@@ -141,7 +151,6 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     _portCtrl.dispose();
     _userCtrl.dispose();
     _initialCommandCtrl.dispose();
-    _themeCtrl.dispose();
     _colorCtrl.dispose();
     _passwordCtrl.dispose();
     _keyCtrl.dispose();
@@ -237,7 +246,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
         host: host,
         port: port,
         username: username,
-        theme: _emptyToNull(_themeCtrl.text),
+        theme: _themeKey,
         color: _emptyToNull(_colorCtrl.text),
         authType: authType,
         vaultId: vaultId,
@@ -424,15 +433,35 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
                 enableSuggestions: false,
               ),
               const SizedBox(height: 12),
-              TextField(
-                key: const Key('profile-editor-theme'),
-                controller: _themeCtrl,
+              // #613: theme PICKER over the full ported palette set. Shows the
+              // palette label; stores the PWA theme KEY into SavedProfile.theme
+              // so connect maps it back via paletteIndexForThemeName.
+              InputDecorator(
                 decoration: const InputDecoration(
-                  labelText: 'Theme (optional)',
-                  hintText: 'e.g. dark, solarizedDark',
+                  labelText: 'Theme',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                 ),
-                autocorrect: false,
-                enableSuggestions: false,
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    key: const Key('profile-editor-theme-picker'),
+                    isExpanded: true,
+                    value: _themeKey,
+                    items: [
+                      for (final palette in terminalPalettes)
+                        DropdownMenuItem<String>(
+                          value: palette.key,
+                          child: Text(palette.label),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _themeKey = value);
+                    },
+                  ),
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
