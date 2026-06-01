@@ -723,13 +723,32 @@ class SshSessionController {
   // --- private helpers ---
 
   void _emit(SshSessionData next) {
-    // Cancel the connecting-phase timer the instant state leaves `connecting`.
-    // Centralizing here covers every transition path (awaitingHostKey,
-    // authenticating, connected, failed) — including the human-paced host-key
-    // prompt, which must never be timed out (#542). The timer is (re-)armed
-    // explicitly in connect() after the `connecting` emit, so cancelling on a
-    // `connecting` emit here is harmless.
-    if (next.state != SshSessionState.connecting && _readyTimer != null) {
+    // Manage the machine-paced phase deadline timer per transition.
+    //
+    // `connecting` and `authenticating` are BOTH machine-paced phases that must
+    // be bounded: the handshake (#542) and userauth (#563) can each stall after
+    // a half-open path is established (TCP SYN accepted but no SSH bytes flow,
+    // or auth negotiation never completes). The previous design cancelled the
+    // timer on entry to ANY non-`connecting` state — including `authenticating`
+    // — so a userauth that stalled AFTER host-key accept hung forever (#563).
+    //
+    // `awaitingHostKey` is HUMAN-paced — the user may deliberate at the Trust
+    // dialog indefinitely — so it must NEVER time out. Terminal/steady states
+    // (`connected`, `failed`, `disconnected`, `softDisconnected`,
+    // `reconnecting`, `idle`) also cancel.
+    //
+    // Rules:
+    //   - entering `connecting` or `authenticating`: (re-)arm the timer.
+    //     `_armReadyTimer()` cancels any existing timer first, so arming is
+    //     idempotent (connect() still calls it explicitly after the connecting
+    //     emit; harmless).
+    //   - any other state: cancel.
+    final armPhase =
+        next.state == SshSessionState.connecting ||
+        next.state == SshSessionState.authenticating;
+    if (armPhase) {
+      _armReadyTimer();
+    } else if (_readyTimer != null) {
       ctrace('task.ssh', 'readyTimer: cancelled (state→${next.state.name})');
       _readyTimer!.cancel();
       _readyTimer = null;
@@ -740,18 +759,24 @@ class SshSessionController {
     }
   }
 
-  /// Arm the connecting-phase deadline. If the session is STILL `connecting`
-  /// when it fires, force-close the client + socket and surface `failed` (#542).
+  /// Arm the machine-paced phase deadline. If the session is STILL `connecting`
+  /// (handshake never completed, #542) OR `authenticating` (userauth stalled
+  /// after host-key accept, #563) when it fires, force-close the client +
+  /// socket and surface `failed`. `awaitingHostKey` cancels this timer (see
+  /// `_emit`), so the human-paced host-key prompt is never timed out.
   void _armReadyTimer() {
     _readyTimer?.cancel();
     final secs = readyTimeout.inMilliseconds / 1000;
     ctrace('task.ssh', 'readyTimer: armed (${secs}s)');
     _readyTimer = Timer(readyTimeout, () {
       _readyTimer = null;
-      if (_data.state != SshSessionState.connecting) return;
+      if (_data.state != SshSessionState.connecting &&
+          _data.state != SshSessionState.authenticating) {
+        return;
+      }
       ctrace(
         'task.ssh',
-        'readyTimer: FIRED while still connecting → force-fail',
+        'readyTimer: FIRED while still ${_data.state.name} → force-fail',
       );
       _forceCloseTransport();
       _emit(
