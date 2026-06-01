@@ -125,13 +125,16 @@ void main() {
       return container;
     }
 
-    testWidgets('theme-cycle item present and advances palette', (
+    // #601/#571: the theme cycle is now PER-SESSION. Tapping it advances the
+    // ACTIVE session's palette index, not a global one. (The global
+    // `terminalThemeProvider` is now only the default a new session inherits.)
+    testWidgets('theme-cycle item present and advances the active session', (
       tester,
     ) async {
       final container = makeContainer();
       addTearDown(container.dispose);
 
-      container
+      final entry = container
           .read(sessionsProvider.notifier)
           .addOrActivate(
             const SshConnectParams(
@@ -142,7 +145,10 @@ void main() {
             ),
           );
 
-      expect(container.read(terminalThemeProvider), terminalThemeDefault);
+      expect(
+        container.read(sessionThemeProvider(entry.id)),
+        terminalThemeDefault,
+      );
 
       await tester.pumpWidget(host(container));
       await tester.tap(find.byKey(const Key('open-menu')));
@@ -154,10 +160,7 @@ void main() {
       await tester.tap(item);
       await _pumpFrames(tester);
 
-      expect(container.read(terminalThemeProvider), 1);
-
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getInt(terminalThemePrefKey), 1);
+      expect(container.read(sessionThemeProvider(entry.id)), 1);
     });
   });
 }

@@ -112,7 +112,12 @@ class SessionMenu extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(sessionsProvider);
     final keybarVisible = ref.watch(keybarVisibleProvider);
-    final palette = ref.watch(activeTerminalThemeProvider);
+    // Theme + font are PER-SESSION (#601, #571): the menu rows read and mutate
+    // the ACTIVE session only. With no active session (empty list) these resolve
+    // to the global default so the rows still render sensibly.
+    final activeId = sessions.activeId;
+    final palette = ref.watch(activeSessionThemeProvider);
+    final fontSize = ref.watch(activeSessionFontSizeProvider);
 
     return SingleChildScrollView(
       child: Column(
@@ -172,8 +177,9 @@ class SessionMenu extends ConsumerWidget {
             value: keybarVisible,
             onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
           ),
-          // Cycle the terminal palette (#552). Tapping advances to the next
-          // ported theme, wrapping at the end; the selection persists.
+          // Cycle the ACTIVE session's terminal palette (#601, #571). Tapping
+          // advances to the next ported theme, wrapping at the end. Per-session:
+          // it changes ONLY the active session, never the others.
           ListTile(
             key: const Key('session-menu-theme-cycle'),
             dense: true,
@@ -183,7 +189,58 @@ class SessionMenu extends ConsumerWidget {
               palette.label,
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            onTap: () => ref.read(terminalThemeProvider.notifier).cycle(),
+            enabled: activeId != null,
+            onTap: activeId == null
+                ? null
+                : () => ref
+                      .read(sessionAppearanceProvider.notifier)
+                      .cycleTheme(activeId),
+          ),
+          // Font-size stepper for the ACTIVE session (#601). The owner shrinks
+          // the font for more terminal real estate, or grows it for legibility,
+          // per session — prod small, dev large. −/＋ step by [kFontSizeStep],
+          // clamped to [kFontSizeMin]..[kFontSizeMax]; the current value shows
+          // between the buttons. Monochrome Material icons only (no emoji).
+          ListTile(
+            key: const Key('session-menu-fontsize'),
+            dense: true,
+            leading: const Icon(Icons.format_size),
+            title: const Text('Font size'),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  key: const Key('session-menu-fontsize-dec'),
+                  tooltip: 'Decrease font size',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.remove),
+                  onPressed: activeId == null
+                      ? null
+                      : () => ref
+                            .read(sessionAppearanceProvider.notifier)
+                            .adjustFontSize(activeId, -kFontSizeStep),
+                ),
+                SizedBox(
+                  width: 28,
+                  child: Text(
+                    '${fontSize.round()}',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('session-menu-fontsize-inc'),
+                  tooltip: 'Increase font size',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.add),
+                  onPressed: activeId == null
+                      ? null
+                      : () => ref
+                            .read(sessionAppearanceProvider.notifier)
+                            .adjustFontSize(activeId, kFontSizeStep),
+                ),
+              ],
+            ),
           ),
           // Browse / download remote files over SFTP for the active session
           // (#559). Disabled when there's no active session.

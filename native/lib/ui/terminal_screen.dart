@@ -342,8 +342,10 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
   Widget build(BuildContext context) {
     final terminal = ref.watch(terminalProvider(widget.sessionId));
     final shellAsync = ref.watch(sshShellProvider(widget.sessionId));
-    final fontSize = ref.watch(fontSizeProvider);
-    final palette = ref.watch(activeTerminalThemeProvider);
+    // Per-session theme + font (#601, #571): each session's TerminalView reads
+    // ITS OWN palette + font size, so two visible sessions can differ.
+    final fontSize = ref.watch(sessionFontSizeProvider(widget.sessionId));
+    final palette = ref.watch(sessionTerminalThemeProvider(widget.sessionId));
 
     return Column(
       children: [
