@@ -344,6 +344,13 @@ class SessionHost {
         return;
       }
       hosted.shell = transport;
+      // Announce shell-ready BEFORE wiring output so the UI's run-on-connect
+      // command (#619) can fire the instant stdin is writable — gating on the
+      // bare `connected` state raced ahead of this open on slow hosts and the
+      // command bytes were dropped to scrollback by `_handleInput`. Re-emitted
+      // on every (re)open; the UI runner is one-shot so a reconnect re-open
+      // can't re-run the command.
+      _gateway.send(SshShellReadyEvent(sessionId: sessionId).toJson());
       hosted.shellSub = transport.output.listen(
         (bytes) {
           hosted.metrics.bytesIn += bytes.length;
