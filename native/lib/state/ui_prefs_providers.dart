@@ -19,6 +19,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
+import 'sessions.dart';
+
 /// SharedPreferences key. Matches the keep-alive naming style.
 const String keybarVisiblePrefKey = 'mobissh.ui.keybarVisible';
 
@@ -80,6 +82,9 @@ const double fontSizeDefault = 13.0;
 /// constant (`{ MIN: 8, MAX: 32 }` in `src/modules/constants.ts`).
 const double kFontSizeMin = 8.0;
 const double kFontSizeMax = 32.0;
+
+/// Step (logical px) for the session-menu font-size −/＋ stepper (#601).
+const double kFontSizeStep = 1.0;
 
 /// Persisted terminal font size. Synchronous value (defaulted while prefs
 /// hydrate) so the terminal can render immediately. `set` clamps to
@@ -276,12 +281,174 @@ final terminalThemeProvider = StateNotifierProvider<TerminalThemeNotifier, int>(
   },
 );
 
-/// Convenience: the currently-selected [NamedTerminalTheme]. Guards against a
-/// stale out-of-range index by falling back to the default palette.
+/// Convenience: the currently-selected GLOBAL [NamedTerminalTheme]. Guards
+/// against a stale out-of-range index by falling back to the default palette.
+///
+/// NOTE (#601/#571): this resolves the *global* default theme. The terminal
+/// screen and session menu now read the PER-SESSION palette via
+/// [activeSessionThemeProvider]; this provider is retained as the source of the
+/// default a brand-new session inherits.
 final activeTerminalThemeProvider = Provider<NamedTerminalTheme>((ref) {
   final index = ref.watch(terminalThemeProvider);
   if (index < 0 || index >= terminalPalettes.length) {
     return terminalPalettes[terminalThemeDefault];
   }
   return terminalPalettes[index];
+});
+
+// ── Per-session terminal appearance (#601, #571) ──────────────────────────
+//
+// The owner wants to differentiate sessions: prod = small + one theme, dev =
+// large + another. So terminal theme + font size are PER-SESSION (keyed by
+// session id), NOT global. Changing one session's theme/font leaves every
+// other session UNCHANGED (isolation — memory: feedback_feature_scoping_and_
+// isolation_tests). A NEW session inherits the persisted global default (the
+// last-used theme/font, hydrated by [TerminalThemeNotifier]/[FontSizeNotifier]
+// from SharedPreferences) — it does NOT copy a live sibling's values.
+//
+// Per-session values live in-memory only: session ids carry a `createdAtMs`
+// suffix, so they are ephemeral by construction (a session never survives a
+// relaunch). The DEFAULT for new sessions is what persists, via the existing
+// global notifiers — that's the knob worth remembering across launches.
+
+/// Immutable per-session terminal appearance: which palette index + the font
+/// size in logical px. Both are clamped/validated by the notifier before they
+/// land here.
+@immutable
+class SessionAppearance {
+  const SessionAppearance({required this.themeIndex, required this.fontSize});
+
+  final int themeIndex;
+  final double fontSize;
+
+  SessionAppearance copyWith({int? themeIndex, double? fontSize}) {
+    return SessionAppearance(
+      themeIndex: themeIndex ?? this.themeIndex,
+      fontSize: fontSize ?? this.fontSize,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is SessionAppearance &&
+      other.themeIndex == themeIndex &&
+      other.fontSize == fontSize;
+
+  @override
+  int get hashCode => Object.hash(themeIndex, fontSize);
+}
+
+/// Owns the per-session appearance map (sessionId → [SessionAppearance]).
+///
+/// A session not yet in the map is treated as carrying the current global
+/// default ([_default]); the first mutation materializes its entry. Mutations
+/// touch ONLY the named session's entry, so sibling sessions never change —
+/// and they deliberately do NOT clobber the global default, so a per-session
+/// tweak never changes what the next NEW session inherits.
+class SessionAppearanceNotifier
+    extends Notifier<Map<String, SessionAppearance>> {
+  @override
+  Map<String, SessionAppearance> build() => const {};
+
+  /// The default a session without an explicit entry carries. Seeded from the
+  /// persisted global theme/font notifiers so a new session inherits the
+  /// last-used values rather than a hardcoded constant.
+  SessionAppearance get _default => SessionAppearance(
+    themeIndex: ref.read(terminalThemeProvider),
+    fontSize: ref.read(fontSizeProvider),
+  );
+
+  /// Read a session's appearance, falling back to the current default for a
+  /// session that hasn't been customized yet.
+  SessionAppearance appearanceOf(String sessionId) =>
+      state[sessionId] ?? _default;
+
+  static int _validTheme(int i) =>
+      (i >= 0 && i < terminalPalettes.length) ? i : terminalThemeDefault;
+
+  static double _clampFont(double v) => v.clamp(kFontSizeMin, kFontSizeMax);
+
+  void _put(String sessionId, SessionAppearance next) {
+    state = {...state, sessionId: next};
+  }
+
+  /// Set [sessionId]'s palette index (clamped to a valid index). Affects only
+  /// this session — sibling sessions and the global default are untouched.
+  void setTheme(String sessionId, int index) {
+    final i = _validTheme(index);
+    _put(sessionId, appearanceOf(sessionId).copyWith(themeIndex: i));
+  }
+
+  /// Advance [sessionId]'s palette to the next one, wrapping at the end.
+  void cycleTheme(String sessionId) {
+    final cur = appearanceOf(sessionId).themeIndex;
+    setTheme(sessionId, (cur + 1) % terminalPalettes.length);
+  }
+
+  /// Set [sessionId]'s font size (clamped). Affects only this session — sibling
+  /// sessions and the global default are untouched.
+  void setFontSize(String sessionId, double size) {
+    final s = _clampFont(size);
+    _put(sessionId, appearanceOf(sessionId).copyWith(fontSize: s));
+  }
+
+  /// Step [sessionId]'s font size by [delta] logical px (clamped).
+  void adjustFontSize(String sessionId, double delta) {
+    setFontSize(sessionId, appearanceOf(sessionId).fontSize + delta);
+  }
+}
+
+final sessionAppearanceProvider =
+    NotifierProvider<SessionAppearanceNotifier, Map<String, SessionAppearance>>(
+      SessionAppearanceNotifier.new,
+    );
+
+/// Per-session palette index. Falls back to the current default for an
+/// un-customized session. Rebuilds when that session's entry changes.
+final sessionThemeProvider = Provider.family<int, String>((ref, sessionId) {
+  ref.watch(sessionAppearanceProvider);
+  return ref
+      .read(sessionAppearanceProvider.notifier)
+      .appearanceOf(sessionId)
+      .themeIndex;
+});
+
+/// Per-session font size. Falls back to the current default for an
+/// un-customized session.
+final sessionFontSizeProvider = Provider.family<double, String>((
+  ref,
+  sessionId,
+) {
+  ref.watch(sessionAppearanceProvider);
+  return ref
+      .read(sessionAppearanceProvider.notifier)
+      .appearanceOf(sessionId)
+      .fontSize;
+});
+
+/// The [NamedTerminalTheme] for a given session, guarding a stale index.
+final sessionTerminalThemeProvider =
+    Provider.family<NamedTerminalTheme, String>((ref, sessionId) {
+      final index = ref.watch(sessionThemeProvider(sessionId));
+      if (index < 0 || index >= terminalPalettes.length) {
+        return terminalPalettes[terminalThemeDefault];
+      }
+      return terminalPalettes[index];
+    });
+
+/// The ACTIVE session's [NamedTerminalTheme] — what the session menu's Theme
+/// row label reflects. Falls back to the global default when no session is
+/// active.
+final activeSessionThemeProvider = Provider<NamedTerminalTheme>((ref) {
+  final activeId = ref.watch(activeSessionIdProvider);
+  if (activeId == null) return ref.watch(activeTerminalThemeProvider);
+  return ref.watch(sessionTerminalThemeProvider(activeId));
+});
+
+/// The ACTIVE session's font size — what the session menu's font stepper shows.
+/// Falls back to the global default when no session is active.
+final activeSessionFontSizeProvider = Provider<double>((ref) {
+  final activeId = ref.watch(activeSessionIdProvider);
+  if (activeId == null) return ref.watch(fontSizeProvider);
+  return ref.watch(sessionFontSizeProvider(activeId));
 });
