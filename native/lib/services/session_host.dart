@@ -344,13 +344,14 @@ class SessionHost {
         return;
       }
       hosted.shell = transport;
-      // Announce shell-ready BEFORE wiring output so the UI's run-on-connect
-      // command (#619) can fire the instant stdin is writable — gating on the
-      // bare `connected` state raced ahead of this open on slow hosts and the
-      // command bytes were dropped to scrollback by `_handleInput`. Re-emitted
-      // on every (re)open; the UI runner is one-shot so a reconnect re-open
-      // can't re-run the command.
-      _gateway.send(SshShellReadyEvent(sessionId: sessionId).toJson());
+      // Wire the output listener BEFORE announcing shell-ready (#619). The UI's
+      // run-on-connect command fires on shell-ready, writes to stdin, and the
+      // shell echoes + runs it immediately. If we announced ready first (the
+      // original #619 fix did), that first output chunk — the command echo and
+      // its stdout — would be produced with no listener attached yet and lost:
+      // the command ran on the remote but its output never reached the UI, and
+      // any output-asserting test saw nothing. stdin is already writable via
+      // `hosted.shell = transport` above, so announcing a few lines later is free.
       hosted.shellSub = transport.output.listen(
         (bytes) {
           hosted.metrics.bytesIn += bytes.length;
@@ -363,6 +364,12 @@ class SessionHost {
           _emitStatus(sessionId, '\r\n[mobissh] shell stream error: $e\r\n');
         },
       );
+      // Now that output is wired and stdin is writable, announce shell-ready so
+      // the UI's run-on-connect command can fire (gating on the bare `connected`
+      // state raced ahead of this open on slow hosts and the bytes were dropped
+      // to scrollback by `_handleInput`). Re-emitted on every (re)open; the UI
+      // runner is one-shot so a reconnect re-open can't re-run the command.
+      _gateway.send(SshShellReadyEvent(sessionId: sessionId).toJson());
       // Drop the shell when the remote channel closes so a reconnect re-opens.
       // Guard with the generation: a late `done` from THIS transport must not
       // null out a shell that a subsequent reconnect already re-opened (#590).
