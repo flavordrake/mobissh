@@ -1,5 +1,4 @@
-// Session menu (#518) — replaces the chip-row tab strip with a modal
-// bottom sheet that mirrors the PWA's `renderSessionList` / `initSessionMenu`.
+// Session menu (#518) — mirrors the PWA's `renderSessionList` / `initSessionMenu`.
 //
 // #567: slimmed to the session-menu-slim direction — terminal real estate is
 // at a premium, so the sheet keeps only what belongs:
@@ -10,6 +9,17 @@
 //
 // Tap-to-switch dismisses the menu. Long-press opens a contextual menu with
 // Disconnect / Close — same actions the PWA exposes on the session row.
+//
+// #585: the menu is presented as a NON-MODAL OverlayEntry, NOT a
+// `showModalBottomSheet` route. Pushing a modal route swaps the active focus
+// scope, so the engine hid the soft keyboard the instant the menu opened and
+// the terminal reflowed ("jumpiness"). Restoring focus on dismiss couldn't fix
+// the drop-on-OPEN — only not-pushing-a-route does. The overlay never requests
+// focus (wrapped in a `FocusScope(canRequestFocus: false)`), so the terminal's
+// text input keeps the keyboard. The panel floats just ABOVE the keyboard
+// (offset by `viewInsets.bottom`) instead of being covered by it.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,27 +29,74 @@ import '../state/ui_prefs_providers.dart';
 import 'connect_form.dart';
 import 'file_browser_screen.dart';
 
-/// Opens the session menu as a modal bottom sheet. Returns once dismissed.
+/// Opens the session menu as a NON-MODAL overlay anchored to the bottom, above
+/// the keyboard. Returns once dismissed (outside tap or an action closes it).
 ///
-/// #585: pushing a modal route pulls primary focus off the terminal's text
-/// input, so the soft keyboard collapses and the terminal reflows (the
-/// "jumpiness" the owner sees when opening the menu mid-typing). We capture the
-/// editable that was focused before the sheet opens and re-request it on
-/// dismiss, so the keyboard returns to where it was instead of leaving the user
-/// with a dropped keyboard after every menu interaction. (Eliminating the
-/// dismiss-on-OPEN reflow needs a non-modal overlay menu — tracked in #585.)
-Future<void> showSessionMenu(BuildContext context) async {
-  final previousFocus = FocusManager.instance.primaryFocus;
-  await showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    builder: (ctx) => const SessionMenu(),
+/// Unlike `showModalBottomSheet`, this inserts an `OverlayEntry` rather than
+/// pushing a route, so the terminal keeps primary focus and the soft keyboard
+/// stays up (#585).
+Future<void> showSessionMenu(BuildContext context) {
+  final overlay = Overlay.of(context);
+  final completer = Completer<void>();
+  late OverlayEntry entry;
+
+  void close() {
+    if (entry.mounted) entry.remove();
+    if (!completer.isCompleted) completer.complete();
+  }
+
+  entry = OverlayEntry(
+    builder: (ctx) {
+      // Float the panel above the keyboard when it's up; sit at the bottom
+      // otherwise. This is what lets the keyboard stay visible without the
+      // menu being hidden behind it.
+      final keyboardInset = MediaQuery.of(ctx).viewInsets.bottom;
+      return Stack(
+        children: [
+          // Outside-tap barrier. A plain GestureDetector does NOT request
+          // focus, so dismissing the menu doesn't disturb the keyboard either.
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: close,
+              child: const ColoredBox(color: Color(0x66000000)),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: keyboardInset,
+            // canRequestFocus:false guarantees the menu (and its tappable rows)
+            // never steal focus from the terminal's editable — the keyboard
+            // stays up. Taps still work; toggles/switches don't need focus.
+            child: FocusScope(
+              canRequestFocus: false,
+              child: Material(
+                color: Theme.of(ctx).colorScheme.surface,
+                elevation: 8,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: SafeArea(top: false, child: SessionMenu(onClose: close)),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
   );
-  previousFocus?.requestFocus();
+
+  overlay.insert(entry);
+  return completer.future;
 }
 
 class SessionMenu extends ConsumerWidget {
-  const SessionMenu({super.key});
+  const SessionMenu({super.key, required this.onClose});
+
+  /// Dismisses the overlay. Replaces the old `Navigator.pop()` since the menu
+  /// is no longer a route (#585).
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -47,97 +104,111 @@ class SessionMenu extends ConsumerWidget {
     final keybarVisible = ref.watch(keybarVisibleProvider);
     final palette = ref.watch(activeTerminalThemeProvider);
 
-    return SafeArea(
-      top: false,
-      // Scrollable so a long session list (+ the New session / keybar rows)
-      // never overflows the sheet on short viewports — the Column is
-      // mainAxisSize.min, so it only scrolls when it has to.
-      child: SingleChildScrollView(
-        child: Column(
-          key: const Key('session-menu'),
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (sessions.entries.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('No sessions yet.'),
-              )
-            else
-              for (final e in sessions.entries)
-                _SessionRow(entry: e, isActive: e.id == sessions.activeId),
-            // Start an additional session. Closes the menu sheet and pushes the
-            // connect form on top of the terminal screen (the goal's leg 2).
-            ListTile(
-              key: const Key('session-menu-new'),
-              dense: true,
-              leading: const Icon(Icons.add),
-              title: const Text('New session'),
-              onTap: () {
-                final navigator = Navigator.of(context);
-                navigator.pop();
-                navigator.push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const NewSessionPage(),
-                  ),
-                );
-              },
-            ),
-            const Divider(height: 1),
-            // Slim secondary controls (#567): no subtitles, dense rows. These
-            // are session-scoped controls that belong in the sheet — keybar
-            // visibility, terminal theme, and SFTP files.
-            SwitchListTile(
-              key: const Key('session-menu-keybar-toggle'),
-              dense: true,
-              secondary: const Icon(Icons.keyboard_outlined),
-              title: const Text('Keybar'),
-              value: keybarVisible,
-              onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
-            ),
-            // Cycle the terminal palette (#552). Tapping advances to the next
-            // ported theme, wrapping at the end; the selection persists.
-            ListTile(
-              key: const Key('session-menu-theme-cycle'),
-              dense: true,
-              leading: const Icon(Icons.palette_outlined),
-              title: const Text('Theme'),
-              trailing: Text(
-                palette.label,
-                style: Theme.of(context).textTheme.bodySmall,
+    return SingleChildScrollView(
+      child: Column(
+        key: const Key('session-menu'),
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Slim grab-handle affordance (replaces showDragHandle, which only
+          // came with the modal sheet).
+          Center(
+            child: Container(
+              width: 32,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
               ),
-              onTap: () => ref.read(terminalThemeProvider.notifier).cycle(),
             ),
-            // Browse / download remote files over SFTP for the active session
-            // (#559). Disabled when there's no active session.
-            ListTile(
-              key: const Key('session-menu-files'),
-              dense: true,
-              leading: const Icon(Icons.folder_outlined),
-              title: const Text('Files'),
-              trailing: const Icon(Icons.chevron_right),
-              enabled: sessions.activeId != null,
-              onTap: sessions.activeId == null
-                  ? null
-                  : () {
-                      final sessionId = sessions.activeId!;
-                      final navigator = Navigator.of(context);
-                      navigator.pop();
-                      openFileBrowser(navigator.context, sessionId);
-                    },
+          ),
+          if (sessions.entries.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No sessions yet.'),
+            )
+          else
+            for (final e in sessions.entries)
+              _SessionRow(
+                entry: e,
+                isActive: e.id == sessions.activeId,
+                onClose: onClose,
+              ),
+          // Start an additional session. Closes the menu and pushes the
+          // connect chooser on top of the terminal screen (the goal's leg 2).
+          ListTile(
+            key: const Key('session-menu-new'),
+            dense: true,
+            leading: const Icon(Icons.add),
+            title: const Text('New session'),
+            onTap: () {
+              final navigator = Navigator.of(context);
+              onClose();
+              navigator.push(
+                MaterialPageRoute<void>(builder: (_) => const NewSessionPage()),
+              );
+            },
+          ),
+          const Divider(height: 1),
+          // Slim secondary controls (#567): no subtitles, dense rows. These
+          // are session-scoped controls that belong in the sheet — keybar
+          // visibility, terminal theme, and SFTP files.
+          SwitchListTile(
+            key: const Key('session-menu-keybar-toggle'),
+            dense: true,
+            secondary: const Icon(Icons.keyboard_outlined),
+            title: const Text('Keybar'),
+            value: keybarVisible,
+            onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
+          ),
+          // Cycle the terminal palette (#552). Tapping advances to the next
+          // ported theme, wrapping at the end; the selection persists.
+          ListTile(
+            key: const Key('session-menu-theme-cycle'),
+            dense: true,
+            leading: const Icon(Icons.palette_outlined),
+            title: const Text('Theme'),
+            trailing: Text(
+              palette.label,
+              style: Theme.of(context).textTheme.bodySmall,
             ),
-          ],
-        ),
+            onTap: () => ref.read(terminalThemeProvider.notifier).cycle(),
+          ),
+          // Browse / download remote files over SFTP for the active session
+          // (#559). Disabled when there's no active session.
+          ListTile(
+            key: const Key('session-menu-files'),
+            dense: true,
+            leading: const Icon(Icons.folder_outlined),
+            title: const Text('Files'),
+            trailing: const Icon(Icons.chevron_right),
+            enabled: sessions.activeId != null,
+            onTap: sessions.activeId == null
+                ? null
+                : () {
+                    final sessionId = sessions.activeId!;
+                    final navigator = Navigator.of(context);
+                    onClose();
+                    openFileBrowser(navigator.context, sessionId);
+                  },
+          ),
+        ],
       ),
     );
   }
 }
 
 class _SessionRow extends ConsumerWidget {
-  const _SessionRow({required this.entry, required this.isActive});
+  const _SessionRow({
+    required this.entry,
+    required this.isActive,
+    required this.onClose,
+  });
 
   final SessionEntry entry;
   final bool isActive;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -170,7 +241,7 @@ class _SessionRow extends ConsumerWidget {
       ),
       onTap: () {
         ref.read(sessionsProvider.notifier).setActive(entry.id);
-        Navigator.of(context).pop();
+        onClose();
       },
       onLongPress: () => _showRowActions(context, ref),
     );
