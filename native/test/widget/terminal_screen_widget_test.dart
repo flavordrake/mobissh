@@ -105,27 +105,39 @@ void main() {
       expect(find.text('alice@sshd.example:2222'), findsWidgets);
     });
 
-    testWidgets('disconnect button is on the bottom session bar', (
-      tester,
-    ) async {
-      final transport = FakeSshShellTransport();
-      addTearDown(transport.close);
-      final ({SessionEntry entry, ProviderContainer container}) setup =
-          await _setupSingleSession(tester, transport);
-      addTearDown(setup.container.dispose);
+    // #607: the bar's right-edge button is now the COMPOSE-bar toggle, not
+    // disconnect. Disconnect moved into the session menu (it's infrequent).
+    testWidgets(
+      'compose toggle is on the bottom session bar; disconnect is not',
+      (tester) async {
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        final ({SessionEntry entry, ProviderContainer container}) setup =
+            await _setupSingleSession(tester, transport);
+        addTearDown(setup.container.dispose);
 
-      final btn = find.byKey(const Key('terminal-disconnect-button'));
-      expect(btn, findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byKey(const Key('session-bar')),
-          matching: btn,
-        ),
-        findsOneWidget,
-      );
-      final iconButton = tester.widget<IconButton>(btn);
-      expect(iconButton.onPressed, isNotNull);
-    });
+        final toggle = find.byKey(const Key('session-bar-compose-toggle'));
+        expect(toggle, findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('session-bar')),
+            matching: toggle,
+          ),
+          findsOneWidget,
+        );
+        final iconButton = tester.widget<IconButton>(toggle);
+        expect(iconButton.onPressed, isNotNull);
+
+        // Disconnect is NO LONGER on the bar (it lives in the session menu now).
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('session-bar')),
+            matching: find.byKey(const Key('terminal-disconnect-button')),
+          ),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets(
       'session menu button is present (now on the bottom bar, #566)',
