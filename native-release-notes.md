@@ -1,15 +1,17 @@
 # MobiSSH native — release notes
 
 Curated, USER-FACING notes rendered on the install page (native.html). Newest
-section first. The install-page generator renders the TOP section's bullets as
-"What to verify" — so write each bullet as something the owner can tap-test on
-the device, not as a commit subject. Keep internal/test/CI/refactor work OUT.
+section first; the generator renders the TOP section's bullets as "What to
+verify". Each bullet: ONE short line, what changed — NOT how to test it. Keep
+internal/test/CI/refactor work OUT. **Update this every release** (the gate
+refuses to ship if the top section's commit is older than the build — see
+gen-apk-install-page.sh staleness check).
 
-## Build 2026-06-01b — compose bar (swipe / voice) + per-session look (verify on device)
-- NEW: Compose bar for swipe-typing + voice. Open the session menu → toggle "Compose bar (swipe / voice)". An editable docks above the keybar — swipe-type a phrase (SPACES should appear correctly now) or tap the keyboard mic to dictate, then ✓ sends the text (no Enter) / ⏎ sends text + Enter. This is the workaround for the terminal itself not accepting swipe/voice. THIS IS THE THING TO TEST.
-- Per-session font size + theme: session menu has a font −/＋ stepper and theme cycle that change ONLY the active session — set prod small/one color, dev large/another, to tell sessions apart.
-- Keybar is now one scrollable line of touch-friendly buttons; paste icon is monochrome (was an emoji).
-- Session menu floats above the bottom bar — tapping the session-bar trigger again now dismisses it (no longer lands on Files).
+## Build 2026-06-01c — compose bar position fix (#610)
+- Compose bar docks to a fixed top/bottom margin — no longer goes off-screen or hides the session bar.
+- Compose toggle lives on the session bar (right edge); swipe-type + voice land with correct spaces.
+- Per-session font size + theme from the session menu (differentiate sessions).
+- Keybar: one scrollable line, monochrome arrows, ^keys grouped at the end.
 
 ## Build 2026-06-01 — reliability sweep (verify on device)
 - Profiles screen is now a clean chooser: TAP a saved profile to connect, tap the PENCIL to edit it, "New connection" to add one. The old inline host/port/Connect form is gone.
