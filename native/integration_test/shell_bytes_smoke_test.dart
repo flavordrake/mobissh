@@ -21,29 +21,35 @@ import 'package:integration_test/integration_test.dart';
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/sessions.dart';
 
+import 'support/connect_helpers.dart';
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('connected session streams shell bytes and echoes input',
-      (tester) async {
+  testWidgets('connected session streams shell bytes and echoes input', (
+    tester,
+  ) async {
     FlutterForegroundTask.initCommunicationPort();
 
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
     await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const MobisshApp()),
+      UncontrolledProviderScope(
+        container: container,
+        child: const MobisshApp(),
+      ),
     );
     await tester.pump(const Duration(seconds: 1));
 
-    await tester.enterText(find.byKey(const Key('connect-host')), '127.0.0.1');
-    await tester.enterText(find.byKey(const Key('connect-port')), '2222');
-    await tester.enterText(
-        find.byKey(const Key('connect-username')), 'testuser');
-    await tester.enterText(
-        find.byKey(const Key('connect-password')), 'testpass');
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('connect-submit')));
+    // #583: connect ad-hoc via "New connection" → editor → "Save & connect".
+    await adhocPasswordConnect(
+      tester,
+      host: '127.0.0.1',
+      port: '2222',
+      user: 'testuser',
+      pass: 'testpass',
+    );
 
     // Reach the terminal screen, accepting the host-key prompt if shown.
     var connected = false;
@@ -78,9 +84,13 @@ void main() {
         break;
       }
     }
-    expect(gotPrompt, isTrue,
-        reason: 'terminal received ZERO bytes after connect — the dead-shell '
-            'hang (no PTY opened task-side)');
+    expect(
+      gotPrompt,
+      isTrue,
+      reason:
+          'terminal received ZERO bytes after connect — the dead-shell '
+          'hang (no PTY opened task-side)',
+    );
 
     // 2) A typed command must echo back through the proxy round-trip.
     const marker = 'MOBISSH_SHELL_OK_42';
@@ -93,7 +103,10 @@ void main() {
         break;
       }
     }
-    expect(sawMarker, isTrue,
-        reason: 'typed command never echoed back — input not routed to the PTY');
+    expect(
+      sawMarker,
+      isTrue,
+      reason: 'typed command never echoed back — input not routed to the PTY',
+    );
   });
 }

@@ -145,9 +145,9 @@ Future<bool> _pump(
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets(
-      'import KEY profile from backup → tap → connect in key mode (#547)',
-      (tester) async {
+  testWidgets('import KEY profile from backup → tap → connect in key mode (#547)', (
+    tester,
+  ) async {
     FlutterForegroundTask.initCommunicationPort();
 
     const masterPassword = 'master';
@@ -176,56 +176,60 @@ void main() {
     // Open the import dialog. The Connect form exposes an import affordance;
     // the dialog itself is keyed `import-profiles-dialog`.
     final importButton = find.byKey(const Key('open-import-profiles-dialog'));
-    expect(importButton.evaluate(), isNotEmpty,
-        reason: 'no import affordance found on the connect screen');
+    expect(
+      importButton.evaluate(),
+      isNotEmpty,
+      reason: 'no import affordance found on the connect screen',
+    );
     await tester.tap(importButton.first);
-    expect(await _pump(tester, find.byKey(const Key('import-profiles-dialog'))),
-        isTrue,
-        reason: 'import dialog did not open');
+    expect(
+      await _pump(tester, find.byKey(const Key('import-profiles-dialog'))),
+      isTrue,
+      reason: 'import dialog did not open',
+    );
 
     // Expand the paste disclosure and paste the envelope JSON.
-    final disclosure = find.byKey(const Key('import-profiles-paste-disclosure'));
+    final disclosure = find.byKey(
+      const Key('import-profiles-paste-disclosure'),
+    );
     if (disclosure.evaluate().isNotEmpty) {
       await tester.tap(disclosure);
       await tester.pump(const Duration(milliseconds: 300));
     }
     await tester.enterText(
-        find.byKey(const Key('import-profiles-input')), envelope);
+      find.byKey(const Key('import-profiles-input')),
+      envelope,
+    );
     await tester.pump(const Duration(milliseconds: 200));
 
     // Stage 1 submit → vault detected → password field appears.
     await tester.tap(find.byKey(const Key('import-profiles-submit')));
     expect(
-        await _pump(tester, find.byKey(const Key('import-profiles-password'))),
-        isTrue,
-        reason: 'password stage did not appear for the encrypted envelope');
+      await _pump(tester, find.byKey(const Key('import-profiles-password'))),
+      isTrue,
+      reason: 'password stage did not appear for the encrypted envelope',
+    );
 
     await tester.enterText(
-        find.byKey(const Key('import-profiles-password')), masterPassword);
+      find.byKey(const Key('import-profiles-password')),
+      masterPassword,
+    );
     await tester.pump(const Duration(milliseconds: 200));
 
     // Stage 2 submit → decrypt (600k PBKDF2 on device) + persist + close.
     await tester.tap(find.byKey(const Key('import-profiles-submit')));
     final tile = find.byKey(const Key('profile-tile-127.0.0.1:2222:testuser'));
-    expect(await _pump(tester, tile, slices: 40),
-        isTrue,
-        reason: 'imported profile tile did not appear after import');
+    expect(
+      await _pump(tester, tile, slices: 40),
+      isTrue,
+      reason: 'imported profile tile did not appear after import',
+    );
 
-    // Tap the saved profile → prefills the form from the resolved secret.
+    // #583: tapping the saved profile CONNECTS directly using the resolved
+    // secret (no inline form to prefill anymore). The #547 assertion — that the
+    // imported key secret actually resolved — is now proven by reaching a live
+    // terminal under KEY auth (a failed resolve would hang / fail auth).
     await tester.tap(tile);
-    // Give the async vault prefill time to land the private key.
-    final keyField = find.byKey(const Key('connect-key'));
-    final keyApplied = await _pump(tester, keyField, slices: 20);
-
-    // MINIMUM acceptance: profile applied in key mode with a non-empty key.
-    if (keyApplied) {
-      final widget = tester.widget<TextField>(keyField);
-      expect(widget.controller?.text ?? '', isNotEmpty,
-          reason: 'key field empty — secret not resolved (the #547 bug)');
-    }
-
-    // FULL acceptance: connect reaches the terminal screen.
-    await tester.tap(find.byKey(const Key('connect-submit')));
     var connected = false;
     for (var i = 0; i < 60; i++) {
       await tester.pump(const Duration(milliseconds: 500));
@@ -240,10 +244,16 @@ void main() {
       }
     }
 
-    // The live socket may flake (bridge down); the key-mode application is the
-    // load-bearing #547 assertion. Connect is the stronger signal when the
-    // bridge is up.
-    expect(connected || keyApplied, isTrue,
-        reason: 'neither connected nor applied key mode — #547 regression');
+    // FULL acceptance: connect reaches the terminal screen. (If the live socket
+    // flakes because the bridge is down, this is the only signal we have now
+    // that the form is gone — the import + tile appearance above already
+    // proved the profile + its vault reference persisted.)
+    expect(
+      connected,
+      isTrue,
+      reason:
+          'import → tap-to-connect did not reach the terminal — '
+          'the resolved key secret may not have applied (#547 regression)',
+    );
   });
 }

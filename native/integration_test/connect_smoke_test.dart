@@ -30,6 +30,8 @@ import 'package:integration_test/integration_test.dart';
 
 import 'package:mobissh/main.dart' show MobisshApp;
 
+import 'support/connect_helpers.dart';
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -40,16 +42,15 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: MobisshApp()));
     await tester.pump(const Duration(seconds: 1));
 
-    // Fill the connect form. Fields are keyed (#539 testability).
-    await tester.enterText(find.byKey(const Key('connect-host')), '127.0.0.1');
-    await tester.enterText(find.byKey(const Key('connect-port')), '2222');
-    await tester.enterText(
-        find.byKey(const Key('connect-username')), 'testuser');
-    await tester.enterText(
-        find.byKey(const Key('connect-password')), 'testpass');
-    await tester.pump();
-
-    await tester.tap(find.byKey(const Key('connect-submit')));
+    // #583: the inline form is gone — connect ad-hoc via "New connection" →
+    // editor → "Save & connect".
+    await adhocPasswordConnect(
+      tester,
+      host: '127.0.0.1',
+      port: '2222',
+      user: 'testuser',
+      pass: 'testpass',
+    );
 
     // Poll for up to 30s. Can't pumpAndSettle — the terminal animates + the
     // socket is live, so the tree never settles. Pump 500ms slices and look
@@ -75,8 +76,12 @@ void main() {
       }
     }
 
-    expect(connected, isTrue,
-        reason: 'session did not reach connected within 30s — '
-            'this is the #539 connect-deadlock signature');
+    expect(
+      connected,
+      isTrue,
+      reason:
+          'session did not reach connected within 30s — '
+          'this is the #539 connect-deadlock signature',
+    );
   });
 }

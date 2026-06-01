@@ -26,6 +26,8 @@ import 'package:integration_test/integration_test.dart';
 
 import 'package:mobissh/main.dart' show MobisshApp;
 
+import 'support/connect_helpers.dart';
+
 const _testKeyPem = '''-----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACB85qILD6Ykve+v2FrQWtcrsjW1baL6CXJ4LD5mmiDTdgAAAJgTrJmWE6yZ
@@ -37,33 +39,23 @@ NbVtovoJcngsPmaaINN2AAAAFXRlc3R1c2VyQG1vYmlzc2gtdGVzdA==
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('key-auth connect to test-sshd reaches connected state',
-      (tester) async {
+  testWidgets('key-auth connect to test-sshd reaches connected state', (
+    tester,
+  ) async {
     FlutterForegroundTask.initCommunicationPort();
 
     await tester.pumpWidget(const ProviderScope(child: MobisshApp()));
     await tester.pump(const Duration(seconds: 1));
 
-    await tester.enterText(find.byKey(const Key('connect-host')), '127.0.0.1');
-    await tester.enterText(find.byKey(const Key('connect-port')), '2222');
-    await tester.enterText(
-        find.byKey(const Key('connect-username')), 'testuser');
-
-    // Switch to Key auth (SegmentedButton segment labelled "Key").
-    await tester.tap(find.text('Key'));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    await tester.enterText(find.byKey(const Key('connect-key')), _testKeyPem);
-    await tester.pump();
-
-    // Key mode expands the form (4-line key field + passphrase + initial-command
-    // field) past the fold; the submit button is inside the ConnectHomePage
-    // SingleChildScrollView. tap() does not auto-scroll, so bring it on-screen
-    // first (on a real device the user scrolls to it — this mirrors that).
-    final submit = find.byKey(const Key('connect-submit'));
-    await tester.ensureVisible(submit);
-    await tester.pumpAndSettle(const Duration(milliseconds: 300));
-    await tester.tap(submit);
+    // #583: connect ad-hoc via "New connection" → editor (Key mode) →
+    // "Save & connect".
+    await adhocKeyConnect(
+      tester,
+      host: '127.0.0.1',
+      port: '2222',
+      user: 'testuser',
+      keyPem: _testKeyPem,
+    );
 
     // Poll up to 30s. Accept the host-key prompt when it appears (fresh install
     // → it WILL appear; this is the path the password smoke skipped on a
@@ -86,10 +78,17 @@ void main() {
       }
     }
 
-    expect(acceptedHostKey, isTrue,
-        reason: 'host-key prompt never appeared — fresh install should prompt');
-    expect(connected, isTrue,
-        reason: 'KEY-AUTH session did not reach connected within 30s after '
-            'accepting the host key — the device key-auth hang');
+    expect(
+      acceptedHostKey,
+      isTrue,
+      reason: 'host-key prompt never appeared — fresh install should prompt',
+    );
+    expect(
+      connected,
+      isTrue,
+      reason:
+          'KEY-AUTH session did not reach connected within 30s after '
+          'accepting the host key — the device key-auth hang',
+    );
   });
 }

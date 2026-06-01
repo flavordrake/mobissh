@@ -27,22 +27,64 @@ import '../storage/profiles_store.dart';
 
 enum _AuthKind { password, key }
 
-/// Push the profile editor as a modal route. Resolves to `true` when the user
-/// saved (caller should refresh the profile list), or `null`/`false` when they
-/// cancelled / backed out.
-Future<bool?> showProfileEditor(BuildContext context, SavedProfile profile) {
-  return Navigator.of(context).push<bool>(
-    MaterialPageRoute<bool>(
+/// Outcome of the profile editor (#583). The editor is now the SINGLE entry for
+/// both editing a saved profile AND creating a new / ad-hoc connection — the
+/// inline connect form on the home view was removed. The caller (the profile
+/// chooser) inspects the result to decide whether to just refresh the list or
+/// to also connect to the saved profile.
+class ProfileEditorResult {
+  const ProfileEditorResult({required this.saved, this.connect});
+
+  /// True when the store was mutated (save or delete) — caller refreshes list.
+  final bool saved;
+
+  /// Non-null when the user chose "Save & connect": the profile to connect to.
+  /// The chooser routes this through its shared connect path so the host-key
+  /// prompt + initial-command arming run exactly as a profile-row tap does.
+  final SavedProfile? connect;
+}
+
+/// Push the profile editor as a modal route to EDIT an existing profile.
+/// Resolves to a [ProfileEditorResult] (`saved`/`connect`), or `null` when the
+/// user backed out without saving.
+Future<ProfileEditorResult?> showProfileEditor(
+  BuildContext context,
+  SavedProfile profile,
+) {
+  return Navigator.of(context).push<ProfileEditorResult>(
+    MaterialPageRoute<ProfileEditorResult>(
       fullscreenDialog: true,
       builder: (_) => ProfileEditor(profile: profile),
     ),
   );
 }
 
+/// A blank profile used to open the editor in CREATE mode (#583). Sensible
+/// defaults so the user starts on an empty form (host/username empty, port 22).
+SavedProfile blankProfile() =>
+    SavedProfile(title: '', host: '', port: 22, username: '');
+
+/// Push the editor in CREATE mode for a brand-new / ad-hoc connection (#583).
+/// This is the home view's "New" affordance: the editor IS the new-connection
+/// entry now that the inline form is gone. Same return contract as
+/// [showProfileEditor].
+Future<ProfileEditorResult?> showProfileEditorForNew(BuildContext context) {
+  return Navigator.of(context).push<ProfileEditorResult>(
+    MaterialPageRoute<ProfileEditorResult>(
+      fullscreenDialog: true,
+      builder: (_) => ProfileEditor(profile: blankProfile(), isNew: true),
+    ),
+  );
+}
+
 class ProfileEditor extends ConsumerStatefulWidget {
-  const ProfileEditor({super.key, required this.profile});
+  const ProfileEditor({super.key, required this.profile, this.isNew = false});
 
   final SavedProfile profile;
+
+  /// When true the editor renders in CREATE mode: blank starting fields, no
+  /// delete action, "Edit profile" → "New connection" title (#583).
+  final bool isNew;
 
   @override
   ConsumerState<ProfileEditor> createState() => _ProfileEditorState();
@@ -113,6 +155,24 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
   }
 
   Future<void> _save() async {
+    final saved = await _persist();
+    if (saved == null || !mounted) return;
+    Navigator.of(context).pop(const ProfileEditorResult(saved: true));
+  }
+
+  /// Save & connect (#583): persist the profile then hand it back to the
+  /// chooser so it connects via the shared connect path (host-key prompt +
+  /// initial-command arming included). The editor is the new-connection entry
+  /// now that the inline form is gone.
+  Future<void> _saveAndConnect() async {
+    final saved = await _persist();
+    if (saved == null || !mounted) return;
+    Navigator.of(context).pop(ProfileEditorResult(saved: true, connect: saved));
+  }
+
+  /// Persist the current fields to the store + vault. Returns the saved
+  /// profile on success, or null when validation failed (caller stays open).
+  Future<SavedProfile?> _persist() async {
     final host = _hostCtrl.text.trim();
     final username = _userCtrl.text.trim();
     final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
@@ -120,7 +180,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Host and username are required')),
       );
-      return;
+      return null;
     }
 
     setState(() => _busy = true);
@@ -192,8 +252,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
             'hasVaultId=${vaultId != null} hasKeyVaultId=${keyVaultId != null}',
       );
       ref.invalidate(savedProfilesProvider);
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
+      return updated;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -206,7 +265,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     await store.remove(host: p.host, port: p.port, username: p.username);
     ref.invalidate(savedProfilesProvider);
     if (!mounted) return;
-    Navigator.of(context).pop(true);
+    Navigator.of(context).pop(const ProfileEditorResult(saved: true));
   }
 
   @override
@@ -215,14 +274,16 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     return Scaffold(
       key: const Key('profile-editor'),
       appBar: AppBar(
-        title: const Text('Edit profile'),
+        title: Text(widget.isNew ? 'New connection' : 'Edit profile'),
         actions: [
-          IconButton(
-            key: const Key('profile-editor-delete'),
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete profile',
-            onPressed: _busy ? null : _delete,
-          ),
+          // No delete in create mode — there's nothing persisted yet (#583).
+          if (!widget.isNew)
+            IconButton(
+              key: const Key('profile-editor-delete'),
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Delete profile',
+              onPressed: _busy ? null : _delete,
+            ),
         ],
       ),
       body: SafeArea(
@@ -360,7 +421,18 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
                 enableSuggestions: false,
               ),
               const SizedBox(height: 20),
+              // Save & connect (#583): the editor is the new-connection entry
+              // now that the inline form is gone. `connect-submit` key keeps the
+              // emulator connect smokes addressable. Connects via the chooser's
+              // shared path (host-key prompt + initial-command arming).
               FilledButton.icon(
+                key: const Key('connect-submit'),
+                onPressed: _busy ? null : _saveAndConnect,
+                icon: const Icon(Icons.power_settings_new),
+                label: Text(_busy ? 'Connecting…' : 'Save & connect'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
                 key: const Key('profile-editor-save'),
                 onPressed: _busy ? null : _save,
                 icon: const Icon(Icons.save),
