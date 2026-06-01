@@ -72,6 +72,24 @@ fi
 
 NOTES_FILE="${REPO_ROOT}/native-release-notes.md"
 
+# Staleness guard (the recurring miss the owner caught: shipping new APKs while
+# the "What to verify" notes stayed stale). If native/lib (app code) has commits
+# NEWER than the last commit that touched native-release-notes.md, the notes are
+# probably out of date for this build — warn LOUDLY. Best-effort: a git failure
+# (e.g. shallow checkout) just skips the check rather than blocking a release.
+check_notes_freshness() {
+  local notes_commit lib_commit
+  notes_commit="$(git -C "$REPO_ROOT" log -1 --format=%ct -- native-release-notes.md 2>/dev/null || true)"
+  lib_commit="$(git -C "$REPO_ROOT" log -1 --format=%ct -- native/lib 2>/dev/null || true)"
+  if [[ -n "$notes_commit" && -n "$lib_commit" && "$lib_commit" -gt "$notes_commit" ]]; then
+    echo "! WARNING: native-release-notes.md looks STALE — native/lib changed more" >&2
+    echo "!   recently than the release notes. The 'What to verify' list on the" >&2
+    echo "!   install page may not reflect this build. Update native-release-notes.md" >&2
+    echo "!   (top section) before shipping." >&2
+  fi
+}
+check_notes_freshness
+
 # Minimal HTML escape (& < >).
 esc() {
   sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
