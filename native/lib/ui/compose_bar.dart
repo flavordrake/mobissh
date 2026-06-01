@@ -79,6 +79,13 @@ class _ComposeBarState extends State<ComposeBar> {
   void initState() {
     super.initState();
     _controller.addListener(_onChanged);
+    // Grab focus + raise the keyboard the instant the compose bar opens, so the
+    // owner can go straight into voice/swipe typing (autofocus alone loses the
+    // race against the terminal's focus management). Request after the first
+    // frame, once the FocusNode is attached.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   @override
