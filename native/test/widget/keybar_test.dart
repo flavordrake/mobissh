@@ -34,20 +34,88 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  group('kDefaultKeybarKeys layout (#606)', () {
+    test(
+      'control sequences are grouped at the END, after all nav/symbol keys',
+      () {
+        final ids = kDefaultKeybarKeys.map((k) => k.id).toList();
+        final ctrlIds = ['keyCtrlC', 'keyCtrlZ', 'keyCtrlB', 'keyCtrlD'];
+        // Every control key must come after every non-control key.
+        final lastNonCtrlIndex = ids.lastIndexWhere(
+          (id) => !ctrlIds.contains(id),
+        );
+        final firstCtrlIndex = ids.indexWhere((id) => ctrlIds.contains(id));
+        expect(
+          firstCtrlIndex,
+          greaterThan(lastNonCtrlIndex),
+          reason:
+              'control keys ($ctrlIds) must be grouped at the end, not '
+              'interspersed among nav/symbol keys. Order was: $ids',
+        );
+        // And they must be contiguous at the tail.
+        expect(
+          ids.sublist(ids.length - ctrlIds.length),
+          equals(ctrlIds),
+          reason: 'control keys should be the final contiguous block',
+        );
+      },
+    );
+
+    test('default set includes Esc, Tab, four arrows, Home, End', () {
+      final ids = kDefaultKeybarKeys.map((k) => k.id).toSet();
+      for (final required in [
+        'keyEsc',
+        'keyTab',
+        'keyLeft',
+        'keyUp',
+        'keyDown',
+        'keyRight',
+        'keyHome',
+        'keyEnd',
+      ]) {
+        expect(
+          ids,
+          contains(required),
+          reason: 'default keybar must include $required',
+        );
+      }
+    });
+
+    test('all four arrows use the monochrome icon path (icon != null)', () {
+      final arrows = kDefaultKeybarKeys
+          .where(
+            (k) => ['keyLeft', 'keyUp', 'keyDown', 'keyRight'].contains(k.id),
+          )
+          .toList();
+      expect(arrows.length, 4);
+      for (final a in arrows) {
+        expect(
+          a.icon,
+          isNotNull,
+          reason:
+              '${a.id} must render as a theme-tinted Material icon, not '
+              'a unicode glyph that the platform colorizes inconsistently',
+        );
+      }
+    });
+  });
+
   group('Keybar widget', () {
-    testWidgets('renders without throwing for an active session', (tester) async {
+    testWidgets('renders without throwing for an active session', (
+      tester,
+    ) async {
       final pair = InMemoryGatewayPair();
       addTearDown(() async {
         await pair.dispose();
       });
       final container = ProviderContainer(
-        overrides: [
-          taskSshGatewayProvider.overrideWithValue(pair.uiSide),
-        ],
+        overrides: [taskSshGatewayProvider.overrideWithValue(pair.uiSide)],
       );
       addTearDown(container.dispose);
 
-      final entry = container.read(sessionsProvider.notifier).addOrActivate(
+      final entry = container
+          .read(sessionsProvider.notifier)
+          .addOrActivate(
             const SshConnectParams(
               host: 'h',
               port: 22,
@@ -59,7 +127,9 @@ void main() {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: MaterialApp(home: Scaffold(body: Keybar(activeEntry: entry))),
+          child: MaterialApp(
+            home: Scaffold(body: Keybar(activeEntry: entry)),
+          ),
         ),
       );
       await _pumpFrames(tester);
