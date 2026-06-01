@@ -18,8 +18,6 @@
 //
 // Bridge: scripts/native-connect-test.sh (127.0.0.1:2222 → socat → test-sshd).
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -84,20 +82,21 @@ void main() {
     final entry = container.read(sessionsProvider).active;
     expect(entry, isNotNull, reason: 'no active session after connect');
 
-    // Capture everything the task side streams to the UI terminal.
-    final out = <int>[];
-    final sub = entry!.proxy.output.listen(out.addAll);
-    addTearDown(sub.cancel);
-
-    // The initial command ran iff the marker shows up TWICE: once in the echoed
-    // command line (`echo MARKER`) and once in its stdout (`MARKER`). A single
-    // occurrence would just be the command line; the run-on-connect was dropped.
+    // The run-on-connect command fires on shell-ready DURING connect, which can
+    // be BEFORE this test gets to subscribe. proxy.output is a broadcast stream
+    // (drops events while no one is listening), so a listener attached here
+    // races the command's echo and can miss it — flaky under load. Assert
+    // against the proxy's cached scrollbackTail instead: it accumulates from
+    // session creation (the entry's own terminal subscription is wired then)
+    // and is independent of when this test looks. The marker shows up TWICE —
+    // once in the echoed command line (`echo MARKER`) and once in its stdout
+    // (`MARKER`); a single occurrence would just be the command line with the
+    // run-on-connect dropped.
     var ran = false;
     for (var i = 0; i < 60; i++) {
       await tester.pump(const Duration(milliseconds: 500));
-      final text = utf8.decode(out, allowMalformed: true);
-      final count = marker.allMatches(text).length;
-      if (count >= 2) {
+      final text = entry!.proxy.snapshot.scrollbackTail;
+      if (marker.allMatches(text).length >= 2) {
         ran = true;
         break;
       }
@@ -107,8 +106,8 @@ void main() {
       isTrue,
       reason:
           'run-on-connect command never executed — its output ($marker) did '
-          'not appear in the shell. The command was dropped before the PTY '
-          'shell opened (#619).',
+          'not appear in the session scrollback. The command was dropped before '
+          'the PTY shell opened (#619).',
     );
   });
 }
