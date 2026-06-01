@@ -292,12 +292,19 @@ void main() {
             'password field present — editor opened in password mode for '
             'a KEY profile (stale authType)',
       );
-      // Back out of the editor before checking the diversity row.
-      final keyBack = find.byTooltip('Back');
-      if (keyBack.evaluate().isNotEmpty) {
-        await tester.tap(keyBack.first);
+      // Back out of the editor before checking the diversity row. The editor
+      // is a `fullscreenDialog` route, so on Android its leading affordance is
+      // a Material CloseButton (X), NOT a Back/Cupertino button — `pageBack()`
+      // looks for a CupertinoNavigationBarBackButton and finds none. Tap the
+      // CloseButton (covers fullscreenDialog on every platform); fall back to
+      // BackButton / a Back tooltip for non-dialog presentations.
+      final keyClose = find.byType(CloseButton);
+      if (keyClose.evaluate().isNotEmpty) {
+        await tester.tap(keyClose.first);
+      } else if (find.byType(BackButton).evaluate().isNotEmpty) {
+        await tester.tap(find.byType(BackButton).first);
       } else {
-        await tester.pageBack();
+        await tester.tap(find.byTooltip('Back').first);
       }
       expect(
         await _pumpUntilGone(
