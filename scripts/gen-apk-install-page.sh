@@ -138,6 +138,30 @@ cat > "$OUT" <<HTMLEOF
   li { margin: 4px 0; }
   .permalink { display: block; margin-top: 16px; color: #58a6ff; text-decoration: none; font-size: 0.9rem; word-break: break-all; }
   .note { color: #8b949e; font-size: 0.82rem; margin-top: 28px; border-top: 1px solid #30363d; padding-top: 14px; }
+  .fb { margin-top: 28px; border-top: 1px solid #30363d; padding-top: 18px; }
+  .fb textarea {
+    width: 100%; min-height: 84px; resize: vertical; box-sizing: border-box;
+    background: #0d1117; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 10px; padding: 10px 12px; font: inherit; margin: 8px 0;
+  }
+  .fb-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .fb label.file {
+    display: inline-block; background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 10px 14px; color: #e6edf3; cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .fb input[type=file] { display: none; }
+  .fb .send {
+    background: #1f6feb; color: #fff; font-weight: 700; border: none;
+    border-radius: 10px; padding: 12px 20px; font-size: 1rem; cursor: pointer;
+    margin-left: auto;
+  }
+  .fb .send:disabled { opacity: 0.5; cursor: default; }
+  .fb .imgname { color: #8b949e; font-size: 0.85rem; word-break: break-all; }
+  .fb .status { margin-top: 10px; font-size: 0.9rem; min-height: 1.2em; }
+  .fb .status.ok { color: #3fb950; }
+  .fb .status.err { color: #f85149; }
+  .fb .scoped { color: #8b949e; font-size: 0.8rem; }
 </style>
 </head>
 <body>
@@ -163,9 +187,30 @@ ${NOTES_HTML}  </ul>
 
   <p class="note">This page is served with no-store caching, so a refresh always reflects the live build. The green button always points at the newest APK; the permalink pins this specific build.</p>
 
+  <!-- Version-scoped feedback (#609): posts to the existing /api/bug-report
+       endpoint with the version field pre-filled to THIS build (stamp +
+       commit), so a report is tied to exactly what was shipping when it was hit.
+       The orchestrator watches test-results/uploads/ and triages each report
+       against the workstream active at that hash. -->
+  <form class="fb" id="fb-form"
+        data-version="${TS} ${GIT_HASH}"
+        data-build="${BUILD_HUMAN}">
+    <h2>Feedback on this build</h2>
+    <p class="scoped">Tagged to build <strong>${BUILD_HUMAN}</strong> · ${GIT_HASH} — so it's scoped to exactly what's shipping now.</p>
+    <textarea id="fb-text" placeholder="What happened / what feels off? (this build)"></textarea>
+    <div class="fb-row">
+      <label class="file" for="fb-img">Attach screenshot</label>
+      <input type="file" id="fb-img" accept="image/*">
+      <span class="imgname" id="fb-imgname"></span>
+      <button type="submit" class="send" id="fb-send">Send feedback</button>
+    </div>
+    <div class="status" id="fb-status"></div>
+  </form>
+
   <!-- Relative "X ago" is computed client-side from the embedded build epoch.
-       Same-origin script (CSP: script-src 'self'); inline JS is blocked. -->
+       Same-origin scripts (CSP: script-src 'self'); inline JS is blocked. -->
   <script src="./native-time.js"></script>
+  <script src="./native-feedback.js"></script>
 </body>
 </html>
 HTMLEOF

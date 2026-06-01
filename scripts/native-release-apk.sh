@@ -59,6 +59,7 @@ docker cp "${PUBLIC_DIR}/${STAMPED}" "${PROD_CONTAINER}:${PROD_PUBLIC}/${STAMPED
 docker cp "${PUBLIC_DIR}/${STABLE}" "${PROD_CONTAINER}:${PROD_PUBLIC}/${STABLE}"
 docker cp "${PUBLIC_DIR}/native.html" "${PROD_CONTAINER}:${PROD_PUBLIC}/native.html"
 docker cp "${PUBLIC_DIR}/native-time.js" "${PROD_CONTAINER}:${PROD_PUBLIC}/native-time.js"
+docker cp "${PUBLIC_DIR}/native-feedback.js" "${PROD_CONTAINER}:${PROD_PUBLIC}/native-feedback.js"
 
 echo "+ PUBLISHED"
 echo "+ install page (bookmark this, refresh for latest):"
