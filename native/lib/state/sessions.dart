@@ -216,7 +216,18 @@ class SessionsNotifier extends Notifier<SessionsState> {
       }
     });
     // Wire terminal keystrokes back through the proxy to the task isolate.
+    //
+    // #624: gate forwarding on a LIVE session. xterm's WheelFixMouseHandler
+    // (#617) emits mouse-wheel SGR reports (`ESC[<64;x;yM`) through this same
+    // `onOutput` path on a scroll gesture. When the PTY is dead
+    // (soft_disconnected / reconnecting / failed / disconnected / idle /
+    // connecting), there is no live shell consuming mouse mode, so those SGR
+    // bodies would land at the (re-opened plain) shell as literal `64;x;yM`
+    // text — exactly the garbage in the bug report. Dropping ALL terminal
+    // output unless `connected` kills this regardless of any stale mouse-mode
+    // on the xterm side, and typing into a dead PTY was never useful anyway.
     terminal.onOutput = (data) {
+      if (proxy.data.state != SshSessionState.connected) return;
       proxy.sendInput(Uint8List.fromList(utf8.encode(data)));
     };
     terminal.onResize = (width, height, pixelWidth, pixelHeight) {

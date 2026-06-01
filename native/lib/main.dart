@@ -80,6 +80,12 @@ class RootRouter extends ConsumerStatefulWidget {
 }
 
 class _RootRouterState extends ConsumerState<RootRouter> {
+  /// Session ids that have been observed in `connected` at least once (#624).
+  /// Lets the router keep the terminal screen mounted for a session that
+  /// dropped (→ disconnected/failed) rather than snapping back to the chooser
+  /// and hiding the disconnect banner. Pruned to live entries each build.
+  final Set<String> _everConnected = <String>{};
+
   @override
   Widget build(BuildContext context) {
     // Touch the keepalive controller so it attaches to the SSH session
@@ -127,13 +133,57 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     });
 
     final entries = ref.watch(sessionsProvider).entries;
+    var showTerminal = false;
     for (final e in entries) {
-      // Watch each session's data so we re-route when any of them connects.
-      final data = ref.watch(sessionDataProvider(e.id)).valueOrNull;
-      if (data?.state == SshSessionState.connected) {
-        return const TerminalScreen();
+      // Watch each session's data so we re-route when any of them connects —
+      // OR when a previously-live session drops (#624).
+      final state =
+          ref.watch(sessionDataProvider(e.id)).valueOrNull?.state ??
+          SshSessionState.idle;
+      if (state == SshSessionState.connected) {
+        // A session reached `connected` at least once. Remember it so a later
+        // drop (→ disconnected/failed) keeps the terminal mounted instead of
+        // snapping back to the chooser (#624 root cause).
+        _everConnected.add(e.id);
+        showTerminal = true;
+        continue;
+      }
+      // #624: a KEPT-but-dead entry must keep the terminal screen mounted so
+      // the disconnect banner shows + the input gate holds, rather than
+      // silently navigating to the chooser leaving no indication. We only do
+      // this for sessions that were ONCE live:
+      //   - softDisconnected / reconnecting are reachable ONLY from `connected`
+      //     (see SshSessionController.handleTransportClosed), so they always
+      //     mean "was live — now dropped".
+      //   - disconnected / failed are ambiguous (a first connect that never
+      //     succeeded also fails), so we additionally require that this id was
+      //     observed `connected` at some point (_everConnected). A never-live
+      //     failed/disconnected entry stays on the chooser so the host-key
+      //     prompt + connect error render there (preserves first-connect UX).
+      // Pre-first-connect states (idle/connecting/authenticating/
+      // awaitingHostKey) NEVER route to the terminal.
+      switch (state) {
+        case SshSessionState.softDisconnected:
+        case SshSessionState.reconnecting:
+          showTerminal = true;
+        case SshSessionState.disconnected:
+        case SshSessionState.failed:
+          if (_everConnected.contains(e.id)) showTerminal = true;
+        case SshSessionState.idle:
+        case SshSessionState.connecting:
+        case SshSessionState.awaitingHostKey:
+        case SshSessionState.authenticating:
+        case SshSessionState.connected:
+          break;
       }
     }
+    // Drop bookkeeping for ids no longer in the collection (close()d sessions)
+    // so the set can't grow unbounded across many connect/close cycles.
+    if (_everConnected.isNotEmpty) {
+      final live = entries.map((e) => e.id).toSet();
+      _everConnected.removeWhere((id) => !live.contains(id));
+    }
+    if (showTerminal) return const TerminalScreen();
     return const ConnectHomePage();
   }
 }
