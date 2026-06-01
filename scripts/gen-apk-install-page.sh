@@ -3,8 +3,16 @@
 #
 # Writes public/native.html: a stable, refreshable URL the owner can bookmark.
 # The server serves it with Cache-Control: no-store, so a browser refresh always
-# shows the NEWEST build — latest timestamp, git hash, and recent native commits
-# — with a big tap-to-install button pointing at the stable mobissh-native.apk.
+# shows the NEWEST build — latest timestamp, git hash, and a curated "What to
+# verify" list — with a big tap-to-install button pointing at the stable
+# mobissh-native.apk.
+#
+# The "What to verify" list comes from the TOP section of native-release-notes.md
+# (its `- ` bullets), NOT from git log. Raw commit subjects (merge commits,
+# test(#..)/CI/refactor noise) are useless for deciding what to tap-test on the
+# device — so the human curates user-facing notes in that file at ship time and
+# this script renders them. Falls back to "(see native-release-notes.md)" if the
+# file or its first section is missing.
 #
 # Why a page (not the raw .apk URL): refreshing a 78MB .apk URL just re-downloads
 # the binary. A page refresh is instant and confirms which build is live before
@@ -32,23 +40,43 @@ STAMPED_APK="${3:?stamped apk filename required}"
 
 GIT_HASH="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
-# Recent native-facing commits as the "what's new" list. Plain text, HTML-escaped
-# below via a here-free sed; we keep it simple and safe (subjects only, no bodies).
-recent_commits() {
-  git -C "$REPO_ROOT" log -8 --pretty=format:'%s' || true
-}
+NOTES_FILE="${REPO_ROOT}/native-release-notes.md"
 
-# Minimal HTML escape for commit subjects (& < >).
+# Minimal HTML escape (& < >).
 esc() {
   sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
-COMMITS_HTML=""
+# The "What to verify" bullets come from the FIRST `## ` section of
+# native-release-notes.md — its `- ` lines, in order, until the next `## `.
+# This is the curated user-facing list; raw git log is not used.
+notes_bullets() {
+  [ -f "$NOTES_FILE" ] || return 0
+  awk '
+    /^## / { if (seen) exit; seen=1; next }
+    seen && /^- / { sub(/^- /, ""); print }
+  ' "$NOTES_FILE"
+}
+
+# Heading shown for the curated section (the first `## ` title, sans marker), so
+# the page reads e.g. "Build 2026-06-01 — reliability sweep (verify on device)".
+notes_heading() {
+  [ -f "$NOTES_FILE" ] || { echo "What to verify"; return 0; }
+  local h
+  h="$(awk '/^## /{sub(/^## /,""); print; exit}' "$NOTES_FILE")"
+  [ -n "$h" ] && echo "$h" || echo "What to verify"
+}
+
+NOTES_HEADING="$(notes_heading | esc)"
+NOTES_HTML=""
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   safe="$(printf '%s' "$line" | esc)"
-  COMMITS_HTML="${COMMITS_HTML}    <li>${safe}</li>"$'\n'
-done < <(recent_commits)
+  NOTES_HTML="${NOTES_HTML}    <li>${safe}</li>"$'\n'
+done < <(notes_bullets)
+if [ -z "$NOTES_HTML" ]; then
+  NOTES_HTML="    <li>(curate user-facing notes in native-release-notes.md)</li>"$'\n'
+fi
 
 # Human-readable build time from the compact stamp (best-effort; show raw too).
 BUILD_LINE="${TS}"
@@ -102,9 +130,9 @@ cat > "$OUT" <<HTMLEOF
     <dt>Commit</dt><dd>${GIT_HASH}</dd>
   </dl>
 
-  <h2>What's new</h2>
+  <h2>What to verify — ${NOTES_HEADING}</h2>
   <ul>
-${COMMITS_HTML}  </ul>
+${NOTES_HTML}  </ul>
 
   <a class="permalink" href="./${STAMPED_APK}" download>Permalink to this exact build: ${STAMPED_APK}</a>
 
