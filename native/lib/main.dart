@@ -15,6 +15,7 @@ import 'ssh/ssh_session.dart';
 import 'state/connection_providers.dart';
 import 'state/keepalive_providers.dart';
 import 'state/lifecycle_providers.dart';
+import 'state/notification_providers.dart';
 import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
@@ -79,6 +80,20 @@ class RootRouter extends ConsumerStatefulWidget {
 
 class _RootRouterState extends ConsumerState<RootRouter> {
   @override
+  void initState() {
+    super.initState();
+    // #575 cold-start: a notification tapped while the app was killed persisted
+    // its sessionId via FlutterForegroundTask.saveData; consume it after the
+    // first frame so any restored sessions exist before we focus one.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        ref.read(notificationFocusRouterProvider).consumePendingFocus(),
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     // Touch the keepalive controller so it attaches to the SSH session
     // controller at app start; this is what starts/stops the foreground
@@ -120,6 +135,12 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         for (final e in ref.read(sessionsProvider).entries) {
           e.proxy.rebind();
         }
+        // #575 warm-resume: if the user got here by tapping a session
+        // notification, focus the originating session. One-shot (takePending
+        // clears) so an ordinary resume doesn't re-focus.
+        unawaited(
+          ref.read(notificationFocusRouterProvider).consumePendingFocus(),
+        );
         setState(() {});
       }
     });

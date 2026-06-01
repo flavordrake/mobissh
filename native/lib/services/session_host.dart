@@ -28,6 +28,9 @@ import '../ssh/ssh_session.dart';
 import '../ssh/ssh_shell.dart';
 import '../ssh/sftp_session.dart';
 import 'session_messages.dart';
+import 'session_notification.dart';
+import 'session_notification_poster.dart';
+import 'session_signal_detector.dart';
 import 'task_ssh_gateway.dart';
 
 /// Factory injected by the UI / tests. Production uses the default which
@@ -57,11 +60,13 @@ class SessionHost {
     SshControllerFactory? controllerFactory,
     SftpSessionOpener? sftpOpener,
     HostShellOpener? shellOpener,
+    SessionNotificationPoster? notificationPoster,
     this.snapshotInterval = const Duration(seconds: 2),
   }) : _gateway = gateway,
        _factory = controllerFactory ?? _defaultControllerFactory,
        _sftpOpener = sftpOpener,
-       _shellOpener = shellOpener ?? _defaultShellOpener {
+       _shellOpener = shellOpener ?? _defaultShellOpener,
+       _notificationPoster = notificationPoster {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
     ctrace('task.host', 'ctor: listening; sending SshTaskReadyEvent');
@@ -83,6 +88,11 @@ class SessionHost {
 
   /// Opens the PTY shell once a session reaches `connected`.
   final HostShellOpener _shellOpener;
+
+  /// Surfaces tappable session notifications (#575). Null in tests / on
+  /// platforms without a foreground service — the host then runs without
+  /// notifications.
+  final SessionNotificationPoster? _notificationPoster;
 
   /// How often a snapshot is pushed to the UI side. Tests use a short
   /// interval; production defaults to two seconds.
@@ -172,7 +182,16 @@ class SessionHost {
       return;
     }
     final controller = _factory();
-    final hosted = _HostedSession(controller: controller);
+    // Human label for notifications (#575): prefer the saved profile title, fall
+    // back to user@host:port (mirrors SessionEntry.label).
+    final label = (cmd.title != null && cmd.title!.isNotEmpty)
+        ? cmd.title!
+        : '${cmd.username}@${cmd.host}:${cmd.port}';
+    final hosted = _HostedSession(controller: controller, label: label);
+    // Detector scans this session's PTY output for OSC-9/BEL "ready" signals.
+    hosted.signalDetector = SessionSignalDetector(
+      onSignal: (signal) => _onSessionSignal(cmd.sessionId, hosted, signal),
+    );
     _sessions[cmd.sessionId] = hosted;
 
     // Forward state transitions back as events.
@@ -192,6 +211,16 @@ class SessionHost {
       // a stall shows WHERE it stopped instead of a blank cursor.
       if (data.state != prevState) {
         _emitConnectStatus(cmd.sessionId, data);
+        // #575: a session that STOPS (disconnected/failed) posts a "disconnected"
+        // notification so the user knows it dropped even while in another app.
+        if (data.state == SshSessionState.disconnected ||
+            data.state == SshSessionState.failed) {
+          _postSessionNotification(
+            cmd.sessionId,
+            hosted,
+            SessionSignalKind.stopped,
+          );
+        }
         prevState = data.state;
       }
       // Drop the prior shell the instant the transport leaves `connected`
@@ -348,6 +377,8 @@ class SessionHost {
         (bytes) {
           hosted.metrics.bytesIn += bytes.length;
           hosted.appendScrollback(bytes);
+          // #575: scan PTY output for OSC-9/BEL "ready for review" signals.
+          hosted.signalDetector?.feed(bytes);
           _gateway.send(
             SshOutputEvent(sessionId: sessionId, bytes: bytes).toJson(),
           );
@@ -406,6 +437,45 @@ class SessionHost {
         line = null;
     }
     if (line != null) _emitStatus(sessionId, '$line\r\n');
+  }
+
+  /// A detector fired a "ready" signal from this session's PTY output (#575).
+  void _onSessionSignal(
+    String sessionId,
+    _HostedSession hosted,
+    SessionSignal signal,
+  ) {
+    _postSessionNotification(
+      sessionId,
+      hosted,
+      signal.kind,
+      message: signal.message,
+    );
+  }
+
+  /// Post a tappable notification for [sessionId] (#575). No-op when no poster
+  /// is wired (tests / desktop). Errors are swallowed — a failed notification
+  /// must never disturb the SSH session.
+  void _postSessionNotification(
+    String sessionId,
+    _HostedSession hosted,
+    SessionSignalKind kind, {
+    String? message,
+  }) {
+    final poster = _notificationPoster;
+    if (poster == null) return;
+    unawaited(
+      poster
+          .notify(
+            sessionId: sessionId,
+            label: hosted.label,
+            kind: kind,
+            message: message,
+          )
+          .catchError((Object e) {
+            ctrace('task.host', 'notify FAILED sid=$sessionId — $e');
+          }),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -687,9 +757,16 @@ class SessionMetrics {
 }
 
 class _HostedSession {
-  _HostedSession({required this.controller});
+  _HostedSession({required this.controller, this.label = ''});
 
   final SshSessionController controller;
+
+  /// Human label for notifications (#575): profile title or user@host:port.
+  final String label;
+
+  /// Per-session PTY signal scanner (#575). Null until a connect sets it.
+  SessionSignalDetector? signalDetector;
+
   StreamSubscription<SshSessionData>? stateSub;
   final SessionMetrics metrics = SessionMetrics();
 
