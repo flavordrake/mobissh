@@ -136,6 +136,12 @@ class _RootRouterState extends ConsumerState<RootRouter> {
   }
 }
 
+/// The cold-start / home view: an uncluttered profile CHOOSER (#583). It hosts
+/// the profile list (tap = connect, pencil = edit), a "New connection"
+/// affordance, and slim Import/Settings/Diagnostics access. The inline connect
+/// form + connection-status panel were removed — the goal of this view is human
+/// DECISION, not data entry. Connection status is shown on the terminal screen
+/// (the router swaps to it the moment any session connects).
 class ConnectHomePage extends ConsumerWidget {
   const ConnectHomePage({super.key});
 
@@ -143,63 +149,7 @@ class ConnectHomePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(title: const Text('MobiSSH')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: const [ConnectForm(), Divider(), _StatusPanel()],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusPanel extends ConsumerWidget {
-  const _StatusPanel();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(sshSessionDataProvider);
-    return async.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Text('Provider error: $e'),
-      ),
-      data: (data) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'State: ${data.state.name}',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            if (data.host != null)
-              Text('Target: ${data.username}@${data.host}:${data.port}'),
-            if (data.remoteVersion != null)
-              Text('Server: ${data.remoteVersion}'),
-            if (data.banner != null && data.banner!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              const Text('Banner:'),
-              SelectableText(
-                data.banner!,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
-            ],
-            if (data.error != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Error: ${data.error}',
-                style: const TextStyle(color: Colors.redAccent),
-              ),
-            ],
-          ],
-        ),
-      ),
+      body: const SafeArea(child: SingleChildScrollView(child: ConnectForm())),
     );
   }
 }

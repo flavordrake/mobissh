@@ -1,10 +1,22 @@
-// Connect form — host/port/username/password (or key) + Submit.
+// Profile chooser — the home/connect view (#583).
 //
-// Phase 1 (#501): no profiles, no persistence. Submit calls the SshSession
-// controller; UI mirrors lifecycle state below the form.
+// History: this widget used to be a full inline connect FORM
+// (host/port/username/auth fields + a Connect button). #580 added tap-a-profile
+// = connect and a pencil = full profile editor, which made the inline form
+// redundant. #583 strips the form: the view is now an uncluttered profile
+// CHOOSER for human decision —
+//   - the saved-profile list (tap = connect, pencil = edit), and
+//   - a single "New" affordance that opens the profile editor in create mode
+//     (the editor is the new / ad-hoc connection entry now), and
+//   - slim access to Import-from-PWA, Settings, and Diagnostics.
 //
-// Profile import (Phase 3 of #501): saved profiles rendered above the form;
-// tapping one populates host/port/username (user still types credentials).
+// CRITICAL plumbing kept here (the relocation trap): the host-key prompt
+// listener (`ref.listen(sshSessionDataProvider)` → [_handleHostKeyPrompt]) and
+// the shared connect dispatch ([_connectWithParams] / [_connectFromProfile] +
+// initial-command arming) live in this State so tap-to-connect AND
+// editor-"Save & connect" both prompt for unknown host keys and run the initial
+// command. The class name is kept as `ConnectForm` (it's referenced by
+// NewSessionPage + tests) even though it no longer renders a form.
 
 import 'dart:async';
 import 'dart:convert';
@@ -29,8 +41,6 @@ import 'profile_editor.dart';
 import 'profile_list.dart';
 import 'settings_panel.dart';
 
-enum _AuthKind { password, key }
-
 class ConnectForm extends ConsumerStatefulWidget {
   const ConnectForm({super.key});
 
@@ -39,56 +49,34 @@ class ConnectForm extends ConsumerStatefulWidget {
 }
 
 class _ConnectFormState extends ConsumerState<ConnectForm> {
-  final _hostCtrl = TextEditingController(text: 'test-sshd');
-  final _portCtrl = TextEditingController(text: '22');
-  final _userCtrl = TextEditingController(text: 'testuser');
-  final _passwordCtrl = TextEditingController();
-  final _keyCtrl = TextEditingController();
-  final _passphraseCtrl = TextEditingController();
-  // Optional command run once after the session connects (#558). Prefilled
-  // from an applied profile's `initialCommand`; empty by default.
-  final _initialCommandCtrl = TextEditingController();
-
-  _AuthKind _authKind = _AuthKind.password;
   bool _busy = false;
 
   /// Active subscription / completer for the "pop on connected" wait. Stored
-  /// so [dispose] can tear them down cleanly when the form unmounts before the
-  /// session reaches `connected` (otherwise the test binding flags a pending
-  /// timer or the awaiter hangs forever).
+  /// so [dispose] can tear them down cleanly when the chooser unmounts before
+  /// the session reaches `connected` (otherwise the test binding flags a
+  /// pending timer or the awaiter hangs forever).
   StreamSubscription<SshSessionData>? _connectedSub;
   Completer<bool>? _connectedCompleter;
 
-  /// Last saved profile applied to the form, if any. Carries the human title
-  /// through to the session (#518). Cleared (effectively) by drift-checking
-  /// host/port/username at submit time so the title doesn't lie about the
-  /// connection target.
-  SavedProfile? _appliedProfile;
-
   @override
   void dispose() {
-    ctrace('ui.form', 'dispose: ConnectForm state being torn down');
-    // Unblock any in-flight "wait for connected" await BEFORE the controllers
-    // tear down, so _popWhenConnected's continuation runs against a dead
-    // widget but doesn't leak a Stream subscription or hang the future.
+    ctrace('ui.chooser', 'dispose: ProfileChooser state being torn down');
+    // Unblock any in-flight "wait for connected" await so the future doesn't
+    // leak a Stream subscription or hang.
     if (_connectedCompleter != null && !_connectedCompleter!.isCompleted) {
       _connectedCompleter!.complete(false);
     }
     _connectedSub?.cancel();
     _connectedSub = null;
-    _hostCtrl.dispose();
-    _portCtrl.dispose();
-    _userCtrl.dispose();
-    _passwordCtrl.dispose();
-    _keyCtrl.dispose();
-    _passphraseCtrl.dispose();
-    _initialCommandCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Watch for host-key prompts; show dialog when one appears.
+    // CRITICAL (relocation trap): watch for host-key prompts so tapping a
+    // profile (or "Save & connect" from the editor) still pops the Trust
+    // dialog for an unknown host. This listener MUST live on the always-mounted
+    // chooser — it was previously on the now-removed inline form.
     ref.listen<AsyncValue<SshSessionData>>(sshSessionDataProvider, (
       prev,
       next,
@@ -105,9 +93,22 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Saved profiles + import action. Collapsed-to-empty-hint when the
-          // user has no imported profiles yet.
+          // Saved profiles: tap a row = connect, pencil = edit. Empty-state
+          // hint nudges Import when the user has none yet.
           ProfileList(onConnect: _connectFromProfile, onEdit: _editProfile),
+          const SizedBox(height: 4),
+          // The single "New" affordance: opens the editor in create mode. The
+          // editor is the ad-hoc / new-connection entry now that the inline
+          // form is gone (#583).
+          FilledButton.icon(
+            key: const Key('new-connection'),
+            onPressed: _busy ? null : _newConnection,
+            icon: const Icon(Icons.add),
+            label: Text(_busy ? 'Connecting…' : 'New connection'),
+          ),
+          const SizedBox(height: 4),
+          // Slim secondary access: Import-from-PWA. Settings + Diagnostics stay
+          // below as compact disclosures — not a wall of fields.
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
@@ -117,110 +118,6 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               label: const Text('Import from PWA'),
             ),
           ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  key: const Key('connect-host'),
-                  controller: _hostCtrl,
-                  decoration: const InputDecoration(labelText: 'Host'),
-                  textInputAction: TextInputAction.next,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 1,
-                child: TextField(
-                  key: const Key('connect-port'),
-                  controller: _portCtrl,
-                  decoration: const InputDecoration(labelText: 'Port'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            key: const Key('connect-username'),
-            controller: _userCtrl,
-            decoration: const InputDecoration(labelText: 'Username'),
-            textInputAction: TextInputAction.next,
-            autocorrect: false,
-            enableSuggestions: false,
-          ),
-          const SizedBox(height: 12),
-          SegmentedButton<_AuthKind>(
-            segments: const [
-              ButtonSegment(
-                value: _AuthKind.password,
-                label: Text('Password'),
-                icon: Icon(Icons.password),
-              ),
-              ButtonSegment(
-                value: _AuthKind.key,
-                label: Text('Key'),
-                icon: Icon(Icons.vpn_key),
-              ),
-            ],
-            selected: {_authKind},
-            onSelectionChanged: (s) => setState(() => _authKind = s.first),
-          ),
-          const SizedBox(height: 8),
-          if (_authKind == _AuthKind.password)
-            TextField(
-              key: const Key('connect-password'),
-              controller: _passwordCtrl,
-              decoration: const InputDecoration(labelText: 'Password'),
-              obscureText: true,
-              autocorrect: false,
-              enableSuggestions: false,
-            )
-          else ...[
-            TextField(
-              key: const Key('connect-key'),
-              controller: _keyCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Private key (PEM)',
-                hintText: '-----BEGIN OPENSSH PRIVATE KEY-----',
-              ),
-              maxLines: 4,
-              autocorrect: false,
-              enableSuggestions: false,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _passphraseCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Key passphrase (optional)',
-              ),
-              obscureText: true,
-              autocorrect: false,
-              enableSuggestions: false,
-            ),
-          ],
-          const SizedBox(height: 12),
-          TextField(
-            key: const Key('connect-initial-command'),
-            controller: _initialCommandCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Initial command (optional)',
-              hintText: 'e.g. tmux attach || tmux',
-            ),
-            autocorrect: false,
-            enableSuggestions: false,
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            key: const Key('connect-submit'),
-            onPressed: _canSubmit() ? () => _submit() : null,
-            icon: const Icon(Icons.power_settings_new),
-            label: Text(_busy ? 'Connecting...' : 'Connect'),
-          ),
-          const SizedBox(height: 8),
           const SettingsPanel(),
           const DiagnosticsSection(),
         ],
@@ -228,110 +125,49 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     );
   }
 
-  /// Whether the Connect button is enabled. Gated only on this form's own
-  /// in-flight submit (`_busy`) — NOT on any global/active session state.
-  ///
-  /// Multi-session: the form may be a pushed "New session" page opened while
-  /// other sessions are already `connected`. Gating on the legacy single-
-  /// session shim (`sshSessionDataProvider`) disabled the button whenever any
-  /// session was connected, making it impossible to start a 2nd session.
-  /// `addOrActivate` dedups by host:port:username and the task-side controller
-  /// no-ops a re-connect, so an always-enabled button is safe.
-  bool _canSubmit() => !_busy;
-
-  Future<void> _submit() async {
-    final host = _hostCtrl.text.trim();
-    final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
-    final username = _userCtrl.text.trim();
-
-    if (host.isEmpty || username.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Host and username are required')),
-      );
-      return;
+  /// "New" affordance → open the editor in CREATE mode. On "Save & connect" the
+  /// editor returns the saved profile and we route it through the same connect
+  /// path as a profile-row tap. On plain "Save" we just refresh the list.
+  Future<void> _newConnection() async {
+    final result = await showProfileEditorForNew(context);
+    if (!mounted || result == null) return;
+    if (result.saved) {
+      ref.invalidate(savedProfilesProvider);
     }
-
-    // Credential-presence trace (lengths only — never values). Tells us via
-    // the on-device Connect log whether the vault prefill actually populated
-    // the fields: pwLen=0 / keyLen=0 means prefill returned empty (secret not
-    // found / read failed), vs a non-zero length meaning creds are present and
-    // the server rejected them. (#542/#543 diagnosis of "all auth methods
-    // failed after import".)
-    ctrace(
-      'ui.form',
-      'auth=${_authKind.name} pwLen=${_passwordCtrl.text.length} '
-          'keyLen=${_keyCtrl.text.length} ppLen=${_passphraseCtrl.text.length}',
-    );
-    final SshAuth auth;
-    if (_authKind == _AuthKind.password) {
-      auth = SshAuth.password(_passwordCtrl.text);
-    } else {
-      auth = SshAuth.key(
-        Uint8List.fromList(utf8.encode(_keyCtrl.text)),
-        passphrase: _passphraseCtrl.text.isEmpty ? null : _passphraseCtrl.text,
-      );
+    final toConnect = result.connect;
+    if (toConnect != null) {
+      await _connectFromProfile(toConnect);
     }
-
-    final params = SshConnectParams(
-      host: host,
-      port: port,
-      username: username,
-      auth: auth,
-    );
-
-    ctrace(
-      'ui.form',
-      'submit host=$host port=$port user=$username auth=${_authKind.name}',
-    );
-    await _connectWithParams(
-      params,
-      title: _profileTitleForCurrentForm(),
-      initialCommand: _initialCommandCtrl.text,
-    );
   }
 
-  /// Shared connect path used by BOTH the form Submit and a saved-profile row
-  /// tap (#579). Routes through the sessions notifier (dedupe by
+  /// Shared connect path used by BOTH a saved-profile row tap and the editor's
+  /// "Save & connect". Routes through the sessions notifier (dedupe by
   /// host:port:user, per-session proxy), arms the run-on-connect command, then
-  /// dispatches `proxy.connect`. When this form was pushed as a "New session"
-  /// route, it pops back to the terminal once the session CONNECTS.
-  ///
-  /// Keeping this separate from [_submit] means tapping a profile reuses the
-  /// exact same connect machinery as the manual form — no second code path to
-  /// drift.
+  /// dispatches `proxy.connect`. When this chooser was pushed as a "New
+  /// session" route, it pops back to the terminal once the session CONNECTS.
   Future<void> _connectWithParams(
     SshConnectParams params, {
     String? title,
     required String initialCommand,
   }) async {
-    // Captured before the async gap so we can pop a pushed "New session"
-    // route after dispatching connect without touching `context` post-await.
+    // Captured before the async gap so we can pop a pushed "New session" route
+    // after dispatching connect without touching `context` post-await.
     final navigator = Navigator.of(context);
 
     setState(() => _busy = true);
     try {
-      // Multi-session (#511): route through the sessions notifier so we
-      // dedupe by host:port:user and create a per-session proxy. If a
-      // matching session already exists, addOrActivate returns it without
-      // reconnecting (acceptance bullet 4). The optional title carries the
-      // saved profile's display name into the session (#518).
-      //
-      // #533: connect now dispatches across the task gateway via the per-
-      // session [SshSessionProxy] — the underlying `SshSessionController`
-      // lives in the task isolate, not the UI.
+      // Multi-session (#511): route through the sessions notifier so we dedupe
+      // by host:port:user and create a per-session proxy. If a matching session
+      // already exists, addOrActivate returns it without reconnecting. The
+      // optional title carries the saved profile's display name into the
+      // session (#518).
       final entry = ref
           .read(sessionsProvider.notifier)
           .addOrActivate(params, title: title);
-      // Only fire connect for entries that haven't been kicked off yet —
-      // idle/failed/disconnected states are safe to re-drive; connected/
-      // connecting/authenticating are no-ops inside the task-side controller
-      // itself.
-      ctrace('ui.form', 'entry=${entry.id} → proxy.connect()');
+      ctrace('ui.chooser', 'entry=${entry.id} → proxy.connect()');
       // Arm the run-on-connect command (#558) BEFORE dispatching connect, so
       // the one-shot listener is attached before the task side can emit
-      // `connected`. The runner fires exactly once on the first `connected`
-      // transition for this session id and guards against re-fire on the
-      // #551 reconnect rebind. No-op when the field is empty.
+      // `connected`. No-op when the field is empty.
       ref
           .read(initialCommandRunnerProvider)
           .arm(
@@ -340,18 +176,15 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             command: initialCommand,
           );
       await entry.proxy.connect(params);
-      // Once we've proven we have network reachability, fire-and-forget a
-      // crash upload sweep. Tailscale being down is the common case at boot
-      // and the second-chance path matters more than blocking the UI.
+      // Once we've proven network reachability, fire-and-forget a crash upload
+      // sweep. Tailscale being down at boot is the common case.
       unawaited(CrashReporter.uploadPending());
-      // When this form was pushed as a "New session" route (over a live
-      // TerminalScreen), return to the terminal once the session CONNECTS —
-      // not on dispatch. Popping early would unmount the form mid-handshake,
-      // so a host-key prompt for the new session would have no form to render
-      // on (and touching `ref` after dispose throws). Staying mounted lets the
-      // form show the trust prompt; once connected we pop back to the terminal.
-      // The root form (ConnectHomePage) can't pop, so this is skipped there —
-      // the router swaps to the terminal screen on `connected` as before.
+      // When this chooser was pushed as a "New session" route (over a live
+      // TerminalScreen), return to the terminal once the session CONNECTS — not
+      // on dispatch. Staying mounted lets the chooser show the trust prompt;
+      // once connected we pop back. The root chooser (ConnectHomePage) can't
+      // pop, so this is skipped there — the router swaps to the terminal screen
+      // on `connected` as before.
       if (navigator.canPop()) {
         await _popWhenConnected(entry, navigator);
       }
@@ -360,30 +193,27 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     }
   }
 
-  /// Wait for the new session's proxy to reach `connected`, then pop the
-  /// pushed "New session" route back to the terminal. Stays mounted while
-  /// waiting so host-key prompts still render on this form. On `failed` we
-  /// stop and stay put so the user sees the error and can retry. On dispose
-  /// (e.g. the user backs out), the completer is short-circuited so the
-  /// awaiter unblocks without leaking the subscription.
+  /// Wait for the new session's proxy to reach `connected`, then pop the pushed
+  /// "New session" route back to the terminal. Stays mounted while waiting so
+  /// host-key prompts still render. On `failed` we stop and stay put so the
+  /// user sees the error. On dispose the completer is short-circuited.
   Future<void> _popWhenConnected(
     SessionEntry entry,
     NavigatorState navigator,
   ) async {
     ctrace(
-      'ui.form',
+      'ui.chooser',
       'popWhenConnected: enter sid=${entry.id} state=${entry.proxy.data.state.name}',
     );
-    // Already there? Pop now.
     if (entry.proxy.data.state == SshSessionState.connected) {
-      ctrace('ui.form', 'popWhenConnected: already connected → pop');
+      ctrace('ui.chooser', 'popWhenConnected: already connected → pop');
       if (mounted && navigator.canPop()) navigator.pop();
       return;
     }
     final completer = Completer<bool>();
     _connectedCompleter = completer;
     _connectedSub = entry.proxy.stream.listen((data) {
-      ctrace('ui.form', 'popWhenConnected: state=${data.state.name}');
+      ctrace('ui.chooser', 'popWhenConnected: state=${data.state.name}');
       if (completer.isCompleted) return;
       if (data.state == SshSessionState.connected) {
         completer.complete(true);
@@ -393,71 +223,27 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     });
     final connected = await completer.future;
     ctrace(
-      'ui.form',
+      'ui.chooser',
       'popWhenConnected: completer=$connected mounted=$mounted canPop=${navigator.canPop()}',
     );
     await _connectedSub?.cancel();
     _connectedSub = null;
     _connectedCompleter = null;
     if (connected && mounted && navigator.canPop()) {
-      ctrace('ui.form', 'popWhenConnected: navigator.pop() now');
+      ctrace('ui.chooser', 'popWhenConnected: navigator.pop() now');
       navigator.pop();
     }
   }
 
-  /// Populate the form with metadata from a saved profile. When the
-  /// profile has a `vaultId` or `keyVaultId`, look up the decrypted secret
-  /// in `flutter_secure_storage` and prefill the password / key fields.
-  /// The user can still edit them before submitting.
-  ///
-  /// Both ids are consulted because a `key`-auth profile imported from the
-  /// PWA stores the private-key blob under `keyVaultId`, not `vaultId`
-  /// (#519).
-  void _applyProfileToForm(SavedProfile profile) {
-    setState(() {
-      _appliedProfile = profile;
-      _hostCtrl.text = profile.host;
-      _portCtrl.text = profile.port.toString();
-      _userCtrl.text = profile.username;
-      // Prefill the optional run-on-connect command (#558). Empty when the
-      // profile carries none.
-      _initialCommandCtrl.text = profile.initialCommand ?? '';
-      // Pick the auth mode. Prefer the explicit authType, but if it's missing
-      // or ambiguous (e.g. a profile imported by an older build that persisted
-      // before authType round-tripped), INFER from keyVaultId: a profile that
-      // carries a key-blob reference is a key-auth profile. Without this, such
-      // a profile defaults to password mode with an empty password field and
-      // every connect fails with "all authentication methods failed" against a
-      // publickey-only host.
-      if (profile.authType == 'key') {
-        _authKind = _AuthKind.key;
-      } else if (profile.authType == 'password') {
-        _authKind = _AuthKind.password;
-      } else if (profile.keyVaultId != null && profile.keyVaultId!.isNotEmpty) {
-        _authKind = _AuthKind.key;
-      } else {
-        _authKind = _AuthKind.password;
-      }
-      ctrace(
-        'ui.form',
-        'applyProfile ${profile.host} authType=${profile.authType} '
-            'keyVaultId=${profile.keyVaultId != null} → mode=${_authKind.name}',
-      );
-    });
-    if (profile.vaultId != null || profile.keyVaultId != null) {
-      unawaited(_prefillFromVault(profile));
-    }
-  }
-
-  /// #579 tap-to-connect. Resolve the profile's connection params + stored
-  /// credentials, then connect immediately via the shared connect path — no
-  /// separate Connect tap, no form round-trip.
+  /// #579 tap-to-connect / #583 editor "Save & connect". Resolve the profile's
+  /// connection params + stored credentials, then connect immediately via the
+  /// shared connect path.
   ///
   /// Credential resolution mirrors the PWA's `connectFromProfile`: load creds
-  /// from the vault by vaultId/keyVaultId. If NO stored credentials are found
-  /// (nothing saved on this device, or the secret read came back empty), fall
-  /// back to populating the form + a snackbar so the user can type them — we
-  /// never silently no-op.
+  /// from the vault by vaultId/keyVaultId. If NO stored credentials are found,
+  /// fall back to opening the profile editor (edit mode for this profile) so
+  /// the user can add the missing credential — NOT a silent no-op, and no
+  /// dangling reference to the removed inline form (#583).
   Future<void> _connectFromProfile(SavedProfile profile) async {
     final secrets = ref.read(secretsStoreProvider);
     final creds = await loadProfileCredentials(secrets, profile);
@@ -477,19 +263,19 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         : (creds.password != null && creds.password!.isNotEmpty);
 
     if (!hasUsableCreds) {
-      // No stored secret — fall back to the manual form (prefilled metadata)
-      // so the user can enter credentials. Matches the PWA "not saved on this
-      // browser" branch. NOT a silent failure.
+      // No stored secret — open the editor so the user can enter credentials.
+      // Matches the PWA "not saved on this browser" branch. NOT a silent
+      // failure. The editor's "Save & connect" then routes back here.
       ctrace(
-        'ui.form',
-        'connectFromProfile ${profile.host}: no stored creds → form fallback',
+        'ui.chooser',
+        'connectFromProfile ${profile.host}: no stored creds → editor',
       );
-      _applyProfileToForm(profile);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('No saved credentials — enter them to connect.'),
         ),
       );
+      await _editProfile(profile);
       return;
     }
 
@@ -512,12 +298,9 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       auth: auth,
     );
     ctrace(
-      'ui.form',
+      'ui.chooser',
       'connectFromProfile ${profile.host} authType=${wantsKey ? 'key' : 'password'} → connect',
     );
-    // Reflect the chosen profile in the form (and remember it for the session
-    // title) so the UI stays consistent if the user backs out.
-    _applyProfileToForm(profile);
     await _connectWithParams(
       params,
       title: profile.title,
@@ -525,47 +308,19 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     );
   }
 
-  /// #579 edit pencil. Open the full profile editor; on save, refresh the
-  /// saved-profile list.
+  /// #579 edit pencil / #583 no-creds fallback. Open the full profile editor;
+  /// on save, refresh the saved-profile list, and if the user chose "Save &
+  /// connect", route through the shared connect path.
   Future<void> _editProfile(SavedProfile profile) async {
-    final saved = await showProfileEditor(context, profile);
-    if (!mounted) return;
-    if (saved == true) {
+    final result = await showProfileEditor(context, profile);
+    if (!mounted || result == null) return;
+    if (result.saved) {
       ref.invalidate(savedProfilesProvider);
     }
-  }
-
-  /// Return the saved profile title to attach to the new session — but only
-  /// if the user hasn't drifted away from the applied profile's host/port/
-  /// username. If they've edited anything, return null so the session falls
-  /// back to `username@host:port` (#518).
-  String? _profileTitleForCurrentForm() {
-    final p = _appliedProfile;
-    if (p == null) return null;
-    final host = _hostCtrl.text.trim();
-    final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
-    final username = _userCtrl.text.trim();
-    if (p.host == host && p.port == port && p.username == username) {
-      return p.title;
+    final toConnect = result.connect;
+    if (toConnect != null) {
+      await _connectFromProfile(toConnect);
     }
-    return null;
-  }
-
-  Future<void> _prefillFromVault(SavedProfile profile) async {
-    final secrets = ref.read(secretsStoreProvider);
-    final creds = await loadProfileCredentials(secrets, profile);
-    if (!mounted || creds.isEmpty) return;
-    setState(() {
-      final pw = creds.password;
-      if (pw != null) _passwordCtrl.text = pw;
-      final key = creds.privateKey;
-      if (key != null) {
-        _keyCtrl.text = key;
-        _authKind = _AuthKind.key;
-      }
-      final passphrase = creds.passphrase;
-      if (passphrase != null) _passphraseCtrl.text = passphrase;
-    });
   }
 
   Future<void> _openImportDialog() async {
@@ -586,18 +341,9 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {
     final accepted = await showHostKeyDialog(context, pending: pending);
-    // Defensive — the form can be popped (e.g. New session route) while the
+    // Defensive — the chooser can be popped (e.g. New session route) while the
     // dialog is in-flight. Touching `ref` after dispose throws StateError.
-    // The new-session flow now stays mounted until connected, so this only
-    // fires on edge cases (user backs out mid-handshake); skipping the
-    // decision lets the task-side controller fall through its own timeout.
     if (!mounted) return;
-    // #533: host-key over-IPC is a follow-up — the proxy's accept/reject
-    // are no-ops today because the gateway envelope contract doesn't carry
-    // `pendingHostKey` state. The trust-on-first-use cache in the task-side
-    // controller handles cached fingerprints; first-time prompts surface
-    // through the dialog but the decision currently round-trips only through
-    // the in-process host. See [SshSessionProxy.acceptHostKey].
     final proxy = ref.read(sshSessionProxyProvider);
     if (accepted) {
       proxy.acceptHostKey();
@@ -607,15 +353,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   }
 }
 
-/// Full-screen page hosting a [ConnectForm] for starting an ADDITIONAL session
-/// while others are already connected. Pushed from the session menu's
-/// "New session" tile (the goal's leg 2: connect a second session).
-///
-/// Without this, the `RootRouter` shows the terminal screen the moment any
-/// session connects, so there's no way back to the connect form to start a
-/// second one. The form pops this route itself once connect is dispatched
-/// (see [_ConnectFormState._submit]), landing back on the terminal screen with
-/// the new session active.
+/// Full-screen page hosting the profile [ConnectForm] chooser for starting an
+/// ADDITIONAL session while others are already connected (#583). Pushed from
+/// the session menu's "New session" tile (the goal's leg 2). It shows the SAME
+/// chooser as the home view: pick a profile = open as a new session; "New" =
+/// editor. The chooser pops this route itself once the new session CONNECTS
+/// (see [_ConnectFormState._popWhenConnected]).
 class NewSessionPage extends StatelessWidget {
   const NewSessionPage({super.key});
 

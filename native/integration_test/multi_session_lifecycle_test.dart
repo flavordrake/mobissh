@@ -40,6 +40,8 @@ import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/ssh/ssh_session.dart' show SshSessionState;
 import 'package:mobissh/state/sessions.dart';
 
+import 'support/connect_helpers.dart';
+
 const _slice = Duration(milliseconds: 500);
 
 Future<void> _pumpFrames(WidgetTester tester, int count) async {
@@ -68,6 +70,9 @@ Future<bool> _pumpUntil(
   return false;
 }
 
+/// #583: the inline form is gone. An ad-hoc connect (session A from the home
+/// chooser, session B from the pushed New-session chooser) goes through the
+/// "New connection" → editor → "Save & connect" flow.
 Future<void> _fillAndSubmit(
   WidgetTester tester, {
   required String host,
@@ -75,26 +80,31 @@ Future<void> _fillAndSubmit(
   required String user,
   required String pass,
 }) async {
-  await tester.enterText(find.byKey(const Key('connect-host')), host);
-  await tester.enterText(find.byKey(const Key('connect-port')), port);
-  await tester.enterText(find.byKey(const Key('connect-username')), user);
-  await tester.enterText(find.byKey(const Key('connect-password')), pass);
-  await tester.pump();
-  await tester.tap(find.byKey(const Key('connect-submit')));
+  await adhocPasswordConnect(
+    tester,
+    host: host,
+    port: port,
+    user: user,
+    pass: pass,
+  );
 }
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('two sessions connect via the New session UI on emulator',
-      (tester) async {
+  testWidgets('two sessions connect via the New session UI on emulator', (
+    tester,
+  ) async {
     FlutterForegroundTask.initCommunicationPort();
 
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
     await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const MobisshApp()),
+      UncontrolledProviderScope(
+        container: container,
+        child: const MobisshApp(),
+      ),
     );
     await tester.pump(const Duration(seconds: 1));
 
@@ -116,14 +126,20 @@ void main() {
       tester,
       () => find.byKey(const Key('session-menu-button')).evaluate().isNotEmpty,
     );
-    expect(reachedA, isTrue,
-        reason: 'session A never reached the terminal screen');
+    expect(
+      reachedA,
+      isTrue,
+      reason: 'session A never reached the terminal screen',
+    );
 
     // 2. New session → session B on port 2223.
     await tester.tap(find.byKey(const Key('session-menu-button')));
     await _pumpFrames(tester, 12);
-    expect(find.byKey(const Key('session-menu-new')), findsOneWidget,
-        reason: 'no "New session" affordance — leg 2 is UI-unreachable');
+    expect(
+      find.byKey(const Key('session-menu-new')),
+      findsOneWidget,
+      reason: 'no "New session" affordance — leg 2 is UI-unreachable',
+    );
     await tester.tap(find.byKey(const Key('session-menu-new')));
     await _pumpFrames(tester, 16);
     expect(find.byKey(const Key('new-session-page')), findsOneWidget);
@@ -141,7 +157,8 @@ void main() {
     expect(
       connectedBoth,
       isTrue,
-      reason: 'both sessions did not reach connected — the New session path '
+      reason:
+          'both sessions did not reach connected — the New session path '
           'cannot establish a 2nd connection',
     );
 

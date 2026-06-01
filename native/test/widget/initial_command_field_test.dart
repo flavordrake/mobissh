@@ -1,32 +1,32 @@
-// Widget test: the connect form's "Initial command" field (#558).
+// Widget test: the "Initial command" field lives on the profile editor (#558,
+// relocated by #583).
 //
-//   1. The field exists on the connect form.
-//   2. Tapping a saved profile that carries an `initialCommand` prefills it.
+// History: this used to assert the inline connect form had an initial-command
+// field and that tapping a profile prefilled it. #583 removed the inline form;
+// the editor is now the new/ad-hoc connection entry, so the initial-command
+// field lives there. These tests lock:
+//   1. The editor renders an initial-command field.
+//   2. Editing a profile that carries an `initialCommand` prefills it.
 //   3. A profile without an `initialCommand` leaves the field empty.
-//
-// The form's profile list reads `savedProfilesProvider`; we override it with a
-// fixed list so no real ProfilesStore IO happens. The chosen profiles have no
-// vault references, so `_prefillFromVault` never runs.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/state/profiles_providers.dart';
-import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/storage/profiles_store.dart';
-import 'package:mobissh/ui/connect_form.dart';
+import 'package:mobissh/storage/secrets_store.dart';
+import 'package:mobissh/ui/profile_editor.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Widget _app(List<SavedProfile> profiles, InMemoryGatewayPair pair) {
+Widget _editorApp(SavedProfile profile) {
   return ProviderScope(
     overrides: [
-      savedProfilesProvider.overrideWith((ref) async => profiles),
-      taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+      profilesStoreProvider.overrideWithValue(ProfilesStore()),
+      secretsStoreProvider.overrideWithValue(
+        SecretsStore(backend: InMemorySecretsBackend()),
+      ),
     ],
-    child: const MaterialApp(
-      home: Scaffold(body: SingleChildScrollView(child: ConnectForm())),
-    ),
+    child: MaterialApp(home: ProfileEditor(profile: profile)),
   );
 }
 
@@ -43,18 +43,19 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('connect form renders an initial-command field', (tester) async {
-    final pair = InMemoryGatewayPair();
-    addTearDown(() async => pair.dispose());
-    await tester.pumpWidget(_app(const [], pair));
+  testWidgets('profile editor renders an initial-command field', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_editorApp(blankProfile()));
     await _settle(tester);
 
-    expect(find.byKey(const Key('connect-initial-command')), findsOneWidget);
+    expect(
+      find.byKey(const Key('profile-editor-initial-command')),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('tapping a profile prefills its initialCommand', (tester) async {
-    final pair = InMemoryGatewayPair();
-    addTearDown(() async => pair.dispose());
+  testWidgets('editing a profile prefills its initialCommand', (tester) async {
     final profile = SavedProfile(
       title: 'Box',
       host: 'box.example',
@@ -62,14 +63,11 @@ void main() {
       username: 'me',
       initialCommand: 'tmux attach || tmux new',
     );
-    await tester.pumpWidget(_app([profile], pair));
-    await _settle(tester);
-
-    await tester.tap(find.byKey(Key('profile-tile-${profile.identityKey}')));
+    await tester.pumpWidget(_editorApp(profile));
     await _settle(tester);
 
     final field = tester.widget<TextField>(
-      find.byKey(const Key('connect-initial-command')),
+      find.byKey(const Key('profile-editor-initial-command')),
     );
     expect(field.controller?.text, 'tmux attach || tmux new');
   });
@@ -77,22 +75,17 @@ void main() {
   testWidgets('profile without initialCommand leaves the field empty', (
     tester,
   ) async {
-    final pair = InMemoryGatewayPair();
-    addTearDown(() async => pair.dispose());
     final profile = SavedProfile(
       title: 'Plain',
       host: 'plain.example',
       port: 22,
       username: 'me',
     );
-    await tester.pumpWidget(_app([profile], pair));
-    await _settle(tester);
-
-    await tester.tap(find.byKey(Key('profile-tile-${profile.identityKey}')));
+    await tester.pumpWidget(_editorApp(profile));
     await _settle(tester);
 
     final field = tester.widget<TextField>(
-      find.byKey(const Key('connect-initial-command')),
+      find.byKey(const Key('profile-editor-initial-command')),
     );
     expect(field.controller?.text, isEmpty);
   });

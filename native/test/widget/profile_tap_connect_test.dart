@@ -102,8 +102,11 @@ void main() {
   );
 
   testWidgets(
-    'tapping a profile with NO stored creds falls back to form (no session)',
+    'tapping a profile with NO stored creds opens the editor (no session)',
     (tester) async {
+      // #583: the inline form is gone, so the no-creds fallback opens the
+      // profile editor (edit mode, prefilled) so the user can add the missing
+      // credential — NOT a silent no-op, and NOT the removed form.
       final store = ProfilesStore();
       final secrets = SecretsStore(backend: InMemorySecretsBackend());
       await store.save(<SavedProfile>[
@@ -145,11 +148,19 @@ void main() {
       );
       await _pumpFrames(tester, count: 20);
 
-      // No session created — fell back to form-fill.
+      // No session created — there were no usable credentials.
       expect(container.read(sessionsProvider).entries, isEmpty);
-      // The form was prefilled with the profile's host so the user can finish.
-      expect(find.text('bare.example'), findsOneWidget);
-      // And a snackbar nudged them to enter credentials.
+      // The editor opened, prefilled with the profile's host so the user can
+      // add the credential and connect.
+      expect(find.byKey(const Key('profile-editor')), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('profile-editor-host')))
+            .controller
+            ?.text,
+        'bare.example',
+      );
+      // A snackbar nudged them to enter credentials.
       expect(find.textContaining('No saved credentials'), findsOneWidget);
     },
   );

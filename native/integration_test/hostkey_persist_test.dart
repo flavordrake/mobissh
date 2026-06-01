@@ -29,23 +29,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/sessions.dart';
 
-Future<void> _fillForm(WidgetTester tester) async {
-  await tester.enterText(find.byKey(const Key('connect-host')), '127.0.0.1');
-  await tester.enterText(find.byKey(const Key('connect-port')), '2222');
-  await tester.enterText(find.byKey(const Key('connect-username')), 'testuser');
-  await tester.enterText(find.byKey(const Key('connect-password')), 'testpass');
-  await tester.pump();
-}
+import 'support/connect_helpers.dart';
 
-/// Submit, optionally accept the host-key prompt, and poll until the terminal
-/// mounts AND the shell streams bytes. Returns a record:
-///   (reachedShell, sawPrompt).
-Future<({bool reachedShell, bool sawPrompt})> _connect(
+/// Optionally accept the host-key prompt, and poll until the terminal mounts
+/// AND the shell streams bytes. The connect itself is dispatched by the caller
+/// (ad-hoc editor for the first connect; saved-profile tap on reconnect, #583).
+/// Returns a record: (reachedShell, sawPrompt).
+Future<({bool reachedShell, bool sawPrompt})> _awaitShell(
   WidgetTester tester,
   ProviderContainer container, {
   required bool acceptPromptIfShown,
 }) async {
-  await tester.tap(find.byKey(const Key('connect-submit')));
   var connected = false;
   var sawPrompt = false;
   for (var i = 0; i < 60; i++) {
@@ -104,8 +98,17 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
 
       // First connect — empty store → MUST prompt, we accept, reach a shell.
-      await _fillForm(tester);
-      final first = await _connect(
+      // #583: ad-hoc connect via "New connection" → editor → "Save & connect".
+      // Side effect: the profile 127.0.0.1:2222:testuser is now SAVED with its
+      // credential, so the reconnect below can tap the saved tile.
+      await adhocPasswordConnect(
+        tester,
+        host: '127.0.0.1',
+        port: '2222',
+        user: 'testuser',
+        pass: 'testpass',
+      );
+      final first = await _awaitShell(
         tester,
         container,
         acceptPromptIfShown: true,
@@ -123,24 +126,28 @@ void main() {
 
       // Disconnect → removes the session + its controller/store.
       await tester.tap(find.byKey(const Key('terminal-disconnect-button')));
-      var backAtForm = false;
+      var backAtChooser = false;
       for (var i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 500));
-        if (find.byKey(const Key('connect-submit')).evaluate().isNotEmpty) {
-          backAtForm = true;
+        if (find.byKey(const Key('new-connection')).evaluate().isNotEmpty) {
+          backAtChooser = true;
           break;
         }
       }
       expect(
-        backAtForm,
+        backAtChooser,
         isTrue,
-        reason: 'disconnect did not return to the connect form',
+        reason: 'disconnect did not return to the chooser',
       );
 
-      // Reconnect to the SAME host — the persisted trust must hydrate into the
+      // Reconnect to the SAME host — tap the now-saved profile tile (stored
+      // creds connect directly). The persisted trust must hydrate into the
       // fresh session's store, so NO prompt this time, and still reach a shell.
-      await _fillForm(tester);
-      final second = await _connect(
+      await tester.tap(
+        find.byKey(const Key('profile-tile-127.0.0.1:2222:testuser')),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      final second = await _awaitShell(
         tester,
         container,
         acceptPromptIfShown: false,

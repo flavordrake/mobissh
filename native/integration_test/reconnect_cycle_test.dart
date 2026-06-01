@@ -20,21 +20,22 @@ import 'package:integration_test/integration_test.dart';
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/sessions.dart';
 
-Future<void> _fillForm(WidgetTester tester) async {
-  await tester.enterText(find.byKey(const Key('connect-host')), '127.0.0.1');
-  await tester.enterText(find.byKey(const Key('connect-port')), '2222');
-  await tester.enterText(find.byKey(const Key('connect-username')), 'testuser');
-  await tester.enterText(find.byKey(const Key('connect-password')), 'testpass');
-  await tester.pump();
-}
+import 'support/connect_helpers.dart';
 
-/// Submit and poll until the terminal screen mounts AND the shell streams
-/// bytes. Accepts the host-key prompt if shown. Returns the bytes seen.
+/// #583: open the create-mode editor and connect ad-hoc (no inline form).
+/// Then poll until the terminal screen mounts AND the shell streams bytes.
+/// Accepts the host-key prompt if shown. Returns whether bytes were seen.
 Future<bool> _connectAndProveShell(
   WidgetTester tester,
   ProviderContainer container,
 ) async {
-  await tester.tap(find.byKey(const Key('connect-submit')));
+  await adhocPasswordConnect(
+    tester,
+    host: '127.0.0.1',
+    port: '2222',
+    user: 'testuser',
+    pass: 'testpass',
+  );
   var connected = false;
   for (var i = 0; i < 60; i++) {
     await tester.pump(const Duration(milliseconds: 500));
@@ -69,44 +70,61 @@ Future<bool> _connectAndProveShell(
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('connect, disconnect, then reconnect reaches a live shell again',
-      (tester) async {
+  testWidgets('connect, disconnect, then reconnect reaches a live shell again', (
+    tester,
+  ) async {
     FlutterForegroundTask.initCommunicationPort();
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
     await tester.pumpWidget(
-      UncontrolledProviderScope(container: container, child: const MobisshApp()),
+      UncontrolledProviderScope(
+        container: container,
+        child: const MobisshApp(),
+      ),
     );
     await tester.pump(const Duration(seconds: 1));
 
     // First connect — must reach a live shell on the FIRST submit (no double-tap).
-    await _fillForm(tester);
     final first = await _connectAndProveShell(tester, container);
-    expect(first, isTrue,
-        reason: 'first connect did not reach a live shell on a single tap');
+    expect(
+      first,
+      isTrue,
+      reason: 'first connect did not reach a live shell on a single tap',
+    );
 
     // Disconnect via the AppBar button → should remove the session + return to
-    // the connect form.
+    // the chooser (#583: the home view is the chooser, signalled by the
+    // "New connection" affordance).
     await tester.tap(find.byKey(const Key('terminal-disconnect-button')));
-    var backAtForm = false;
+    var backAtChooser = false;
     for (var i = 0; i < 30; i++) {
       await tester.pump(const Duration(milliseconds: 500));
-      if (find.byKey(const Key('connect-submit')).evaluate().isNotEmpty) {
-        backAtForm = true;
+      if (find.byKey(const Key('new-connection')).evaluate().isNotEmpty) {
+        backAtChooser = true;
         break;
       }
     }
-    expect(backAtForm, isTrue, reason: 'disconnect did not return to the form');
-    expect(container.read(sessionsProvider).entries, isEmpty,
-        reason: 'disconnect must remove the session entry (#564)');
+    expect(
+      backAtChooser,
+      isTrue,
+      reason: 'disconnect did not return to the chooser',
+    );
+    expect(
+      container.read(sessionsProvider).entries,
+      isEmpty,
+      reason: 'disconnect must remove the session entry (#564)',
+    );
 
     // Reconnect — the bug: this did nothing, stuck at idle. Must reach a live
     // shell again.
-    await _fillForm(tester);
     final second = await _connectAndProveShell(tester, container);
-    expect(second, isTrue,
-        reason: 'RECONNECT after disconnect did not reach a live shell — '
-            'the #564 stuck-at-idle bug');
+    expect(
+      second,
+      isTrue,
+      reason:
+          'RECONNECT after disconnect did not reach a live shell — '
+          'the #564 stuck-at-idle bug',
+    );
   });
 }
