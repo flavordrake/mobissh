@@ -33,6 +33,7 @@ import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
+import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
 import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
@@ -149,6 +150,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     SshConnectParams params, {
     String? title,
     required String initialCommand,
+    String? themeName,
   }) async {
     // Captured before the async gap so we can pop a pushed "New session" route
     // after dispatching connect without touching `context` post-await.
@@ -165,6 +167,19 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           .read(sessionsProvider.notifier)
           .addOrActivate(params, title: title);
       ctrace('ui.chooser', 'entry=${entry.id} → proxy.connect()');
+      // #613: apply the profile's default theme to THIS session (per-session,
+      // #601 — keyed by the new session's id, NOT global). Only when the profile
+      // carries a theme; an unknown/typo name maps to the default palette.
+      if (themeName != null) {
+        ref
+            .read(sessionAppearanceProvider.notifier)
+            .setTheme(entry.id, paletteIndexForThemeName(themeName));
+        ctrace(
+          'ui.chooser',
+          'applied profile theme "$themeName" → '
+              'palette ${paletteIndexForThemeName(themeName)} for ${entry.id}',
+        );
+      }
       // Arm the run-on-connect command (#558) BEFORE dispatching connect, so
       // the one-shot listener is attached before the task side can emit
       // `connected`. No-op when the field is empty.
@@ -305,6 +320,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       params,
       title: profile.title,
       initialCommand: profile.initialCommand ?? '',
+      themeName: profile.theme,
     );
   }
 

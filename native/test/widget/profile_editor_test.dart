@@ -83,7 +83,12 @@ void main() {
       expect(_fieldText(tester, 'profile-editor-host'), 'home.example');
       expect(_fieldText(tester, 'profile-editor-port'), '2222');
       expect(_fieldText(tester, 'profile-editor-username'), 'me');
-      expect(_fieldText(tester, 'profile-editor-theme'), 'solarizedDark');
+      // #613: theme is now a picker (dropdown) storing the PWA key, not a text
+      // field — see profile_editor_theme_picker_test.dart for picker coverage.
+      final themePicker = tester.widget<DropdownButton<String>>(
+        find.byKey(const Key('profile-editor-theme-picker')),
+      );
+      expect(themePicker.value, 'solarizedDark');
       expect(_fieldText(tester, 'profile-editor-color'), '#ff8800');
       expect(
         _fieldText(tester, 'profile-editor-initial-command'),
