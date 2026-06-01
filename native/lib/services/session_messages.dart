@@ -44,6 +44,14 @@ enum SshTaskEventKind {
   /// gateway flushes any commands it buffered during isolate spin-up (#539).
   ready,
 
+  /// The PTY shell for a session is open + writable (its stdin is wired and
+  /// its output is being piped back). Emitted once per shell open, including
+  /// after a reconnect re-opens the shell (#619). The UI gates the
+  /// run-on-connect "initial command" on THIS, not the bare `connected` state,
+  /// so a slow host's shell can't be raced ahead of by the command bytes
+  /// (which `_handleInput` would otherwise drop to scrollback).
+  shellReady,
+
   // --- SFTP (#559) ---
   /// A directory listing result (entries for one path).
   sftpListing,
@@ -431,6 +439,8 @@ sealed class SshTaskEvent {
         );
       case SshTaskEventKind.ready:
         return const SshTaskReadyEvent();
+      case SshTaskEventKind.shellReady:
+        return SshShellReadyEvent(sessionId: sessionId);
       case SshTaskEventKind.sftpListing:
         final rawEntries = (json['entries'] as List)
             .map((e) => SftpEntry.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -630,6 +640,26 @@ class SshTaskReadyEvent extends SshTaskEvent {
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.ready;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+      };
+}
+
+/// Task → UI: the PTY shell for [sessionId] is open + writable (#619). Emitted
+/// by `SessionHost._ensureShell` right after the shell transport is attached
+/// and its output subscription is wired. The UI proxy turns this into a
+/// `shellReady` stream tick that the run-on-connect initial command gates on —
+/// sending the command on the bare `connected` STATE raced ahead of the shell
+/// on slow hosts (ra-server), and `_handleInput` dropped the bytes to
+/// scrollback instead of the (not-yet-open) shell.
+class SshShellReadyEvent extends SshTaskEvent {
+  const SshShellReadyEvent({required String sessionId}) : super(sessionId);
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.shellReady;
 
   @override
   Map<String, dynamic> toJson() => {

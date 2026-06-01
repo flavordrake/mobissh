@@ -19,13 +19,15 @@ Future<void> openNewConnectionEditor(WidgetTester tester) async {
 }
 
 /// Fill the create-mode editor with a password connection and tap
-/// "Save & connect". Assumes [openNewConnectionEditor] already ran.
+/// "Save & connect". Assumes [openNewConnectionEditor] already ran. An optional
+/// [initialCommand] fills the run-on-connect field (#558/#619).
 Future<void> fillPasswordAndConnect(
   WidgetTester tester, {
   required String host,
   required String port,
   required String user,
   required String pass,
+  String? initialCommand,
 }) async {
   await tester.enterText(find.byKey(const Key('profile-editor-host')), host);
   await tester.enterText(find.byKey(const Key('profile-editor-port')), port);
@@ -37,6 +39,11 @@ Future<void> fillPasswordAndConnect(
     find.byKey(const Key('profile-editor-password')),
     pass,
   );
+  if (initialCommand != null) {
+    final field = find.byKey(const Key('profile-editor-initial-command'));
+    await tester.ensureVisible(field);
+    await tester.enterText(field, initialCommand);
+  }
   await tester.pump();
   final submit = find.byKey(const Key('connect-submit'));
   await tester.ensureVisible(submit);
@@ -45,13 +52,15 @@ Future<void> fillPasswordAndConnect(
 }
 
 /// Full ad-hoc password connect from the chooser: open the editor, fill, and
-/// "Save & connect".
+/// "Save & connect". An optional [initialCommand] sets the run-on-connect
+/// command (#558/#619).
 Future<void> adhocPasswordConnect(
   WidgetTester tester, {
   required String host,
   required String port,
   required String user,
   required String pass,
+  String? initialCommand,
 }) async {
   await openNewConnectionEditor(tester);
   await fillPasswordAndConnect(
@@ -60,6 +69,7 @@ Future<void> adhocPasswordConnect(
     port: port,
     user: user,
     pass: pass,
+    initialCommand: initialCommand,
   );
 }
 

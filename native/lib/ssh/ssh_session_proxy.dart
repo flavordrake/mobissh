@@ -56,6 +56,13 @@ class SshSessionProxy {
   final StreamController<Uint8List> _outputCtrl =
       StreamController<Uint8List>.broadcast();
 
+  /// Shell-ready ticks (#619). Emits once each time the task side opens the
+  /// PTY shell (initial connect + every reconnect re-open). The run-on-connect
+  /// initial command gates on this, NOT the bare `connected` state, so the
+  /// command can't race ahead of a slow host's shell-open and get dropped.
+  final StreamController<void> _shellReadyCtrl =
+      StreamController<void>.broadcast();
+
   /// SFTP events (#559): directory listings, download chunks/done, errors —
   /// all keyed by `requestId`. The file browser subscribes and filters by its
   /// own in-flight request id.
@@ -78,6 +85,12 @@ class SshSessionProxy {
   /// PTY output bytes streamed from the task side. Subscribers feed these
   /// into `Terminal.write(...)`.
   Stream<Uint8List> get output => _outputCtrl.stream;
+
+  /// Fires when the task side reports the PTY shell is open + writable (#619).
+  /// One tick per shell open. The run-on-connect [InitialCommandRunner] listens
+  /// here instead of on the `connected` state so the command lands in the live
+  /// shell rather than racing ahead of it on a slow host.
+  Stream<void> get shellReady => _shellReadyCtrl.stream;
 
   /// SFTP events from the task side (#559). Emits [SftpListingEvent],
   /// [SftpDownloadChunkEvent], [SftpDownloadDoneEvent], [SftpErrorEvent].
@@ -220,6 +233,7 @@ class SshSessionProxy {
     _eventSub = null;
     if (!_dataCtrl.isClosed) await _dataCtrl.close();
     if (!_outputCtrl.isClosed) await _outputCtrl.close();
+    if (!_shellReadyCtrl.isClosed) await _shellReadyCtrl.close();
     if (!_sftpCtrl.isClosed) await _sftpCtrl.close();
   }
 
@@ -277,6 +291,10 @@ class SshSessionProxy {
           ),
         );
         if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
+      case SshShellReadyEvent():
+        // The task side opened the PTY shell (#619). Tick the shell-ready
+        // stream so the run-on-connect command fires now that stdin is wired.
+        if (!_shellReadyCtrl.isClosed) _shellReadyCtrl.add(null);
       case SshTaskReadyEvent():
         // Task-global readiness signal (#539). Per-session proxies ignore it —
         // the UI-side gateway already consumed it to flush buffered commands.
