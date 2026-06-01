@@ -7,10 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
-## Build 2026-06-01c — compose bar position fix (#610)
-- Compose bar docks to a fixed top/bottom margin — no longer goes off-screen or hides the session bar.
-- Compose toggle lives on the session bar (right edge); swipe-type + voice land with correct spaces.
-- Per-session font size + theme from the session menu (differentiate sessions).
+## Build 2026-06-01d — keyboard no longer covers the bottom bar (P0)
+- Bottom session bar floats above the soft keyboard instead of being covered by it.
+- Compose bar docks to a fixed top/bottom margin — no longer off-screen or hiding the session bar.
+- Compose toggle on the session bar (right edge); swipe-type + voice land with correct spaces.
+- Per-session font size + theme from the session menu.
 - Keybar: one scrollable line, monochrome arrows, ^keys grouped at the end.
 
 ## Build 2026-06-01 — reliability sweep (verify on device)
