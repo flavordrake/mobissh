@@ -23,7 +23,13 @@ void main() {
     terminal.onOutput = sink.add;
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: ComposeBar(terminal: terminal)),
+        home: Scaffold(
+          // ComposeBar is a floating panel (returns a Positioned), so it must
+          // live inside a Stack (#604).
+          body: Stack(
+            children: [ComposeBar(terminal: terminal, onClose: () {})],
+          ),
+        ),
       ),
     );
     await tester.pump();

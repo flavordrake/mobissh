@@ -19,8 +19,10 @@
 // hardcoded vertical-scroll gesture; selection stays xterm.dart's domain (no
 // custom overlay — see terminal_context_menu.dart for the rationale).
 
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,55 +70,69 @@ class TerminalScreen extends ConsumerWidget {
     // label + menu + disconnect all live on the bottom session bar; the
     // terminal fills from the status bar down.
     return Scaffold(
+      // resizeToAvoidBottomInset:false — the floating compose bar (#604) owns
+      // the keyboard inset itself (it positions above the keyboard), so the
+      // Scaffold shouldn't also reflow the terminal Column when the keyboard
+      // opens. This keeps the terminal cursor from jumping while composing.
+      resizeToAvoidBottomInset: false,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            Expanded(
-              child: IndexedStack(
-                index: activeIndex < 0 ? 0 : activeIndex,
-                children: [
-                  for (final e in entries)
-                    _SessionTerminalBody(
-                      key: ValueKey('terminal-body-${e.id}'),
-                      sessionId: e.id,
-                    ),
-                ],
-              ),
+            // The terminal + chrome column.
+            Column(
+              children: [
+                Expanded(
+                  child: IndexedStack(
+                    index: activeIndex < 0 ? 0 : activeIndex,
+                    children: [
+                      for (final e in entries)
+                        _SessionTerminalBody(
+                          key: ValueKey('terminal-body-${e.id}'),
+                          sessionId: e.id,
+                        ),
+                    ],
+                  ),
+                ),
+                if (keybarVisible) Keybar(activeEntry: activeEntry),
+                // Bottom session bar (#566): the thumb-reachable trigger for the
+                // session menu (tap the label area) + a disconnect affordance at the
+                // right edge. Sits below the keybar so the menu sheet rises from
+                // immediately above the affordance that summoned it. The label tap
+                // target leaves a clean seam for swipe-to-switch (#568).
+                _SessionBar(
+                  label: activeEntry.label,
+                  sessionCount: entries.length,
+                  // Swipe left → next session, swipe right → previous, wrapping
+                  // around the session ring (#568). No-op with a single session.
+                  onSwipe: (delta) {
+                    if (entries.length < 2) return;
+                    final from = activeIndex < 0 ? 0 : activeIndex;
+                    final count = entries.length;
+                    final target = (from + delta) % count;
+                    final nextIndex = target < 0 ? target + count : target;
+                    ref
+                        .read(sessionsProvider.notifier)
+                        .setActive(entries[nextIndex].id);
+                    HapticFeedback.lightImpact();
+                  },
+                  composeOn: composeBarVisible,
+                  onToggleCompose: () =>
+                      ref.read(composeBarVisibleProvider.notifier).toggle(),
+                ),
+              ],
             ),
-            // Compose bar (#599): the swipe/voice/IME composing surface, above
-            // the keybar so both are reachable. Keyed by the active session so
-            // switching sessions gives a fresh field bound to the right
-            // terminal. Opt-in via the session menu.
+            // Floating compose bar (#604): overlays the terminal as a draggable
+            // panel rather than docking in the Column, so it never pushes the
+            // terminal up / scrolls the cursor out of view. Keyed by the active
+            // session so switching gives a fresh field bound to the right
+            // terminal. Toggled from the session bar's compose button (#607).
             if (composeBarVisible)
               ComposeBar(
                 key: ValueKey('compose-bar-${activeEntry.id}'),
                 terminal: activeEntry.terminal,
+                onClose: () =>
+                    ref.read(composeBarVisibleProvider.notifier).set(false),
               ),
-            if (keybarVisible) Keybar(activeEntry: activeEntry),
-            // Bottom session bar (#566): the thumb-reachable trigger for the
-            // session menu (tap the label area) + a disconnect affordance at the
-            // right edge. Sits below the keybar so the menu sheet rises from
-            // immediately above the affordance that summoned it. The label tap
-            // target leaves a clean seam for swipe-to-switch (#568).
-            _SessionBar(
-              label: activeEntry.label,
-              sessionCount: entries.length,
-              // Swipe left → next session, swipe right → previous, wrapping
-              // around the session ring (#568). No-op with a single session.
-              onSwipe: (delta) {
-                if (entries.length < 2) return;
-                final from = activeIndex < 0 ? 0 : activeIndex;
-                final count = entries.length;
-                final target = (from + delta) % count;
-                final nextIndex = target < 0 ? target + count : target;
-                ref
-                    .read(sessionsProvider.notifier)
-                    .setActive(entries[nextIndex].id);
-                HapticFeedback.lightImpact();
-              },
-              onDisconnect: () =>
-                  ref.read(sessionsProvider.notifier).close(activeEntry.id),
-            ),
           ],
         ),
       ),
@@ -138,7 +154,8 @@ class _SessionBar extends StatefulWidget {
     required this.label,
     required this.sessionCount,
     required this.onSwipe,
-    required this.onDisconnect,
+    required this.composeOn,
+    required this.onToggleCompose,
   });
 
   final String label;
@@ -148,7 +165,11 @@ class _SessionBar extends StatefulWidget {
   /// a left swipe (next session) and `-1` for a right swipe (previous).
   final ValueChanged<int> onSwipe;
 
-  final VoidCallback onDisconnect;
+  /// #607: the bar's right-edge button toggles the compose bar (a per-moment
+  /// action), replacing the old disconnect button (disconnect moved into the
+  /// session menu — it's infrequent). [composeOn] drives the icon state.
+  final bool composeOn;
+  final VoidCallback onToggleCompose;
 
   @override
   State<_SessionBar> createState() => _SessionBarState();
@@ -226,7 +247,11 @@ class _SessionBarState extends State<_SessionBar> {
                 child: Row(
                   key: const Key('session-menu-button'),
                   children: [
-                    const Icon(Icons.menu, size: 18),
+                    // #607: hamburger with the session-count badge folded onto
+                    // it (count moved LEFT). No expand_less up-arrow — session
+                    // switching is left/right SWIPE (#568), so an "expand"
+                    // affordance was misleading.
+                    _MenuIconWithCount(count: widget.sessionCount),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -235,42 +260,66 @@ class _SessionBarState extends State<_SessionBar> {
                         style: theme.textTheme.bodyMedium,
                       ),
                     ),
-                    if (widget.sessionCount > 1)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '${widget.sessionCount}',
-                          style: TextStyle(
-                            color: theme.colorScheme.onPrimary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.expand_less, size: 18),
                   ],
                 ),
               ),
             ),
           ),
+          // #607: compose-bar toggle replaces the disconnect button. Reflects
+          // on/off; disconnect now lives in the session menu.
           IconButton(
-            key: const Key('terminal-disconnect-button'),
-            tooltip: 'Disconnect',
-            icon: const Icon(Icons.link_off, size: 18),
-            // Fully close the session (disconnect + dispose + REMOVE the entry)
-            // so a re-connect re-creates it + restarts the service (#564).
-            onPressed: widget.onDisconnect,
+            key: const Key('session-bar-compose-toggle'),
+            tooltip: widget.composeOn
+                ? 'Hide compose bar'
+                : 'Compose (swipe / voice)',
+            isSelected: widget.composeOn,
+            color: widget.composeOn ? theme.colorScheme.primary : null,
+            icon: const Icon(Icons.edit_note_outlined, size: 20),
+            onPressed: widget.onToggleCompose,
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Hamburger menu icon with the session-count badge folded onto it (#607).
+/// The count moved LEFT (onto the menu affordance) from its old mid-bar spot;
+/// the badge only shows when more than one session is open.
+class _MenuIconWithCount extends StatelessWidget {
+  const _MenuIconWithCount({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final icon = const Icon(Icons.menu, size: 18);
+    if (count <= 1) return icon;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          right: -8,
+          top: -6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '$count',
+              style: TextStyle(
+                color: theme.colorScheme.onPrimary,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -296,8 +345,59 @@ class _SessionTerminalBody extends ConsumerStatefulWidget {
 class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
   final TerminalController _terminalController = TerminalController();
 
+  /// Passed to TerminalView so we own the scrollback Scrollable (#605). Having
+  /// an explicit controller also lets future work jump-to-bottom on new output.
+  final ScrollController _scrollController = ScrollController();
+
+  // ── Listener-based long-press (#605) ──────────────────────────────────────
+  // We detect a stationary hold via raw pointer events instead of a
+  // GestureDetector, so we never enter the gesture arena and never compete
+  // with xterm's vertical scroll. A hold fires the context menu only if the
+  // pointer stays within [_kLongPressSlop] for [_kLongPressDuration].
+  static const Duration _kLongPressDuration = Duration(milliseconds: 500);
+  static const double _kLongPressSlop = 12;
+  Timer? _longPressTimer;
+  Offset? _pointerDownPos;
+  Terminal? _pendingMenuTerminal;
+
+  void _onPointerDown(PointerDownEvent e) {
+    // Only touch holds open the menu; mouse uses onSecondaryTapDown.
+    if (e.kind != PointerDeviceKind.touch) return;
+    _pointerDownPos = e.position;
+    _pendingMenuTerminal = ref.read(terminalProvider(widget.sessionId));
+    _longPressTimer?.cancel();
+    _longPressTimer = Timer(_kLongPressDuration, () {
+      final pos = _pointerDownPos;
+      final terminal = _pendingMenuTerminal;
+      if (pos != null && terminal != null && mounted) {
+        _showContextMenu(pos, terminal);
+      }
+      _cancelLongPress();
+    });
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    // A drag past the slop is a scroll, not a hold — cancel the pending menu so
+    // scrollback scrolling is never interrupted.
+    final down = _pointerDownPos;
+    if (down != null && (e.position - down).distance > _kLongPressSlop) {
+      _cancelLongPress();
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent e) => _cancelLongPress();
+
+  void _cancelLongPress() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+    _pointerDownPos = null;
+    _pendingMenuTerminal = null;
+  }
+
   @override
   void dispose() {
+    _longPressTimer?.cancel();
+    _scrollController.dispose();
     _terminalController.dispose();
     super.dispose();
   }
@@ -371,21 +471,27 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
             ),
           ),
         Expanded(
-          // #584: a long-press recognizer wraps the TerminalView so a touch
-          // long-press opens the context menu. A LongPressGestureRecognizer is
-          // distinct from xterm's tap + vertical-scroll-drag recognizers in the
-          // gesture arena, so it only wins for a stationary press and never
-          // steals the terminal's scroll. `deferToChild` keeps the opaque
-          // TerminalView the hit-test target; the ancestor detector still
-          // participates in the arena for that pointer.
-          child: GestureDetector(
-            behavior: HitTestBehavior.deferToChild,
-            onLongPressStart: (details) =>
-                _showContextMenu(details.globalPosition, terminal),
+          // #605 scrollback fix: the long-press context menu is driven by a
+          // `Listener` (raw pointer events), NOT a wrapping GestureDetector.
+          //
+          // The old GestureDetector(onLongPressStart) added a
+          // LongPressGestureRecognizer that COMPETED with xterm's internal
+          // vertical-scroll recognizer in the gesture arena — `deferToChild`
+          // only changes hit-testing, not arena competition — so a slow drag
+          // would lose to the pending 500ms long-press and scrollback drag
+          // failed intermittently. A Listener observes pointer down/move/up
+          // WITHOUT entering the arena, so xterm's scroll always wins; we time
+          // the press ourselves and fire the menu only on a stationary hold.
+          child: Listener(
+            onPointerDown: _onPointerDown,
+            onPointerMove: _onPointerMove,
+            onPointerUp: _onPointerUp,
+            onPointerCancel: (_) => _cancelLongPress(),
             child: TerminalView(
               terminal,
               key: Key('terminal-view-${widget.sessionId}'),
               controller: _terminalController,
+              scrollController: _scrollController,
               autofocus: false,
               padding: const EdgeInsets.all(4),
               theme: palette.theme,
