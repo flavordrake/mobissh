@@ -44,6 +44,35 @@ Never use `npm test` (maps to full Playwright including Appium).
 - **Mock at the right level.** If code uses `ServiceWorkerRegistration.showNotification()`, mock the SW registration — not `new Notification()`. Mismatched mocks create false passes.
 - Develop agents that skip test updates are producing incomplete work. The fast gate (tsc + lint + unit) catching zero failures does not mean the change is tested.
 
+## Native Flutter gate (#501 rewrite, `native/`) — #589 contract
+The native app has its OWN gate, separate from the PWA Playwright gates above.
+
+- **Fast gate (every commit):** `scripts/native-fast-gate.sh` = `flutter analyze` +
+  `flutter test --exclude-tags integration`. It CANNOT boot an emulator, so it runs
+  only headless unit + widget tests. This is necessary but NOT sufficient.
+- **Integration suite (merge/release gate):** `scripts/native-integration-suite.sh`
+  (or `native-fast-gate.sh --with-integration`) runs the FULL `native/integration_test/`
+  suite on a booted emulator through the socat+adb-reverse bridge. These are the
+  byte-flow / state-machine / lifecycle tests the fast gate EXCLUDES.
+- **The rule:** any change touching the session **state machine, connect/auth,
+  reconnect, multi-session, SFTP, or the UI↔task-isolate IPC** MUST pass the
+  integration suite before merge. The fast gate passing is NOT enough — that is
+  exactly how #539/#546/#547 and the #590 stale-shell hang shipped "green" and
+  broke on device. An excluded test suite reads as coverage while gating nothing.
+- **Prefer headless transition tests where possible.** If a state-transition can be
+  reproduced via `InMemoryGatewayPair` (no real device), put it in `native/test/`
+  so it runs in the fast gate on EVERY commit — e.g. `reconnect_shell_revive_test.dart`
+  (#590), `sftp_download_reassembly_test.dart` (#591). Only behaviors that genuinely
+  need a device (real socket, foreground service, host-key prompt) belong in
+  `integration_test/`.
+- **Never silently skip the device tier.** `native-integration-suite.sh` exits
+  non-zero with "NOT VALIDATED" when no emulator is present (unless
+  `--allow-no-emulator` is passed explicitly). A missing emulator must never
+  masquerade as a pass.
+- **Test maintenance:** a native change to a gated subsystem that adds NO new
+  transition test (headless or integration) is incomplete work — same standard as
+  the PWA rule above.
+
 ## Test patterns
 - **Emulator tests: always use `BASE_URL` from fixtures**, never relative URLs like `page.goto('./')`. CDP on Android Chrome rejects relative URLs.
 - Vault tests: `cleanPage` for no-vault state, `emulatorPage` for pre-created vault.
