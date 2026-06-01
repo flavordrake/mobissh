@@ -194,6 +194,18 @@ class SessionHost {
         _emitConnectStatus(cmd.sessionId, data);
         prevState = data.state;
       }
+      // Drop the prior shell the instant the transport leaves `connected`
+      // (reconnecting / softDisconnected / failed / disconnected). The old PTY
+      // belongs to a dead `SSHClient`; relying on the async `transport.done`
+      // callback to clear `hosted.shell` is a RACE — on auto-reconnect the new
+      // `connected` can arrive before that microtask runs, so `_ensureShell`
+      // sees a non-null (dead) handle, no-ops, and zero bytes flow while the
+      // UI shows `connected` (#590, the stale-shell dead-terminal). Clearing
+      // here, synchronously, guarantees the next `connected` opens a FRESH
+      // shell whose output re-pipes to the terminal.
+      if (data.state != SshSessionState.connected) {
+        _dropShell(hosted);
+      }
       // Open the PTY shell the first time we reach `connected` (and re-open
       // after a reconnect, which re-enters `connected`). Without this the
       // terminal screen mounts but never receives a single byte — the device
@@ -270,6 +282,35 @@ class SessionHost {
     _gateway.send(SshClosedEvent(sessionId: sessionId).toJson());
   }
 
+  /// Synchronously drop the live shell handle for [hosted] when the session
+  /// leaves `connected`. Cancels the output subscription and closes the PTY so
+  /// the NEXT `connected` (auto-reconnect) re-opens a fresh shell via
+  /// [_ensureShell] instead of reusing a dead handle (#590). Idempotent: a
+  /// no-op when no shell is open. `shellOpening` is also cleared so an in-flight
+  /// open from the prior connection can't win a late race and re-attach a stale
+  /// transport.
+  void _dropShell(_HostedSession hosted) {
+    hosted.shellOpening = false;
+    // Invalidate any in-flight open: a `_shellOpener` await that started under
+    // the prior connection must NOT attach its (now stale) transport after we
+    // reconnect. `_ensureShell` re-checks the generation after its await.
+    hosted.shellGeneration += 1;
+    final sub = hosted.shellSub;
+    hosted.shellSub = null;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
+    final shell = hosted.shell;
+    hosted.shell = null;
+    if (shell != null) {
+      try {
+        shell.close();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  }
+
   /// Open the PTY shell for [sessionId] once authenticated, and pipe its
   /// output back to the UI terminal as [SshOutputEvent]s. Idempotent: a second
   /// call while a shell is open or opening is a no-op (covers the reconnect
@@ -280,6 +321,7 @@ class SessionHost {
     final client = hosted.controller.client;
     if (client == null) return;
     hosted.shellOpening = true;
+    final openGen = hosted.shellGeneration;
     try {
       final cols = hosted.metrics.lastCols ?? 80;
       final rows = hosted.metrics.lastRows ?? 24;
@@ -288,8 +330,12 @@ class SessionHost {
         _emitStatus(sessionId, '\r\n[mobissh] no shell channel available\r\n');
         return;
       }
-      // The session may have been torn down while we awaited the channel.
-      if (!_sessions.containsKey(sessionId)) {
+      // The session may have been torn down — or dropped + reconnected (#590) —
+      // while we awaited the channel. If the generation moved, this transport
+      // belongs to a connection that's already gone: close it and bail so the
+      // post-reconnect `_ensureShell` opens the live one.
+      if (!_sessions.containsKey(sessionId) ||
+          hosted.shellGeneration != openGen) {
         try {
           transport.close();
         } catch (_) {
@@ -311,8 +357,12 @@ class SessionHost {
         },
       );
       // Drop the shell when the remote channel closes so a reconnect re-opens.
+      // Guard with the generation: a late `done` from THIS transport must not
+      // null out a shell that a subsequent reconnect already re-opened (#590).
+      final doneGen = hosted.shellGeneration;
       unawaited(
         transport.done.then((_) {
+          if (hosted.shellGeneration != doneGen) return;
           hosted.shellSub?.cancel();
           hosted.shellSub = null;
           hosted.shell = null;
@@ -654,6 +704,12 @@ class _HostedSession {
   SshShellTransport? shell;
   StreamSubscription<Uint8List>? shellSub;
   bool shellOpening = false;
+
+  /// Monotonic token bumped each time the shell is dropped (#590). An in-flight
+  /// [SessionHost._ensureShell] open captures this before awaiting and discards
+  /// its transport if the token changed — so a stale open from a dropped
+  /// connection can't re-attach after a reconnect.
+  int shellGeneration = 0;
 
   /// Fingerprint of the host-key challenge already forwarded to the UI, so a
   /// single awaitingHostKey transition emits exactly one challenge (#536).
