@@ -18,6 +18,8 @@ import 'state/lifecycle_providers.dart';
 import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
+import 'ui/diagnostics_screen.dart';
+import 'ui/settings_screen.dart';
 import 'ui/terminal_screen.dart';
 
 void main() {
@@ -186,20 +188,75 @@ class _RootRouterState extends ConsumerState<RootRouter> {
   }
 }
 
-/// The cold-start / home view: an uncluttered profile CHOOSER (#583). It hosts
-/// the profile list (tap = connect, pencil = edit), a "New connection"
-/// affordance, and slim Import/Settings/Diagnostics access. The inline connect
-/// form + connection-status panel were removed — the goal of this view is human
-/// DECISION, not data entry. Connection status is shown on the terminal screen
-/// (the router swaps to it the moment any session connects).
-class ConnectHomePage extends ConsumerWidget {
+/// The cold-start / home view (#583, reshaped in #611 Part A).
+///
+/// #611: the home is JUST the profile CHOOSER — tap = connect, pencil = edit,
+/// plus "New connection" + Import. Settings and Diagnostics no longer clutter
+/// the profile list as inline disclosures; they're separate destinations on a
+/// [BottomNavigationBar] that open their own dedicated views ([SettingsScreen],
+/// [DiagnosticsScreen]). The screens host the EXISTING settings/diagnostics
+/// widgets unchanged so they can grow later (#611 follow-ups).
+///
+/// Out of scope here (Part B, follow-up): PWA-style quick-reconnect / "session
+/// set" bundles — that needs a recent-sessions store + PWA spec study.
+///
+/// Connection status is shown on the terminal screen (the router swaps to it
+/// the moment any session connects).
+class ConnectHomePage extends StatefulWidget {
   const ConnectHomePage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  State<ConnectHomePage> createState() => _ConnectHomePageState();
+}
+
+class _ConnectHomePageState extends State<ConnectHomePage> {
+  // 0 = Profiles (chooser), 1 = Settings, 2 = Diagnostics.
+  int _index = 0;
+
+  static const _titles = <String>['MobiSSH', 'Settings', 'Diagnostics'];
+
+  @override
+  Widget build(BuildContext context) {
+    // IndexedStack keeps each destination's state alive across tab switches
+    // (e.g. the connect-log scroll position, an in-flight diagnostics future)
+    // rather than rebuilding from scratch on every tap.
     return Scaffold(
-      appBar: AppBar(title: const Text('MobiSSH')),
-      body: const SafeArea(child: SingleChildScrollView(child: ConnectForm())),
+      appBar: AppBar(title: Text(_titles[_index])),
+      body: SafeArea(
+        child: IndexedStack(
+          index: _index,
+          children: const [
+            SingleChildScrollView(child: ConnectForm()),
+            SettingsScreen(),
+            DiagnosticsScreen(),
+          ],
+        ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        key: const Key('home-bottom-nav'),
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        destinations: const [
+          NavigationDestination(
+            key: Key('home-nav-profiles'),
+            icon: Icon(Icons.dns_outlined),
+            selectedIcon: Icon(Icons.dns),
+            label: 'Profiles',
+          ),
+          NavigationDestination(
+            key: Key('home-nav-settings'),
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
+          NavigationDestination(
+            key: Key('home-nav-diagnostics'),
+            icon: Icon(Icons.bug_report_outlined),
+            selectedIcon: Icon(Icons.bug_report),
+            label: 'Diagnostics',
+          ),
+        ],
+      ),
     );
   }
 }

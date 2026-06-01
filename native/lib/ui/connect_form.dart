@@ -35,12 +35,10 @@ import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
-import 'diagnostics_section.dart';
 import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_editor.dart';
 import 'profile_list.dart';
-import 'settings_panel.dart';
 
 class ConnectForm extends ConsumerStatefulWidget {
   const ConnectForm({super.key});
@@ -119,8 +117,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               label: const Text('Import from PWA'),
             ),
           ),
-          const SettingsPanel(),
-          const DiagnosticsSection(),
+          // #611 Part A: Settings + Diagnostics moved OUT of the chooser into
+          // their own bottom-nav destinations (SettingsScreen / DiagnosticsScreen
+          // on ConnectHomePage). The home view is now JUST the profile chooser,
+          // and so is the pushed "New session" route (NewSessionPage).
         ],
       ),
     );
