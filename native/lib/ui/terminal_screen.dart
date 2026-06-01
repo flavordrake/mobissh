@@ -197,7 +197,15 @@ class _SessionBarState extends State<_SessionBar> {
                   _swipeOccurred = false;
                   return;
                 }
-                showSessionMenu(context);
+                // Pass the bar's own height so the menu panel floats ABOVE the
+                // bar (not over it) — the last menu row no longer lands on the
+                // trigger, and a second tap on the trigger dismisses via the
+                // overlay barrier (owner 2026-06-01). `context` here is the
+                // _SessionBar element, so `context.size` is the bar's height.
+                showSessionMenu(
+                  context,
+                  bottomReserve: context.size?.height ?? 0,
+                );
               },
               child: Padding(
                 padding: const EdgeInsets.symmetric(

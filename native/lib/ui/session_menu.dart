@@ -35,7 +35,14 @@ import 'file_browser_screen.dart';
 /// Unlike `showModalBottomSheet`, this inserts an `OverlayEntry` rather than
 /// pushing a route, so the terminal keeps primary focus and the soft keyboard
 /// stays up (#585).
-Future<void> showSessionMenu(BuildContext context) {
+///
+/// [bottomReserve] is the height (logical px) of the session bar that summoned
+/// the menu. The panel floats ABOVE that reserved strip so its last row (Files)
+/// never lands on top of the trigger — the owner hit "tap to dismiss lands on
+/// Files" because the panel overlapped the bar (2026-06-01). The full-screen
+/// tap barrier still covers the bar, so a tap on the (now-uncovered) trigger
+/// dismisses the menu: same touch target opens AND closes it.
+Future<void> showSessionMenu(BuildContext context, {double bottomReserve = 0}) {
   final overlay = Overlay.of(context);
   final completer = Completer<void>();
   late OverlayEntry entry;
@@ -47,14 +54,17 @@ Future<void> showSessionMenu(BuildContext context) {
 
   entry = OverlayEntry(
     builder: (ctx) {
-      // Float the panel above the keyboard when it's up; sit at the bottom
-      // otherwise. This is what lets the keyboard stay visible without the
-      // menu being hidden behind it.
+      // Float the panel above the keyboard when it's up; sit just above the
+      // session bar otherwise. This keeps the keyboard visible AND keeps the
+      // bar's trigger uncovered so tapping it again dismisses (via the barrier).
       final keyboardInset = MediaQuery.of(ctx).viewInsets.bottom;
+      final liftAboveBar = keyboardInset > 0 ? keyboardInset : bottomReserve;
       return Stack(
         children: [
           // Outside-tap barrier. A plain GestureDetector does NOT request
           // focus, so dismissing the menu doesn't disturb the keyboard either.
+          // It covers the whole screen INCLUDING the session bar, so a tap on
+          // the trigger that opened the menu dismisses it.
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -65,7 +75,7 @@ Future<void> showSessionMenu(BuildContext context) {
           Positioned(
             left: 0,
             right: 0,
-            bottom: keyboardInset,
+            bottom: liftAboveBar,
             // canRequestFocus:false guarantees the menu (and its tappable rows)
             // never steal focus from the terminal's editable — the keyboard
             // stays up. Taps still work; toggles/switches don't need focus.
@@ -78,7 +88,7 @@ Future<void> showSessionMenu(BuildContext context) {
                   top: Radius.circular(16),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: SafeArea(top: false, child: SessionMenu(onClose: close)),
+                child: SessionMenu(onClose: close),
               ),
             ),
           ),
