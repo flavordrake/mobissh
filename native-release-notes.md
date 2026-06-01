@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-01g — run-on-connect command + per-session font fixes
+- Run-on-connect command now fires reliably, including on slow hosts (e.g. ra-server) where it was being dropped.
+- Per-session font size now sticks and applies to the right terminal.
+
 ## Build 2026-06-01f — tmux scrollback works
 - Drag up/down in tmux now scrolls back through history (xterm wheel-code bug fixed).
 - Long-press selection menu removed (paste stays on the keybar).
