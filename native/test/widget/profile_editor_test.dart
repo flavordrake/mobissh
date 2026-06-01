@@ -223,4 +223,122 @@ void main() {
       },
     );
   });
+
+  // #594: the action bar (Save & connect / Save) must stay reachable with the
+  // soft keyboard UP. The save-semantics tests above use a 1000x2000 surface
+  // with NO keyboard inset — that's the false green this group exists to catch.
+  // Here we pump at a realistic phone size AND inject a keyboard inset via a
+  // MediaQuery override, then assert both action buttons are hit-testable and
+  // their centers fall ABOVE the keyboard inset (inside the visible viewport).
+  group('ProfileEditor action bar — keyboard safety (#594)', () {
+    // Logical phone-ish viewport (dpr 1 for simple px==logical math).
+    const screenSize = Size(360, 800);
+    // A soft keyboard typically eats ~40% of the height; 360 here is well
+    // within that and mirrors the device failure (connect-submit was at dy~794
+    // on an ~800-tall screen, i.e. behind the keyboard).
+    const keyboardHeight = 360.0;
+
+    Future<void> pumpWithKeyboard(
+      WidgetTester tester, {
+      required bool isNew,
+    }) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final store = ProfilesStore();
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final profile = SavedProfile(
+        title: 'Box',
+        host: 'home.example',
+        port: 22,
+        username: 'me',
+        authType: 'key',
+      );
+
+      tester.view.physicalSize = screenSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            profilesStoreProvider.overrideWithValue(store),
+            secretsStoreProvider.overrideWithValue(secrets),
+          ],
+          child: MaterialApp(
+            // Simulate the soft keyboard occupying the lower viewport. This is
+            // what the tall-surface tests omitted, producing a false green.
+            home: Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  viewInsets: const EdgeInsets.only(bottom: keyboardHeight),
+                ),
+                child: ProfileEditor(profile: profile, isNew: isNew),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    void expectButtonReachable(WidgetTester tester, Key key) {
+      final finder = find.byKey(key);
+      expect(finder, findsOneWidget, reason: '$key must be present');
+
+      final center = tester.getCenter(finder);
+      // Must be on-screen horizontally/vertically...
+      expect(
+        center.dy,
+        greaterThan(0),
+        reason: '$key center must be on-screen (dy>0)',
+      );
+      // ...and ABOVE the keyboard: its center must sit in the visible area, not
+      // behind the keyboard inset. This is the exact device failure (#594):
+      // connect-submit derived an offset inside the keyboard band → no hit test.
+      expect(
+        center.dy,
+        lessThan(screenSize.height - keyboardHeight),
+        reason:
+            '$key center (dy=${center.dy}) is behind the keyboard '
+            '(visible area ends at ${screenSize.height - keyboardHeight}) — '
+            'it would not hit-test on a real device',
+      );
+
+      // And it must actually pass a hit test at its center (no occluding
+      // widget, not off-screen) — tap should reach the button, not throw.
+      final result = tester.hitTestOnBinding(center);
+      final hit = result.path.any((entry) => entry.target is RenderBox);
+      expect(
+        hit,
+        isTrue,
+        reason: '$key must be hit-testable at its center with the keyboard up',
+      );
+    }
+
+    testWidgets('connect-submit is reachable above the keyboard (new mode)', (
+      tester,
+    ) async {
+      await pumpWithKeyboard(tester, isNew: true);
+      expectButtonReachable(tester, const Key('connect-submit'));
+    });
+
+    testWidgets('Save is reachable above the keyboard (edit mode)', (
+      tester,
+    ) async {
+      await pumpWithKeyboard(tester, isNew: false);
+      expectButtonReachable(tester, const Key('profile-editor-save'));
+    });
+
+    testWidgets('both actions live in the fixed footer above the keyboard', (
+      tester,
+    ) async {
+      await pumpWithKeyboard(tester, isNew: true);
+      expect(
+        find.byKey(const Key('profile-editor-action-bar')),
+        findsOneWidget,
+      );
+      expectButtonReachable(tester, const Key('connect-submit'));
+      expectButtonReachable(tester, const Key('profile-editor-save'));
+    });
+  });
 }
