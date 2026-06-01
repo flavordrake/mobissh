@@ -32,6 +32,9 @@ BUILT_APK="${NATIVE_DIR}/build/app/outputs/flutter-apk/app-release.apk"
 TS="$(date +%Y%m%dT%H%M%S%z)"
 STAMPED="mobissh-native-${TS}.apk"
 STABLE="mobissh-native.apk"
+# The commit the APK is built from — passed to the page generator so the page's
+# displayed hash ALWAYS matches the binary (never live HEAD on a page-only regen).
+BUILD_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
@@ -52,7 +55,7 @@ cp "$BUILT_APK" "${PUBLIC_DIR}/${STAMPED}"
 cp "$BUILT_APK" "${PUBLIC_DIR}/${STABLE}"
 
 log "generating stable install landing page (public/native.html)"
-"${REPO_ROOT}/scripts/gen-apk-install-page.sh" "$TS" "$STABLE" "$STAMPED"
+"${REPO_ROOT}/scripts/gen-apk-install-page.sh" "$TS" "$STABLE" "$STAMPED" "$BUILD_COMMIT"
 
 log "copying APKs + install page into ${PROD_CONTAINER}:${PROD_PUBLIC}/ (live serve)"
 docker cp "${PUBLIC_DIR}/${STAMPED}" "${PROD_CONTAINER}:${PROD_PUBLIC}/${STAMPED}"

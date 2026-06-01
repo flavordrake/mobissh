@@ -37,8 +37,16 @@ OUT="${PUBLIC_DIR}/native.html"
 TS="${1:?timestamp required}"
 STABLE_APK="${2:?stable apk filename required}"
 STAMPED_APK="${3:?stamped apk filename required}"
-
-GIT_HASH="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+# $4 = the commit the APK was BUILT from. MUST be passed by native-release-apk.sh
+# so the page's hash always matches the binary. Falling back to live HEAD caused
+# the hash to drift when the page was regenerated WITHOUT a rebuild (the APK sat
+# at an older commit while the page showed HEAD — misleading "new build" signal).
+BUILD_COMMIT="${4:-}"
+if [[ -n "$BUILD_COMMIT" ]]; then
+  GIT_HASH="$BUILD_COMMIT"
+else
+  GIT_HASH="$(git -C "$REPO_ROOT" rev-parse --short HEAD) (page-regen, APK commit unknown)"
+fi
 
 # Derive an absolute human time + a unix epoch from the compact build stamp
 # (YYYYMMDDThhmmss+zzzz) so the page can show BOTH "how new" forms (owner ask):
