@@ -69,12 +69,14 @@ class TerminalScreen extends ConsumerWidget {
     // the PWA is a full-screen terminal with bottom-only chrome. The session
     // label + menu + disconnect all live on the bottom session bar; the
     // terminal fills from the status bar down.
+    // resizeToAvoidBottomInset left at the DEFAULT (true): the body — including
+    // the bottom session bar + keybar — lifts ABOVE the soft keyboard instead
+    // of being covered by it. The #604 floating compose bar sets
+    // resizeToAvoidBottomInset:false earlier, which had the side effect of the
+    // keyboard COVERING the session bar (P0). #610 made the compose bar dock to
+    // FIXED margins (it no longer chases the keyboard inset), so that override
+    // is unnecessary AND harmful — removed. The bar now floats over the keyboard.
     return Scaffold(
-      // resizeToAvoidBottomInset:false — the floating compose bar (#604) owns
-      // the keyboard inset itself (it positions above the keyboard), so the
-      // Scaffold shouldn't also reflow the terminal Column when the keyboard
-      // opens. This keeps the terminal cursor from jumping while composing.
-      resizeToAvoidBottomInset: false,
       body: SafeArea(
         child: Stack(
           children: [
