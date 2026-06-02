@@ -130,6 +130,34 @@ void _stepFont(
   );
 }
 
+/// Advance the ACTIVE session's font family to the next bundled face (#679) and
+/// PERSIST it onto the session's PROFILE — mirroring [_stepFont]/#640 for font
+/// size and #613 for theme. Two effects, in order:
+///   1. In-memory per-session family (live render) via [SessionAppearanceNotifier].
+///   2. Best-effort upsert of the chosen family onto the matching saved profile
+///      (keyed by the active entry's `host:port:username`). NO-OP for an ad-hoc
+///      connect with no saved profile — we never materialize one.
+void _cycleFontFamily(WidgetRef ref, SessionsState sessions, String activeId) {
+  final current = ref.read(sessionFontFamilyProvider(activeId));
+  final i = terminalFontFamilies.indexWhere((f) => f.id == current);
+  final next =
+      terminalFontFamilies[(i < 0 ? 0 : i + 1) % terminalFontFamilies.length];
+  ref.read(sessionAppearanceProvider.notifier).setFontFamily(activeId, next.id);
+  final active = sessions.active;
+  if (active == null) return;
+  unawaited(
+    ref.read(profilesStoreProvider).setFontFamily(active.profileKey, next.id),
+  );
+}
+
+/// The human label for a bundled font-family id (#679), for the picker control.
+String _fontFamilyLabel(String id) {
+  for (final f in terminalFontFamilies) {
+    if (f.id == id) return f.label;
+  }
+  return id;
+}
+
 class SessionMenu extends ConsumerWidget {
   const SessionMenu({super.key, required this.onClose});
 
@@ -148,6 +176,7 @@ class SessionMenu extends ConsumerWidget {
     final activeId = sessions.activeId;
     final palette = ref.watch(activeSessionThemeProvider);
     final fontSize = ref.watch(activeSessionFontSizeProvider);
+    final fontFamily = ref.watch(activeSessionFontFamilyProvider);
 
     return SingleChildScrollView(
       child: Column(
@@ -210,6 +239,7 @@ class SessionMenu extends ConsumerWidget {
             keybarVisible: keybarVisible,
             themeLabel: palette.label,
             fontSize: fontSize,
+            fontFamily: fontFamily,
             onClose: onClose,
           ),
         ],
@@ -232,6 +262,7 @@ class _SessionControlsRow extends ConsumerWidget {
     required this.keybarVisible,
     required this.themeLabel,
     required this.fontSize,
+    required this.fontFamily,
     required this.onClose,
   });
 
@@ -240,6 +271,7 @@ class _SessionControlsRow extends ConsumerWidget {
   final bool keybarVisible;
   final String themeLabel;
   final double fontSize;
+  final String fontFamily;
   final VoidCallback onClose;
 
   @override
@@ -309,6 +341,41 @@ class _SessionControlsRow extends ConsumerWidget {
             onPressed: !hasActive
                 ? null
                 : () => _stepFont(ref, sessions, activeId!, kFontSizeStep),
+          ),
+          // Cycle the ACTIVE session's terminal FONT FAMILY (#679): the
+          // bundled monospace faces (JetBrains Mono / Fira Code / Cascadia
+          // Code), mirroring the PWA terminal's font picker. Tap advances to
+          // the next face; the current family's label sits next to the glyph
+          // so the control communicates state without a full row (same idiom
+          // as the theme cycle). PER-SESSION + persisted onto the profile
+          // (#640 idiom). Monochrome Material icon — no emoji
+          // (feedback_monochrome_icons_no_emoji). Disabled with no active
+          // session, like the sibling controls.
+          InkWell(
+            key: const Key('session-menu-fontfamily-cycle'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: !hasActive
+                ? null
+                : () => _cycleFontFamily(ref, sessions, activeId!),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.text_fields, size: 20),
+                  const SizedBox(width: 6),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 64),
+                    child: Text(
+                      _fontFamilyLabel(fontFamily),
+                      key: const Key('session-menu-fontfamily-label'),
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
           // Files moved to a PER-ROW affordance (#649): each session row now
           // carries its own `session-menu-files-${id}` icon next to its X, so

@@ -124,15 +124,32 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Bundled terminal font (#552). JetBrains Mono (OFL-1.1, vendored under
-  # assets/fonts/ with OFL.txt). Applied to the xterm TerminalView via
-  # TerminalStyle(fontFamily: 'JetBrainsMono'). Regular + Bold so bold SGR
-  # attributes render with a real bold face instead of synthetic faux-bold.
+  # Bundled terminal fonts (#552, #679). The three monospace families the PWA
+  # terminal offers (src/modules/terminal.ts FONT_FAMILIES), vendored under
+  # assets/fonts/ (each OFL-1.1, license alongside). The per-session
+  # font-family selector (#679) picks one; applied to the xterm TerminalView
+  # via TerminalStyle(fontFamily: <family>). Regular + Bold per family so bold
+  # SGR attributes render with a real bold face instead of synthetic faux-bold.
+  #   - JetBrainsMono (OFL.txt) — default, was the only bundled face pre-#679.
+  #   - FiraCode (FiraCode-OFL.txt) — tonsky/FiraCode v6.2 ttf/.
+  #   - CascadiaCode (CascadiaCode-OFL.txt) — microsoft/cascadia-code v2407.24
+  #     CascadiaMono static ttf (the no-ligature mono cut, truest terminal face;
+  #     registered as family `CascadiaCode` to match the picker family id).
   fonts:
     - family: JetBrainsMono
       fonts:
         - asset: assets/fonts/JetBrainsMono-Regular.ttf
         - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+    - family: FiraCode
+      fonts:
+        - asset: assets/fonts/FiraCode-Regular.ttf
+        - asset: assets/fonts/FiraCode-Bold.ttf
+          weight: 700
+    - family: CascadiaCode
+      fonts:
+        - asset: assets/fonts/CascadiaMono-Regular.ttf
+        - asset: assets/fonts/CascadiaMono-Bold.ttf
           weight: 700
 
   # To add assets to your application, add an assets section, like this:
