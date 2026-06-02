@@ -72,6 +72,15 @@ double _terminalFontSize(WidgetTester tester, String sessionId) {
   return view.textStyle.fontSize;
 }
 
+/// The `fontFamily` the `TerminalView` for [sessionId] is currently rendering
+/// (#679). Mirrors [_terminalFontSize] for the family axis.
+String _terminalFontFamily(WidgetTester tester, String sessionId) {
+  final view = tester.widget<TerminalView>(
+    find.byKey(Key('terminal-view-$sessionId'), skipOffstage: false),
+  );
+  return view.textStyle.fontFamily;
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -139,6 +148,47 @@ void main() {
       reason: 'sibling session terminal font must be untouched',
     );
   });
+
+  testWidgets(
+    'the per-session font FAMILY reaches the live TerminalView (#679)',
+    (tester) async {
+      final transport = FakeSshShellTransport();
+      addTearDown(transport.close);
+      final container = _makeContainer(transport);
+      final a = _add(container, 'host-a');
+      final b = _add(container, 'host-b'); // b is active
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: TerminalScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      // Both terminals start on the default face.
+      expect(_terminalFontFamily(tester, a.id), fontFamilyDefault);
+      expect(_terminalFontFamily(tester, b.id), fontFamilyDefault);
+
+      // Change the ACTIVE session's family; the live view must reflect it and the
+      // sibling must NOT (per-session isolation at the render layer).
+      container
+          .read(sessionAppearanceProvider.notifier)
+          .setFontFamily(b.id, 'FiraCode');
+      await _pumpFrames(tester);
+
+      expect(
+        _terminalFontFamily(tester, b.id),
+        'FiraCode',
+        reason: 'the live terminal must reflect the per-session font family',
+      );
+      expect(
+        _terminalFontFamily(tester, a.id),
+        fontFamilyDefault,
+        reason: 'sibling session terminal family must be untouched',
+      );
+    },
+  );
 
   testWidgets('a freshly-added session terminal starts from the default', (
     tester,

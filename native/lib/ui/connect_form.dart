@@ -179,6 +179,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     required String initialCommand,
     String? themeName,
     double? fontSize,
+    String? fontFamily,
     String? colorHex,
   }) async {
     // Captured before the async gap so we can pop a pushed "New session" route
@@ -220,6 +221,21 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         ctrace(
           'ui.chooser',
           'applied profile fontSize $fontSize for ${entry.id}',
+        );
+      }
+      // #679: seed THIS session's font family from the profile's PERSISTED
+      // per-profile family (mirrors the theme/font seeds above). Per-session,
+      // keyed by the new session's id — NOT global. Only when the profile
+      // carries a (known) family; otherwise the session opens at the default
+      // face. setFontFamily resolves an unknown id to the default, so a stale
+      // family never renders a missing font.
+      if (fontFamily != null) {
+        ref
+            .read(sessionAppearanceProvider.notifier)
+            .setFontFamily(entry.id, fontFamily);
+        ctrace(
+          'ui.chooser',
+          'applied profile fontFamily $fontFamily for ${entry.id}',
         );
       }
       // #653: seed THIS session's profile color from the profile's saved color
@@ -372,6 +388,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       initialCommand: profile.initialCommand ?? '',
       themeName: profile.theme,
       fontSize: profile.fontSize,
+      fontFamily: profile.fontFamily,
       colorHex: profile.color,
     );
   }

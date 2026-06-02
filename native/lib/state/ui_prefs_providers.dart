@@ -142,6 +142,49 @@ final fontSizeProvider = StateNotifierProvider<FontSizeNotifier, double>((ref) {
   return FontSizeNotifier();
 });
 
+// ── Terminal font family (#679) ───────────────────────────────────────────
+
+/// A bundled monospace font family the per-session picker offers. [id] is the
+/// `pubspec.yaml` family name applied to `TerminalStyle(fontFamily:)` AND the
+/// stable value persisted on a profile; [label] is the human picker label.
+@immutable
+class NamedFontFamily {
+  const NamedFontFamily(this.id, this.label);
+  final String id;
+  final String label;
+}
+
+/// Default terminal font family — `JetBrainsMono`, the face the app bundled
+/// (and rendered with) before #679. Existing profiles with no stored family
+/// open here, so #679 is a no-op for them.
+const String fontFamilyDefault = 'JetBrainsMono';
+
+/// The bundled monospace families (#679), mirroring the PWA terminal's
+/// selectable fonts (`FONT_FAMILIES` in src/modules/terminal.ts: JetBrains
+/// Mono, Fira Code, Cascadia Code). Each [NamedFontFamily.id] matches a
+/// `fonts:` family registered in pubspec.yaml. The picker iterates this list;
+/// adding a bundled face is a one-line append here + a pubspec entry.
+const List<NamedFontFamily> terminalFontFamilies = [
+  NamedFontFamily('JetBrainsMono', 'JetBrains Mono'),
+  NamedFontFamily('FiraCode', 'Fira Code'),
+  NamedFontFamily('CascadiaCode', 'Cascadia Code'),
+];
+
+/// Resolve an arbitrary stored family string to a known bundled family id,
+/// falling back to [fontFamilyDefault] for null/unknown values (a profile
+/// carrying a stale/typo family must never render with a missing face).
+String resolveFontFamily(String? id) {
+  if (id == null) return fontFamilyDefault;
+  for (final f in terminalFontFamilies) {
+    if (f.id == id) return f.id;
+  }
+  return fontFamilyDefault;
+}
+
+/// True iff [id] is one of the bundled families.
+bool isKnownFontFamily(String? id) =>
+    id != null && terminalFontFamilies.any((f) => f.id == id);
+
 // ── Terminal theme palettes (#552) ────────────────────────────────────────
 
 /// A named terminal palette: a label for the UI + the xterm `TerminalTheme`.
@@ -750,12 +793,21 @@ class SessionAppearance {
   const SessionAppearance({
     required this.themeIndex,
     required this.fontSize,
+    this.fontFamily = fontFamilyDefault,
     this.color,
     this.keybarVisible = keybarVisibleDefault,
   });
 
   final int themeIndex;
   final double fontSize;
+
+  /// The session's terminal font family (#679) — one of
+  /// [terminalFontFamilies]' ids. Defaults to [fontFamilyDefault]
+  /// (`JetBrainsMono`). Seeded on connect from the profile (mirrors
+  /// theme/fontSize/color), then applied to the `TerminalView` via
+  /// `TerminalStyle(fontFamily:)`. Per-session: changing one session's font
+  /// family leaves siblings untouched.
+  final String fontFamily;
 
   /// The session's profile color (#653), mirroring the PWA `session-dot`
   /// identity color. Null when the profile has no explicit color; the swatch
@@ -771,12 +823,14 @@ class SessionAppearance {
   SessionAppearance copyWith({
     int? themeIndex,
     double? fontSize,
+    String? fontFamily,
     Color? color,
     bool? keybarVisible,
   }) {
     return SessionAppearance(
       themeIndex: themeIndex ?? this.themeIndex,
       fontSize: fontSize ?? this.fontSize,
+      fontFamily: fontFamily ?? this.fontFamily,
       color: color ?? this.color,
       keybarVisible: keybarVisible ?? this.keybarVisible,
     );
@@ -787,11 +841,13 @@ class SessionAppearance {
       other is SessionAppearance &&
       other.themeIndex == themeIndex &&
       other.fontSize == fontSize &&
+      other.fontFamily == fontFamily &&
       other.color == color &&
       other.keybarVisible == keybarVisible;
 
   @override
-  int get hashCode => Object.hash(themeIndex, fontSize, color, keybarVisible);
+  int get hashCode =>
+      Object.hash(themeIndex, fontSize, fontFamily, color, keybarVisible);
 }
 
 /// Parse a PWA-style profile color hex (#653) into a [Color]. Accepts
@@ -876,6 +932,16 @@ class SessionAppearanceNotifier
     _put(sessionId, appearanceOf(sessionId).copyWith(color: color));
   }
 
+  /// Set [sessionId]'s terminal font family (#679). Affects only this session —
+  /// sibling sessions are untouched (per-session isolation). The value is
+  /// resolved to a known bundled family ([resolveFontFamily]) so an unknown id
+  /// falls back to the default face rather than rendering with a missing font.
+  /// Seeded on connect from the profile (mirrors [setTheme]/[setFontSize]).
+  void setFontFamily(String sessionId, String family) {
+    final f = resolveFontFamily(family);
+    _put(sessionId, appearanceOf(sessionId).copyWith(fontFamily: f));
+  }
+
   /// Set [sessionId]'s keybar visibility (#573). Affects only this session —
   /// sibling sessions never change (the per-session isolation the issue is
   /// about). Mirrors [setTheme]/[setFontSize].
@@ -941,6 +1007,24 @@ final sessionColorProvider = Provider.family<Color?, String>((ref, sessionId) {
       .color;
 });
 
+/// Per-session terminal font family (#679). Falls back to [fontFamilyDefault]
+/// for an un-customized session. Seeded on connect from the profile; mutated by
+/// the session-menu picker. Rebuilds when the session's appearance entry
+/// changes — touching one session leaves siblings' families untouched (the
+/// per-session isolation #679 requires). Unlike theme/font size there is no
+/// global default notifier to track: the family default is the fixed bundled
+/// face, so no `watch` of a global provider is needed.
+final sessionFontFamilyProvider = Provider.family<String, String>((
+  ref,
+  sessionId,
+) {
+  ref.watch(sessionAppearanceProvider);
+  return ref
+      .read(sessionAppearanceProvider.notifier)
+      .appearanceOf(sessionId)
+      .fontFamily;
+});
+
 /// Per-session keybar visibility (#573). Falls back to [keybarVisibleDefault]
 /// (true) for an un-customized session, so a fresh session shows the keybar.
 /// Rebuilds when the session's appearance entry changes — toggling one session
@@ -993,4 +1077,13 @@ final activeSessionKeybarVisibleProvider = Provider<bool>((ref) {
   final activeId = ref.watch(activeSessionIdProvider);
   if (activeId == null) return keybarVisibleDefault;
   return ref.watch(sessionKeybarVisibleProvider(activeId));
+});
+
+/// The ACTIVE session's terminal font family (#679) — what the session menu's
+/// font-family picker reflects/changes. Falls back to [fontFamilyDefault] when
+/// no session is active so the picker still renders sensibly.
+final activeSessionFontFamilyProvider = Provider<String>((ref) {
+  final activeId = ref.watch(activeSessionIdProvider);
+  if (activeId == null) return fontFamilyDefault;
+  return ref.watch(sessionFontFamilyProvider(activeId));
 });

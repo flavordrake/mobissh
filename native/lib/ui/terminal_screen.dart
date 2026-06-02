@@ -897,9 +897,11 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     if (shellAsync.valueOrNull != null) {
       _armConnectRemeasure();
     }
-    // Per-session theme + font (#601, #571): each session's TerminalView reads
-    // ITS OWN palette + font size, so two visible sessions can differ.
+    // Per-session theme + font (#601, #571, #679): each session's TerminalView
+    // reads ITS OWN palette + font size + font family, so two visible sessions
+    // can differ.
     final fontSize = ref.watch(sessionFontSizeProvider(widget.sessionId));
+    final fontFamily = ref.watch(sessionFontFamilyProvider(widget.sessionId));
     final palette = ref.watch(sessionTerminalThemeProvider(widget.sessionId));
     // #624: state-driven disconnect indicator. Reads the session lifecycle enum
     // directly (no parallel boolean — rules/state-management.md). The banner is
@@ -947,7 +949,11 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
               theme: palette.theme,
               textStyle: TerminalStyle(
                 fontSize: fontSize,
-                fontFamily: kTerminalFontFamily,
+                // #679: per-session bundled font family. Falls back to the
+                // default face for an un-customized session. `fontFamilyFallback`
+                // keeps platform monospace coverage for glyphs the chosen face
+                // is missing (and if the asset somehow isn't bundled).
+                fontFamily: fontFamily,
               ),
             ),
           ),

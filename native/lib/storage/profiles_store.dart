@@ -32,6 +32,7 @@ class SavedProfile {
     required this.username,
     this.theme,
     this.fontSize,
+    this.fontFamily,
     this.color,
     this.authType,
     this.vaultId,
@@ -51,6 +52,15 @@ class SavedProfile {
   /// [theme] (#613): both are per-profile appearance, seeded into a session on
   /// connect. Validated/clamped on read to [_fontSizeMin]..[_fontSizeMax].
   final double? fontSize;
+
+  /// Per-profile terminal font family (#679) — one of the bundled families
+  /// (`JetBrainsMono`/`FiraCode`/`CascadiaCode`). Null when the user hasn't
+  /// picked one — the session then opens at the app default
+  /// ([fontFamilyDefault]). Persisted alongside [theme]/[fontSize] (all
+  /// per-profile appearance, seeded into a session on connect). Validated on
+  /// read against the known bundled families; an unknown value yields null so
+  /// the session falls back to the default face (no missing-font render).
+  final String? fontFamily;
 
   final String? color;
 
@@ -96,6 +106,24 @@ class SavedProfile {
     return v.clamp(_fontSizeMin, _fontSizeMax);
   }
 
+  /// The bundled terminal font families (#679). Inlined here (mirrors the
+  /// _fontSize* bounds) so the storage layer stays free of a UI-providers
+  /// import; kept in sync with [terminalFontFamilies] in ui_prefs_providers.dart.
+  static const Set<String> _knownFontFamilies = {
+    'JetBrainsMono',
+    'FiraCode',
+    'CascadiaCode',
+  };
+
+  /// Validate a raw stored font family. Returns the value only when it is a
+  /// known bundled family; anything else (null, typo, removed face) yields null
+  /// so the session falls back to the default face (corrupt-resilience, per
+  /// .claude/rules config-system policy — no crash, no missing-font render).
+  static String? _coerceFontFamily(Object? raw) {
+    if (raw is String && _knownFontFamilies.contains(raw)) return raw;
+    return null;
+  }
+
   Map<String, dynamic> toJson() {
     final out = <String, dynamic>{
       'title': title,
@@ -105,6 +133,7 @@ class SavedProfile {
     };
     if (theme != null) out['theme'] = theme;
     if (fontSize != null) out['fontSize'] = fontSize;
+    if (fontFamily != null) out['fontFamily'] = fontFamily;
     if (color != null) out['color'] = color;
     if (authType != null) out['authType'] = authType;
     if (vaultId != null) out['vaultId'] = vaultId;
@@ -148,6 +177,7 @@ class SavedProfile {
     if (themeRaw is String && themeRaw.isNotEmpty) theme = themeRaw;
 
     final double? fontSize = _coerceFontSize(json['fontSize']);
+    final String? fontFamily = _coerceFontFamily(json['fontFamily']);
 
     String? color;
     final colorRaw = json['color'];
@@ -183,6 +213,7 @@ class SavedProfile {
       username: usernameRaw,
       theme: theme,
       fontSize: fontSize,
+      fontFamily: fontFamily,
       color: color,
       authType: authType,
       vaultId: vaultId,
@@ -196,6 +227,7 @@ class SavedProfile {
     String? vaultId,
     String? keyVaultId,
     double? fontSize,
+    String? fontFamily,
   }) {
     return SavedProfile(
       title: title ?? this.title,
@@ -204,6 +236,7 @@ class SavedProfile {
       username: username,
       theme: theme,
       fontSize: fontSize ?? this.fontSize,
+      fontFamily: fontFamily ?? this.fontFamily,
       color: color,
       authType: authType,
       vaultId: vaultId ?? this.vaultId,
@@ -489,6 +522,7 @@ class ProfilesStore {
             username: prior.username,
             theme: profile.theme,
             fontSize: profile.fontSize,
+            fontFamily: profile.fontFamily,
             color: profile.color,
             authType: profile.authType,
             vaultId: profile.vaultId,
@@ -605,6 +639,24 @@ class ProfilesStore {
     final idx = list.indexWhere((p) => p.identityKey == identityKey);
     if (idx < 0) return false;
     list[idx] = list[idx].copyWith(fontSize: size);
+    await save(list);
+    return true;
+  }
+
+  /// Persist a per-profile terminal font family (#679) onto the profile
+  /// matching [identityKey] (`host:port:username`). Mirrors [setFontSize]: the
+  /// session-menu picker calls this so the chosen face survives restart/
+  /// reconnect. The value is round-trip-validated by [SavedProfile.fromJson]'s
+  /// rules on the next read (an unknown family reads back as null → default).
+  ///
+  /// NO-OP when no saved profile matches — an ad-hoc connect (host typed into
+  /// the form, never saved) must NOT be materialized as a saved profile just
+  /// because the user picked its font. Returns true iff a profile was updated.
+  Future<bool> setFontFamily(String identityKey, String family) async {
+    final list = await load();
+    final idx = list.indexWhere((p) => p.identityKey == identityKey);
+    if (idx < 0) return false;
+    list[idx] = list[idx].copyWith(fontFamily: family);
     await save(list);
     return true;
   }

@@ -160,12 +160,85 @@ void main() {
     });
   });
 
+  group('per-session font family (#679)', () {
+    test('changing one session font family does not leak to the other', () {
+      final c = _makeContainer();
+      final a = _add(c, 'host-a');
+      final b = _add(c, 'host-b');
+
+      c
+          .read(sessionAppearanceProvider.notifier)
+          .setFontFamily(a.id, 'FiraCode');
+
+      expect(c.read(sessionFontFamilyProvider(a.id)), 'FiraCode');
+      expect(
+        c.read(sessionFontFamilyProvider(b.id)),
+        fontFamilyDefault,
+        reason: 'session B font family must be untouched by a change to A',
+      );
+    });
+
+    test('an unknown family falls back to the default face', () {
+      final c = _makeContainer();
+      final a = _add(c, 'host-a');
+
+      c
+          .read(sessionAppearanceProvider.notifier)
+          .setFontFamily(a.id, 'NotABundledFont');
+
+      expect(
+        c.read(sessionFontFamilyProvider(a.id)),
+        fontFamilyDefault,
+        reason:
+            'an unknown family must resolve to the default, never render '
+            'a missing font',
+      );
+    });
+
+    test('switching active does not mutate any session font family', () {
+      final c = _makeContainer();
+      final a = _add(c, 'host-a');
+      final b = _add(c, 'host-b');
+
+      final appearance = c.read(sessionAppearanceProvider.notifier);
+      appearance.setFontFamily(a.id, 'FiraCode');
+      appearance.setFontFamily(b.id, 'CascadiaCode');
+
+      c.read(sessionsProvider.notifier).setActive(a.id);
+      c.read(sessionsProvider.notifier).setActive(b.id);
+
+      expect(c.read(sessionFontFamilyProvider(a.id)), 'FiraCode');
+      expect(c.read(sessionFontFamilyProvider(b.id)), 'CascadiaCode');
+    });
+
+    test('activeSessionFontFamily resolves the active session family', () {
+      final c = _makeContainer();
+      final a = _add(c, 'host-a');
+      final b = _add(c, 'host-b'); // b is active
+
+      c
+          .read(sessionAppearanceProvider.notifier)
+          .setFontFamily(a.id, 'CascadiaCode');
+
+      // Active is b → still default family.
+      expect(c.read(activeSessionFontFamilyProvider), fontFamilyDefault);
+
+      c.read(sessionsProvider.notifier).setActive(a.id);
+      expect(c.read(activeSessionFontFamilyProvider), 'CascadiaCode');
+
+      // Switching active did NOT change either stored value.
+      expect(c.read(sessionFontFamilyProvider(a.id)), 'CascadiaCode');
+      expect(c.read(sessionFontFamilyProvider(b.id)), fontFamilyDefault);
+    });
+  });
+
   group('defaults + new-session inheritance', () {
     test('a fresh session reads the defaults', () {
       final c = _makeContainer();
       final a = _add(c, 'host-a');
       expect(c.read(sessionThemeProvider(a.id)), terminalThemeDefault);
       expect(c.read(sessionFontSizeProvider(a.id)), fontSizeDefault);
+      expect(c.read(sessionFontFamilyProvider(a.id)), fontFamilyDefault);
     });
 
     test('a new session inherits the persisted global default, not a live '
@@ -177,10 +250,14 @@ void main() {
       // a brand-new session B inherits — B inherits the persisted default.
       c.read(sessionAppearanceProvider.notifier).setFontSize(a.id, 26);
       c.read(sessionAppearanceProvider.notifier).setTheme(a.id, 1);
+      c
+          .read(sessionAppearanceProvider.notifier)
+          .setFontFamily(a.id, 'FiraCode');
 
       final b = _add(c, 'host-b');
       expect(c.read(sessionFontSizeProvider(b.id)), fontSizeDefault);
       expect(c.read(sessionThemeProvider(b.id)), terminalThemeDefault);
+      expect(c.read(sessionFontFamilyProvider(b.id)), fontFamilyDefault);
     });
 
     // #616: the global default can change AFTER a session's terminal first
