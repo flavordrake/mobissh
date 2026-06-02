@@ -39,6 +39,7 @@ import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_editor.dart';
 import 'profile_list.dart';
+import 'top_toast.dart';
 
 class ConnectForm extends ConsumerStatefulWidget {
   const ConnectForm({super.key});
@@ -334,11 +335,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         'ui.chooser',
         'connectFromProfile ${profile.host}: no stored creds → editor',
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No saved credentials — enter them to connect.'),
-        ),
-      );
+      showTopToast(context, 'No saved credentials — enter them to connect.');
       await _editProfile(profile);
       return;
     }
@@ -403,7 +400,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     final msg = parts.isNotEmpty
         ? 'Imported ${parts.join(', ')}'
         : 'No profiles imported.';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showTopToast(context, msg);
   }
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {

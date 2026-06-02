@@ -14,6 +14,7 @@ import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
 import 'connection_audit.dart';
+import 'top_toast.dart';
 
 class DiagnosticsSection extends StatefulWidget {
   /// Allows tests to inject a fake share function so we don't open the real
@@ -66,9 +67,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
       );
     } catch (err) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Share failed: $err')));
+      showTopToast(context, 'Share failed: $err');
     }
   }
 
@@ -113,9 +112,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
       );
     } catch (err) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Share feedback failed: $err')));
+      showTopToast(context, 'Share feedback failed: $err');
     }
   }
 
@@ -126,15 +123,11 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
     } catch (err) {
       summary = const UploadSummary();
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Upload failed: $err')));
+        showTopToast(context, 'Upload failed: $err');
       }
     }
     if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(summary.toString())));
+      showTopToast(context, summary.toString());
     }
     _refresh();
   }
@@ -271,11 +264,7 @@ class _ConnectLogTile extends StatelessWidget {
                                   ClipboardData(text: lines.join('\n')),
                                 );
                                 if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Connect log copied.'),
-                                  ),
-                                );
+                                showTopToast(context, 'Connect log copied.');
                               },
                         icon: const Icon(Icons.copy),
                         label: const Text('Copy'),

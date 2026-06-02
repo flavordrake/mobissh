@@ -19,6 +19,7 @@
 #   integrate PR_NUM ISSUE_NUM [--merge|--squash|--rebase]  Merge PR, close issue, pull main
 #   delegate  ISSUE_NUM [--label L ...]   Label bot, audit comment, prune stale refs
 #   fetch-issues N1,N2,N3 [--out FILE]   Fetch issue bodies to file (default: $MOBISSH_TMPDIR/fetched-issues.md)
+#   release TAG --title T [--notes-file F] [--target SHA] [ASSET ...]  Create a GitHub release (+ tag) with optional assets
 #
 # All progress goes to stderr, actionable output to stdout.
 
@@ -29,7 +30,7 @@ source "$(dirname "$0")/lib/repo-guard.sh"
 
 usage() {
   echo "Usage: scripts/gh-ops.sh <command> [args]" >&2
-  echo "Commands: comment, labels, close, reopen, search, version, pr-create, pr-merge, pr-close, integrate, delegate, fetch-issues" >&2
+  echo "Commands: comment, labels, close, reopen, search, version, pr-create, pr-merge, pr-close, integrate, delegate, fetch-issues, release" >&2
   exit 1
 }
 
@@ -356,6 +357,35 @@ case "$CMD" in
       echo -e "\n---\n" >> "$OUT"
     done
     echo "Wrote ${#NUMS[@]} issues to ${OUT}" >&2
+    ;;
+
+  release)
+    # Create a GitHub release (and its tag) with optional asset uploads.
+    [ $# -ge 1 ] || { echo "Error: release requires TAG" >&2; exit 1; }
+    TAG="$1"; shift
+    TITLE=""
+    NOTES_FILE=""
+    TARGET=""
+    ASSETS=()
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --title) TITLE="$2"; shift 2 ;;
+        --notes-file) NOTES_FILE="$2"; shift 2 ;;
+        --target) TARGET="$2"; shift 2 ;;
+        *) ASSETS+=("$1"); shift ;;
+      esac
+    done
+    [ -n "$TITLE" ] || TITLE="$TAG"
+    REL_ARGS=("$TAG" --title "$TITLE")
+    if [ -n "$NOTES_FILE" ]; then
+      [ -f "$NOTES_FILE" ] || { echo "Error: notes file not found: $NOTES_FILE" >&2; exit 1; }
+      REL_ARGS+=(--notes-file "$NOTES_FILE")
+    else
+      REL_ARGS+=(--generate-notes)
+    fi
+    [ -n "$TARGET" ] && REL_ARGS+=(--target "$TARGET")
+    echo "Creating release ${TAG} (${TITLE})" >&2
+    gh release create "${REL_ARGS[@]}" "${ASSETS[@]+"${ASSETS[@]}"}"
     ;;
 
   *)

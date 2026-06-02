@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.0 (2026-06-02) — first tagged native release
+First versioned cut of the native app (replaces the date+letter daily-build labels). Everything below this line shipped under the rapid date-letter builds; this tags it as v0.1.0. Daily iterations now use v0.1.x.
+- Daily-driver baseline: multi-session SSH that survives backgrounding + auto-reconnects; profiles with keys/passwords, per-profile theme/font/color; SFTP file browser; 38 terminal themes.
+- Terminal fills the screen on first connect (the PTY re-syncs on shellReady); centered session title + per-session color swatch; per-session theme & font.
+- In-app feedback: one-tap screenshot (captured at the moment of tap) + full comment + on-device diagnostic log, straight into the fix loop.
+
 ## Build 2026-06-02l — centered session title + per-session color swatch
 - The session title is now centered in the bottom bar instead of colliding with the menu.
 - Each session shows a small color swatch matching its profile color (or its theme accent) — the same color identifies the same profile, like the PWA. Set a profile's color in the editor to tag it.
