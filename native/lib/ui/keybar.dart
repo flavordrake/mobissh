@@ -22,6 +22,30 @@ import 'package:xterm/xterm.dart';
 
 import '../state/sessions.dart';
 
+/// Bottom-chrome sizing (#615). The keybar was shrunk ~25% vertically to give
+/// the terminal more real estate. These are the single source of truth for the
+/// button geometry AND the vertical space the bar occupies — the latter
+/// ([kKeybarReserve]) is consumed by the compose bar's bottom reserve in
+/// terminal_screen.dart so a docked compose panel always clears the chrome.
+///
+/// Old values (pre-#615): minWidth 48, minHeight 44, icon 18, label 14,
+/// reserve ≈ 96. The ~25% reduction lands the height around 33 and the reserve
+/// around 72.
+const double kKeybarButtonMinWidth = 44;
+const double kKeybarButtonMinHeight = 33;
+const double kKeybarIconSize = 14;
+const double kKeybarLabelFontSize = 12;
+
+/// "ESC" is the widest text label; scaling it down lets it share the normal
+/// button min width instead of bulging the bar (#615). Still monochrome text —
+/// no glyph that could be mistaken for Enter.
+const double kKeybarEscFontSize = 10;
+
+/// Vertical space (logical px) the keybar occupies, used as the compose-bar
+/// bottom reserve. Button height + the 4px top/bottom scroll-view padding,
+/// rounded for a small safety margin. ~25% smaller than the old hardcoded 96.
+const double kKeybarReserve = 72;
+
 /// One key on the bar. Renders [label] text, OR [icon] (a monochrome
 /// theme-tinted Material icon) when set — never an emoji.
 class KeybarKey {
@@ -124,7 +148,8 @@ class Keybar extends ConsumerWidget {
         // target. Each button has a comfortable min width.
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          // #615: tighter vertical padding (was 4) to shrink the strip ~25%.
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -165,29 +190,44 @@ class _KeybarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // #615: ESC is the widest text key; render it at a smaller font so it fits
+    // the shared normal button width instead of bulging the bar. Still plain
+    // monochrome text (no Enter-ish glyph).
+    final bool isEsc = keyData.id == 'keyEsc';
     // Monochrome icon (theme-tinted) when set, else the label glyph/text.
     // Never an emoji — see memory feedback_monochrome_icons_no_emoji.
     final Widget child = keyData.icon != null
         ? Icon(
             keyData.icon,
-            size: 18,
+            size: kKeybarIconSize,
             color: theme.colorScheme.onSurface,
             semanticLabel: keyData.label,
           )
         : Text(
             keyData.label,
-            style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
+            style: TextStyle(
+              fontSize: isEsc ? kKeybarEscFontSize : kKeybarLabelFontSize,
+              fontFamily: 'monospace',
+            ),
             overflow: TextOverflow.ellipsis,
           );
     return OutlinedButton(
       key: Key('keybar-btn-${keyData.id}'),
       onPressed: () => _onTap(context),
       style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        // Touch-friendly: a comfortable min width/height per key (≥44px tall
-        // tap target) instead of squeezing N keys to fit the viewport width.
-        minimumSize: const Size(48, 44),
+        // #615: tighter padding for the ~25% shrink. Still a touch-friendly
+        // tap target via minimumSize below.
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        // Every key shares the same min width so the bar stays even — ESC no
+        // longer bulges (its smaller font fits this width).
+        minimumSize: const Size(kKeybarButtonMinWidth, kKeybarButtonMinHeight),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        // #615: lighter outline — thinner, lower-opacity border so the bar
+        // reads as a quiet strip rather than a grid of boxes.
+        side: BorderSide(
+          color: theme.colorScheme.outline.withValues(alpha: 0.4),
+          width: 0.5,
+        ),
         // Squarer look matching the PWA keybar — subtle rounding, not pill.
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(6)),

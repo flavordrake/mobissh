@@ -76,6 +76,14 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  group('bottom-chrome reserve constants (#615)', () {
+    test('session bar reserve is reduced ~25% from the old 48px', () {
+      // The compose-bar bottomReserve used a hardcoded 48 for the session bar.
+      expect(kSessionBarReserve, lessThanOrEqualTo(40));
+      expect(kSessionBarReserve, greaterThanOrEqualTo(32));
+    });
+  });
+
   group('TerminalScreen', () {
     testWidgets('renders a TerminalView', (tester) async {
       final transport = FakeSshShellTransport();

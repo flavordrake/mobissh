@@ -81,6 +81,14 @@ void main() {
       }
     });
 
+    test('default set includes BOTH Home and End (#615)', () {
+      // #615: Home and End must be on the DEFAULT bar so they're reachable
+      // without scrolling once the keys are shrunk to fit a phone width.
+      final ids = kDefaultKeybarKeys.map((k) => k.id).toList();
+      expect(ids, contains('keyHome'));
+      expect(ids, contains('keyEnd'));
+    });
+
     test('all four arrows use the monochrome icon path (icon != null)', () {
       final arrows = kDefaultKeybarKeys
           .where(
@@ -97,6 +105,25 @@ void main() {
               'a unicode glyph that the platform colorizes inconsistently',
         );
       }
+    });
+  });
+
+  group('keybar sizing (#615 — shrink ~25%, lighter outline)', () {
+    test('button min height is reduced ~25% from the old 44px tap target', () {
+      // Old default min height was 44. A ~25% shrink lands around 33 (±2).
+      expect(kKeybarButtonMinHeight, lessThanOrEqualTo(35));
+      expect(kKeybarButtonMinHeight, greaterThanOrEqualTo(31));
+    });
+
+    test('icon + label font sizes are reduced from the old 18 / 14', () {
+      expect(kKeybarIconSize, lessThan(18));
+      expect(kKeybarLabelFontSize, lessThan(14));
+    });
+
+    test('keybar reserve height is reduced ~25% from the old 96px', () {
+      // The compose-bar bottomReserve used a hardcoded 96 for the keybar.
+      expect(kKeybarReserve, lessThanOrEqualTo(76));
+      expect(kKeybarReserve, greaterThanOrEqualTo(64));
     });
   });
 
@@ -136,6 +163,56 @@ void main() {
 
       expect(find.byKey(const Key('keybar')), findsOneWidget);
     });
+
+    testWidgets(
+      'ESC renders at a normal button width — same minWidth as a normal key '
+      '(#615)',
+      (tester) async {
+        final pair = InMemoryGatewayPair();
+        addTearDown(() async {
+          await pair.dispose();
+        });
+        final container = ProviderContainer(
+          overrides: [taskSshGatewayProvider.overrideWithValue(pair.uiSide)],
+        );
+        addTearDown(container.dispose);
+
+        final entry = container
+            .read(sessionsProvider.notifier)
+            .addOrActivate(
+              const SshConnectParams(
+                host: 'h',
+                port: 22,
+                username: 'u',
+                auth: SshAuth.password('p'),
+              ),
+            );
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              home: Scaffold(body: Keybar(activeEntry: entry)),
+            ),
+          ),
+        );
+        await _pumpFrames(tester);
+
+        OutlinedButton buttonFor(String id) =>
+            tester.widget<OutlinedButton>(find.byKey(Key('keybar-btn-$id')));
+
+        Size? minSizeOf(OutlinedButton b) =>
+            b.style?.minimumSize?.resolve(<WidgetState>{});
+
+        final escMin = minSizeOf(buttonFor('keyEsc'));
+        final normalMin = minSizeOf(buttonFor('keyPipe'));
+        expect(escMin, isNotNull);
+        expect(normalMin, isNotNull);
+        // ESC must not be wider than a normal key — it used to be the widest
+        // text key. Same min width keeps the bar even.
+        expect(escMin!.width, equals(normalMin!.width));
+      },
+    );
 
     testWidgets(
       'tapping a key writes its byte sequence to the terminal',
