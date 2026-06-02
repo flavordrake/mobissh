@@ -779,19 +779,35 @@ final activeTerminalThemeProvider = Provider<NamedTerminalTheme>((ref) {
 // global notifiers — that's the knob worth remembering across launches.
 
 /// Immutable per-session terminal appearance: which palette index + the font
-/// size in logical px. Both are clamped/validated by the notifier before they
-/// land here.
+/// size in logical px + the profile color (#653). Index/size are
+/// clamped/validated by the notifier; [color] is null when the session's
+/// profile carried no explicit color (the swatch then falls back to the theme
+/// accent — see `_SessionBar`).
 @immutable
 class SessionAppearance {
-  const SessionAppearance({required this.themeIndex, required this.fontSize});
+  const SessionAppearance({
+    required this.themeIndex,
+    required this.fontSize,
+    this.color,
+  });
 
   final int themeIndex;
   final double fontSize;
 
-  SessionAppearance copyWith({int? themeIndex, double? fontSize}) {
+  /// The session's profile color (#653), mirroring the PWA `session-dot`
+  /// identity color. Null when the profile has no explicit color; the swatch
+  /// then derives a fallback from the session's terminal theme accent.
+  final Color? color;
+
+  SessionAppearance copyWith({
+    int? themeIndex,
+    double? fontSize,
+    Color? color,
+  }) {
     return SessionAppearance(
       themeIndex: themeIndex ?? this.themeIndex,
       fontSize: fontSize ?? this.fontSize,
+      color: color ?? this.color,
     );
   }
 
@@ -799,10 +815,27 @@ class SessionAppearance {
   bool operator ==(Object other) =>
       other is SessionAppearance &&
       other.themeIndex == themeIndex &&
-      other.fontSize == fontSize;
+      other.fontSize == fontSize &&
+      other.color == color;
 
   @override
-  int get hashCode => Object.hash(themeIndex, fontSize);
+  int get hashCode => Object.hash(themeIndex, fontSize, color);
+}
+
+/// Parse a PWA-style profile color hex (#653) into a [Color]. Accepts
+/// `#RRGGBB`, `#AARRGGBB`, or those forms without a leading `#`. Returns null
+/// for empty/invalid input so the caller can fall back (PWA parity: the swatch
+/// must always render a sensible color, never blank).
+Color? colorFromHex(String? hex) {
+  if (hex == null) return null;
+  var s = hex.trim();
+  if (s.isEmpty) return null;
+  if (s.startsWith('#')) s = s.substring(1);
+  if (s.length != 6 && s.length != 8) return null;
+  final v = int.tryParse(s, radix: 16);
+  if (v == null) return null;
+  // 6 digits → assume fully opaque; 8 digits → caller-specified alpha.
+  return s.length == 6 ? Color(0xFF000000 | v) : Color(v);
 }
 
 /// Owns the per-session appearance map (sessionId → [SessionAppearance]).
@@ -863,6 +896,13 @@ class SessionAppearanceNotifier
   void adjustFontSize(String sessionId, double delta) {
     setFontSize(sessionId, appearanceOf(sessionId).fontSize + delta);
   }
+
+  /// Set [sessionId]'s profile color (#653). Affects only this session —
+  /// sibling sessions and the global default are untouched. Seeded on connect
+  /// from the profile's saved color (mirrors [setTheme]/[setFontSize]).
+  void setColor(String sessionId, Color color) {
+    _put(sessionId, appearanceOf(sessionId).copyWith(color: color));
+  }
 }
 
 final sessionAppearanceProvider =
@@ -902,6 +942,18 @@ final sessionFontSizeProvider = Provider.family<double, String>((
       .read(sessionAppearanceProvider.notifier)
       .appearanceOf(sessionId)
       .fontSize;
+});
+
+/// Per-session profile color (#653). The explicit color seeded from the
+/// profile on connect, or null when the profile had none — callers fall back
+/// to the session's terminal-theme accent so the swatch always renders a
+/// sensible color. Rebuilds when the session's appearance entry changes.
+final sessionColorProvider = Provider.family<Color?, String>((ref, sessionId) {
+  ref.watch(sessionAppearanceProvider);
+  return ref
+      .read(sessionAppearanceProvider.notifier)
+      .appearanceOf(sessionId)
+      .color;
 });
 
 /// The [NamedTerminalTheme] for a given session, guarding a stale index.

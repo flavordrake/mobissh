@@ -100,6 +100,18 @@ class TerminalScreen extends ConsumerWidget {
     final activeEntry = sessions.active ?? entries.first;
     final activeIndex = entries.indexWhere((e) => e.id == activeEntry.id);
 
+    // #653: resolve the active session's swatch color. Prefer the profile's
+    // explicit color (seeded on connect); fall back to the session's terminal
+    // theme accent (the palette cursor — mirrors the PWA `profileColor()`
+    // theme-accent fallback). The cursor is always set, so the swatch is never
+    // blank.
+    final activePalette = ref.watch(
+      sessionTerminalThemeProvider(activeEntry.id),
+    );
+    final swatchColor =
+        ref.watch(sessionColorProvider(activeEntry.id)) ??
+        activePalette.theme.cursor;
+
     // No top AppBar (#566 follow-up): terminal real estate is at a premium and
     // the PWA is a full-screen terminal with bottom-only chrome. The session
     // label + menu + disconnect all live on the bottom session bar; the
@@ -139,6 +151,7 @@ class TerminalScreen extends ConsumerWidget {
                 _SessionBar(
                   label: activeEntry.label,
                   sessionCount: entries.length,
+                  swatchColor: swatchColor,
                   // Swipe left → next session, swipe right → previous, wrapping
                   // around the session ring (#568). No-op with a single session.
                   onSwipe: (delta) {
@@ -197,6 +210,7 @@ class _SessionBar extends StatefulWidget {
   const _SessionBar({
     required this.label,
     required this.sessionCount,
+    required this.swatchColor,
     required this.onSwipe,
     required this.composeOn,
     required this.onToggleCompose,
@@ -204,6 +218,12 @@ class _SessionBar extends StatefulWidget {
 
   final String label;
   final int sessionCount;
+
+  /// #653: the active session's profile color, shown as a small filled-circle
+  /// swatch tag immediately left of the (centered) title. Resolved by the
+  /// parent — the profile color when set, else the theme accent — so it is
+  /// always a sensible color (never blank). Mirrors the PWA `session-dot`.
+  final Color swatchColor;
 
   /// Called when a horizontal swipe crosses the threshold. `delta` is `+1` for
   /// a left swipe (next session) and `-1` for a right swipe (previous).
@@ -253,80 +273,130 @@ class _SessionBarState extends State<_SessionBar> {
     );
   }
 
+  /// Logical-px horizontal inset reserved on each side of the centered title
+  /// layer (#651) so the title — centered over the FULL bar width — clears the
+  /// left menu icon/count and the right compose toggle and never collides with
+  /// them. Symmetric so the title's center stays on the bar's center.
+  static const double _titleSideInset = 48;
+
   Widget _buildBar(BuildContext context, ThemeData theme) {
+    // #651/#653: the title (+ #653 swatch tag) is CENTERED across the full bar
+    // width via a Stack overlay rather than sitting flush-left after the menu
+    // icon (where it collided with the menu). The interactive controls — the
+    // menu/swipe InkWell (left, full-width tap target) and the compose toggle
+    // (right) — form the base layer; the centered title layer is wrapped in
+    // IgnorePointer so taps fall through to the InkWell beneath it.
     return Material(
       key: const Key('session-bar'),
       color: theme.colorScheme.surfaceContainerHighest,
-      child: Row(
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          Expanded(
-            child: InkWell(
-              // `session-menu-button` is retained as the stable terminal-screen-
-              // mounted marker that smoke/integration tests poll for; it moved
-              // from the AppBar to the bottom bar. `session-bar-open-menu` is the
-              // screenshot/test-addressable name for the menu affordance.
-              key: const Key('session-bar-open-menu'),
-              onTap: () {
-                // Suppress the tap that fires at the tail of a swipe so a
-                // swipe-to-switch doesn't also pop the session menu (#568).
-                if (_swipeOccurred) {
-                  _swipeOccurred = false;
-                  return;
-                }
-                // Pass the bar's own height so the menu panel floats ABOVE the
-                // bar (not over it) — the last menu row no longer lands on the
-                // trigger, and a second tap on the trigger dismisses via the
-                // overlay barrier (owner 2026-06-01). `context` here is the
-                // _SessionBar element, so `context.size` is the bar's height.
-                showSessionMenu(
-                  context,
-                  bottomReserve: context.size?.height ?? 0,
-                );
-              },
-              child: Padding(
-                // #615: vertical padding trimmed (was 8) to shrink the bar
-                // ~25%. Pairs with the smaller compose toggle icon below.
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 5,
-                ),
-                child: Row(
-                  key: const Key('session-menu-button'),
-                  children: [
-                    // #607: hamburger with the session-count badge folded onto
-                    // it (count moved LEFT). No expand_less up-arrow — session
-                    // switching is left/right SWIPE (#568), so an "expand"
-                    // affordance was misleading.
-                    _MenuIconWithCount(count: widget.sessionCount),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        widget.label,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium,
-                      ),
+          // Base layer: the menu/swipe tap target + the compose toggle.
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  // `session-menu-button` is retained as the stable terminal-
+                  // screen-mounted marker smoke/integration tests poll for; it
+                  // moved from the AppBar to the bottom bar. `session-bar-open-
+                  // menu` is the screenshot/test-addressable name for the menu
+                  // affordance.
+                  key: const Key('session-bar-open-menu'),
+                  onTap: () {
+                    // Suppress the tap that fires at the tail of a swipe so a
+                    // swipe-to-switch doesn't also pop the session menu (#568).
+                    if (_swipeOccurred) {
+                      _swipeOccurred = false;
+                      return;
+                    }
+                    // Pass the bar's own height so the menu panel floats ABOVE
+                    // the bar (not over it) — the last menu row no longer lands
+                    // on the trigger, and a second tap on the trigger dismisses
+                    // via the overlay barrier (owner 2026-06-01). `context` here
+                    // is the _SessionBar element, so `context.size` is the bar's
+                    // height.
+                    showSessionMenu(
+                      context,
+                      bottomReserve: context.size?.height ?? 0,
+                    );
+                  },
+                  child: Padding(
+                    // #615: vertical padding trimmed (was 8) to shrink the bar
+                    // ~25%. Pairs with the smaller compose toggle icon below.
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 5,
                     ),
-                  ],
+                    child: Row(
+                      key: const Key('session-menu-button'),
+                      children: [
+                        // #607: hamburger with the session-count badge folded
+                        // onto it (count moved LEFT). No expand_less up-arrow —
+                        // session switching is left/right SWIPE (#568), so an
+                        // "expand" affordance was misleading. The title moved
+                        // OUT of this row into the centered overlay (#651).
+                        _MenuIconWithCount(count: widget.sessionCount),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
+              // #607: compose-bar toggle replaces the disconnect button.
+              // Reflects on/off; disconnect now lives in the session menu.
+              IconButton(
+                key: const Key('session-bar-compose-toggle'),
+                tooltip: widget.composeOn
+                    ? 'Hide compose bar'
+                    : 'Compose (swipe / voice)',
+                isSelected: widget.composeOn,
+                color: widget.composeOn ? theme.colorScheme.primary : null,
+                // #615: tighter visual density so the IconButton's default 48px
+                // tap box doesn't set the bar height; row padding drives it.
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 28),
+                padding: EdgeInsets.zero,
+                icon: const Icon(Icons.edit_note_outlined, size: 18),
+                onPressed: widget.onToggleCompose,
+              ),
+            ],
           ),
-          // #607: compose-bar toggle replaces the disconnect button. Reflects
-          // on/off; disconnect now lives in the session menu.
-          IconButton(
-            key: const Key('session-bar-compose-toggle'),
-            tooltip: widget.composeOn
-                ? 'Hide compose bar'
-                : 'Compose (swipe / voice)',
-            isSelected: widget.composeOn,
-            color: widget.composeOn ? theme.colorScheme.primary : null,
-            // #615: tighter visual density so the IconButton's default 48px
-            // tap box doesn't set the bar height; the row padding now drives it.
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 28),
-            padding: EdgeInsets.zero,
-            icon: const Icon(Icons.edit_note_outlined, size: 18),
-            onPressed: widget.onToggleCompose,
+          // Centered title layer (#651) + profile color swatch tag (#653).
+          // IgnorePointer so the swipe/tap on the bar still reaches the base
+          // InkWell. Padded symmetrically so the title centers over the whole
+          // bar yet clears both controls.
+          IgnorePointer(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _titleSideInset),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // #653: profile color swatch — a small filled circle tag
+                  // immediately left of the title. Color resolved by the
+                  // parent (profile color, else theme accent). Mirrors the PWA
+                  // `session-dot`.
+                  Container(
+                    key: const Key('session-bar-swatch'),
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: widget.swatchColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      widget.label,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),

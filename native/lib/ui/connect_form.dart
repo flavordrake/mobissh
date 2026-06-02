@@ -174,6 +174,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     required String initialCommand,
     String? themeName,
     double? fontSize,
+    String? colorHex,
   }) async {
     // Captured before the async gap so we can pop a pushed "New session" route
     // after dispatching connect without touching `context` post-await.
@@ -215,6 +216,18 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           'ui.chooser',
           'applied profile fontSize $fontSize for ${entry.id}',
         );
+      }
+      // #653: seed THIS session's profile color from the profile's saved color
+      // (mirrors the theme/font seeds above). Per-session, keyed by the new
+      // session's id — NOT global. Only when the profile carries a valid color;
+      // otherwise the session bar's swatch falls back to the theme accent. The
+      // SAME color identifies the SAME profile everywhere (PWA `session-dot`).
+      final seededColor = colorFromHex(colorHex);
+      if (seededColor != null) {
+        ref
+            .read(sessionAppearanceProvider.notifier)
+            .setColor(entry.id, seededColor);
+        ctrace('ui.chooser', 'applied profile color $colorHex for ${entry.id}');
       }
       // Arm the run-on-connect command (#558) BEFORE dispatching connect, so
       // the one-shot listener is attached before the task side can emit
@@ -358,6 +371,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       initialCommand: profile.initialCommand ?? '',
       themeName: profile.theme,
       fontSize: profile.fontSize,
+      colorHex: profile.color,
     );
   }
 
