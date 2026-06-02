@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02b — compose Copy/Paste/Fix pills
+- Copy, Paste, and Fix are now inline pills; the right-side buttons stay just close/clear/commit/submit.
+- Fix rejoins a wrapped command/URL back into one clean, runnable line (matches the PWA).
+
 ## Build 2026-06-02 — compose bar fixes
 - Enter or Commit now hides the compose box so the full terminal is visible again.
 - The compose text area keeps its focus when you switch apps and come back.
