@@ -74,9 +74,12 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
   /// Assemble the full feedback bundle (connect log + last crash + env +
   /// version/git-hash + device/OS) and share it off the device (#553).
   ///
-  /// Defensive: any failure surfaces a snackbar instead of crashing the form.
-  /// Network is never blocking — the share sheet is the primary path; an
-  /// optional upload is fire-and-forget elsewhere.
+  /// This is the OFFLINE BACKUP path (#673): the integrated in-app Feedback
+  /// overlay (#664) is the primary route but needs prod/Tailscale reachable.
+  /// This share-sheet path is the only way to get a feedback bundle off the
+  /// device (email/files) when the network is unavailable.
+  ///
+  /// Defensive: any failure surfaces a toast instead of crashing the form.
   Future<void> _shareFeedback() async {
     try {
       final info = await CrashReporter.environmentSnapshot();
@@ -155,11 +158,23 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  FilledButton.icon(
+                  OutlinedButton.icon(
                     key: const ValueKey('share-feedback-button'),
                     onPressed: _shareFeedback,
                     icon: const Icon(Icons.ios_share),
-                    label: const Text('Share feedback'),
+                    label: const Text('Share feedback (offline backup)'),
+                  ),
+                  const Padding(
+                    key: ValueKey('share-feedback-caption'),
+                    padding: EdgeInsets.only(top: 4, bottom: 4),
+                    child: Text(
+                      'Offline backup — the in-app Feedback button is the '
+                      'primary path.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   if (latest != null)
