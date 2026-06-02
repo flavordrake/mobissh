@@ -88,7 +88,7 @@ void main() {
       tester,
     ) async {
       final container = _makeContainer();
-      _add(container, 'host-a');
+      final session = _add(container, 'host-a');
 
       await tester.pumpWidget(_host(container: container));
       await tester.tap(find.byKey(const Key('open-menu')));
@@ -106,7 +106,13 @@ void main() {
         find.byKey(const Key('session-menu-fontsize-inc')),
         findsOneWidget,
       );
-      expect(find.byKey(const Key('session-menu-files')), findsOneWidget);
+      // Files moved to a PER-ROW icon (#649): each session row carries its own
+      // `session-menu-files-${id}` next to its X, instead of one active-only
+      // control in the secondary row.
+      expect(
+        find.byKey(Key('session-menu-files-${session.id}')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const Key('session-menu-keybar-toggle')),
         findsOneWidget,
