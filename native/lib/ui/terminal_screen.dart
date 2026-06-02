@@ -87,7 +87,6 @@ class TerminalScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(sessionsProvider);
-    final keybarVisible = ref.watch(keybarVisibleProvider);
     final composeBarVisible = ref.watch(composeBarVisibleProvider);
     final entries = sessions.entries;
 
@@ -99,6 +98,14 @@ class TerminalScreen extends ConsumerWidget {
 
     final activeEntry = sessions.active ?? entries.first;
     final activeIndex = entries.indexWhere((e) => e.id == activeEntry.id);
+
+    // #573: keybar visibility is PER-SESSION — read the ACTIVE session's flag.
+    // Switching sessions re-watches the new active id, so each session shows
+    // its own keybar state; toggling one never affects another. The compose
+    // bar's bottomReserve (below) consumes the same active-session value.
+    final keybarVisible = ref.watch(
+      sessionKeybarVisibleProvider(activeEntry.id),
+    );
 
     // #653: resolve the active session's swatch color. Prefer the profile's
     // explicit color (seeded on connect); fall back to the session's terminal

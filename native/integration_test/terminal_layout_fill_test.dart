@@ -171,7 +171,10 @@ void main() {
       // grow (more rows) AND a fresh resize must reach the host. This is the
       // same lever every viewport change pulls (keyboard show/hide, rotation).
       spy.clear();
-      container.read(keybarVisibleProvider.notifier).toggle();
+      // #573: keybar visibility is PER-SESSION now — toggle THIS session's flag.
+      container
+          .read(sessionAppearanceProvider.notifier)
+          .toggleKeybarVisible(entry.id);
       for (var i = 0; i < 12; i++) {
         await tester.pump(const Duration(milliseconds: 250));
       }

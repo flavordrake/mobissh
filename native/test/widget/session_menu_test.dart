@@ -3,7 +3,7 @@
 // Covers the contract the PWA's session menu exposes:
 //   - tap-to-switch sets activeSessionId and dismisses the menu
 //   - long-press opens the contextual actions sheet
-//   - the keybar toggle flips the global preference
+//   - the keybar toggle flips ONLY the active session's keybar (#573)
 //   - the close affordance on each row removes the entry
 //
 // Tests pump bounded frames rather than `pumpAndSettle` — the modal bottom
@@ -140,33 +140,70 @@ void main() {
       );
     });
 
-    testWidgets('keybar toggle flips keybarVisibleProvider', (tester) async {
-      final container = _makeContainer();
-      addTearDown(container.dispose);
+    testWidgets(
+      'keybar toggle flips ONLY the active session, not siblings (#573)',
+      (tester) async {
+        final container = _makeContainer();
+        addTearDown(container.dispose);
 
-      container
-          .read(sessionsProvider.notifier)
-          .addOrActivate(
-            const SshConnectParams(
-              host: 'host-a',
-              port: 22,
-              username: 'u',
-              auth: SshAuth.password('p'),
-            ),
-          );
+        final notifier = container.read(sessionsProvider.notifier);
+        final a = notifier.addOrActivate(
+          const SshConnectParams(
+            host: 'host-a',
+            port: 22,
+            username: 'u',
+            auth: SshAuth.password('p'),
+          ),
+        );
+        final b = notifier.addOrActivate(
+          const SshConnectParams(
+            host: 'host-b',
+            port: 22,
+            username: 'u',
+            auth: SshAuth.password('p'),
+          ),
+        );
+        // b is the active session.
+        expect(container.read(sessionsProvider).activeId, b.id);
 
-      // Default is visible.
-      expect(container.read(keybarVisibleProvider), isTrue);
+        // Both sessions default to visible (PWA parity).
+        expect(container.read(sessionKeybarVisibleProvider(a.id)), isTrue);
+        expect(container.read(sessionKeybarVisibleProvider(b.id)), isTrue);
 
-      await tester.pumpWidget(_host(container: container));
-      await tester.tap(find.byKey(const Key('open-menu')));
-      await _pumpFrames(tester);
+        await tester.pumpWidget(_host(container: container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
 
-      await tester.tap(find.byKey(const Key('session-menu-keybar-toggle')));
-      await _pumpFrames(tester);
+        // Toggle hides the keybar — for the ACTIVE session (b) only.
+        await tester.tap(find.byKey(const Key('session-menu-keybar-toggle')));
+        await _pumpFrames(tester);
 
-      expect(container.read(keybarVisibleProvider), isFalse);
-    });
+        expect(
+          container.read(sessionKeybarVisibleProvider(b.id)),
+          isFalse,
+          reason: 'active session keybar should be hidden after toggle',
+        );
+        expect(
+          container.read(sessionKeybarVisibleProvider(a.id)),
+          isTrue,
+          reason: 'sibling session keybar must NOT change (no leakage, #573)',
+        );
+
+        // Switch active to a and toggle: a flips, b stays hidden — each session
+        // carries its own keybar state.
+        notifier.setActive(a.id);
+        await _pumpFrames(tester);
+        await tester.tap(find.byKey(const Key('session-menu-keybar-toggle')));
+        await _pumpFrames(tester);
+
+        expect(container.read(sessionKeybarVisibleProvider(a.id)), isFalse);
+        expect(
+          container.read(sessionKeybarVisibleProvider(b.id)),
+          isFalse,
+          reason: 'toggling a must not re-show b',
+        );
+      },
+    );
 
     testWidgets('tapping the close button removes the entry', (tester) async {
       final container = _makeContainer();
