@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02k — first-connect fill, fixed at the real cause
+- The first-connect re-sync now fires the moment the remote shell exists (on the shellReady signal), so it lands as a real resize instead of being dropped before the shell was ready. tmux should fill on the very first connect — status bar at the bottom.
+- (Two bugs from your 'j' log: the re-sync fired ~10ms too early and got dropped, and the retry-burst was never actually running on device. Both fixed.)
+
 ## Build 2026-06-02j — first-connect terminal fill (real fix, from your log)
 - First connect after launch now fills the screen — the remote (tmux) gets the correct size even when the local terminal was already right. Your connect log pinned it: the PTY had attached at the default ~80×24 and was never re-synced; now it is, on connect. (tmux status bar should sit at the BOTTOM.)
 - Feedback screenshot now captures at the moment of tap — interacting with the form can no longer re-lay-out the screen before the shot.

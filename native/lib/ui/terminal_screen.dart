@@ -409,6 +409,19 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// are cancelled on dispose and never fire against a gone widget.
   final List<Timer> _connectRemeasureTimers = <Timer>[];
 
+  /// #666: subscription to the proxy's `shellReady` stream — the
+  /// PRODUCTION-reliable "the task-side shell now EXISTS" signal. The #659 arm
+  /// hooked `sshShellProvider`, which (unlike the widget-test override) never
+  /// resolves non-null in production — the real shell lives in the task isolate
+  /// — so the connect burst was DEAD on device (the device log showed only
+  /// `mount:`, never `connect:`/`burst:`). And a resize sent BEFORE the shell
+  /// exists is dropped by `s.shell?.resize` (session_host.dart), so the
+  /// mount-time re-sync (which fires ~10ms before shellReady) never reached the
+  /// PTY. Arming off this stream fires the burst right when the shell exists, so
+  /// the forced re-sync lands as a real SIGWINCH and tmux re-sizes. Re-fires on
+  /// reconnect.
+  StreamSubscription<void>? _shellReadySub;
+
   /// Last painter cell size we logged, used purely for a "font settled?"
   /// heuristic in the CTRACE659 line (the cell metrics stop changing once the
   /// bundled asset font is in effect). Null until the first fit attempt.
@@ -447,6 +460,23 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _scheduleExplicitFit('mount', force: true),
     );
+    // #666: arm the connect re-fit on the proxy's shellReady stream — the
+    // moment the task-side shell exists (so a forced re-sync is NOT dropped by
+    // session_host's `s.shell?.resize`). This is the production-reliable signal
+    // the sshShellProvider arm never delivered on device. The body mounts ~10ms
+    // BEFORE shellReady on first connect, so subscribing here catches the event.
+    for (final e in ref.read(sessionsProvider).entries) {
+      if (e.id == widget.sessionId) {
+        _shellReadySub = e.proxy.shellReady.listen((_) {
+          if (!mounted) return;
+          // Re-arm each shellReady (reconnect re-runs it); disarm first so the
+          // burst actually re-fires rather than being skipped by the guard.
+          _disarmConnectRemeasure();
+          _armConnectRemeasure();
+        });
+        break;
+      }
+    }
   }
 
   /// systemFonts listener — the bundled asset font finished loading. Re-fit so
@@ -651,6 +681,7 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   void dispose() {
     PaintingBinding.instance.systemFonts.removeListener(_onSystemFontsChanged);
     WidgetsBinding.instance.removeObserver(this);
+    _shellReadySub?.cancel();
     _disarmConnectRemeasure();
     _scrollController.dispose();
     super.dispose();
