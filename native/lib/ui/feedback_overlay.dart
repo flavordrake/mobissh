@@ -28,6 +28,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
+import 'package:mobissh/ui/top_toast.dart';
 
 /// Prod endpoint that ingests bug reports (same one the web form posts to).
 /// The orchestrator's watcher polls the files this endpoint writes.
@@ -286,16 +287,17 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       connectLog: connectLog,
     );
     final ok = await widget.submitter.submit(payload);
-    // Confirmation via the app's ScaffoldMessenger key (the own context can't
-    // resolve a messenger either). This is the "OK response" the owner expects.
-    widget.messengerKey.currentState?.showSnackBar(
-      SnackBar(
-        content: Text(
-          ok ? 'Feedback sent — thanks!' : 'Send failed — try again.',
-        ),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    // Confirmation as a TOP toast (#667) so it doesn't occlude the bottom
+    // controls. This overlay sits ABOVE the Navigator (MaterialApp.builder, the
+    // #664 fix) and has no ScaffoldMessenger / ambient Overlay in its own
+    // context, so we hand showTopToast the navigator's OverlayState directly.
+    final overlay = widget.navigatorKey.currentState?.overlay;
+    if (overlay != null) {
+      showTopToastInOverlay(
+        overlay,
+        ok ? 'Feedback sent — thanks!' : 'Send failed — try again.',
+      );
+    }
   }
 
   @override

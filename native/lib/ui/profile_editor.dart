@@ -25,6 +25,7 @@ import '../diagnostics/connect_trace.dart';
 import '../state/profiles_providers.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
+import 'top_toast.dart';
 
 enum _AuthKind { password, key }
 
@@ -186,9 +187,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     final username = _userCtrl.text.trim();
     final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
     if (host.isEmpty || username.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Host and username are required')),
-      );
+      showTopToast(context, 'Host and username are required');
       return null;
     }
 
