@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.2 (2026-06-02) — copy & navigate URLs (Slice 1)
+- Long-press a URL in the terminal → a Copy / Open menu (Open launches your browser). The matched URL is highlighted, including when it wraps across lines.
+- Works on the live terminal without disturbing scroll or mouse-mode apps.
+- (Foundation for arbitrary smart-pattern detection — configurable patterns + OSC 8 hyperlinks are the next slices.)
+
 ## v0.1.1 (2026-06-02) — session/keybar/toast polish
 - Keybar visibility is now per-session — hide it on one session without affecting the others.
 - Toasts/confirmations now appear at the TOP of the screen so they never cover the keybar or session bar.
