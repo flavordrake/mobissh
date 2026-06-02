@@ -23,7 +23,11 @@
 // feedback_monochrome_icons_no_emoji).
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
+
+import '../state/lifecycle_providers.dart';
 
 /// Bracketed-paste wrappers (#599): a multi-line commit is wrapped so the
 /// remote TUI/shell treats it as a single paste rather than running each
@@ -41,7 +45,7 @@ const String _bracketedPasteEnd = '\x1b[201~';
 /// above the session bar.
 enum ComposeDock { top, bottom }
 
-class ComposeBar extends StatefulWidget {
+class ComposeBar extends ConsumerStatefulWidget {
   const ComposeBar({
     super.key,
     required this.terminal,
@@ -63,10 +67,10 @@ class ComposeBar extends StatefulWidget {
   final double bottomReserve;
 
   @override
-  State<ComposeBar> createState() => _ComposeBarState();
+  ConsumerState<ComposeBar> createState() => _ComposeBarState();
 }
 
-class _ComposeBarState extends State<ComposeBar> {
+class _ComposeBarState extends ConsumerState<ComposeBar> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -74,6 +78,12 @@ class _ComposeBarState extends State<ComposeBar> {
   /// while the keyboard is up (the common swipe/voice compose case). Double-tap
   /// the grip toggles top↔bottom.
   ComposeDock _dock = ComposeDock.top;
+
+  /// #633: whether the compose field held focus when the app was last paused.
+  /// On resume we re-`requestFocus()` only if this is true, so a background swap
+  /// (lock screen, app switcher) doesn't lose the keyboard mid-compose. If the
+  /// field wasn't focused at pause, resume leaves focus alone.
+  bool _hadFocusAtPause = false;
 
   @override
   void initState() {
@@ -88,6 +98,28 @@ class _ComposeBarState extends State<ComposeBar> {
     });
   }
 
+  /// #633: re-focus the compose field across an app-swap. The OS drops soft-
+  /// keyboard focus when the app is backgrounded; on resume we restore it (only
+  /// if the field was focused at pause) so the owner returns to a live field
+  /// with the keyboard up and the composed text intact. Mirrors the
+  /// auto-focus-on-open pattern (dc6f803). We do NOT touch the keyboard/
+  /// visualViewport handling (#610/#585) — just the FocusNode.
+  void _onLifecycle(AppLifecycleState? prev, AppLifecycleState next) {
+    if (next == AppLifecycleState.paused ||
+        next == AppLifecycleState.inactive) {
+      // Latch focus state at the moment we lose the foreground.
+      if (next == AppLifecycleState.paused) {
+        _hadFocusAtPause = _focusNode.hasFocus;
+      }
+    } else if (next == AppLifecycleState.resumed) {
+      if (_hadFocusAtPause) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _focusNode.requestFocus();
+        });
+      }
+    }
+  }
+
   @override
   void dispose() {
     _controller.removeListener(_onChanged);
@@ -100,7 +132,9 @@ class _ComposeBarState extends State<ComposeBar> {
 
   /// Send staged text, optionally followed by [trailing] ('\r' for submit).
   /// Multi-line text is bracketed-paste wrapped so embedded newlines don't each
-  /// fire Enter. Clears + keeps focus for the next swipe/voice phrase.
+  /// fire Enter. #614 (owner reversal): BOTH commit (trailing=='') and submit
+  /// (trailing=='\r') HIDE the panel afterward via [onClose], so the full
+  /// terminal is readable once composing is done.
   void _send({required String trailing}) {
     final text = _controller.text;
     if (text.isEmpty && trailing.isEmpty) return;
@@ -114,11 +148,41 @@ class _ComposeBarState extends State<ComposeBar> {
       widget.terminal.textInput(trailing);
     }
     _controller.clear();
-    _focusNode.requestFocus();
+    // #614: hide the panel after sending (both commit and submit).
+    widget.onClose();
   }
 
   void _clear() {
     _controller.clear();
+    _focusNode.requestFocus();
+  }
+
+  /// #634: copy the current compose text to the system clipboard (PWA parity —
+  /// mirrors the IME compose copy affordance). Keeps focus in the field.
+  void _copy() {
+    final text = _controller.text;
+    if (text.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: text));
+    _focusNode.requestFocus();
+  }
+
+  /// #634: paste clipboard text into the compose field AT THE CURSOR (replacing
+  /// any selection), then move the caret to the end of the inserted text.
+  Future<void> _paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final pasted = data?.text;
+    if (pasted == null || pasted.isEmpty) return;
+    if (!mounted) return;
+    final value = _controller.value;
+    final sel = value.selection;
+    // Selection may be invalid (e.g. never focused); fall back to end-insert.
+    final start = sel.isValid ? sel.start : value.text.length;
+    final end = sel.isValid ? sel.end : value.text.length;
+    final newText = value.text.replaceRange(start, end, pasted);
+    _controller.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: start + pasted.length),
+    );
     _focusNode.requestFocus();
   }
 
@@ -128,12 +192,17 @@ class _ComposeBarState extends State<ComposeBar> {
     final media = MediaQuery.of(context);
     final size = media.size;
 
+    // #633: re-focus the compose field across an app-swap (paused → resumed).
+    // ref.listen so the side effect fires on the transition, not every build.
+    ref.listen<AppLifecycleState>(lifecycleProvider, _onLifecycle);
+
     // Panel width: most of the screen, capped so it reads as a panel.
     final panelWidth = size.width - 24;
-    // Tall enough for the 4-button vertical action rail (close/clear/commit/
-    // submit) WITHOUT overflow — an overflowing Column under Clip.antiAlias
-    // clips the bottom buttons so their taps don't land.
-    const panelHeight = 196.0;
+    // Tall enough for the top drag bar + the 6-button vertical action rail
+    // (close/clear/copy/paste/commit/submit) WITHOUT overflow — an overflowing
+    // Column under Clip.antiAlias clips the bottom buttons so their taps don't
+    // land.
+    const panelHeight = 272.0;
     const margin = 12.0;
     final left = (size.width - panelWidth) / 2;
 
@@ -166,13 +235,15 @@ class _ComposeBarState extends State<ComposeBar> {
         clipBehavior: Clip.antiAlias,
         child: SizedBox(
           height: panelHeight,
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Dock grip (left edge): toggle the panel between the TOP and
-              // BOTTOM margin so the user can keep the terminal cursor visible.
-              // Double-tap or a vertical drag flips the dock; the anchor is
-              // always a fixed margin (#610) — never free-floating off-screen.
+              // Dock grip (TOP edge, #634): a slim full-width bar so the text
+              // field reclaims the left margin and reads wider. Toggle the panel
+              // between the TOP and BOTTOM margin so the user can keep the
+              // terminal cursor visible. Double-tap or a vertical drag flips the
+              // dock; the anchor is always a fixed margin (#610) — never
+              // free-floating off-screen.
               GestureDetector(
                 key: const Key('compose-bar-drag'),
                 behavior: HitTestBehavior.opaque,
@@ -187,59 +258,71 @@ class _ComposeBarState extends State<ComposeBar> {
                       : ComposeDock.top;
                 }),
                 child: Container(
-                  width: 28,
+                  height: 24,
                   color: theme.colorScheme.surfaceContainerHighest,
+                  alignment: Alignment.center,
                   child: Icon(
-                    Icons.drag_indicator,
+                    Icons.drag_handle,
                     size: 18,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
-              // The editable — gets the width (buttons are a slim vertical rail).
+              // Field + action rail share the remaining height.
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-                  child: TextField(
-                    key: const Key('compose-bar-input'),
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    autofocus: true,
-                    // THE CRUX: composing/swipe/voice need these ENABLED.
-                    keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.newline,
-                    autocorrect: true,
-                    enableSuggestions: true,
-                    enableIMEPersonalizedLearning: true,
-                    expands: true,
-                    minLines: null,
-                    maxLines: null,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 15,
-                    ),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      hintText: 'Compose (swipe / voice / type)',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // The editable — gets the width (slim vertical button rail).
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+                        child: TextField(
+                          key: const Key('compose-bar-input'),
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          autofocus: true,
+                          // THE CRUX: composing/swipe/voice need these ENABLED.
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.newline,
+                          autocorrect: true,
+                          enableSuggestions: true,
+                          enableIMEPersonalizedLearning: true,
+                          expands: true,
+                          minLines: null,
+                          maxLines: null,
+                          textAlignVertical: TextAlignVertical.top,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 15,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: 'Compose (swipe / voice / type)',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                          ),
+                        ),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
                     ),
-                  ),
+                    // Vertical action rail (#604/#634): close / clear / copy /
+                    // paste / commit / submit.
+                    _ActionRail(
+                      hasText: _controller.text.isNotEmpty,
+                      onClose: widget.onClose,
+                      onClear: _clear,
+                      onCopy: _copy,
+                      onPaste: _paste,
+                      onCommit: () => _send(trailing: ''),
+                      onSubmit: () => _send(trailing: '\r'),
+                    ),
+                  ],
                 ),
-              ),
-              // Vertical action rail (#604): close / clear / commit / submit.
-              _ActionRail(
-                hasText: _controller.text.isNotEmpty,
-                onClose: widget.onClose,
-                onClear: _clear,
-                onCommit: () => _send(trailing: ''),
-                onSubmit: () => _send(trailing: '\r'),
               ),
             ],
           ),
@@ -256,6 +339,8 @@ class _ActionRail extends StatelessWidget {
     required this.hasText,
     required this.onClose,
     required this.onClear,
+    required this.onCopy,
+    required this.onPaste,
     required this.onCommit,
     required this.onSubmit,
   });
@@ -263,6 +348,8 @@ class _ActionRail extends StatelessWidget {
   final bool hasText;
   final VoidCallback onClose;
   final VoidCallback onClear;
+  final VoidCallback onCopy;
+  final VoidCallback onPaste;
   final VoidCallback onCommit;
   final VoidCallback onSubmit;
 
@@ -289,6 +376,22 @@ class _ActionRail extends StatelessWidget {
             iconSize: 20,
             icon: const Icon(Icons.backspace_outlined),
             onPressed: hasText ? onClear : null,
+          ),
+          IconButton(
+            key: const Key('compose-bar-copy'),
+            tooltip: 'Copy compose text',
+            visualDensity: VisualDensity.compact,
+            iconSize: 20,
+            icon: const Icon(Icons.copy_outlined),
+            onPressed: hasText ? onCopy : null,
+          ),
+          IconButton(
+            key: const Key('compose-bar-paste'),
+            tooltip: 'Paste at cursor',
+            visualDensity: VisualDensity.compact,
+            iconSize: 20,
+            icon: const Icon(Icons.content_paste_outlined),
+            onPressed: onPaste,
           ),
           IconButton(
             key: const Key('compose-bar-commit'),
