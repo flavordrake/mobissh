@@ -64,6 +64,11 @@ dependencies:
   # SFTP-fetched temp PDF in the file explorer's preview route.
   pdfrx: ^1.0.0
 
+  # Open detected terminal URLs in the system browser (#570 "copy & navigate
+  # URLs"). launchUrl(..., LaunchMode.externalApplication). Needs the Android
+  # <queries> https intent in AndroidManifest to resolve a browser (added).
+  url_launcher: ^6.3.0
+
   # Crash telemetry pipeline (#501 crash-on-launch).
   # http: bridge upload. path_provider: app-docs dir shared with the Kotlin
   # crash writer. device_info_plus + package_info_plus: enrich crash JSON.
