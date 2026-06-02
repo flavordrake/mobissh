@@ -45,6 +45,18 @@ Your prompt will contain:
 `scripts/test-typecheck.sh` (relative) works but `/home/.../scripts/test-typecheck.sh`
 (absolute) will be denied by permission patterns. Use `scripts/*` paths, never absolute.
 
+**CRITICAL: Gate INSIDE your worktree — NEVER touch the main checkout (#537).** Run
+the gate as a RELATIVE path from your worktree root (`scripts/native-fast-gate.sh`
+for native; `scripts/test-fast-gate.sh` for the PWA). Its `REPO_ROOT` resolves to
+*your worktree*, and `flutter-cmd.sh` sets `XDG_CONFIG_HOME` so Flutter runs fine in
+the worktree — there is NO pub workspace, so the worktree resolves its deps
+independently (verified). Do **NOT** `git checkout` / `git reset --hard` / `git merge`
+/ `git cherry-pick` against the MAIN repo to gate or commit — that hijacks the
+orchestrator's checkout and silently DISCARDS its uncommitted work (the #537 bleed).
+Everything you do stays on your worktree branch. If you think you must operate in the
+main repo to run the gate, you do not — gate in place. Do NOT invoke the gate via its
+main-repo absolute path either; that gates main's code, not your changes.
+
 1. Record the start time: `date +%s`
 2. **Initialize TRACE** (mandatory):
    ```bash

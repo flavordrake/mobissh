@@ -271,19 +271,46 @@ case "$CMD" in
       fi
     fi
 
-    # Step 1: Merge PR — worktree cleanup deferred to release (#235)
+    # Step 1: Merge PR — worktree cleanup deferred to release (#235).
+    # After the merge-main-into-PR push above, GitHub asynchronously recomputes
+    # mergeability (mergeStateStatus → UNKNOWN); a merge attempt in that window
+    # fails "Pull Request is not mergeable" — the transient that needed a manual
+    # retry on nearly every behind-main integrate (#598). Poll mergeStateStatus
+    # and retry with backoff so the transient resolves itself.
     echo "==> Merging PR #${PR_NUM} (${STRATEGY#--})" >&2
+    MERGE_OK=0
     MERGE_ERR=""
-    if ! MERGE_ERR=$(gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch 2>&1); then
+    for attempt in 1 2 3 4 5 6 7 8; do
+      MERGE_STATE=$(gh pr view "$PR_NUM" --json mergeStateStatus \
+        --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
+      if [ "$MERGE_STATE" = "UNKNOWN" ]; then
+        echo "   mergeability still computing (attempt ${attempt}/8) — wait 3s" >&2
+        sleep 3
+        continue
+      fi
+      if MERGE_ERR=$(gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch 2>&1); then
+        MERGE_OK=1
+        break
+      fi
       case "$MERGE_ERR" in
         *"used by worktree"*)
           echo "Skipping local branch deletion — worktree holds it (cleanup deferred to release)" >&2
+          MERGE_OK=1
+          break
+          ;;
+        *"not mergeable"*|*"not in a mergeable state"*|*"Base branch was modified"*)
+          echo "   transient not-mergeable (attempt ${attempt}/8) — wait 3s + retry" >&2
+          sleep 3
           ;;
         *)
           echo "$MERGE_ERR" >&2
           exit 1
           ;;
       esac
+    done
+    if [ "$MERGE_OK" -ne 1 ]; then
+      echo "Error: PR #${PR_NUM} did not become mergeable after retries — last: ${MERGE_ERR}" >&2
+      exit 1
     fi
 
     # Step 2: Close issue
