@@ -12,8 +12,9 @@
 // theme — never colorful emoji (the Paste key was a 📋 emoji; now a
 // theme-tinted Icons.content_paste). See memory feedback_monochrome_icons_no_emoji.
 //
-// Visibility is controlled by `keybarVisibleProvider` (SharedPreferences).
-// The toggle lives in the session menu; this widget is just the renderer.
+// Visibility is PER-SESSION (#573): the terminal screen renders this widget
+// only when the ACTIVE session's `sessionKeybarVisibleProvider` is true. The
+// toggle lives in the session menu; this widget is just the renderer.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

@@ -140,10 +140,11 @@ class SessionMenu extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(sessionsProvider);
-    final keybarVisible = ref.watch(keybarVisibleProvider);
-    // Theme + font are PER-SESSION (#601, #571): the menu rows read and mutate
-    // the ACTIVE session only. With no active session (empty list) these resolve
-    // to the global default so the rows still render sensibly.
+    // Theme + font + keybar are all PER-SESSION (#601, #571, #573): the menu
+    // rows read and mutate the ACTIVE session only. With no active session
+    // (empty list) these resolve to the default so the rows still render
+    // sensibly.
+    final keybarVisible = ref.watch(activeSessionKeybarVisibleProvider);
     final activeId = sessions.activeId;
     final palette = ref.watch(activeSessionThemeProvider);
     final fontSize = ref.watch(activeSessionFontSizeProvider);
@@ -316,8 +317,9 @@ class _SessionControlsRow extends ConsumerWidget {
           // redundant second entry point.
           // Keybar visibility toggle. Filled icon = visible, outlined = hidden,
           // so the glyph itself communicates the toggle state (no SwitchListTile
-          // row needed). Keybar visibility is global today; #573 moves it
-          // per-session as a separate change — keep the wiring intact here.
+          // row needed). PER-SESSION (#573): flips THIS (active) session's flag
+          // only — sibling sessions keep their own keybar state. Disabled with
+          // no active session, mirroring the other controls.
           IconButton(
             key: const Key('session-menu-keybar-toggle'),
             tooltip: keybarVisible ? 'Hide keybar' : 'Show keybar',
@@ -325,8 +327,11 @@ class _SessionControlsRow extends ConsumerWidget {
             isSelected: keybarVisible,
             icon: const Icon(Icons.keyboard_outlined),
             selectedIcon: const Icon(Icons.keyboard),
-            onPressed: () =>
-                ref.read(keybarVisibleProvider.notifier).set(!keybarVisible),
+            onPressed: !hasActive
+                ? null
+                : () => ref
+                      .read(sessionAppearanceProvider.notifier)
+                      .toggleKeybarVisible(activeId!),
           ),
           // Disconnect the ACTIVE session (#607). Fully closes (disconnect +
           // dispose + REMOVE the entry) so a re-connect restarts the service

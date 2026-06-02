@@ -1,9 +1,12 @@
 // UI preference providers (#518, #552).
 //
-// `keybarVisibleProvider` controls whether the bottom keybar is rendered on
-// the terminal screen. Default: true (matches the PWA where the key bar is
-// visible whenever the keyboard is up). The toggle lives inside the session
-// menu; the setting persists across launches via SharedPreferences.
+// Keybar visibility is PER-SESSION (#573): it lives on [SessionAppearance]
+// (keyed by session id) alongside theme/font/color, NOT as a global flag.
+// Default: true ([keybarVisibleDefault]) — matches the PWA where the key bar
+// is visible. Toggling one session's keybar (session menu) leaves every other
+// session's keybar untouched. It is a pure runtime toggle (not persisted): a
+// session id is ephemeral by construction, so there is nothing to remember
+// across launches.
 //
 // #552 adds terminal-appearance preferences:
 //   - `fontSizeProvider` — terminal font size in logical px, persisted +
@@ -21,52 +24,10 @@ import 'package:xterm/xterm.dart';
 
 import 'sessions.dart';
 
-/// SharedPreferences key. Matches the keep-alive naming style.
-const String keybarVisiblePrefKey = 'mobissh.ui.keybarVisible';
-
-/// Default to visible — parity with the PWA default.
+/// Default keybar visibility — visible, for PWA parity. Used as the default
+/// for a session that hasn't toggled its keybar (#573); see [SessionAppearance]
+/// and [sessionKeybarVisibleProvider].
 const bool keybarVisibleDefault = true;
-
-/// User toggle for the bottom keybar. Synchronous value (defaulted to
-/// [keybarVisibleDefault] while we load preferences) so the UI doesn't need
-/// a loading state.
-class KeybarVisibleNotifier extends StateNotifier<bool> {
-  KeybarVisibleNotifier({Future<SharedPreferences>? prefs})
-    : _prefs = prefs ?? SharedPreferences.getInstance(),
-      super(keybarVisibleDefault) {
-    _hydrate();
-  }
-
-  final Future<SharedPreferences> _prefs;
-
-  Future<void> _hydrate() async {
-    try {
-      final prefs = await _prefs;
-      final stored = prefs.getBool(keybarVisiblePrefKey);
-      if (stored != null && stored != state) state = stored;
-    } catch (_) {
-      // SharedPreferences may be unavailable in tests without bindings; keep
-      // the default in that case.
-    }
-  }
-
-  Future<void> set(bool value) async {
-    state = value;
-    try {
-      final prefs = await _prefs;
-      await prefs.setBool(keybarVisiblePrefKey, value);
-    } catch (_) {
-      // best-effort persistence
-    }
-  }
-
-  void toggle() => set(!state);
-}
-
-final keybarVisibleProvider =
-    StateNotifierProvider<KeybarVisibleNotifier, bool>((ref) {
-      return KeybarVisibleNotifier();
-    });
 
 // ── Compose bar / IME editor (#599) ───────────────────────────────────────
 
@@ -79,7 +40,8 @@ const String composeBarVisiblePrefKey = 'mobissh.ui.composeBarVisible';
 /// own input disables composing, so swipe-typing + voice need this editable).
 const bool composeBarVisibleDefault = false;
 
-/// User toggle for the compose bar (IME editor). Mirrors [KeybarVisibleNotifier].
+/// User toggle for the compose bar (IME editor). A simple persisted global
+/// flag (the compose bar is NOT per-session — unlike the keybar, #573).
 class ComposeBarVisibleNotifier extends StateNotifier<bool> {
   ComposeBarVisibleNotifier({Future<SharedPreferences>? prefs})
     : _prefs = prefs ?? SharedPreferences.getInstance(),
@@ -789,6 +751,7 @@ class SessionAppearance {
     required this.themeIndex,
     required this.fontSize,
     this.color,
+    this.keybarVisible = keybarVisibleDefault,
   });
 
   final int themeIndex;
@@ -799,15 +762,23 @@ class SessionAppearance {
   /// then derives a fallback from the session's terminal theme accent.
   final Color? color;
 
+  /// Whether THIS session's bottom keybar is visible (#573). PER-SESSION, not
+  /// global: hiding it on one session leaves every sibling session's keybar
+  /// untouched. Defaults to [keybarVisibleDefault] (true) so a fresh session
+  /// shows the keybar (PWA parity — no behavior change for a new session).
+  final bool keybarVisible;
+
   SessionAppearance copyWith({
     int? themeIndex,
     double? fontSize,
     Color? color,
+    bool? keybarVisible,
   }) {
     return SessionAppearance(
       themeIndex: themeIndex ?? this.themeIndex,
       fontSize: fontSize ?? this.fontSize,
       color: color ?? this.color,
+      keybarVisible: keybarVisible ?? this.keybarVisible,
     );
   }
 
@@ -816,10 +787,11 @@ class SessionAppearance {
       other is SessionAppearance &&
       other.themeIndex == themeIndex &&
       other.fontSize == fontSize &&
-      other.color == color;
+      other.color == color &&
+      other.keybarVisible == keybarVisible;
 
   @override
-  int get hashCode => Object.hash(themeIndex, fontSize, color);
+  int get hashCode => Object.hash(themeIndex, fontSize, color, keybarVisible);
 }
 
 /// Parse a PWA-style profile color hex (#653) into a [Color]. Accepts
@@ -903,6 +875,19 @@ class SessionAppearanceNotifier
   void setColor(String sessionId, Color color) {
     _put(sessionId, appearanceOf(sessionId).copyWith(color: color));
   }
+
+  /// Set [sessionId]'s keybar visibility (#573). Affects only this session —
+  /// sibling sessions never change (the per-session isolation the issue is
+  /// about). Mirrors [setTheme]/[setFontSize].
+  void setKeybarVisible(String sessionId, bool visible) {
+    _put(sessionId, appearanceOf(sessionId).copyWith(keybarVisible: visible));
+  }
+
+  /// Flip [sessionId]'s keybar visibility (#573). Reads the session's CURRENT
+  /// (possibly defaulted) value and inverts it — touching only this session.
+  void toggleKeybarVisible(String sessionId) {
+    setKeybarVisible(sessionId, !appearanceOf(sessionId).keybarVisible);
+  }
 }
 
 final sessionAppearanceProvider =
@@ -956,6 +941,24 @@ final sessionColorProvider = Provider.family<Color?, String>((ref, sessionId) {
       .color;
 });
 
+/// Per-session keybar visibility (#573). Falls back to [keybarVisibleDefault]
+/// (true) for an un-customized session, so a fresh session shows the keybar.
+/// Rebuilds when the session's appearance entry changes — toggling one session
+/// rebuilds ONLY that session's value, leaving siblings untouched (the
+/// per-session isolation the issue requires). No global notifier to watch:
+/// keybar visibility is a pure per-session runtime toggle, not a persisted
+/// global default (unlike theme/font, which DO track a global default).
+final sessionKeybarVisibleProvider = Provider.family<bool, String>((
+  ref,
+  sessionId,
+) {
+  ref.watch(sessionAppearanceProvider);
+  return ref
+      .read(sessionAppearanceProvider.notifier)
+      .appearanceOf(sessionId)
+      .keybarVisible;
+});
+
 /// The [NamedTerminalTheme] for a given session, guarding a stale index.
 final sessionTerminalThemeProvider =
     Provider.family<NamedTerminalTheme, String>((ref, sessionId) {
@@ -981,4 +984,13 @@ final activeSessionFontSizeProvider = Provider<double>((ref) {
   final activeId = ref.watch(activeSessionIdProvider);
   if (activeId == null) return ref.watch(fontSizeProvider);
   return ref.watch(sessionFontSizeProvider(activeId));
+});
+
+/// The ACTIVE session's keybar visibility (#573) — what the session menu's
+/// keybar toggle reflects/flips. Falls back to [keybarVisibleDefault] when no
+/// session is active so the toggle still renders sensibly.
+final activeSessionKeybarVisibleProvider = Provider<bool>((ref) {
+  final activeId = ref.watch(activeSessionIdProvider);
+  if (activeId == null) return keybarVisibleDefault;
+  return ref.watch(sessionKeybarVisibleProvider(activeId));
 });
