@@ -204,6 +204,141 @@ void main() {
       reason: 'action menu wrongly appeared on a non-URL long-press',
     );
   });
+
+  // SPIKE (#570 Slice 2) — wrapped-URL case on REAL hardware.
+  //
+  // Echoes a URL LONGER than the terminal width so the terminal SOFT-wraps it
+  // across rendered rows (no \n in the byte stream), then long-presses a cell on
+  // the WRAPPED TAIL row. Asserts the hit-test resolves the FULL URL. This is
+  // the on-device confirmation of the spike's STEP 1 finding: Slice 1's buffer
+  // reconstruction already handles SOFT wrap. (The HARD-wrap case — a literal
+  // \n mid-URL from the source/TUI — is the documented remaining gap; it needs
+  // the continuation-join heuristic proven in test/terminal/wrapped_url_join_
+  // test.dart and is NOT asserted here.)
+  testWidgets('long-press the WRAPPED TAIL of a soft-wrapped URL → full URL', (
+    tester,
+  ) async {
+    FlutterForegroundTask.initCommunicationPort();
+    term_screen.debugLastHitUrl = null;
+    url_overlay.debugUrlOpenerOverride = (u) async => true;
+    addTearDown(() => url_overlay.debugUrlOpenerOverride = null);
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MobisshApp(),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 1));
+
+    await adhocPasswordConnect(
+      tester,
+      host: '127.0.0.1',
+      port: '2222',
+      user: 'testuser',
+      pass: 'testpass',
+    );
+
+    var connected = false;
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      final accept = find.text('Trust + connect');
+      if (accept.evaluate().isNotEmpty) {
+        await tester.tap(accept.first);
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      if (find.byKey(const Key('session-menu-button')).evaluate().isNotEmpty) {
+        connected = true;
+        break;
+      }
+    }
+    expect(connected, isTrue, reason: 'never reached the terminal screen');
+
+    final entry = container.read(sessionsProvider).active;
+    expect(entry, isNotNull, reason: 'no active session after connect');
+    final terminal = entry!.terminal;
+
+    final out = <int>[];
+    final sub = entry.proxy.output.listen(out.addAll);
+    addTearDown(sub.cancel);
+    for (var i = 0; i < 40 && out.isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    expect(out.isNotEmpty, isTrue, reason: 'no shell prompt — dead PTY');
+
+    // A URL guaranteed LONGER than any phone-width terminal so it must wrap.
+    final width = terminal.viewWidth;
+    final longUrl = 'https://example.com/${'segment/' * ((width ~/ 8) + 4)}end';
+    expect(
+      longUrl.length > width,
+      isTrue,
+      reason: 'URL must exceed view width to force a soft wrap',
+    );
+    entry.proxy.sendInput(Uint8List.fromList(utf8.encode('echo $longUrl\n')));
+
+    // Wait for the printed URL and find its FIRST (scheme) row in the buffer.
+    int? schemeRow;
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      final b = terminal.buffer;
+      for (var y = b.height - 1; y >= 0; y--) {
+        final text = b.lines[y].toString();
+        if (text.contains('https://example.com/') && !text.contains('echo ')) {
+          schemeRow = y;
+          break;
+        }
+      }
+      if (schemeRow != null) break;
+    }
+    expect(
+      schemeRow,
+      isNotNull,
+      reason: 'printed wrapped URL never appeared in the buffer',
+    );
+
+    // The row AFTER the scheme row is the wrapped continuation (the tail).
+    final b = terminal.buffer;
+    expect(
+      b.lines[schemeRow! + 1].isWrapped,
+      isTrue,
+      reason:
+          'continuation row not marked isWrapped — not a soft wrap on device',
+    );
+    final tailRow = schemeRow + 1;
+
+    final termFinder = find.byKey(Key('terminal-view-${entry.id}'));
+    expect(termFinder, findsOneWidget);
+    final box = _findRenderTerminal(tester, termFinder);
+    expect(box, isNotNull, reason: 'could not locate RenderTerminal');
+
+    // Long-press a cell INSIDE the wrapped tail (a few cols in from the left).
+    final cell = CellOffset(2, tailRow);
+    final localTopLeft = (box! as dynamic).getOffset(cell) as Offset;
+    final cellSize = (box as dynamic).cellSize as Size;
+    final localCenter =
+        localTopLeft + Offset(cellSize.width / 2, cellSize.height / 2);
+    final global = box.localToGlobal(localCenter);
+
+    term_screen.debugLastHitUrl = null;
+    await tester.longPressAt(global);
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 150));
+    }
+
+    // The crux: a tap on the WRAPPED TAIL resolves the FULL URL (Slice 1's
+    // buffer reconstruction coalesces the isWrapped rows).
+    expect(
+      term_screen.debugLastHitUrl,
+      longUrl,
+      reason:
+          'long-press on the WRAPPED TAIL of a soft-wrapped URL did not resolve '
+          'the full URL (tailRow=$tailRow) — soft-wrap reconstruction broken',
+    );
+    expect(find.byKey(const Key('url-action-menu')), findsOneWidget);
+  });
 }
 
 /// Locate the live `RenderTerminal` render object under [finder]. The type is
