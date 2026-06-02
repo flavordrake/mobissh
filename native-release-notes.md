@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.3 (2026-06-02) — terminal font selector
+- Pick your terminal font per session — JetBrains Mono, Fira Code, or Cascadia Code — from the font control in the session menu. Remembered per profile, like theme and size.
+
 ## v0.1.2 (2026-06-02) — copy & navigate URLs (Slice 1)
 - Long-press a URL in the terminal → a Copy / Open menu (Open launches your browser). The matched URL is highlighted, including when it wraps across lines.
 - Works on the live terminal without disturbing scroll or mouse-mode apps.
