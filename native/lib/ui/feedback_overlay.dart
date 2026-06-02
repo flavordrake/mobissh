@@ -26,6 +26,9 @@ import 'package:flutter/rendering.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'package:mobissh/diagnostics/connect_trace.dart';
+import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
+
 /// Prod endpoint that ingests bug reports (same one the web form posts to).
 /// The orchestrator's watcher polls the files this endpoint writes.
 const String feedbackEndpoint =
@@ -63,6 +66,7 @@ Map<String, Object?> buildFeedbackPayload({
   required String comment,
   required String version,
   String? screenshotDataUrl,
+  List<String> connectLog = const <String>[],
 }) {
   final fullComment = comment;
   // First non-empty line → title summary. Never truncate the comment itself.
@@ -78,6 +82,17 @@ Map<String, Object?> buildFeedbackPayload({
       ? 'In-app feedback $version'
       : '$version $firstLine';
 
+  // The connect-trace ring (#539 connect path + #659 CTRACE659 `ui.fit659`
+  // fill diagnostics). Attaching it is the whole point of the telemetry fix:
+  // a device repro of the first-connect fill bug now carries the measured
+  // render-box size / computed cols×rows / cellSize, so it can be fixed from
+  // DATA instead of bouncing builds off the owner's phone. The server (#553)
+  // persists this as `connectLogFile` + `connectLogEventCount`.
+  //
+  // Scrubbed of any credential-looking material (rules/security.md / #553
+  // contract) — defense-in-depth even though ctrace logs lengths only.
+  final scrubbedLog = connectLog.map(scrubSecrets).toList(growable: false);
+
   return <String, Object?>{
     'title': title,
     // FULL comment — the server stores this untruncated (#661).
@@ -88,6 +103,7 @@ Map<String, Object?> buildFeedbackPayload({
     'source': 'native-in-app',
     if (screenshotDataUrl != null && screenshotDataUrl.isNotEmpty)
       'screenshot': screenshotDataUrl,
+    if (scrubbedLog.isNotEmpty) 'connectLog': scrubbedLog,
   };
 }
 
@@ -224,6 +240,10 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
   bool _captureInProgress = false;
 
   Future<void> _onTap() async {
+    // Snapshot the connect-trace ring NOW — before the sheet/keyboard pushes
+    // any more lines — so the report carries the just-observed connect +
+    // CTRACE659 fill data (the telemetry that ends the bounce-a-build loop).
+    final connectLog = connectLogSnapshot();
     // Hide the affordance, let the next frame paint (so the button is gone),
     // then rasterize the screen WITHOUT the affordance in it.
     setState(() => _captureInProgress = true);
@@ -236,12 +256,17 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final version = await widget.versionResolver();
     if (!mounted) return;
 
-    await _showCommentSheet(dataUrl: dataUrl, version: version);
+    await _showCommentSheet(
+      dataUrl: dataUrl,
+      version: version,
+      connectLog: connectLog,
+    );
   }
 
   Future<void> _showCommentSheet({
     required String? dataUrl,
     required String version,
+    required List<String> connectLog,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -263,6 +288,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       comment: comment,
       version: version,
       screenshotDataUrl: dataUrl,
+      connectLog: connectLog,
     );
     final ok = await widget.submitter.submit(payload);
     // Confirmation via the app's ScaffoldMessenger key (the own context can't

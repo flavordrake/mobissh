@@ -99,6 +99,43 @@ void main() {
       expect(emptyShot.containsKey('screenshot'), isFalse);
     });
 
+    test('attaches the connect-trace log when present, omits it when empty', () {
+      final withLog = buildFeedbackPayload(
+        comment: 'fill broken',
+        version: '[v]',
+        connectLog: const [
+          '08:23:01.123 [ui.fit659] connect: arming fit burst (shell ready)',
+          '08:23:02.456 [ui.fit659] burst-700ms: view=393.0x300.0 cell=8.4x18.0 '
+              'computed=46x16 cur=46x16 noop font=JetBrainsMono settled=true',
+        ],
+      );
+      // Server (#553) persists this as connectLogFile + connectLogEventCount.
+      final log = withLog['connectLog'] as List;
+      expect(log.length, 2);
+      expect((log[1] as String).contains('view=393.0x300.0'), isTrue);
+
+      // No log → the field is omitted entirely (no empty array noise).
+      final without = buildFeedbackPayload(comment: 'x', version: '[v]');
+      expect(without.containsKey('connectLog'), isFalse);
+    });
+
+    test('scrubs credential-looking material out of the connect log', () {
+      // Defense-in-depth: even though ctrace logs lengths only, a stray secret
+      // in a trace line must never leave the device (rules/security.md / #553).
+      final payload = buildFeedbackPayload(
+        comment: 'x',
+        version: '[v]',
+        connectLog: const [
+          '10:00:00.000 [ui.form] password=hunter2 entered',
+          '10:00:01.000 [ui.ssh] token: abc.def.ghi',
+        ],
+      );
+      final log = (payload['connectLog'] as List).cast<String>();
+      expect(log.every((l) => !l.contains('hunter2')), isTrue);
+      expect(log.every((l) => !l.contains('abc.def.ghi')), isTrue);
+      expect(log.any((l) => l.contains('[REDACTED]')), isTrue);
+    });
+
     test('payload JSON-encodes cleanly (server consumes JSON)', () {
       final payload = buildFeedbackPayload(
         comment: 'line1\nline2 "quoted"\nline3',

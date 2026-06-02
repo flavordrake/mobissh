@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02i — feedback now carries the on-device diagnostic log
+- In-app feedback now attaches the connect/CTRACE log (measured terminal size, computed rows/cols) to your report — so a bad first-connect screenshot finally comes with the numbers to fix it, no more bouncing builds. (Scrubbed of anything secret.)
+- Tap Feedback on a broken first-connect screen → the report carries exactly what the terminal measured.
+
 ## Build 2026-06-02h — in-app feedback actually opens now
 - Tapping Feedback used to just blink — now it opens the comment sheet and shows a "Feedback sent — thanks!" confirmation. (It was mounted above the navigator, so the sheet couldn't open.)
 - Use it on a broken first-connect screen: it bundles the on-device size log so the terminal-fill bug can finally be pinpointed.
