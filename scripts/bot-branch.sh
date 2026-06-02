@@ -19,6 +19,15 @@ source "$(dirname "$0")/lib/repo-guard.sh"
 guard_cwd
 ensure_repo_root
 
+# Restore the shared checkout to `main` on exit so this script never LEAVES the
+# main repo's HEAD on a bot branch. Leaving it there ("hijack") made later
+# commits in the shared checkout land on the wrong branch and left bot-branch
+# files stray in the main working tree. Agents do their real work in isolated
+# worktrees (rescue copies+commits before this fires), so nothing relies on the
+# leftover branch checkout. No-op on a dirty/error state so it can't worsen a
+# failure.
+trap 'git checkout main >/dev/null 2>&1 || true' EXIT
+
 log() { echo "> $*" >&2; }
 err() { echo "! $*" >&2; }
 ok()  { echo "+ $*" >&2; }
