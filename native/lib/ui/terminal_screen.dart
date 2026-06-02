@@ -345,13 +345,98 @@ class _SessionTerminalBody extends ConsumerStatefulWidget {
       _SessionTerminalBodyState();
 }
 
-class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody> {
+class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
+    with WidgetsBindingObserver {
   /// Passed to TerminalView so we own the scrollback Scrollable (#605). Having
   /// an explicit controller also lets future work jump-to-bottom on new output.
   final ScrollController _scrollController = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    // #625/#600 — terminal layout/resize correctness.
+    //
+    // xterm.dart's `RenderTerminal.performLayout` computes cols/rows from
+    // `constraints.biggest / cellSize`, but ONLY inside `performLayout`. On the
+    // device's FIRST connect the very first layout can run before the bundled
+    // JetBrainsMono asset font has settled, so the cell size is measured from
+    // the platform-monospace fallback. The terminal locks in cols/rows for the
+    // WRONG cell size and never re-measures on its own (the constraints don't
+    // change), so the rendered content fills fewer rows than the viewport —
+    // the dead vertical gap above the keybar (#625). It "settles" after any
+    // later relayout (keyboard / rotation / keybar toggle) because that re-runs
+    // `performLayout` with the now-correct cached cellSize.
+    //
+    // The PWA's terminal (`src/modules/terminal.ts`, the UX spec) is more
+    // stable precisely because it RE-FITS explicitly on every viewport/font
+    // change (`fitAddon.fit()` on `fonts.ready`, `loadingdone`, visualViewport
+    // resize) and re-sends the PTY size. We mirror that here: force xterm to
+    // re-measure after the first frame and whenever the available fonts change,
+    // so the rendered size — and therefore the PTY `resize` that
+    // `Terminal.onResize` sends (see sessions.dart) — tracks reality.
+    WidgetsBinding.instance.addObserver(this);
+    PaintingBinding.instance.systemFonts.addListener(_forceRemeasure);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _forceRemeasure());
+  }
+
+  /// Force the xterm `TerminalView` to re-run layout so it recomputes cols/rows
+  /// from the current rendered cell size. A no-op cost when nothing changed:
+  /// `markNeedsLayout` only re-measures, and `Terminal.onResize` fires (→
+  /// `proxy.sendResize`) ONLY when cols/rows actually differ. Deferred to a
+  /// post-frame callback so it is safe to call from layout-phase notifications
+  /// (`systemFonts`, metrics changes).
+  void _forceRemeasure() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // The `terminal-view-$id` ValueKey is kept for test addressing, so we
+      // can't also hang a `GlobalKey<TerminalViewState>` on the TerminalView.
+      // Locate its state by descending our own element subtree instead.
+      final state = _findTerminalViewState();
+      if (state == null) return;
+      // `renderTerminal` throws if the viewport hasn't laid out yet; a render
+      // box detached mid-frame would also reject `markNeedsLayout`. Either way
+      // the next settle/remeasure recovers, so swallow.
+      try {
+        final ro = state.renderTerminal;
+        if (ro.attached) ro.markNeedsLayout();
+      } catch (_) {
+        /* not laid out yet — a later remeasure handles it */
+      }
+    });
+  }
+
+  /// Walk this body's element subtree to find the xterm [TerminalViewState].
+  /// Returns null before the first build or if the TerminalView isn't mounted
+  /// (e.g. an offstage IndexedStack child that hasn't laid out yet).
+  TerminalViewState? _findTerminalViewState() {
+    TerminalViewState? found;
+    void visit(Element el) {
+      if (found != null) return;
+      if (el is StatefulElement && el.state is TerminalViewState) {
+        found = el.state as TerminalViewState;
+        return;
+      }
+      el.visitChildren(visit);
+    }
+
+    (context as Element).visitChildren(visit);
+    return found;
+  }
+
+  /// Keyboard show/hide and rotation change the available terminal height. The
+  /// Scaffold relayout already re-fits xterm in most cases, but we re-measure
+  /// explicitly so a viewport change can never leave the PTY size stale vs. the
+  /// rendered size (#600). Mirrors the PWA's visualViewport resize → re-fit.
+  @override
+  void didChangeMetrics() {
+    _forceRemeasure();
+  }
+
+  @override
   void dispose() {
+    PaintingBinding.instance.systemFonts.removeListener(_forceRemeasure);
+    WidgetsBinding.instance.removeObserver(this);
     _scrollController.dispose();
     super.dispose();
   }
