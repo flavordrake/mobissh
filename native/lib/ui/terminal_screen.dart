@@ -33,9 +33,11 @@ import '../ssh/ssh_session.dart';
 import '../state/sessions.dart';
 import '../state/terminal_providers.dart';
 import '../state/ui_prefs_providers.dart';
+import '../terminal/url_hit_test.dart';
 import 'compose_bar.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
+import 'url_action_overlay.dart';
 
 /// Minimum horizontal travel (logical px) before a drag on the session bar is
 /// treated as a swipe-to-switch. Matches the ~50px threshold in the design so
@@ -80,6 +82,12 @@ int debugExplicitFitAppliedCount = 0;
 /// dedupes `terminal.resize` when unchanged). Reset it in test `setUp`.
 @visibleForTesting
 int debugForcedPtyResyncCount = 0;
+
+/// #570 — test hook. Set to the URL a long-press hit-test resolved (or null when
+/// a long-press landed on no URL). Lets the on-emulator integration test assert
+/// the tap→cell→URL path end to end without UI scraping. Reset in test `setUp`.
+@visibleForTesting
+String? debugLastHitUrl;
 
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
@@ -727,6 +735,98 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     _connectRemeasureTimers.clear();
   }
 
+  /// #570: map a long-press to a buffer cell and, if it lands on a detected
+  /// URL, show the Copy/Open action menu + a transient highlight over the URL's
+  /// on-screen cell rects. [localPosition] is in the wrapping GestureDetector's
+  /// coordinate space; we convert through GLOBAL coordinates into the
+  /// RenderTerminal's own space so cell mapping is correct regardless of any
+  /// padding/offset between the two render boxes.
+  ///
+  /// Cell mapping reuses xterm's PUBLIC `RenderTerminal.getCellOffset` (which
+  /// already accounts for scroll offset + padding), so we never reimplement the
+  /// layout math. The URL test reconstructs the logical line from the live
+  /// buffer (url_hit_test.dart) and matches with the parser's regex.
+  void _onTerminalLongPress(Terminal terminal, Offset localPosition) {
+    // Mouse-reporting apps (vim/tmux/less with mouse ON) own the pointer; a tap
+    // there is a click the app expects, not a URL probe. Skip so we never steal
+    // the gesture from an interactive full-screen program (#570 conflict gate).
+    if (terminal.mouseMode != MouseMode.none) {
+      ctrace('ui.url570', 'skip — mouseMode=${terminal.mouseMode}');
+      return;
+    }
+    final state = _findTerminalViewState();
+    if (state == null) return;
+
+    final CellOffset cell;
+    final dynamic box;
+    final Offset global;
+    try {
+      box = state.renderTerminal;
+      if (!(box.attached as bool)) return;
+      // GestureDetector localPosition → global → RenderTerminal-local.
+      final renderObj = context.findRenderObject();
+      global = renderObj is RenderBox
+          ? renderObj.localToGlobal(localPosition)
+          : localPosition;
+      final local = box.globalToLocal(global) as Offset;
+      cell = box.getCellOffset(local) as CellOffset;
+    } catch (_) {
+      return;
+    }
+
+    final hit = hitTestUrl(terminal, cell);
+    debugLastHitUrl = hit?.url;
+    ctrace(
+      'ui.url570',
+      'cell=(${cell.x},${cell.y}) hit=${hit?.url ?? "<none>"}',
+    );
+    if (hit == null || !mounted) return;
+
+    // Compute the URL's on-screen cell rect(s). A soft-wrapped URL spans
+    // multiple rendered rows, so we walk the logical-column range and emit one
+    // GLOBAL rect per row segment via xterm's PUBLIC getOffset + cellSize.
+    final rects = _urlHighlightRects(box, hit);
+
+    showUrlActions(context, hit.url, highlightRects: rects, anchor: global);
+  }
+
+  /// Translate a [hit]'s logical-column range into GLOBAL on-screen rects, one
+  /// per rendered buffer row the URL occupies. Uses xterm's PUBLIC
+  /// `RenderTerminal.getOffset(CellOffset)` (cell top-left, RenderTerminal-local)
+  /// + `cellSize`. Best-effort: wraps in try/catch so a layout race never throws.
+  List<Rect> _urlHighlightRects(dynamic box, UrlHit hit) {
+    final rects = <Rect>[];
+    try {
+      final cellSize = box.cellSize as Size;
+      final width = hit.lineWidth > 0 ? hit.lineWidth : 1;
+      for (var c = hit.logicalStart; c < hit.logicalEnd;) {
+        final rowOffset = c ~/ width;
+        final colInRow = c % width;
+        final row = hit.logicalLineStartRow + rowOffset;
+        // How many columns of this URL remain on this rendered row.
+        final colsLeftOnRow = width - colInRow;
+        final remaining = hit.logicalEnd - c;
+        final span = remaining < colsLeftOnRow ? remaining : colsLeftOnRow;
+
+        final topLeftLocal = box.getOffset(CellOffset(colInRow, row)) as Offset;
+        final localRect = Rect.fromLTWH(
+          topLeftLocal.dx,
+          topLeftLocal.dy,
+          cellSize.width * span,
+          cellSize.height,
+        );
+        final globalTopLeft = (box as RenderBox).localToGlobal(
+          localRect.topLeft,
+        );
+        rects.add(globalTopLeft & localRect.size);
+        c += span;
+      }
+    } catch (_) {
+      return rects;
+    }
+    return rects;
+  }
+
   /// Walk this body's element subtree to find the xterm [TerminalViewState].
   /// Returns null before the first build or if the TerminalView isn't mounted
   /// (e.g. an offstage IndexedStack child that hasn't laid out yet).
@@ -824,20 +924,31 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
             ),
           ),
         Expanded(
-          // #617: no wrapping Listener/GestureDetector. The terminal's own
-          // vertical-scroll gesture (xterm's alt-buffer scroll handler →
-          // corrected wheel SGR via WheelFixMouseHandler) drives tmux
-          // scrollback unobstructed. The long-press selection menu was removed.
-          child: TerminalView(
-            terminal,
-            key: Key('terminal-view-${widget.sessionId}'),
-            scrollController: _scrollController,
-            autofocus: false,
-            padding: const EdgeInsets.all(4),
-            theme: palette.theme,
-            textStyle: TerminalStyle(
-              fontSize: fontSize,
-              fontFamily: kTerminalFontFamily,
+          // #570: a LONG-PRESS GestureDetector wraps the TerminalView to probe
+          // URL hit-testing → Copy/Open menu + highlight. Long-press is
+          // deliberately the gesture: it does NOT compete with xterm's
+          // vertical-drag scrollback (a pan, via the corrected wheel SGR — #617)
+          // nor with tap/click mouse reporting, so the existing scroll path
+          // stays unobstructed. `behavior: deferToChild` keeps the
+          // TerminalView's own recognizers first in the arena — the long-press
+          // only claims the pointer once the press-and-hold threshold passes,
+          // after a drag would already have won. (NO wrapping Listener — that
+          // was the #617 wheel-SGR regression source.)
+          child: GestureDetector(
+            behavior: HitTestBehavior.deferToChild,
+            onLongPressStart: (details) =>
+                _onTerminalLongPress(terminal, details.localPosition),
+            child: TerminalView(
+              terminal,
+              key: Key('terminal-view-${widget.sessionId}'),
+              scrollController: _scrollController,
+              autofocus: false,
+              padding: const EdgeInsets.all(4),
+              theme: palette.theme,
+              textStyle: TerminalStyle(
+                fontSize: fontSize,
+                fontFamily: kTerminalFontFamily,
+              ),
             ),
           ),
         ),

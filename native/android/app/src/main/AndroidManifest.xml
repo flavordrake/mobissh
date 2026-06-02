@@ -66,5 +66,17 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- url_launcher (#570 "copy & navigate URLs"): Android 11+ package
+             visibility requires declaring the browse intent so launchUrl can
+             resolve a browser for a detected terminal URL. Without this,
+             canLaunchUrl/launchUrl fail to find a handler on API 30+. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="http"/>
+        </intent>
     </queries>
 </manifest>
