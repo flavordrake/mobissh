@@ -31,10 +31,12 @@ import 'package:xterm/xterm.dart';
 import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../state/sessions.dart';
+import '../state/terminal_backend.dart';
 import '../state/terminal_providers.dart';
 import '../state/ui_prefs_providers.dart';
 import '../terminal/url_hit_test.dart';
 import 'compose_bar.dart';
+import 'ghostty_terminal_view.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
 import 'url_action_overlay.dart';
@@ -866,6 +868,18 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
 
   @override
   Widget build(BuildContext context) {
+    // #684: switchable terminal backend. The backend is read at BUILD time
+    // (restart-to-apply) — when `ghostty`, render the flterm view instead of
+    // xterm. The ghostty branch deliberately SKIPS the xterm-only machinery
+    // (the #659 explicit-fit burst, #570 URL long-press, #617 mouse handler,
+    // per-session theme/font): flterm self-fits, has native drag-select, and
+    // per-session appearance parity is a deferred follow-up. The xterm path
+    // (the `else` below) is the DEFAULT and stays unchanged.
+    final backend = ref.watch(terminalBackendProvider);
+    if (backend == TerminalBackend.ghostty) {
+      return _buildGhosttyBody();
+    }
+
     final terminal = ref.watch(terminalProvider(widget.sessionId));
     // #659 — arm the connect explicit-fit burst on the shell-ready transition.
     // `sshShellProvider` resolves to a non-null shell ONLY once the session
@@ -958,6 +972,23 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// #684 — the ghostty (flterm) backend body. Keeps the shared disconnect
+  /// banner (#624) so lifecycle feedback matches the xterm path, but mounts the
+  /// flterm view (which owns its own I/O wiring + native drag-select). The
+  /// xterm-only fit/URL/mouse machinery is intentionally absent here.
+  Widget _buildGhosttyBody() {
+    final sessionState =
+        ref.watch(sessionDataProvider(widget.sessionId)).valueOrNull?.state ??
+        SshSessionState.idle;
+    return Column(
+      children: [
+        if (_isDisconnected(sessionState))
+          _DisconnectBanner(state: sessionState),
+        Expanded(child: GhosttyTerminalView(sessionId: widget.sessionId)),
       ],
     );
   }
