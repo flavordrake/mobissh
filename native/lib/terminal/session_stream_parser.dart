@@ -101,6 +101,33 @@ final RegExp _defaultUrlPattern = RegExp(
   caseSensitive: false,
 );
 
+/// The default URL matcher pattern, exposed for the hit-test layer (#570 Part B)
+/// so the tap→URL mapping uses the EXACT same detection as the stream parser —
+/// one source of truth for "what is a URL". Used by [urlMatchAt].
+RegExp get defaultUrlPattern => _defaultUrlPattern;
+
+/// Pure hit-test: given a [line] of LOGICAL text (a full, soft-wrap-coalesced
+/// terminal line reconstructed by the UI from the xterm buffer) and a 0-based
+/// character [col] within it, return the URL substring that [col] lands inside,
+/// or null if the column is not on a URL.
+///
+/// This is the #570 hit-test CORE, kept PURE (no Flutter, no buffer types) so it
+/// is unit-testable and shared between the spike's gesture handler and tests.
+/// It deliberately does NOT use the stream parser's session-absolute offsets:
+/// those index the logical stream, while a tap yields a (row,col) in the
+/// reflowed circular buffer. Reconstructing the logical line from the buffer at
+/// tap time and matching it here sidesteps the (fragile) reconciliation of those
+/// two coordinate spaces — and is robust to scrollback trimming + reflow.
+String? urlMatchAt(String line, int col) {
+  if (col < 0 || col >= line.length) return null;
+  for (final m in _defaultUrlPattern.allMatches(line)) {
+    if (col >= m.start && col < m.end) {
+      return m.group(0);
+    }
+  }
+  return null;
+}
+
 /// Consumes a session's logical text stream and emits [StreamMatch]es.
 ///
 /// One instance per session by construction. Not thread-safe; feed from a single

@@ -33,9 +33,11 @@ import '../ssh/ssh_session.dart';
 import '../state/sessions.dart';
 import '../state/terminal_providers.dart';
 import '../state/ui_prefs_providers.dart';
+import '../terminal/url_hit_test.dart';
 import 'compose_bar.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
+import 'top_toast.dart';
 
 /// Minimum horizontal travel (logical px) before a drag on the session bar is
 /// treated as a swipe-to-switch. Matches the ~50px threshold in the design so
@@ -80,6 +82,13 @@ int debugExplicitFitAppliedCount = 0;
 /// dedupes `terminal.resize` when unchanged). Reset it in test `setUp`.
 @visibleForTesting
 int debugForcedPtyResyncCount = 0;
+
+/// SPIKE (#570/#631) — test hook. Set to the URL a long-press hit-test resolved
+/// (or null when a long-press landed on no URL). Lets the on-emulator spike
+/// integration test assert the tap→cell→URL path end to end without any UI
+/// scraping. DO NOT MERGE the spike wiring as-is.
+@visibleForTesting
+String? debugLastHitUrl;
 
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
@@ -727,6 +736,54 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     _connectRemeasureTimers.clear();
   }
 
+  /// SPIKE (#570/#631): map a long-press to a buffer cell and, if it lands on a
+  /// detected URL, surface it. [localPosition] is in the wrapping
+  /// GestureDetector's coordinate space; we convert through GLOBAL coordinates
+  /// into the RenderTerminal's own space so the cell mapping is correct
+  /// regardless of any padding/offset between the two render boxes.
+  ///
+  /// Cell mapping reuses xterm's PUBLIC `RenderTerminal.getCellOffset` (which
+  /// already accounts for scroll offset + padding), so we never reimplement the
+  /// layout math. The URL test reconstructs the logical line from the live
+  /// buffer (url_hit_test.dart) and matches with the parser's regex.
+  ///
+  /// DO NOT MERGE the spike wiring as-is.
+  void _spikeUrlHitTest(Terminal terminal, Offset localPosition) {
+    // Mouse-reporting apps (vim/tmux/less with mouse ON) own the pointer; a tap
+    // there is a click the app expects, not a URL probe. Skip so we never steal
+    // the gesture from an interactive full-screen program (#570 conflict gate).
+    if (terminal.mouseMode != MouseMode.none) {
+      ctrace('ui.urlspike', 'skip — mouseMode=${terminal.mouseMode}');
+      return;
+    }
+    final state = _findTerminalViewState();
+    if (state == null) return;
+    final Offset local;
+    final CellOffset cell;
+    try {
+      final box = state.renderTerminal;
+      if (!box.attached) return;
+      // GestureDetector localPosition → global → RenderTerminal-local.
+      final renderObj = context.findRenderObject();
+      final global = renderObj is RenderBox
+          ? renderObj.localToGlobal(localPosition)
+          : localPosition;
+      local = box.globalToLocal(global);
+      cell = box.getCellOffset(local);
+    } catch (_) {
+      return;
+    }
+    final hit = hitTestUrl(terminal, cell);
+    debugLastHitUrl = hit?.url;
+    ctrace(
+      'ui.urlspike',
+      'cell=(${cell.x},${cell.y}) hit=${hit?.url ?? "<none>"}',
+    );
+    if (hit != null && mounted) {
+      showTopToast(context, 'URL: ${hit.url}');
+    }
+  }
+
   /// Walk this body's element subtree to find the xterm [TerminalViewState].
   /// Returns null before the first build or if the TerminalView isn't mounted
   /// (e.g. an offstage IndexedStack child that hasn't laid out yet).
@@ -824,20 +881,31 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
             ),
           ),
         Expanded(
-          // #617: no wrapping Listener/GestureDetector. The terminal's own
-          // vertical-scroll gesture (xterm's alt-buffer scroll handler →
-          // corrected wheel SGR via WheelFixMouseHandler) drives tmux
-          // scrollback unobstructed. The long-press selection menu was removed.
-          child: TerminalView(
-            terminal,
-            key: Key('terminal-view-${widget.sessionId}'),
-            scrollController: _scrollController,
-            autofocus: false,
-            padding: const EdgeInsets.all(4),
-            theme: palette.theme,
-            textStyle: TerminalStyle(
-              fontSize: fontSize,
-              fontFamily: kTerminalFontFamily,
+          // SPIKE (#570): a LONG-PRESS GestureDetector wraps the TerminalView to
+          // probe URL hit-testing. Long-press is deliberately the gesture: it
+          // does NOT compete with xterm's vertical-drag scrollback (a pan, via
+          // the corrected wheel SGR — #617) nor with tap/click mouse reporting,
+          // so the existing scroll path stays unobstructed (verified: a long
+          // press fires onLongPressStart, a drag still reaches xterm's
+          // Scrollable). `behavior: deferToChild` keeps the TerminalView's own
+          // recognizers first in the arena — the long-press only claims the
+          // pointer once the press-and-hold threshold passes, after a drag would
+          // already have won. DO NOT MERGE the spike wiring as-is.
+          child: GestureDetector(
+            behavior: HitTestBehavior.deferToChild,
+            onLongPressStart: (details) =>
+                _spikeUrlHitTest(terminal, details.localPosition),
+            child: TerminalView(
+              terminal,
+              key: Key('terminal-view-${widget.sessionId}'),
+              scrollController: _scrollController,
+              autofocus: false,
+              padding: const EdgeInsets.all(4),
+              theme: palette.theme,
+              textStyle: TerminalStyle(
+                fontSize: fontSize,
+                fontFamily: kTerminalFontFamily,
+              ),
             ),
           ),
         ),
