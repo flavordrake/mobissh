@@ -48,7 +48,7 @@ Future<ProviderContainer> _pump(
     UncontrolledProviderScope(
       container: container,
       child: const MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: ConnectForm())),
+        home: Scaffold(body: ConnectForm()),
       ),
     ),
   );

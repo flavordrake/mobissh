@@ -87,14 +87,29 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       }
     });
 
+    // #643: the chooser FILLS the screen. The saved-profile list goes in an
+    // `Expanded` so it takes all the vertical room above the actions (it
+    // scrolls within that full height); "New connection" + "Import from PWA"
+    // pin directly below the full-height list. Previously the list was capped
+    // at 220px and the whole Column was wrapped in a SingleChildScrollView at
+    // both call sites, so it collapsed to the top ~40% with a blank band below.
+    // This widget now needs a BOUNDED height (it no longer lives inside a
+    // SingleChildScrollView) — its hosts (ConnectHomePage / NewSessionPage)
+    // give it the full screen height.
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Saved profiles: tap a row = connect, pencil = edit. Empty-state
-          // hint nudges Import when the user has none yet.
-          ProfileList(onConnect: _connectFromProfile, onEdit: _editProfile),
+          // hint nudges Import when the user has none yet. Expanded so the list
+          // uses the available height and scrolls internally (#643).
+          Expanded(
+            child: ProfileList(
+              onConnect: _connectFromProfile,
+              onEdit: _editProfile,
+            ),
+          ),
           const SizedBox(height: 4),
           // The single "New" affordance: opens the editor in create mode. The
           // editor is the ad-hoc / new-connection entry now that the inline
@@ -106,8 +121,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             label: Text(_busy ? 'Connecting…' : 'New connection'),
           ),
           const SizedBox(height: 4),
-          // Slim secondary access: Import-from-PWA. Settings + Diagnostics stay
-          // below as compact disclosures — not a wall of fields.
+          // Slim secondary access: Import-from-PWA. Settings + Diagnostics live
+          // on the home bottom nav (#611 Part A), not here.
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
@@ -398,11 +413,10 @@ class NewSessionPage extends StatelessWidget {
     return Scaffold(
       key: const Key('new-session-page'),
       appBar: AppBar(title: const Text('New session')),
-      body: const SafeArea(
-        child: SingleChildScrollView(
-          child: ConnectForm(key: Key('new-session-form')),
-        ),
-      ),
+      // #643: NO SingleChildScrollView — the chooser fills the page height so
+      // its profile list expands and scrolls internally instead of collapsing
+      // to the top with a blank band below.
+      body: const SafeArea(child: ConnectForm(key: Key('new-session-form'))),
     );
   }
 }

@@ -75,7 +75,7 @@ void main() {
         UncontrolledProviderScope(
           container: container,
           child: const MaterialApp(
-            home: Scaffold(body: SingleChildScrollView(child: ConnectForm())),
+            home: Scaffold(body: ConnectForm()),
           ),
         ),
       );
@@ -137,7 +137,7 @@ void main() {
         UncontrolledProviderScope(
           container: container,
           child: const MaterialApp(
-            home: Scaffold(body: SingleChildScrollView(child: ConnectForm())),
+            home: Scaffold(body: ConnectForm()),
           ),
         ),
       );

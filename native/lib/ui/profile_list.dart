@@ -70,11 +70,14 @@ class ProfileList extends ConsumerWidget {
                 style: Theme.of(context).textTheme.titleSmall,
               ),
             ),
-            // Constrain so a giant list doesn't push the form off-screen.
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 220),
+            // #643: the list FILLS the available height instead of a fixed
+            // 220px cap that left ~60% of the screen blank below. `Expanded`
+            // takes whatever vertical room the parent gives (the chooser places
+            // ProfileList in its own Expanded), and the ListView scrolls within
+            // that full height when there are more profiles than fit. No
+            // `shrinkWrap` — the list gets a bounded height from the Expanded.
+            Expanded(
               child: ListView.builder(
-                shrinkWrap: true,
                 itemCount: profiles.length,
                 itemBuilder: (context, i) {
                   final p = profiles[i];
@@ -86,7 +89,7 @@ class ProfileList extends ConsumerWidget {
                 },
               ),
             ),
-            const Divider(),
+            const Divider(height: 1),
           ],
         );
       },
