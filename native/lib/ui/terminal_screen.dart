@@ -28,6 +28,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../state/sessions.dart';
 import '../state/terminal_providers.dart';
@@ -52,15 +53,24 @@ const double kSessionBarReserve = 36;
 /// bundled face is missing, so this stays robust even if the asset is absent.
 const String kTerminalFontFamily = 'JetBrainsMono';
 
-/// Test-only counter: incremented each time a session body arms the #647
-/// connect-triggered re-measure burst (the shell-ready transition). Lets a
-/// widget test prove the connect path — and ONLY the connect path, with no
-/// fonts/metrics event — fires the re-measure that on device fills the terminal
-/// without a keyboard toggle. The actual device re-fit is gated by the
-/// on-emulator integration test + owner validation (the headless harness can't
-/// reproduce the stale-cell-size race). Reset it in test `setUp`.
+/// Test-only counter: incremented each time a session body ARMS the #659
+/// connect-triggered fit burst (the shell-ready transition). Lets a widget test
+/// prove the connect path — and ONLY the connect path, with no fonts/metrics
+/// event — kicks off the explicit fit that on device fills the terminal without
+/// a keyboard toggle. The actual device re-fit is gated by the on-emulator
+/// integration test + owner validation (the headless harness can't reproduce
+/// the stale-cell-size race). Reset it in test `setUp`.
 @visibleForTesting
 int debugConnectRemeasureArmCount = 0;
+
+/// Test-only counter: incremented each time an explicit fit (#659) actually
+/// CHANGES the terminal's view size — i.e. it computed cols/rows from the
+/// rendered viewport + the painter cell metrics and drove `terminal.resize`
+/// (which fires `onResize` → `proxy.sendResize` → PTY). Distinct from the arm
+/// count: arming is "we tried", this is "the explicit resize moved the size".
+/// Reset it in test `setUp`.
+@visibleForTesting
+int debugExplicitFitAppliedCount = 0;
 
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
@@ -386,108 +396,190 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// session stays connected.
   bool _connectRemeasureArmed = false;
 
-  /// Pending delayed re-measure timers from the connect burst (#647), tracked
-  /// so they are cancelled on dispose and never fire against a gone widget.
+  /// Pending delayed fit timers from the connect burst (#659), tracked so they
+  /// are cancelled on dispose and never fire against a gone widget.
   final List<Timer> _connectRemeasureTimers = <Timer>[];
+
+  /// Last painter cell size we logged, used purely for a "font settled?"
+  /// heuristic in the CTRACE659 line (the cell metrics stop changing once the
+  /// bundled asset font is in effect). Null until the first fit attempt.
+  Size? _lastLoggedCellSize;
 
   @override
   void initState() {
     super.initState();
-    // #625/#600 — terminal layout/resize correctness.
+    // #625/#600/#641/#647/#659 — terminal layout/resize correctness.
     //
     // xterm.dart's `RenderTerminal.performLayout` computes cols/rows from
-    // `constraints.biggest / cellSize`, but ONLY inside `performLayout`. On the
-    // device's FIRST connect the very first layout can run before the bundled
-    // JetBrainsMono asset font has settled, so the cell size is measured from
-    // the platform-monospace fallback. The terminal locks in cols/rows for the
-    // WRONG cell size and never re-measures on its own (the constraints don't
-    // change), so the rendered content fills fewer rows than the viewport —
-    // the dead vertical gap above the keybar (#625). It "settles" after any
-    // later relayout (keyboard / rotation / keybar toggle) because that re-runs
-    // `performLayout` with the now-correct cached cellSize.
+    // `constraints.biggest / cellSize` and CACHES the result in `_viewportSize`;
+    // its `_resizeTerminalIfNeeded` re-sends a PTY resize ONLY when that cached
+    // size CHANGES. On the device's FIRST connect the first layout can run
+    // before the bundled JetBrainsMono asset font has settled, so the cell size
+    // is measured from the platform-monospace fallback and the terminal locks
+    // in cols/rows for the WRONG cell size — the dead vertical gap above the
+    // keybar (#625). It "settled" only after a relayout with a CHANGED
+    // constraint (keyboard/rotation), which is why tapping to show the keyboard
+    // fixed it.
     //
-    // The PWA's terminal (`src/modules/terminal.ts`, the UX spec) is more
-    // stable precisely because it RE-FITS explicitly on every viewport/font
-    // change (`fitAddon.fit()` on `fonts.ready`, `loadingdone`, visualViewport
-    // resize) and re-sends the PTY size. We mirror that here: force xterm to
-    // re-measure after the first frame and whenever the available fonts change,
-    // so the rendered size — and therefore the PTY `resize` that
-    // `Terminal.onResize` sends (see sessions.dart) — tracks reality.
+    // #641/#647 tried `markNeedsLayout`. That re-runs `performLayout` with the
+    // SAME constraint → recomputes the SAME stale cell size → SAME cached
+    // `_viewportSize` → NO-OP. Both shipped and FAILED on device.
+    //
+    // #659 stops relying on xterm's auto-measure. We compute cols/rows the same
+    // way xterm does — but from the CURRENT render-object `size` + the painter's
+    // `cellSize`, read in a post-frame so the asset font has had a frame to
+    // settle — and drive `terminal.resize(cols, rows, cellW, cellH)` DIRECTLY.
+    // `Terminal.resize` always fires `onResize` (→ `proxy.sendResize` → PTY,
+    // wired in sessions.dart) and updates the terminal's view size, so it
+    // bypasses the stale `_viewportSize` cache entirely. Mirrors the PWA's
+    // explicit `fitAddon.fit()` on font/viewport change.
     WidgetsBinding.instance.addObserver(this);
-    PaintingBinding.instance.systemFonts.addListener(_forceRemeasure);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _forceRemeasure());
+    PaintingBinding.instance.systemFonts.addListener(_onSystemFontsChanged);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _scheduleExplicitFit('mount'),
+    );
   }
 
-  /// Force the xterm `TerminalView` to re-run layout so it recomputes cols/rows
-  /// from the current rendered cell size. A no-op cost when nothing changed:
-  /// `markNeedsLayout` only re-measures, and `Terminal.onResize` fires (→
-  /// `proxy.sendResize`) ONLY when cols/rows actually differ. Deferred to a
-  /// post-frame callback so it is safe to call from layout-phase notifications
-  /// (`systemFonts`, metrics changes).
-  void _forceRemeasure() {
+  /// systemFonts listener — the bundled asset font finished loading. Re-fit so
+  /// the now-correct cell metrics drive the PTY size (#641 path, #659 mechanism).
+  void _onSystemFontsChanged() => _scheduleExplicitFit('font');
+
+  /// Compute cols/rows from the CURRENT rendered viewport + painter cell metrics
+  /// and drive `terminal.resize` directly when they differ from the terminal's
+  /// current view size (#659). Deferred to a post-frame so it is safe to call
+  /// from layout-phase notifications and so the render box has laid out.
+  ///
+  /// This is the REAL fix: it does not depend on xterm noticing a changed
+  /// constraint (the #641/#647 markNeedsLayout no-op). It reads the truth off
+  /// the render object and pushes it through the PTY-resize path itself. Every
+  /// attempt logs a CTRACE659 line so a device failure yields DATA, not blind
+  /// iteration.
+  void _scheduleExplicitFit(String trigger) {
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // The `terminal-view-$id` ValueKey is kept for test addressing, so we
-      // can't also hang a `GlobalKey<TerminalViewState>` on the TerminalView.
-      // Locate its state by descending our own element subtree instead.
-      final state = _findTerminalViewState();
-      if (state == null) return;
-      // `renderTerminal` throws if the viewport hasn't laid out yet; a render
-      // box detached mid-frame would also reject `markNeedsLayout`. Either way
-      // the next settle/remeasure recovers, so swallow.
-      try {
-        final ro = state.renderTerminal;
-        if (ro.attached) ro.markNeedsLayout();
-      } catch (_) {
-        /* not laid out yet — a later remeasure handles it */
-      }
+      _explicitFit(trigger);
     });
   }
 
-  /// #647 — force the SAME re-measure on FIRST CONNECT, without needing a
-  /// keyboard toggle.
+  void _explicitFit(String trigger) {
+    if (!mounted) return;
+    // The `terminal-view-$id` ValueKey is kept for test addressing, so we can't
+    // also hang a `GlobalKey<TerminalViewState>` on the TerminalView. Locate its
+    // state by descending our own element subtree instead.
+    final state = _findTerminalViewState();
+    if (state == null) {
+      ctrace('ui.fit659', '$trigger: no TerminalViewState yet (offstage?)');
+      return;
+    }
+    // `RenderTerminal` is not exported from package:xterm, so the type is left
+    // inferred. The getter throws if the viewport hasn't laid out yet (null
+    // currentContext) and a detached box would also reject reads — either way a
+    // later attempt in the burst recovers, so capture both inside the try.
+    final Size size;
+    final Size cell;
+    try {
+      final box = state.renderTerminal;
+      if (!box.attached) {
+        ctrace('ui.fit659', '$trigger: render box detached');
+        return;
+      }
+      size = box.size;
+      cell = box.cellSize;
+    } catch (_) {
+      ctrace('ui.fit659', '$trigger: render box not laid out yet');
+      return;
+    }
+    final terminal = ref.read(terminalProvider(widget.sessionId));
+
+    // Guard against a not-yet-measured cell (zero/NaN) which would blow up the
+    // division and the PTY size.
+    if (cell.width <= 0 || cell.height <= 0 || !size.width.isFinite) {
+      ctrace(
+        'ui.fit659',
+        '$trigger: skip — bad metrics size=${_fmtSize(size)} '
+            'cell=${_fmtSize(cell)}',
+      );
+      return;
+    }
+
+    // Compute cols/rows EXACTLY as xterm's `RenderTerminal._updateViewportSize`
+    // does (xterm-4.0.0 render.dart): WIDTH uses the FULL box width (no padding
+    // subtraction), HEIGHT subtracts the vertical padding only. Matching xterm
+    // precisely is essential — a 1-cell disagreement would make our explicit
+    // resize and xterm's auto-measure fight each other (endless churn). The
+    // TerminalView padding is 4px on every edge (see the `padding` below), so
+    // the vertical padding is 8px.
+    const double pad = 4;
+    final int cols = (size.width ~/ cell.width).clamp(1, 1 << 20);
+    final int rows = ((size.height - pad * 2) ~/ cell.height).clamp(1, 1 << 20);
+
+    final int curCols = terminal.viewWidth;
+    final int curRows = terminal.viewHeight;
+    final bool fontSettled =
+        _lastLoggedCellSize != null && _lastLoggedCellSize == cell;
+    _lastLoggedCellSize = cell;
+
+    final bool changed = cols != curCols || rows != curRows;
+    if (changed) {
+      // Drive the PTY-resize path directly. terminal.onResize (sessions.dart)
+      // → proxy.sendResize → PTY. Pixel sizes mirror what xterm sends.
+      terminal.resize(cols, rows, cell.width.round(), cell.height.round());
+      debugExplicitFitAppliedCount += 1;
+    }
+
+    // CTRACE659: the device-diagnosis line. Captures incoming render-box
+    // constraints, the cell metrics xterm measured, the computed vs current
+    // cols/rows, whether we drove a resize, and a font-settled heuristic.
+    // Appears in the debug overlay, the on-device Connect log, AND the uploaded
+    // feedback bundle (ctrace ring), so the owner's repro carries the data.
+    ctrace(
+      'ui.fit659',
+      '$trigger: view=${_fmtSize(size)} cell=${_fmtSize(cell)} '
+          'computed=${cols}x$rows cur=${curCols}x$curRows '
+          '${changed ? "RESIZED" : "noop"} '
+          'font=$kTerminalFontFamily settled=$fontSettled',
+    );
+  }
+
+  static String _fmtSize(Size s) =>
+      '${s.width.toStringAsFixed(1)}x${s.height.toStringAsFixed(1)}';
+
+  /// #659 — drive an explicit fit on FIRST CONNECT, without needing a keyboard
+  /// toggle.
   ///
   /// On a real device's first connect NEITHER #641 trigger fires: the bundled
   /// JetBrainsMono asset is already cached (no `systemFonts` event) and there's
-  /// no viewport change (no `didChangeMetrics`). So the stale first-frame
-  /// measure (taken before the asset font's metrics settled) persisted until the
-  /// user tapped to show the keyboard — which finally ran `didChangeMetrics` →
-  /// the #641 remeasure → re-fit. The owner's smoking gun: "tapping to show the
-  /// keyboard fixes it."
-  ///
-  /// We mimic exactly what the keyboard-show did, but on the connect/shell-ready
-  /// transition: fire the #641 re-measure once immediately, then again at a few
-  /// short delays so a remeasure lands AFTER the asset font's cell metrics have
-  /// settled (the device race the emulator can't reproduce — there the
-  /// font-load relayout happens to fire). Each call is idempotent:
-  /// `markNeedsLayout` only re-measures, and `Terminal.onResize` →
-  /// `transport.resize` fires ONLY when cols/rows actually change. The burst is
-  /// armed once per live shell ([_connectRemeasureArmed]); it re-arms after a
-  /// drop so a reconnect gets the same treatment.
+  /// no viewport change (no `didChangeMetrics`). The stale first-frame measure
+  /// persisted until the user tapped to show the keyboard. We arm an explicit
+  /// fit on the connect/shell-ready transition: once immediately, then again at
+  /// a few short delays so at least one fires AFTER the asset font's cell
+  /// metrics settle (the device race the emulator can't reproduce). Each fit is
+  /// idempotent — it only drives `terminal.resize` when the computed cols/rows
+  /// differ from the terminal's current view size. Armed once per live shell
+  /// ([_connectRemeasureArmed]); re-arms after a drop so a reconnect repeats it.
   void _armConnectRemeasure() {
     if (_connectRemeasureArmed) return;
     _connectRemeasureArmed = true;
     // Test-only: lets a widget test assert the connect transition (and ONLY the
-    // connect transition — no fonts/metrics event) armed the #647 burst. The
-    // device re-fit itself can't be reproduced headlessly (test fonts preload),
-    // so the wiring counter is the headless contract; the emulator/owner gate
-    // the actual re-fit.
+    // connect transition — no fonts/metrics event) armed the #659 fit burst.
     debugConnectRemeasureArmCount += 1;
-    // Immediate (post-frame) re-measure — covers the case where layout is
-    // already correct by connect time (e.g. the emulator / headless harness).
-    _forceRemeasure();
-    // Staggered re-measures defeat the device font-settle race: at least one
-    // lands after the cached asset font's metrics are in effect.
-    for (final ms in const [120, 350, 700]) {
+    ctrace('ui.fit659', 'connect: arming fit burst (shell ready)');
+    // Immediate (post-frame) fit — covers the case where layout is already
+    // correct by connect time (e.g. the emulator / headless harness).
+    _scheduleExplicitFit('connect');
+    // Staggered fits defeat the device font-settle race: at least one lands
+    // after the cached asset font's metrics are in effect. 1200ms tail added
+    // over #647 for slow cold-starts.
+    for (final ms in const [120, 350, 700, 1200]) {
       _connectRemeasureTimers.add(
-        Timer(Duration(milliseconds: ms), _forceRemeasure),
+        Timer(Duration(milliseconds: ms), () => _explicitFit('burst-${ms}ms')),
       );
     }
   }
 
-  /// Drop the connect-remeasure arming + cancel pending burst timers so a
-  /// reconnect re-arms the burst and gone timers never touch a dead widget.
+  /// Drop the connect-fit arming + cancel pending burst timers so a reconnect
+  /// re-arms the burst and gone timers never touch a dead widget.
   void _disarmConnectRemeasure() {
     _connectRemeasureArmed = false;
     for (final t in _connectRemeasureTimers) {
@@ -520,12 +612,12 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// rendered size (#600). Mirrors the PWA's visualViewport resize → re-fit.
   @override
   void didChangeMetrics() {
-    _forceRemeasure();
+    _scheduleExplicitFit('metrics');
   }
 
   @override
   void dispose() {
-    PaintingBinding.instance.systemFonts.removeListener(_forceRemeasure);
+    PaintingBinding.instance.systemFonts.removeListener(_onSystemFontsChanged);
     WidgetsBinding.instance.removeObserver(this);
     _disarmConnectRemeasure();
     _scrollController.dispose();
@@ -535,13 +627,14 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   @override
   Widget build(BuildContext context) {
     final terminal = ref.watch(terminalProvider(widget.sessionId));
-    // #647 — arm the connect re-measure burst on the shell-ready transition.
+    // #659 — arm the connect explicit-fit burst on the shell-ready transition.
     // `sshShellProvider` resolves to a non-null shell ONLY once the session
     // reaches `connected` (see terminal_providers.dart), so a ready AsyncData
     // here IS the first-connect / shell-ready signal. Listening (not just
     // watching) lets us fire the burst exactly on the transition and re-arm it
-    // after a drop, without rebuilding the body. Mirrors the keyboard-show
-    // re-fit, but triggered by connect instead of a metrics change.
+    // after a drop, without rebuilding the body. Each fit computes cols/rows
+    // from the rendered viewport + cell metrics and drives terminal.resize —
+    // bypassing xterm's stale auto-measure (the #641/#647 no-op).
     ref.listen(sshShellProvider(widget.sessionId), (prev, next) {
       if (next.valueOrNull != null) {
         _armConnectRemeasure();
