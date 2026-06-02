@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02e — visual polish: profile list fills, slimmer chrome, slim menu
+- Profile list now fills the screen — no more huge blank space below it.
+- Session bar + keybar shrunk ~25%; Home and End now fit on the keybar, ESC is normal-width.
+- Session menu slimmed to a compact icon row.
+
 ## Build 2026-06-02d — font size persists per profile
 - Terminal font size now sticks per profile — set it once and it's remembered across restarts and reconnects.
 
