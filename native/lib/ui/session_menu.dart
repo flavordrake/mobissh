@@ -195,115 +195,161 @@ class SessionMenu extends ConsumerWidget {
             },
           ),
           const Divider(height: 1),
-          // Slim secondary controls (#567): no subtitles, dense rows. These
-          // are session-scoped controls that belong in the sheet — keybar
-          // visibility, terminal theme, and SFTP files.
-          SwitchListTile(
-            key: const Key('session-menu-keybar-toggle'),
-            dense: true,
-            secondary: const Icon(Icons.keyboard_outlined),
-            title: const Text('Keybar'),
-            value: keybarVisible,
-            onChanged: (v) => ref.read(keybarVisibleProvider.notifier).set(v),
+          // Slim per-session controls (#567): the five stacked full-width
+          // ListTiles (keybar / theme / font / files / disconnect) regrew the
+          // menu into clutter — the owner's #2 priority was to slim it back to
+          // the PWA's tight direction. They now collapse into ONE compact row
+          // of monochrome icon-buttons. Every essential control is KEPT and
+          // keeps its existing key (so appearance/keybar/disconnect tests and
+          // device screenshots still address them). All are session-scoped and
+          // act on the ACTIVE session only (#601, #571).
+          _SessionControlsRow(
+            activeId: activeId,
+            sessions: sessions,
+            keybarVisible: keybarVisible,
+            themeLabel: palette.label,
+            fontSize: fontSize,
+            onClose: onClose,
           ),
-          // (#607: the compose-bar toggle moved to the session BAR — it's a
-          // per-moment action. Disconnect, infrequent, moved INTO this menu
-          // below.)
-          // Cycle the ACTIVE session's terminal palette (#601, #571). Tapping
-          // advances to the next ported theme, wrapping at the end. Per-session:
-          // it changes ONLY the active session, never the others.
-          ListTile(
+        ],
+      ),
+    );
+  }
+}
+
+/// One compact row replacing the old stack of secondary ListTiles (#567).
+///
+/// Layout (left→right): theme cycle (icon + current label), font − [value] +,
+/// files, keybar toggle, disconnect. Monochrome Material icons only — no emoji
+/// (feedback_monochrome_icons_no_emoji). Controls disable themselves when there
+/// is no active session, mirroring the prior per-tile `enabled` gating.
+class _SessionControlsRow extends ConsumerWidget {
+  const _SessionControlsRow({
+    required this.activeId,
+    required this.sessions,
+    required this.keybarVisible,
+    required this.themeLabel,
+    required this.fontSize,
+    required this.onClose,
+  });
+
+  final String? activeId;
+  final SessionsState sessions;
+  final bool keybarVisible;
+  final String themeLabel;
+  final double fontSize;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final hasActive = activeId != null;
+    return Padding(
+      key: const Key('session-menu-controls'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Cycle the ACTIVE session's terminal palette (#601, #571). The
+          // current theme label sits next to the icon so the control still
+          // communicates state without a full row.
+          InkWell(
             key: const Key('session-menu-theme-cycle'),
-            dense: true,
-            leading: const Icon(Icons.palette_outlined),
-            title: const Text('Theme'),
-            trailing: Text(
-              palette.label,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            enabled: activeId != null,
-            onTap: activeId == null
+            borderRadius: BorderRadius.circular(8),
+            onTap: !hasActive
                 ? null
                 : () => ref
                       .read(sessionAppearanceProvider.notifier)
-                      .cycleTheme(activeId),
-          ),
-          // Font-size stepper for the ACTIVE session (#601). The owner shrinks
-          // the font for more terminal real estate, or grows it for legibility,
-          // per session — prod small, dev large. −/＋ step by [kFontSizeStep],
-          // clamped to [kFontSizeMin]..[kFontSizeMax]; the current value shows
-          // between the buttons. Monochrome Material icons only (no emoji).
-          ListTile(
-            key: const Key('session-menu-fontsize'),
-            dense: true,
-            leading: const Icon(Icons.format_size),
-            title: const Text('Font size'),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  key: const Key('session-menu-fontsize-dec'),
-                  tooltip: 'Decrease font size',
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.remove),
-                  onPressed: activeId == null
-                      ? null
-                      : () =>
-                            _stepFont(ref, sessions, activeId, -kFontSizeStep),
-                ),
-                SizedBox(
-                  width: 28,
-                  child: Text(
-                    '${fontSize.round()}',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
+                      .cycleTheme(activeId!),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.palette_outlined, size: 20),
+                  const SizedBox(width: 6),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 64),
+                    child: Text(
+                      themeLabel,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
+                    ),
                   ),
-                ),
-                IconButton(
-                  key: const Key('session-menu-fontsize-inc'),
-                  tooltip: 'Increase font size',
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.add),
-                  onPressed: activeId == null
-                      ? null
-                      : () => _stepFont(ref, sessions, activeId, kFontSizeStep),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-          // Browse / download remote files over SFTP for the active session
-          // (#559). Disabled when there's no active session.
-          ListTile(
+          // Font-size stepper for the ACTIVE session (#601): − [value] +.
+          IconButton(
+            key: const Key('session-menu-fontsize-dec'),
+            tooltip: 'Decrease font size',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.remove),
+            onPressed: !hasActive
+                ? null
+                : () => _stepFont(ref, sessions, activeId!, -kFontSizeStep),
+          ),
+          SizedBox(
+            width: 22,
+            child: Text(
+              '${fontSize.round()}',
+              key: const Key('session-menu-fontsize'),
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+          IconButton(
+            key: const Key('session-menu-fontsize-inc'),
+            tooltip: 'Increase font size',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.add),
+            onPressed: !hasActive
+                ? null
+                : () => _stepFont(ref, sessions, activeId!, kFontSizeStep),
+          ),
+          // Browse / download remote files over SFTP (#559).
+          IconButton(
             key: const Key('session-menu-files'),
-            dense: true,
-            leading: const Icon(Icons.folder_outlined),
-            title: const Text('Files'),
-            trailing: const Icon(Icons.chevron_right),
-            enabled: sessions.activeId != null,
-            onTap: sessions.activeId == null
+            tooltip: 'Files',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.folder_outlined),
+            onPressed: !hasActive
                 ? null
                 : () {
-                    final sessionId = sessions.activeId!;
+                    final sessionId = activeId!;
                     final navigator = Navigator.of(context);
                     onClose();
                     openFileBrowser(navigator.context, sessionId);
                   },
           ),
-          // Disconnect the ACTIVE session (#607: moved here from the session
-          // bar — infrequent, so it belongs in the menu, not a per-moment
-          // button). Fully closes (disconnect + dispose + REMOVE the entry) so
-          // a re-connect re-creates it + restarts the service (#564).
-          ListTile(
+          // Keybar visibility toggle. Filled icon = visible, outlined = hidden,
+          // so the glyph itself communicates the toggle state (no SwitchListTile
+          // row needed). Keybar visibility is global today; #573 moves it
+          // per-session as a separate change — keep the wiring intact here.
+          IconButton(
+            key: const Key('session-menu-keybar-toggle'),
+            tooltip: keybarVisible ? 'Hide keybar' : 'Show keybar',
+            visualDensity: VisualDensity.compact,
+            isSelected: keybarVisible,
+            icon: const Icon(Icons.keyboard_outlined),
+            selectedIcon: const Icon(Icons.keyboard),
+            onPressed: () =>
+                ref.read(keybarVisibleProvider.notifier).set(!keybarVisible),
+          ),
+          // Disconnect the ACTIVE session (#607). Fully closes (disconnect +
+          // dispose + REMOVE the entry) so a re-connect restarts the service
+          // (#564).
+          IconButton(
             key: const Key('terminal-disconnect-button'),
-            dense: true,
-            leading: const Icon(Icons.link_off),
-            title: const Text('Disconnect'),
-            enabled: activeId != null,
-            onTap: activeId == null
+            tooltip: 'Disconnect',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.link_off),
+            onPressed: !hasActive
                 ? null
                 : () {
                     onClose();
-                    ref.read(sessionsProvider.notifier).close(activeId);
+                    ref.read(sessionsProvider.notifier).close(activeId!);
                   },
           ),
         ],
@@ -332,17 +378,17 @@ class _SessionRow extends ConsumerWidget {
         Icons.terminal,
         color: isActive ? theme.colorScheme.primary : null,
       ),
+      // #567: the label alone identifies the session (mirrors the PWA's slim
+      // session list, which shows the label + a connection dot, no verbose
+      // user@host:port subtitle). Dropping the subtitle halves each row's
+      // height and tightens the menu.
+      dense: true,
       title: Text(
         entry.label,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
         ),
-      ),
-      subtitle: Text(
-        '${entry.username}@${entry.host}:${entry.port}',
-        overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodySmall,
       ),
       trailing: IconButton(
         key: Key('session-menu-close-${entry.id}'),
