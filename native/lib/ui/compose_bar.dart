@@ -28,6 +28,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../state/lifecycle_providers.dart';
+import '../util/terminal_copy_fixup.dart';
 
 /// Bracketed-paste wrappers (#599): a multi-line commit is wrapped so the
 /// remote TUI/shell treats it as a single paste rather than running each
@@ -157,8 +158,8 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     _focusNode.requestFocus();
   }
 
-  /// #634: copy the current compose text to the system clipboard (PWA parity —
-  /// mirrors the IME compose copy affordance). Keeps focus in the field.
+  /// #638 (was #634): copy the current compose text to the system clipboard
+  /// (PWA parity — mirrors the IME compose Copy pill). Keeps focus in the field.
   void _copy() {
     final text = _controller.text;
     if (text.isEmpty) return;
@@ -166,8 +167,26 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     _focusNode.requestFocus();
   }
 
-  /// #634: paste clipboard text into the compose field AT THE CURSOR (replacing
-  /// any selection), then move the caret to the end of the inserted text.
+  /// #638: "Fix" pill — collapse terminal soft-wrap artifacts in the staged
+  /// text into one clean line (PWA parity with `fixupTerminalCopy`). Used after
+  /// pasting a long URL/command that the terminal hard-wrapped with newline +
+  /// indent. Keeps the caret at the end and keeps focus.
+  void _fix() {
+    final cleaned = fixupTerminalCopy(_controller.text);
+    if (cleaned == _controller.text) {
+      _focusNode.requestFocus();
+      return;
+    }
+    _controller.value = TextEditingValue(
+      text: cleaned,
+      selection: TextSelection.collapsed(offset: cleaned.length),
+    );
+    _focusNode.requestFocus();
+  }
+
+  /// #638 (was #634): paste clipboard text into the compose field AT THE CURSOR
+  /// (replacing any selection), then move the caret to the end of the inserted
+  /// text.
   Future<void> _paste() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final pasted = data?.text;
@@ -198,10 +217,10 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
 
     // Panel width: most of the screen, capped so it reads as a panel.
     final panelWidth = size.width - 24;
-    // Tall enough for the top drag bar + the 6-button vertical action rail
-    // (close/clear/copy/paste/commit/submit) WITHOUT overflow — an overflowing
-    // Column under Clip.antiAlias clips the bottom buttons so their taps don't
-    // land.
+    // Tall enough for the top drag bar + the inline pill row (Fix/Copy/Paste,
+    // #638) + the 4-button vertical action rail (close/clear/commit/submit)
+    // WITHOUT overflow — an overflowing Column under Clip.antiAlias clips the
+    // bottom buttons so their taps don't land.
     const panelHeight = 272.0;
     const margin = 12.0;
     final left = (size.width - panelWidth) / 2;
@@ -268,6 +287,17 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
                   ),
                 ),
               ),
+              // #638: inline TEXT-action pill row (Fix / Copy / Paste). These
+              // are TEXT actions on the staged content — distinct from the
+              // right rail's WHOLE-VIEW actions (close/clear/✓/⏎). Mirrors the
+              // PWA's `.ime-paste-overlay` chips (src/modules/ime.ts), same
+              // left→right order. Monochrome, theme-tinted (no emoji).
+              _PillRow(
+                hasText: _controller.text.isNotEmpty,
+                onFix: _fix,
+                onCopy: _copy,
+                onPaste: _paste,
+              ),
               // Field + action rail share the remaining height.
               Expanded(
                 child: Row(
@@ -310,14 +340,13 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
                         ),
                       ),
                     ),
-                    // Vertical action rail (#604/#634): close / clear / copy /
-                    // paste / commit / submit.
+                    // Vertical action rail (#604/#638): WHOLE-VIEW actions
+                    // only — close / clear / commit / submit. Text actions
+                    // (copy/paste/fix) moved to the inline pill row above.
                     _ActionRail(
                       hasText: _controller.text.isNotEmpty,
                       onClose: widget.onClose,
                       onClear: _clear,
-                      onCopy: _copy,
-                      onPaste: _paste,
                       onCommit: () => _send(trailing: ''),
                       onSubmit: () => _send(trailing: '\r'),
                     ),
@@ -332,15 +361,114 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   }
 }
 
-/// Slim vertical button rail for the compose panel (#604). Stacking the actions
-/// keeps the editable wide for long composition. Monochrome theme-tinted icons.
+/// Inline TEXT-action pill row (#638). Mirrors the PWA's `.ime-paste-overlay`
+/// chips (src/modules/ime.ts) — same left→right order: Fix, Copy, Paste. These
+/// act on the staged TEXT (not the whole view), so they live as chips next to
+/// the field rather than in the right rail (owner: "the copy paste and fix are
+/// pills not cluttering up the right side for whole view actions"). Monochrome,
+/// theme-tinted — no emoji (memory: feedback_monochrome_icons_no_emoji).
+class _PillRow extends StatelessWidget {
+  const _PillRow({
+    required this.hasText,
+    required this.onFix,
+    required this.onCopy,
+    required this.onPaste,
+  });
+
+  final bool hasText;
+  final VoidCallback onFix;
+  final VoidCallback onCopy;
+  final VoidCallback onPaste;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      key: const Key('compose-bar-pills'),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+      child: Row(
+        children: [
+          _Pill(
+            buttonKey: const Key('compose-bar-fix'),
+            icon: Icons.auto_fix_high_outlined,
+            label: 'Fix',
+            tooltip: 'Collapse terminal soft-wraps into one line',
+            onPressed: hasText ? onFix : null,
+          ),
+          const SizedBox(width: 6),
+          _Pill(
+            buttonKey: const Key('compose-bar-copy'),
+            icon: Icons.copy_outlined,
+            label: 'Copy',
+            tooltip: 'Copy compose text',
+            onPressed: hasText ? onCopy : null,
+          ),
+          const SizedBox(width: 6),
+          _Pill(
+            buttonKey: const Key('compose-bar-paste'),
+            icon: Icons.content_paste_outlined,
+            label: 'Paste',
+            tooltip: 'Paste at cursor',
+            onPressed: onPaste,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A single chip-style text-action pill (#638). Tonal, compact, monochrome —
+/// reads as a secondary affordance, not a primary button.
+class _Pill extends StatelessWidget {
+  const _Pill({
+    required this.buttonKey,
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final Key buttonKey;
+  final IconData icon;
+  final String label;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: TextButton.icon(
+        key: buttonKey,
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16),
+        label: Text(label),
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          foregroundColor: theme.colorScheme.onSurfaceVariant,
+          backgroundColor: theme.colorScheme.surfaceContainerHighest,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          minimumSize: const Size(0, 32),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          textStyle: const TextStyle(fontSize: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Slim vertical button rail for the compose panel (#604/#638). WHOLE-VIEW
+/// actions only — close / clear / commit / submit. Text actions live in the
+/// pill row. Stacking keeps the editable wide for long composition. Monochrome
+/// theme-tinted icons.
 class _ActionRail extends StatelessWidget {
   const _ActionRail({
     required this.hasText,
     required this.onClose,
     required this.onClear,
-    required this.onCopy,
-    required this.onPaste,
     required this.onCommit,
     required this.onSubmit,
   });
@@ -348,8 +476,6 @@ class _ActionRail extends StatelessWidget {
   final bool hasText;
   final VoidCallback onClose;
   final VoidCallback onClear;
-  final VoidCallback onCopy;
-  final VoidCallback onPaste;
   final VoidCallback onCommit;
   final VoidCallback onSubmit;
 
@@ -357,6 +483,7 @@ class _ActionRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
+      key: const Key('compose-bar-rail'),
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -376,22 +503,6 @@ class _ActionRail extends StatelessWidget {
             iconSize: 20,
             icon: const Icon(Icons.backspace_outlined),
             onPressed: hasText ? onClear : null,
-          ),
-          IconButton(
-            key: const Key('compose-bar-copy'),
-            tooltip: 'Copy compose text',
-            visualDensity: VisualDensity.compact,
-            iconSize: 20,
-            icon: const Icon(Icons.copy_outlined),
-            onPressed: hasText ? onCopy : null,
-          ),
-          IconButton(
-            key: const Key('compose-bar-paste'),
-            tooltip: 'Paste at cursor',
-            visualDensity: VisualDensity.compact,
-            iconSize: 20,
-            icon: const Icon(Icons.content_paste_outlined),
-            onPressed: onPaste,
           ),
           IconButton(
             key: const Key('compose-bar-commit'),
