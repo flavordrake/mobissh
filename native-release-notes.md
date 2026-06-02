@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02d — font size persists per profile
+- Terminal font size now sticks per profile — set it once and it's remembered across restarts and reconnects.
+
 ## Build 2026-06-02c — terminal fills the screen + compose pills
 - Terminal now fills the screen on first connect (no dead gap) and re-fits when the keyboard or keybar change.
 - Copy, Paste, and Fix are now inline pills; the right-side buttons stay just close/clear/commit/submit.
