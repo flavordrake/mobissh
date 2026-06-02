@@ -35,7 +35,6 @@ import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
-import 'connect_error_dialog.dart';
 import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_editor.dart';
@@ -57,16 +56,6 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// pending timer or the awaiter hangs forever).
   StreamSubscription<SshSessionData>? _connectedSub;
   Completer<bool>? _connectedCompleter;
-
-  /// True while the connect-error dialog (#648) is open, so the `failed`-state
-  /// listener doesn't stack a second dialog on a re-emit of the same failure.
-  bool _errorDialogOpen = false;
-
-  /// The params (and display title) of the most recent connect dispatch, so the
-  /// connect-error dialog's "Retry" can re-attempt the SAME connection without
-  /// re-walking the profile/credential resolution (#648).
-  SshConnectParams? _lastConnectParams;
-  String? _lastConnectTitle;
 
   @override
   void dispose() {
@@ -97,21 +86,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         _handleHostKeyPrompt(pending);
       }
 
-      // #648: surface a connect FAILURE. An unreachable host (down / bad host /
-      // wrong port → TCP refused, no route, or the half-open path that hit the
-      // readyTimeout), a rejected host key, a bad key, or an auth failure all
-      // land the active session in `failed`. The router keeps THIS chooser
-      // mounted on a never-live `failed` precisely so the connect error renders
-      // here (main.dart RootRouter) — but nothing rendered it. Show a clear
-      // dialog with the reason + Back/Retry instead of a silent spinner/no-op.
-      // Only fire on the TRANSITION into `failed` (prev != failed) so a re-emit
-      // doesn't stack dialogs.
-      final nextState = next.valueOrNull?.state;
-      final prevState = prev?.valueOrNull?.state;
-      if (nextState == SshSessionState.failed &&
-          prevState != SshSessionState.failed) {
-        _handleConnectFailure(next.valueOrNull);
-      }
+      // #660: a connect FAILURE is NOT surfaced here anymore. #648 popped a
+      // modal AlertDialog on the transition into `failed`, but on device that
+      // blocked the whole profile list. The failure is now surfaced as a
+      // LOCAL, PER-ROW affordance (inline error + Retry) inside ProfileList,
+      // which derives each row's connect state from the matching session's
+      // proxy. The chooser only handles the host-key prompt (above).
     });
 
     // #643: the chooser FILLS the screen. The saved-profile list goes in an
@@ -198,11 +178,6 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     // Captured before the async gap so we can pop a pushed "New session" route
     // after dispatching connect without touching `context` post-await.
     final navigator = Navigator.of(context);
-
-    // Remember the params so the connect-error dialog's "Retry" can re-attempt
-    // this exact connection without re-resolving the profile/credential (#648).
-    _lastConnectParams = params;
-    _lastConnectTitle = title;
 
     setState(() => _busy = true);
     try {
@@ -415,49 +390,6 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         ? 'Imported ${parts.join(', ')}'
         : 'No profiles imported.';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
-  /// #648: surface a connect failure as a clear, dismissable error dialog with
-  /// the reason + Back/Retry. Called on the transition into `failed`. "Retry"
-  /// re-dispatches the last connect params to the active session; "Back" just
-  /// dismisses (the user stays on the chooser, not a silent spinner).
-  Future<void> _handleConnectFailure(SshSessionData? data) async {
-    if (_errorDialogOpen) return;
-    final reason = (data?.error?.trim().isNotEmpty ?? false)
-        ? data!.error!.trim()
-        : 'The connection could not be established.';
-    final host = data?.host;
-    final port = data?.port;
-    final target = (host != null && host.isNotEmpty)
-        ? (port != null ? '$host:$port' : host)
-        : null;
-    ctrace('ui.chooser', 'connectFailure: surfacing error "$reason"');
-    _errorDialogOpen = true;
-    bool retry = false;
-    try {
-      retry = await showConnectErrorDialog(
-        context,
-        reason: reason,
-        target: target,
-      );
-    } finally {
-      _errorDialogOpen = false;
-    }
-    if (!mounted || !retry) return;
-
-    // Retry: re-attempt the SAME connection. Reuse the cached params so we
-    // don't re-walk profile/credential resolution. The active proxy is the one
-    // that just failed; re-dispatch connect through it.
-    final params = _lastConnectParams;
-    if (params == null) return;
-    ctrace('ui.chooser', 'connectFailure: RETRY ${params.host}:${params.port}');
-    final proxy = ref.read(sshSessionProxyProvider);
-    setState(() => _busy = true);
-    try {
-      await proxy.connect(params, title: _lastConnectTitle);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {
