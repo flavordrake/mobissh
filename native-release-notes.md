@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02 — compose bar fixes
+- Enter or Commit now hides the compose box so the full terminal is visible again.
+- The compose text area keeps its focus when you switch apps and come back.
+- Drag handle moved to the top edge (wider text area) + Copy and Paste pills.
+
 ## Build 2026-06-01h — disconnect indicator, auth timeout, home reshape
 - Disconnected terminal now shows a clear indicator; scroll gestures no longer dump stray characters while a session is down.
 - A stuck SSH login now times out instead of hanging forever.
