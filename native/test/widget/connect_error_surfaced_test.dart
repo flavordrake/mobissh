@@ -1,16 +1,15 @@
-// Widget test: a connect that ends in `failed` SURFACES a visible error (#648).
+// Widget test: a connect that ends in `failed` surfaces a VISIBLE, INLINE error
+// at the chooser — NOT a blocking modal (#648 → refined by #660).
 //
-// Bug: connecting to an unreachable host gave no error and no feedback — the
-// session reached `SshSessionState.failed` (controller is bounded by the
-// readyTimeout / TCP-connect throw) but the chooser never rendered the failure.
-// The router keeps the chooser mounted on a never-live `failed` precisely so the
-// "connect error renders there", but the chooser only listened for host-key
-// prompts.
+// History: #648 fixed a silent hang (a failed connect rendered nothing) by
+// popping a modal AlertDialog. On device (build 'f') that modal BLOCKED the
+// whole profile list — the owner asked for a LOCAL, PER-ROW affordance instead.
+// #660 replaces the modal with an inline per-row error + retry.
 //
 // This test drives a profile tap → connect, then pushes a `failed` state event
 // from the task side (modelling an unreachable host the controller force-failed)
-// and asserts the connect-error dialog appears with the reason — NOT a silent
-// hang.
+// and asserts the failure is surfaced INLINE on that profile row — and that NO
+// blocking AlertDialog appears.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -41,7 +40,7 @@ void main() {
   });
 
   testWidgets(
-    'connect that reaches `failed` surfaces a visible error dialog with the reason',
+    'a failed connect surfaces an INLINE row error (with reason), not a blocking modal',
     (tester) async {
       // Seed a password profile + its vault secret so the tap connects.
       final store = ProfilesStore();
@@ -103,79 +102,23 @@ void main() {
       );
       await _pumpFrames(tester, count: 20);
 
-      // The failure must be SURFACED — a visible dialog with the reason, not a
-      // silent spinner.
+      // #660: the failure is SURFACED INLINE on the row — not a blocking modal.
+      expect(
+        find.byKey(const Key('profile-error-down.example:22:alice')),
+        findsOneWidget,
+        reason: 'a failed connect must surface inline on the row',
+      );
+      expect(
+        find.byKey(const Key('profile-retry-down.example:22:alice')),
+        findsOneWidget,
+      );
+      // The old #648 modal must be GONE.
       expect(
         find.byKey(const Key('connect-error-dialog')),
-        findsOneWidget,
-        reason: 'a failed connect must surface a visible error, not hang',
+        findsNothing,
+        reason: '#660 replaces the modal with an inline per-row affordance',
       );
-      expect(find.textContaining('unreachable'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'tapping Back on the connect-error dialog dismisses it (no hang)',
-    (tester) async {
-      final store = ProfilesStore();
-      final secrets = SecretsStore(backend: InMemorySecretsBackend());
-      await secrets.write('vault-1', <String, Object?>{'password': 'pw'});
-      await store.save(<SavedProfile>[
-        SavedProfile(
-          title: 'Refused',
-          host: 'refused.example',
-          port: 22,
-          username: 'bob',
-          authType: 'password',
-          vaultId: 'vault-1',
-        ),
-      ]);
-
-      final pair = InMemoryGatewayPair();
-      addTearDown(() async {
-        await pair.dispose();
-      });
-      final container = ProviderContainer(
-        overrides: [
-          taskSshGatewayProvider.overrideWithValue(pair.uiSide),
-          profilesStoreProvider.overrideWithValue(store),
-          secretsStoreProvider.overrideWithValue(secrets),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: const MaterialApp(home: Scaffold(body: ConnectForm())),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(
-        find.byKey(const Key('profile-tile-refused.example:22:bob')),
-      );
-      await _pumpFrames(tester, count: 20);
-
-      final entry = container.read(sessionsProvider).entries.first;
-      pair.taskSide.send(
-        SshStateEvent(
-          sessionId: entry.id,
-          state: SshSessionState.failed.name,
-          error: 'TCP connect failed: connection refused',
-          host: 'refused.example',
-          port: 22,
-          username: 'bob',
-        ).toJson(),
-      );
-      await _pumpFrames(tester, count: 20);
-
-      expect(find.byKey(const Key('connect-error-dialog')), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('connect-error-back')));
-      await _pumpFrames(tester, count: 10);
-
-      expect(find.byKey(const Key('connect-error-dialog')), findsNothing);
+      expect(find.byType(AlertDialog), findsNothing);
     },
   );
 }
