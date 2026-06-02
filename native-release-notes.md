@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02g — terminal fills (real fix), inline connect, in-app feedback, app icon
+- Terminal fills the screen on first connect — explicit resize after the font settles (tmux status bar should sit at the bottom, no mid-screen float). If it's still off, the new in-app feedback now carries an on-device size log so we can pinpoint it.
+- Tap a profile to connect: inline "Connecting…" then inline error + Retry on the row — no modal popup.
+- NEW: in-app feedback — a top-center button → one-tap screenshot + full comment, sent straight into the fix loop (no browser, no truncation).
+- App now uses the MobiSSH icon instead of the default Flutter icon.
+
 ## Build 2026-06-02f — first-connect fill, connect errors, per-session files, keybar Enter
 - Terminal fills the screen on first connect — no keyboard tap needed.
 - Unreachable hosts now show a clear "Connection failed" dialog (Back / Retry) instead of hanging silently.
