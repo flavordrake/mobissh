@@ -23,6 +23,7 @@ import '../services/sftp_download.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
 import 'pdf_viewer_screen.dart';
+import 'top_toast.dart';
 
 /// Resolves the destination sink for downloads. Overridden in widget tests to
 /// avoid touching the real filesystem; production uses the app Downloads dir.
@@ -269,9 +270,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showTopToast(context, message);
   }
 
   void _onEntryTap(SftpEntry entry) {
