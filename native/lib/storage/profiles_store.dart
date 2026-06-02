@@ -31,6 +31,7 @@ class SavedProfile {
     required this.port,
     required this.username,
     this.theme,
+    this.fontSize,
     this.color,
     this.authType,
     this.vaultId,
@@ -43,6 +44,14 @@ class SavedProfile {
   final int port;
   final String username;
   final String? theme;
+
+  /// Per-profile terminal font size in logical px (#640). Null when the user
+  /// hasn't customized it — the session then opens at the app default
+  /// ([fontSizeDefault] in ui_prefs_providers.dart). Persisted alongside
+  /// [theme] (#613): both are per-profile appearance, seeded into a session on
+  /// connect. Validated/clamped on read to [_fontSizeMin]..[_fontSizeMax].
+  final double? fontSize;
+
   final String? color;
 
   /// 'password' or 'key'. Optional — older saved profiles omit it.
@@ -64,6 +73,29 @@ class SavedProfile {
   /// (host:port:username) as the unique constraint.
   String get identityKey => '$host:$port:$username';
 
+  /// Clamp bounds for [fontSize], mirroring the PWA `FONT_SIZE` constant
+  /// (`{ MIN: 8, MAX: 32 }` in src/modules/constants.ts) and the native
+  /// [kFontSizeMin]/[kFontSizeMax] in ui_prefs_providers.dart. Inlined here so
+  /// the storage layer stays free of a UI-providers import.
+  static const double _fontSizeMin = 8.0;
+  static const double _fontSizeMax = 32.0;
+
+  /// Validate + clamp a raw stored font size. Accepts int or double (JSON
+  /// encoders vary); anything non-numeric yields null (corrupt -> default
+  /// fallback, per .claude/rules config-system policy — no crash).
+  static double? _coerceFontSize(Object? raw) {
+    final double v;
+    if (raw is int) {
+      v = raw.toDouble();
+    } else if (raw is double) {
+      v = raw;
+    } else {
+      return null;
+    }
+    if (v.isNaN || v.isInfinite) return null;
+    return v.clamp(_fontSizeMin, _fontSizeMax);
+  }
+
   Map<String, dynamic> toJson() {
     final out = <String, dynamic>{
       'title': title,
@@ -72,6 +104,7 @@ class SavedProfile {
       'username': username,
     };
     if (theme != null) out['theme'] = theme;
+    if (fontSize != null) out['fontSize'] = fontSize;
     if (color != null) out['color'] = color;
     if (authType != null) out['authType'] = authType;
     if (vaultId != null) out['vaultId'] = vaultId;
@@ -114,6 +147,8 @@ class SavedProfile {
     final themeRaw = json['theme'];
     if (themeRaw is String && themeRaw.isNotEmpty) theme = themeRaw;
 
+    final double? fontSize = _coerceFontSize(json['fontSize']);
+
     String? color;
     final colorRaw = json['color'];
     if (colorRaw is String && colorRaw.isNotEmpty) color = colorRaw;
@@ -147,6 +182,7 @@ class SavedProfile {
       port: port,
       username: usernameRaw,
       theme: theme,
+      fontSize: fontSize,
       color: color,
       authType: authType,
       vaultId: vaultId,
@@ -155,13 +191,19 @@ class SavedProfile {
     );
   }
 
-  SavedProfile copyWith({String? title, String? vaultId, String? keyVaultId}) {
+  SavedProfile copyWith({
+    String? title,
+    String? vaultId,
+    String? keyVaultId,
+    double? fontSize,
+  }) {
     return SavedProfile(
       title: title ?? this.title,
       host: host,
       port: port,
       username: username,
       theme: theme,
+      fontSize: fontSize ?? this.fontSize,
       color: color,
       authType: authType,
       vaultId: vaultId ?? this.vaultId,
@@ -446,6 +488,7 @@ class ProfilesStore {
             port: prior.port,
             username: prior.username,
             theme: profile.theme,
+            fontSize: profile.fontSize,
             color: profile.color,
             authType: profile.authType,
             vaultId: profile.vaultId,
@@ -547,6 +590,23 @@ class ProfilesStore {
       }
     }
     await save(list);
+  }
+
+  /// Persist a per-profile terminal font size (#640) onto the profile matching
+  /// [identityKey] (`host:port:username`). The font is clamped/validated by
+  /// [SavedProfile.fromJson]'s rules on the next read; we store the raw value
+  /// here (the menu stepper already clamps to [kFontSizeMin]..[kFontSizeMax]).
+  ///
+  /// NO-OP when no saved profile matches — an ad-hoc connect (host typed into
+  /// the form, never saved) must NOT be materialized as a saved profile just
+  /// because the user stepped its font. Returns true iff a profile was updated.
+  Future<bool> setFontSize(String identityKey, double size) async {
+    final list = await load();
+    final idx = list.indexWhere((p) => p.identityKey == identityKey);
+    if (idx < 0) return false;
+    list[idx] = list[idx].copyWith(fontSize: size);
+    await save(list);
+    return true;
   }
 
   /// Delete a single profile by identity. Persists if anything was removed.
