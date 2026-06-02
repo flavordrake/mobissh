@@ -24,6 +24,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import 'connect_form.dart';
@@ -99,6 +100,34 @@ Future<void> showSessionMenu(BuildContext context, {double bottomReserve = 0}) {
 
   overlay.insert(entry);
   return completer.future;
+}
+
+/// Step the ACTIVE session's font size by [delta] and PERSIST the result onto
+/// its PROFILE (#640) so it survives restart/reconnect — mirroring how a
+/// per-profile theme (#613) is stored on the profile, not just in-memory.
+///
+/// Two effects, in order:
+///   1. In-memory per-session font (live render) via [SessionAppearanceNotifier]
+///      — already clamped to [kFontSizeMin]..[kFontSizeMax].
+///   2. Best-effort upsert of the clamped value onto the matching saved profile
+///      (keyed by the active entry's `host:port:username`). NO-OP for an ad-hoc
+///      connect with no saved profile — we never materialize one.
+void _stepFont(
+  WidgetRef ref,
+  SessionsState sessions,
+  String activeId,
+  double delta,
+) {
+  final notifier = ref.read(sessionAppearanceProvider.notifier);
+  notifier.adjustFontSize(activeId, delta);
+  // The clamped in-memory value is now authoritative for this session.
+  final size = ref.read(sessionFontSizeProvider(activeId));
+  final active = sessions.active;
+  if (active == null) return;
+  // profileKey == the SavedProfile identityKey (host:port:username).
+  unawaited(
+    ref.read(profilesStoreProvider).setFontSize(active.profileKey, size),
+  );
 }
 
 class SessionMenu extends ConsumerWidget {
@@ -219,9 +248,8 @@ class SessionMenu extends ConsumerWidget {
                   icon: const Icon(Icons.remove),
                   onPressed: activeId == null
                       ? null
-                      : () => ref
-                            .read(sessionAppearanceProvider.notifier)
-                            .adjustFontSize(activeId, -kFontSizeStep),
+                      : () =>
+                            _stepFont(ref, sessions, activeId, -kFontSizeStep),
                 ),
                 SizedBox(
                   width: 28,
@@ -238,9 +266,7 @@ class SessionMenu extends ConsumerWidget {
                   icon: const Icon(Icons.add),
                   onPressed: activeId == null
                       ? null
-                      : () => ref
-                            .read(sessionAppearanceProvider.notifier)
-                            .adjustFontSize(activeId, kFontSizeStep),
+                      : () => _stepFont(ref, sessions, activeId, kFontSizeStep),
                 ),
               ],
             ),

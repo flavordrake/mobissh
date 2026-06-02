@@ -151,6 +151,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     String? title,
     required String initialCommand,
     String? themeName,
+    double? fontSize,
   }) async {
     // Captured before the async gap so we can pop a pushed "New session" route
     // after dispatching connect without touching `context` post-await.
@@ -178,6 +179,19 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           'ui.chooser',
           'applied profile theme "$themeName" → '
               'palette ${paletteIndexForThemeName(themeName)} for ${entry.id}',
+        );
+      }
+      // #640: seed THIS session's font size from the profile's PERSISTED
+      // per-profile font (mirrors the theme seed above). Per-session, keyed by
+      // the new session's id — NOT global. Only when the profile carries a
+      // custom size; otherwise the session tracks the app default (#616).
+      if (fontSize != null) {
+        ref
+            .read(sessionAppearanceProvider.notifier)
+            .setFontSize(entry.id, fontSize);
+        ctrace(
+          'ui.chooser',
+          'applied profile fontSize $fontSize for ${entry.id}',
         );
       }
       // Arm the run-on-connect command (#558) BEFORE dispatching connect, so
@@ -321,6 +335,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       title: profile.title,
       initialCommand: profile.initialCommand ?? '',
       themeName: profile.theme,
+      fontSize: profile.fontSize,
     );
   }
 
