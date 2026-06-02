@@ -226,7 +226,10 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
         child: IndexedStack(
           index: _index,
           children: const [
-            SingleChildScrollView(child: ConnectForm()),
+            // #643: NO SingleChildScrollView — the chooser fills the body so
+            // its profile list expands and scrolls internally. IndexedStack
+            // gives ConnectForm a bounded height (its Expanded needs that).
+            ConnectForm(),
             SettingsScreen(),
             DiagnosticsScreen(),
           ],
