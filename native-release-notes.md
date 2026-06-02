@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02f — first-connect fill, connect errors, per-session files, keybar Enter
+- Terminal fills the screen on first connect — no keyboard tap needed.
+- Unreachable hosts now show a clear "Connection failed" dialog (Back / Retry) instead of hanging silently.
+- Each session row has a file icon that opens that session's files.
+- Keybar Enter shows a proper return icon (was an unreadable box) and sends Enter.
+
 ## Build 2026-06-02e — visual polish: profile list fills, slimmer chrome, slim menu
 - Profile list now fills the screen — no more huge blank space below it.
 - Session bar + keybar shrunk ~25%; Home and End now fit on the keybar, ESC is normal-width.
