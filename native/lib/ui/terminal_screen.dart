@@ -39,6 +39,12 @@ import 'session_menu.dart';
 /// a small horizontal wobble during a tap doesn't switch sessions.
 const double kSessionSwipeThreshold = 50;
 
+/// Vertical space (logical px) the bottom session bar occupies (#615). Single
+/// source of truth shared by the compose-bar bottom reserve so a docked compose
+/// panel always clears the bar. ~25% smaller than the old hardcoded 48 — the
+/// bar's row padding was tightened to match (see `_SessionBar`).
+const double kSessionBarReserve = 36;
+
 /// Bundled monospace family declared in `pubspec.yaml` (#552). The xterm
 /// `TerminalStyle.fontFamilyFallback` (platform monospace) covers glyphs the
 /// bundled face is missing, so this stays robust even if the asset is absent.
@@ -131,8 +137,12 @@ class TerminalScreen extends ConsumerWidget {
                 key: ValueKey('compose-bar-${activeEntry.id}'),
                 terminal: activeEntry.terminal,
                 // Reserve the bottom chrome so a bottom-docked panel never hides
-                // the session bar (#610). Session bar ≈ 48; keybar ≈ 96 when on.
-                bottomReserve: 48 + (keybarVisible ? 96 : 0),
+                // the session bar (#610). Heights are centralized constants
+                // (#615): kSessionBarReserve (session bar) + kKeybarReserve
+                // (keybar, only when visible). Update those — not magic numbers
+                // here — when the chrome height changes.
+                bottomReserve:
+                    kSessionBarReserve + (keybarVisible ? kKeybarReserve : 0),
                 onClose: () =>
                     ref.read(composeBarVisibleProvider.notifier).set(false),
               ),
@@ -243,9 +253,11 @@ class _SessionBarState extends State<_SessionBar> {
                 );
               },
               child: Padding(
+                // #615: vertical padding trimmed (was 8) to shrink the bar
+                // ~25%. Pairs with the smaller compose toggle icon below.
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
-                  vertical: 8,
+                  vertical: 5,
                 ),
                 child: Row(
                   key: const Key('session-menu-button'),
@@ -277,7 +289,12 @@ class _SessionBarState extends State<_SessionBar> {
                 : 'Compose (swipe / voice)',
             isSelected: widget.composeOn,
             color: widget.composeOn ? theme.colorScheme.primary : null,
-            icon: const Icon(Icons.edit_note_outlined, size: 20),
+            // #615: tighter visual density so the IconButton's default 48px
+            // tap box doesn't set the bar height; the row padding now drives it.
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 28),
+            padding: EdgeInsets.zero,
+            icon: const Icon(Icons.edit_note_outlined, size: 18),
             onPressed: widget.onToggleCompose,
           ),
         ],
