@@ -251,6 +251,56 @@ void main() {
     );
   });
 
+  testWidgets('#672: Import button reads "Import" (not "Import from PWA") and '
+      'New + Import share one row', (tester) async {
+    tester.view.physicalSize = const Size(1000, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final store = ProfilesStore();
+    final secrets = SecretsStore(backend: InMemorySecretsBackend());
+    final pair = InMemoryGatewayPair();
+    addTearDown(() async => pair.dispose());
+    final container = _container(store: store, secrets: secrets, pair: pair);
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: ConnectHomePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Label dropped "from PWA" — just "Import".
+    expect(find.text('Import'), findsOneWidget);
+    expect(find.text('Import from PWA'), findsNothing);
+
+    // Both affordances still present (keys preserved).
+    final newBtn = find.byKey(const Key('new-connection'));
+    final importBtn = find.byKey(const Key('open-import-profiles-dialog'));
+    expect(newBtn, findsOneWidget);
+    expect(importBtn, findsOneWidget);
+
+    // They share ONE horizontal row: same vertical center, side by side.
+    final newCenter = tester.getCenter(newBtn);
+    final importCenter = tester.getCenter(importBtn);
+    expect(
+      (newCenter.dy - importCenter.dy).abs(),
+      lessThan(1.0),
+      reason:
+          'New + Import should be on one row (same vertical position), '
+          'newDy=${newCenter.dy} importDy=${importCenter.dy}',
+    );
+    // Side by side: New on the left, Import on the right.
+    expect(
+      newCenter.dx,
+      lessThan(importCenter.dx),
+      reason: 'New should be left of Import on the shared row',
+    );
+  });
+
   testWidgets('#611-A bottom nav still exposes Settings + Diagnostics', (
     tester,
   ) async {
