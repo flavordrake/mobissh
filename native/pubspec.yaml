@@ -42,6 +42,11 @@ dependencies:
   # Terminal widget (terminal.studio, same publisher as dartssh2)
   xterm: ^4.0.0
 
+  # SPIKE (#582, DO-NOT-MERGE): flterm = Flutter terminal widget on libghostty-vt.
+  # Evaluating as an ALTERNATE backend for native drag-select (xterm.dart v4 has
+  # no selection-extend API). Pulls libghostty (native FFI via Dart build hooks).
+  flterm: ^0.0.3
+
   # OS-backed credential vault — replaces PWA's PBKDF2+WebAuthn dance
   flutter_secure_storage: ^9.2.2
 

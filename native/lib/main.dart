@@ -20,6 +20,8 @@ import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
 import 'ui/diagnostics_screen.dart';
 import 'ui/feedback_overlay.dart';
+// SPIKE (#582, DO-NOT-MERGE): temporary debug entry to the flterm/ghostty probe.
+import 'ui/ghostty_spike_screen.dart';
 import 'ui/settings_screen.dart';
 import 'ui/terminal_screen.dart';
 
@@ -247,6 +249,16 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
     // rather than rebuilding from scratch on every tap.
     return Scaffold(
       appBar: AppBar(title: Text(_titles[_index])),
+      // SPIKE (#582, DO-NOT-MERGE): temporary debug FAB → standalone flterm /
+      // ghostty probe screen. Remove with the spike (this and the import).
+      floatingActionButton: FloatingActionButton.extended(
+        key: const Key('ghostty-spike-fab'),
+        icon: const Icon(Icons.terminal),
+        label: const Text('ghostty spike'),
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const GhosttySpikeScreen()),
+        ),
+      ),
       body: SafeArea(
         child: IndexedStack(
           index: _index,
