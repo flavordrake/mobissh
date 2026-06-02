@@ -89,6 +89,39 @@ void main() {
       expect(ids, contains('keyEnd'));
     });
 
+    test(
+      'keyEnter uses the monochrome icon path, not a raw unicode glyph (#650)',
+      () {
+        // #650: the Enter key was `label: '↵'` (U+21B5), which renders as a
+        // tofu box in the bundled font — the SAME problem the arrows had. It
+        // must use the monochrome Material icon path like the arrows do.
+        final enter = kDefaultKeybarKeys.firstWhere((k) => k.id == 'keyEnter');
+        expect(
+          enter.icon,
+          isNotNull,
+          reason:
+              'keyEnter must render as a theme-tinted Material icon '
+              '(Icons.keyboard_return), not a unicode glyph that renders as '
+              'tofu in the bundled font',
+        );
+        // The raw glyph must not survive as a visible text label.
+        expect(
+          enter.label,
+          isNot(equals('↵')),
+          reason:
+              'keyEnter must not keep the unrecognized ↵ glyph as its label',
+        );
+      },
+    );
+
+    test('keyEnter still sends a carriage return (CR) (#650)', () {
+      // The glyph was the whole problem — the tap wiring forwards
+      // keyData.sequence regardless of the icon path, so Enter must still
+      // carry '\r'.
+      final enter = kDefaultKeybarKeys.firstWhere((k) => k.id == 'keyEnter');
+      expect(enter.sequence, equals('\r'));
+    });
+
     test('all four arrows use the monochrome icon path (icon != null)', () {
       final arrows = kDefaultKeybarKeys
           .where(

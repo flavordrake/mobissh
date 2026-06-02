@@ -98,6 +98,47 @@ void main() {
     );
 
     test(
+      'unreachable host (TCP connect refused) → failed within readyTimeout (#648)',
+      () async {
+        // Connecting to an unreachable host (down / wrong port → ECONNREFUSED,
+        // bad host → no route) must deterministically reach `failed` with a
+        // meaningful error, never a silent indefinite hang. The TCP connect
+        // itself throws; the controller surfaces `failed` immediately, well
+        // within the readyTimeout bound.
+        final controller = SshSessionController(
+          readyTimeout: const Duration(milliseconds: 200),
+          socketOpener: (host, port, {timeout}) async {
+            throw Exception(
+              'Connection refused (errno = 111) — no route to host',
+            );
+          },
+        );
+
+        final connectFuture = controller.connect(
+          const SshConnectParams(
+            host: 'down.example',
+            port: 22,
+            username: 'u',
+            auth: SshAuth.password('p'),
+          ),
+        );
+
+        // Resolves fast (TCP throw) — assert it completes inside the bound and
+        // the state is `failed` with a non-empty error.
+        await connectFuture.timeout(
+          const Duration(milliseconds: 150),
+          onTimeout: () {},
+        );
+
+        expect(controller.data.state, SshSessionState.failed);
+        expect(controller.data.error, isNotNull);
+        expect(controller.data.error, contains('TCP connect failed'));
+
+        await controller.dispose();
+      },
+    );
+
+    test(
       'awaitingHostKey (host-key prompt) cancels the timer — never times out',
       () async {
         final controller = SshSessionController(
