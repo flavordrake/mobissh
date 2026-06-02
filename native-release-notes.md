@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.5 (2026-06-02) — Ghostty polish (font + gestures)
+- Ghostty now uses your selected per-session font + size (JetBrains Mono default — readable, no more thin default).
+- Vertical drag scrolls the scrollback (it no longer starts a selection); long-press to select, drag to extend, plus Select-All.
+- (Draggable selection-endpoint handles aren't in flterm yet — long-press + drag-extend for now.)
+
 ## v0.1.4 (2026-06-02) — experimental Ghostty terminal engine (opt-in)
 - Settings → Terminal engine: switch between xterm (default) and **Ghostty** (experimental), restart to apply. Ghostty has native touch drag-select + copy — long-press and drag to select, then Copy.
 - xterm stays the default; flip to Ghostty to try it on a real session.
