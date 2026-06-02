@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.1 (2026-06-02) — session/keybar/toast polish
+- Keybar visibility is now per-session — hide it on one session without affecting the others.
+- Toasts/confirmations now appear at the TOP of the screen so they never cover the keybar or session bar.
+- Profiles: "Import from PWA" is now just "Import", and New + Import share one button row.
+- Diagnostics "Share feedback" is now labeled as the offline backup (the top Feedback button is the primary path).
+
 ## v0.1.0 (2026-06-02) — first tagged native release
 First versioned cut of the native app (replaces the date+letter daily-build labels). Everything below this line shipped under the rapid date-letter builds; this tags it as v0.1.0. Daily iterations now use v0.1.x.
 - Daily-driver baseline: multi-session SSH that survives backgrounding + auto-reconnects; profiles with keys/passwords, per-profile theme/font/color; SFTP file browser; 38 terminal themes.

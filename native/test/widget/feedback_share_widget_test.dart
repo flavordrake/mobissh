@@ -72,7 +72,9 @@ void main() {
     await pumpBounded(tester);
 
     expect(find.byKey(const ValueKey('share-feedback-button')), findsOneWidget);
-    expect(find.text('Share feedback'), findsOneWidget);
+    // #673: relabeled to "Share feedback (offline backup)" — match by substring
+    // so the label can carry the backup framing without breaking this assertion.
+    expect(find.textContaining('Share feedback'), findsOneWidget);
   });
 
   testWidgets(
