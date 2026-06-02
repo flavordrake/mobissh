@@ -220,7 +220,8 @@ class SessionMenu extends ConsumerWidget {
 /// One compact row replacing the old stack of secondary ListTiles (#567).
 ///
 /// Layout (left→right): theme cycle (icon + current label), font − [value] +,
-/// files, keybar toggle, disconnect. Monochrome Material icons only — no emoji
+/// keybar toggle, disconnect. (Files moved to a per-row icon, #649.)
+/// Monochrome Material icons only — no emoji
 /// (feedback_monochrome_icons_no_emoji). Controls disable themselves when there
 /// is no active session, mirroring the prior per-tile `enabled` gating.
 class _SessionControlsRow extends ConsumerWidget {
@@ -308,21 +309,11 @@ class _SessionControlsRow extends ConsumerWidget {
                 ? null
                 : () => _stepFont(ref, sessions, activeId!, kFontSizeStep),
           ),
-          // Browse / download remote files over SFTP (#559).
-          IconButton(
-            key: const Key('session-menu-files'),
-            tooltip: 'Files',
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.folder_outlined),
-            onPressed: !hasActive
-                ? null
-                : () {
-                    final sessionId = activeId!;
-                    final navigator = Navigator.of(context);
-                    onClose();
-                    openFileBrowser(navigator.context, sessionId);
-                  },
-          ),
+          // Files moved to a PER-ROW affordance (#649): each session row now
+          // carries its own `session-menu-files-${id}` icon next to its X, so
+          // the browser opens for THAT row's session rather than only the
+          // active one. The active-only control here was removed to avoid a
+          // redundant second entry point.
           // Keybar visibility toggle. Filled icon = visible, outlined = hidden,
           // so the glyph itself communicates the toggle state (no SwitchListTile
           // row needed). Keybar visibility is global today; #573 moves it
@@ -390,13 +381,38 @@ class _SessionRow extends ConsumerWidget {
           fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
         ),
       ),
-      trailing: IconButton(
-        key: Key('session-menu-close-${entry.id}'),
-        tooltip: 'Close session',
-        icon: const Icon(Icons.close),
-        onPressed: () {
-          ref.read(sessionsProvider.notifier).close(entry.id);
-        },
+      // [file icon][X] — the file icon opens the browser for THIS row's
+      // session (#649); the X disconnects/closes THIS row's session. Both are
+      // per-row so a multi-session menu addresses each session independently.
+      // The file glyph is monochrome (Material `folder_outlined`, currentColor)
+      // — no emoji (feedback_monochrome_icons_no_emoji).
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            key: Key('session-menu-files-${entry.id}'),
+            tooltip: 'Files',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.folder_outlined),
+            // Open the file browser for THIS row's session id (its live SSH
+            // connection drives SFTP), not just the active session. Close the
+            // menu first so the browser route isn't covered by the overlay.
+            onPressed: () {
+              final sessionId = entry.id;
+              final navigator = Navigator.of(context);
+              onClose();
+              openFileBrowser(navigator.context, sessionId);
+            },
+          ),
+          IconButton(
+            key: Key('session-menu-close-${entry.id}'),
+            tooltip: 'Close session',
+            icon: const Icon(Icons.close),
+            onPressed: () {
+              ref.read(sessionsProvider.notifier).close(entry.id);
+            },
+          ),
+        ],
       ),
       onTap: () {
         ref.read(sessionsProvider.notifier).setActive(entry.id);
