@@ -1,4 +1,4 @@
-// Compose-bar (IME / swipe / voice surface) semantics (#599, #614, #633, #634).
+// Compose-bar (IME / swipe / voice surface) semantics (#599, #614, #633, #638).
 //
 // The byte-level contract — the thing that matters for the owner's swipe+voice
 // goal — is what the bar SENDS to the terminal:
@@ -8,7 +8,8 @@
 //     remote treats it as one paste, not N Enters.
 // #614: BOTH commit AND submit now HIDE the panel (onClose) so the full terminal
 //   is readable after composing (owner reversal of the original #614 plan).
-// #634: drag thumb at the TOP edge; Copy/Paste pills in the action rail.
+// #638 (corrects #634): drag thumb at the TOP edge; Copy/Paste/Fix are inline
+//   text-action PILLS — the right rail holds only whole-view actions.
 // #633: best-effort — preview field re-focuses on app resume if it was focused
 //   at pause (true app-swap focus is device-only).
 // We capture `terminal.onOutput` (the exact pipe the keybar + IME use →
@@ -196,7 +197,7 @@ void main() {
     });
   });
 
-  group('#634 — copy/paste pills + top thumb', () {
+  group('#638 — copy/paste/fix are inline pills, NOT in the right rail', () {
     testWidgets('drag thumb renders at the top edge (above the field)', (
       tester,
     ) async {
@@ -214,6 +215,83 @@ void main() {
         isTrue,
         reason: 'grip must sit above the text field (top dock thumb)',
       );
+    });
+
+    testWidgets(
+      'right rail keeps ONLY whole-view actions (no copy/paste/fix)',
+      (tester) async {
+        await pumpBar(tester, <String>[]);
+
+        // The rail must still carry the whole-view actions.
+        expect(find.byKey(const Key('compose-bar-close')), findsOneWidget);
+        expect(find.byKey(const Key('compose-bar-clear')), findsOneWidget);
+        expect(find.byKey(const Key('compose-bar-commit')), findsOneWidget);
+        expect(find.byKey(const Key('compose-bar-submit')), findsOneWidget);
+
+        // The text actions must NOT live inside the rail any more — they belong
+        // to the pill row. Assert no rail descendant owns those keys.
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('compose-bar-rail')),
+            matching: find.byKey(const Key('compose-bar-copy')),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('compose-bar-rail')),
+            matching: find.byKey(const Key('compose-bar-paste')),
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets('inline pill row carries Copy, Paste and Fix', (tester) async {
+      await pumpBar(tester, <String>[]);
+
+      final pillRow = find.byKey(const Key('compose-bar-pills'));
+      expect(pillRow, findsOneWidget);
+
+      expect(
+        find.descendant(
+          of: pillRow,
+          matching: find.byKey(const Key('compose-bar-copy')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: pillRow,
+          matching: find.byKey(const Key('compose-bar-paste')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: pillRow,
+          matching: find.byKey(const Key('compose-bar-fix')),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Fix pill collapses terminal soft-wrap into one clean line', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+
+      final controller = tester
+          .widget<TextField>(find.byKey(const Key('compose-bar-input')))
+          .controller!;
+      // A URL hard-wrapped by the terminal (newline + indent mid-token).
+      controller.text = 'https://example.com/long/\n    path?q=1';
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('compose-bar-fix')));
+      await tester.pump();
+
+      expect(controller.text, 'https://example.com/long/path?q=1');
     });
 
     testWidgets('Copy pill copies the current compose text to the clipboard', (
