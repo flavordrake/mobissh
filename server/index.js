@@ -861,7 +861,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { screenshot, logs, title, userAgent, url, version, connectLog, gestureLog } = data;
+        const { screenshot, logs, title, comment, userAgent, url, version, connectLog, gestureLog } = data;
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
         fs.mkdirSync(reportDir, { recursive: true });
@@ -875,9 +875,22 @@ const server = http.createServer((req, res) => {
           console.log(`[bug-report] screenshot: ${screenshotFile}`);
         }
 
-        // Save logs
-        if (logs) {
-          fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.log`), logs);
+        // Full free-text body. The native in-app feedback (#661) sends the
+        // ENTIRE multi-line note as `comment` (no truncation). The web form
+        // (public/native-feedback.js) sends the full note as `logs` and only a
+        // first-line `title`. To kill the title-truncation data loss for BOTH,
+        // resolve the full body from `comment` first, falling back to `logs`,
+        // and persist it into the .json meta (below) so the orchestrator's
+        // watcher — which reads the .json — gets the complete note.
+        const fullComment = (typeof comment === 'string' && comment.length > 0)
+          ? comment
+          : (typeof logs === 'string' ? logs : '');
+
+        // Save logs / full comment as a sidecar text file too (unchanged for
+        // the web form; native reports also get a readable .log).
+        const logBody = (typeof logs === 'string' && logs.length > 0) ? logs : fullComment;
+        if (logBody) {
+          fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.log`), logBody);
           console.log(`[bug-report] logs: ${ts}-bug-report.log`);
         }
 
@@ -908,6 +921,10 @@ const server = http.createServer((req, res) => {
         // Save metadata
         const meta = {
           title: title || `Bug report ${ts}`,
+          // #661: persist the FULL comment (untruncated) into the meta JSON.
+          // Back-compatible: empty string for web-form reports that send only
+          // a truncated title with no body.
+          comment: fullComment,
           version,
           url,
           userAgent,

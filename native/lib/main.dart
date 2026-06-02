@@ -19,6 +19,7 @@ import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
 import 'ui/diagnostics_screen.dart';
+import 'ui/feedback_overlay.dart';
 import 'ui/settings_screen.dart';
 import 'ui/terminal_screen.dart';
 
@@ -62,6 +63,15 @@ class MobisshApp extends StatelessWidget {
           ),
           useMaterial3: true,
         ),
+        // #661: mount the app-wide in-app feedback affordance via `builder` so
+        // it floats over EVERY screen AND every pushed route (file browser,
+        // pdf viewer) — the builder wraps the Navigator. One tap captures the
+        // current screen + a full multi-line comment and submits to the
+        // /api/bug-report pipeline. The RepaintBoundary lives inside
+        // FeedbackOverlay so the capture rasterizes the live route.
+        builder: (context, child) {
+          return FeedbackOverlay(child: child ?? const SizedBox.shrink());
+        },
         home: const RootRouter(),
       ),
     );
