@@ -47,11 +47,22 @@ void main() {
 class MobisshApp extends StatelessWidget {
   const MobisshApp({super.key});
 
+  // Created once (static) so they survive rebuilds. The feedback overlay is
+  // mounted ABOVE the Navigator via `builder:`, so it can't resolve a
+  // Navigator/ScaffoldMessenger from its own context — it shows its sheet +
+  // confirmation through these keys instead (the "just blinks" fix).
+  static final GlobalKey<NavigatorState> _navigatorKey =
+      GlobalKey<NavigatorState>();
+  static final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
+
   @override
   Widget build(BuildContext context) {
     return AppLifecycleObserver(
       child: MaterialApp(
         title: 'MobiSSH',
+        navigatorKey: _navigatorKey,
+        scaffoldMessengerKey: _messengerKey,
         // Default LIGHT (temporary, this build): an unmistakable visual signal
         // that a fresh APK actually installed/updated, so we can separate
         // "build didn't update" from "feature still broken" while closing the
@@ -70,7 +81,11 @@ class MobisshApp extends StatelessWidget {
         // /api/bug-report pipeline. The RepaintBoundary lives inside
         // FeedbackOverlay so the capture rasterizes the live route.
         builder: (context, child) {
-          return FeedbackOverlay(child: child ?? const SizedBox.shrink());
+          return FeedbackOverlay(
+            navigatorKey: _navigatorKey,
+            messengerKey: _messengerKey,
+            child: child ?? const SizedBox.shrink(),
+          );
         },
         home: const RootRouter(),
       ),

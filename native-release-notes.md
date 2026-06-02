@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02h — in-app feedback actually opens now
+- Tapping Feedback used to just blink — now it opens the comment sheet and shows a "Feedback sent — thanks!" confirmation. (It was mounted above the navigator, so the sheet couldn't open.)
+- Use it on a broken first-connect screen: it bundles the on-device size log so the terminal-fill bug can finally be pinpointed.
+
 ## Build 2026-06-02g — terminal fills (real fix), inline connect, in-app feedback, app icon
 - Terminal fills the screen on first connect — explicit resize after the font settles (tmux status bar should sit at the bottom, no mid-screen float). If it's still off, the new in-app feedback now carries an on-device size log so we can pinpoint it.
 - Tap a profile to connect: inline "Connecting…" then inline error + Retry on the row — no modal popup.

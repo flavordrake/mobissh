@@ -154,7 +154,7 @@ case "$CMD" in
 
   search)
     [ $# -ge 1 ] || { echo "Error: search requires QUERY" >&2; exit 1; }
-    gh issue list --search "$1" --state open --json number,title --limit 5
+    gh issue list --search "$1" --state open --json number,title --limit "${2:-5}"
     ;;
 
   version)

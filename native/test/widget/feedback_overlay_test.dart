@@ -34,15 +34,27 @@ Future<Uint8List> _fakeCapturer(GlobalKey key, double dpr) async {
   return Uint8List.fromList([0x89, 0x50, 0x4e, 0x47]);
 }
 
+// Mirrors PRODUCTION wiring (main.dart): the overlay is mounted via
+// `MaterialApp.builder`, i.e. ABOVE the Navigator — NOT inside `home` below it.
+// This is the configuration that exposed the "just blinks" bug (the overlay's
+// own context has no Navigator ancestor). The keys give it a below-Navigator
+// context to show the sheet + confirmation from.
 Widget _harness({required FeedbackSubmitter submitter}) {
+  final navigatorKey = GlobalKey<NavigatorState>();
+  final messengerKey = GlobalKey<ScaffoldMessengerState>();
   return MaterialApp(
-    home: Scaffold(
-      body: FeedbackOverlay(
-        submitter: submitter,
-        versionResolver: () async => '[1.0.0+9 deadbee]',
-        screenshotCapturer: _fakeCapturer,
-        child: const Center(child: Text('SOME SCREEN CONTENT')),
-      ),
+    navigatorKey: navigatorKey,
+    scaffoldMessengerKey: messengerKey,
+    builder: (context, child) => FeedbackOverlay(
+      navigatorKey: navigatorKey,
+      messengerKey: messengerKey,
+      submitter: submitter,
+      versionResolver: () async => '[1.0.0+9 deadbee]',
+      screenshotCapturer: _fakeCapturer,
+      child: child ?? const SizedBox.shrink(),
+    ),
+    home: const Scaffold(
+      body: Center(child: Text('SOME SCREEN CONTENT')),
     ),
   );
 }

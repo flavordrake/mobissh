@@ -185,12 +185,29 @@ class FeedbackOverlay extends StatefulWidget {
   const FeedbackOverlay({
     super.key,
     required this.child,
+    required this.navigatorKey,
+    required this.messengerKey,
     this.submitter = const HttpFeedbackSubmitter(),
     this.versionResolver = _defaultVersionResolver,
     this.screenshotCapturer = _defaultScreenshotCapturer,
   });
 
   final Widget child;
+
+  /// Key on the host [MaterialApp]'s Navigator. The overlay is mounted ABOVE
+  /// the Navigator (via `MaterialApp.builder`), so its OWN `context` has no
+  /// Navigator ancestor — calling `showModalBottomSheet` from it throws, the
+  /// async error is swallowed, and the tap only "blinks" (the affordance
+  /// hides then shows, no sheet). We show the sheet from the Navigator's
+  /// OVERLAY context (a descendant of the Navigator) instead, which
+  /// `Navigator.of` resolves correctly.
+  final GlobalKey<NavigatorState> navigatorKey;
+
+  /// Key on the host [MaterialApp]'s ScaffoldMessenger — used for the "sent"
+  /// confirmation SnackBar. The overlay's own context can't resolve a
+  /// messenger either (same above-the-Navigator reason).
+  final GlobalKey<ScaffoldMessengerState> messengerKey;
+
   final FeedbackSubmitter submitter;
   final VersionResolver versionResolver;
   final ScreenshotCapturer screenshotCapturer;
@@ -226,11 +243,17 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     required String? dataUrl,
     required String version,
   }) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
+    // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
+    // own context, which sits above the Navigator (mounted via
+    // MaterialApp.builder) and has no Navigator ancestor. Using the own
+    // context here is the "just blinks" bug: showModalBottomSheet throws and
+    // no sheet ever appears.
+    final sheetContext = widget.navigatorKey.currentState?.overlay?.context;
+    if (sheetContext == null) return;
 
     // The sheet returns the typed comment on Submit (null if dismissed).
     final comment = await showModalBottomSheet<String>(
-      context: context,
+      context: sheetContext,
       isScrollControlled: true,
       builder: (sheetCtx) => _FeedbackCommentSheet(version: version),
     );
@@ -242,7 +265,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       screenshotDataUrl: dataUrl,
     );
     final ok = await widget.submitter.submit(payload);
-    messenger?.showSnackBar(
+    // Confirmation via the app's ScaffoldMessenger key (the own context can't
+    // resolve a messenger either). This is the "OK response" the owner expects.
+    widget.messengerKey.currentState?.showSnackBar(
       SnackBar(
         content: Text(
           ok ? 'Feedback sent — thanks!' : 'Send failed — try again.',
