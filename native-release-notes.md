@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02l — centered session title + per-session color swatch
+- The session title is now centered in the bottom bar instead of colliding with the menu.
+- Each session shows a small color swatch matching its profile color (or its theme accent) — the same color identifies the same profile, like the PWA. Set a profile's color in the editor to tag it.
+
 ## Build 2026-06-02k — first-connect fill, fixed at the real cause
 - The first-connect re-sync now fires the moment the remote shell exists (on the shellReady signal), so it lands as a real resize instead of being dropped before the shell was ready. tmux should fill on the very first connect — status bar at the bottom.
 - (Two bugs from your 'j' log: the re-sync fired ~10ms too early and got dropped, and the retry-burst was never actually running on device. Both fixed.)
