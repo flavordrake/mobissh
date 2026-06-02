@@ -21,6 +21,8 @@
 // that was a candidate for blocking the terminal's vertical scrollback drag.
 // Paste stays available via the keybar.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -49,6 +51,16 @@ const double kSessionBarReserve = 36;
 /// `TerminalStyle.fontFamilyFallback` (platform monospace) covers glyphs the
 /// bundled face is missing, so this stays robust even if the asset is absent.
 const String kTerminalFontFamily = 'JetBrainsMono';
+
+/// Test-only counter: incremented each time a session body arms the #647
+/// connect-triggered re-measure burst (the shell-ready transition). Lets a
+/// widget test prove the connect path — and ONLY the connect path, with no
+/// fonts/metrics event — fires the re-measure that on device fills the terminal
+/// without a keyboard toggle. The actual device re-fit is gated by the
+/// on-emulator integration test + owner validation (the headless harness can't
+/// reproduce the stale-cell-size race). Reset it in test `setUp`.
+@visibleForTesting
+int debugConnectRemeasureArmCount = 0;
 
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
@@ -368,6 +380,16 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// an explicit controller also lets future work jump-to-bottom on new output.
   final ScrollController _scrollController = ScrollController();
 
+  /// True once the connect-triggered re-measure burst has been armed for the
+  /// CURRENT live shell (#647). Reset when the shell goes away so a reconnect
+  /// re-arms it. Prevents re-arming the burst on every rebuild while the
+  /// session stays connected.
+  bool _connectRemeasureArmed = false;
+
+  /// Pending delayed re-measure timers from the connect burst (#647), tracked
+  /// so they are cancelled on dispose and never fire against a gone widget.
+  final List<Timer> _connectRemeasureTimers = <Timer>[];
+
   @override
   void initState() {
     super.initState();
@@ -423,6 +445,57 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     });
   }
 
+  /// #647 — force the SAME re-measure on FIRST CONNECT, without needing a
+  /// keyboard toggle.
+  ///
+  /// On a real device's first connect NEITHER #641 trigger fires: the bundled
+  /// JetBrainsMono asset is already cached (no `systemFonts` event) and there's
+  /// no viewport change (no `didChangeMetrics`). So the stale first-frame
+  /// measure (taken before the asset font's metrics settled) persisted until the
+  /// user tapped to show the keyboard — which finally ran `didChangeMetrics` →
+  /// the #641 remeasure → re-fit. The owner's smoking gun: "tapping to show the
+  /// keyboard fixes it."
+  ///
+  /// We mimic exactly what the keyboard-show did, but on the connect/shell-ready
+  /// transition: fire the #641 re-measure once immediately, then again at a few
+  /// short delays so a remeasure lands AFTER the asset font's cell metrics have
+  /// settled (the device race the emulator can't reproduce — there the
+  /// font-load relayout happens to fire). Each call is idempotent:
+  /// `markNeedsLayout` only re-measures, and `Terminal.onResize` →
+  /// `transport.resize` fires ONLY when cols/rows actually change. The burst is
+  /// armed once per live shell ([_connectRemeasureArmed]); it re-arms after a
+  /// drop so a reconnect gets the same treatment.
+  void _armConnectRemeasure() {
+    if (_connectRemeasureArmed) return;
+    _connectRemeasureArmed = true;
+    // Test-only: lets a widget test assert the connect transition (and ONLY the
+    // connect transition — no fonts/metrics event) armed the #647 burst. The
+    // device re-fit itself can't be reproduced headlessly (test fonts preload),
+    // so the wiring counter is the headless contract; the emulator/owner gate
+    // the actual re-fit.
+    debugConnectRemeasureArmCount += 1;
+    // Immediate (post-frame) re-measure — covers the case where layout is
+    // already correct by connect time (e.g. the emulator / headless harness).
+    _forceRemeasure();
+    // Staggered re-measures defeat the device font-settle race: at least one
+    // lands after the cached asset font's metrics are in effect.
+    for (final ms in const [120, 350, 700]) {
+      _connectRemeasureTimers.add(
+        Timer(Duration(milliseconds: ms), _forceRemeasure),
+      );
+    }
+  }
+
+  /// Drop the connect-remeasure arming + cancel pending burst timers so a
+  /// reconnect re-arms the burst and gone timers never touch a dead widget.
+  void _disarmConnectRemeasure() {
+    _connectRemeasureArmed = false;
+    for (final t in _connectRemeasureTimers) {
+      t.cancel();
+    }
+    _connectRemeasureTimers.clear();
+  }
+
   /// Walk this body's element subtree to find the xterm [TerminalViewState].
   /// Returns null before the first build or if the TerminalView isn't mounted
   /// (e.g. an offstage IndexedStack child that hasn't laid out yet).
@@ -454,6 +527,7 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   void dispose() {
     PaintingBinding.instance.systemFonts.removeListener(_forceRemeasure);
     WidgetsBinding.instance.removeObserver(this);
+    _disarmConnectRemeasure();
     _scrollController.dispose();
     super.dispose();
   }
@@ -461,6 +535,22 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   @override
   Widget build(BuildContext context) {
     final terminal = ref.watch(terminalProvider(widget.sessionId));
+    // #647 — arm the connect re-measure burst on the shell-ready transition.
+    // `sshShellProvider` resolves to a non-null shell ONLY once the session
+    // reaches `connected` (see terminal_providers.dart), so a ready AsyncData
+    // here IS the first-connect / shell-ready signal. Listening (not just
+    // watching) lets us fire the burst exactly on the transition and re-arm it
+    // after a drop, without rebuilding the body. Mirrors the keyboard-show
+    // re-fit, but triggered by connect instead of a metrics change.
+    ref.listen(sshShellProvider(widget.sessionId), (prev, next) {
+      if (next.valueOrNull != null) {
+        _armConnectRemeasure();
+      } else {
+        // Shell went away (disconnect / reconnecting / loading) — re-arm for
+        // the next connect so a reconnect gets the same first-connect re-fit.
+        _disarmConnectRemeasure();
+      }
+    });
     final shellAsync = ref.watch(sshShellProvider(widget.sessionId));
     // Per-session theme + font (#601, #571): each session's TerminalView reads
     // ITS OWN palette + font size, so two visible sessions can differ.
