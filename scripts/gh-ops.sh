@@ -236,12 +236,31 @@ case "$CMD" in
     PR_NUM="$1"; shift
     ISSUE_NUM="$1"; shift
     STRATEGY="--merge"
+    INTEGRATION_VERIFIED=0
     while [[ $# -gt 0 ]]; do
       case $1 in
         --squash|--merge|--rebase) STRATEGY="$1"; shift ;;
+        --integration-verified) INTEGRATION_VERIFIED=1; shift ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
       esac
     done
+
+    # Step 0a (#589): integration-sensitive changes (session state machine /
+    # connect / reconnect / SFTP / IPC) MUST be gated by the on-emulator
+    # integration suite — the fast gate EXCLUDES it, so these ship green-but-
+    # broken (the #539/#546/#547 class). Refuse the merge unless the suite was
+    # actually run (--integration-verified). UI-only/docs/test PRs pass through.
+    if [ "$INTEGRATION_VERIFIED" -ne 1 ]; then
+      if gh pr view "$PR_NUM" --json files --jq '.files[].path' 2>/dev/null \
+           | "$(dirname "$0")/integration-required.sh" --stdin; then
+        echo "BLOCKED (#589): PR #${PR_NUM} changes integration-sensitive code" >&2
+        echo "  (session/connect/reconnect/SFTP/IPC). The fast gate does NOT cover it." >&2
+        echo "  Run the on-emulator suite, then re-integrate with the verified flag:" >&2
+        echo "    scripts/native-fast-gate.sh --with-integration" >&2
+        echo "    scripts/gh-ops.sh integrate ${PR_NUM} ${ISSUE_NUM} --integration-verified" >&2
+        exit 1
+      fi
+    fi
 
     # Step 0: Ensure PR branch is up-to-date with main before merging.
     # Uses a temporary local branch to avoid conflicting with worktrees
