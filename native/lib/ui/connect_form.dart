@@ -97,10 +97,10 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
 
     // #643: the chooser FILLS the screen. The saved-profile list goes in an
     // `Expanded` so it takes all the vertical room above the actions (it
-    // scrolls within that full height); "New connection" + "Import from PWA"
-    // pin directly below the full-height list. Previously the list was capped
-    // at 220px and the whole Column was wrapped in a SingleChildScrollView at
-    // both call sites, so it collapsed to the top ~40% with a blank band below.
+    // scrolls within that full height); the "New" + "Import" action row pins
+    // directly below the full-height list. Previously the list was capped at
+    // 220px and the whole Column was wrapped in a SingleChildScrollView at both
+    // call sites, so it collapsed to the top ~40% with a blank band below.
     // This widget now needs a BOUNDED height (it no longer lives inside a
     // SingleChildScrollView) — its hosts (ConnectHomePage / NewSessionPage)
     // give it the full screen height.
@@ -119,31 +119,35 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             ),
           ),
           const SizedBox(height: 4),
-          // The single "New" affordance: opens the editor in create mode. The
-          // editor is the ad-hoc / new-connection entry now that the inline
-          // form is gone (#583).
-          FilledButton.icon(
-            key: const Key('new-connection'),
-            onPressed: _busy ? null : _newConnection,
-            icon: const Icon(Icons.add),
-            label: Text(_busy ? 'Connecting…' : 'New connection'),
+          // #672: "New" + "Import" share ONE horizontal row (two Expanded
+          // buttons side by side) instead of being stacked on separate lines,
+          // reclaiming vertical space for the profile list. "New" opens the
+          // editor in create mode (the ad-hoc / new-connection entry now that
+          // the inline form is gone, #583). "Import" pulls profiles from the
+          // PWA — the "from PWA" suffix is an implementation detail, dropped
+          // from the label. Settings + Diagnostics live on the home bottom nav
+          // (#611 Part A), not here.
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  key: const Key('new-connection'),
+                  onPressed: _busy ? null : _newConnection,
+                  icon: const Icon(Icons.add),
+                  label: Text(_busy ? 'Connecting…' : 'New connection'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const Key('open-import-profiles-dialog'),
+                  onPressed: _openImportDialog,
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('Import'),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          // Slim secondary access: Import-from-PWA. Settings + Diagnostics live
-          // on the home bottom nav (#611 Part A), not here.
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              key: const Key('open-import-profiles-dialog'),
-              onPressed: _openImportDialog,
-              icon: const Icon(Icons.download_outlined),
-              label: const Text('Import from PWA'),
-            ),
-          ),
-          // #611 Part A: Settings + Diagnostics moved OUT of the chooser into
-          // their own bottom-nav destinations (SettingsScreen / DiagnosticsScreen
-          // on ConnectHomePage). The home view is now JUST the profile chooser,
-          // and so is the pushed "New session" route (NewSessionPage).
         ],
       ),
     );
