@@ -92,6 +92,22 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+  # Generates the Android launcher icon set from the MobiSSH PWA icon (#657).
+  # Source is public/icon-512.png copied to assets/icon/mobissh_icon.png.
+  # Regenerate with: dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.1
+
+# flutter_launcher_icons config (#657). Replaces the default Flutter blue
+# launcher icon with the MobiSSH PWA icon (pager showing "SSh" on a green LCD,
+# white backdrop). adaptive_icon_background is white to match the icon's own
+# backdrop so the pager stays centered with safe-zone padding on Android 8+.
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: false
+  image_path: "assets/icon/mobissh_icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/mobissh_icon.png"
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
