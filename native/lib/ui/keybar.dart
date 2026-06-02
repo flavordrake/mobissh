@@ -1,7 +1,7 @@
 // Bottom keybar widget (#518).
 //
 // Mirrors the PWA's key bar (Esc / Tab / / / - / | / ^C / ^Z / ^D, plus
-// arrows / Home / End / ↵ / Paste). Pressing a key forwards the configured
+// arrows / Home / End / Enter / Paste). Pressing a key forwards the configured
 // byte sequence to the active session's terminal (xterm.dart) via
 // `Terminal.textInput`, which routes through the standard keystroke pipe
 // (see `keystroke_pipe_widget_test.dart`).
@@ -115,7 +115,16 @@ const List<KeybarKey> kDefaultKeybarKeys = [
   KeybarKey(id: 'keyEnd', label: 'End', sequence: '\x1b[F'),
   KeybarKey(id: 'keyPgUp', label: 'PgUp', sequence: '\x1b[5~'),
   KeybarKey(id: 'keyPgDn', label: 'PgDn', sequence: '\x1b[6~'),
-  KeybarKey(id: 'keyEnter', label: '↵', sequence: '\r'),
+  // #650: was `label: '↵'` (U+21B5), which renders as tofu in the bundled
+  // font — the SAME issue the arrows had. Use the monochrome Material icon
+  // path (Icons.keyboard_return) so it's clearly an Enter/Return key. The tap
+  // wiring still forwards `sequence` ('\r') regardless of the icon path.
+  KeybarKey(
+    id: 'keyEnter',
+    label: 'Enter',
+    sequence: '\r',
+    icon: Icons.keyboard_return,
+  ),
   KeybarKey(
     id: 'keyPaste',
     label: 'Paste',
