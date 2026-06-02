@@ -14,7 +14,10 @@ import 'package:mobissh/ui/feedback_overlay.dart';
 void main() {
   group('formatFeedbackVersion', () {
     test('combines build + hash into [build hash]', () {
-      expect(formatFeedbackVersion('1.2.3+45', 'abc1234'), '[1.2.3+45 abc1234]');
+      expect(
+        formatFeedbackVersion('1.2.3+45', 'abc1234'),
+        '[1.2.3+45 abc1234]',
+      );
     });
 
     test('degrades when a part is missing', () {
@@ -29,9 +32,11 @@ void main() {
       // A long, multi-line note exactly like the owner's tails that the web
       // form was cutting at ~100 chars on the first line.
       final longComment = StringBuffer()
-        ..writeln('First line that the web form would have used as a title and '
-            'then sliced at around one hundred characters losing everything '
-            'after this point entirely.')
+        ..writeln(
+          'First line that the web form would have used as a title and '
+          'then sliced at around one hundred characters losing everything '
+          'after this point entirely.',
+        )
         ..writeln('Second line with more detail.')
         ..writeln('Third line: also charact...');
       final comment = longComment.toString();
@@ -79,25 +84,27 @@ void main() {
       expect(payload['source'], 'native-in-app');
     });
 
-    test('includes the screenshot data URL when provided, omits it otherwise',
-        () {
-      final withShot = buildFeedbackPayload(
-        comment: 'x',
-        version: '[v]',
-        screenshotDataUrl: 'data:image/png;base64,AAAA',
-      );
-      expect(withShot['screenshot'], 'data:image/png;base64,AAAA');
+    test(
+      'includes the screenshot data URL when provided, omits it otherwise',
+      () {
+        final withShot = buildFeedbackPayload(
+          comment: 'x',
+          version: '[v]',
+          screenshotDataUrl: 'data:image/png;base64,AAAA',
+        );
+        expect(withShot['screenshot'], 'data:image/png;base64,AAAA');
 
-      final without = buildFeedbackPayload(comment: 'x', version: '[v]');
-      expect(without.containsKey('screenshot'), isFalse);
+        final without = buildFeedbackPayload(comment: 'x', version: '[v]');
+        expect(without.containsKey('screenshot'), isFalse);
 
-      final emptyShot = buildFeedbackPayload(
-        comment: 'x',
-        version: '[v]',
-        screenshotDataUrl: '',
-      );
-      expect(emptyShot.containsKey('screenshot'), isFalse);
-    });
+        final emptyShot = buildFeedbackPayload(
+          comment: 'x',
+          version: '[v]',
+          screenshotDataUrl: '',
+        );
+        expect(emptyShot.containsKey('screenshot'), isFalse);
+      },
+    );
 
     test('attaches the connect-trace log when present, omits it when empty', () {
       final withLog = buildFeedbackPayload(

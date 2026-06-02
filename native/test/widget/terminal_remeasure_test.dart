@@ -166,6 +166,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     debugConnectRemeasureArmCount = 0;
     debugExplicitFitAppliedCount = 0;
+    debugForcedPtyResyncCount = 0;
     clearConnectLog();
   });
 
@@ -440,6 +441,63 @@ void main() {
       expect(transport.resizes.last.rows, filled);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+      'connect FORCE-RESYNCS the PTY even when the LOCAL size is already '
+      'correct (#666): first-connect-after-cold-launch leaves the remote at the '
+      'stale default size; the fit must re-send the size to the PTY even though '
+      'the local view did not change',
+      (tester) async {
+        // The #666 device bug: on first connect the initial PTY resize is sent
+        // at the terminal's default size before layout, so tmux attaches at
+        // ~80x24; the local terminal then lays out correctly, but because its
+        // size never CHANGES again the old `if (changed)` guard re-sent
+        // nothing — tmux stayed at 24 rows (status bar mid-screen, dead gap).
+        // The fix force-resends on the connect path even when !changed.
+        //
+        // In this harness the terminal fills correctly on first layout, so the
+        // connect-path fits find the local size ALREADY correct (changed=false)
+        // — exactly the device condition where the old code did nothing. We
+        // assert the force path runs and the size still reaches the transport.
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        final s = await _setupConnected(tester, transport);
+
+        final filled = s.entry.terminal.viewHeight;
+        expect(filled, greaterThan(24));
+
+        // Advance the full burst window so connect-path fits run while the
+        // local size is already `filled` (changed == false).
+        for (var i = 0; i < 30; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+
+        // At least one connect-path fit force-resynced the PTY WITHOUT a local
+        // size change — the behavior the old `if (changed)` guard suppressed,
+        // and the exact gap that left tmux stale on first connect (#666).
+        expect(
+          debugForcedPtyResyncCount,
+          greaterThanOrEqualTo(1),
+          reason:
+              'no force PTY re-sync on the connect path — a stale remote '
+              '(#666 first-connect-after-cold-launch) would never be corrected. '
+              'Log: ${connectLogSnapshot()}',
+        );
+        // The re-sync reached the transport carrying the filled rows (the PTY
+        // gets the correct size, not the stale default).
+        expect(transport.resizes, isNotEmpty);
+        expect(transport.resizes.last.rows, filled);
+        // The diagnostic records the new RESYNC action so a device log shows it.
+        expect(
+          connectLogSnapshot().any(
+            (l) => l.contains('ui.fit659') && l.contains('RESYNC'),
+          ),
+          isTrue,
+          reason: 'no RESYNC action logged — the force-resync path did not run',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets(
       're-measure wiring is torn down when the session body unmounts',

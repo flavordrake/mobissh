@@ -54,14 +54,14 @@ Widget _harness({required FeedbackSubmitter submitter}) {
       screenshotCapturer: _fakeCapturer,
       child: child ?? const SizedBox.shrink(),
     ),
-    home: const Scaffold(
-      body: Center(child: Text('SOME SCREEN CONTENT')),
-    ),
+    home: const Scaffold(body: Center(child: Text('SOME SCREEN CONTENT'))),
   );
 }
 
 void main() {
-  testWidgets('feedback affordance mounts over the current screen', (tester) async {
+  testWidgets('feedback affordance mounts over the current screen', (
+    tester,
+  ) async {
     final submitter = _RecordingSubmitter();
     await tester.pumpWidget(_harness(submitter: submitter));
     await tester.pumpAndSettle();
@@ -71,8 +71,9 @@ void main() {
     expect(find.text('SOME SCREEN CONTENT'), findsOneWidget);
   });
 
-  testWidgets('tapping the affordance opens a multi-line comment sheet',
-      (tester) async {
+  testWidgets('tapping the affordance opens a multi-line comment sheet', (
+    tester,
+  ) async {
     final submitter = _RecordingSubmitter();
     await tester.pumpWidget(_harness(submitter: submitter));
     await tester.pumpAndSettle();
@@ -89,11 +90,16 @@ void main() {
       find.byKey(const Key('feedback-comment-field')),
     );
     expect(field.maxLines == null || field.maxLines! > 1, isTrue);
-    expect(field.maxLength, isNull, reason: 'NO maxLength — full comment (#661)');
+    expect(
+      field.maxLength,
+      isNull,
+      reason: 'NO maxLength — full comment (#661)',
+    );
   });
 
-  testWidgets('submitting sends the FULL multi-line comment to the submitter',
-      (tester) async {
+  testWidgets('submitting sends the FULL multi-line comment to the submitter', (
+    tester,
+  ) async {
     final submitter = _RecordingSubmitter();
     await tester.pumpWidget(_harness(submitter: submitter));
     await tester.pumpAndSettle();
@@ -116,41 +122,45 @@ void main() {
     expect(submitter.lastPayload, isNotNull);
     expect(submitter.lastPayload!['comment'], longNote);
     // Untruncated: the trailing line survived.
-    expect((submitter.lastPayload!['comment'] as String).contains('Third line'),
-        isTrue);
+    expect(
+      (submitter.lastPayload!['comment'] as String).contains('Third line'),
+      isTrue,
+    );
     expect(submitter.lastPayload!['version'], '[1.0.0+9 deadbee]');
   });
 
-  testWidgets('bundles the connect-trace ring (CTRACE659) into the submission',
-      (tester) async {
-    // The telemetry fix: a report submitted after a connect must carry the
-    // connect log so the first-connect fill bug is fixable from DATA, not a
-    // bounced build. The ring is a module global — clear it for isolation.
-    clearConnectLog();
-    ctrace('ui.fit659', 'connect: arming fit burst (shell ready)');
-    ctrace(
-      'ui.fit659',
-      'burst-700ms: view=393.0x300.0 cell=8.4x18.0 computed=46x16 cur=46x16 '
-          'noop font=JetBrainsMono settled=true',
-    );
+  testWidgets(
+    'bundles the connect-trace ring (CTRACE659) into the submission',
+    (tester) async {
+      // The telemetry fix: a report submitted after a connect must carry the
+      // connect log so the first-connect fill bug is fixable from DATA, not a
+      // bounced build. The ring is a module global — clear it for isolation.
+      clearConnectLog();
+      ctrace('ui.fit659', 'connect: arming fit burst (shell ready)');
+      ctrace(
+        'ui.fit659',
+        'burst-700ms: view=393.0x300.0 cell=8.4x18.0 computed=46x16 cur=46x16 '
+            'noop font=JetBrainsMono settled=true',
+      );
 
-    final submitter = _RecordingSubmitter();
-    await tester.pumpWidget(_harness(submitter: submitter));
-    await tester.pumpAndSettle();
+      final submitter = _RecordingSubmitter();
+      await tester.pumpWidget(_harness(submitter: submitter));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('feedback-affordance')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('feedback-comment-field')),
-      'first connect layout broken',
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('feedback-submit-button')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('feedback-affordance')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('feedback-comment-field')),
+        'first connect layout broken',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('feedback-submit-button')));
+      await tester.pumpAndSettle();
 
-    final log = (submitter.lastPayload!['connectLog'] as List).cast<String>();
-    expect(log.length, 2);
-    expect(log.any((l) => l.contains('view=393.0x300.0')), isTrue);
-    clearConnectLog();
-  });
+      final log = (submitter.lastPayload!['connectLog'] as List).cast<String>();
+      expect(log.length, 2);
+      expect(log.any((l) => l.contains('view=393.0x300.0')), isTrue);
+      clearConnectLog();
+    },
+  );
 }

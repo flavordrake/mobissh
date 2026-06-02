@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## Build 2026-06-02j — first-connect terminal fill (real fix, from your log)
+- First connect after launch now fills the screen — the remote (tmux) gets the correct size even when the local terminal was already right. Your connect log pinned it: the PTY had attached at the default ~80×24 and was never re-synced; now it is, on connect. (tmux status bar should sit at the BOTTOM.)
+- Feedback screenshot now captures at the moment of tap — interacting with the form can no longer re-lay-out the screen before the shot.
+- If first connect is still off, the connect log now shows a `RESYNC` line with the exact sizes.
+
 ## Build 2026-06-02i — feedback now carries the on-device diagnostic log
 - In-app feedback now attaches the connect/CTRACE log (measured terminal size, computed rows/cols) to your report — so a bad first-connect screenshot finally comes with the numbers to fix it, no more bouncing builds. (Scrubbed of anything secret.)
 - Tap Feedback on a broken first-connect screen → the report carries exactly what the terminal measured.

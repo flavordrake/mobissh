@@ -72,6 +72,15 @@ int debugConnectRemeasureArmCount = 0;
 @visibleForTesting
 int debugExplicitFitAppliedCount = 0;
 
+/// Test-only counter: incremented each time a connect-path fit FORCE-RESYNCS
+/// the remote PTY even though the LOCAL cols/rows did not change (#666). This
+/// is the fix for first-connect-after-cold-launch: the remote attached at the
+/// default size before layout, the local terminal is already correct, so the
+/// only way to re-sync tmux is to push the size to the PTY directly (xterm
+/// dedupes `terminal.resize` when unchanged). Reset it in test `setUp`.
+@visibleForTesting
+int debugForcedPtyResyncCount = 0;
+
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
 
@@ -436,7 +445,7 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     WidgetsBinding.instance.addObserver(this);
     PaintingBinding.instance.systemFonts.addListener(_onSystemFontsChanged);
     WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _scheduleExplicitFit('mount'),
+      (_) => _scheduleExplicitFit('mount', force: true),
     );
   }
 
@@ -454,15 +463,15 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// the render object and pushes it through the PTY-resize path itself. Every
   /// attempt logs a CTRACE659 line so a device failure yields DATA, not blind
   /// iteration.
-  void _scheduleExplicitFit(String trigger) {
+  void _scheduleExplicitFit(String trigger, {bool force = false}) {
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _explicitFit(trigger);
+      _explicitFit(trigger, force: force);
     });
   }
 
-  void _explicitFit(String trigger) {
+  void _explicitFit(String trigger, {bool force = false}) {
     if (!mounted) return;
     // The `terminal-view-$id` ValueKey is kept for test addressing, so we can't
     // also hang a `GlobalKey<TerminalViewState>` on the TerminalView. Locate its
@@ -521,11 +530,29 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     _lastLoggedCellSize = cell;
 
     final bool changed = cols != curCols || rows != curRows;
+    var action = 'noop';
     if (changed) {
       // Drive the PTY-resize path directly. terminal.onResize (sessions.dart)
       // → proxy.sendResize → PTY. Pixel sizes mirror what xterm sends.
       terminal.resize(cols, rows, cell.width.round(), cell.height.round());
       debugExplicitFitAppliedCount += 1;
+      action = 'RESIZED';
+    } else if (force) {
+      // Local size already correct, but the REMOTE PTY may be stale (#666):
+      // on first-connect-after-cold-launch the initial PTY resize is sent at
+      // the terminal's DEFAULT size before Flutter lays it out, so tmux
+      // attaches at e.g. 80×24; the local terminal then lays out correctly
+      // (55×51) but its size never changes again, so the prior guard re-sent
+      // NOTHING — tmux stayed at 24 rows (status bar mid-screen, dead gap
+      // below). Terminal.resize ALWAYS fires onResize (xterm 4.0.0
+      // terminal.dart:362 — no dedupe) → proxy.sendResize → PTY, so re-sending
+      // the SAME size re-syncs the remote without changing the local view. A
+      // keyboard toggle / second connect did this incidentally; force makes it
+      // deterministic. Only on connect-path triggers (mount/connect/burst) so
+      // steady-state fits (metrics/font) don't spam PTY resizes.
+      terminal.resize(cols, rows, cell.width.round(), cell.height.round());
+      debugForcedPtyResyncCount += 1;
+      action = 'RESYNC';
     }
 
     // CTRACE659: the device-diagnosis line. Captures incoming render-box
@@ -537,7 +564,7 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
       'ui.fit659',
       '$trigger: view=${_fmtSize(size)} cell=${_fmtSize(cell)} '
           'computed=${cols}x$rows cur=${curCols}x$curRows '
-          '${changed ? "RESIZED" : "noop"} '
+          '$action '
           'font=$kTerminalFontFamily settled=$fontSettled',
     );
   }
@@ -567,13 +594,18 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     ctrace('ui.fit659', 'connect: arming fit burst (shell ready)');
     // Immediate (post-frame) fit — covers the case where layout is already
     // correct by connect time (e.g. the emulator / headless harness).
-    _scheduleExplicitFit('connect');
+    // force: re-sync the PTY even when the local size is unchanged (#666 — the
+    // remote may have attached at the stale default size).
+    _scheduleExplicitFit('connect', force: true);
     // Staggered fits defeat the device font-settle race: at least one lands
     // after the cached asset font's metrics are in effect. 1200ms tail added
-    // over #647 for slow cold-starts.
+    // over #647 for slow cold-starts. force: same PTY re-sync rationale.
     for (final ms in const [120, 350, 700, 1200]) {
       _connectRemeasureTimers.add(
-        Timer(Duration(milliseconds: ms), () => _explicitFit('burst-${ms}ms')),
+        Timer(
+          Duration(milliseconds: ms),
+          () => _explicitFit('burst-${ms}ms', force: true),
+        ),
       );
     }
   }
@@ -645,6 +677,18 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
       }
     });
     final shellAsync = ref.watch(sshShellProvider(widget.sessionId));
+    // #666: `ref.listen` does NOT fire for a value already present when the
+    // listener is attached. On first-connect-after-cold-launch, RootRouter
+    // mounts TerminalScreen only AFTER the session is `connected`, so the shell
+    // can already be ready at this first build → the listener misses the
+    // null→ready transition and the connect re-fit burst NEVER arms (the device
+    // log showed only `mount:`, no `connect:`/`burst:`). Arm explicitly when we
+    // observe a ready shell; `_armConnectRemeasure` is idempotent
+    // (`_connectRemeasureArmed` guards re-entry), and a drop re-arms via the
+    // listener's else branch above.
+    if (shellAsync.valueOrNull != null) {
+      _armConnectRemeasure();
+    }
     // Per-session theme + font (#601, #571): each session's TerminalView reads
     // ITS OWN palette + font size, so two visible sessions can differ.
     final fontSize = ref.watch(sessionFontSizeProvider(widget.sessionId));

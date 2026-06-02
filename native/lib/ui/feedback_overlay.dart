@@ -153,10 +153,8 @@ typedef VersionResolver = Future<String> Function();
 /// Rasterizes the current screen to PNG bytes. Injected so widget tests can
 /// bypass `RenderRepaintBoundary.toImage` (which does not complete under the
 /// default test binding). [boundaryKey] is the key on the root RepaintBoundary.
-typedef ScreenshotCapturer = Future<Uint8List> Function(
-  GlobalKey boundaryKey,
-  double pixelRatio,
-);
+typedef ScreenshotCapturer =
+    Future<Uint8List> Function(GlobalKey boundaryKey, double pixelRatio);
 
 /// Production screenshot capture: rasterizes the root RepaintBoundary. Returns
 /// empty bytes on any failure (capture is best-effort — feedback must still
@@ -235,21 +233,18 @@ class FeedbackOverlay extends StatefulWidget {
 class _FeedbackOverlayState extends State<FeedbackOverlay> {
   final GlobalKey _captureKey = GlobalKey();
 
-  /// Hides the affordance for the frame in which we rasterize, so the button
-  /// never shows up inside its own screenshot.
-  bool _captureInProgress = false;
-
   Future<void> _onTap() async {
-    // Snapshot the connect-trace ring NOW — before the sheet/keyboard pushes
-    // any more lines — so the report carries the just-observed connect +
-    // CTRACE659 fill data (the telemetry that ends the bounce-a-build loop).
+    // Snapshot the connect-trace ring + rasterize the screen at the EXACT
+    // moment of tap. We deliberately DON'T hide the affordance and pump a frame
+    // first: that rebuild + extra frames can let a pending layout settle (e.g.
+    // the #666 first-connect re-fit, or the keyboard inset) and capture the
+    // screen AFTER the bug self-corrects — hiding the very thing being reported.
+    // The owner saw exactly this: interacting with the feedback control changed
+    // the layout before the shot. Capturing immediately is truer; the small
+    // affordance pill appearing in its own screenshot is an acceptable trade.
     final connectLog = connectLogSnapshot();
-    // Hide the affordance, let the next frame paint (so the button is gone),
-    // then rasterize the screen WITHOUT the affordance in it.
-    setState(() => _captureInProgress = true);
     final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
     final bytes = await widget.screenshotCapturer(_captureKey, dpr);
-    if (mounted) setState(() => _captureInProgress = false);
     if (!mounted) return;
 
     final dataUrl = pngBytesToDataUrl(bytes);
@@ -308,45 +303,47 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     return Stack(
       children: [
         RepaintBoundary(key: _captureKey, child: widget.child),
-        // Top-center affordance. Hidden during capture so it never appears in
-        // its own screenshot. Low-opacity + small to stay unobtrusive.
-        if (!_captureInProgress)
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 4,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Opacity(
-                opacity: 0.5,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    key: const Key('feedback-affordance'),
-                    onTap: _onTap,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Icon(Icons.feedback_outlined, size: 14),
-                          SizedBox(width: 4),
-                          Text('Feedback', style: TextStyle(fontSize: 11)),
-                        ],
-                      ),
+        // Top-center affordance. Low-opacity + small to stay unobtrusive. It is
+        // captured AS-IS in its own screenshot (we no longer hide it for a
+        // frame — that delay let the screen re-layout before capture, #666).
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 4,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Opacity(
+              opacity: 0.5,
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  key: const Key('feedback-affordance'),
+                  onTap: _onTap,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.feedback_outlined, size: 14),
+                        SizedBox(width: 4),
+                        Text('Feedback', style: TextStyle(fontSize: 11)),
+                      ],
                     ),
                   ),
                 ),
               ),
             ),
           ),
+        ),
       ],
     );
   }
