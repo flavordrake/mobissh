@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.4 (2026-06-02) — experimental Ghostty terminal engine (opt-in)
+- Settings → Terminal engine: switch between xterm (default) and **Ghostty** (experimental), restart to apply. Ghostty has native touch drag-select + copy — long-press and drag to select, then Copy.
+- xterm stays the default; flip to Ghostty to try it on a real session.
+
 ## v0.1.3 (2026-06-02) — terminal font selector
 - Pick your terminal font per session — JetBrains Mono, Fira Code, or Cascadia Code — from the font control in the session menu. Remembered per profile, like theme and size.
 
