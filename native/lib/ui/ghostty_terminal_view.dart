@@ -23,9 +23,23 @@
 //      thin/unreadable on device).
 //   2. SCROLL-vs-SELECT: a plain vertical drag must SCROLL the scrollback;
 //      selection starts on LONG-PRESS. flterm's default `enabledSelections`
-//      includes `drag` — see [kGhosttyGestureSettings] for why we drop it.
+//      includes `drag` — see [kGhosttyScrollSettings] for why we drop it.
 //   3. SELECTION endpoints / control: best achievable on flterm 0.0.3 — see the
 //      "selection control" note below + a Select-All affordance.
+//
+// #688 fix (SWIPE STILL drag-selected after #686): the root cause was NOT
+// `drag`. flterm restricts its pan/drag recognizer to `PointerDeviceKind.mouse`
+// and its LONG-PRESS recognizer to `PointerDeviceKind.touch`
+// (terminal_raw_gesture_detector.dart). Scroll comes from the inner `Scrollable`
+// (terminal_view.dart), NOT flterm's gesture detector. On a finger SWIPE the
+// brief start-of-swipe dwell makes flterm's `LongPressGestureRecognizer` win the
+// arena; `onLongPressMoveUpdate` -> `_updateDrag` then paints a multi-line
+// selection AND auto-scrolls. So `SelectionGesture.longPress` (which #686 KEPT)
+// was the culprit, not `drag`. The owner wants swipe = scroll-ONLY; selection =
+// DELIBERATE. We default to NO touch drag-select (`longPress` dropped) so a
+// swipe only scrolls, and gate long-press-drag selection behind an explicit
+// "select mode" toggle — see [kGhosttyScrollSettings] / [kGhosttySelectSettings]
+// and `_selectMode`.
 //
 // flterm re-exports libghostty's `Key` input enum, which collides with
 // Flutter's widget `Key`. We only use Flutter's, so hide flterm's.
@@ -63,26 +77,46 @@ TerminalTheme buildGhosttyTheme({
   return TerminalTheme.dark().copyWith(fontFamily: family, fontSize: fontSize);
 }
 
-/// Scroll-priority gesture settings for the ghostty backend (#686, fix 2).
+/// DEFAULT (scroll-only) gesture settings for the ghostty backend (#688).
 ///
-/// The device-tested MVP used `SelectionGesture.all`, which includes
-/// `SelectionGesture.drag`. On touch, flterm restricts the drag/pan recognizer
-/// to `PointerDeviceKind.mouse` (terminal_raw_gesture_detector.dart), so a plain
-/// finger drag SHOULD scroll the inner `Scrollable` — but a stylus/trackpad that
-/// reports as a mouse pointer would drag-SELECT and swallow the scroll. Dropping
-/// `drag` makes the contract explicit and uniform across pointer kinds:
+/// #686 dropped `SelectionGesture.drag` but a finger SWIPE STILL drag-selected
+/// a multi-line block. Root cause: flterm gives `drag` to MOUSE pointers and
+/// `longPress` to TOUCH pointers (terminal_raw_gesture_detector.dart), and on a
+/// swipe the brief start-of-swipe dwell makes the touch `LongPressGestureRecognizer`
+/// win the gesture arena — `onLongPressMoveUpdate` then paints a selection AND
+/// auto-scrolls. So `longPress`, not `drag`, was the swipe culprit.
 ///
-///   - vertical DRAG  -> SCROLL the scrollback (flterm's `Scrollable`)
-///   - LONG-PRESS     -> START selection, then drag the finger to EXTEND
-///   - double-tap     -> select word     (kept)
-///   - triple-tap     -> select line     (kept)
-///   - Ctrl/Cmd+A     -> select all      (kept)
+/// To make a swipe SCROLL-ONLY we drop BOTH `drag` and `longPress` here, leaving
+/// no touch DRAG-select gesture. A swipe now only drives the inner `Scrollable`:
 ///
-/// `lineSelectMode.full` makes a line/triple-tap selection grab the FULL row
-/// width (trailing blanks included) rather than trimming to the last glyph —
-/// part of giving the user more selection control (#686, fix 3) when grabbing
-/// whole lines of output.
-const TerminalGestureSettings kGhosttyGestureSettings = TerminalGestureSettings(
+///   - vertical SWIPE -> SCROLL the scrollback (flterm's `Scrollable`), no select
+///   - double-tap     -> select word   (discrete tap; never fires on a swipe)
+///   - triple-tap     -> select line   (discrete tap; never fires on a swipe)
+///   - Ctrl/Cmd+A     -> select all
+///
+/// Deliberate long-press-drag selection is opt-in via [kGhosttySelectSettings]
+/// (the "select mode" toggle). `lineSelectMode.full` keeps line/triple-tap
+/// selection grabbing the FULL row width (trailing blanks included).
+const TerminalGestureSettings kGhosttyScrollSettings = TerminalGestureSettings(
+  enabledSelections: {
+    SelectionGesture.word,
+    SelectionGesture.line,
+    SelectionGesture.selectAll,
+  },
+  lineSelectMode: LineSelectMode.full,
+);
+
+/// SELECT-MODE gesture settings for the ghostty backend (#688).
+///
+/// Active only while the user has toggled "select mode" on. Re-enables flterm's
+/// native touch `longPress` so a deliberate long-press-then-drag starts and
+/// extends a selection. Everything else matches [kGhosttyScrollSettings].
+///
+/// flterm limitation (#688): even here, a long-press-drag that reaches the
+/// viewport edge will auto-scroll (`_updateDrag` in flterm's gesture detector),
+/// and flterm 0.0.3 exposes no draggable endpoint handles — so the "deliberate"
+/// gate is the MODE, not a finer in-gesture distinction.
+const TerminalGestureSettings kGhosttySelectSettings = TerminalGestureSettings(
   enabledSelections: {
     SelectionGesture.longPress,
     SelectionGesture.word,
@@ -113,6 +147,32 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   StreamSubscription<Uint8List>? _outputSub;
 
   String? _initError;
+
+  /// Whether DELIBERATE selection mode is active (#688).
+  ///
+  /// `false` (default): a swipe SCROLLS only — [kGhosttyScrollSettings], which
+  /// has no touch drag-select gesture. `true`: [kGhosttySelectSettings] is
+  /// applied, re-enabling flterm's native touch long-press-drag selection.
+  /// Per-session (held on the widget state, not a global) so one session's
+  /// select mode never leaks into another's.
+  bool _selectMode = false;
+
+  /// Toggle deliberate select mode. Leaving select mode clears any pending
+  /// highlight so the user isn't left with a stale selection while scrolling.
+  void _toggleSelectMode() {
+    setState(() {
+      _selectMode = !_selectMode;
+      if (!_selectMode) _controller?.clearSelection();
+    });
+    if (mounted) {
+      showTopToast(
+        context,
+        _selectMode
+            ? 'Select mode ON — long-press the terminal, then drag to select.'
+            : 'Select mode OFF — swipe scrolls.',
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -169,7 +229,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (mounted) {
         showTopToast(
           context,
-          'No selection — long-press the terminal, then drag.',
+          _selectMode
+              ? 'No selection — long-press the terminal, then drag.'
+              : 'No selection — turn on select mode first, then long-press.',
         );
       }
       return;
@@ -228,10 +290,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             autofocus: false,
             theme: buildGhosttyTheme(family: fontFamily, fontSize: fontSize),
             padding: const EdgeInsets.all(4),
-            // #686 fix 2: scroll-priority. Drop the `drag` selection gesture so
-            // a vertical finger drag scrolls the scrollback; selection is
-            // long-press (+ drag-to-extend), word, line, and select-all.
-            gestureSettings: kGhosttyGestureSettings,
+            // #688: swipe = scroll-ONLY by default; deliberate long-press-drag
+            // selection only while select mode is ON. See the two settings
+            // objects' docs for the flterm root cause (touch long-press, not
+            // `drag`, was the swipe-select culprit).
+            gestureSettings: _selectMode
+                ? kGhosttySelectSettings
+                : kGhosttyScrollSettings,
           ),
         ),
         // Selection affordances (bottom-right). flterm's long-press select
@@ -244,6 +309,25 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // #688: deliberate select-mode toggle. OFF (default) = swipe
+              // scrolls only; ON = flterm native long-press-drag selection.
+              Material(
+                color: _selectMode ? Colors.green.shade700 : Colors.black54,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  key: const Key('ghostty-select-mode'),
+                  tooltip: _selectMode
+                      ? 'Select mode ON (tap to scroll)'
+                      : 'Select mode OFF (tap to select)',
+                  iconSize: 18,
+                  icon: Icon(
+                    _selectMode ? Icons.touch_app : Icons.touch_app_outlined,
+                    color: Colors.white,
+                  ),
+                  onPressed: _toggleSelectMode,
+                ),
+              ),
+              const SizedBox(height: 8),
               Material(
                 color: Colors.black54,
                 shape: const CircleBorder(),
