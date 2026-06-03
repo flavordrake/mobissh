@@ -178,6 +178,43 @@ bool ghosttySwipeShouldScrollLocally({required MouseTracking mouseTracking}) {
   return mouseTracking != MouseTracking.none;
 }
 
+/// Whether a FORCED post-shellReady PTY resize re-sync should be sent for the
+/// ghostty backend (#702).
+///
+/// The xterm path's #666/#659 connect fit-burst (`[ui.fit659]` in
+/// terminal_screen.dart) is XTERM-ONLY: it hunts for xterm.dart's
+/// `TerminalViewState`, which is offstage on the ghostty backend, so the burst
+/// NEVER runs and the only PTY resize is the one fired BEFORE `shellReady` — the
+/// classic #666 drop (`s.shell?.resize` discards a resize sent before the shell
+/// exists). tmux then keeps the stale pre-shellReady size and the first-connect
+/// layout is wrong.
+///
+/// The ghostty view already wires `controller.onResize → proxy.sendResize` and
+/// mirrors `_cols`/`_rows`, but flterm only emits `onResize` when its computed
+/// grid CHANGES — so if the first layout equals the pre-shellReady size, nothing
+/// re-fires after the shell is actually ready. This helper gates a Ghostty-LOCAL
+/// forced re-send: on `shellReady` (and a short follow-up burst) we re-send the
+/// CURRENT grid even if unchanged, so tmux gets the real size AFTER the shell
+/// exists. Guard: only when the session is [connected] and [cols]/[rows] are a
+/// valid (> 0) grid (flterm may not have laid out yet at the exact shellReady
+/// instant). Pure (no FFI / no widget) → unit-testable headless.
+bool ghosttyShouldResyncResize({
+  required bool connected,
+  required int cols,
+  required int rows,
+}) {
+  return connected && cols > 0 && rows > 0;
+}
+
+/// The delayed re-sync ticks (ms after `shellReady`) for the ghostty
+/// first-connect resize burst (#702), mirroring the xterm #659/#666 burst
+/// (120/350/700/1200ms). flterm may not have laid out its real grid at the exact
+/// `shellReady` instant, so we re-send at a few delays until [_cols]/[_rows] are
+/// valid — at least one tick lands after flterm's grid settles. Each tick is
+/// guarded by [ghosttyShouldResyncResize], so a tick with no valid grid is a
+/// no-op (no stray resize).
+const List<int> kGhosttyResyncBurstMs = [120, 350, 700, 1200];
+
 /// The padding flterm's [TerminalView] is built with (`EdgeInsets.all(4)`), in
 /// logical px (#699). flterm wraps its `Scrollable` + render box in a
 /// `Padding(padding: widget.padding)`, so the grid's top-left is offset by this
@@ -823,6 +860,22 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   int _cols = 0;
   int _rows = 0;
 
+  /// #702: the session proxy, resolved once in [initState] so the shellReady
+  /// subscription + forced resize re-sync don't re-walk the sessions list.
+  SshSessionProxy? _proxy;
+
+  /// #702: subscription to the proxy's `shellReady` stream — the moment the
+  /// task-side shell EXISTS (so a forced re-sync is NOT dropped by session_host's
+  /// `s.shell?.resize`). The xterm path's #666 fit-burst is offstage for ghostty
+  /// (it hunts xterm's `TerminalViewState`), so without this the ONLY PTY resize
+  /// is the pre-shellReady one tmux drops. Re-fires on reconnect (each shell open
+  /// emits a tick). Cancelled on dispose.
+  StreamSubscription<void>? _shellReadySub;
+
+  /// #702: pending delayed re-sync timers from the post-shellReady burst, tracked
+  /// so dispose cancels them and a gone widget is never re-synced.
+  final List<Timer> _resyncTimers = <Timer>[];
+
   @override
   void initState() {
     super.initState();
@@ -831,6 +884,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       _initError = 'No session for ${widget.sessionId}';
       return;
     }
+    _proxy = proxy;
     try {
       final controller = TerminalController();
       // Keystrokes (controller.onOutput) -> SSH stdin. Gate on a LIVE session,
@@ -863,6 +917,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       controller.addListener(_syncMouseTracking);
       _mouseTracking = controller.mouseTracking;
       _controller = controller;
+      // #702: arm the first-connect resize re-sync on the proxy's shellReady
+      // stream. The xterm #666 fit-burst is offstage for ghostty, so this is the
+      // ghostty-LOCAL equivalent: once the task-side shell EXISTS, force-re-send
+      // the current grid so the size that reaches tmux is the post-layout one,
+      // not the pre-shellReady default that gets dropped. Re-fires on reconnect.
+      _shellReadySub = proxy.shellReady.listen((_) {
+        if (!mounted) return;
+        _armResizeResync();
+      });
     } catch (e) {
       // If libghostty's native .so failed to load, surface it instead of a
       // blank crash so the device tester can report it (mirrors the spike).
@@ -886,6 +949,53 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (e.id == widget.sessionId) return e.proxy;
     }
     return null;
+  }
+
+  /// #702: on `shellReady`, force a resize re-sync now, then a short burst of
+  /// delayed re-syncs ([kGhosttyResyncBurstMs]). flterm may not have laid out its
+  /// real grid at the exact shellReady instant (so `_cols`/`_rows` may still be
+  /// 0), so the burst keeps re-trying until the grid is valid — at least one tick
+  /// lands after flterm settles, mirroring the xterm #659/#666 burst. Re-armed on
+  /// every shellReady (reconnect), cancelling any pending burst first so a
+  /// reconnect's burst doesn't stack on the previous one.
+  void _armResizeResync() {
+    for (final t in _resyncTimers) {
+      t.cancel();
+    }
+    _resyncTimers.clear();
+    // Immediate: covers the case where flterm already laid out by shellReady
+    // (e.g. a reconnect, where the grid is already valid).
+    _forceResizeResync('shellReady');
+    for (final ms in kGhosttyResyncBurstMs) {
+      _resyncTimers.add(
+        Timer(Duration(milliseconds: ms), () => _forceResizeResync('+${ms}ms')),
+      );
+    }
+  }
+
+  /// #702: FORCE-re-send the current grid to the PTY (even if unchanged) so tmux
+  /// re-sizes to the post-shellReady layout. Guarded by [ghosttyShouldResyncResize]
+  /// (connected + valid `_cols`/`_rows`); a tick with no valid grid is a no-op.
+  /// Every forced re-sync is recorded in the gesture/connect trace so a device
+  /// repro CONFIRMS a real resize landed after shellReady (`ghostty-resync`).
+  void _forceResizeResync(String trigger) {
+    if (!mounted) return;
+    final proxy = _proxy;
+    if (proxy == null) return;
+    final connected = proxy.data.state == SshSessionState.connected;
+    if (!ghosttyShouldResyncResize(
+      connected: connected,
+      cols: _cols,
+      rows: _rows,
+    )) {
+      gtrace(
+        'ghostty-resync $trigger: skip '
+        '(connected=$connected cols=$_cols rows=$_rows)',
+      );
+      return;
+    }
+    proxy.sendResize(_cols, _rows);
+    gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
   }
 
   Future<void> _copySelection() async {
@@ -918,6 +1028,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
 
   @override
   void dispose() {
+    _shellReadySub?.cancel();
+    for (final t in _resyncTimers) {
+      t.cancel();
+    }
+    _resyncTimers.clear();
     _outputSub?.cancel();
     _controller?.removeListener(_syncMouseTracking);
     _controller?.onOutput = null;
