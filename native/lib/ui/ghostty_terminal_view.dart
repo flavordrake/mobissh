@@ -147,6 +147,13 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// The PER-SESSION theme palettes (#552/#571) are xterm.dart `TerminalTheme`s
+// (see [terminalPalettes] / [NamedTerminalTheme] in ui_prefs_providers.dart).
+// Both xterm AND flterm export a type named `TerminalTheme`, so the xterm one
+// is imported with a prefix to avoid colliding with flterm's (the type this
+// view feeds the flterm `TerminalView`). [buildGhosttyTheme] maps from one to
+// the other (#716).
+import 'package:xterm/xterm.dart' as xterm;
 
 import '../diagnostics/gesture_trace.dart';
 import '../ssh/ssh_session.dart';
@@ -156,13 +163,63 @@ import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import 'top_toast.dart';
 
-/// The per-session [TerminalTheme] for the ghostty backend (#686, fix 1).
+/// Build the flterm [ColorPalette] for the per-session theme [palette] (#716).
+///
+/// The per-session theme palettes ([terminalPalettes]) are xterm.dart
+/// `TerminalTheme`s carrying background/foreground/cursor/selection + the 16
+/// named ANSI colors (black..brightWhite). flterm instead bundles
+/// background/foreground + the 16 ANSI colors (as an ordered list) into a
+/// [ColorPalette] (cursor + selection live on the THEME, mapped separately by
+/// [buildGhosttyTheme]). This maps the xterm palette's ANSI fields → flterm's
+/// canonical 0-15 ANSI order so the Ghostty terminal renders in the selected
+/// theme's colors, not the hardcoded Tomorrow-Night dark default (#716 root
+/// cause). Pure (no FFI / no widget) → unit-testable headless.
+ColorPalette ghosttyPaletteFromXterm(xterm.TerminalTheme palette) {
+  return ColorPalette(
+    background: palette.background,
+    foreground: palette.foreground,
+    // Canonical ANSI order 0-15: black, red, green, yellow, blue, magenta,
+    // cyan, white, then the 8 bright variants. Matches flterm's _darkAnsiColors
+    // ordering and tmux/xterm's 16-color index space.
+    ansiColors: <Color>[
+      palette.black,
+      palette.red,
+      palette.green,
+      palette.yellow,
+      palette.blue,
+      palette.magenta,
+      palette.cyan,
+      palette.white,
+      palette.brightBlack,
+      palette.brightRed,
+      palette.brightGreen,
+      palette.brightYellow,
+      palette.brightBlue,
+      palette.brightMagenta,
+      palette.brightCyan,
+      palette.brightWhite,
+    ],
+  );
+}
+
+/// The per-session [TerminalTheme] for the ghostty backend (#686 fix 1, #716).
 ///
 /// flterm carries font face + size on the THEME (`fontFamily`/`fontSize`), not a
 /// separate `textStyle` like xterm.dart — changing either recalculates the
-/// flterm cell metrics. We start from [TerminalTheme.dark] (Ghostty's Tomorrow
-/// Night palette + the bundled emoji/mono fallback chain) and override the face
-/// + size from the live #679/#640 per-session providers.
+/// flterm cell metrics. Likewise it carries COLORS on the theme (its
+/// [ColorPalette] + cursor/selection), where xterm.dart takes a separate `theme`
+/// on the `TerminalView`.
+///
+/// #686 fix 1 mapped only the FONT (face + size). #716 fixes the colors: when a
+/// per-session theme [palette] (an xterm.dart `TerminalTheme` from
+/// [terminalPalettes]) is supplied, its background/foreground + 16 ANSI colors,
+/// cursor, and selection are mapped onto the flterm theme so cycling the theme
+/// actually recolors the terminal (previously only the LABEL changed — the
+/// builder always started from [TerminalTheme.dark], ignoring the palette). When
+/// [palette] is null the builder keeps Ghostty's Tomorrow-Night dark default
+/// (preserving the #686 behaviour for callers/tests that pass only font + size).
+/// The font face + size always override on top, from the live #679/#640
+/// per-session providers.
 ///
 /// [family] is a pubspec-registered family id (e.g. `JetBrainsMono`) — the SAME
 /// string the xterm path feeds `TerminalStyle.fontFamily`, and the same id
@@ -172,8 +229,31 @@ import 'top_toast.dart';
 TerminalTheme buildGhosttyTheme({
   required String family,
   required double fontSize,
+  xterm.TerminalTheme? palette,
 }) {
-  return TerminalTheme.dark().copyWith(fontFamily: family, fontSize: fontSize);
+  final base = TerminalTheme.dark();
+  if (palette == null) {
+    return base.copyWith(fontFamily: family, fontSize: fontSize);
+  }
+  return base.copyWith(
+    fontFamily: family,
+    fontSize: fontSize,
+    palette: ghosttyPaletteFromXterm(palette),
+    // Cursor + selection live on the THEME (not the ColorPalette). Map the
+    // xterm palette's cursor/selection to flterm's fixed DynamicColor so the
+    // caret + highlight match the selected theme too. CursorTheme has no
+    // copyWith, so rebuild it, preserving the base shape/blink/opacity/text.
+    cursor: CursorTheme(
+      shape: base.cursor.shape,
+      color: DynamicColor.fixed(palette.cursor),
+      text: base.cursor.text,
+      blinkInterval: base.cursor.blinkInterval,
+      opacity: base.cursor.opacity,
+    ),
+    selection: SelectionTheme(
+      background: DynamicColor.fixed(palette.selection),
+    ),
+  );
 }
 
 /// Gesture settings for the ghostty backend (#688, #692).
@@ -1680,10 +1760,20 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // session.
     final fontFamily = ref.watch(sessionFontFamilyProvider(widget.sessionId));
     final fontSize = ref.watch(sessionFontSizeProvider(widget.sessionId));
+    // #716: per-session THEME palette, read from the SAME provider the xterm
+    // body reads (terminal_screen.dart `sessionTerminalThemeProvider`). Watching
+    // it here means cycling the session's theme rebuilds the TerminalView with a
+    // new flterm Terminaltheme — previously buildGhosttyTheme ignored the
+    // palette so only the session-menu LABEL changed, never flterm's colors.
+    final palette = ref.watch(sessionTerminalThemeProvider(widget.sessionId));
     // #699: measure the REAL flterm cell size from the SAME font + DPR flterm
     // renders with, so the gesture router's touch->cell map divides by the cell
     // height flterm actually laid out (not overlayHeight/rows — the #699 bug).
-    final theme = buildGhosttyTheme(family: fontFamily, fontSize: fontSize);
+    final theme = buildGhosttyTheme(
+      family: fontFamily,
+      fontSize: fontSize,
+      palette: palette.theme,
+    );
     final devicePixelRatio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
     final cellSize = ghosttyMeasureCellSize(
       fontSize: theme.fontSize,
