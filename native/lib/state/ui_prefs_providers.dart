@@ -159,15 +159,20 @@ class NamedFontFamily {
 /// open here, so #679 is a no-op for them.
 const String fontFamilyDefault = 'JetBrainsMono';
 
-/// The bundled monospace families (#679), mirroring the PWA terminal's
+/// The bundled monospace families (#679, extended #707). Each
+/// [NamedFontFamily.id] matches a `fonts:` family registered in pubspec.yaml.
+/// The picker iterates this list; adding a bundled face is a one-line append
+/// here + a pubspec entry. The first three mirror the PWA terminal's
 /// selectable fonts (`FONT_FAMILIES` in src/modules/terminal.ts: JetBrains
-/// Mono, Fira Code, Cascadia Code). Each [NamedFontFamily.id] matches a
-/// `fonts:` family registered in pubspec.yaml. The picker iterates this list;
-/// adding a bundled face is a one-line append here + a pubspec entry.
+/// Mono, Fira Code, Cascadia Code); #707 adds Roboto Mono, Ubuntu Mono, and
+/// Cousine (Iosevka deferred — needs a custom build).
 const List<NamedFontFamily> terminalFontFamilies = [
   NamedFontFamily('JetBrainsMono', 'JetBrains Mono'),
   NamedFontFamily('FiraCode', 'Fira Code'),
   NamedFontFamily('CascadiaCode', 'Cascadia Code'),
+  NamedFontFamily('RobotoMono', 'Roboto Mono'),
+  NamedFontFamily('UbuntuMono', 'Ubuntu Mono'),
+  NamedFontFamily('Cousine', 'Cousine'),
 ];
 
 /// Resolve an arbitrary stored family string to a known bundled family id,
