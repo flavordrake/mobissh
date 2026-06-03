@@ -415,6 +415,67 @@ TerminalSelection ghosttySelectionForCells({
   ).scroll(scrollOffset);
 }
 
+/// Re-anchor a content-frame [TerminalSelection] when the scrollback buffer's
+/// oldest lines are EVICTED, so the highlight keeps tracking the SAME text as
+/// output streams (#706, issue 1).
+///
+/// flterm stores a selection in the ABSOLUTE, TOP-ANCHORED buffer frame: row 0
+/// is the OLDEST line currently in the buffer, and the painter renders viewport
+/// row `r` as selected iff `selection.contains(r + scrollbar.offset)` (see
+/// terminal_frame_builder.dart `_RowSelection`), with `selectedText` extracting
+/// over the same `PointTag.screen` frame. While the bounded scrollback is still
+/// FILLING, every line keeps its absolute index, so a selection built via
+/// [ghosttySelectionForCells] (which already `.scroll(offset)`s into this frame)
+/// AUTO-tracks streaming content — the painter re-reads the grown `offset` each
+/// dirty frame and the highlight slides UP with its text, exactly as wanted.
+///
+/// The ONE case the absolute frame does NOT self-correct is scrollback
+/// EVICTION: once the buffer is capped, each new line drops the oldest line, so
+/// every surviving line's absolute index shifts DOWN by the number of evicted
+/// lines. We detect that as a DROP in the scrollback length — `prevScrollbackLen`
+/// (the `total - visible` captured on the previous tick) exceeding
+/// `nextScrollbackLen` would never happen while merely filling; but once capped,
+/// `nextScrollbackLen` plateaus while content keeps scrolling, so we instead
+/// shift by the supplied [evictedRows] (lines pushed past the cap since the last
+/// tick). A positive [evictedRows] shifts the selection UP (negative delta) to
+/// stay on its content; rows that scroll entirely off the top (above row 0) are
+/// CLAMPED to 0 so the selection degrades to the oldest surviving line rather
+/// than pointing at wrong content or going negative.
+///
+/// Returns the re-anchored selection, or null when the whole span has scrolled
+/// off the top (both endpoints evicted) — the caller then clears it. Pure (no
+/// FFI / no widget) so the row math is unit-testable headless.
+TerminalSelection? ghosttyReanchorForEviction(
+  TerminalSelection selection, {
+  required int evictedRows,
+}) {
+  if (evictedRows <= 0) return selection;
+  final newStartRow = selection.startRow - evictedRows;
+  final newEndRow = selection.endRow - evictedRows;
+  // Both endpoints scrolled off the top → the selection is gone.
+  if (newStartRow < 0 && newEndRow < 0) return null;
+  return TerminalSelection(
+    startRow: newStartRow < 0 ? 0 : newStartRow,
+    startCol: selection.startCol,
+    endRow: newEndRow < 0 ? 0 : newEndRow,
+    endCol: selection.endCol,
+    mode: selection.mode,
+  );
+}
+
+/// Whether a single TAP should DISMISS an active selection (and SWALLOW the tap)
+/// rather than forward a click / type (#706, issue 2).
+///
+/// Owner workflow: long-press begin → drag to select → release (the selection
+/// PERSISTS, #705) → TAP ANYWHERE ONCE → dismiss → long-press to begin again. So
+/// when a selection is active, a tap's PRIMARY job is to clear it; the tap must
+/// NOT also forward the #693 SGR click (which would step a tmux window) or do
+/// anything else with the gesture. When there is NO active selection, the tap
+/// behaves exactly as before (focus + raise keyboard +, under mouse mode, an SGR
+/// click). Pure, so the decision is unit-testable headless.
+bool ghosttyTapShouldDismissSelection({required bool hasSelection}) =>
+    hasSelection;
+
 /// SGR-1006 button1-PRESS report at the 1-based ([col], [row]) cell (#692).
 ///
 /// `CSI < 0 ; col ; row M` — button 0 (left), uppercase `M` = press.
@@ -663,6 +724,8 @@ class _PointerGestureRouter extends StatefulWidget {
     required this.onMouseReport,
     required this.onSelectionStart,
     required this.onSelectionExtend,
+    required this.hasSelection,
+    required this.onSelectionClear,
   });
 
   /// Whether to intercept touch (the remote has mouse tracking on).
@@ -714,6 +777,16 @@ class _PointerGestureRouter extends StatefulWidget {
   /// VIEWPORT cell (#705): the parent rebuilds `controller.selection` with the
   /// same anchor and the new end, so the highlight GROWS as the finger drags.
   final void Function(int col, int row) onSelectionExtend;
+
+  /// Whether a selection is currently active (`controller.selection != null`),
+  /// read live so a TAP can DISMISS it (#706, issue 2). The parent owns the
+  /// controller, so it supplies this as a getter evaluated at tap time.
+  final bool Function() hasSelection;
+
+  /// Clear the active flterm LOCAL selection (`controller.clearSelection()`),
+  /// invoked when a TAP lands while a selection is active (#706, issue 2). The
+  /// tap is then SWALLOWED — no SGR click / type is forwarded.
+  final VoidCallback onSelectionClear;
 
   @override
   State<_PointerGestureRouter> createState() => _PointerGestureRouterState();
@@ -853,10 +926,18 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
   /// branch this handler isn't used for the click — see [build] — only the
   /// keyboard raise runs.
   void _onTapUp(TapUpDetails details) {
+    final local = details.localPosition;
+    // #706 (issue 2): if a selection is ACTIVE, a single tap's primary job is to
+    // DISMISS it — clear the selection and SWALLOW the tap (no keyboard raise,
+    // no SGR click, no type). The owner then long-presses again to start fresh.
+    if (ghosttyTapShouldDismissSelection(hasSelection: widget.hasSelection())) {
+      widget.onSelectionClear();
+      _trace('tap-dismiss-selection', local.dx, local.dy, null, null, null);
+      return;
+    }
     // Order: focus + raise the keyboard FIRST so the IME comes up regardless of
     // whether the click forwards (the keyboard is the always-on behaviour).
     widget.onTap();
-    final local = details.localPosition;
     if (!ghosttyTapShouldForwardClick(active: widget.active)) {
       _trace('tap', local.dx, local.dy, null, null, null);
       return;
@@ -879,7 +960,29 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
       // the keyboard on tap. No SGR is emitted here (plain shell, no mouse mode).
       return GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onTap: widget.onTap,
+        // #706 (issue 2): even in a plain shell a selection can exist (Select-all
+        // / double-/triple-tap), so a tap must DISMISS it first; otherwise raise
+        // the keyboard as before. We use onTapUp here too (it carries position
+        // for the trace) — the translucent layer still lets the pointer fall
+        // through to flterm for its own focus/scroll when no selection is active.
+        onTapUp: (details) {
+          final local = details.localPosition;
+          if (ghosttyTapShouldDismissSelection(
+            hasSelection: widget.hasSelection(),
+          )) {
+            widget.onSelectionClear();
+            _trace(
+              'tap-dismiss-selection',
+              local.dx,
+              local.dy,
+              null,
+              null,
+              null,
+            );
+            return;
+          }
+          widget.onTap();
+        },
         child: const SizedBox.expand(),
       );
     }
@@ -986,6 +1089,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   int? _selAnchorCol;
   int? _selAnchorRow;
 
+  /// #706 (issue 1): the scrollback length (`scrollbar.total - .visible`)
+  /// captured when the active selection was made, so [_reanchorSelectionOnGrowth]
+  /// can detect later EVICTION (a DROP in this length) and shift the selection's
+  /// absolute rows to keep the highlight on the same content. Null when no
+  /// selection is active.
+  int? _selScrollbackLen;
+
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
   SshSessionProxy? _proxy;
@@ -1048,7 +1158,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       });
       // Track remote mouse-mode changes so the #690 swipe-scroll overlay turns
       // on/off as the remote toggles mouse reporting (e.g. tmux mouse on/off).
-      controller.addListener(_syncMouseTracking);
+      controller.addListener(_onControllerChanged);
       _mouseTracking = controller.mouseTracking;
       _controller = controller;
       // #702: arm the first-connect resize re-sync on the proxy's shellReady
@@ -1065,6 +1175,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // blank crash so the device tester can report it (mirrors the spike).
       _initError = 'flterm init failed: $e';
     }
+  }
+
+  /// The controller is a `ChangeNotifier` that fires on output writes, scroll,
+  /// mouse-mode toggles, etc. On each notification we (1) re-anchor a persisted
+  /// selection to its content if the scrollback evicted lines (#706, issue 1),
+  /// then (2) follow the remote's mouse-tracking mode (#690). Re-anchor runs
+  /// FIRST and reads the controller directly (no setState), so it doesn't depend
+  /// on the mouse-mode rebuild.
+  void _onControllerChanged() {
+    _reanchorSelectionOnGrowth();
+    _syncMouseTracking();
   }
 
   /// Mirror the controller's live mouse-tracking mode into [_mouseTracking],
@@ -1203,6 +1324,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       endViewRow: row,
       scrollOffset: controller.scrollbar.offset,
     );
+    // #706 (issue 1): record the scrollback length this selection is anchored
+    // against, so a later eviction can be detected and the rows shifted.
+    _selScrollbackLen =
+        controller.scrollbar.total - controller.scrollbar.visible;
   }
 
   /// #705: extend the in-progress LOCAL selection's END to the dragged 1-based
@@ -1221,6 +1346,69 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       endViewRow: row,
       scrollOffset: controller.scrollbar.offset,
     );
+    // #706: capture the scrollback length the selection was anchored against,
+    // so [_reanchorSelectionOnGrowth] can detect later EVICTION and shift the
+    // absolute rows to keep the highlight on the same content.
+    _selScrollbackLen =
+        controller.scrollbar.total - controller.scrollbar.visible;
+  }
+
+  /// #706 (issue 2): clear the active flterm LOCAL selection and forget the
+  /// content anchor. Invoked when a single tap lands while a selection is
+  /// active (the tap is then swallowed). Idempotent.
+  void _clearSelection() {
+    final controller = _controller;
+    if (controller == null) return;
+    controller.clearSelection();
+    _selAnchorCol = null;
+    _selAnchorRow = null;
+    _selScrollbackLen = null;
+  }
+
+  /// #706 (issue 1): keep a persisted selection anchored to its CONTENT as
+  /// output streams. flterm stores the selection in the absolute, top-anchored
+  /// buffer frame and the painter re-reads `scrollbar.offset` each dirty frame,
+  /// so while the bounded scrollback is merely FILLING the highlight already
+  /// tracks its text (it slides up as new lines arrive). The one case the
+  /// absolute frame can't self-correct is scrollback EVICTION: once capped, the
+  /// oldest lines drop and every surviving line's index shifts down. We detect
+  /// that as a DROP in the scrollback length vs. the value captured when the
+  /// selection was made, and shift the rows by the evicted count via
+  /// [ghosttyReanchorForEviction] (clamping a partially-evicted span to row 0,
+  /// clearing a fully-evicted one).
+  ///
+  /// LIMIT (documented for the device tester): under tmux MOUSE MODE the remote
+  /// runs on the ALTERNATE screen, which has NO scrollback — `scrollbar.offset`
+  /// is pinned at 0 and tmux REDRAWS the grid in place rather than scrolling
+  /// lines into history. There is then no stable content frame for ANY local
+  /// selection (flterm's own selection has the same limit), so a selection made
+  /// over alt-screen content cannot track a redraw. This re-anchor covers the
+  /// primary-screen streaming case (plain shell / tmux copy-mode scrollback).
+  void _reanchorSelectionOnGrowth() {
+    final controller = _controller;
+    if (controller == null) return;
+    final selection = controller.selection;
+    final prevLen = _selScrollbackLen;
+    if (selection == null || prevLen == null) return;
+    final nextLen = controller.scrollbar.total - controller.scrollbar.visible;
+    // While the scrollback is still filling (nextLen grows), the absolute frame
+    // is stable — flterm tracks it for us, so do nothing. A DROP means eviction:
+    // shift the selection up by how many lines were pushed past the cap.
+    final evicted = prevLen - nextLen;
+    if (evicted <= 0) {
+      _selScrollbackLen = nextLen;
+      return;
+    }
+    final reanchored = ghosttyReanchorForEviction(
+      selection,
+      evictedRows: evicted,
+    );
+    _selScrollbackLen = nextLen;
+    if (reanchored == null) {
+      _clearSelection();
+      return;
+    }
+    controller.selection = reanchored;
   }
 
   Future<void> _copySelection() async {
@@ -1248,6 +1436,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     final controller = _controller;
     if (controller == null) return;
     controller.selectAll();
+    // #706 (issue 1): anchor the content-tracking baseline so a Select-all span
+    // is re-offset on eviction too (and a tap dismisses it like any selection).
+    _selAnchorCol = null;
+    _selAnchorRow = null;
+    _selScrollbackLen =
+        controller.scrollbar.total - controller.scrollbar.visible;
     if (mounted) showTopToast(context, 'Selected all — tap copy to grab it.');
   }
 
@@ -1259,7 +1453,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     _resyncTimers.clear();
     _outputSub?.cancel();
-    _controller?.removeListener(_syncMouseTracking);
+    _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
     _controller?.onResize = null;
     _controller?.dispose();
@@ -1412,6 +1606,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // after release → Copy reads it), not a tmux SGR drag.
             onSelectionStart: _onSelectionStart,
             onSelectionExtend: _onSelectionExtend,
+            // #706 (issue 2): a single tap dismisses an active selection and is
+            // swallowed. The parent owns the controller, so it answers "is a
+            // selection active?" live and clears it on demand.
+            hasSelection: () => controller.selection != null,
+            onSelectionClear: _clearSelection,
           ),
         ),
         // Selection affordances (bottom-right). A deliberate long-press-drag
