@@ -306,25 +306,25 @@ void main() {
   group('ghosttyWindowSwitchForSwipe — direction + threshold (#693)', () {
     const threshold = kGhosttyWindowSwitchThreshold; // 32px
 
-    test('swipe LEFT past threshold → next-window (wheel-down)', () {
+    test('swipe LEFT past threshold → previous-window (wheel-up)', () {
       expect(
         ghosttyWindowSwitchForSwipe(-threshold, threshold),
-        GhosttyWindowSwitch.next,
+        GhosttyWindowSwitch.previous,
       );
       expect(
         ghosttyWindowSwitchForSwipe(-200, threshold),
-        GhosttyWindowSwitch.next,
+        GhosttyWindowSwitch.previous,
       );
     });
 
-    test('swipe RIGHT past threshold → previous-window (wheel-up)', () {
+    test('swipe RIGHT past threshold → next-window (wheel-down)', () {
       expect(
         ghosttyWindowSwitchForSwipe(threshold, threshold),
-        GhosttyWindowSwitch.previous,
+        GhosttyWindowSwitch.next,
       );
       expect(
         ghosttyWindowSwitchForSwipe(200, threshold),
-        GhosttyWindowSwitch.previous,
+        GhosttyWindowSwitch.next,
       );
     });
 
@@ -346,11 +346,11 @@ void main() {
     test('boundary: exactly ±threshold counts (inclusive)', () {
       expect(
         ghosttyWindowSwitchForSwipe(threshold, threshold),
-        GhosttyWindowSwitch.previous,
+        GhosttyWindowSwitch.next,
       );
       expect(
         ghosttyWindowSwitchForSwipe(-threshold, threshold),
-        GhosttyWindowSwitch.next,
+        GhosttyWindowSwitch.previous,
       );
     });
   });
@@ -366,9 +366,9 @@ void main() {
   );
 
   group('swipe end-to-end: dx + status row feed the wheel report (#693)', () {
-    test('swipe LEFT emits one wheel-DOWN at the status row (next-window)', () {
+    test('swipe RIGHT emits one wheel-DOWN at the status row (next-window)', () {
       final decision = ghosttyWindowSwitchForSwipe(
-        -64,
+        64,
         kGhosttyWindowSwitchThreshold,
       );
       expect(decision, GhosttyWindowSwitch.next);
@@ -376,9 +376,9 @@ void main() {
       expect(ghosttySgrWheelDown(col: col, row: row), '\x1b[<65;1;24M');
     });
 
-    test('swipe RIGHT emits one wheel-UP at the status row (prev-window)', () {
+    test('swipe LEFT emits one wheel-UP at the status row (prev-window)', () {
       final decision = ghosttyWindowSwitchForSwipe(
-        64,
+        -64,
         kGhosttyWindowSwitchThreshold,
       );
       expect(decision, GhosttyWindowSwitch.previous);

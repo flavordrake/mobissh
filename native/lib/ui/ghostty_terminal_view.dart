@@ -315,7 +315,7 @@ double ghosttyScrollDeltaForSwipe(double fingerDy) => -fingerDy;
 /// `CSI < 64 ; col ; row M` — button 64 is the wheel-up code. tmux's DEFAULT
 /// root-table binding `bind -n WheelUpStatus previous-window` switches to the
 /// PREVIOUS window when a wheel-up lands on the status line (no prefix, no user
-/// config). So a horizontal swipe RIGHT (→ previous-window) synthesises this at
+/// config). So a horizontal swipe LEFT (→ previous-window) synthesises this at
 /// the status row. Pure (no FFI), so the byte sequence is unit-testable headless.
 String ghosttySgrWheelUp({required int col, required int row}) =>
     '\x1b[<64;$col;${row}M';
@@ -324,7 +324,7 @@ String ghosttySgrWheelUp({required int col, required int row}) =>
 ///
 /// `CSI < 65 ; col ; row M` — button 65 is the wheel-down code. tmux's DEFAULT
 /// root-table binding `bind -n WheelDownStatus next-window` switches to the NEXT
-/// window when a wheel-down lands on the status line. So a horizontal swipe LEFT
+/// window when a wheel-down lands on the status line. So a horizontal swipe RIGHT
 /// (→ next-window) synthesises this at the status row. Pure (no FFI), so the byte
 /// sequence is unit-testable headless.
 String ghosttySgrWheelDown({required int col, required int row}) =>
@@ -339,11 +339,11 @@ enum GhosttyWindowSwitch {
   /// Below the px threshold — no window step.
   none,
 
-  /// Swipe LEFT (dx ≤ -threshold) → next-window via a wheel-DOWN report
+  /// Swipe RIGHT (dx ≥ +threshold) → next-window via a wheel-DOWN report
   /// (`WheelDownStatus`).
   next,
 
-  /// Swipe RIGHT (dx ≥ +threshold) → previous-window via a wheel-UP report
+  /// Swipe LEFT (dx ≤ -threshold) → previous-window via a wheel-UP report
   /// (`WheelUpStatus`).
   previous,
 }
@@ -351,10 +351,11 @@ enum GhosttyWindowSwitch {
 /// Decide whether a horizontal swipe of net [totalDx] logical px (across the
 /// whole drag) crosses [threshold] and, if so, in which direction (#693).
 ///
-/// Direction convention (mobile-natural; the owner can flip it later):
-///   - swipe LEFT  (`totalDx <= -threshold`) → [GhosttyWindowSwitch.next]
+/// Direction convention (owner-chosen 2026-06-03 — swiped to match the keybar's
+/// tab feel):
+///   - swipe RIGHT (`totalDx >=  threshold`) → [GhosttyWindowSwitch.next]
 ///     (next-window, emitted as wheel-DOWN → `WheelDownStatus`);
-///   - swipe RIGHT (`totalDx >=  threshold`) → [GhosttyWindowSwitch.previous]
+///   - swipe LEFT  (`totalDx <= -threshold`) → [GhosttyWindowSwitch.previous]
 ///     (previous-window, emitted as wheel-UP → `WheelUpStatus`);
 ///   - otherwise → [GhosttyWindowSwitch.none].
 ///
@@ -364,8 +365,8 @@ GhosttyWindowSwitch ghosttyWindowSwitchForSwipe(
   double totalDx,
   double threshold,
 ) {
-  if (totalDx <= -threshold) return GhosttyWindowSwitch.next;
-  if (totalDx >= threshold) return GhosttyWindowSwitch.previous;
+  if (totalDx <= -threshold) return GhosttyWindowSwitch.previous;
+  if (totalDx >= threshold) return GhosttyWindowSwitch.next;
   return GhosttyWindowSwitch.none;
 }
 
@@ -395,8 +396,8 @@ const double kGhosttyWindowSwitchThreshold = 32.0;
 ///   - a HORIZONTAL finger SWIPE -> switch the tmux WINDOW (#693): on lift, if the
 ///     net dx crossed [kGhosttyWindowSwitchThreshold], emit ONE SGR wheel report
 ///     at the status-line row via [onMouseReport] — tmux's default
-///     `WheelUpStatus`/`WheelDownStatus` binding steps one window (swipe LEFT →
-///     next, swipe RIGHT → previous);
+///     `WheelUpStatus`/`WheelDownStatus` binding steps one window (swipe RIGHT →
+///     next, swipe LEFT → previous);
 ///   - a deliberate LONG-PRESS (held stationary past the recogniser threshold)
 ///     then drag -> drive a remote SELECTION (#692): map the touch -> cell and
 ///     emit SGR-1006 button1 press / motion / release via [onMouseReport]; the
@@ -487,11 +488,11 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
     if (decision == GhosttyWindowSwitch.none) return;
     final (col, row) = ghosttyStatusRowCell(rows: widget.rows);
     final report = decision == GhosttyWindowSwitch.next
-        ? ghosttySgrWheelDown(col: col, row: row) // swipe LEFT → next-window
+        ? ghosttySgrWheelDown(col: col, row: row) // swipe RIGHT → next-window
         : ghosttySgrWheelUp(
             col: col,
             row: row,
-          ); // swipe RIGHT → previous-window
+          ); // swipe LEFT → previous-window
     widget.onMouseReport(report);
   }
 
