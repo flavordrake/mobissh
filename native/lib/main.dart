@@ -213,6 +213,35 @@ class _RootRouterState extends ConsumerState<RootRouter> {
   }
 }
 
+/// Pushes the FULL [ConnectHomePage] (Profiles / Settings / Diagnostics) as a
+/// route OVER the live terminal so the user can reach profiles + every setting
+/// WITHOUT disconnecting any session (#721). The sessions collection is left
+/// untouched — pushing a route doesn't close or pause sessions, so the
+/// foreground-service keep-alive and the active-session selection persist
+/// underneath. The pushed route can pop (`Navigator.canPop()` is true), so:
+///   - [ConnectHomePage]'s AppBar auto-shows a back arrow + system back pops →
+///     returns to the previously-active session(s) (the router keeps showing
+///     [TerminalScreen] because the sessions are still connected).
+///   - The embedded [ConnectForm] pops this route itself once a NEW session
+///     CONNECTS (`_popWhenConnected`), so "add connection" flows back to the
+///     terminal exactly like the old "New session" route did.
+///
+/// This is the SAME view shown at first-run / cold start (the router's
+/// zero-session branch) — there is no reduced connect form anymore. First-run,
+/// "add connection", and "open settings from a session" are one unified view.
+///
+/// Navigation uses the passed [context]'s Navigator. Callers that live above
+/// the Navigator (e.g. a `MaterialApp.builder` overlay) must instead route via
+/// the app `navigatorKey` (the #664 "just blinks" trap) — the session menu /
+/// session bar that call this sit BELOW the Navigator, so their context is fine.
+Future<void> openConnectHome(BuildContext context) {
+  return Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => const ConnectHomePage(fromSession: true),
+    ),
+  );
+}
+
 /// The cold-start / home view (#583, reshaped in #611 Part A).
 ///
 /// #611: the home is JUST the profile CHOOSER — tap = connect, pencil = edit,
@@ -222,13 +251,27 @@ class _RootRouterState extends ConsumerState<RootRouter> {
 /// [DiagnosticsScreen]). The screens host the EXISTING settings/diagnostics
 /// widgets unchanged so they can grow later (#611 follow-ups).
 ///
+/// #721: the SAME page is also reachable on demand OVER a live session (pushed
+/// by [openConnectHome] from the session menu / session bar) so profiles +
+/// every setting are available without tearing down sessions. When pushed that
+/// way [fromSession] is true: the route can pop, so the AppBar shows a back
+/// arrow back to the active terminal, and the title makes the "over a session"
+/// context legible. As the cold-start home (router's zero-session branch) it is
+/// the root route — [fromSession] is false, nothing to pop, and the router
+/// swaps to the terminal the moment any session connects.
+///
 /// Out of scope here (Part B, follow-up): PWA-style quick-reconnect / "session
 /// set" bundles — that needs a recent-sessions store + PWA spec study.
 ///
 /// Connection status is shown on the terminal screen (the router swaps to it
 /// the moment any session connects).
 class ConnectHomePage extends StatefulWidget {
-  const ConnectHomePage({super.key});
+  const ConnectHomePage({super.key, this.fromSession = false});
+
+  /// True when pushed OVER a live terminal (#721) rather than shown as the
+  /// cold-start root. Drives the back-to-session affordance + title only — the
+  /// body (Profiles / Settings / Diagnostics) is identical in both cases.
+  final bool fromSession;
 
   @override
   State<ConnectHomePage> createState() => _ConnectHomePageState();
@@ -245,8 +288,21 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
     // IndexedStack keeps each destination's state alive across tab switches
     // (e.g. the connect-log scroll position, an in-flight diagnostics future)
     // rather than rebuilding from scratch on every tap.
+    //
+    // #721: when pushed OVER a live session the AppBar auto-shows a back arrow
+    // (the route can pop), which returns to the active terminal. A tooltip +
+    // key make that back affordance test-addressable. As the cold-start root
+    // (fromSession == false) there's nothing to pop, so no back button shows.
+    final leading = widget.fromSession
+        ? IconButton(
+            key: const Key('home-back-to-session'),
+            icon: const Icon(Icons.arrow_back),
+            tooltip: 'Back to session',
+            onPressed: () => Navigator.of(context).maybePop(),
+          )
+        : null;
     return Scaffold(
-      appBar: AppBar(title: Text(_titles[_index])),
+      appBar: AppBar(leading: leading, title: Text(_titles[_index])),
       body: SafeArea(
         child: IndexedStack(
           index: _index,

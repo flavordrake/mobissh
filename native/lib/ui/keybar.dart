@@ -23,29 +23,65 @@ import 'package:xterm/xterm.dart';
 
 import '../state/sessions.dart';
 
-/// Bottom-chrome sizing (#615). The keybar was shrunk ~25% vertically to give
-/// the terminal more real estate. These are the single source of truth for the
-/// button geometry AND the vertical space the bar occupies — the latter
+/// Bottom-chrome sizing. These are the single source of truth for the button
+/// geometry AND the vertical space the bar occupies — the latter
 /// ([kKeybarReserve]) is consumed by the compose bar's bottom reserve in
 /// terminal_screen.dart so a docked compose panel always clears the chrome.
 ///
-/// Old values (pre-#615): minWidth 48, minHeight 44, icon 18, label 14,
-/// reserve ≈ 96. The ~25% reduction lands the height around 33 and the reserve
-/// around 72.
+/// #615 had shrunk the bar ~25% (minHeight 33, icon 14, label 12) for terminal
+/// real estate, but owner device feedback (#696) found the labels too small and
+/// too low-contrast to read over the terminal. #696 trades a little of that
+/// vertical savings back for legibility: a clearly LARGER label font, with the
+/// internal/text padding trimmed (owner-approved) so the taller text doesn't
+/// grow the bar much, and the touch-target min-height restored to the 44px
+/// floor. Colors go high-contrast (near-black key bg, bright label) in the
+/// button style below.
+///
+/// Old values (pre-#615): minWidth 48, minHeight 44, icon 18, label 14.
 const double kKeybarButtonMinWidth = 44;
-const double kKeybarButtonMinHeight = 33;
-const double kKeybarIconSize = 14;
-const double kKeybarLabelFontSize = 12;
+const double kKeybarButtonMinHeight = 44;
+const double kKeybarIconSize = 18;
 
-/// "ESC" is the widest text label; scaling it down lets it share the normal
-/// button min width instead of bulging the bar (#615). Still monochrome text —
-/// no glyph that could be mistaken for Enter.
-const double kKeybarEscFontSize = 10;
+/// Single-character TEXT keys (`|`, `/`, `-` and any other 1-glyph label) are
+/// NARROWER than multi-char keys so they don't waste width (#703 owner device
+/// feedback). Multi-char text keys (Esc, Tab label, Home, PgUp…) keep the full
+/// [kKeybarButtonMinWidth] so they never clip. Icon keys also keep the full
+/// width. The tap-target HEIGHT is unchanged ([kKeybarButtonMinHeight]) — only
+/// horizontal width shrinks.
+const double kKeybarSingleCharMinWidth = 30;
+
+/// #703: ALL keybar TEXT labels render at ONE uniform size — the smaller ESC
+/// size. The owner asked for a single, smaller text size across the bar (icons
+/// stay legible at [kKeybarIconSize]). [kKeybarEscFontSize] is the single
+/// source of truth for that uniform text size.
+///
+/// #615 had shrunk the bar; #696 bumped labels back up to ~17 for legibility
+/// but kept ESC a notch smaller (14) so it shared the normal width. #703
+/// collapses the two: every text key now uses the ESC size, so the constant is
+/// reused for every label below.
+const double kKeybarLabelFontSize = 14;
+
+/// The uniform keybar text size (#703). ESC is no longer special-cased — this
+/// is simply the one text size used for ALL text labels. Kept as a distinct
+/// (equal) constant so call sites and tests stay readable.
+const double kKeybarEscFontSize = 14;
 
 /// Vertical space (logical px) the keybar occupies, used as the compose-bar
-/// bottom reserve. Button height + the 4px top/bottom scroll-view padding,
-/// rounded for a small safety margin. ~25% smaller than the old hardcoded 96.
-const double kKeybarReserve = 72;
+/// bottom reserve. Button height (44) + the 3px top/bottom scroll-view padding,
+/// rounded up for a small safety margin so a docked compose panel clears the
+/// chrome.
+const double kKeybarReserve = 56;
+
+/// High-contrast keybar palette (#696). Owner device feedback: the old
+/// dark-blue (theme `surfaceContainerHigh`) bar + dim `onSurface` labels were
+/// too low-contrast to read over the terminal. The owner's example was BLACK
+/// keys instead of dark-blue. We back the bar with near-black, fill each key a
+/// touch above it so the keys read as distinct faces, and paint the labels
+/// near-white. Monochrome (no color/emoji — project rule); the theme accent is
+/// reserved for the armed-Ctrl state so it still pops against the dark keys.
+const Color kKeybarBarColor = Color(0xFF000000); // bar backing — black
+const Color kKeybarKeyColor = Color(0xFF1A1A1A); // key face — near-black
+const Color kKeybarLabelColor = Color(0xFFF2F2F2); // label — near-white
 
 /// One key on the bar. Renders [label] text, OR [icon] (a monochrome
 /// theme-tinted Material icon) when set — never an emoji.
@@ -55,6 +91,7 @@ class KeybarKey {
     required this.label,
     required this.sequence,
     this.icon,
+    this.isModifier = false,
   });
 
   final String id;
@@ -64,6 +101,59 @@ class KeybarKey {
   /// When non-null, the button shows this monochrome icon instead of [label]
   /// text (e.g. Paste). [label] is still used as the accessibility tooltip.
   final IconData? icon;
+
+  /// A sticky modifier key (the Ctrl key, #694) — tapping it ARMS the modifier
+  /// rather than emitting [sequence]. Modifier keys carry no literal byte; the
+  /// transform is applied to the NEXT key. See [CtrlModifier] / [ctrlTransform].
+  final bool isModifier;
+}
+
+/// Transform a keybar [sequence] as if Ctrl were held (#694), mirroring the
+/// PWA's `ctrlActive` mapping (`e.key.toLowerCase().charCodeAt(0) - 96`).
+///
+/// A single ASCII letter a–z / A–Z becomes its control byte via `& 0x1f`
+/// (Ctrl+A = \x01 … Ctrl+Z = \x1a). Anything else — a multi-byte CSI escape
+/// (arrows), an already-control byte (^C), an empty sequence (Paste), or a
+/// symbol with no letter control meaning — passes through UNCHANGED. The caller
+/// still clears the armed modifier afterward (one-shot sticky).
+String ctrlTransform(String sequence) {
+  if (sequence.length != 1) return sequence;
+  final code = sequence.codeUnitAt(0);
+  final isLetter =
+      (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+  if (!isLetter) return sequence;
+  return String.fromCharCode(code & 0x1f);
+}
+
+/// Sticky one-shot Ctrl modifier state (#694), mirroring the PWA's
+/// `ctrlActive`. [arm] toggles the armed flag (a second tap CANCELS). [apply]
+/// transforms the next key's sequence when armed and AUTO-CLEARS (one-shot).
+///
+/// Kept as a plain state holder (no widget dependency) so the arm/transform/
+/// clear lifecycle is unit-testable — the keybar widget tap path hangs the
+/// headless harness on Material ripple (see keybar_test.dart).
+class CtrlModifier {
+  bool _armed = false;
+
+  bool get armed => _armed;
+
+  /// Tap the Ctrl key: arm if disarmed, cancel if already armed.
+  void arm() {
+    _armed = !_armed;
+  }
+
+  /// Force the modifier off (e.g. when switching sessions).
+  void clear() {
+    _armed = false;
+  }
+
+  /// Apply Ctrl to [sequence] if armed, then auto-clear. Returns the bytes to
+  /// actually send. When disarmed, returns [sequence] verbatim.
+  String apply(String sequence) {
+    if (!_armed) return sequence;
+    _armed = false;
+    return ctrlTransform(sequence);
+  }
 }
 
 /// Default key layout — one flat line (scrolls horizontally), mirroring the
@@ -84,6 +174,12 @@ class KeybarKey {
 const List<KeybarKey> kDefaultKeybarKeys = [
   // --- nav / symbol keys first ---
   KeybarKey(id: 'keyEsc', label: 'Esc', sequence: '\x1b'),
+  // #703: the sticky Ctrl MODIFIER now leads the bar, immediately after Esc
+  // (owner device feedback overriding #694's control-group placement for the
+  // modifier specifically). Tapping it arms Ctrl for the next keybar key
+  // (Ctrl+A..Z etc.), then auto-clears. It carries no literal byte
+  // (isModifier). The FIXED ^C/^Z/^B/^D quick combos stay grouped at the END.
+  KeybarKey(id: 'keyCtrl', label: 'Ctrl', sequence: '', isModifier: true),
   KeybarKey(id: 'keyTab', label: '↹', sequence: '\t'),
   KeybarKey(id: 'keySlash', label: '/', sequence: '/'),
   KeybarKey(id: 'keyDash', label: '-', sequence: '-'),
@@ -132,24 +228,73 @@ const List<KeybarKey> kDefaultKeybarKeys = [
     sequence: '', // handled out-of-band
     icon: Icons.content_paste,
   ),
-  // --- control sequences grouped LAST (owner-mandated, do not intersperse) ---
+  // --- fixed control combos grouped LAST (owner-mandated, do not intersperse) ---
+  // The one-tap ^C/^Z/^B/^D interrupts stay grouped at the END. The sticky Ctrl
+  // MODIFIER moved to the FRONT (right after Esc) per #703 — only the modifier
+  // moved; these fixed combos keep their tail grouping.
   KeybarKey(id: 'keyCtrlC', label: '^C', sequence: '\x03'),
   KeybarKey(id: 'keyCtrlZ', label: '^Z', sequence: '\x1a'),
   KeybarKey(id: 'keyCtrlB', label: '^B', sequence: '\x02'),
   KeybarKey(id: 'keyCtrlD', label: '^D', sequence: '\x04'),
 ];
 
-class Keybar extends ConsumerWidget {
+class Keybar extends ConsumerStatefulWidget {
   const Keybar({super.key, required this.activeEntry});
 
   final SessionEntry activeEntry;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
+  ConsumerState<Keybar> createState() => _KeybarState();
+}
+
+class _KeybarState extends ConsumerState<Keybar> {
+  // #694: sticky one-shot Ctrl modifier, mirroring the PWA's `ctrlActive`.
+  // Tapping the Ctrl key arms it; the next keybar key transforms to its control
+  // byte, then it auto-clears.
+  final CtrlModifier _ctrl = CtrlModifier();
+
+  void _onKeyTap(KeybarKey k) {
+    final terminal = widget.activeEntry.terminal;
+
+    // The Ctrl modifier key itself: arm/cancel, no byte emitted.
+    if (k.isModifier) {
+      setState(_ctrl.arm);
+      return;
+    }
+
+    // Paste pulls from the clipboard out-of-band. If Ctrl was armed, it has no
+    // single-letter control meaning, so clear the modifier and paste literally.
+    if (k.id == 'keyPaste') {
+      final wasArmed = _ctrl.armed;
+      if (wasArmed) setState(_ctrl.clear);
+      _paste(terminal);
+      return;
+    }
+
+    // Apply the (possibly armed) Ctrl transform and send. `apply` auto-clears
+    // the one-shot modifier; rebuild so the armed highlight clears.
+    final wasArmed = _ctrl.armed;
+    final bytes = _ctrl.apply(k.sequence);
+    if (bytes.isNotEmpty) terminal.textInput(bytes);
+    if (wasArmed) setState(() {});
+  }
+
+  Future<void> _paste(Terminal terminal) async {
+    final data = await Clipboard.getData('text/plain');
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) {
+      terminal.textInput(text);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Material(
       key: const Key('keybar'),
-      color: theme.colorScheme.surfaceContainerHigh,
+      // #696: high-contrast strip. The bar backs the keys with near-black so the
+      // brighter key faces read clearly over the terminal, instead of the old
+      // dark-blue surfaceContainerHigh tint that washed the labels out.
+      color: kKeybarBarColor,
       child: SafeArea(
         top: false,
         // ONE LINE that scrolls horizontally (owner 2026-06-01). 16 keys can't
@@ -168,7 +313,9 @@ class Keybar extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: _KeybarButton(
                     keyData: k,
-                    terminal: activeEntry.terminal,
+                    // The Ctrl key shows an accented/armed state while sticky.
+                    armed: k.isModifier && _ctrl.armed,
+                    onTap: () => _onKeyTap(k),
                   ),
                 ),
             ],
@@ -180,63 +327,88 @@ class Keybar extends ConsumerWidget {
 }
 
 class _KeybarButton extends StatelessWidget {
-  const _KeybarButton({required this.keyData, required this.terminal});
+  const _KeybarButton({
+    required this.keyData,
+    required this.onTap,
+    this.armed = false,
+  });
 
   final KeybarKey keyData;
-  final Terminal terminal;
+  final VoidCallback onTap;
 
-  Future<void> _onTap(BuildContext context) async {
-    if (keyData.id == 'keyPaste') {
-      final data = await Clipboard.getData('text/plain');
-      final text = data?.text;
-      if (text != null && text.isNotEmpty) {
-        terminal.textInput(text);
-      }
-      return;
-    }
-    terminal.textInput(keyData.sequence);
-  }
+  /// #694: when true (the armed Ctrl modifier), the button paints an accented
+  /// highlight so it's clear Ctrl is sticky for the next key.
+  final bool armed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // #615: ESC is the widest text key; render it at a smaller font so it fits
-    // the shared normal button width instead of bulging the bar. Still plain
-    // monochrome text (no Enter-ish glyph).
-    final bool isEsc = keyData.id == 'keyEsc';
+    // #703: a single-character TEXT key (`|`, `/`, `-`, …) gets a narrower min
+    // width so it doesn't waste horizontal space. Icon keys and multi-char text
+    // keys keep the full width so they never clip. Height is unchanged.
+    final bool isSingleChar = keyData.icon == null && keyData.label.length == 1;
+    final double minWidth = isSingleChar
+        ? kKeybarSingleCharMinWidth
+        : kKeybarButtonMinWidth;
     // Monochrome icon (theme-tinted) when set, else the label glyph/text.
     // Never an emoji — see memory feedback_monochrome_icons_no_emoji.
+    // #694: the armed Ctrl modifier paints accent-tinted text so the sticky
+    // state reads clearly. #696: other keys use a bright near-white label for
+    // high contrast against the near-black key face (the old dim `onSurface`
+    // tint was unreadable over the terminal).
+    final Color fg = armed ? theme.colorScheme.onPrimary : kKeybarLabelColor;
     final Widget child = keyData.icon != null
         ? Icon(
             keyData.icon,
             size: kKeybarIconSize,
-            color: theme.colorScheme.onSurface,
+            color: fg,
             semanticLabel: keyData.label,
           )
         : Text(
             keyData.label,
             style: TextStyle(
-              fontSize: isEsc ? kKeybarEscFontSize : kKeybarLabelFontSize,
+              // #703: ONE uniform text size for every label (the smaller ESC
+              // size). Icons stay at kKeybarIconSize so they remain legible.
+              fontSize: kKeybarLabelFontSize,
               fontFamily: 'monospace',
+              // #696: always the high-contrast label color (armed = onPrimary,
+              // else the bright near-white) so it reads over the dark key face.
+              color: fg,
             ),
             overflow: TextOverflow.ellipsis,
           );
     return OutlinedButton(
       key: Key('keybar-btn-${keyData.id}'),
-      onPressed: () => _onTap(context),
+      onPressed: onTap,
       style: OutlinedButton.styleFrom(
-        // #615: tighter padding for the ~25% shrink. Still a touch-friendly
-        // tap target via minimumSize below.
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        // Every key shares the same min width so the bar stays even — ESC no
-        // longer bulges (its smaller font fits this width).
-        minimumSize: const Size(kKeybarButtonMinWidth, kKeybarButtonMinHeight),
+        // #694: armed Ctrl fills with the accent color so the sticky state is
+        // unmistakable (mirrors the PWA's `.active` keybar styling). #696:
+        // unarmed keys fill near-black so each key reads as a distinct face
+        // against the black bar and the bright label pops.
+        backgroundColor: armed ? theme.colorScheme.primary : kKeybarKeyColor,
+        foregroundColor: fg,
+        // #696: trim the internal padding so the label fits without growing the
+        // bar height. The comfortable tap target is preserved via minimumSize
+        // (44px height) below. #703: single-char keys also trim horizontal
+        // padding so they read as tight, narrow keys.
+        padding: EdgeInsets.symmetric(
+          horizontal: isSingleChar ? 2 : 6,
+          vertical: 2,
+        ),
+        // #703: single-char text keys use a narrower min width so they don't
+        // waste space; multi-char and icon keys keep the full width. Height is
+        // the same comfortable tap target for every key.
+        minimumSize: Size(minWidth, kKeybarButtonMinHeight),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        // #615: lighter outline — thinner, lower-opacity border so the bar
-        // reads as a quiet strip rather than a grid of boxes.
+        // #696: a subtle light hairline separates each near-black key face from
+        // the black bar so the keys read as distinct buttons (the #615 dim
+        // outline disappeared against black). Armed Ctrl keeps its solid accent
+        // border to match its filled state.
         side: BorderSide(
-          color: theme.colorScheme.outline.withValues(alpha: 0.4),
-          width: 0.5,
+          color: armed
+              ? theme.colorScheme.primary
+              : kKeybarLabelColor.withValues(alpha: 0.22),
+          width: armed ? 1.0 : 0.5,
         ),
         // Squarer look matching the PWA keybar — subtle rounding, not pill.
         shape: const RoundedRectangleBorder(

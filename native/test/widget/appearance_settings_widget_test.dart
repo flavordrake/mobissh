@@ -1,6 +1,7 @@
 // Widget tests for #552 terminal-appearance UI:
 //   - SettingsPanel exposes a font-size slider that reflects + persists value.
-//   - SessionMenu exposes a theme-cycle item that advances the palette.
+//   - SessionMenu exposes a theme picker that sets the active session's palette
+//     (#724: was an advance-to-next cycle, now a picker).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -125,10 +126,10 @@ void main() {
       return container;
     }
 
-    // #601/#571: the theme cycle is now PER-SESSION. Tapping it advances the
-    // ACTIVE session's palette index, not a global one. (The global
-    // `terminalThemeProvider` is now only the default a new session inherits.)
-    testWidgets('theme-cycle item present and advances the active session', (
+    // #601/#571/#724: the theme control is PER-SESSION and now a PICKER. Tapping
+    // it opens a bottom sheet of palettes; selecting one sets the ACTIVE
+    // session's palette index (not a global one).
+    testWidgets('theme picker present and sets the active session palette', (
       tester,
     ) async {
       final container = makeContainer();
@@ -157,7 +158,10 @@ void main() {
       final item = find.byKey(const Key('session-menu-theme-cycle'));
       expect(item, findsOneWidget);
 
+      // Open the picker and select the second palette (index 1).
       await tester.tap(item);
+      await _pumpFrames(tester);
+      await tester.tap(find.byKey(const Key('picker-option-1')));
       await _pumpFrames(tester);
 
       expect(container.read(sessionThemeProvider(entry.id)), 1);

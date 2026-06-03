@@ -1,8 +1,12 @@
-// Session-menu per-session theme + font controls (#601, #571).
+// Session-menu per-session theme + font controls (#601, #571, #724).
 //
-// The menu's Theme cycle row and the NEW font-size stepper must mutate ONLY the
+// The menu's Theme PICKER (#724) and the font-size stepper must mutate ONLY the
 // ACTIVE session. With two sessions open, operating the menu on the active one
 // must leave the other's theme + font unchanged (isolation, not just presence).
+//
+// #724: the theme control is now a PICKER (bottom sheet of all palettes with the
+// current marked), not a blind advance-to-next cycle; the font-size stepper no
+// longer shows a numeric value (just − / +).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -82,7 +86,16 @@ void main() {
       await tester.tap(find.byKey(const Key('open-menu')));
       await _pumpFrames(tester);
 
-      expect(find.byKey(const Key('session-menu-fontsize')), findsOneWidget);
+      // #724: the font-size control shows − / + with NO numeric value.
+      expect(find.byKey(const Key('session-menu-fontsize')), findsNothing);
+      expect(
+        find.byKey(const Key('session-menu-fontsize-dec')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('session-menu-fontsize-inc')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byKey(const Key('session-menu-fontsize-inc')));
       await _pumpFrames(tester);
@@ -109,7 +122,9 @@ void main() {
       expect(container.read(sessionFontSizeProvider(a.id)), fontSizeDefault);
     });
 
-    testWidgets('theme cycle changes ONLY the active session', (tester) async {
+    testWidgets('theme picker changes ONLY the active session (#724)', (
+      tester,
+    ) async {
       final container = _makeContainer();
       final a = _add(container, 'host-a');
       final b = _add(container, 'host-b'); // b active
@@ -118,10 +133,24 @@ void main() {
       await tester.tap(find.byKey(const Key('open-menu')));
       await _pumpFrames(tester);
 
+      // Tapping the theme control opens a picker rather than cycling.
       await tester.tap(find.byKey(const Key('session-menu-theme-cycle')));
       await _pumpFrames(tester);
 
-      expect(container.read(sessionThemeProvider(b.id)), 1);
+      // Picker lists every palette; the current one is marked. Pick the third.
+      expect(
+        find.byKey(const Key('picker-option-0')),
+        findsOneWidget,
+        reason: 'picker should list palette options',
+      );
+      await tester.tap(find.byKey(const Key('picker-option-2')));
+      await _pumpFrames(tester);
+
+      expect(
+        container.read(sessionThemeProvider(b.id)),
+        2,
+        reason: 'active session theme set to the picked palette',
+      );
       expect(
         container.read(sessionThemeProvider(a.id)),
         terminalThemeDefault,
@@ -129,19 +158,34 @@ void main() {
       );
     });
 
-    testWidgets('font stepper shows the active session current value', (
-      tester,
-    ) async {
-      final container = _makeContainer();
-      _add(container, 'host-a');
-      final b = _add(container, 'host-b');
-      container.read(sessionAppearanceProvider.notifier).setFontSize(b.id, 17);
+    testWidgets(
+      'theme picker marks the active session current palette (#724)',
+      (tester) async {
+        final container = _makeContainer();
+        _add(container, 'host-a');
+        final b = _add(container, 'host-b');
+        container.read(sessionAppearanceProvider.notifier).setTheme(b.id, 4);
 
-      await tester.pumpWidget(_host(container: container));
-      await tester.tap(find.byKey(const Key('open-menu')));
-      await _pumpFrames(tester);
+        await tester.pumpWidget(_host(container: container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
 
-      expect(find.text('17'), findsOneWidget);
-    });
+        // The control label reflects the active session's current palette.
+        expect(find.text(terminalPalettes[4].label), findsWidgets);
+
+        await tester.tap(find.byKey(const Key('session-menu-theme-cycle')));
+        await _pumpFrames(tester);
+
+        // The current palette's row carries the check (selected) icon.
+        final selectedTile = tester.widget<ListTile>(
+          find.byKey(const Key('picker-option-4')),
+        );
+        expect(
+          selectedTile.selected,
+          isTrue,
+          reason: 'the current palette must be marked in the picker',
+        );
+      },
+    );
   });
 }

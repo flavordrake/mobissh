@@ -145,6 +145,12 @@ flutter:
   #   - CascadiaCode (CascadiaCode-OFL.txt) — microsoft/cascadia-code v2407.24
   #     CascadiaMono static ttf (the no-ligature mono cut, truest terminal face;
   #     registered as family `CascadiaCode` to match the picker family id).
+  #   - RobotoMono (RobotoMono-OFL.txt, OFL-1.1) — googlefonts/RobotoMono
+  #     fonts/ttf/ static Regular+Bold (#707).
+  #   - UbuntuMono (UbuntuMono-UFL.txt, Ubuntu Font Licence 1.0) — google/fonts
+  #     ufl/ubuntumono static Regular+Bold (#707).
+  #   - Cousine (Cousine-OFL.txt, OFL-1.1) — google/fonts ofl/cousine static
+  #     Regular+Bold (#707). (Iosevka deferred — needs a custom build.)
   fonts:
     - family: JetBrainsMono
       fonts:
@@ -160,6 +166,21 @@ flutter:
       fonts:
         - asset: assets/fonts/CascadiaMono-Regular.ttf
         - asset: assets/fonts/CascadiaMono-Bold.ttf
+          weight: 700
+    - family: RobotoMono
+      fonts:
+        - asset: assets/fonts/RobotoMono-Regular.ttf
+        - asset: assets/fonts/RobotoMono-Bold.ttf
+          weight: 700
+    - family: UbuntuMono
+      fonts:
+        - asset: assets/fonts/UbuntuMono-Regular.ttf
+        - asset: assets/fonts/UbuntuMono-Bold.ttf
+          weight: 700
+    - family: Cousine
+      fonts:
+        - asset: assets/fonts/Cousine-Regular.ttf
+        - asset: assets/fonts/Cousine-Bold.ttf
           weight: 700
 
   # To add assets to your application, add an assets section, like this:

@@ -228,13 +228,14 @@ class SavedProfile {
     String? keyVaultId,
     double? fontSize,
     String? fontFamily,
+    String? theme,
   }) {
     return SavedProfile(
       title: title ?? this.title,
       host: host,
       port: port,
       username: username,
-      theme: theme,
+      theme: theme ?? this.theme,
       fontSize: fontSize ?? this.fontSize,
       fontFamily: fontFamily ?? this.fontFamily,
       color: color,
@@ -657,6 +658,24 @@ class ProfilesStore {
     final idx = list.indexWhere((p) => p.identityKey == identityKey);
     if (idx < 0) return false;
     list[idx] = list[idx].copyWith(fontFamily: family);
+    await save(list);
+    return true;
+  }
+
+  /// Persist a per-profile terminal theme (#613, #724) onto the profile matching
+  /// [identityKey] (`host:port:username`). [themeKey] is the PWA `ThemeName` key
+  /// (e.g. 'dracula') that connect maps back to a palette via
+  /// [paletteIndexForThemeName]. Mirrors [setFontFamily]: the session-menu theme
+  /// picker calls this so the chosen palette survives restart/reconnect.
+  ///
+  /// NO-OP when no saved profile matches — an ad-hoc connect (host typed into
+  /// the form, never saved) must NOT be materialized as a saved profile just
+  /// because the user picked its theme. Returns true iff a profile was updated.
+  Future<bool> setTheme(String identityKey, String themeKey) async {
+    final list = await load();
+    final idx = list.indexWhere((p) => p.identityKey == identityKey);
+    if (idx < 0) return false;
+    list[idx] = list[idx].copyWith(theme: themeKey);
     await save(list);
     return true;
   }

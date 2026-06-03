@@ -28,6 +28,13 @@ PROD_CONTAINER="mobissh-prod"
 PROD_PUBLIC="/app/public"
 SERVE_HOST="https://mobissh.tailbe5094.ts.net"
 BUILT_APK="${NATIVE_DIR}/build/app/outputs/flutter-apk/app-release.apk"
+# Persistent, bind-mounted native distribution dir (#700). docker-compose.prod.yml
+# mounts this host path at the container's /app/native-dist, and server/index.js
+# serves the native artifact names from there — so the APK + install page survive
+# a container recreate AND the `container-ctl.sh push` hot-cp of public/ (the old
+# docker-cp-into-/app/public approach was wiped by both). FIXED host path (the main
+# checkout, = the mounted volume), independent of which worktree built the APK.
+NATIVE_DIST_HOST="${NATIVE_DIST_HOST:-/home/dev/workspace/mobissh/native-dist}"
 
 TS="$(date +%Y%m%dT%H%M%S%z)"
 STAMPED="mobissh-native-${TS}.apk"
@@ -57,12 +64,16 @@ cp "$BUILT_APK" "${PUBLIC_DIR}/${STABLE}"
 log "generating stable install landing page (public/native.html)"
 "${REPO_ROOT}/scripts/gen-apk-install-page.sh" "$TS" "$STABLE" "$STAMPED" "$BUILD_COMMIT"
 
-log "copying APKs + install page into ${PROD_CONTAINER}:${PROD_PUBLIC}/ (live serve)"
-docker cp "${PUBLIC_DIR}/${STAMPED}" "${PROD_CONTAINER}:${PROD_PUBLIC}/${STAMPED}"
-docker cp "${PUBLIC_DIR}/${STABLE}" "${PROD_CONTAINER}:${PROD_PUBLIC}/${STABLE}"
-docker cp "${PUBLIC_DIR}/native.html" "${PROD_CONTAINER}:${PROD_PUBLIC}/native.html"
-docker cp "${PUBLIC_DIR}/native-time.js" "${PROD_CONTAINER}:${PROD_PUBLIC}/native-time.js"
-docker cp "${PUBLIC_DIR}/native-feedback.js" "${PROD_CONTAINER}:${PROD_PUBLIC}/native-feedback.js"
+# Publish into the PERSISTENT bind-mounted native-dist (#700) — NOT docker cp into
+# /app/public (which a recreate or public hot-push wipes). The container sees these
+# immediately via the /app/native-dist mount, and they survive restarts.
+log "publishing APKs + install page into ${NATIVE_DIST_HOST}/ (persistent, live-served)"
+mkdir -p "$NATIVE_DIST_HOST"
+cp "${PUBLIC_DIR}/${STAMPED}" "${NATIVE_DIST_HOST}/${STAMPED}"
+cp "${PUBLIC_DIR}/${STABLE}" "${NATIVE_DIST_HOST}/${STABLE}"
+cp "${PUBLIC_DIR}/native.html" "${NATIVE_DIST_HOST}/native.html"
+cp "${PUBLIC_DIR}/native-time.js" "${NATIVE_DIST_HOST}/native-time.js"
+cp "${PUBLIC_DIR}/native-feedback.js" "${NATIVE_DIST_HOST}/native-feedback.js"
 
 echo "+ PUBLISHED"
 echo "+ install page (bookmark this, refresh for latest):"

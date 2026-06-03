@@ -162,6 +162,29 @@ cmd_build() {
   ok "Image built."
 }
 
+# #712 — verify the persistent native-dist bind is actually mounted after a
+# (re)deploy. A container recreated WITHOUT the docker-compose native-dist mount
+# (e.g. a deploy from a checkout lacking #700) serves no APK/install page → the
+# download URL 404s. Surface it LOUDLY here instead of discovering it via a 404.
+# Reads /version's nativeDist field (added in #712). Returns non-zero on MISSING.
+check_native_dist() {
+  local body
+  body=$(curl -fsS "http://${CONTAINER}:8081/version" 2>/dev/null || true)
+  case "$body" in
+    *'"nativeDist":"mounted"'*)
+      ok "native-dist bind mounted + published (APK/install page served)." ;;
+    *'"nativeDist":"EMPTY"'*)
+      err "native-dist is mounted but EMPTY — no APK published yet. Run scripts/native-release-apk.sh." ;;
+    *'"nativeDist":"MISSING"'*)
+      err "!!! native-dist NOT mounted — the APK + install page WILL 404."
+      err "    The container was recreated without the docker-compose native-dist bind (#700/#712)."
+      err "    Always deploy from the container workspace: scripts/container-ctl.sh restart"
+      return 1 ;;
+    *)
+      log "native-dist status unknown (/version did not report it — older image?)." ;;
+  esac
+}
+
 cmd_up() {
   log "Starting ${CONTAINER}..."
   # Ensure shared Docker network exists (external: true in compose requires pre-creation)
@@ -173,6 +196,7 @@ cmd_up() {
     serving=$(container_version)
     ok "Container healthy (version ${serving})."
     show_changelog "${PREV_VERSION:-}" "$serving"
+    check_native_dist || true
   else
     err "Container failed to become healthy within ${HEALTH_TIMEOUT}s."
     err "Logs:"

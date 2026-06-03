@@ -16,6 +16,10 @@ services:
     volumes:
       - tailscale-state:/var/lib/tailscale
       - /var/lib/docker/volumes/dev_workspace/_data/mobissh/test-results/uploads:/app/test-results/uploads
+      # Persistent native APK + install-page dir (#700). Survives container
+      # recreate and the public/ hot-push; scripts/native-release-apk.sh writes
+      # here and server/index.js serves the native artifact names from it.
+      - /var/lib/docker/volumes/dev_workspace/_data/mobissh/native-dist:/app/native-dist
     cap_add:
       - NET_ADMIN
       - SYS_MODULE

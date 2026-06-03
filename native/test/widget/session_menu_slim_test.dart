@@ -8,7 +8,9 @@
 //   - the per-session controls collapse into ONE compact icon-button row
 //     (`session-menu-controls`) instead of five stacked tiles,
 //   - every ESSENTIAL control is KEPT and addressable by its existing key:
-//     theme cycle, font -, font +, files, keybar toggle, disconnect.
+//     theme picker, font -, font +, font-family picker, keybar toggle,
+//     disconnect (#724 swapped theme/font cycles for pickers + dropped the
+//     font-size number; the control keys are unchanged).
 //
 // #585: the menu must remain a NON-MODAL overlay that never steals focus from
 // the terminal's editable (otherwise the soft keyboard drops + the screen
