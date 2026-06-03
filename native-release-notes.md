@@ -7,7 +7,7 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
-## v0.1.8.1 (2026-06-03) — Ghostty is the default
+## v0.1.9 (2026-06-03) — Ghostty default + tap-to-copy URLs
 - **Ghostty (flterm) is now the default terminal engine** — xterm is still selectable in **Settings → Terminal engine**.
 
 ## v0.1.8 (2026-06-03) — Ghostty terminal, hardened
