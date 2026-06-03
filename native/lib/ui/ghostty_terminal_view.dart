@@ -1022,15 +1022,27 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // subsequent focus-gain `_onFocusChanged` calls `show()` on a
             // STILL-UNATTACHED connection. Net: no keyboard.
             //
-            // Fix: request focus now, then `showKeyboard()` on a microtask. The
-            // focus change is applied via its own (earlier-queued) microtask, so
-            // by ours `_onFocusChanged` has already attached the connection and
-            // `hasFocus` is true → `show()` actually opens the IME. Works in
-            // BOTH plain shell (translucent overlay) and mouse mode (opaque).
+            // Fix: request focus now, then re-show on a microtask (after the
+            // focus-apply microtask, so `_onFocusChanged` has attached the
+            // connection and `hasFocus` is true).
+            //
+            // But `showKeyboard()` alone only works ONCE: flterm caches
+            // `_keyboardState` and `_updateKeyboardState` early-returns when the
+            // new state == current. The IME can be dismissed (system back /
+            // swipe-down) WITHOUT a focus change, leaving the state stuck at
+            // `.showing` while the keyboard is actually DOWN — so the next tap's
+            // `showKeyboard()` is a no-op and the keyboard never returns ("works
+            // once, then need the compose view"). So hideKeyboard() FIRST: it
+            // forces `.hidden` (resetting the stuck state) and, via its
+            // `.hidden when hasFocus` arm, RE-ATTACHES the input connection
+            // (covering a dismiss that closed it); then showKeyboard() reliably
+            // re-shows. When the IME is already down (the common re-tap case)
+            // the hide() is a no-op, so there's no visible blink.
             onTap: () {
               controller.requestFocus();
               Future.microtask(() {
                 if (!mounted) return;
+                controller.hideKeyboard();
                 controller.showKeyboard();
               });
             },
