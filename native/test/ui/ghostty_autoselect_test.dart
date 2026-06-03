@@ -194,4 +194,94 @@ void main() {
       expect(sent, ['\x1b[<0;8;8M', '\x1b[<32;9;8M', '\x1b[<0;9;8m']);
     });
   });
+
+  group('GhosttySelectionDriver.click — tap forwards a CLICK (#693)', () {
+    test('click emits press THEN release at the SAME cell, no motion', () {
+      final sent = <String>[];
+      final driver = GhosttySelectionDriver(onReport: sent.add);
+      driver.click(col: 12, row: 3);
+      expect(sent, ['\x1b[<0;12;3M', '\x1b[<0;12;3m']);
+    });
+
+    test('click is self-contained: a second click is independent', () {
+      final sent = <String>[];
+      final driver = GhosttySelectionDriver(onReport: sent.add);
+      driver.click(col: 1, row: 1);
+      driver.click(col: 40, row: 1); // status bar: another window tab
+      expect(sent, [
+        '\x1b[<0;1;1M',
+        '\x1b[<0;1;1m',
+        '\x1b[<0;40;1M',
+        '\x1b[<0;40;1m',
+      ]);
+    });
+
+    test('click leaves the driver inactive (release self-closes)', () {
+      final sent = <String>[];
+      final driver = GhosttySelectionDriver(onReport: sent.add);
+      driver.click(col: 5, row: 5);
+      sent.clear();
+      // A stray motion after a click is a no-op (the click already released).
+      driver.motion(col: 6, row: 5);
+      driver.release();
+      expect(sent, isEmpty);
+    });
+  });
+
+  group('ghosttyTapClickReports — pure tap->click SGR sequence (#693)', () {
+    test('is press then release at the same cell, in order', () {
+      expect(ghosttyTapClickReports(col: 7, row: 2), [
+        '\x1b[<0;7;2M',
+        '\x1b[<0;7;2m',
+      ]);
+    });
+
+    test('matches what the driver emits for the same cell', () {
+      final sent = <String>[];
+      GhosttySelectionDriver(onReport: sent.add).click(col: 9, row: 4);
+      expect(ghosttyTapClickReports(col: 9, row: 4), sent);
+    });
+
+    test('1-based coordinates are emitted verbatim (top-left tab)', () {
+      expect(ghosttyTapClickReports(col: 1, row: 1), [
+        '\x1b[<0;1;1M',
+        '\x1b[<0;1;1m',
+      ]);
+    });
+  });
+
+  group('ghosttyTapShouldForwardClick — click only under mouse mode (#693)', () {
+    test(
+      'forwards the click only when the overlay is active (mouse mode on)',
+      () {
+        expect(ghosttyTapShouldForwardClick(active: true), isTrue);
+      },
+    );
+
+    test('does NOT forward a click in a plain shell (overlay inactive)', () {
+      // A plain-shell tap must focus + raise the keyboard but emit NO SGR bytes,
+      // so escape bytes never land as literal text on the shell.
+      expect(ghosttyTapShouldForwardClick(active: false), isFalse);
+    });
+  });
+
+  group('tap end-to-end: cell mapping feeds the click (#693)', () {
+    test('a tap pixel maps to a cell that produces the click reports', () {
+      // 800/80 = 10px cols, 600/24 = 25px rows. Tap at (45, 60):
+      // col floor(45/10)=4 -> 5 (1-based); row floor(60/25)=2 -> 3 (1-based).
+      final (col, row) = ghosttyCellForPosition(
+        dx: 45,
+        dy: 60,
+        width: 800,
+        height: 600,
+        cols: 80,
+        rows: 24,
+      );
+      expect((col, row), (5, 3));
+      expect(ghosttyTapClickReports(col: col, row: row), [
+        '\x1b[<0;5;3M',
+        '\x1b[<0;5;3m',
+      ]);
+    });
+  });
 }

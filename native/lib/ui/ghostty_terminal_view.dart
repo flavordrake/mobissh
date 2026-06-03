@@ -268,7 +268,39 @@ class GhosttySelectionDriver {
     if (col == null || row == null) return;
     onReport(ghosttySgrMouseRelease(col: col, row: row));
   }
+
+  /// A discrete CLICK at ([col], [row]) — button1 press THEN release at the
+  /// SAME cell, with no motion in between (#693).
+  ///
+  /// This is what a TAP forwards under remote mouse mode so tmux selects the
+  /// clicked status-bar window / pane (the long-press path drives a DRAG
+  /// selection; a tap is a plain click). Implemented in terms of [press] +
+  /// [release] so it reuses the same state machine and emits exactly two
+  /// reports: `CSI<0;col;rowM` then `CSI<0;col;rowm`.
+  void click({required int col, required int row}) {
+    press(col: col, row: row);
+    release();
+  }
 }
+
+/// The SGR-1006 reports a discrete TAP forwards as a CLICK at the 1-based
+/// ([col], [row]) cell (#693): button1 press THEN release at the SAME cell, no
+/// motion. Pure (no FFI / no driver state), so the byte sequence + order are
+/// unit-testable headless. Mirrors [GhosttySelectionDriver.click] exactly.
+List<String> ghosttyTapClickReports({required int col, required int row}) => [
+  ghosttySgrMousePress(col: col, row: row),
+  ghosttySgrMouseRelease(col: col, row: row),
+];
+
+/// Whether a TAP at the terminal should forward an SGR mouse CLICK to the
+/// remote (#693).
+///
+/// A tap forwards a click ONLY when the gesture router overlay is [active] —
+/// i.e. the remote has mouse tracking on (tmux mouse mode), where a click maps
+/// to "select this window/pane". In a plain shell (overlay inert) a tap just
+/// focuses + raises the keyboard and emits NO SGR bytes (so escape bytes never
+/// land as literal text). Pure, so the gating decision is unit-testable.
+bool ghosttyTapShouldForwardClick({required bool active}) => active;
 
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
 /// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
@@ -295,16 +327,24 @@ double ghosttyScrollDeltaForSwipe(double fingerDy) => -fingerDy;
 /// vertical-drag recogniser wins (scroll); if it HOLDS first the long-press
 /// recogniser wins (select).
 ///
-/// Why OPAQUE, not translucent: flterm reports tracked mouse via a raw
-/// `Listener` (onPointerDown/Move/Up), which is NOT a gesture-arena participant
-/// — so merely WINNING the arena would not stop flterm from also emitting button
-/// press/motion on the same pointer. The only way to keep the touch off flterm's
-/// `Listener` is to be the opaque hit-test target so the pointer never reaches
-/// the terminal below. Because that also swallows taps, we add a tap recogniser
-/// that forwards focus via [onTap] (so tapping still raises the keyboard).
+/// Why OPAQUE (when active), not translucent: flterm reports tracked mouse via a
+/// raw `Listener` (onPointerDown/Move/Up), which is NOT a gesture-arena
+/// participant — so merely WINNING the arena would not stop flterm from also
+/// emitting button press/motion on the same pointer. The only way to keep the
+/// touch off flterm's `Listener` is to be the opaque hit-test target so the
+/// pointer never reaches the terminal below. Because that also swallows taps, the
+/// active branch handles the tap itself: it raises the keyboard via [onTap] AND
+/// forwards an SGR button1 CLICK at the tapped cell via [onMouseReport] (#693) so
+/// tmux selects the clicked status-bar window / pane.
 ///
-/// When [active] is false (mouse mode off) it is inert (`IgnorePointer`), so
-/// flterm's native scroll/selection is untouched (plain shells just work).
+/// When [active] is false (mouse mode off) the overlay is a TRANSLUCENT tap layer
+/// (#693), NOT inert: flterm's gesture detector calls only `requestFocus()` on a
+/// tap (never `showKeyboard()`), so a tap on a plain shell never raised the
+/// Android IME. The translucent layer (`HitTestBehavior.translucent`) lets the
+/// pointer fall THROUGH to flterm (its own focus/scroll/selection still run)
+/// while a top-level tap recogniser additionally raises the keyboard via [onTap].
+/// In the inactive branch NO SGR is emitted — a plain-shell tap only focuses +
+/// raises the keyboard.
 class _PointerGestureRouter extends StatefulWidget {
   const _PointerGestureRouter({
     required this.active,
@@ -326,11 +366,14 @@ class _PointerGestureRouter extends StatefulWidget {
   final int cols;
   final int rows;
 
-  /// Forwarded on a tap so focus/keyboard still work while the overlay is the
-  /// opaque hit-test target (typically `controller.requestFocus`).
+  /// Invoked on a tap to FOCUS + raise the soft keyboard (#693). flterm's own
+  /// tap only calls `requestFocus()`, which doesn't show the Android IME, so the
+  /// parent wires this to `requestFocus()` + `controller.showKeyboard()`. Fires
+  /// in BOTH the active (opaque) and inactive (translucent) branches.
   final VoidCallback onTap;
 
-  /// Sink for synthesised SGR mouse reports (wired to `proxy.sendInput`).
+  /// Sink for synthesised SGR mouse reports (wired to `proxy.sendInput`). Used
+  /// for the long-press-drag selection AND, under mouse mode, the tap CLICK.
   final void Function(String report) onMouseReport;
 
   @override
@@ -390,11 +433,36 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
     _selection = null;
   }
 
+  /// Handle a discrete TAP (#693). ALWAYS focus + raise the keyboard via
+  /// [widget.onTap]. When the overlay is ACTIVE (mouse mode on), ALSO forward an
+  /// SGR button1 CLICK (press+release at the tapped cell, no motion) so tmux
+  /// selects the clicked status-bar window / pane. In the inactive (plain-shell)
+  /// branch this handler isn't used for the click — see [build] — only the
+  /// keyboard raise runs.
+  void _onTapUp(TapUpDetails details) {
+    // Order: focus + raise the keyboard FIRST so the IME comes up regardless of
+    // whether the click forwards (the keyboard is the always-on behaviour).
+    widget.onTap();
+    if (!ghosttyTapShouldForwardClick(active: widget.active)) return;
+    final (col, row) = _cellAt(details.localPosition);
+    GhosttySelectionDriver(
+      onReport: widget.onMouseReport,
+    ).click(col: col, row: row);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!widget.active) {
-      // Inert: flterm's own gesture detector / Scrollable handles everything.
-      return const IgnorePointer(child: SizedBox.expand());
+      // #693: NOT inert. flterm's own tap calls only `requestFocus()`, which
+      // never raises the Android IME, so a plain-shell tap left the keyboard
+      // down. A TRANSLUCENT tap layer lets the pointer fall through to flterm
+      // (its own focus/scroll/selection still run) while we additionally raise
+      // the keyboard on tap. No SGR is emitted here (plain shell, no mouse mode).
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: widget.onTap,
+        child: const SizedBox.expand(),
+      );
     }
     return RawGestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -422,10 +490,13 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
                 ..onLongPressMoveUpdate = _onLongPressMoveUpdate
                 ..onLongPressEnd = _onLongPressEnd,
             ),
+        // #693: use onTapUp (it carries the position; onTap does not) so the tap
+        // maps to a cell and forwards an SGR CLICK to tmux. Still raises the
+        // keyboard via _onTapUp -> widget.onTap.
         TapGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
               () => TapGestureRecognizer(),
-              (recognizer) => recognizer.onTap = widget.onTap,
+              (recognizer) => recognizer.onTapUp = _onTapUp,
             ),
       },
       child: const SizedBox.expand(),
@@ -617,15 +688,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             gestureSettings: kGhosttyScrollSettings,
           ),
         ),
-        // #690/#692: when the remote has mouse mode on (tmux etc.), flterm would
-        // otherwise forward raw touch as button reports. This opaque overlay
-        // routes the gesture instead: a finger SWIPE scrolls the scrollback
-        // (flterm then emits canonical wheel reports — never a remote drag),
-        // and a deliberate LONG-PRESS-drag drives a remote selection by mapping
-        // touch -> cell and emitting SGR-1006 button1 press/motion/release to
-        // the PTY (tmux runs its own native selection). Inert when mouse mode is
-        // off (plain shells untouched). Sits below the affordance buttons so
-        // they stay tappable.
+        // #690/#692/#693: routes touch so the remote (tmux) behaves. When mouse
+        // mode is ON the overlay is OPAQUE and routes the gesture: a finger SWIPE
+        // scrolls the scrollback (flterm emits canonical wheel reports — never a
+        // remote drag); a deliberate LONG-PRESS-drag drives a remote selection
+        // (touch -> cell -> SGR-1006 press/motion/release); a TAP forwards an SGR
+        // CLICK so tmux selects the clicked window/pane (#693). When mouse mode is
+        // OFF the overlay is a TRANSLUCENT tap layer (#693): the pointer falls
+        // through to flterm (its own scroll/select run) but a tap also raises the
+        // soft keyboard, which flterm's own tap (requestFocus only) does not. In
+        // BOTH branches a tap focuses + raises the keyboard. Sits below the
+        // affordance buttons so they stay tappable.
         Positioned.fill(
           child: _PointerGestureRouter(
             active: ghosttySwipeShouldScrollLocally(
@@ -634,7 +707,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             scrollController: _scrollController,
             cols: _cols,
             rows: _rows,
-            onTap: controller.requestFocus,
+            // #693: a tap must FOCUS *and* raise the soft keyboard. flterm's own
+            // tap calls only `requestFocus()` (terminal_gesture_detector.dart),
+            // which doesn't show the Android IME; `showKeyboard()` drives the
+            // soft-keyboard state machine. Call both so a tap anywhere on the
+            // terminal raises the keyboard in BOTH plain shell (translucent
+            // overlay) and mouse mode (opaque overlay).
+            onTap: () {
+              controller.requestFocus();
+              controller.showKeyboard();
+            },
             onMouseReport: (report) {
               final proxy = _resolveProxy();
               if (proxy == null) return;
