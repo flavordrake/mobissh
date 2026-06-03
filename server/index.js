@@ -71,6 +71,25 @@ const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, '');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
+// Persistent distribution dir for the native APK + its install page (#700).
+// Bind-mounted from the host in docker-compose.prod.yml so these large, build-
+// produced artifacts survive a container recreate AND the `container-ctl.sh push`
+// hot-cp of public/ — neither of which carries them (they're not in the image,
+// and `scripts/native-release-apk.sh` writes them here, not into public/). The
+// static handler serves the native artifact names from here, falling back to
+// PUBLIC_DIR when a file isn't present (e.g. before the first publish).
+const NATIVE_DIST_DIR = process.env.NATIVE_DIST_DIR
+  ? path.resolve(process.env.NATIVE_DIST_DIR)
+  : path.resolve(__dirname, '..', 'native-dist');
+// Exact basenames + the timestamped-APK pattern served from NATIVE_DIST_DIR.
+function isNativeDistArtifact(baseName) {
+  return (
+    baseName === 'native.html' ||
+    baseName === 'native-time.js' ||
+    baseName === 'native-feedback.js' ||
+    /^mobissh-native(-[\w.+-]+)?\.apk$/.test(baseName)
+  );
+}
 
 // ─── CSWSH prevention (issue #83) ─────────────────────────────────────────────
 // WS_ORIGIN_ALLOWLIST: comma-separated list of additional allowed origins.
@@ -175,6 +194,7 @@ const MIME = {
   '.svg':  'image/svg+xml',
   '.png':  'image/png',
   '.ico':  'image/x-icon',
+  '.apk':  'application/vnd.android.package-archive',
 };
 
 // ─── SFTP message handler (exported for unit tests) ──────────────────────────
@@ -1053,9 +1073,23 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
   }
 
   const rel = path.normalize(req.url.split('?')[0]).replace(/^(\.\.[/\\])+/, '');
-  const filePath = path.join(PUBLIC_DIR, rel === '/' || rel === '' ? 'index.html' : rel);
+  const relName = rel === '/' || rel === '' ? 'index.html' : rel;
+  const baseName = path.basename(relName);
 
-  if (!filePath.startsWith(PUBLIC_DIR + path.sep) && filePath !== PUBLIC_DIR) {
+  // Native dist artifacts (#700): serve from the persistent NATIVE_DIST_DIR so a
+  // container recreate / public-hot-push can't 404 the download URL. baseName is
+  // path.basename (no separators) matched against a strict allowlist, so it's a
+  // safe direct join. Falls back to PUBLIC_DIR if not yet published there.
+  let serveRoot = PUBLIC_DIR;
+  let filePath;
+  if (isNativeDistArtifact(baseName) && fs.existsSync(path.join(NATIVE_DIST_DIR, baseName))) {
+    serveRoot = NATIVE_DIST_DIR;
+    filePath = path.join(NATIVE_DIST_DIR, baseName);
+  } else {
+    filePath = path.join(PUBLIC_DIR, relName);
+  }
+
+  if (!filePath.startsWith(serveRoot + path.sep) && filePath !== serveRoot) {
     res.writeHead(403);
     res.end('Forbidden');
     return;

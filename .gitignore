@@ -17,6 +17,9 @@ public/modules/*.js
 public/*.apk
 # Generated APK install landing page (regenerated every release by gen-apk-install-page.sh)
 public/native.html
+# Persistent native distribution dir (#700) — bind-mounted into prod; holds the
+# built APKs + install page so they survive container recreate / public hot-push.
+native-dist/
 test-data/
 .claude/worktrees/
 .claude/settings.local.json
