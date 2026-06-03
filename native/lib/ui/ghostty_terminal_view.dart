@@ -413,6 +413,46 @@ bool ghosttyShouldFocusOnConnect({
   return active && connected && !alreadyFocused;
 }
 
+/// Whether a resume must force a flterm repaint via a FOCUS CYCLE rather than a
+/// plain `requestFocus()` (#720).
+///
+/// #718 re-focuses the terminal on resume to drive a repaint, reusing the #717
+/// connect-focus path (`controller.requestFocus()`). That works when focus was
+/// LOST while backgrounded — the focus CHANGE (unfocused → focused) fires
+/// flterm's `_onFocusChanged` → `controller.notifyListeners()` → the
+/// `RenderTerminal`'s `_onRenderObserverChanged` → `markNeedsPaint()`.
+///
+/// But on a device UNLOCK (or any resume where the app kept focus and the grid
+/// size didn't change), focus was RETAINED through the lock, so `requestFocus()`
+/// is a NO-OP: flterm's `FocusNode` is already focused → no focus change → no
+/// `_onFocusChanged` → no notify → no repaint. The view stays STALE until a tap
+/// (which only repaints because it forwards an SGR click → tmux emits output →
+/// repaint). Telemetry on #720 confirmed `_onResume` ran (`ghostty-resume-refit`
+/// / `-refresh` / `ghostty-connect-focus resume: focused`) yet the view stayed
+/// stale until tap.
+///
+/// The fix: when focus is RETAINED, do a real focus CYCLE — `controller.unfocus()`
+/// then `controller.requestFocus()` on a POST-FRAME callback. Deferring the
+/// refocus one frame makes it a genuine focus CHANGE (focused → unfocused →
+/// focused), which fires `_onFocusChanged` and forces the repaint. (A same-frame
+/// toggle coalesces to no net change.) `_onFocusChanged` only calls
+/// `_textInput.show()` when the keyboard state is already `.showing`; on a resume
+/// the keyboard is down (`.hidden`), so refocus re-attaches the input connection
+/// but does NOT raise the IME — the keyboard stays down.
+///
+/// Gating: only cycle when [active] + [connected] (same scope as #717/#718) AND
+/// the terminal currently [hasFocus]. If focus was LOST, [hasFocus] is false and
+/// the plain `requestFocus()` already produces a real focus change → repaint, so
+/// no cycle is needed (and cycling would be redundant). Pure (no FFI / no widget)
+/// → unit-testable headless.
+bool ghosttyShouldCycleFocusForRepaint({
+  required bool active,
+  required bool connected,
+  required bool hasFocus,
+}) {
+  return active && connected && hasFocus;
+}
+
 /// The padding flterm's [TerminalView] is built with (`EdgeInsets.all(4)`), in
 /// logical px (#699). flterm wraps its `Scrollable` + render box in a
 /// `Padding(padding: widget.padding)`, so the grid's top-left is offset by this
@@ -1764,6 +1804,67 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     //    auto-pop on resume (the #693/#706/#717 focus-vs-IME separation).
     _focusedThisConnect = false;
     _focusTerminalOnConnect('resume');
+    // 4. FORCE REPAINT WHEN FOCUS WAS RETAINED (#720): the #718 re-focus above
+    //    only repaints when focus was LOST while backgrounded — the focus CHANGE
+    //    fires flterm's `_onFocusChanged` → `notifyListeners()` → the render
+    //    box's `_onRenderObserverChanged` → `markNeedsPaint()`. On a device
+    //    UNLOCK (or any resume where focus was RETAINED and the grid size didn't
+    //    change), `requestFocus()` is a no-op (already focused → no change → no
+    //    notify → no repaint), so the view stays STALE until a tap. Force a real
+    //    flterm repaint by CYCLING focus — unfocus, then requestFocus on the NEXT
+    //    frame so it lands as a genuine focus change (a same-frame toggle would
+    //    coalesce to no change). Active-session-guarded (#717/#718) and only when
+    //    focus is currently held; never raises the keyboard (the keyboard is down
+    //    on resume, so `_onFocusChanged` re-attaches the input but does NOT show).
+    _forceRepaintOnResume();
+  }
+
+  /// #720: force flterm to repaint on resume even when focus was RETAINED.
+  ///
+  /// Gated by [ghosttyShouldCycleFocusForRepaint]: only the ACTIVE, connected
+  /// session's view, and only when the terminal currently HAS focus (the
+  /// unlock/retained-focus case where `requestFocus()` is a no-op). When focus
+  /// was lost, the #718 `_focusTerminalOnConnect('resume')` above already drove a
+  /// real focus change → repaint, so this is a no-op and we skip the cycle.
+  ///
+  /// The cycle is `unfocus()` now + `requestFocus()` on a POST-FRAME callback:
+  /// deferring the refocus one frame makes it a genuine focus CHANGE
+  /// (focused → unfocused → focused) which fires flterm's `_onFocusChanged` →
+  /// `notifyListeners()` → `RenderTerminal._onRenderObserverChanged` →
+  /// `markNeedsPaint()`. NEVER `showKeyboard()`: on resume the keyboard is down
+  /// (`KeyboardState.hidden`), so the refocus re-attaches the input connection
+  /// but does NOT raise the IME — the keyboard stays down.
+  void _forceRepaintOnResume() {
+    if (!mounted) return;
+    final controller = _controller;
+    final proxy = _proxy;
+    if (controller == null || proxy == null) return;
+    final connected = proxy.data.state == SshSessionState.connected;
+    final active = ref.read(activeSessionIdProvider) == widget.sessionId;
+    final hasFocus = controller.hasFocus;
+    if (!ghosttyShouldCycleFocusForRepaint(
+      active: active,
+      connected: connected,
+      hasFocus: hasFocus,
+    )) {
+      gtrace(
+        'ghostty-resume-repaint: skip '
+        '(active=$active connected=$connected hasFocus=$hasFocus)',
+      );
+      return;
+    }
+    // Drop focus now; re-request it next frame so the FocusNode actually
+    // transitions (focused → unfocused → focused) and flterm repaints. A
+    // same-frame toggle would coalesce to no net change and not notify.
+    controller.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final c = _controller;
+      if (c == null) return;
+      // Focus ONLY — never showKeyboard(); the keyboard must stay down on resume.
+      c.requestFocus();
+      gtrace('ghostty-resume-repaint: focus-cycled (no keyboard)');
+    });
   }
 
   /// #705: begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT
