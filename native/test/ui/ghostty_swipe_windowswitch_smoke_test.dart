@@ -75,6 +75,8 @@ void main() {
             onSelectionExtend: (_, _) {},
             hasSelection: () => false,
             onSelectionClear: () {},
+            urlAtCell: (_, _) => null,
+            onUrlTap: (_) {},
           ),
         ),
       ),
@@ -88,15 +90,17 @@ void main() {
     ) async {
       // rows=24, in sync with tmux → status row is 24 (bottom).
       final reports = await pumpRouter(tester, rows: 24);
-      final center = tester.getCenter(
-        find.byType(GhosttyPointerGestureRouter),
-      );
+      final center = tester.getCenter(find.byType(GhosttyPointerGestureRouter));
       // A clear horizontal drag well past the 32px window-switch threshold, with
       // ~zero vertical so axis-lock commits horizontal.
       await tester.dragFrom(center, const Offset(120, 0));
       await tester.pumpAndSettle();
 
-      expect(reports, hasLength(1), reason: 'ONE discrete window step per swipe');
+      expect(
+        reports,
+        hasLength(1),
+        reason: 'ONE discrete window step per swipe',
+      );
       expect(
         wheelButton(reports.single),
         65,
@@ -113,9 +117,7 @@ void main() {
       tester,
     ) async {
       final reports = await pumpRouter(tester, rows: 30);
-      final center = tester.getCenter(
-        find.byType(GhosttyPointerGestureRouter),
-      );
+      final center = tester.getCenter(find.byType(GhosttyPointerGestureRouter));
       await tester.dragFrom(center, const Offset(-120, 0));
       await tester.pumpAndSettle();
 
@@ -132,9 +134,7 @@ void main() {
       tester,
     ) async {
       final reports = await pumpRouter(tester);
-      final center = tester.getCenter(
-        find.byType(GhosttyPointerGestureRouter),
-      );
+      final center = tester.getCenter(find.byType(GhosttyPointerGestureRouter));
       // Past the axis-lock slop (12) so it commits horizontal, but under the
       // 32px window-switch threshold → committed-horizontal but no step.
       await tester.dragFrom(center, const Offset(20, 0));
@@ -150,27 +150,30 @@ void main() {
       // window-switch wheel is forwarded to the remote. This is the axis-lock
       // guarantee: a scroll must never step a tmux window (#708/#719).
       final reports = await pumpRouter(tester);
-      final center = tester.getCenter(
-        find.byType(GhosttyPointerGestureRouter),
-      );
+      final center = tester.getCenter(find.byType(GhosttyPointerGestureRouter));
       await tester.dragFrom(center, const Offset(0, -120));
       await tester.pumpAndSettle();
-      expect(reports, isEmpty, reason: 'vertical = scroll, never a wheel report');
+      expect(
+        reports,
+        isEmpty,
+        reason: 'vertical = scroll, never a wheel report',
+      );
     });
 
-    testWidgets('a vertical drag with horizontal jitter still does not switch', (
-      tester,
-    ) async {
-      // The #708 regression half: a scroll with a few px of horizontal drift
-      // must NOT trip a window-switch. dy dominates → locks vertical.
-      final reports = await pumpRouter(tester);
-      final center = tester.getCenter(
-        find.byType(GhosttyPointerGestureRouter),
-      );
-      await tester.dragFrom(center, const Offset(20, -120));
-      await tester.pumpAndSettle();
-      expect(reports, isEmpty);
-    });
+    testWidgets(
+      'a vertical drag with horizontal jitter still does not switch',
+      (tester) async {
+        // The #708 regression half: a scroll with a few px of horizontal drift
+        // must NOT trip a window-switch. dy dominates → locks vertical.
+        final reports = await pumpRouter(tester);
+        final center = tester.getCenter(
+          find.byType(GhosttyPointerGestureRouter),
+        );
+        await tester.dragFrom(center, const Offset(20, -120));
+        await tester.pumpAndSettle();
+        expect(reports, isEmpty);
+      },
+    );
   });
 
   group('#719 inactive overlay (no mouse mode) forwards no wheel', () {
@@ -180,9 +183,7 @@ void main() {
       // active=false → translucent tap layer, no pan router; flterm handles its
       // own scroll. A swipe must NOT synthesise a window-switch wheel.
       final reports = await pumpRouter(tester, active: false);
-      final center = tester.getCenter(
-        find.byType(GhosttyPointerGestureRouter),
-      );
+      final center = tester.getCenter(find.byType(GhosttyPointerGestureRouter));
       await tester.dragFrom(center, const Offset(120, 0));
       await tester.pumpAndSettle();
       expect(reports, isEmpty);

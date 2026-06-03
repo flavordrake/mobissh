@@ -177,6 +177,7 @@ import '../ssh/ssh_session_proxy.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import 'ghostty_url_detector.dart';
 import 'top_toast.dart';
 
 /// Build the flterm [ColorPalette] for the per-session theme [palette] (#716).
@@ -1022,6 +1023,8 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
     required this.onSelectionExtend,
     required this.hasSelection,
     required this.onSelectionClear,
+    required this.urlAtCell,
+    required this.onUrlTap,
   });
 
   /// Whether to intercept touch (the remote has mouse tracking on).
@@ -1095,6 +1098,17 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
   /// invoked when a TAP lands while a selection is active (#706, issue 2). The
   /// tap is then SWALLOWED — no SGR click / type is forwarded.
   final VoidCallback onSelectionClear;
+
+  /// #726: resolve a 0-based viewport ([col], [row]) cell to the URL it lands
+  /// in, or null. The parent owns the detected [GhosttyUrlMatch] list, so it
+  /// answers this live at tap time via [ghosttyUrlAtCell].
+  final GhosttyUrlMatch? Function(int col, int row) urlAtCell;
+
+  /// #726: copy the tapped URL (a single-tap on a highlighted URL copies it +
+  /// shows a top-toast). When a tap lands on a URL the gesture is SWALLOWED —
+  /// no #693 SGR click / focus / type is forwarded — exactly like the #706
+  /// selection-dismiss path.
+  final void Function(GhosttyUrlMatch match) onUrlTap;
 
   @override
   State<GhosttyPointerGestureRouter> createState() =>
@@ -1337,6 +1351,17 @@ class _GhosttyPointerGestureRouterState
       _trace('tap-dismiss-selection', local.dx, local.dy, null, null, null);
       return;
     }
+    // #726: if the tap landed on a detected URL, COPY it and SWALLOW the tap —
+    // no #693 SGR click, no focus/keyboard, no type. Checked after the #706
+    // selection-dismiss (a selection still clears first) but before the normal
+    // tap behaviour. The cell map uses the SAME #723-correct grid as the click.
+    final (urlCol, urlRow) = _cellAt(local);
+    final url = widget.urlAtCell(urlCol - 1, urlRow - 1);
+    if (url != null) {
+      _trace('tap-url-copy', local.dx, local.dy, urlCol, urlRow, null);
+      widget.onUrlTap(url);
+      return;
+    }
     // Order: focus + raise the keyboard FIRST so the IME comes up regardless of
     // whether the click forwards (the keyboard is the always-on behaviour).
     widget.onTap();
@@ -1381,6 +1406,16 @@ class _GhosttyPointerGestureRouterState
               null,
               null,
             );
+            return;
+          }
+          // #726: a single tap on a detected URL copies it + swallows the tap,
+          // even in a plain shell (no mouse mode). Same 1-based→0-based cell
+          // convention as the active branch.
+          final (urlCol, urlRow) = _cellAt(local);
+          final url = widget.urlAtCell(urlCol - 1, urlRow - 1);
+          if (url != null) {
+            _trace('tap-url-copy', local.dx, local.dy, urlCol, urlRow, null);
+            widget.onUrlTap(url);
             return;
           }
           widget.onTap();
@@ -1436,6 +1471,92 @@ class _GhosttyPointerGestureRouterState
       },
       child: const SizedBox.expand(),
     );
+  }
+}
+
+/// Paints the URL HIGHLIGHT overlay above the flterm [TerminalView] (#726).
+///
+/// flterm 0.0.3 has exactly ONE selection and no multi-range highlight API, so
+/// detected URLs can't be marked via the controller. Instead this CustomPainter
+/// draws a subtle UNDERLINE under each URL's cell range, using the SAME
+/// #723-correct cell metrics ([cellWidth]/[cellHeight]) and the
+/// [kGhosttyTerminalPadding] the grid is offset by — so the underline lands
+/// exactly under the on-screen text. It repaints when the [matches] list, the
+/// cell metrics, or the [color] change (the parent re-runs detection on a
+/// debounced controller notify + on scroll, and rebuilds this painter), so the
+/// highlights follow scroll + resize.
+///
+/// Each [GhosttyUrlMatch] is in 0-based VIEWPORT cells ([endCol] exclusive). A
+/// single-row URL underlines `[startCol, endCol)` on its row; a soft-wrapped URL
+/// underlines the start row's tail, every interior row full-width, and the end
+/// row's head — matching [ghosttyCellInUrl]'s hit-test geometry so what's
+/// underlined is exactly what a tap copies. Pure paint (no FFI) — the geometry
+/// is exercised by the matcher tests via the shared cell model.
+class GhosttyUrlHighlightPainter extends CustomPainter {
+  GhosttyUrlHighlightPainter({
+    required this.matches,
+    required this.cellWidth,
+    required this.cellHeight,
+    required this.cols,
+    required this.color,
+    this.padding = kGhosttyTerminalPadding,
+  });
+
+  /// The detected URL ranges to underline (0-based viewport cells).
+  final List<GhosttyUrlMatch> matches;
+
+  /// The REAL flterm cell size (see [ghosttyMeasureCellSize]) — the underline
+  /// geometry MUST use this, not `size/rows`, to land under the rendered text.
+  final double cellWidth;
+  final double cellHeight;
+
+  /// The grid width, used to extend an interior/start row's underline to the
+  /// full row when a URL wraps.
+  final int cols;
+
+  /// The underline colour (the theme's accent / selection colour) so the
+  /// highlight is theme-consistent (#716).
+  final Color color;
+
+  /// The flterm [TerminalView] padding the grid is offset by ([kGhosttyTerminalPadding]).
+  final double padding;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (cellWidth <= 0 || cellHeight <= 0 || matches.isEmpty) return;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    for (final m in matches) {
+      for (var row = m.startRow; row <= m.endRow; row++) {
+        final startCol = row == m.startRow ? m.startCol : 0;
+        final endCol = row == m.endRow ? m.endCol : cols;
+        if (endCol <= startCol) continue;
+        final x0 = padding + startCol * cellWidth;
+        final x1 = padding + endCol * cellWidth;
+        // Underline sits ~1px above the cell's bottom edge.
+        final y = padding + (row + 1) * cellHeight - 1.5;
+        canvas.drawLine(Offset(x0, y), Offset(x1, y), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(GhosttyUrlHighlightPainter old) =>
+      old.color != color ||
+      old.cellWidth != cellWidth ||
+      old.cellHeight != cellHeight ||
+      old.cols != cols ||
+      old.padding != padding ||
+      !_sameMatches(old.matches, matches);
+
+  static bool _sameMatches(List<GhosttyUrlMatch> a, List<GhosttyUrlMatch> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }
 
@@ -1511,6 +1632,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// listener drives the rebuild — no second listener.
   bool _hasSelection = false;
 
+  /// #726: the URLs currently detected in the VISIBLE viewport, highlighted by
+  /// [GhosttyUrlHighlightPainter] and hit-tested by a tap (single-tap copies the
+  /// URL). Re-detected on a DEBOUNCED controller notify (output/scroll) via
+  /// [_scheduleUrlDetect] so streaming output doesn't re-scan every byte.
+  List<GhosttyUrlMatch> _urlMatches = const [];
+
+  /// #726: debounce timer for URL re-detection. The controller notifies on every
+  /// output write; coalesce a burst into a single scan after a short idle.
+  Timer? _urlDebounce;
+
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
   SshSessionProxy? _proxy;
@@ -1573,6 +1704,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         _cols = cols;
         _rows = rows;
         _sendResize(cols, rows);
+        // #726: a resize changes the cell ranges (and the cols the matcher joins
+        // wrapped rows by), so re-detect URLs against the new grid (debounced).
+        _scheduleUrlDetect();
       };
       // PTY output bytes -> terminal. The subscription lives on this state so
       // dispose() cancels it.
@@ -1620,6 +1754,56 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     _reanchorSelectionOnGrowth();
     _syncMouseTracking();
     _syncHasSelection();
+    // #726: the visible buffer may have changed (output/scroll) — re-detect URLs
+    // on a debounce so a streaming burst doesn't re-scan every byte.
+    _scheduleUrlDetect();
+  }
+
+  /// #726: debounce a URL re-detection. The controller fires on every output
+  /// write; coalesce a burst into one scan ~120ms after the last notify so
+  /// streaming output stays cheap. A short delay also lets flterm settle the
+  /// grid before we read it. Cancelled/replaced on each notify; cleared on
+  /// dispose.
+  void _scheduleUrlDetect() {
+    _urlDebounce?.cancel();
+    _urlDebounce = Timer(const Duration(milliseconds: 120), _detectUrls);
+  }
+
+  /// #726: read the VISIBLE viewport text from flterm and re-detect URLs.
+  ///
+  /// The buffer READ uses flterm's public
+  /// `controller.createFormatter(format: plain, unwrap: false).format()`, which
+  /// returns the ACTIVE SCREEN (visible viewport, NOT scrollback) as plain text,
+  /// one VISIBLE ROW per `\n`. We split on `\n` to get the per-row strings and
+  /// hand them to the PURE [detectGhosttyUrls] matcher with the live grid width
+  /// ([_cols]) — which re-joins soft-wrapped rows and maps each URL to a viewport
+  /// cell range. Only rebuilds when the match list actually changes (the painter
+  /// + tap hit-test read [_urlMatches]). Defensive: a formatter/FFI error must
+  /// never crash the session, so it falls back to no highlights.
+  void _detectUrls() {
+    if (!mounted) return;
+    final controller = _controller;
+    if (controller == null) return;
+    List<GhosttyUrlMatch> next;
+    try {
+      final formatter = controller.createFormatter(
+        format: FormatterFormat.plain,
+        unwrap: false,
+      );
+      final String text;
+      try {
+        text = formatter.format();
+      } finally {
+        formatter.dispose();
+      }
+      final rows = text.split('\n');
+      next = detectGhosttyUrls(rows, cols: _cols);
+    } catch (_) {
+      // A formatter/FFI hiccup must not crash the session — drop highlights.
+      next = const [];
+    }
+    if (GhosttyUrlHighlightPainter._sameMatches(_urlMatches, next)) return;
+    if (mounted) setState(() => _urlMatches = next);
   }
 
   /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
@@ -2000,6 +2184,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     controller.selection = reanchored;
   }
 
+  /// #726: copy a tapped URL to the clipboard + confirm via a top-toast. Invoked
+  /// when a single tap lands on a highlighted URL (the tap is swallowed).
+  Future<void> _copyUrl(GhosttyUrlMatch match) async {
+    await Clipboard.setData(ClipboardData(text: match.url));
+    if (mounted) showTopToast(context, 'Copied URL');
+  }
+
   Future<void> _copySelection() async {
     final controller = _controller;
     if (controller == null) return;
@@ -2041,6 +2232,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       t.cancel();
     }
     _resyncTimers.clear();
+    _urlDebounce?.cancel();
     _outputSub?.cancel();
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
@@ -2130,6 +2322,26 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             gestureSettings: kGhosttyScrollSettings,
           ),
         ),
+        // #726: URL highlight overlay — a subtle underline under each detected
+        // URL's cell range, drawn with the SAME #723-correct cell metrics + the
+        // flterm padding so it lands under the on-screen text. IgnorePointer so
+        // it never steals the tap (the gesture router below handles tap-to-copy).
+        // Repaints when _urlMatches / metrics change (debounced re-detection on
+        // controller notify), so it follows scroll + resize. Uses the theme's
+        // selection colour for theme consistency (#716).
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: GhosttyUrlHighlightPainter(
+                matches: _urlMatches,
+                cellWidth: cellSize.width,
+                cellHeight: cellSize.height,
+                cols: _cols,
+                color: palette.theme.selection,
+              ),
+            ),
+          ),
+        ),
         // #690/#692/#693: routes touch so the remote (tmux) behaves. When mouse
         // mode is ON the overlay is OPAQUE and routes the gesture: a finger SWIPE
         // scrolls the scrollback (flterm emits canonical wheel reports — never a
@@ -2214,6 +2426,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // selection active?" live and clears it on demand.
             hasSelection: () => controller.selection != null,
             onSelectionClear: _clearSelection,
+            // #726: resolve a tapped cell to a detected URL (0-based viewport
+            // cells) and copy it on tap. The parent owns _urlMatches.
+            urlAtCell: (col, row) =>
+                ghosttyUrlAtCell(_urlMatches, col: col, row: row),
+            onUrlTap: _copyUrl,
           ),
         ),
         // Selection affordances (bottom-right). #712: shown ONLY while a
