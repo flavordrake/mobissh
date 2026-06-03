@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.7 (2026-06-03) — Ghostty: swipe scrolls in tmux (no selection capture)
+- Ghostty: in tmux / mouse-mode sessions, a **swipe now scrolls the scrollback** (sends wheel events) instead of triggering tmux's selection — the swipe was previously forwarded as a mouse-drag. tmux's precise native selection still works on a deliberate drag (select-mode); plain shells were already fine.
+
 ## v0.1.6 (2026-06-03) — Ghostty: swipe scrolls, selection is deliberate
 - Ghostty: a swipe now **scrolls the scrollback cleanly** — no more accidental selection block (long-press was grabbing the swipe). Tap the new **select-mode** button (touch-app icon) to deliberately long-press-drag a selection, then Copy; tap it off to return to scroll.
 - Known flterm limits (a fork would be needed): in select mode a long-press-drag still auto-scrolls at the screen edge, and there are no draggable selection-endpoint handles yet.
