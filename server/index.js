@@ -2052,9 +2052,9 @@ if (require.main === module) {
     } else {
       console.error(
         `[ssh-bridge] !!! native-dist ${ndStatus} at ${NATIVE_DIST_DIR} — ` +
-          `the APK + install page will 404. The container was recreated WITHOUT ` +
-          `the docker-compose native-dist bind (#700/#712). Redeploy from the ` +
-          `container workspace via scripts/container-ctl.sh restart. /version reports nativeDist.`
+          'the APK + install page will 404. The container was recreated WITHOUT ' +
+          'the docker-compose native-dist bind (#700/#712). Redeploy from the ' +
+          'container workspace via scripts/container-ctl.sh restart. /version reports nativeDist.'
       );
     }
   });
