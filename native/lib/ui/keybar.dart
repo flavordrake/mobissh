@@ -55,6 +55,7 @@ class KeybarKey {
     required this.label,
     required this.sequence,
     this.icon,
+    this.isModifier = false,
   });
 
   final String id;
@@ -64,6 +65,59 @@ class KeybarKey {
   /// When non-null, the button shows this monochrome icon instead of [label]
   /// text (e.g. Paste). [label] is still used as the accessibility tooltip.
   final IconData? icon;
+
+  /// A sticky modifier key (the Ctrl key, #694) — tapping it ARMS the modifier
+  /// rather than emitting [sequence]. Modifier keys carry no literal byte; the
+  /// transform is applied to the NEXT key. See [CtrlModifier] / [ctrlTransform].
+  final bool isModifier;
+}
+
+/// Transform a keybar [sequence] as if Ctrl were held (#694), mirroring the
+/// PWA's `ctrlActive` mapping (`e.key.toLowerCase().charCodeAt(0) - 96`).
+///
+/// A single ASCII letter a–z / A–Z becomes its control byte via `& 0x1f`
+/// (Ctrl+A = \x01 … Ctrl+Z = \x1a). Anything else — a multi-byte CSI escape
+/// (arrows), an already-control byte (^C), an empty sequence (Paste), or a
+/// symbol with no letter control meaning — passes through UNCHANGED. The caller
+/// still clears the armed modifier afterward (one-shot sticky).
+String ctrlTransform(String sequence) {
+  if (sequence.length != 1) return sequence;
+  final code = sequence.codeUnitAt(0);
+  final isLetter =
+      (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+  if (!isLetter) return sequence;
+  return String.fromCharCode(code & 0x1f);
+}
+
+/// Sticky one-shot Ctrl modifier state (#694), mirroring the PWA's
+/// `ctrlActive`. [arm] toggles the armed flag (a second tap CANCELS). [apply]
+/// transforms the next key's sequence when armed and AUTO-CLEARS (one-shot).
+///
+/// Kept as a plain state holder (no widget dependency) so the arm/transform/
+/// clear lifecycle is unit-testable — the keybar widget tap path hangs the
+/// headless harness on Material ripple (see keybar_test.dart).
+class CtrlModifier {
+  bool _armed = false;
+
+  bool get armed => _armed;
+
+  /// Tap the Ctrl key: arm if disarmed, cancel if already armed.
+  void arm() {
+    _armed = !_armed;
+  }
+
+  /// Force the modifier off (e.g. when switching sessions).
+  void clear() {
+    _armed = false;
+  }
+
+  /// Apply Ctrl to [sequence] if armed, then auto-clear. Returns the bytes to
+  /// actually send. When disarmed, returns [sequence] verbatim.
+  String apply(String sequence) {
+    if (!_armed) return sequence;
+    _armed = false;
+    return ctrlTransform(sequence);
+  }
 }
 
 /// Default key layout — one flat line (scrolls horizontally), mirroring the
@@ -132,20 +186,69 @@ const List<KeybarKey> kDefaultKeybarKeys = [
     sequence: '', // handled out-of-band
     icon: Icons.content_paste,
   ),
-  // --- control sequences grouped LAST (owner-mandated, do not intersperse) ---
+  // --- control group LAST (owner-mandated, do not intersperse) ---
+  // #694: the sticky Ctrl MODIFIER leads the control group. Tapping it arms
+  // Ctrl for the next keybar key (Ctrl+A..Z etc.), then auto-clears. It carries
+  // no literal byte (isModifier). The fixed ^C/^Z/^B/^D quick-access combos
+  // stay after it for one-tap common interrupts.
+  KeybarKey(id: 'keyCtrl', label: 'Ctrl', sequence: '', isModifier: true),
   KeybarKey(id: 'keyCtrlC', label: '^C', sequence: '\x03'),
   KeybarKey(id: 'keyCtrlZ', label: '^Z', sequence: '\x1a'),
   KeybarKey(id: 'keyCtrlB', label: '^B', sequence: '\x02'),
   KeybarKey(id: 'keyCtrlD', label: '^D', sequence: '\x04'),
 ];
 
-class Keybar extends ConsumerWidget {
+class Keybar extends ConsumerStatefulWidget {
   const Keybar({super.key, required this.activeEntry});
 
   final SessionEntry activeEntry;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<Keybar> createState() => _KeybarState();
+}
+
+class _KeybarState extends ConsumerState<Keybar> {
+  // #694: sticky one-shot Ctrl modifier, mirroring the PWA's `ctrlActive`.
+  // Tapping the Ctrl key arms it; the next keybar key transforms to its control
+  // byte, then it auto-clears.
+  final CtrlModifier _ctrl = CtrlModifier();
+
+  void _onKeyTap(KeybarKey k) {
+    final terminal = widget.activeEntry.terminal;
+
+    // The Ctrl modifier key itself: arm/cancel, no byte emitted.
+    if (k.isModifier) {
+      setState(_ctrl.arm);
+      return;
+    }
+
+    // Paste pulls from the clipboard out-of-band. If Ctrl was armed, it has no
+    // single-letter control meaning, so clear the modifier and paste literally.
+    if (k.id == 'keyPaste') {
+      final wasArmed = _ctrl.armed;
+      if (wasArmed) setState(_ctrl.clear);
+      _paste(terminal);
+      return;
+    }
+
+    // Apply the (possibly armed) Ctrl transform and send. `apply` auto-clears
+    // the one-shot modifier; rebuild so the armed highlight clears.
+    final wasArmed = _ctrl.armed;
+    final bytes = _ctrl.apply(k.sequence);
+    if (bytes.isNotEmpty) terminal.textInput(bytes);
+    if (wasArmed) setState(() {});
+  }
+
+  Future<void> _paste(Terminal terminal) async {
+    final data = await Clipboard.getData('text/plain');
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) {
+      terminal.textInput(text);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Material(
       key: const Key('keybar'),
@@ -168,7 +271,9 @@ class Keybar extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: _KeybarButton(
                     keyData: k,
-                    terminal: activeEntry.terminal,
+                    // The Ctrl key shows an accented/armed state while sticky.
+                    armed: k.isModifier && _ctrl.armed,
+                    onTap: () => _onKeyTap(k),
                   ),
                 ),
             ],
@@ -180,22 +285,18 @@ class Keybar extends ConsumerWidget {
 }
 
 class _KeybarButton extends StatelessWidget {
-  const _KeybarButton({required this.keyData, required this.terminal});
+  const _KeybarButton({
+    required this.keyData,
+    required this.onTap,
+    this.armed = false,
+  });
 
   final KeybarKey keyData;
-  final Terminal terminal;
+  final VoidCallback onTap;
 
-  Future<void> _onTap(BuildContext context) async {
-    if (keyData.id == 'keyPaste') {
-      final data = await Clipboard.getData('text/plain');
-      final text = data?.text;
-      if (text != null && text.isNotEmpty) {
-        terminal.textInput(text);
-      }
-      return;
-    }
-    terminal.textInput(keyData.sequence);
-  }
+  /// #694: when true (the armed Ctrl modifier), the button paints an accented
+  /// highlight so it's clear Ctrl is sticky for the next key.
+  final bool armed;
 
   @override
   Widget build(BuildContext context) {
@@ -206,11 +307,16 @@ class _KeybarButton extends StatelessWidget {
     final bool isEsc = keyData.id == 'keyEsc';
     // Monochrome icon (theme-tinted) when set, else the label glyph/text.
     // Never an emoji — see memory feedback_monochrome_icons_no_emoji.
+    // #694: the armed Ctrl modifier paints accent-tinted text so the sticky
+    // state reads clearly. Other keys use the normal onSurface tint.
+    final Color fg = armed
+        ? theme.colorScheme.onPrimary
+        : theme.colorScheme.onSurface;
     final Widget child = keyData.icon != null
         ? Icon(
             keyData.icon,
             size: kKeybarIconSize,
-            color: theme.colorScheme.onSurface,
+            color: fg,
             semanticLabel: keyData.label,
           )
         : Text(
@@ -218,13 +324,17 @@ class _KeybarButton extends StatelessWidget {
             style: TextStyle(
               fontSize: isEsc ? kKeybarEscFontSize : kKeybarLabelFontSize,
               fontFamily: 'monospace',
+              color: armed ? fg : null,
             ),
             overflow: TextOverflow.ellipsis,
           );
     return OutlinedButton(
       key: Key('keybar-btn-${keyData.id}'),
-      onPressed: () => _onTap(context),
+      onPressed: onTap,
       style: OutlinedButton.styleFrom(
+        // #694: armed Ctrl fills with the accent color so the sticky state is
+        // unmistakable (mirrors the PWA's `.active` keybar styling).
+        backgroundColor: armed ? theme.colorScheme.primary : null,
         // #615: tighter padding for the ~25% shrink. Still a touch-friendly
         // tap target via minimumSize below.
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -233,10 +343,13 @@ class _KeybarButton extends StatelessWidget {
         minimumSize: const Size(kKeybarButtonMinWidth, kKeybarButtonMinHeight),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         // #615: lighter outline — thinner, lower-opacity border so the bar
-        // reads as a quiet strip rather than a grid of boxes.
+        // reads as a quiet strip rather than a grid of boxes. Armed Ctrl uses a
+        // solid accent border to match its filled state.
         side: BorderSide(
-          color: theme.colorScheme.outline.withValues(alpha: 0.4),
-          width: 0.5,
+          color: armed
+              ? theme.colorScheme.primary
+              : theme.colorScheme.outline.withValues(alpha: 0.4),
+          width: armed ? 1.0 : 0.5,
         ),
         // Squarer look matching the PWA keybar — subtle rounding, not pill.
         shape: const RoundedRectangleBorder(
