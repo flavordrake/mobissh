@@ -5,10 +5,11 @@
 //   1. [buildGhosttyTheme] maps the per-session font family + size onto flterm's
 //      `TerminalTheme` (where flterm carries the font, NOT a separate textStyle)
 //      and defaults to the readable bundled JetBrainsMono face.
-//   2. [kGhosttyScrollSettings] / [kGhosttySelectSettings] (#688): the DEFAULT
-//      scroll-only settings drop BOTH `drag` and `longPress` (so a swipe scrolls,
-//      never drag-selects), while the opt-in select-mode settings re-enable
-//      `longPress` for deliberate long-press-drag selection.
+//   2. [kGhosttyScrollSettings] (#688/#692): the scroll-only settings drop BOTH
+//      `drag` and `longPress` (so a swipe scrolls, never drag-selects). #692
+//      removed the opt-in select-mode settings — a deliberate touch long-press-
+//      drag now drives a remote selection via the gesture-router overlay, not an
+//      flterm-native gesture.
 //
 // `TerminalTheme` + `TerminalGestureSettings` are pure Dart value objects (no
 // FFI at construction), so this runs without the native libghostty .so. The
@@ -118,44 +119,6 @@ void main() {
 
     test('line selection grabs the full row (fuller selection control)', () {
       expect(kGhosttyScrollSettings.lineSelectMode, LineSelectMode.full);
-    });
-  });
-
-  group('kGhosttySelectSettings — deliberate select mode (#688)', () {
-    test('re-enables long-press so deliberate drag-select works', () {
-      expect(
-        kGhosttySelectSettings.enabledSelections,
-        contains(SelectionGesture.longPress),
-        reason: 'select mode must allow long-press-drag selection',
-      );
-    });
-
-    test('still does NOT enable mouse drag-select', () {
-      expect(
-        kGhosttySelectSettings.enabledSelections,
-        isNot(contains(SelectionGesture.drag)),
-      );
-    });
-
-    test('select mode is exactly the scroll set PLUS long-press', () {
-      expect(
-        kGhosttySelectSettings.enabledSelections,
-        kGhosttyScrollSettings.enabledSelections.union({
-          SelectionGesture.longPress,
-        }),
-      );
-    });
-
-    test('the two settings differ only by the long-press gesture', () {
-      // The mode toggle's ONLY effect on flterm is enabling long-press select.
-      final diff = kGhosttySelectSettings.enabledSelections.difference(
-        kGhosttyScrollSettings.enabledSelections,
-      );
-      expect(diff, {SelectionGesture.longPress});
-    });
-
-    test('keeps the full-row line select mode', () {
-      expect(kGhosttySelectSettings.lineSelectMode, LineSelectMode.full);
     });
   });
 }

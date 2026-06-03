@@ -19,9 +19,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
 void main() {
-  group('ghosttySwipeShouldScrollLocally — when to intercept (#690)', () {
-    test('intercepts when mouse mode is ON and select mode is OFF', () {
-      // The bug case: tmux has mouse on; a swipe would be a remote drag.
+  group('ghosttySwipeShouldScrollLocally — when to intercept (#690, #692)', () {
+    test('intercepts (overlay active) whenever mouse mode is ON', () {
+      // The bug case: tmux has mouse on; flterm would forward raw touch. The
+      // overlay then routes the gesture (swipe→scroll, long-press→select). #692
+      // dropped the select-mode param — the gesture, not a mode, decides.
       for (final mode in const [
         MouseTracking.any,
         MouseTracking.button,
@@ -29,53 +31,18 @@ void main() {
         MouseTracking.x10,
       ]) {
         expect(
-          ghosttySwipeShouldScrollLocally(
-            mouseTracking: mode,
-            selectMode: false,
-          ),
+          ghosttySwipeShouldScrollLocally(mouseTracking: mode),
           isTrue,
-          reason: 'mouse mode $mode + no select mode → swipe must scroll',
+          reason: 'mouse mode $mode → overlay must intercept and route touch',
         );
       }
     });
 
     test('does NOT intercept when the remote has no mouse tracking', () {
-      // No mouse mode → flterm never forwards a drag; its own Scrollable scrolls.
+      // No mouse mode → flterm never forwards a drag; its own Scrollable scrolls
+      // and its native selection works. Overlay stays inert (plain shells work).
       expect(
-        ghosttySwipeShouldScrollLocally(
-          mouseTracking: MouseTracking.none,
-          selectMode: false,
-        ),
-        isFalse,
-      );
-    });
-
-    test('does NOT intercept while DELIBERATE select mode is on', () {
-      // #688's select mode must keep working: long-press-drag selection stays
-      // flterm-native, so the overlay steps aside even under mouse tracking.
-      for (final mode in const [
-        MouseTracking.any,
-        MouseTracking.button,
-        MouseTracking.normal,
-        MouseTracking.x10,
-      ]) {
-        expect(
-          ghosttySwipeShouldScrollLocally(
-            mouseTracking: mode,
-            selectMode: true,
-          ),
-          isFalse,
-          reason: 'select mode is deliberate → do not steal the gesture',
-        );
-      }
-    });
-
-    test('select mode off + no mouse tracking is also not intercepted', () {
-      expect(
-        ghosttySwipeShouldScrollLocally(
-          mouseTracking: MouseTracking.none,
-          selectMode: true,
-        ),
+        ghosttySwipeShouldScrollLocally(mouseTracking: MouseTracking.none),
         isFalse,
       );
     });

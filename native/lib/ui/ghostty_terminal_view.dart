@@ -51,10 +51,37 @@
 // `TerminalGestureSettings` explicitly CANNOT disable mouse tracking, and the
 // only built-in bypass (virtual Shift) leaks into key/scroll encoding and clears
 // on the next keystroke. So we intercept ONE layer up — see
-// [_ScrollInsteadOfMouseDrag] / [ghosttySwipeShouldScrollLocally]. The wheel
+// [_PointerGestureRouter] / [ghosttySwipeShouldScrollLocally]. The wheel
 // reports flterm emits for an actual scroll ARE correct (libghostty's own SGR
 // wheel encoding, not xterm-4.0.0's buggy 68/69 — so no #617-style fix is needed
 // for the wheel path here).
+//
+// #692 (DROP the #688 mode toggle — the GESTURE decides): the explicit select-
+// mode toggle is gone. The pointer-absorbing overlay is now a gesture ROUTER:
+//   - a finger SWIPE (movement first) -> scroll (the #690 path, unchanged);
+//   - a deliberate LONG-PRESS (held stationary ~500ms) then drag -> SELECTION.
+// We drive the selection OURSELVES rather than letting flterm forward it: flterm
+// 0.0.3 does NOT export its pixel->cell mapping (`CellMetrics.cellAt`) or its
+// internal mouse encoder, and libghostty's `MouseEncoder` is native FFI (not
+// headless-testable) and not re-exported by flterm. So on a long-press-drag we
+// synthesise SGR-1006 mouse reports — button1 press at the long-pressed cell,
+// motion as the finger drags (deduped per cell), release on lift — and send them
+// to the remote via `proxy.sendInput`. tmux then runs its OWN precise, native
+// selection. The overlay is opaque while mouse tracking is on (so flterm never
+// sees the raw touch), so the only mouse reports the remote gets are the ones WE
+// emit: a swipe scrolls and reports nothing; a long-press-drag selects.
+//
+// Cell mapping is viewport-relative (1-based col;row), which is exactly what tmux
+// mouse mode expects — and the overlay is active ONLY under mouse tracking, where
+// flterm pins the viewport to the bottom (no scrollback offset to compensate). We
+// derive the cell size from the overlay's laid-out size / the live (cols, rows)
+// captured from `controller.onResize`.
+//
+// SMART-SELECT (future, do NOT build here): a future button could select a word/
+// path/URL UNIT at the tap — the PWA's `src/modules/selection.ts _selectableUnitAt`
+// is the spec. The seam is [GhosttySelectionDriver] + [ghosttyCellForPosition]:
+// resolve a unit's start/end cell, then drive press(start) -> motion(end) ->
+// release to make tmux select that span. Not implemented in #692.
 //
 // flterm re-exports libghostty's `Key` input enum, which collides with
 // Flutter's widget `Key`. We only use Flutter's, so hide flterm's.
@@ -93,7 +120,7 @@ TerminalTheme buildGhosttyTheme({
   return TerminalTheme.dark().copyWith(fontFamily: family, fontSize: fontSize);
 }
 
-/// DEFAULT (scroll-only) gesture settings for the ghostty backend (#688).
+/// Gesture settings for the ghostty backend (#688, #692).
 ///
 /// #686 dropped `SelectionGesture.drag` but a finger SWIPE STILL drag-selected
 /// a multi-line block. Root cause: flterm gives `drag` to MOUSE pointers and
@@ -102,17 +129,20 @@ TerminalTheme buildGhosttyTheme({
 /// win the gesture arena — `onLongPressMoveUpdate` then paints a selection AND
 /// auto-scrolls. So `longPress`, not `drag`, was the swipe culprit.
 ///
-/// To make a swipe SCROLL-ONLY we drop BOTH `drag` and `longPress` here, leaving
-/// no touch DRAG-select gesture. A swipe now only drives the inner `Scrollable`:
+/// We drop BOTH `drag` and `longPress` here, leaving NO touch DRAG-select gesture
+/// in flterm itself. Discrete taps still select (they never fire on a swipe), and
+/// our own [_PointerGestureRouter] overlay handles touch long-press selection by
+/// synthesising SGR mouse reports (#692) when the remote has mouse tracking on:
 ///
 ///   - vertical SWIPE -> SCROLL the scrollback (flterm's `Scrollable`), no select
 ///   - double-tap     -> select word   (discrete tap; never fires on a swipe)
 ///   - triple-tap     -> select line   (discrete tap; never fires on a swipe)
 ///   - Ctrl/Cmd+A     -> select all
 ///
-/// Deliberate long-press-drag selection is opt-in via [kGhosttySelectSettings]
-/// (the "select mode" toggle). `lineSelectMode.full` keeps line/triple-tap
-/// selection grabbing the FULL row width (trailing blanks included).
+/// #692 removed the #688 explicit select-mode toggle: a deliberate touch
+/// long-press-drag now drives a remote (tmux) selection via the overlay, so no
+/// flterm-native touch `longPress` is needed. `lineSelectMode.full` keeps line/
+/// triple-tap selection grabbing the FULL row width (trailing blanks included).
 const TerminalGestureSettings kGhosttyScrollSettings = TerminalGestureSettings(
   enabledSelections: {
     SelectionGesture.word,
@@ -122,40 +152,122 @@ const TerminalGestureSettings kGhosttyScrollSettings = TerminalGestureSettings(
   lineSelectMode: LineSelectMode.full,
 );
 
-/// SELECT-MODE gesture settings for the ghostty backend (#688).
+/// Whether the pointer overlay should be ACTIVE — i.e. intercept touch so a
+/// swipe scrolls locally and a long-press-drag drives a remote selection,
+/// instead of letting flterm forward raw touch to the remote (#690, #692).
 ///
-/// Active only while the user has toggled "select mode" on. Re-enables flterm's
-/// native touch `longPress` so a deliberate long-press-then-drag starts and
-/// extends a selection. Everything else matches [kGhosttyScrollSettings].
+/// flterm forwards touch as mouse reports ONLY when the remote has mouse
+/// tracking on (`mouseTracking != MouseTracking.none`, e.g. tmux mouse mode). A
+/// plain shell with no mouse tracking is unaffected — flterm's own scroll/
+/// selection works there, so the overlay stays inert. Pure (no FFI), so it's
+/// unit-testable headless.
 ///
-/// flterm limitation (#688): even here, a long-press-drag that reaches the
-/// viewport edge will auto-scroll (`_updateDrag` in flterm's gesture detector),
-/// and flterm 0.0.3 exposes no draggable endpoint handles — so the "deliberate"
-/// gate is the MODE, not a finer in-gesture distinction.
-const TerminalGestureSettings kGhosttySelectSettings = TerminalGestureSettings(
-  enabledSelections: {
-    SelectionGesture.longPress,
-    SelectionGesture.word,
-    SelectionGesture.line,
-    SelectionGesture.selectAll,
-  },
-  lineSelectMode: LineSelectMode.full,
-);
+/// #692 dropped the `selectMode` parameter the #688 toggle added — the gesture,
+/// not a mode, now decides scroll-vs-select.
+bool ghosttySwipeShouldScrollLocally({required MouseTracking mouseTracking}) {
+  return mouseTracking != MouseTracking.none;
+}
 
-/// Whether a touch SWIPE should be intercepted and turned into a local scroll
-/// instead of being forwarded to the remote PTY as a mouse-button DRAG (#690).
+/// Map a touch pixel position within the terminal viewport to a 1-based
+/// (col, row) terminal cell for SGR mouse reports (#692).
 ///
-/// flterm forwards swipes as button1 press+motion+release ONLY when the remote
-/// has mouse tracking on (`mouseTracking != MouseTracking.none`). When the user
-/// has DELIBERATELY entered select mode we leave flterm's native gestures alone
-/// (so a long-press-drag still works, mirroring #688). So the swipe-scroll
-/// interception is active exactly when mouse tracking is on AND select mode is
-/// off. Pure (no FFI), so it's unit-testable headless.
-bool ghosttySwipeShouldScrollLocally({
-  required MouseTracking mouseTracking,
-  required bool selectMode,
+/// [width]/[height] are the laid-out overlay size in logical px; [cols]/[rows]
+/// are the live grid dimensions (from `controller.onResize`). The result is
+/// CLAMPED into `[1, cols] x [1, rows]` so an edge or out-of-range touch never
+/// produces an off-grid report. Viewport-relative (no scrollback offset): the
+/// overlay is active only under mouse tracking, where the viewport is pinned to
+/// the bottom — which is exactly the coordinate space tmux mouse mode expects.
+/// Pure (no FFI), so it's unit-testable headless.
+(int col, int row) ghosttyCellForPosition({
+  required double dx,
+  required double dy,
+  required double width,
+  required double height,
+  required int cols,
+  required int rows,
 }) {
-  return mouseTracking != MouseTracking.none && !selectMode;
+  if (cols <= 0 || rows <= 0 || width <= 0 || height <= 0) return (1, 1);
+  final cellWidth = width / cols;
+  final cellHeight = height / rows;
+  final col = (dx / cellWidth).floor() + 1;
+  final row = (dy / cellHeight).floor() + 1;
+  return (col.clamp(1, cols), row.clamp(1, rows));
+}
+
+/// SGR-1006 button1-PRESS report at the 1-based ([col], [row]) cell (#692).
+///
+/// `CSI < 0 ; col ; row M` — button 0 (left), uppercase `M` = press.
+String ghosttySgrMousePress({required int col, required int row}) =>
+    '\x1b[<0;$col;${row}M';
+
+/// SGR-1006 button1-MOTION (drag) report at ([col], [row]) (#692).
+///
+/// `CSI < 32 ; col ; row M` — 32 is the motion bit added to button 0, so this is
+/// "left button held, pointer moved" — what tmux reads as extending a selection.
+String ghosttySgrMouseMotion({required int col, required int row}) =>
+    '\x1b[<32;$col;${row}M';
+
+/// SGR-1006 button1-RELEASE report at ([col], [row]) (#692).
+///
+/// `CSI < 0 ; col ; row m` — lowercase `m` = release; ends the tmux selection.
+String ghosttySgrMouseRelease({required int col, required int row}) =>
+    '\x1b[<0;$col;${row}m';
+
+/// Drives a remote terminal selection by emitting SGR-1006 mouse reports for a
+/// touch long-press-drag (#692).
+///
+/// flterm 0.0.3 doesn't expose its pixel->cell mapping or its native mouse
+/// encoder, and libghostty's `MouseEncoder` is native FFI (not headless-
+/// testable), so we synthesise the reports ourselves and hand them to
+/// [onReport] (wired to `proxy.sendInput`). The remote (tmux) then runs its own
+/// precise, native selection:
+///
+///   - [press]   once at the long-pressed start cell (button1 down);
+///   - [motion]  on each NEW cell as the finger drags (deduped — only on cell
+///     change, to avoid flooding the PTY);
+///   - [release] on lift (button1 up) at the last cell.
+///
+/// Robust to out-of-order calls: [motion]/[release] before a [press] are no-ops
+/// (no stray reports), and a fresh [press] after [release] starts a new
+/// selection. Pure (no FFI), so the state machine is unit-testable headless.
+class GhosttySelectionDriver {
+  GhosttySelectionDriver({required this.onReport});
+
+  /// Sink for each synthesised SGR report (wired to `proxy.sendInput`).
+  final void Function(String report) onReport;
+
+  int? _col;
+  int? _row;
+  bool _active = false;
+
+  /// Begin a selection: button1-down at ([col], [row]).
+  void press({required int col, required int row}) {
+    _active = true;
+    _col = col;
+    _row = row;
+    onReport(ghosttySgrMousePress(col: col, row: row));
+  }
+
+  /// Extend the selection to ([col], [row]) — only reports on a cell change.
+  void motion({required int col, required int row}) {
+    if (!_active) return;
+    if (col == _col && row == _row) return;
+    _col = col;
+    _row = row;
+    onReport(ghosttySgrMouseMotion(col: col, row: row));
+  }
+
+  /// End the selection: button1-up at the last cell. No-op if not active.
+  void release() {
+    if (!_active) return;
+    final col = _col;
+    final row = _row;
+    _active = false;
+    _col = null;
+    _row = null;
+    if (col == null || row == null) return;
+    onReport(ghosttySgrMouseRelease(col: col, row: row));
+  }
 }
 
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
@@ -166,48 +278,69 @@ bool ghosttySwipeShouldScrollLocally({
 /// negation of the finger delta, matching a natural touch-scroll. Pure.
 double ghosttyScrollDeltaForSwipe(double fingerDy) => -fingerDy;
 
-/// A gesture layer that absorbs touch swipes and drives a
-/// [TerminalScrollController] directly, so the swipe SCROLLS the scrollback
-/// instead of flterm forwarding it to the remote PTY as a button1 DRAG (#690).
+/// A gesture ROUTER overlay that absorbs touch and disambiguates a SWIPE from a
+/// deliberate LONG-PRESS (#690, #692).
 ///
-/// Active only while [active] is true (see [ghosttySwipeShouldScrollLocally]).
+/// Active only while [active] is true (see [ghosttySwipeShouldScrollLocally] —
+/// i.e. the remote has mouse tracking on). Routes:
+///   - a finger SWIPE (movement first) -> SCROLL the [scrollController] directly
+///     (flterm then emits canonical wheel reports), so the swipe NEVER reaches
+///     the remote as a button drag (#690);
+///   - a deliberate LONG-PRESS (held stationary past the recogniser threshold)
+///     then drag -> drive a remote SELECTION (#692): map the touch -> cell and
+///     emit SGR-1006 button1 press / motion / release via [onMouseReport]; the
+///     remote (tmux) runs its own precise native selection.
+///
+/// The gesture arena disambiguates for us: if the finger MOVES first the
+/// vertical-drag recogniser wins (scroll); if it HOLDS first the long-press
+/// recogniser wins (select).
 ///
 /// Why OPAQUE, not translucent: flterm reports tracked mouse via a raw
 /// `Listener` (onPointerDown/Move/Up), which is NOT a gesture-arena participant
-/// — so merely WINNING the arena for the drag would not stop flterm from also
-/// emitting button press/motion on the same pointer. The only way to keep the
-/// swipe off flterm's `Listener` is to be the opaque hit-test target so the
-/// pointer never reaches the terminal below. Because that also swallows taps, we
-/// add a tap recognizer that forwards focus via [onTap] (so tapping still raises
-/// the keyboard) while the vertical-drag recognizer (touch-only) does the scroll.
+/// — so merely WINNING the arena would not stop flterm from also emitting button
+/// press/motion on the same pointer. The only way to keep the touch off flterm's
+/// `Listener` is to be the opaque hit-test target so the pointer never reaches
+/// the terminal below. Because that also swallows taps, we add a tap recogniser
+/// that forwards focus via [onTap] (so tapping still raises the keyboard).
 ///
-/// When [active] is false (mouse mode off, or deliberate select mode on) it is
-/// inert (`IgnorePointer`), so flterm's native scroll/selection is untouched.
-class _ScrollInsteadOfMouseDrag extends StatefulWidget {
-  const _ScrollInsteadOfMouseDrag({
+/// When [active] is false (mouse mode off) it is inert (`IgnorePointer`), so
+/// flterm's native scroll/selection is untouched (plain shells just work).
+class _PointerGestureRouter extends StatefulWidget {
+  const _PointerGestureRouter({
     required this.active,
     required this.scrollController,
+    required this.cols,
+    required this.rows,
     required this.onTap,
+    required this.onMouseReport,
   });
 
-  /// Whether to intercept swipes (mouse tracking on AND select mode off).
+  /// Whether to intercept touch (the remote has mouse tracking on).
   final bool active;
 
   /// The SAME controller handed to the flterm [TerminalView] — moving it routes
   /// through flterm's `_onScrollChanged` → wheel reports / local scroll.
   final TerminalScrollController scrollController;
 
+  /// Live grid columns/rows (from `controller.onResize`) for pixel->cell mapping.
+  final int cols;
+  final int rows;
+
   /// Forwarded on a tap so focus/keyboard still work while the overlay is the
   /// opaque hit-test target (typically `controller.requestFocus`).
   final VoidCallback onTap;
 
+  /// Sink for synthesised SGR mouse reports (wired to `proxy.sendInput`).
+  final void Function(String report) onMouseReport;
+
   @override
-  State<_ScrollInsteadOfMouseDrag> createState() =>
-      _ScrollInsteadOfMouseDragState();
+  State<_PointerGestureRouter> createState() => _PointerGestureRouterState();
 }
 
-class _ScrollInsteadOfMouseDragState extends State<_ScrollInsteadOfMouseDrag> {
-  void _onUpdate(DragUpdateDetails details) {
+class _PointerGestureRouterState extends State<_PointerGestureRouter> {
+  GhosttySelectionDriver? _selection;
+
+  void _onScrollUpdate(DragUpdateDetails details) {
     final controller = widget.scrollController;
     if (!controller.hasClients) return;
     final position = controller.position;
@@ -218,6 +351,43 @@ class _ScrollInsteadOfMouseDragState extends State<_ScrollInsteadOfMouseDrag> {
         );
     if (target == position.pixels) return;
     controller.jumpTo(target);
+  }
+
+  /// The overlay's laid-out size, used with (cols, rows) to map touch -> cell.
+  Size get _viewportSize {
+    final box = context.findRenderObject();
+    if (box is RenderBox && box.hasSize) return box.size;
+    return Size.zero;
+  }
+
+  (int, int) _cellAt(Offset local) {
+    final size = _viewportSize;
+    return ghosttyCellForPosition(
+      dx: local.dx,
+      dy: local.dy,
+      width: size.width,
+      height: size.height,
+      cols: widget.cols,
+      rows: widget.rows,
+    );
+  }
+
+  void _onLongPressStart(LongPressStartDetails details) {
+    widget.onTap(); // focus, mirroring flterm's own long-press-start.
+    final (col, row) = _cellAt(details.localPosition);
+    final driver = GhosttySelectionDriver(onReport: widget.onMouseReport)
+      ..press(col: col, row: row);
+    _selection = driver;
+  }
+
+  void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
+    final (col, row) = _cellAt(details.localPosition);
+    _selection?.motion(col: col, row: row);
+  }
+
+  void _onLongPressEnd(LongPressEndDetails details) {
+    _selection?.release();
+    _selection = null;
   }
 
   @override
@@ -237,7 +407,20 @@ class _ScrollInsteadOfMouseDragState extends State<_ScrollInsteadOfMouseDrag> {
                 // re-routed to scroll.
                 supportedDevices: const {PointerDeviceKind.touch},
               ),
-              (recognizer) => recognizer.onUpdate = _onUpdate,
+              (recognizer) => recognizer.onUpdate = _onScrollUpdate,
+            ),
+        // #692: a deliberate touch long-press-drag drives a remote selection by
+        // synthesising SGR mouse reports. Touch-only so it never competes with a
+        // mouse drag. Loses the arena to the vertical drag on a move-first swipe.
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+              () => LongPressGestureRecognizer(
+                supportedDevices: const {PointerDeviceKind.touch},
+              ),
+              (recognizer) => recognizer
+                ..onLongPressStart = _onLongPressStart
+                ..onLongPressMoveUpdate = _onLongPressMoveUpdate
+                ..onLongPressEnd = _onLongPressEnd,
             ),
         TapGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
@@ -282,31 +465,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
 
   String? _initError;
 
-  /// Whether DELIBERATE selection mode is active (#688).
-  ///
-  /// `false` (default): a swipe SCROLLS only — [kGhosttyScrollSettings], which
-  /// has no touch drag-select gesture. `true`: [kGhosttySelectSettings] is
-  /// applied, re-enabling flterm's native touch long-press-drag selection.
-  /// Per-session (held on the widget state, not a global) so one session's
-  /// select mode never leaks into another's.
-  bool _selectMode = false;
-
-  /// Toggle deliberate select mode. Leaving select mode clears any pending
-  /// highlight so the user isn't left with a stale selection while scrolling.
-  void _toggleSelectMode() {
-    setState(() {
-      _selectMode = !_selectMode;
-      if (!_selectMode) _controller?.clearSelection();
-    });
-    if (mounted) {
-      showTopToast(
-        context,
-        _selectMode
-            ? 'Select mode ON — long-press the terminal, then drag to select.'
-            : 'Select mode OFF — swipe scrolls.',
-      );
-    }
-  }
+  /// Live grid dimensions, mirrored from `controller.onResize`, so the #692
+  /// gesture router can map a touch pixel -> 1-based terminal cell for the
+  /// SGR mouse reports that drive a remote (tmux) selection on long-press-drag.
+  int _cols = 0;
+  int _rows = 0;
 
   @override
   void initState() {
@@ -327,9 +490,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         proxy.sendInput(bytes);
       };
       // Grid resize -> PTY resize. flterm reports (cols, rows); the proxy's
-      // pixel sizes default to 0 (the task isolate only needs cols/rows).
+      // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
+      // mirror (cols, rows) so the #692 gesture router can map touch -> cell.
       controller.onResize = (cols, rows) {
         proxy.sendResize(cols, rows);
+        _cols = cols;
+        _rows = rows;
       };
       // PTY output bytes -> terminal. The subscription lives on this state so
       // dispose() cancels it.
@@ -378,9 +544,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (mounted) {
         showTopToast(
           context,
-          _selectMode
-              ? 'No selection — long-press the terminal, then drag.'
-              : 'No selection — turn on select mode first, then long-press.',
+          'No selection — long-press the terminal, then drag (or tap Select all).',
         );
       }
       return;
@@ -444,61 +608,55 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // #690: share the scroll controller so the overlay below can drive
             // scrollback (→ flterm wheel reports) under remote mouse mode.
             scrollController: _scrollController,
-            // #688: swipe = scroll-ONLY by default; deliberate long-press-drag
-            // selection only while select mode is ON. See the two settings
-            // objects' docs for the flterm root cause (touch long-press, not
-            // `drag`, was the swipe-select culprit).
-            gestureSettings: _selectMode
-                ? kGhosttySelectSettings
-                : kGhosttyScrollSettings,
+            // #688/#692: swipe = scroll, deliberate long-press-drag = selection.
+            // flterm's own touch drag/long-press select are dropped here; the
+            // overlay below routes the gesture (long-press-drag drives a remote
+            // selection via synthesised SGR reports). See the settings doc for
+            // the flterm root cause (touch long-press, not `drag`, was the
+            // swipe-select culprit).
+            gestureSettings: kGhosttyScrollSettings,
           ),
         ),
-        // #690: when the remote has mouse mode on (tmux etc.), a finger swipe
-        // would otherwise be forwarded as a button1 DRAG → tmux selection. This
-        // overlay claims the touch vertical-drag and scrolls the scrollback
-        // (flterm then emits canonical wheel reports), so a swipe SCROLLS and
-        // never drags. Inert when mouse mode is off or select mode is on, so
-        // #688's gestures are untouched. Sits below the affordance buttons so
+        // #690/#692: when the remote has mouse mode on (tmux etc.), flterm would
+        // otherwise forward raw touch as button reports. This opaque overlay
+        // routes the gesture instead: a finger SWIPE scrolls the scrollback
+        // (flterm then emits canonical wheel reports — never a remote drag),
+        // and a deliberate LONG-PRESS-drag drives a remote selection by mapping
+        // touch -> cell and emitting SGR-1006 button1 press/motion/release to
+        // the PTY (tmux runs its own native selection). Inert when mouse mode is
+        // off (plain shells untouched). Sits below the affordance buttons so
         // they stay tappable.
         Positioned.fill(
-          child: _ScrollInsteadOfMouseDrag(
+          child: _PointerGestureRouter(
             active: ghosttySwipeShouldScrollLocally(
               mouseTracking: _mouseTracking,
-              selectMode: _selectMode,
             ),
             scrollController: _scrollController,
+            cols: _cols,
+            rows: _rows,
             onTap: controller.requestFocus,
+            onMouseReport: (report) {
+              final proxy = _resolveProxy();
+              if (proxy == null) return;
+              if (proxy.data.state != SshSessionState.connected) return;
+              proxy.sendInput(Uint8List.fromList(report.codeUnits));
+            },
           ),
         ),
-        // Selection affordances (bottom-right). flterm's long-press select
-        // highlights cells; `selectedText()` pulls them to the clipboard.
-        // Select-all is the best extra selection control flterm 0.0.3 exposes
-        // (no draggable endpoint handles — see file header / TRACE).
+        // Selection affordances (bottom-right). A deliberate long-press-drag
+        // drives a remote (tmux) native selection via SGR reports (#692);
+        // Select-all + Copy operate on flterm's LOCAL selection (Select-all,
+        // double/triple-tap) — copying a tmux-native span is tmux's own copy
+        // mode. A future smart-select button would select a word/path/URL unit
+        // at the tap (PWA selection.ts _selectableUnitAt) — see file header.
         Positioned(
           right: 4,
           bottom: 4,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // #688: deliberate select-mode toggle. OFF (default) = swipe
-              // scrolls only; ON = flterm native long-press-drag selection.
-              Material(
-                color: _selectMode ? Colors.green.shade700 : Colors.black54,
-                shape: const CircleBorder(),
-                child: IconButton(
-                  key: const Key('ghostty-select-mode'),
-                  tooltip: _selectMode
-                      ? 'Select mode ON (tap to scroll)'
-                      : 'Select mode OFF (tap to select)',
-                  iconSize: 18,
-                  icon: Icon(
-                    _selectMode ? Icons.touch_app : Icons.touch_app_outlined,
-                    color: Colors.white,
-                  ),
-                  onPressed: _toggleSelectMode,
-                ),
-              ),
-              const SizedBox(height: 8),
+              // #692: select-all (flterm-local). The #688 select-mode toggle is
+              // gone — a deliberate long-press-drag now selects automatically.
               Material(
                 color: Colors.black54,
                 shape: const CircleBorder(),
