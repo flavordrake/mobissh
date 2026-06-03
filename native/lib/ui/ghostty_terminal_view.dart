@@ -518,6 +518,7 @@ class _PointerGestureRouter extends StatefulWidget {
     required this.cellHeight,
     required this.mouseTrackingLabel,
     required this.onTap,
+    required this.onFocus,
     required this.onMouseReport,
   });
 
@@ -548,6 +549,11 @@ class _PointerGestureRouter extends StatefulWidget {
   /// parent wires this to `requestFocus()` + `controller.showKeyboard()`. Fires
   /// in BOTH the active (opaque) and inactive (translucent) branches.
   final VoidCallback onTap;
+
+  /// Invoked to FOCUS only (no keyboard) on a long-press-start — so a deliberate
+  /// selection gesture doesn't pop the soft keyboard over the text being
+  /// selected. A plain TAP still raises the keyboard via [onTap].
+  final VoidCallback onFocus;
 
   /// Sink for synthesised SGR mouse reports (wired to `proxy.sendInput`). Used
   /// for the long-press-drag selection AND, under mouse mode, the tap CLICK.
@@ -659,7 +665,7 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
   }
 
   void _onLongPressStart(LongPressStartDetails details) {
-    widget.onTap(); // focus, mirroring flterm's own long-press-start.
+    widget.onFocus(); // focus only — a selection must NOT pop the keyboard.
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
     final report = ghosttySgrMousePress(col: col, row: row);
@@ -1003,14 +1009,33 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             mouseTrackingLabel: _mouseTracking.name,
             // #693: a tap must FOCUS *and* raise the soft keyboard. flterm's own
             // tap calls only `requestFocus()` (terminal_gesture_detector.dart),
-            // which doesn't show the Android IME; `showKeyboard()` drives the
-            // soft-keyboard state machine. Call both so a tap anywhere on the
-            // terminal raises the keyboard in BOTH plain shell (translucent
-            // overlay) and mouse mode (opaque overlay).
+            // which doesn't show the Android IME.
+            //
+            // Ordering matters (the keyboard-never-opens bug): flterm's
+            // `showKeyboard()` only calls `TextInput.show()` when the terminal
+            // ALREADY has focus AND its input connection is attached
+            // (terminal_controller_impl `_updateKeyboardState`: the
+            // `.showing when hasFocus` arm shows; the bare `.showing` arm only
+            // re-requests focus). `requestFocus()` is async, so calling
+            // `showKeyboard()` synchronously on the next line runs BEFORE focus
+            // lands — flterm sets state=showing but never shows, and on the
+            // subsequent focus-gain `_onFocusChanged` calls `show()` on a
+            // STILL-UNATTACHED connection. Net: no keyboard.
+            //
+            // Fix: request focus now, then `showKeyboard()` on a microtask. The
+            // focus change is applied via its own (earlier-queued) microtask, so
+            // by ours `_onFocusChanged` has already attached the connection and
+            // `hasFocus` is true → `show()` actually opens the IME. Works in
+            // BOTH plain shell (translucent overlay) and mouse mode (opaque).
             onTap: () {
               controller.requestFocus();
-              controller.showKeyboard();
+              Future.microtask(() {
+                if (!mounted) return;
+                controller.showKeyboard();
+              });
             },
+            // Long-press-start focuses without raising the keyboard (selection).
+            onFocus: controller.requestFocus,
             onMouseReport: (report) {
               final proxy = _resolveProxy();
               if (proxy == null) return;
