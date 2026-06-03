@@ -91,6 +91,25 @@ function isNativeDistArtifact(baseName) {
   );
 }
 
+// #712: report whether the persistent native-dist bind is actually mounted +
+// populated. A container recreated WITHOUT the docker-compose native-dist bind
+// (e.g. a deploy from a checkout lacking the #700 mount) serves no APK/install
+// page → the download URL 404s. Surface it loudly (startup log + /version) so a
+// bare recreate is obvious instead of discovered via a 404 mid-test.
+//   'mounted' — dir exists AND the install page is present (healthy)
+//   'EMPTY'   — dir exists but native.html is missing (mounted, not published)
+//   'MISSING' — dir does not exist (the bind was dropped — THE failure mode)
+function nativeDistStatus() {
+  try {
+    if (!fs.existsSync(NATIVE_DIST_DIR)) return 'MISSING';
+    return fs.existsSync(path.join(NATIVE_DIST_DIR, 'native.html'))
+      ? 'mounted'
+      : 'EMPTY';
+  } catch (_) {
+    return 'MISSING';
+  }
+}
+
 // ─── CSWSH prevention (issue #83) ─────────────────────────────────────────────
 // WS_ORIGIN_ALLOWLIST: comma-separated list of additional allowed origins.
 // Example: WS_ORIGIN_ALLOWLIST=https://myapp.tailnet.ts.net,https://localhost:8081
@@ -1001,7 +1020,13 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
     });
-    res.end(JSON.stringify({ version: APP_VERSION, hash: GIT_HASH }));
+    res.end(
+      JSON.stringify({
+        version: APP_VERSION,
+        hash: GIT_HASH,
+        nativeDist: nativeDistStatus(), // #712 — 'mounted' | 'EMPTY' | 'MISSING'
+      })
+    );
     return;
   }
 
@@ -2017,6 +2042,21 @@ wss.on('connection', (ws, req) => {
 if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`[ssh-bridge] Listening on http://${HOST}:${PORT}`);
+    // #712 — loud check that the persistent native-dist bind is present. A
+    // container recreated without the docker-compose native-dist mount serves
+    // no APK/install page (download URL 404s). Make a bare recreate obvious in
+    // `docker logs` instead of waiting for a 404 mid-test.
+    const ndStatus = nativeDistStatus();
+    if (ndStatus === 'mounted') {
+      console.log(`[ssh-bridge] native-dist OK (${NATIVE_DIST_DIR})`);
+    } else {
+      console.error(
+        `[ssh-bridge] !!! native-dist ${ndStatus} at ${NATIVE_DIST_DIR} — ` +
+          'the APK + install page will 404. The container was recreated WITHOUT ' +
+          'the docker-compose native-dist bind (#700/#712). Redeploy from the ' +
+          'container workspace via scripts/container-ctl.sh restart. /version reports nativeDist.'
+      );
+    }
   });
 
   process.on('SIGTERM', () => {
