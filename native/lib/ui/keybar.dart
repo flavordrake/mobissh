@@ -41,12 +41,29 @@ import '../state/sessions.dart';
 const double kKeybarButtonMinWidth = 44;
 const double kKeybarButtonMinHeight = 44;
 const double kKeybarIconSize = 18;
-const double kKeybarLabelFontSize = 17;
 
-/// "ESC" is the widest text label; scaling it down slightly lets it share the
-/// normal button min width instead of bulging the bar. Still monochrome text —
-/// no glyph that could be mistaken for Enter. Kept legible (#696), just a notch
-/// under the normal label size.
+/// Single-character TEXT keys (`|`, `/`, `-` and any other 1-glyph label) are
+/// NARROWER than multi-char keys so they don't waste width (#703 owner device
+/// feedback). Multi-char text keys (Esc, Tab label, Home, PgUp…) keep the full
+/// [kKeybarButtonMinWidth] so they never clip. Icon keys also keep the full
+/// width. The tap-target HEIGHT is unchanged ([kKeybarButtonMinHeight]) — only
+/// horizontal width shrinks.
+const double kKeybarSingleCharMinWidth = 30;
+
+/// #703: ALL keybar TEXT labels render at ONE uniform size — the smaller ESC
+/// size. The owner asked for a single, smaller text size across the bar (icons
+/// stay legible at [kKeybarIconSize]). [kKeybarEscFontSize] is the single
+/// source of truth for that uniform text size.
+///
+/// #615 had shrunk the bar; #696 bumped labels back up to ~17 for legibility
+/// but kept ESC a notch smaller (14) so it shared the normal width. #703
+/// collapses the two: every text key now uses the ESC size, so the constant is
+/// reused for every label below.
+const double kKeybarLabelFontSize = 14;
+
+/// The uniform keybar text size (#703). ESC is no longer special-cased — this
+/// is simply the one text size used for ALL text labels. Kept as a distinct
+/// (equal) constant so call sites and tests stay readable.
 const double kKeybarEscFontSize = 14;
 
 /// Vertical space (logical px) the keybar occupies, used as the compose-bar
@@ -157,6 +174,12 @@ class CtrlModifier {
 const List<KeybarKey> kDefaultKeybarKeys = [
   // --- nav / symbol keys first ---
   KeybarKey(id: 'keyEsc', label: 'Esc', sequence: '\x1b'),
+  // #703: the sticky Ctrl MODIFIER now leads the bar, immediately after Esc
+  // (owner device feedback overriding #694's control-group placement for the
+  // modifier specifically). Tapping it arms Ctrl for the next keybar key
+  // (Ctrl+A..Z etc.), then auto-clears. It carries no literal byte
+  // (isModifier). The FIXED ^C/^Z/^B/^D quick combos stay grouped at the END.
+  KeybarKey(id: 'keyCtrl', label: 'Ctrl', sequence: '', isModifier: true),
   KeybarKey(id: 'keyTab', label: '↹', sequence: '\t'),
   KeybarKey(id: 'keySlash', label: '/', sequence: '/'),
   KeybarKey(id: 'keyDash', label: '-', sequence: '-'),
@@ -205,12 +228,10 @@ const List<KeybarKey> kDefaultKeybarKeys = [
     sequence: '', // handled out-of-band
     icon: Icons.content_paste,
   ),
-  // --- control group LAST (owner-mandated, do not intersperse) ---
-  // #694: the sticky Ctrl MODIFIER leads the control group. Tapping it arms
-  // Ctrl for the next keybar key (Ctrl+A..Z etc.), then auto-clears. It carries
-  // no literal byte (isModifier). The fixed ^C/^Z/^B/^D quick-access combos
-  // stay after it for one-tap common interrupts.
-  KeybarKey(id: 'keyCtrl', label: 'Ctrl', sequence: '', isModifier: true),
+  // --- fixed control combos grouped LAST (owner-mandated, do not intersperse) ---
+  // The one-tap ^C/^Z/^B/^D interrupts stay grouped at the END. The sticky Ctrl
+  // MODIFIER moved to the FRONT (right after Esc) per #703 — only the modifier
+  // moved; these fixed combos keep their tail grouping.
   KeybarKey(id: 'keyCtrlC', label: '^C', sequence: '\x03'),
   KeybarKey(id: 'keyCtrlZ', label: '^Z', sequence: '\x1a'),
   KeybarKey(id: 'keyCtrlB', label: '^B', sequence: '\x02'),
@@ -322,10 +343,13 @@ class _KeybarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // ESC is the widest text key; render it a notch smaller so it fits the
-    // shared normal button width instead of bulging the bar. Still plain
-    // monochrome text (no Enter-ish glyph), still legible (#696).
-    final bool isEsc = keyData.id == 'keyEsc';
+    // #703: a single-character TEXT key (`|`, `/`, `-`, …) gets a narrower min
+    // width so it doesn't waste horizontal space. Icon keys and multi-char text
+    // keys keep the full width so they never clip. Height is unchanged.
+    final bool isSingleChar = keyData.icon == null && keyData.label.length == 1;
+    final double minWidth = isSingleChar
+        ? kKeybarSingleCharMinWidth
+        : kKeybarButtonMinWidth;
     // Monochrome icon (theme-tinted) when set, else the label glyph/text.
     // Never an emoji — see memory feedback_monochrome_icons_no_emoji.
     // #694: the armed Ctrl modifier paints accent-tinted text so the sticky
@@ -343,7 +367,9 @@ class _KeybarButton extends StatelessWidget {
         : Text(
             keyData.label,
             style: TextStyle(
-              fontSize: isEsc ? kKeybarEscFontSize : kKeybarLabelFontSize,
+              // #703: ONE uniform text size for every label (the smaller ESC
+              // size). Icons stay at kKeybarIconSize so they remain legible.
+              fontSize: kKeybarLabelFontSize,
               fontFamily: 'monospace',
               // #696: always the high-contrast label color (armed = onPrimary,
               // else the bright near-white) so it reads over the dark key face.
@@ -361,13 +387,18 @@ class _KeybarButton extends StatelessWidget {
         // against the black bar and the bright label pops.
         backgroundColor: armed ? theme.colorScheme.primary : kKeybarKeyColor,
         foregroundColor: fg,
-        // #696: trim the internal padding (owner-approved) so the larger label
-        // font fits without growing the bar height much. The comfortable tap
-        // target is preserved via minimumSize (44px) below.
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        // Every key shares the same min width so the bar stays even — ESC no
-        // longer bulges (its smaller font fits this width).
-        minimumSize: const Size(kKeybarButtonMinWidth, kKeybarButtonMinHeight),
+        // #696: trim the internal padding so the label fits without growing the
+        // bar height. The comfortable tap target is preserved via minimumSize
+        // (44px height) below. #703: single-char keys also trim horizontal
+        // padding so they read as tight, narrow keys.
+        padding: EdgeInsets.symmetric(
+          horizontal: isSingleChar ? 2 : 6,
+          vertical: 2,
+        ),
+        // #703: single-char text keys use a narrower min width so they don't
+        // waste space; multi-char and icon keys keep the full width. Height is
+        // the same comfortable tap target for every key.
+        minimumSize: Size(minWidth, kKeybarButtonMinHeight),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         // #696: a subtle light hairline separates each near-black key face from
         // the black bar so the keys read as distinct buttons (the #615 dim

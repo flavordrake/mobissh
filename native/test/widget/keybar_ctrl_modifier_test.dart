@@ -146,25 +146,43 @@ void main() {
       );
     });
 
-    test('Ctrl is grouped with the control keys at the END of the bar', () {
+    test('Ctrl modifier sits immediately after Esc at the FRONT (#703)', () {
+      // #703: owner device feedback moved the sticky Ctrl MODIFIER to the front
+      // of the bar, immediately after Esc (overriding #694's control-group
+      // placement for the modifier specifically).
       final ids = kDefaultKeybarKeys.map((k) => k.id).toList();
-      final ctrlGroup = {
-        'keyCtrl',
-        'keyCtrlC',
-        'keyCtrlZ',
-        'keyCtrlB',
-        'keyCtrlD',
-      };
-      final lastNonCtrlIndex = ids.lastIndexWhere(
-        (id) => !ctrlGroup.contains(id),
-      );
-      final firstCtrlIndex = ids.indexWhere((id) => ctrlGroup.contains(id));
+      final escIndex = ids.indexOf('keyEsc');
+      final ctrlIndex = ids.indexOf('keyCtrl');
+      expect(escIndex, equals(0), reason: 'Esc leads the bar');
       expect(
-        firstCtrlIndex,
-        greaterThan(lastNonCtrlIndex),
+        ctrlIndex,
+        equals(escIndex + 1),
         reason:
-            'control group (incl. the new Ctrl modifier) must be at the END, '
-            'not interspersed among nav/symbol keys. Order: $ids',
+            'the Ctrl modifier must be immediately after Esc at the front of '
+            'the bar (#703). Order: $ids',
+      );
+    });
+
+    test('the FIXED ^C/^Z/^B/^D combos stay grouped at the END (#703)', () {
+      // Only the Ctrl MODIFIER moved to the front. The fixed one-tap interrupt
+      // combos keep their owner-mandated tail grouping.
+      final ids = kDefaultKeybarKeys.map((k) => k.id).toList();
+      final fixedCtrl = {'keyCtrlC', 'keyCtrlZ', 'keyCtrlB', 'keyCtrlD'};
+      final lastNonFixedIndex = ids.lastIndexWhere(
+        (id) => !fixedCtrl.contains(id),
+      );
+      final firstFixedIndex = ids.indexWhere((id) => fixedCtrl.contains(id));
+      expect(
+        firstFixedIndex,
+        greaterThan(lastNonFixedIndex),
+        reason:
+            'fixed ^C/^Z/^B/^D combos must stay grouped at the END, not '
+            'interspersed. Order: $ids',
+      );
+      // They are the final contiguous block.
+      expect(
+        ids.sublist(ids.length - 4),
+        equals(['keyCtrlC', 'keyCtrlZ', 'keyCtrlB', 'keyCtrlD']),
       );
     });
 
