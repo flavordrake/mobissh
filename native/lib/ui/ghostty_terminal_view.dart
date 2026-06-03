@@ -51,7 +51,7 @@
 // `TerminalGestureSettings` explicitly CANNOT disable mouse tracking, and the
 // only built-in bypass (virtual Shift) leaks into key/scroll encoding and clears
 // on the next keystroke. So we intercept ONE layer up — see
-// [_PointerGestureRouter] / [ghosttySwipeShouldScrollLocally]. The wheel
+// [GhosttyPointerGestureRouter] / [ghosttySwipeShouldScrollLocally]. The wheel
 // reports flterm emits for an actual scroll ARE correct (libghostty's own SGR
 // wheel encoding, not xterm-4.0.0's buggy 68/69 — so no #617-style fix is needed
 // for the wheel path here).
@@ -130,6 +130,22 @@
 // (left=prev/right=next), one-step-per-swipe + status-row report, the local
 // scroll, long-press selection (#705/#706), tap-keyboard/click (#693), resume
 // (#704), and cell metrics (#699) are all unchanged.
+//
+// #719 fix (horizontal swipe MISSED the tmux window-switch after a keyboard
+// toggle / resize): the window-switch wheel was emitted at the LIVE local grid's
+// status row (`ghosttyStatusRowCell(rows: _rows)`). Device telemetry showed the
+// last resize SENT to tmux was rows=28 (a #702 resync) but the local grid had
+// since grown to 47 (keyboard toggled), so the wheel fired at row 47 while tmux
+// still believed it had 28 rows → the wheel landed BELOW tmux's status line
+// (row 28) → `WheelDownStatus`/`WheelUpStatus` never fired → no window switch.
+// Two-part fix: (1) every `proxy.sendResize` now routes through a single
+// `_sendResize` helper that also records the last-sent grid
+// (`_lastSentCols`/`_lastSentRows`), so onResize AND the #702 resync keep tmux's
+// rows == what we track; (2) the window-switch wheel targets
+// `ghosttyStatusRowCell(rows: lastSentRows)` — tmux's REAL status row — not the
+// possibly-diverged live `_rows`, so even mid-resize the wheel lands on tmux's
+// current status line. A widget smoke test (`GhosttyPointerGestureRouter`, now
+// public) drives a real drag→report assertion in the gate so this can't regress.
 //
 // SMART-SELECT (future, do NOT build here): a future button could select a word/
 // path/URL UNIT at the tap — the PWA's `src/modules/selection.ts _selectableUnitAt`
@@ -267,7 +283,7 @@ TerminalTheme buildGhosttyTheme({
 ///
 /// We drop BOTH `drag` and `longPress` here, leaving NO touch DRAG-select gesture
 /// in flterm itself. Discrete taps still select (they never fire on a swipe), and
-/// our own [_PointerGestureRouter] overlay handles touch long-press selection by
+/// our own [GhosttyPointerGestureRouter] overlay handles touch long-press selection by
 /// synthesising SGR mouse reports (#692) when the remote has mouse tracking on:
 ///
 ///   - vertical SWIPE -> SCROLL the scrollback (flterm's `Scrollable`), no select
@@ -935,12 +951,27 @@ const double kGhosttySwipeAxisLockRatio = 1.5;
 /// while a top-level tap recogniser additionally raises the keyboard via [onTap].
 /// In the inactive branch NO SGR is emitted — a plain-shell tap only focuses +
 /// raises the keyboard.
-class _PointerGestureRouter extends StatefulWidget {
-  const _PointerGestureRouter({
+/// A gesture ROUTER overlay (#690/#692/#708), made public + `@visibleForTesting`
+/// for the #719 swipe smoke test.
+///
+/// It is `RawGestureDetector` + plain callbacks — NO flterm/libghostty native
+/// `.so` is needed to drive it — so a widget test can pump it directly, simulate
+/// a horizontal/vertical drag, and assert the synthesised SGR wheel report
+/// (`onMouseReport`) lands at the EXPECTED status row, and that a vertical drag
+/// scrolls without a report (axis-lock). The swipe→tmux window-switch has
+/// regressed repeatedly (#693/#702/#708/#719); this keeps a real drag→report
+/// assertion in the gate so a future regression is caught headless. Renamed from
+/// the former private `_PointerGestureRouter`.
+@visibleForTesting
+class GhosttyPointerGestureRouter extends StatefulWidget {
+  const GhosttyPointerGestureRouter({
+    super.key,
     required this.active,
     required this.scrollController,
     required this.cols,
     required this.rows,
+    required this.lastSentCols,
+    required this.lastSentRows,
     required this.cellWidth,
     required this.cellHeight,
     required this.mouseTrackingLabel,
@@ -961,8 +992,20 @@ class _PointerGestureRouter extends StatefulWidget {
   final TerminalScrollController scrollController;
 
   /// Live grid columns/rows (from `controller.onResize`) for pixel->cell mapping.
+  /// Used ONLY for the touch->cell map (tap click / long-press selection), where
+  /// the live grid IS the right coordinate space (flterm renders at this size).
   final int cols;
   final int rows;
+
+  /// The cols/rows LAST SENT to the PTY via `proxy.sendResize` — i.e. the grid
+  /// tmux actually BELIEVES it has (#719). The window-switch wheel targets the
+  /// status row of THIS, not the live [rows]: on a keyboard toggle / resize the
+  /// live grid can change (e.g. 28→47) before tmux is told, so a wheel at the
+  /// live status row (47) misses tmux's real status row (28) → no window switch.
+  /// Targeting the last-sent rows lands the wheel on tmux's actual status line
+  /// even mid-resize. Kept in sync by the parent's single `_sendResize` helper.
+  final int lastSentCols;
+  final int lastSentRows;
 
   /// The REAL flterm cell size (logical px), measured by [ghosttyMeasureCellSize]
   /// from the live theme font (#699). The touch->cell map divides by THIS, not by
@@ -1014,10 +1057,12 @@ class _PointerGestureRouter extends StatefulWidget {
   final VoidCallback onSelectionClear;
 
   @override
-  State<_PointerGestureRouter> createState() => _PointerGestureRouterState();
+  State<GhosttyPointerGestureRouter> createState() =>
+      _GhosttyPointerGestureRouterState();
 }
 
-class _PointerGestureRouterState extends State<_PointerGestureRouter> {
+class _GhosttyPointerGestureRouterState
+    extends State<GhosttyPointerGestureRouter> {
   /// #708: ONE pan tracker replaces the old independent Vertical/Horizontal drag
   /// recognisers so a gesture commits to a SINGLE axis and ignores the other for
   /// its whole duration. State across the pan:
@@ -1102,7 +1147,16 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
       _trace('swipe-h', totalDx, 0, null, null, null);
       return;
     }
-    final (col, row) = ghosttyStatusRowCell(rows: widget.rows);
+    // #719: target the status row of the rows tmux ACTUALLY HAS (the last grid
+    // sent via sendResize), NOT the live local grid (widget.rows). On a keyboard
+    // toggle / resize the live grid can change (e.g. 28→47) before tmux is told,
+    // so a wheel at the live status row (47) would miss tmux's real status row
+    // (28) and no window switch fires. Falls back to the live rows only if no
+    // resize was ever sent (lastSentRows == 0), which can't happen once connected.
+    final targetRows = widget.lastSentRows > 0
+        ? widget.lastSentRows
+        : widget.rows;
+    final (col, row) = ghosttyStatusRowCell(rows: targetRows);
     final report = decision == GhosttyWindowSwitch.next
         ? ghosttySgrWheelDown(col: col, row: row) // swipe RIGHT → next-window
         : ghosttySgrWheelUp(col: col, row: row); // swipe LEFT → previous-window
@@ -1355,6 +1409,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   int _cols = 0;
   int _rows = 0;
 
+  /// #719: the cols/rows LAST SENT to the PTY via `proxy.sendResize` — what tmux
+  /// actually BELIEVES its grid is. The window-switch wheel (#702) must target
+  /// the status row of THIS, not the live `_rows`. Device telemetry: the last
+  /// resize sent was rows=28 (a #702 resync), the keyboard toggled so the local
+  /// grid grew to 47 and `_rows`→47, but the wheel fired at row 47 while tmux
+  /// still had 28 rows → the wheel missed tmux's status line (row 28) and no
+  /// window switch fired. Every `proxy.sendResize` goes through [_sendResize],
+  /// which updates these, so they can never diverge from what tmux was told.
+  /// 0 until the first resize is sent.
+  int _lastSentCols = 0;
+  int _lastSentRows = 0;
+
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
   /// long-press-start, held while the finger drags so each extend rebuilds the
   /// flterm `TerminalSelection` with this fixed start and the moving end. Null
@@ -1433,9 +1499,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
       // mirror (cols, rows) so the #692 gesture router can map touch -> cell.
       controller.onResize = (cols, rows) {
-        proxy.sendResize(cols, rows);
+        // Mirror the live grid (for the touch->cell map) AND send the resize
+        // through the single [_sendResize] helper so the rows tmux is told about
+        // can never diverge from what the window-switch wheel targets (#719).
         _cols = cols;
         _rows = rows;
+        _sendResize(cols, rows);
       };
       // PTY output bytes -> terminal. The subscription lives on this state so
       // dispose() cancels it.
@@ -1559,8 +1628,23 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       );
       return;
     }
-    proxy.sendResize(_cols, _rows);
+    _sendResize(_cols, _rows);
     gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
+  }
+
+  /// #719: the SINGLE path for every PTY resize. Sends the grid to the proxy AND
+  /// records it as the last-sent grid ([_lastSentCols]/[_lastSentRows]) — the
+  /// rows tmux now BELIEVES it has. Routing both `onResize` and the #702 forced
+  /// resync through here guarantees the window-switch wheel target (which reads
+  /// the last-sent rows) can never diverge from what tmux was actually told, so
+  /// a horizontal swipe lands on tmux's real status row even mid-resize (the
+  /// #719 desync: live grid 47, but tmux still on 28).
+  void _sendResize(int cols, int rows) {
+    final proxy = _proxy;
+    if (proxy == null) return;
+    proxy.sendResize(cols, rows);
+    _lastSentCols = cols;
+    _lastSentRows = rows;
   }
 
   /// #717: focus the terminal ONCE per connect so flterm scroll/interaction is
@@ -1929,13 +2013,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // BOTH branches a tap focuses + raises the keyboard. Sits below the
         // affordance buttons so they stay tappable.
         Positioned.fill(
-          child: _PointerGestureRouter(
+          child: GhosttyPointerGestureRouter(
             active: ghosttySwipeShouldScrollLocally(
               mouseTracking: _mouseTracking,
             ),
             scrollController: _scrollController,
             cols: _cols,
             rows: _rows,
+            // #719: target the window-switch wheel at tmux's REAL status row
+            // (the last grid we told it), not the possibly-diverged live grid.
+            lastSentCols: _lastSentCols,
+            lastSentRows: _lastSentRows,
             // #699: hand the REAL cell size down so the router maps a touch to
             // the cell flterm actually rendered (root-cause fix for the offset).
             cellWidth: cellSize.width,
