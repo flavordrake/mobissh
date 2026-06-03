@@ -141,22 +141,76 @@ void main() {
     });
   });
 
-  group('keybar sizing (#615 — shrink ~25%, lighter outline)', () {
-    test('button min height is reduced ~25% from the old 44px tap target', () {
-      // Old default min height was 44. A ~25% shrink lands around 33 (±2).
-      expect(kKeybarButtonMinHeight, lessThanOrEqualTo(35));
-      expect(kKeybarButtonMinHeight, greaterThanOrEqualTo(31));
+  group('keybar sizing (#703 — uniform text size, narrow single-char keys)', () {
+    test('button min height holds the 44px touch-target floor', () {
+      // #615 shrank this to ~33; #696 restored the comfortable 44px tap target.
+      // #703 keeps the height floor — only horizontal width shrinks for
+      // single-char keys, never the tap-target height.
+      expect(kKeybarButtonMinHeight, greaterThanOrEqualTo(44));
     });
 
-    test('icon + label font sizes are reduced from the old 18 / 14', () {
-      expect(kKeybarIconSize, lessThan(18));
-      expect(kKeybarLabelFontSize, lessThan(14));
+    test('all text labels share ONE uniform size — the ESC size (#703)', () {
+      // #703: the owner asked for a single, smaller text size across the whole
+      // bar. ESC is no longer special-cased smaller; every text label renders
+      // at kKeybarEscFontSize. The label and ESC constants are therefore equal.
+      expect(
+        kKeybarLabelFontSize,
+        equals(kKeybarEscFontSize),
+        reason: 'all text keys must render at the uniform (ESC) size',
+      );
+      // It's the smaller ESC size (legible, but a notch under the #696 label),
+      // not the old larger #696 label.
+      expect(kKeybarLabelFontSize, equals(14));
     });
 
-    test('keybar reserve height is reduced ~25% from the old 96px', () {
-      // The compose-bar bottomReserve used a hardcoded 96 for the keybar.
-      expect(kKeybarReserve, lessThanOrEqualTo(76));
-      expect(kKeybarReserve, greaterThanOrEqualTo(64));
+    test(
+      'icons stay legible at their current size (#703 — text only shrinks)',
+      () {
+        // #703 shrinks TEXT to the ESC size but explicitly KEEPS icons at their
+        // current (larger) size so the arrows / Enter / Paste glyphs stay legible.
+        expect(kKeybarIconSize, equals(18));
+        // The icon is larger than the (now uniform, smaller) text.
+        expect(kKeybarIconSize, greaterThan(kKeybarLabelFontSize));
+      },
+    );
+
+    test('single-char keys are narrower than multi-char keys (#703)', () {
+      // #703: single-glyph text keys (`|`, `/`, `-`) waste width at the full
+      // min-width, so they get a narrower min width. Multi-char keys keep the
+      // full width so they never clip.
+      expect(
+        kKeybarSingleCharMinWidth,
+        lessThan(kKeybarButtonMinWidth),
+        reason: 'single-char keys must be narrower than multi-char keys',
+      );
+      // Still wide enough to remain a comfortable horizontal tap target.
+      expect(kKeybarSingleCharMinWidth, greaterThanOrEqualTo(28));
+    });
+
+    test('keybar reserve still clears the bar (button + padding)', () {
+      // The compose-bar bottomReserve consumes this. It must cover the button
+      // height plus the scroll-view vertical padding with a small margin.
+      expect(kKeybarReserve, greaterThanOrEqualTo(kKeybarButtonMinHeight));
+      // Still meaningfully tighter than the old hardcoded 96.
+      expect(kKeybarReserve, lessThanOrEqualTo(72));
+    });
+
+    test('keybar palette is high-contrast and monochrome (#696)', () {
+      // Near-black bar + key faces, near-white label. No color/emoji — the
+      // theme accent is reserved for the armed-Ctrl state.
+      expect(kKeybarBarColor, const Color(0xFF000000));
+      // Key face sits just above the bar so keys read as distinct faces.
+      expect(
+        kKeybarKeyColor.toARGB32(),
+        greaterThan(kKeybarBarColor.toARGB32()),
+      );
+      // Label is bright (near-white) for contrast over the dark key face.
+      expect(kKeybarLabelColor.computeLuminance(), greaterThan(0.8));
+      // Monochrome: bar/key/label are all neutral grays (R==G==B).
+      for (final c in [kKeybarBarColor, kKeybarKeyColor, kKeybarLabelColor]) {
+        expect(c.r, c.g);
+        expect(c.g, c.b);
+      }
     });
   });
 
@@ -198,8 +252,8 @@ void main() {
     });
 
     testWidgets(
-      'ESC renders at a normal button width — same minWidth as a normal key '
-      '(#615)',
+      'single-char keys render narrower than multi-char keys; multi-char keys '
+      'share the full width (#703)',
       (tester) async {
         final pair = InMemoryGatewayPair();
         addTearDown(() async {
@@ -237,13 +291,27 @@ void main() {
         Size? minSizeOf(OutlinedButton b) =>
             b.style?.minimumSize?.resolve(<WidgetState>{});
 
-        final escMin = minSizeOf(buttonFor('keyEsc'));
-        final normalMin = minSizeOf(buttonFor('keyPipe'));
+        // #703: single-glyph text keys (`|`, `/`, `-`) get a narrower min width
+        // so they don't waste space; multi-char text keys (Esc, Home) keep the
+        // full width so they never clip.
+        final pipeMin = minSizeOf(buttonFor('keyPipe')); // single char
+        final slashMin = minSizeOf(buttonFor('keySlash')); // single char
+        final escMin = minSizeOf(buttonFor('keyEsc')); // multi char
+        final homeMin = minSizeOf(buttonFor('keyHome')); // multi char
+        expect(pipeMin, isNotNull);
+        expect(slashMin, isNotNull);
         expect(escMin, isNotNull);
-        expect(normalMin, isNotNull);
-        // ESC must not be wider than a normal key — it used to be the widest
-        // text key. Same min width keeps the bar even.
-        expect(escMin!.width, equals(normalMin!.width));
+        expect(homeMin, isNotNull);
+        // Single-char keys are narrower than multi-char keys.
+        expect(pipeMin!.width, lessThan(escMin!.width));
+        expect(slashMin!.width, lessThan(homeMin!.width));
+        // Single-char keys all share the same narrow width.
+        expect(pipeMin.width, equals(slashMin.width));
+        // Multi-char keys all share the same full width (the bar stays even).
+        expect(escMin.width, equals(homeMin.width));
+        // Height is the same comfortable tap target for every key (#703 only
+        // shrinks width, never the tap-target height).
+        expect(pipeMin.height, equals(escMin.height));
       },
     );
 
