@@ -100,6 +100,20 @@
 // by. The router instruments every gesture into the #699 gesture-trace ring
 // (gesture_trace.dart) so a device repro carries the touch->cell numbers.
 //
+// #704 fix (app switch-away-and-back: terminal NOT refreshed AND NOT laid out):
+// `_SessionTerminalBody` renders this view for the ghostty backend and skips the
+// xterm-only resume machinery (the #659/#666 fit-burst, the `didChangeMetrics`
+// re-fit), so on `AppLifecycleState.resumed` flterm neither re-fits nor repaints
+// — stale/blank until a tap/scroll forces a frame, and tmux keeps its
+// backgrounded grid. The fix listens for a transition INTO `resumed`
+// ([ghosttyShouldRefreshOnLifecycle]) and, when connected: (1) RE-FITS by
+// re-arming the SAME #702 forced-resize burst ([_armResizeResync]) so flterm
+// re-lays-out and the PTY gets the current grid; (2) REFRESHES by nudging a
+// repaint — `controller.scrollToBottom()` (pin to latest output, fire the scroll
+// listener → frame) plus a post-frame `setState` so the repaint lands even if
+// the buffer is unchanged. Both fire `ghostty-resume-refit`/`-refresh` into the
+// connect/gesture trace so a device repro confirms they ran.
+//
 // SMART-SELECT (future, do NOT build here): a future button could select a word/
 // path/URL UNIT at the tap — the PWA's `src/modules/selection.ts _selectableUnitAt`
 // is the spec. The seam is [GhosttySelectionDriver] + [ghosttyCellForPosition]:
@@ -120,6 +134,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../diagnostics/gesture_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
+import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import 'top_toast.dart';
@@ -228,6 +243,31 @@ bool ghosttyShouldResyncResize({
 /// guarded by [ghosttyShouldResyncResize], so a tick with no valid grid is a
 /// no-op (no stray resize).
 const List<int> kGhosttyResyncBurstMs = [120, 350, 700, 1200];
+
+/// Whether an app-lifecycle transition warrants a Ghostty resume re-fit +
+/// refresh (#704).
+///
+/// On app switch-away-and-back the flterm view neither re-fits nor repaints —
+/// `_SessionTerminalBody` (terminal_screen.dart) renders [GhosttyTerminalView]
+/// for the ghostty backend and DELIBERATELY skips the xterm-only resume
+/// machinery (the #659/#666 fit-burst, the `didChangeMetrics` re-fit). So on
+/// `AppLifecycleState.resumed` flterm shows stale/blank content until a tap or
+/// scroll forces a frame, and the PTY (tmux) keeps whatever grid it had while
+/// backgrounded.
+///
+/// This gates the resume action on a transition INTO `resumed` from a
+/// non-resumed state ([AppLifecycleState.paused]/`inactive`/`hidden`/`detached`,
+/// or a null first-listen). A `resumed → resumed` repeat (a spurious provider
+/// tick) is a no-op so the burst doesn't double-fire, and any transition INTO a
+/// non-resumed state (e.g. → paused) is ignored. Pure (no FFI / no widget) →
+/// unit-testable headless.
+bool ghosttyShouldRefreshOnLifecycle(
+  AppLifecycleState? prev,
+  AppLifecycleState next,
+) {
+  if (next != AppLifecycleState.resumed) return false;
+  return prev != AppLifecycleState.resumed;
+}
 
 /// The padding flterm's [TerminalView] is built with (`EdgeInsets.all(4)`), in
 /// logical px (#699). flterm wraps its `Scrollable` + render box in a
@@ -962,6 +1002,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// so dispose cancels them and a gone widget is never re-synced.
   final List<Timer> _resyncTimers = <Timer>[];
 
+  /// #704: the lifecycle state seen on the previous `ref.listen` tick, so
+  /// [ghosttyShouldRefreshOnLifecycle] can detect a transition INTO `resumed`
+  /// (and not double-fire on a `resumed → resumed` repeat). Null until the
+  /// first tick. NOTE: `ref.listen` already hands us `prev`, but the
+  /// StateProvider can re-emit the same value; gating on the transition keeps
+  /// the resume burst single-shot.
+  AppLifecycleState? _lastLifecycle;
+
   @override
   void initState() {
     super.initState();
@@ -1084,6 +1132,59 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
   }
 
+  /// #704: on app switch-away-and-back, RE-FIT then REFRESH the flterm view.
+  ///
+  /// `_SessionTerminalBody` renders [GhosttyTerminalView] for the ghostty
+  /// backend and skips the xterm-only resume machinery, so on resume flterm
+  /// neither re-lays-out nor repaints — it shows stale/blank content (and the
+  /// PTY keeps its backgrounded grid) until a tap or scroll forces a frame.
+  /// This handler, fired on the lifecycle transition INTO `resumed`
+  /// ([ghosttyShouldRefreshOnLifecycle]), does both:
+  ///
+  ///   1. RE-FIT ("not laid out"): re-arm the SAME #702 forced-resize burst
+  ///      ([_armResizeResync]) so flterm re-lays-out its grid and the current
+  ///      cols/rows reach the PTY (tmux) again — the mechanism is identical to
+  ///      first-connect, just triggered by resume instead of `shellReady`.
+  ///   2. REFRESH ("not refreshed"): pull the latest output back into view.
+  ///      The live `proxy.output → controller.write` stream remains the source
+  ///      of truth (a connected session's bytes keep flowing); the global
+  ///      resume-rebind (#551/connection_providers.dart) also re-requests a
+  ///      task-side snapshot. What's missing is a FRAME: flterm only repaints
+  ///      when its controller/scroll notifies. So we nudge it — `scrollToBottom`
+  ///      (jump to the latest content, which fires the scroll listener → a
+  ///      frame, mirroring the xterm/PWA "resume shows latest" semantics) plus a
+  ///      post-frame `setState` to rebuild the subtree and guarantee a repaint
+  ///      even if the buffer was unchanged.
+  ///
+  /// Guarded: only when the session is connected (a dead PTY has nothing to
+  /// re-fit/refresh), and single-shot per resume via the transition gate.
+  void _onResume() {
+    if (!mounted) return;
+    final proxy = _proxy;
+    if (proxy == null) return;
+    if (proxy.data.state != SshSessionState.connected) {
+      gtrace('ghostty-resume: skip (not connected)');
+      return;
+    }
+    // 1. RE-FIT: reuse the #702 forced-resize burst so flterm re-lays-out and
+    //    tmux gets the current grid again after the background pause.
+    gtrace('ghostty-resume-refit: cols=$_cols rows=$_rows');
+    _armResizeResync();
+    // 2. REFRESH: nudge flterm to repaint the latest buffer. scrollToBottom
+    //    pins the viewport to the newest output (and fires the scroll listener
+    //    → a frame); the post-frame setState forces a rebuild so the repaint
+    //    lands even when the content is unchanged.
+    final controller = _controller;
+    if (controller != null) {
+      controller.scrollToBottom();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {});
+    });
+    gtrace('ghostty-resume-refresh: cols=$_cols rows=$_rows');
+  }
+
   /// #705: begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT
   /// cell. Anchor it (held for the drag) and SET `controller.selection` to a
   /// collapsed span at that cell — mapped to absolute buffer rows by adding the
@@ -1168,6 +1269,20 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
 
   @override
   Widget build(BuildContext context) {
+    // #704: re-fit + refresh on app switch-away-and-back. The flterm view skips
+    // the xterm path's resume machinery, so without this a resume leaves the
+    // terminal stale/blank (and the PTY on its backgrounded grid) until a tap
+    // or scroll forces a frame. We listen for a transition INTO `resumed` and
+    // re-arm the #702 resize burst (re-fit) + nudge a repaint (refresh). Gated
+    // by [ghosttyShouldRefreshOnLifecycle] against [_lastLifecycle] so a
+    // `resumed → resumed` re-emit doesn't double-fire the burst.
+    ref.listen<AppLifecycleState>(lifecycleProvider, (prev, next) {
+      final effectivePrev = prev ?? _lastLifecycle;
+      _lastLifecycle = next;
+      if (ghosttyShouldRefreshOnLifecycle(effectivePrev, next)) {
+        _onResume();
+      }
+    });
     final controller = _controller;
     if (controller == null) {
       return Container(
