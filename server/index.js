@@ -71,6 +71,44 @@ const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PATH = (process.env.BASE_PATH || '').replace(/\/$/, '');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
+// Persistent distribution dir for the native APK + its install page (#700).
+// Bind-mounted from the host in docker-compose.prod.yml so these large, build-
+// produced artifacts survive a container recreate AND the `container-ctl.sh push`
+// hot-cp of public/ — neither of which carries them (they're not in the image,
+// and `scripts/native-release-apk.sh` writes them here, not into public/). The
+// static handler serves the native artifact names from here, falling back to
+// PUBLIC_DIR when a file isn't present (e.g. before the first publish).
+const NATIVE_DIST_DIR = process.env.NATIVE_DIST_DIR
+  ? path.resolve(process.env.NATIVE_DIST_DIR)
+  : path.resolve(__dirname, '..', 'native-dist');
+// Exact basenames + the timestamped-APK pattern served from NATIVE_DIST_DIR.
+function isNativeDistArtifact(baseName) {
+  return (
+    baseName === 'native.html' ||
+    baseName === 'native-time.js' ||
+    baseName === 'native-feedback.js' ||
+    /^mobissh-native(-[\w.+-]+)?\.apk$/.test(baseName)
+  );
+}
+
+// #712: report whether the persistent native-dist bind is actually mounted +
+// populated. A container recreated WITHOUT the docker-compose native-dist bind
+// (e.g. a deploy from a checkout lacking the #700 mount) serves no APK/install
+// page → the download URL 404s. Surface it loudly (startup log + /version) so a
+// bare recreate is obvious instead of discovered via a 404 mid-test.
+//   'mounted' — dir exists AND the install page is present (healthy)
+//   'EMPTY'   — dir exists but native.html is missing (mounted, not published)
+//   'MISSING' — dir does not exist (the bind was dropped — THE failure mode)
+function nativeDistStatus() {
+  try {
+    if (!fs.existsSync(NATIVE_DIST_DIR)) return 'MISSING';
+    return fs.existsSync(path.join(NATIVE_DIST_DIR, 'native.html'))
+      ? 'mounted'
+      : 'EMPTY';
+  } catch (_) {
+    return 'MISSING';
+  }
+}
 
 // ─── CSWSH prevention (issue #83) ─────────────────────────────────────────────
 // WS_ORIGIN_ALLOWLIST: comma-separated list of additional allowed origins.
@@ -175,6 +213,7 @@ const MIME = {
   '.svg':  'image/svg+xml',
   '.png':  'image/png',
   '.ico':  'image/x-icon',
+  '.apk':  'application/vnd.android.package-archive',
 };
 
 // ─── SFTP message handler (exported for unit tests) ──────────────────────────
@@ -981,7 +1020,13 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
     });
-    res.end(JSON.stringify({ version: APP_VERSION, hash: GIT_HASH }));
+    res.end(
+      JSON.stringify({
+        version: APP_VERSION,
+        hash: GIT_HASH,
+        nativeDist: nativeDistStatus(), // #712 — 'mounted' | 'EMPTY' | 'MISSING'
+      })
+    );
     return;
   }
 
@@ -1053,9 +1098,23 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
   }
 
   const rel = path.normalize(req.url.split('?')[0]).replace(/^(\.\.[/\\])+/, '');
-  const filePath = path.join(PUBLIC_DIR, rel === '/' || rel === '' ? 'index.html' : rel);
+  const relName = rel === '/' || rel === '' ? 'index.html' : rel;
+  const baseName = path.basename(relName);
 
-  if (!filePath.startsWith(PUBLIC_DIR + path.sep) && filePath !== PUBLIC_DIR) {
+  // Native dist artifacts (#700): serve from the persistent NATIVE_DIST_DIR so a
+  // container recreate / public-hot-push can't 404 the download URL. baseName is
+  // path.basename (no separators) matched against a strict allowlist, so it's a
+  // safe direct join. Falls back to PUBLIC_DIR if not yet published there.
+  let serveRoot = PUBLIC_DIR;
+  let filePath;
+  if (isNativeDistArtifact(baseName) && fs.existsSync(path.join(NATIVE_DIST_DIR, baseName))) {
+    serveRoot = NATIVE_DIST_DIR;
+    filePath = path.join(NATIVE_DIST_DIR, baseName);
+  } else {
+    filePath = path.join(PUBLIC_DIR, relName);
+  }
+
+  if (!filePath.startsWith(serveRoot + path.sep) && filePath !== serveRoot) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -1983,6 +2042,21 @@ wss.on('connection', (ws, req) => {
 if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`[ssh-bridge] Listening on http://${HOST}:${PORT}`);
+    // #712 — loud check that the persistent native-dist bind is present. A
+    // container recreated without the docker-compose native-dist mount serves
+    // no APK/install page (download URL 404s). Make a bare recreate obvious in
+    // `docker logs` instead of waiting for a 404 mid-test.
+    const ndStatus = nativeDistStatus();
+    if (ndStatus === 'mounted') {
+      console.log(`[ssh-bridge] native-dist OK (${NATIVE_DIST_DIR})`);
+    } else {
+      console.error(
+        `[ssh-bridge] !!! native-dist ${ndStatus} at ${NATIVE_DIST_DIR} — ` +
+          'the APK + install page will 404. The container was recreated WITHOUT ' +
+          'the docker-compose native-dist bind (#700/#712). Redeploy from the ' +
+          'container workspace via scripts/container-ctl.sh restart. /version reports nativeDist.'
+      );
+    }
   });
 
   process.on('SIGTERM', () => {
