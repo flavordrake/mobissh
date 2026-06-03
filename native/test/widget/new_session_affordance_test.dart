@@ -1,15 +1,23 @@
-// Widget test: the "New session" affordance (goal leg 2).
+// Widget test: the "Profiles & settings" affordance (goal leg 2, #721).
 //
 // The multi-session model (SessionsNotifier) supports N sessions, but until
-// this affordance there was no UI path to start a SECOND one: RootRouter shows
-// the terminal screen the moment any session connects, and neither the AppBar
-// nor the session menu offered a "connect another" entry point. This test
-// locks the wiring:
+// this affordance there was no UI path to start a SECOND one — and, separately
+// (#721), no way to reach profiles + every setting from a LIVE session without
+// disconnecting all of them. RootRouter binary-swaps to the terminal the moment
+// any session connects, so ConnectHomePage (the only place with Profiles +
+// Settings + Diagnostics) was reachable ONLY with zero connected sessions.
 //
-//   1. The session menu renders a "New session" tile.
-//   2. Tapping it closes the menu and pushes the connect form (NewSessionPage).
-//   3. Submitting the form adds a second session, makes it active, and pops
-//      back to the terminal screen.
+// #721: the session menu's tile now opens the FULL ConnectHomePage (the SAME
+// unified view as first-run) PUSHED over the live terminal, NOT a reduced
+// connect form. This test locks the wiring:
+//
+//   1. The session menu renders the tile (`session-menu-new`).
+//   2. Tapping it closes the menu and pushes ConnectHomePage — with the
+//      Settings/Diagnostics bottom-nav (`home-bottom-nav`) AND a back-to-session
+//      affordance (`home-back-to-session`) — while the existing session stays
+//      connected (NOT closed).
+//   3. Picking "New connection" -> Save&connect adds a second session.
+//   4. Tapping back returns to the terminal with both sessions intact.
 //
 // Sessions are proxy-backed; `taskSshGatewayProvider` is overridden with an
 // in-memory gateway pair so addOrActivate + proxy.connect run without binding
@@ -69,7 +77,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('session menu offers a "New session" tile', (tester) async {
+  testWidgets('session menu offers the profiles/settings tile', (tester) async {
     final container = _makeContainer();
     addTearDown(container.dispose);
 
@@ -99,11 +107,9 @@ void main() {
   });
 
   testWidgets(
-    'New session: menu -> chooser -> New -> Save&connect adds a 2nd session',
+    '#721: tile opens the FULL home (Profiles/Settings/Diagnostics) over the '
+    'live session WITHOUT closing it',
     (tester) async {
-      // #583: the new-session page is the profile CHOOSER now (no inline form).
-      // Starting an ad-hoc 2nd session goes through the editor: "New connection"
-      // -> fill the editor -> "Save & connect".
       final container = _makeContainer();
       addTearDown(container.dispose);
 
@@ -126,18 +132,81 @@ void main() {
       );
       await _pumpFrames(tester);
 
-      // Open the session menu and tap "New session".
+      // Open the session menu and tap the profiles/settings tile.
       await tester.tap(find.byKey(const Key('session-menu-button')));
       await _pumpFrames(tester);
       await tester.tap(find.byKey(const Key('session-menu-new')));
       await _pumpFrames(tester);
 
-      // The menu is gone and the chooser is pushed on top — NOT a form.
+      // The menu is gone and the FULL ConnectHomePage is pushed on top: it has
+      // the Settings/Diagnostics bottom-nav (the unified view, NOT a reduced
+      // connect form) AND a back-to-session affordance.
       expect(find.byKey(const Key('session-menu')), findsNothing);
-      expect(find.byKey(const Key('new-session-page')), findsOneWidget);
-      expect(find.byKey(const Key('new-session-form')), findsOneWidget);
+      expect(find.byKey(const Key('home-bottom-nav')), findsOneWidget);
+      expect(find.byKey(const Key('home-nav-settings')), findsOneWidget);
+      expect(find.byKey(const Key('home-nav-diagnostics')), findsOneWidget);
+      expect(find.byKey(const Key('home-back-to-session')), findsOneWidget);
 
-      // Open the editor in create mode via the "New connection" affordance.
+      // CRITICAL (#721): the existing session was NOT torn down by opening the
+      // home — it persists underneath so its keep-alive holds.
+      expect(container.read(sessionsProvider).entries.length, 1);
+      expect(container.read(sessionsProvider).entries.first.id, a.id);
+
+      // Settings is reachable right here (the whole point): switch to it.
+      await tester.tap(find.byKey(const Key('home-nav-settings')));
+      await _pumpFrames(tester);
+
+      // Back returns to the live terminal; the session is still there. Pump
+      // generously so the route pop transition fully completes (the terminal
+      // body re-arms fit timers continuously, so pumpAndSettle would never
+      // quiesce — use discrete frames instead).
+      await tester.tap(find.byKey(const Key('home-back-to-session')));
+      await _pumpFrames(tester, count: 20);
+      expect(find.byKey(const Key('home-bottom-nav')), findsNothing);
+      expect(find.byKey(const Key('session-bar')), findsOneWidget);
+      expect(container.read(sessionsProvider).entries.length, 1);
+      expect(container.read(sessionsProvider).entries.first.id, a.id);
+    },
+  );
+
+  testWidgets(
+    '#721: from the pushed home, New -> Save&connect adds a 2nd session '
+    '(both sessions persist)',
+    (tester) async {
+      // #583: starting an ad-hoc session goes through the editor: "New
+      // connection" -> fill -> "Save & connect". The chooser lives inside the
+      // pushed ConnectHomePage now (#721) instead of a standalone page.
+      final container = _makeContainer();
+      addTearDown(container.dispose);
+
+      final notifier = container.read(sessionsProvider.notifier);
+      final a = notifier.addOrActivate(
+        const SshConnectParams(
+          host: 'host-a',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
+      expect(container.read(sessionsProvider).entries.length, 1);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: TerminalScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      // Open the session menu and open the profiles/settings home.
+      await tester.tap(find.byKey(const Key('session-menu-button')));
+      await _pumpFrames(tester);
+      await tester.tap(find.byKey(const Key('session-menu-new')));
+      await _pumpFrames(tester);
+      expect(find.byKey(const Key('home-bottom-nav')), findsOneWidget);
+
+      // Open the editor in create mode via the "New connection" affordance
+      // (the Profiles tab is selected by default).
       await tester.tap(find.byKey(const Key('new-connection')));
       await _pumpFrames(tester);
       expect(find.byKey(const Key('profile-editor')), findsOneWidget);
@@ -170,13 +239,13 @@ void main() {
       await tester.tap(submit);
       await _pumpFrames(tester, count: 30);
 
-      // A second session now exists and is active. The pushed route stays
-      // mounted until its session reaches `connected` (so host-key prompts
-      // still render on the chooser) — that pop is exercised by the emulator
-      // integration test (`multi_session_lifecycle_test.dart`); the in-memory
-      // gateway here never emits a `connected` state, so we don't assert pop.
+      // A second session now exists and is active — and the FIRST one was NOT
+      // dropped. The pushed route stays mounted until its session reaches
+      // `connected` (so host-key prompts still render); the in-memory gateway
+      // here never emits `connected`, so we don't assert pop.
       final state = container.read(sessionsProvider);
       expect(state.entries.length, 2);
+      expect(state.entries.any((e) => e.id == a.id), isTrue);
       expect(state.activeId, isNot(a.id));
       expect(state.active?.host, 'host-b');
     },

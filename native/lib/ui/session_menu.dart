@@ -24,10 +24,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../main.dart' show openConnectHome;
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
-import 'connect_form.dart';
 import 'file_browser_screen.dart';
 
 /// Opens the session menu as a NON-MODAL overlay anchored to the bottom, above
@@ -209,19 +209,25 @@ class SessionMenu extends ConsumerWidget {
                 isActive: e.id == sessions.activeId,
                 onClose: onClose,
               ),
-          // Start an additional session. Closes the menu and pushes the
-          // connect chooser on top of the terminal screen (the goal's leg 2).
+          // #721: open the FULL home (Profiles / Settings / Diagnostics) OVER
+          // the live terminal — the SAME unified view as first-run, not a
+          // reduced connect form. Reaches every setting + profiles without
+          // disconnecting: pushing a route leaves the sessions (and their
+          // keep-alive) intact underneath. Picking a profile here starts an
+          // ADDITIONAL session and the embedded chooser pops back to the
+          // terminal on connect (`_popWhenConnected`); the AppBar back arrow
+          // returns to the active session. Closes the menu first so the pushed
+          // route isn't covered by the overlay.
           ListTile(
             key: const Key('session-menu-new'),
             dense: true,
             leading: const Icon(Icons.add),
-            title: const Text('New session'),
+            title: const Text('Profiles & settings'),
+            subtitle: const Text('Add a connection · all settings'),
             onTap: () {
               final navigator = Navigator.of(context);
               onClose();
-              navigator.push(
-                MaterialPageRoute<void>(builder: (_) => const NewSessionPage()),
-              );
+              openConnectHome(navigator.context);
             },
           ),
           const Divider(height: 1),
