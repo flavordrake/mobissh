@@ -3,7 +3,9 @@
 // These gate the SWITCH (which widget mounts), NOT flterm's rendering — the
 // libghostty-backed flterm view can't paint headless, so the ghostty branch is
 // device-validated by the owner. We assert:
-//   1. Default (xterm): the xterm `TerminalView` mounts; no GhosttyTerminalView.
+//   1. backend=xterm (explicit override): the xterm `TerminalView` mounts; no
+//      GhosttyTerminalView. (Ghostty is the default since #725, so the xterm
+//      path is pinned via an override to keep its coverage.)
 //   2. backend=ghostty: a GhosttyTerminalView mounts; no xterm `TerminalView`.
 //
 // `GhosttyTerminalView` defends against a failed libghostty load by catching
@@ -76,15 +78,23 @@ void main() {
   });
 
   group('TerminalScreen backend switch (#684)', () {
-    testWidgets('default backend mounts the xterm TerminalView, not ghostty', (
+    testWidgets('backend=xterm mounts the xterm TerminalView, not ghostty', (
       tester,
     ) async {
       final transport = FakeSshShellTransport();
       addTearDown(transport.close);
-      final container = await _mountWithBackend(tester, transport);
+      final container = await _mountWithBackend(
+        tester,
+        transport,
+        overrides: [
+          terminalBackendProvider.overrideWith(
+            (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
+          ),
+        ],
+      );
       addTearDown(container.dispose);
 
-      // Sanity: the default really is xterm.
+      // Pinned to xterm via override (ghostty is the default since #725).
       expect(container.read(terminalBackendProvider), TerminalBackend.xterm);
       expect(find.byType(TerminalView), findsWidgets);
       expect(find.byType(GhosttyTerminalView), findsNothing);
