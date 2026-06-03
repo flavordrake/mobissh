@@ -60,17 +60,28 @@ String _timestamp(DateTime now) {
 String formatSgrForTrace(String report) =>
     report.replaceAll('\x1b', 'ESC').replaceAll('\r', '\\r');
 
-/// One-line summary of a single gesture event for the ring buffer (#699).
+/// One-line summary of a single gesture event for the ring buffer (#699, #723).
 ///
 /// Fields are fixed-key `k=v` pairs so the log is greppable and diffs cleanly:
 ///   pos=(dx,dy)  the raw localPosition the router received;
-///   size=(w,h)   the laid-out overlay size used for the cell mapping;
-///   grid=COLSxROWS  the live (cols, rows) from controller.onResize;
+///   size=(w,h)   the laid-out overlay box size (FULL Stack box, NOT flterm's
+///                grid-sized render box — bigger by the padding + floor slack);
+///   grid=COLSxROWS  the LIVE (cols, rows) from controller.onResize — flterm's
+///                most recent computed grid;
+///   sent=COLSxROWS  the grid LAST SENT to the PTY via sendResize — what tmux
+///                ACTUALLY believes it has (#723). At steady state grid==sent;
+///                a divergence here is the #723 bug (the gesture router acting on
+///                a grid tmux doesn't have). Logging both side-by-side lets ONE
+///                device report (correlated with the live tmux size) prove
+///                live==sent==tmux convergence.
 ///   cell=(col,row)  the computed 1-based cell the mapping produced;
 ///   sgr=...      the SGR bytes emitted (ESC-escaped), or `none`;
 ///   mouse=...    the MouseTracking state name;
 ///   by=...       which layer handled it: `overlay` (active router) or
 ///                `flterm` (translucent fall-through, plain shell).
+///
+/// [sentCols]/[sentRows] default to [cols]/[rows] so callers that don't track a
+/// last-sent grid (and existing tests) keep the in-sync `sent==grid` line.
 ///
 /// Pure (no I/O), so the formatting is unit-testable headless.
 String formatGestureEvent({
@@ -81,6 +92,8 @@ String formatGestureEvent({
   required double height,
   required int cols,
   required int rows,
+  int? sentCols,
+  int? sentRows,
   int? col,
   int? row,
   String? sgr,
@@ -92,10 +105,13 @@ String formatGestureEvent({
   final sgrText = (sgr != null && sgr.isNotEmpty)
       ? formatSgrForTrace(sgr)
       : 'none';
+  final sCols = sentCols ?? cols;
+  final sRows = sentRows ?? rows;
   return '$type '
       'pos=(${n(dx)},${n(dy)}) '
       'size=(${n(width)},${n(height)}) '
       'grid=${cols}x$rows '
+      'sent=${sCols}x$sRows '
       'cell=$cell '
       'sgr=$sgrText '
       'mouse=$mouseTracking '
@@ -137,6 +153,8 @@ void gevent({
   required double height,
   required int cols,
   required int rows,
+  int? sentCols,
+  int? sentRows,
   int? col,
   int? row,
   String? sgr,
@@ -152,6 +170,8 @@ void gevent({
       height: height,
       cols: cols,
       rows: rows,
+      sentCols: sentCols,
+      sentRows: sentRows,
       col: col,
       row: row,
       sgr: sgr,

@@ -1187,16 +1187,15 @@ class _GhosttyPointerGestureRouterState
       _trace('swipe-h', totalDx, 0, null, null, null);
       return;
     }
-    // #719: target the status row of the rows tmux ACTUALLY HAS (the last grid
-    // sent via sendResize), NOT the live local grid (widget.rows). On a keyboard
-    // toggle / resize the live grid can change (e.g. 28→47) before tmux is told,
-    // so a wheel at the live status row (47) would miss tmux's real status row
-    // (28) and no window switch fires. Falls back to the live rows only if no
-    // resize was ever sent (lastSentRows == 0), which can't happen once connected.
-    final targetRows = widget.lastSentRows > 0
-        ? widget.lastSentRows
-        : widget.rows;
-    final (col, row) = ghosttyStatusRowCell(rows: targetRows);
+    // #719/#723: target the status row of the rows tmux ACTUALLY HAS — flterm's
+    // ACTUAL (last-sent) grid via [_gridRows], NOT the live local grid
+    // (widget.rows). On a keyboard toggle / resize the live grid can change (e.g.
+    // 28→47) before tmux is told, so a wheel at the live status row (47) would
+    // miss tmux's real status row (28) and no window switch fires. [_gridRows]
+    // is the SAME single source of truth the cell map clamps to (#723), falling
+    // back to the live rows only before the first resize is sent (can't happen
+    // once connected).
+    final (col, row) = ghosttyStatusRowCell(rows: _gridRows);
     final report = decision == GhosttyWindowSwitch.next
         ? ghosttySgrWheelDown(col: col, row: row) // swipe RIGHT → next-window
         : ghosttySgrWheelUp(col: col, row: row); // swipe LEFT → previous-window
@@ -1226,14 +1225,37 @@ class _GhosttyPointerGestureRouterState
     return Size.zero;
   }
 
+  /// #723: the AUTHORITATIVE grid for every gesture decision — flterm's ACTUAL
+  /// grid, i.e. the cols/rows LAST SENT to the PTY ([widget.lastSentCols]/
+  /// [widget.lastSentRows]), which is what tmux ACTUALLY believes it has.
+  ///
+  /// Root cause (#723): the gesture router had TWO grid notions — the live
+  /// `controller.onResize` grid (`widget.cols`/`widget.rows`) and the grid sent
+  /// to the PTY. They normally agree, but a transient onResize (or an overlay-box
+  /// artifact: the overlay is the FULL Stack box, bigger than flterm's grid-sized
+  /// render box) can leave the live grid AHEAD of what tmux has. Acting on the
+  /// live grid then targets a row/col tmux doesn't have — the device repro showed
+  /// the wheel at row 56 while tmux's status line was 28/47, so swipe-left
+  /// scrolled instead of switching windows. The single source of truth is the
+  /// last-SENT grid (#719 already targets it for the wheel); the cell CLAMP must
+  /// use it too so a touch never maps past tmux's real grid. Falls back to the
+  /// live grid only before the first resize is sent (lastSent == 0), which can't
+  /// happen once connected.
+  int get _gridCols =>
+      widget.lastSentCols > 0 ? widget.lastSentCols : widget.cols;
+  int get _gridRows =>
+      widget.lastSentRows > 0 ? widget.lastSentRows : widget.rows;
+
   (int, int) _cellAt(Offset local) {
     return ghosttyCellForPosition(
       dx: local.dx,
       dy: local.dy,
       cellWidth: widget.cellWidth,
       cellHeight: widget.cellHeight,
-      cols: widget.cols,
-      rows: widget.rows,
+      // #723: clamp to flterm's ACTUAL (last-sent) grid, not the possibly-ahead
+      // live grid, so a touch can never map to a cell tmux doesn't have.
+      cols: _gridCols,
+      rows: _gridRows,
     );
   }
 
@@ -1255,8 +1277,14 @@ class _GhosttyPointerGestureRouterState
       dy: dy,
       width: size.width,
       height: size.height,
+      // #723: log the LIVE onResize grid AND the grid LAST SENT to the PTY side
+      // by side. At steady state grid==sent (==tmux); a divergence here IS the
+      // #723 bug, and one device report (correlated with the live tmux size)
+      // proves convergence. Decisions act on `sent` (the authoritative grid).
       cols: widget.cols,
       rows: widget.rows,
+      sentCols: _gridCols,
+      sentRows: _gridRows,
       col: col,
       row: row,
       sgr: sgr,
