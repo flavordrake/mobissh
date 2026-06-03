@@ -14,6 +14,7 @@
 // release state machine (the [GhosttySelectionDriver]). The real on-device tmux
 // selection is OWNER-validated.
 
+import 'package:flterm/flterm.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
@@ -523,6 +524,96 @@ void main() {
         ghosttyWindowSwitchForSwipe(5, kGhosttyWindowSwitchThreshold),
         GhosttyWindowSwitch.none,
       );
+    });
+  });
+
+  group('ghosttySelectionForCells — viewport cells -> flterm LOCAL selection '
+      '(#705)', () {
+    test('a collapsed press (start==end) at top-left, no scroll, maps to the '
+        'pressed cell with a 0-based anchor and an inclusive end', () {
+      // Viewport cell (1,1) is the top-left. 0-based anchor (0,0); end col is
+      // kept 1-based (== 0-based end + 1) so flterm\'s exclusive bottomCol
+      // includes the pressed cell.
+      final sel = ghosttySelectionForCells(
+        startViewCol: 1,
+        startViewRow: 1,
+        endViewCol: 1,
+        endViewRow: 1,
+        scrollOffset: 0,
+      );
+      expect(sel.startRow, 0);
+      expect(sel.startCol, 0);
+      expect(sel.endRow, 0);
+      expect(sel.endCol, 1);
+    });
+
+    test('the scroll offset shifts BOTH rows to absolute buffer rows', () {
+      // Viewport row 1, scrollback offset 100 → absolute buffer row 100.
+      final sel = ghosttySelectionForCells(
+        startViewCol: 3,
+        startViewRow: 1,
+        endViewCol: 3,
+        endViewRow: 1,
+        scrollOffset: 100,
+      );
+      expect(sel.startRow, 100, reason: '(1-1) + 100');
+      expect(sel.endRow, 100);
+      // Cols are unaffected by scroll.
+      expect(sel.startCol, 2, reason: '0-based col');
+      expect(sel.endCol, 3, reason: 'inclusive end (1-based value)');
+    });
+
+    test(
+      'a drag DOWN-RIGHT extends the END below+right of the anchor (highlight '
+      'grows)',
+      () {
+        // Anchor viewport (2,3); drag to viewport (10,8), no scroll.
+        final sel = ghosttySelectionForCells(
+          startViewCol: 2,
+          startViewRow: 3,
+          endViewCol: 10,
+          endViewRow: 8,
+          scrollOffset: 0,
+        );
+        expect(sel.startCol, 1); // 2-1
+        expect(sel.startRow, 2); // 3-1
+        expect(sel.endRow, 7); // 8-1
+        expect(sel.endCol, 10); // inclusive end
+        // Direction-independent bounds confirm the span covers anchor..end.
+        expect(sel.topRow, 2);
+        expect(sel.bottomRow, 7);
+      },
+    );
+
+    test(
+      'a drag UPWARD (end above anchor) still anchors at the press; normalized '
+      'bounds put the press row at the BOTTOM',
+      () {
+        // Anchor viewport row 10, drag up to row 4, with a scrollback offset.
+        final sel = ghosttySelectionForCells(
+          startViewCol: 5,
+          startViewRow: 10,
+          endViewCol: 2,
+          endViewRow: 4,
+          scrollOffset: 50,
+        );
+        // Anchor preserved as start (absolute), end is the dragged-up cell.
+        expect(sel.startRow, 59); // (10-1)+50
+        expect(sel.endRow, 53); // (4-1)+50
+        expect(sel.topRow, 53);
+        expect(sel.bottomRow, 59);
+      },
+    );
+
+    test('the result is a normal-mode selection (contiguous, not block)', () {
+      final sel = ghosttySelectionForCells(
+        startViewCol: 1,
+        startViewRow: 1,
+        endViewCol: 4,
+        endViewRow: 2,
+        scrollOffset: 0,
+      );
+      expect(sel.mode, TerminalSelectionMode.normal);
     });
   });
 }

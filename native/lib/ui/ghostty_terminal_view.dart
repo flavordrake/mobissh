@@ -75,6 +75,20 @@
 // mouse mode expects — and the overlay is active ONLY under mouse tracking, where
 // flterm pins the viewport to the bottom (no scrollback offset to compensate).
 //
+// #705 (long-press-drag selection VANISHED on release): the #692 SGR path drove
+// TMUX's selection, but tmux's default `MouseDragEnd1Pane` = copy-selection-and-
+// cancel: on release tmux copies to ITS paste buffer and CLEARS the on-screen
+// highlight, so the selection disappeared and our Copy button (which reads
+// flterm's LOCAL selection via `controller.selectedText()`) got nothing. The fix
+// is to drive flterm's OWN local selection instead of tmux's: on long-press we
+// SET `controller.selection` (collapsed at the press cell) and on drag we extend
+// its END (see [ghosttySelectionForCells]) — built viewport-relative then
+// `.scroll(scrollbar.offset)` to absolute buffer rows, exactly as flterm's own
+// `selectWord`/`selectLine`/`updateSelection` do. On release we do NOTHING, so
+// the selection PERSISTS and `selectedText()` reads it. The long-press path no
+// longer emits SGR mouse reports; the tap CLICK (#693) and swipe WHEEL (#702)
+// SGR helpers are unchanged.
+//
 // #699 fix (selection landed several rows ABOVE the press): the cell map used to
 // DERIVE the cell size from `overlayHeight / rows`, which is LARGER than flterm's
 // real cell height (flterm sizes the grid to exactly `rows * realCellHeight` and
@@ -314,6 +328,53 @@ Size ghosttyMeasureCellSize({
   return (col.clamp(1, cols), row.clamp(1, rows));
 }
 
+/// Build the flterm LOCAL [TerminalSelection] for a touch long-press-drag, in
+/// flterm's coordinate space, from VIEWPORT-relative 1-based start/end cells
+/// (#705).
+///
+/// #705 root cause: the #692 long-press path synthesised SGR-1006 mouse reports
+/// so tmux ran its OWN selection. But tmux's default `MouseDragEnd1Pane` =
+/// `copy-selection-and-cancel`: on release tmux copies to ITS paste buffer and
+/// CLEARS the on-screen highlight — so the selection VANISHES on lift and our
+/// Copy button (which reads flterm's LOCAL selection via
+/// `controller.selectedText()`) gets nothing. The fix is to drive flterm's OWN
+/// local selection instead: set `controller.selection` to the span below, which
+/// PERSISTS after release, and `selectedText()` then reads it.
+///
+/// Coordinate model (mirrors flterm's `selectLine`/`selectWord`/`updateSelection`
+/// in terminal_controller_impl.dart, which build a viewport-relative
+/// `TerminalSelection` then `.scroll(scrollbar.offset)`):
+///   - [ghosttyCellForPosition] returns 1-based VIEWPORT col/row; flterm's
+///     `TerminalSelection` is 0-based, so subtract 1 from each.
+///   - rows are ABSOLUTE buffer rows = viewport row + [scrollOffset]
+///     (`controller.scrollbar.offset`); we apply that here via `.scroll`.
+///   - `endCol` is EXCLUSIVE in flterm's text extraction (`selectedText` uses
+///     `bottomCol - 1`), so to make the dragged END cell INCLUSIVE we set
+///     `endCol = endViewCol` (the 1-based value == 0-based end + 1). The anchor
+///     `startCol` is the 0-based start cell (inclusive top).
+///
+/// A collapsed press (start == end cell) yields a zero/one-cell selection that
+/// `selectedText()` returns empty for until the finger drags — exactly the
+/// "press anchors, drag grows the highlight" feel. Pure (no FFI / no widget) so
+/// the conversion is unit-testable headless.
+TerminalSelection ghosttySelectionForCells({
+  required int startViewCol,
+  required int startViewRow,
+  required int endViewCol,
+  required int endViewRow,
+  required int scrollOffset,
+}) {
+  // Viewport-relative, 0-based anchor; end col stays 1-based so flterm's
+  // exclusive `bottomCol` includes the dragged cell. Then shift to absolute
+  // buffer rows by the scrollback offset, mirroring flterm's own builders.
+  return TerminalSelection(
+    startRow: startViewRow - 1,
+    startCol: startViewCol - 1,
+    endRow: endViewRow - 1,
+    endCol: endViewCol,
+  ).scroll(scrollOffset);
+}
+
 /// SGR-1006 button1-PRESS report at the 1-based ([col], [row]) cell (#692).
 ///
 /// `CSI < 0 ; col ; row M` — button 0 (left), uppercase `M` = press.
@@ -519,9 +580,12 @@ const double kGhosttyWindowSwitchThreshold = 32.0;
 ///     `WheelUpStatus`/`WheelDownStatus` binding steps one window (swipe RIGHT →
 ///     next, swipe LEFT → previous);
 ///   - a deliberate LONG-PRESS (held stationary past the recogniser threshold)
-///     then drag -> drive a remote SELECTION (#692): map the touch -> cell and
-///     emit SGR-1006 button1 press / motion / release via [onMouseReport]; the
-///     remote (tmux) runs its own precise native selection.
+///     then drag -> drive flterm's LOCAL SELECTION (#705): map the touch -> cell
+///     and set/extend `controller.selection` via [onSelectionStart]/
+///     [onSelectionExtend]. The selection PERSISTS after release (unlike the
+///     #692 SGR-tmux path, where tmux's default `copy-selection-and-cancel`
+///     cleared the highlight on lift and left Copy with nothing), so the Copy
+///     button's `selectedText()` reads it.
 ///
 /// The gesture arena disambiguates for us: a vertical-ish swipe wins the vertical
 /// recogniser (scroll); a horizontal-ish swipe wins the horizontal one (window
@@ -557,6 +621,8 @@ class _PointerGestureRouter extends StatefulWidget {
     required this.onTap,
     required this.onFocus,
     required this.onMouseReport,
+    required this.onSelectionStart,
+    required this.onSelectionExtend,
   });
 
   /// Whether to intercept touch (the remote has mouse tracking on).
@@ -593,16 +659,27 @@ class _PointerGestureRouter extends StatefulWidget {
   final VoidCallback onFocus;
 
   /// Sink for synthesised SGR mouse reports (wired to `proxy.sendInput`). Used
-  /// for the long-press-drag selection AND, under mouse mode, the tap CLICK.
+  /// under mouse mode for the tap CLICK (#693). NO LONGER used for the long-
+  /// press selection — that drives flterm's LOCAL selection (#705).
   final void Function(String report) onMouseReport;
+
+  /// Begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT cell
+  /// (#705): the parent maps it to absolute buffer coords (adding the scroll
+  /// offset) and SETs `controller.selection` to a collapsed span there. Replaces
+  /// the #692 SGR button1-press; the selection PERSISTS after release so Copy
+  /// (`selectedText()`) can read it.
+  final void Function(int col, int row) onSelectionStart;
+
+  /// Extend the in-progress flterm LOCAL selection's END to the dragged 1-based
+  /// VIEWPORT cell (#705): the parent rebuilds `controller.selection` with the
+  /// same anchor and the new end, so the highlight GROWS as the finger drags.
+  final void Function(int col, int row) onSelectionExtend;
 
   @override
   State<_PointerGestureRouter> createState() => _PointerGestureRouterState();
 }
 
 class _PointerGestureRouterState extends State<_PointerGestureRouter> {
-  GhosttySelectionDriver? _selection;
-
   /// Net horizontal distance (logical px) accumulated across the current
   /// horizontal drag, summed on each `onUpdate` and evaluated once on `onEnd`
   /// (#693). One discrete window step per swipe — we never emit mid-drag.
@@ -705,26 +782,28 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
     widget.onFocus(); // focus only — a selection must NOT pop the keyboard.
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
-    final report = ghosttySgrMousePress(col: col, row: row);
-    _trace('longpress-start', local.dx, local.dy, col, row, report);
-    final driver = GhosttySelectionDriver(onReport: widget.onMouseReport)
-      ..press(col: col, row: row);
-    _selection = driver;
+    // #705: drive flterm's LOCAL selection (NOT a tmux SGR drag, which tmux's
+    // default copy-and-cancel would clear on release). Anchor a collapsed
+    // selection at the pressed cell; the parent adds the scroll offset.
+    _trace('longpress-select', local.dx, local.dy, col, row, 'start');
+    widget.onSelectionStart(col, row);
   }
 
   void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
-    _trace('longpress-move', local.dx, local.dy, col, row, null);
-    _selection?.motion(col: col, row: row);
+    // #705: extend the LOCAL selection's END to the dragged cell so the
+    // highlight grows under the finger.
+    _trace('longpress-select', local.dx, local.dy, col, row, 'extend');
+    widget.onSelectionExtend(col, row);
   }
 
   void _onLongPressEnd(LongPressEndDetails details) {
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
-    _trace('longpress-end', local.dx, local.dy, col, row, null);
-    _selection?.release();
-    _selection = null;
+    // #705: do NOTHING that clears the selection — leave `controller.selection`
+    // SET so it PERSISTS for the Copy button. No SGR release is sent.
+    _trace('longpress-select', local.dx, local.dy, col, row, 'end');
   }
 
   /// Handle a discrete TAP (#693). ALWAYS focus + raise the keyboard via
@@ -859,6 +938,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// SGR mouse reports that drive a remote (tmux) selection on long-press-drag.
   int _cols = 0;
   int _rows = 0;
+
+  /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
+  /// long-press-start, held while the finger drags so each extend rebuilds the
+  /// flterm `TerminalSelection` with this fixed start and the moving end. Null
+  /// when no selection gesture is in progress.
+  int? _selAnchorCol;
+  int? _selAnchorRow;
 
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
@@ -996,6 +1082,44 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     proxy.sendResize(_cols, _rows);
     gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
+  }
+
+  /// #705: begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT
+  /// cell. Anchor it (held for the drag) and SET `controller.selection` to a
+  /// collapsed span at that cell — mapped to absolute buffer rows by adding the
+  /// live scrollback offset, mirroring flterm's own `selectWord`/`selectLine`
+  /// (`.scroll(scrollbar.offset)`). Unlike the #692 SGR-tmux path, this PERSISTS
+  /// after release so Copy (`selectedText()`) can read it.
+  void _onSelectionStart(int col, int row) {
+    final controller = _controller;
+    if (controller == null) return;
+    _selAnchorCol = col;
+    _selAnchorRow = row;
+    controller.selection = ghosttySelectionForCells(
+      startViewCol: col,
+      startViewRow: row,
+      endViewCol: col,
+      endViewRow: row,
+      scrollOffset: controller.scrollbar.offset,
+    );
+  }
+
+  /// #705: extend the in-progress LOCAL selection's END to the dragged 1-based
+  /// VIEWPORT cell, keeping the held anchor as the start, so the highlight grows
+  /// under the finger. No-op if no anchor is set (no selection in progress).
+  void _onSelectionExtend(int col, int row) {
+    final controller = _controller;
+    if (controller == null) return;
+    final anchorCol = _selAnchorCol;
+    final anchorRow = _selAnchorRow;
+    if (anchorCol == null || anchorRow == null) return;
+    controller.selection = ghosttySelectionForCells(
+      startViewCol: anchorCol,
+      startViewRow: anchorRow,
+      endViewCol: col,
+      endViewRow: row,
+      scrollOffset: controller.scrollbar.offset,
+    );
   }
 
   Future<void> _copySelection() async {
@@ -1169,6 +1293,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
               if (proxy.data.state != SshSessionState.connected) return;
               proxy.sendInput(Uint8List.fromList(report.codeUnits));
             },
+            // #705: long-press-drag drives flterm's LOCAL selection (persists
+            // after release → Copy reads it), not a tmux SGR drag.
+            onSelectionStart: _onSelectionStart,
+            onSelectionExtend: _onSelectionExtend,
           ),
         ),
         // Selection affordances (bottom-right). A deliberate long-press-drag
