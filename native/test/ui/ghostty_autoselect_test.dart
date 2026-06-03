@@ -634,59 +634,68 @@ void main() {
     },
   );
 
-  group(
-    'ghosttyReanchorForEviction — selection follows CONTENT on scrollback '
-    'eviction (#706, issue 1)',
-    () {
-      const base = TerminalSelection(
-        startRow: 100,
-        startCol: 3,
-        endRow: 104,
-        endCol: 10,
-      );
+  group('ghosttyShouldShowAffordances — Copy/Select-all visible only with a '
+      'selection (#712)', () {
+    test('an active selection SHOWS the affordance buttons', () {
+      // After a long-press-drag (#705/#706) or Select-all sets a selection,
+      // the bottom-right Copy + Select-all buttons appear.
+      expect(ghosttyShouldShowAffordances(hasSelection: true), isTrue);
+    });
 
-      test('no eviction (evictedRows <= 0) returns the selection unchanged', () {
-        // While the bounded scrollback is merely FILLING, the absolute frame is
-        // stable and flterm tracks the highlight for us — no shift needed.
-        expect(ghosttyReanchorForEviction(base, evictedRows: 0), same(base));
-        expect(ghosttyReanchorForEviction(base, evictedRows: -5), same(base));
-      });
+    test('no selection HIDES the buttons (clean terminal)', () {
+      // Before any selection, and after a single tap dismisses one (#706),
+      // the corner renders nothing.
+      expect(ghosttyShouldShowAffordances(hasSelection: false), isFalse);
+    });
+  });
 
-      test('eviction shifts BOTH rows UP by the evicted count, cols intact', () {
-        // 10 oldest lines dropped → every surviving line index shifts down 10,
-        // so the selection must move up 10 to stay on the SAME text.
-        final r = ghosttyReanchorForEviction(base, evictedRows: 10)!;
-        expect(r.startRow, 90);
-        expect(r.endRow, 94);
-        expect(r.startCol, 3);
-        expect(r.endCol, 10);
-        expect(r.mode, TerminalSelectionMode.normal);
-      });
+  group('ghosttyReanchorForEviction — selection follows CONTENT on scrollback '
+      'eviction (#706, issue 1)', () {
+    const base = TerminalSelection(
+      startRow: 100,
+      startCol: 3,
+      endRow: 104,
+      endCol: 10,
+    );
 
-      test(
-        'a partially-evicted span clamps the off-top endpoint to row 0',
-        () {
-          // start at 100, end at 104, evict 102: start would be -2 (off top) but
-          // end (2) survives → start clamps to 0, end keeps its shifted index.
-          final r = ghosttyReanchorForEviction(base, evictedRows: 102)!;
-          expect(r.startRow, 0);
-          expect(r.endRow, 2);
-        },
-      );
+    test('no eviction (evictedRows <= 0) returns the selection unchanged', () {
+      // While the bounded scrollback is merely FILLING, the absolute frame is
+      // stable and flterm tracks the highlight for us — no shift needed.
+      expect(ghosttyReanchorForEviction(base, evictedRows: 0), same(base));
+      expect(ghosttyReanchorForEviction(base, evictedRows: -5), same(base));
+    });
 
-      test('a fully-evicted span (both endpoints off top) returns null', () {
-        // Evict 200: both 100 and 104 scroll off the top → the selection is
-        // gone; the caller clears it.
-        expect(ghosttyReanchorForEviction(base, evictedRows: 200), isNull);
-      });
+    test('eviction shifts BOTH rows UP by the evicted count, cols intact', () {
+      // 10 oldest lines dropped → every surviving line index shifts down 10,
+      // so the selection must move up 10 to stay on the SAME text.
+      final r = ghosttyReanchorForEviction(base, evictedRows: 10)!;
+      expect(r.startRow, 90);
+      expect(r.endRow, 94);
+      expect(r.startCol, 3);
+      expect(r.endCol, 10);
+      expect(r.mode, TerminalSelectionMode.normal);
+    });
 
-      test('the exact-boundary eviction keeps a one-line span at row 0', () {
-        // Evict exactly endRow (104): start -4 → 0, end 0 → both clamp to 0,
-        // a degenerate one-line selection at the oldest surviving line.
-        final r = ghosttyReanchorForEviction(base, evictedRows: 104)!;
-        expect(r.startRow, 0);
-        expect(r.endRow, 0);
-      });
-    },
-  );
+    test('a partially-evicted span clamps the off-top endpoint to row 0', () {
+      // start at 100, end at 104, evict 102: start would be -2 (off top) but
+      // end (2) survives → start clamps to 0, end keeps its shifted index.
+      final r = ghosttyReanchorForEviction(base, evictedRows: 102)!;
+      expect(r.startRow, 0);
+      expect(r.endRow, 2);
+    });
+
+    test('a fully-evicted span (both endpoints off top) returns null', () {
+      // Evict 200: both 100 and 104 scroll off the top → the selection is
+      // gone; the caller clears it.
+      expect(ghosttyReanchorForEviction(base, evictedRows: 200), isNull);
+    });
+
+    test('the exact-boundary eviction keeps a one-line span at row 0', () {
+      // Evict exactly endRow (104): start -4 → 0, end 0 → both clamp to 0,
+      // a degenerate one-line selection at the oldest surviving line.
+      final r = ghosttyReanchorForEviction(base, evictedRows: 104)!;
+      expect(r.startRow, 0);
+      expect(r.endRow, 0);
+    });
+  });
 }

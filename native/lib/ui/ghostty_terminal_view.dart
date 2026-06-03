@@ -493,6 +493,17 @@ TerminalSelection? ghosttyReanchorForEviction(
 bool ghosttyTapShouldDismissSelection({required bool hasSelection}) =>
     hasSelection;
 
+/// Whether the bottom-right selection affordance buttons (Copy + Select-all)
+/// should be SHOWN (#712).
+///
+/// The owner wants a CLEAN terminal: the Copy / Select-all buttons appear ONLY
+/// while a selection is active (`controller.selection != null`), and disappear
+/// when there is none — e.g. before any long-press-drag (#705/#706), and after a
+/// single tap dismisses the selection (#706). When [hasSelection] is false the
+/// caller renders nothing in that corner. Pure, so the decision is unit-testable
+/// headless.
+bool ghosttyShouldShowAffordances({required bool hasSelection}) => hasSelection;
+
 /// SGR-1006 button1-PRESS report at the 1-based ([col], [row]) cell (#692).
 ///
 /// `CSI < 0 ; col ; row M` — button 0 (left), uppercase `M` = press.
@@ -1247,6 +1258,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// selection is active.
   int? _selScrollbackLen;
 
+  /// #712: whether a selection is currently active (`controller.selection !=
+  /// null`), mirrored from the controller in [_onControllerChanged] so the
+  /// bottom-right affordance buttons (Copy + Select-all) show ONLY while a
+  /// selection exists and the terminal stays clean otherwise. The controller is
+  /// a `ChangeNotifier` that fires on selection set/clear, so the existing
+  /// listener drives the rebuild — no second listener.
+  bool _hasSelection = false;
+
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
   SshSessionProxy? _proxy;
@@ -1337,6 +1356,20 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   void _onControllerChanged() {
     _reanchorSelectionOnGrowth();
     _syncMouseTracking();
+    _syncHasSelection();
+  }
+
+  /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
+  /// only when it actually toggles (the controller notifies on many unrelated
+  /// events too) so the bottom-right affordance buttons show ONLY while a
+  /// selection exists. Runs AFTER [_reanchorSelectionOnGrowth], which may CLEAR a
+  /// fully-evicted selection, so this reads the post-re-anchor state.
+  void _syncHasSelection() {
+    final controller = _controller;
+    if (controller == null) return;
+    final next = controller.selection != null;
+    if (next == _hasSelection) return;
+    if (mounted) setState(() => _hasSelection = next);
   }
 
   /// Mirror the controller's live mouse-tracking mode into [_mouseTracking],
@@ -1764,46 +1797,51 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             onSelectionClear: _clearSelection,
           ),
         ),
-        // Selection affordances (bottom-right). A deliberate long-press-drag
-        // drives a remote (tmux) native selection via SGR reports (#692);
-        // Select-all + Copy operate on flterm's LOCAL selection (Select-all,
-        // double/triple-tap) — copying a tmux-native span is tmux's own copy
-        // mode. A future smart-select button would select a word/path/URL unit
-        // at the tap (PWA selection.ts _selectableUnitAt) — see file header.
-        Positioned(
-          right: 4,
-          bottom: 4,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // #692: select-all (flterm-local). The #688 select-mode toggle is
-              // gone — a deliberate long-press-drag now selects automatically.
-              Material(
-                color: Colors.black54,
-                shape: const CircleBorder(),
-                child: IconButton(
-                  key: const Key('ghostty-select-all'),
-                  tooltip: 'Select all',
-                  iconSize: 18,
-                  icon: const Icon(Icons.select_all, color: Colors.white),
-                  onPressed: _selectAll,
+        // Selection affordances (bottom-right). #712: shown ONLY while a
+        // selection is active ([_hasSelection], driven by _onControllerChanged)
+        // — a clean terminal otherwise. A deliberate long-press-drag drives a
+        // remote (tmux) native selection via SGR reports (#692); Select-all +
+        // Copy operate on flterm's LOCAL selection (Select-all, double/triple-
+        // tap) — copying a tmux-native span is tmux's own copy mode. #712 also
+        // swaps the order: COPY on top, SELECT-ALL below. A future smart-select
+        // button would select a word/path/URL unit at the tap (PWA selection.ts
+        // _selectableUnitAt) — see file header.
+        if (ghosttyShouldShowAffordances(hasSelection: _hasSelection))
+          Positioned(
+            right: 4,
+            bottom: 4,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    key: const Key('ghostty-copy-selection'),
+                    tooltip: 'Copy selection',
+                    iconSize: 18,
+                    icon: const Icon(Icons.copy, color: Colors.white),
+                    onPressed: _copySelection,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Material(
-                color: Colors.black54,
-                shape: const CircleBorder(),
-                child: IconButton(
-                  key: const Key('ghostty-copy-selection'),
-                  tooltip: 'Copy selection',
-                  iconSize: 18,
-                  icon: const Icon(Icons.copy, color: Colors.white),
-                  onPressed: _copySelection,
+                const SizedBox(height: 8),
+                // #692: select-all (flterm-local). The #688 select-mode toggle
+                // is gone — a deliberate long-press-drag now selects
+                // automatically.
+                Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    key: const Key('ghostty-select-all'),
+                    tooltip: 'Select all',
+                    iconSize: 18,
+                    icon: const Icon(Icons.select_all, color: Colors.white),
+                    onPressed: _selectAll,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
       ],
     );
   }
