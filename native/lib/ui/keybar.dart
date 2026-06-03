@@ -23,29 +23,48 @@ import 'package:xterm/xterm.dart';
 
 import '../state/sessions.dart';
 
-/// Bottom-chrome sizing (#615). The keybar was shrunk ~25% vertically to give
-/// the terminal more real estate. These are the single source of truth for the
-/// button geometry AND the vertical space the bar occupies — the latter
+/// Bottom-chrome sizing. These are the single source of truth for the button
+/// geometry AND the vertical space the bar occupies — the latter
 /// ([kKeybarReserve]) is consumed by the compose bar's bottom reserve in
 /// terminal_screen.dart so a docked compose panel always clears the chrome.
 ///
-/// Old values (pre-#615): minWidth 48, minHeight 44, icon 18, label 14,
-/// reserve ≈ 96. The ~25% reduction lands the height around 33 and the reserve
-/// around 72.
+/// #615 had shrunk the bar ~25% (minHeight 33, icon 14, label 12) for terminal
+/// real estate, but owner device feedback (#696) found the labels too small and
+/// too low-contrast to read over the terminal. #696 trades a little of that
+/// vertical savings back for legibility: a clearly LARGER label font, with the
+/// internal/text padding trimmed (owner-approved) so the taller text doesn't
+/// grow the bar much, and the touch-target min-height restored to the 44px
+/// floor. Colors go high-contrast (near-black key bg, bright label) in the
+/// button style below.
+///
+/// Old values (pre-#615): minWidth 48, minHeight 44, icon 18, label 14.
 const double kKeybarButtonMinWidth = 44;
-const double kKeybarButtonMinHeight = 33;
-const double kKeybarIconSize = 14;
-const double kKeybarLabelFontSize = 12;
+const double kKeybarButtonMinHeight = 44;
+const double kKeybarIconSize = 18;
+const double kKeybarLabelFontSize = 17;
 
-/// "ESC" is the widest text label; scaling it down lets it share the normal
-/// button min width instead of bulging the bar (#615). Still monochrome text —
-/// no glyph that could be mistaken for Enter.
-const double kKeybarEscFontSize = 10;
+/// "ESC" is the widest text label; scaling it down slightly lets it share the
+/// normal button min width instead of bulging the bar. Still monochrome text —
+/// no glyph that could be mistaken for Enter. Kept legible (#696), just a notch
+/// under the normal label size.
+const double kKeybarEscFontSize = 14;
 
 /// Vertical space (logical px) the keybar occupies, used as the compose-bar
-/// bottom reserve. Button height + the 4px top/bottom scroll-view padding,
-/// rounded for a small safety margin. ~25% smaller than the old hardcoded 96.
-const double kKeybarReserve = 72;
+/// bottom reserve. Button height (44) + the 3px top/bottom scroll-view padding,
+/// rounded up for a small safety margin so a docked compose panel clears the
+/// chrome.
+const double kKeybarReserve = 56;
+
+/// High-contrast keybar palette (#696). Owner device feedback: the old
+/// dark-blue (theme `surfaceContainerHigh`) bar + dim `onSurface` labels were
+/// too low-contrast to read over the terminal. The owner's example was BLACK
+/// keys instead of dark-blue. We back the bar with near-black, fill each key a
+/// touch above it so the keys read as distinct faces, and paint the labels
+/// near-white. Monochrome (no color/emoji — project rule); the theme accent is
+/// reserved for the armed-Ctrl state so it still pops against the dark keys.
+const Color kKeybarBarColor = Color(0xFF000000); // bar backing — black
+const Color kKeybarKeyColor = Color(0xFF1A1A1A); // key face — near-black
+const Color kKeybarLabelColor = Color(0xFFF2F2F2); // label — near-white
 
 /// One key on the bar. Renders [label] text, OR [icon] (a monochrome
 /// theme-tinted Material icon) when set — never an emoji.
@@ -249,10 +268,12 @@ class _KeybarState extends ConsumerState<Keybar> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Material(
       key: const Key('keybar'),
-      color: theme.colorScheme.surfaceContainerHigh,
+      // #696: high-contrast strip. The bar backs the keys with near-black so the
+      // brighter key faces read clearly over the terminal, instead of the old
+      // dark-blue surfaceContainerHigh tint that washed the labels out.
+      color: kKeybarBarColor,
       child: SafeArea(
         top: false,
         // ONE LINE that scrolls horizontally (owner 2026-06-01). 16 keys can't
@@ -301,17 +322,17 @@ class _KeybarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // #615: ESC is the widest text key; render it at a smaller font so it fits
-    // the shared normal button width instead of bulging the bar. Still plain
-    // monochrome text (no Enter-ish glyph).
+    // ESC is the widest text key; render it a notch smaller so it fits the
+    // shared normal button width instead of bulging the bar. Still plain
+    // monochrome text (no Enter-ish glyph), still legible (#696).
     final bool isEsc = keyData.id == 'keyEsc';
     // Monochrome icon (theme-tinted) when set, else the label glyph/text.
     // Never an emoji — see memory feedback_monochrome_icons_no_emoji.
     // #694: the armed Ctrl modifier paints accent-tinted text so the sticky
-    // state reads clearly. Other keys use the normal onSurface tint.
-    final Color fg = armed
-        ? theme.colorScheme.onPrimary
-        : theme.colorScheme.onSurface;
+    // state reads clearly. #696: other keys use a bright near-white label for
+    // high contrast against the near-black key face (the old dim `onSurface`
+    // tint was unreadable over the terminal).
+    final Color fg = armed ? theme.colorScheme.onPrimary : kKeybarLabelColor;
     final Widget child = keyData.icon != null
         ? Icon(
             keyData.icon,
@@ -324,7 +345,9 @@ class _KeybarButton extends StatelessWidget {
             style: TextStyle(
               fontSize: isEsc ? kKeybarEscFontSize : kKeybarLabelFontSize,
               fontFamily: 'monospace',
-              color: armed ? fg : null,
+              // #696: always the high-contrast label color (armed = onPrimary,
+              // else the bright near-white) so it reads over the dark key face.
+              color: fg,
             ),
             overflow: TextOverflow.ellipsis,
           );
@@ -333,22 +356,27 @@ class _KeybarButton extends StatelessWidget {
       onPressed: onTap,
       style: OutlinedButton.styleFrom(
         // #694: armed Ctrl fills with the accent color so the sticky state is
-        // unmistakable (mirrors the PWA's `.active` keybar styling).
-        backgroundColor: armed ? theme.colorScheme.primary : null,
-        // #615: tighter padding for the ~25% shrink. Still a touch-friendly
-        // tap target via minimumSize below.
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        // unmistakable (mirrors the PWA's `.active` keybar styling). #696:
+        // unarmed keys fill near-black so each key reads as a distinct face
+        // against the black bar and the bright label pops.
+        backgroundColor: armed ? theme.colorScheme.primary : kKeybarKeyColor,
+        foregroundColor: fg,
+        // #696: trim the internal padding (owner-approved) so the larger label
+        // font fits without growing the bar height much. The comfortable tap
+        // target is preserved via minimumSize (44px) below.
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         // Every key shares the same min width so the bar stays even — ESC no
         // longer bulges (its smaller font fits this width).
         minimumSize: const Size(kKeybarButtonMinWidth, kKeybarButtonMinHeight),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        // #615: lighter outline — thinner, lower-opacity border so the bar
-        // reads as a quiet strip rather than a grid of boxes. Armed Ctrl uses a
-        // solid accent border to match its filled state.
+        // #696: a subtle light hairline separates each near-black key face from
+        // the black bar so the keys read as distinct buttons (the #615 dim
+        // outline disappeared against black). Armed Ctrl keeps its solid accent
+        // border to match its filled state.
         side: BorderSide(
           color: armed
               ? theme.colorScheme.primary
-              : theme.colorScheme.outline.withValues(alpha: 0.4),
+              : kKeybarLabelColor.withValues(alpha: 0.22),
           width: armed ? 1.0 : 0.5,
         ),
         // Squarer look matching the PWA keybar — subtle rounding, not pill.

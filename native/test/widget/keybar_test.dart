@@ -141,22 +141,50 @@ void main() {
     });
   });
 
-  group('keybar sizing (#615 — shrink ~25%, lighter outline)', () {
-    test('button min height is reduced ~25% from the old 44px tap target', () {
-      // Old default min height was 44. A ~25% shrink lands around 33 (±2).
-      expect(kKeybarButtonMinHeight, lessThanOrEqualTo(35));
-      expect(kKeybarButtonMinHeight, greaterThanOrEqualTo(31));
+  group('keybar sizing (#696 — legible labels over #615 shrink)', () {
+    test('button min height holds the 44px touch-target floor', () {
+      // #615 shrank this to ~33; #696 device feedback restored the comfortable
+      // 44px tap target so the larger label fits without a cramped target.
+      expect(kKeybarButtonMinHeight, greaterThanOrEqualTo(44));
     });
 
-    test('icon + label font sizes are reduced from the old 18 / 14', () {
-      expect(kKeybarIconSize, lessThan(18));
-      expect(kKeybarLabelFontSize, lessThan(14));
+    test('label font is clearly larger for legibility (#696)', () {
+      // #615 had label 12 / icon 14. #696: the owner found those too small to
+      // read over the terminal, so the label is bumped to a clearly larger
+      // size (~17–18) that still stays on one line.
+      expect(kKeybarLabelFontSize, greaterThanOrEqualTo(16));
+      // ESC is rendered a notch smaller so it shares the normal width, but it
+      // stays legible (no longer the tiny 10px of #615).
+      expect(kKeybarEscFontSize, greaterThanOrEqualTo(13));
+      expect(kKeybarEscFontSize, lessThanOrEqualTo(kKeybarLabelFontSize));
+      // Icons scale back up alongside the label.
+      expect(kKeybarIconSize, greaterThanOrEqualTo(16));
     });
 
-    test('keybar reserve height is reduced ~25% from the old 96px', () {
-      // The compose-bar bottomReserve used a hardcoded 96 for the keybar.
-      expect(kKeybarReserve, lessThanOrEqualTo(76));
-      expect(kKeybarReserve, greaterThanOrEqualTo(64));
+    test('keybar reserve still clears the bar (button + padding)', () {
+      // The compose-bar bottomReserve consumes this. It must cover the button
+      // height plus the scroll-view vertical padding with a small margin.
+      expect(kKeybarReserve, greaterThanOrEqualTo(kKeybarButtonMinHeight));
+      // Still meaningfully tighter than the old hardcoded 96.
+      expect(kKeybarReserve, lessThanOrEqualTo(72));
+    });
+
+    test('keybar palette is high-contrast and monochrome (#696)', () {
+      // Near-black bar + key faces, near-white label. No color/emoji — the
+      // theme accent is reserved for the armed-Ctrl state.
+      expect(kKeybarBarColor, const Color(0xFF000000));
+      // Key face sits just above the bar so keys read as distinct faces.
+      expect(
+        kKeybarKeyColor.toARGB32(),
+        greaterThan(kKeybarBarColor.toARGB32()),
+      );
+      // Label is bright (near-white) for contrast over the dark key face.
+      expect(kKeybarLabelColor.computeLuminance(), greaterThan(0.8));
+      // Monochrome: bar/key/label are all neutral grays (R==G==B).
+      for (final c in [kKeybarBarColor, kKeybarKeyColor, kKeybarLabelColor]) {
+        expect(c.r, c.g);
+        expect(c.g, c.b);
+      }
     });
   });
 
