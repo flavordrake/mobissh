@@ -1,11 +1,10 @@
-// #679 — the session-menu font-family picker cycles the ACTIVE session's
-// bundled font face and PERSISTS it onto the session's PROFILE (so it sticks
-// across restart/reconnect), mirroring the #640 font-size stepper. Cycling the
-// active session's font family must:
-//   - update the in-memory per-session family (live render), AND
-//   - upsert the new family onto the matching saved profile (host:port:username).
-// Per-session/per-profile isolation: a sibling profile's stored family is
-// untouched. An ad-hoc connect with no matching saved profile must NOT
+// #724 — the session-menu theme PICKER persists the chosen palette onto the
+// ACTIVE session's PROFILE (mirrors the #679 font-family picker + #640 font
+// stepper). Picking a theme must:
+//   - set the in-memory per-session palette (live render), AND
+//   - upsert the palette's PWA theme KEY onto the matching saved profile.
+// Per-session/per-profile isolation: a sibling profile's stored theme is
+// untouched; an ad-hoc connect with no matching saved profile must NOT
 // materialize one.
 
 import 'package:flutter/material.dart';
@@ -82,7 +81,7 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  testWidgets('picking a face changes the active session font family (#724)', (
+  testWidgets('picking a theme persists onto the active profile (#724)', (
     tester,
   ) async {
     final store = ProfilesStore();
@@ -98,70 +97,62 @@ void main() {
     await tester.tap(find.byKey(const Key('open-menu')));
     await _pumpFrames(tester);
 
-    expect(container.read(sessionFontFamilyProvider(b.id)), fontFamilyDefault);
-
-    // #724: tapping the control opens a picker; select the second bundled face.
-    await tester.tap(find.byKey(const Key('session-menu-fontfamily-cycle')));
+    await tester.tap(find.byKey(const Key('session-menu-theme-cycle')));
     await _pumpFrames(tester);
-    expect(
-      find.byKey(const Key('picker-option-1')),
-      findsOneWidget,
-      reason: 'font picker should list the bundled faces',
-    );
-    await tester.tap(find.byKey(const Key('picker-option-1')));
+    // Pick palette index 2.
+    await tester.tap(find.byKey(const Key('picker-option-2')));
     await _pumpFrames(tester);
 
-    // Active session B took the picked family; A is untouched.
     expect(
-      container.read(sessionFontFamilyProvider(b.id)),
-      terminalFontFamilies[1].id,
-      reason: 'picking must set the active session to the chosen face',
+      container.read(sessionThemeProvider(b.id)),
+      2,
+      reason: 'active session palette set to the picked one',
     );
     expect(
-      container.read(sessionFontFamilyProvider(a.id)),
-      fontFamilyDefault,
-      reason: 'sibling session must keep its family (per-session isolation)',
+      container.read(sessionThemeProvider(a.id)),
+      terminalThemeDefault,
+      reason: 'sibling session palette untouched (per-session isolation)',
     );
 
-    // And it was PERSISTED onto the matching profile (B), not A.
     final loaded = await store.load();
     final profA = loaded.firstWhere((p) => p.host == 'host-a');
     final profB = loaded.firstWhere((p) => p.host == 'host-b');
     expect(
-      profB.fontFamily,
-      isNotNull,
-      reason: 'active session family must be persisted on its profile',
+      profB.theme,
+      terminalPalettes[2].key,
+      reason: 'active session theme KEY persisted onto its profile',
     );
     expect(
-      profA.fontFamily,
+      profA.theme,
       isNull,
       reason: 'the other profile must be untouched (per-profile isolation)',
     );
   });
 
-  testWidgets('an ad-hoc connect (no saved profile) does not create one', (
-    tester,
-  ) async {
-    final store = ProfilesStore(); // empty — no saved profiles
-    final container = _makeContainer(store);
-    _add(container, 'adhoc.example', 'u'); // active, not saved
+  testWidgets(
+    'picking a theme on an ad-hoc session creates no profile (#724)',
+    (tester) async {
+      final store = ProfilesStore(); // empty — no saved profiles
+      final container = _makeContainer(store);
+      _add(container, 'adhoc.example', 'u'); // active, not saved
 
-    await tester.pumpWidget(_host(container: container));
-    await tester.tap(find.byKey(const Key('open-menu')));
-    await _pumpFrames(tester);
+      await tester.pumpWidget(_host(container: container));
+      await tester.tap(find.byKey(const Key('open-menu')));
+      await _pumpFrames(tester);
 
-    await tester.tap(find.byKey(const Key('session-menu-fontfamily-cycle')));
-    await _pumpFrames(tester);
-    await tester.tap(find.byKey(const Key('picker-option-1')));
-    await _pumpFrames(tester);
+      await tester.tap(find.byKey(const Key('session-menu-theme-cycle')));
+      await _pumpFrames(tester);
+      await tester.tap(find.byKey(const Key('picker-option-2')));
+      await _pumpFrames(tester);
 
-    final loaded = await store.load();
-    expect(
-      loaded,
-      isEmpty,
-      reason:
-          'picking a font family on an ad-hoc session must not materialize a '
-          'saved profile',
-    );
-  });
+      final loaded = await store.load();
+      expect(
+        loaded,
+        isEmpty,
+        reason:
+            'picking a theme on an ad-hoc session must not materialize a saved '
+            'profile',
+      );
+    },
+  );
 }
