@@ -310,22 +310,101 @@ bool ghosttyTapShouldForwardClick({required bool active}) => active;
 /// negation of the finger delta, matching a natural touch-scroll. Pure.
 double ghosttyScrollDeltaForSwipe(double fingerDy) => -fingerDy;
 
+/// SGR-1006 WHEEL-UP report at the 1-based ([col], [row]) cell (#693).
+///
+/// `CSI < 64 ; col ; row M` — button 64 is the wheel-up code. tmux's DEFAULT
+/// root-table binding `bind -n WheelUpStatus previous-window` switches to the
+/// PREVIOUS window when a wheel-up lands on the status line (no prefix, no user
+/// config). So a horizontal swipe RIGHT (→ previous-window) synthesises this at
+/// the status row. Pure (no FFI), so the byte sequence is unit-testable headless.
+String ghosttySgrWheelUp({required int col, required int row}) =>
+    '\x1b[<64;$col;${row}M';
+
+/// SGR-1006 WHEEL-DOWN report at the 1-based ([col], [row]) cell (#693).
+///
+/// `CSI < 65 ; col ; row M` — button 65 is the wheel-down code. tmux's DEFAULT
+/// root-table binding `bind -n WheelDownStatus next-window` switches to the NEXT
+/// window when a wheel-down lands on the status line. So a horizontal swipe LEFT
+/// (→ next-window) synthesises this at the status row. Pure (no FFI), so the byte
+/// sequence is unit-testable headless.
+String ghosttySgrWheelDown({required int col, required int row}) =>
+    '\x1b[<65;$col;${row}M';
+
+/// The window-switch direction a horizontal swipe maps to (#693).
+///
+/// Mobile-natural convention: a swipe LEFT advances to the NEXT window (the
+/// content slides left to reveal what's "ahead"); a swipe RIGHT goes to the
+/// PREVIOUS window. A swipe below threshold does nothing.
+enum GhosttyWindowSwitch {
+  /// Below the px threshold — no window step.
+  none,
+
+  /// Swipe LEFT (dx ≤ -threshold) → next-window via a wheel-DOWN report
+  /// (`WheelDownStatus`).
+  next,
+
+  /// Swipe RIGHT (dx ≥ +threshold) → previous-window via a wheel-UP report
+  /// (`WheelUpStatus`).
+  previous,
+}
+
+/// Decide whether a horizontal swipe of net [totalDx] logical px (across the
+/// whole drag) crosses [threshold] and, if so, in which direction (#693).
+///
+/// Direction convention (mobile-natural; the owner can flip it later):
+///   - swipe LEFT  (`totalDx <= -threshold`) → [GhosttyWindowSwitch.next]
+///     (next-window, emitted as wheel-DOWN → `WheelDownStatus`);
+///   - swipe RIGHT (`totalDx >=  threshold`) → [GhosttyWindowSwitch.previous]
+///     (previous-window, emitted as wheel-UP → `WheelUpStatus`);
+///   - otherwise → [GhosttyWindowSwitch.none].
+///
+/// ONE discrete step per swipe — the caller emits a single wheel report, never a
+/// stream. Pure (no FFI), so the thresholds/directions are unit-testable headless.
+GhosttyWindowSwitch ghosttyWindowSwitchForSwipe(
+  double totalDx,
+  double threshold,
+) {
+  if (totalDx <= -threshold) return GhosttyWindowSwitch.next;
+  if (totalDx >= threshold) return GhosttyWindowSwitch.previous;
+  return GhosttyWindowSwitch.none;
+}
+
+/// The default horizontal-swipe distance (logical px) that triggers ONE window
+/// step (#693). Chosen in the ~24–48px band: large enough that a near-vertical
+/// scroll's incidental horizontal drift never trips a window switch, small
+/// enough for a comfortable one-thumb flick.
+const double kGhosttyWindowSwitchThreshold = 32.0;
+
+/// The 1-based status-line row a window-switch wheel report targets (#693).
+///
+/// tmux's `WheelUpStatus`/`WheelDownStatus` fire when the wheel lands on the
+/// STATUS-LINE row. The default status position is BOTTOM, so the status row is
+/// the last grid row, [rows]. (CAVEAT: if the user sets `status-position top`
+/// the status row would be 1 — out of scope for #693; see the file TRACE.)
+/// Column is irrelevant to the status binding; we use 1. Pure.
+(int col, int row) ghosttyStatusRowCell({required int rows}) => (1, rows);
+
 /// A gesture ROUTER overlay that absorbs touch and disambiguates a SWIPE from a
 /// deliberate LONG-PRESS (#690, #692).
 ///
 /// Active only while [active] is true (see [ghosttySwipeShouldScrollLocally] —
 /// i.e. the remote has mouse tracking on). Routes:
-///   - a finger SWIPE (movement first) -> SCROLL the [scrollController] directly
-///     (flterm then emits canonical wheel reports), so the swipe NEVER reaches
-///     the remote as a button drag (#690);
+///   - a VERTICAL finger SWIPE -> SCROLL the [scrollController] directly (flterm
+///     then emits canonical wheel reports), so the swipe NEVER reaches the remote
+///     as a button drag (#690);
+///   - a HORIZONTAL finger SWIPE -> switch the tmux WINDOW (#693): on lift, if the
+///     net dx crossed [kGhosttyWindowSwitchThreshold], emit ONE SGR wheel report
+///     at the status-line row via [onMouseReport] — tmux's default
+///     `WheelUpStatus`/`WheelDownStatus` binding steps one window (swipe LEFT →
+///     next, swipe RIGHT → previous);
 ///   - a deliberate LONG-PRESS (held stationary past the recogniser threshold)
 ///     then drag -> drive a remote SELECTION (#692): map the touch -> cell and
 ///     emit SGR-1006 button1 press / motion / release via [onMouseReport]; the
 ///     remote (tmux) runs its own precise native selection.
 ///
-/// The gesture arena disambiguates for us: if the finger MOVES first the
-/// vertical-drag recogniser wins (scroll); if it HOLDS first the long-press
-/// recogniser wins (select).
+/// The gesture arena disambiguates for us: a vertical-ish swipe wins the vertical
+/// recogniser (scroll); a horizontal-ish swipe wins the horizontal one (window
+/// switch); if the finger HOLDS first the long-press recogniser wins (select).
 ///
 /// Why OPAQUE (when active), not translucent: flterm reports tracked mouse via a
 /// raw `Listener` (onPointerDown/Move/Up), which is NOT a gesture-arena
@@ -382,6 +461,39 @@ class _PointerGestureRouter extends StatefulWidget {
 
 class _PointerGestureRouterState extends State<_PointerGestureRouter> {
   GhosttySelectionDriver? _selection;
+
+  /// Net horizontal distance (logical px) accumulated across the current
+  /// horizontal drag, summed on each `onUpdate` and evaluated once on `onEnd`
+  /// (#693). One discrete window step per swipe — we never emit mid-drag.
+  double _horizontalDx = 0;
+
+  void _onHorizontalStart(DragStartDetails details) {
+    _horizontalDx = 0;
+  }
+
+  void _onHorizontalUpdate(DragUpdateDetails details) {
+    _horizontalDx += details.delta.dx;
+  }
+
+  /// On lift, if the net horizontal travel crossed the threshold, emit ONE
+  /// wheel report at the status-line row so tmux's default `WheelUpStatus`/
+  /// `WheelDownStatus` binding steps one window (#693).
+  void _onHorizontalEnd(DragEndDetails details) {
+    final decision = ghosttyWindowSwitchForSwipe(
+      _horizontalDx,
+      kGhosttyWindowSwitchThreshold,
+    );
+    _horizontalDx = 0;
+    if (decision == GhosttyWindowSwitch.none) return;
+    final (col, row) = ghosttyStatusRowCell(rows: widget.rows);
+    final report = decision == GhosttyWindowSwitch.next
+        ? ghosttySgrWheelDown(col: col, row: row) // swipe LEFT → next-window
+        : ghosttySgrWheelUp(
+            col: col,
+            row: row,
+          ); // swipe RIGHT → previous-window
+    widget.onMouseReport(report);
+  }
 
   void _onScrollUpdate(DragUpdateDetails details) {
     final controller = widget.scrollController;
@@ -476,6 +588,24 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
                 supportedDevices: const {PointerDeviceKind.touch},
               ),
               (recognizer) => recognizer.onUpdate = _onScrollUpdate,
+            ),
+        // #693: a horizontal touch swipe switches the tmux window. Touch-only
+        // (like the vertical one) so a real mouse drag still reaches the remote.
+        // The arena disambiguates by dominant axis: a vertical-ish swipe wins the
+        // vertical recogniser (scroll), a horizontal-ish swipe wins this one. We
+        // accumulate dx across updates and emit ONE wheel report at the status
+        // row on end — tmux's default Wheel{Up,Down}Status steps one window.
+        HorizontalDragGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<
+              HorizontalDragGestureRecognizer
+            >(
+              () => HorizontalDragGestureRecognizer(
+                supportedDevices: const {PointerDeviceKind.touch},
+              ),
+              (recognizer) => recognizer
+                ..onStart = _onHorizontalStart
+                ..onUpdate = _onHorizontalUpdate
+                ..onEnd = _onHorizontalEnd,
             ),
         // #692: a deliberate touch long-press-drag drives a remote selection by
         // synthesising SGR mouse reports. Touch-only so it never competes with a

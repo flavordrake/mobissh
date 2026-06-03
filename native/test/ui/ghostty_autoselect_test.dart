@@ -284,4 +284,113 @@ void main() {
       ]);
     });
   });
+
+  group('ghosttySgrWheel* — SGR-1006 wheel byte encoding (#693)', () {
+    test(
+      'wheel-up is CSI < 64 ; col ; row M (WheelUpStatus → prev-window)',
+      () {
+        expect(ghosttySgrWheelUp(col: 1, row: 24), '\x1b[<64;1;24M');
+      },
+    );
+
+    test('wheel-down is CSI < 65 ; col ; row M (WheelDownStatus → next)', () {
+      expect(ghosttySgrWheelDown(col: 1, row: 24), '\x1b[<65;1;24M');
+    });
+
+    test('coordinates are emitted verbatim (already 1-based)', () {
+      expect(ghosttySgrWheelUp(col: 3, row: 50), '\x1b[<64;3;50M');
+      expect(ghosttySgrWheelDown(col: 3, row: 50), '\x1b[<65;3;50M');
+    });
+  });
+
+  group('ghosttyWindowSwitchForSwipe — direction + threshold (#693)', () {
+    const threshold = kGhosttyWindowSwitchThreshold; // 32px
+
+    test('swipe LEFT past threshold → next-window (wheel-down)', () {
+      expect(
+        ghosttyWindowSwitchForSwipe(-threshold, threshold),
+        GhosttyWindowSwitch.next,
+      );
+      expect(
+        ghosttyWindowSwitchForSwipe(-200, threshold),
+        GhosttyWindowSwitch.next,
+      );
+    });
+
+    test('swipe RIGHT past threshold → previous-window (wheel-up)', () {
+      expect(
+        ghosttyWindowSwitchForSwipe(threshold, threshold),
+        GhosttyWindowSwitch.previous,
+      );
+      expect(
+        ghosttyWindowSwitchForSwipe(200, threshold),
+        GhosttyWindowSwitch.previous,
+      );
+    });
+
+    test('sub-threshold travel (either direction) → none', () {
+      expect(
+        ghosttyWindowSwitchForSwipe(threshold - 1, threshold),
+        GhosttyWindowSwitch.none,
+      );
+      expect(
+        ghosttyWindowSwitchForSwipe(-(threshold - 1), threshold),
+        GhosttyWindowSwitch.none,
+      );
+      expect(
+        ghosttyWindowSwitchForSwipe(0, threshold),
+        GhosttyWindowSwitch.none,
+      );
+    });
+
+    test('boundary: exactly ±threshold counts (inclusive)', () {
+      expect(
+        ghosttyWindowSwitchForSwipe(threshold, threshold),
+        GhosttyWindowSwitch.previous,
+      );
+      expect(
+        ghosttyWindowSwitchForSwipe(-threshold, threshold),
+        GhosttyWindowSwitch.next,
+      );
+    });
+  });
+
+  group(
+    'ghosttyStatusRowCell — wheel report targets the status row (#693)',
+    () {
+      test('default status-position bottom → last grid row, col 1', () {
+        expect(ghosttyStatusRowCell(rows: 24), (1, 24));
+        expect(ghosttyStatusRowCell(rows: 50), (1, 50));
+      });
+    },
+  );
+
+  group('swipe end-to-end: dx + status row feed the wheel report (#693)', () {
+    test('swipe LEFT emits one wheel-DOWN at the status row (next-window)', () {
+      final decision = ghosttyWindowSwitchForSwipe(
+        -64,
+        kGhosttyWindowSwitchThreshold,
+      );
+      expect(decision, GhosttyWindowSwitch.next);
+      final (col, row) = ghosttyStatusRowCell(rows: 24);
+      expect(ghosttySgrWheelDown(col: col, row: row), '\x1b[<65;1;24M');
+    });
+
+    test('swipe RIGHT emits one wheel-UP at the status row (prev-window)', () {
+      final decision = ghosttyWindowSwitchForSwipe(
+        64,
+        kGhosttyWindowSwitchThreshold,
+      );
+      expect(decision, GhosttyWindowSwitch.previous);
+      final (col, row) = ghosttyStatusRowCell(rows: 24);
+      expect(ghosttySgrWheelUp(col: col, row: row), '\x1b[<64;1;24M');
+    });
+
+    test('a near-vertical swipe (tiny dx) switches no window', () {
+      expect(
+        ghosttyWindowSwitchForSwipe(5, kGhosttyWindowSwitchThreshold),
+        GhosttyWindowSwitch.none,
+      );
+    });
+  });
 }
