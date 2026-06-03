@@ -28,6 +28,7 @@ import '../main.dart' show openConnectHome;
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import '../storage/profiles_store.dart' show ProfilesStore;
 import 'file_browser_screen.dart';
 
 /// Opens the session menu as a NON-MODAL overlay anchored to the bottom, above
@@ -130,24 +131,57 @@ void _stepFont(
   );
 }
 
-/// Advance the ACTIVE session's font family to the next bundled face (#679) and
-/// PERSIST it onto the session's PROFILE — mirroring [_stepFont]/#640 for font
-/// size and #613 for theme. Two effects, in order:
+/// Set the ACTIVE session's font family to [familyId] (#679, #724) and PERSIST
+/// it onto the session's PROFILE — mirroring [_stepFont]/#640 for font size and
+/// [_pickTheme]/#613 for theme. The session menu used to ADVANCE to the next
+/// face on each tap (#679); #724 swapped that blind cycle for a picker, so this
+/// applies an explicitly chosen family. Two effects, in order:
 ///   1. In-memory per-session family (live render) via [SessionAppearanceNotifier].
 ///   2. Best-effort upsert of the chosen family onto the matching saved profile
 ///      (keyed by the active entry's `host:port:username`). NO-OP for an ad-hoc
 ///      connect with no saved profile — we never materialize one.
-void _cycleFontFamily(WidgetRef ref, SessionsState sessions, String activeId) {
-  final current = ref.read(sessionFontFamilyProvider(activeId));
-  final i = terminalFontFamilies.indexWhere((f) => f.id == current);
-  final next =
-      terminalFontFamilies[(i < 0 ? 0 : i + 1) % terminalFontFamilies.length];
-  ref.read(sessionAppearanceProvider.notifier).setFontFamily(activeId, next.id);
+///
+/// [appearance] and [store] are passed in (resolved before the menu overlay is
+/// closed) rather than read off a `ref`: opening the picker CLOSES the menu
+/// overlay (#664), which disposes the controls-row widget + its `ref`. Touching
+/// `ref` afterwards throws "Cannot use ref after the widget was disposed", so
+/// the picker callback must hold the notifier/store directly.
+void _pickFontFamily(
+  SessionAppearanceNotifier appearance,
+  ProfilesStore store,
+  SessionsState sessions,
+  String activeId,
+  String familyId,
+) {
+  appearance.setFontFamily(activeId, familyId);
   final active = sessions.active;
   if (active == null) return;
-  unawaited(
-    ref.read(profilesStoreProvider).setFontFamily(active.profileKey, next.id),
-  );
+  unawaited(store.setFontFamily(active.profileKey, familyId));
+}
+
+/// Set the ACTIVE session's terminal palette to [index] (#601, #571, #724) and
+/// PERSIST the matching theme KEY onto the session's PROFILE (#613) so it sticks
+/// across restart/reconnect. The session menu used to CYCLE to the next palette
+/// on each tap; #724 swapped that blind cycle for a picker, so this applies an
+/// explicitly chosen palette. Two effects, in order:
+///   1. In-memory per-session theme (live render) via [SessionAppearanceNotifier].
+///   2. Best-effort upsert of the palette's PWA theme KEY onto the matching saved
+///      profile. NO-OP for an ad-hoc connect with no saved profile.
+///
+/// [appearance] and [store] are passed in (resolved before the menu overlay is
+/// closed) rather than read off a `ref` — see [_pickFontFamily] for why (#664).
+void _pickTheme(
+  SessionAppearanceNotifier appearance,
+  ProfilesStore store,
+  SessionsState sessions,
+  String activeId,
+  int index,
+) {
+  appearance.setTheme(activeId, index);
+  final active = sessions.active;
+  if (active == null) return;
+  if (index < 0 || index >= terminalPalettes.length) return;
+  unawaited(store.setTheme(active.profileKey, terminalPalettes[index].key));
 }
 
 /// The human label for a bundled font-family id (#679), for the picker control.
@@ -156,6 +190,81 @@ String _fontFamilyLabel(String id) {
     if (f.id == id) return f.label;
   }
   return id;
+}
+
+/// A compact, dismissible bottom-sheet picker (#724) listing [count] options as
+/// a scrollable column with the [selectedIndex] marked by a check. Tapping an
+/// option calls [onPick] and closes the sheet. Used for BOTH the theme picker
+/// (all 38 palettes) and the font-family picker (all bundled faces) — same
+/// idiom, so the two controls read consistently.
+///
+/// #664: the menu is a non-modal OverlayEntry, so we cannot use the overlay's
+/// own context for a route-based sheet. [navigatorContext] is captured from a
+/// `Navigator.of(context)` at the call site (the app's real Navigator), which
+/// owns a valid route stack for `showModalBottomSheet`.
+void _showPickerSheet({
+  required BuildContext navigatorContext,
+  required String title,
+  required int count,
+  required int selectedIndex,
+  required String Function(int index) labelOf,
+  required void Function(int index) onPick,
+}) {
+  showModalBottomSheet<void>(
+    context: navigatorContext,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (ctx) {
+      final theme = Theme.of(ctx);
+      return SafeArea(
+        child: ConstrainedBox(
+          // Keep the sheet compact (premium space): cap at ~half the screen and
+          // let the list scroll past that.
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.6,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                child: Text(title, style: theme.textTheme.titleSmall),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: count,
+                  itemBuilder: (lctx, i) {
+                    final selected = i == selectedIndex;
+                    return ListTile(
+                      key: Key('picker-option-$i'),
+                      dense: true,
+                      selected: selected,
+                      leading: Icon(
+                        selected
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                        size: 20,
+                        color: selected
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.outlineVariant,
+                      ),
+                      title: Text(labelOf(i)),
+                      onTap: () {
+                        onPick(i);
+                        Navigator.of(ctx).pop();
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class SessionMenu extends ConsumerWidget {
@@ -175,7 +284,6 @@ class SessionMenu extends ConsumerWidget {
     final keybarVisible = ref.watch(activeSessionKeybarVisibleProvider);
     final activeId = sessions.activeId;
     final palette = ref.watch(activeSessionThemeProvider);
-    final fontSize = ref.watch(activeSessionFontSizeProvider);
     final fontFamily = ref.watch(activeSessionFontFamilyProvider);
 
     return SingleChildScrollView(
@@ -244,7 +352,7 @@ class SessionMenu extends ConsumerWidget {
             sessions: sessions,
             keybarVisible: keybarVisible,
             themeLabel: palette.label,
-            fontSize: fontSize,
+            themeKey: palette.key,
             fontFamily: fontFamily,
             onClose: onClose,
           ),
@@ -254,20 +362,35 @@ class SessionMenu extends ConsumerWidget {
   }
 }
 
-/// One compact row replacing the old stack of secondary ListTiles (#567).
+/// One compact row replacing the old stack of secondary ListTiles (#567),
+/// re-proportioned in #724.
 ///
-/// Layout (left→right): theme cycle (icon + current label), font − [value] +,
-/// keybar toggle, disconnect. (Files moved to a per-row icon, #649.)
+/// Layout (left→right), evenly proportioned into comfortably-tappable segments:
+///   1. theme PICKER (palette glyph + current label) — tap opens a bottom sheet
+///      listing all [terminalPalettes] with the current one marked (#724).
+///   2. font-size − / + (NO numeric value, #724) flanking a small "Aa" glyph.
+///   3. font-family PICKER (text glyph + current label) — tap opens a bottom
+///      sheet listing the bundled faces with the current one marked (#724).
+///   4. keybar visibility toggle.
+///   5. disconnect.
+///
+/// #724 swapped the theme + font-family controls from blind advance-to-next
+/// CYCLES to explicit PICKERS, and dropped the font-size number (the − / +
+/// alone are enough; the menu is premium space). The control KEYS are unchanged
+/// (`session-menu-theme-cycle` / `session-menu-fontfamily-cycle`) so existing
+/// presence tests + device screenshots still address them.
+///
 /// Monochrome Material icons only — no emoji
 /// (feedback_monochrome_icons_no_emoji). Controls disable themselves when there
-/// is no active session, mirroring the prior per-tile `enabled` gating.
+/// is no active session, mirroring the prior per-tile `enabled` gating. Every
+/// control is session-scoped and acts on the ACTIVE session only (#601, #571).
 class _SessionControlsRow extends ConsumerWidget {
   const _SessionControlsRow({
     required this.activeId,
     required this.sessions,
     required this.keybarVisible,
     required this.themeLabel,
-    required this.fontSize,
+    required this.themeKey,
     required this.fontFamily,
     required this.onClose,
   });
@@ -276,7 +399,7 @@ class _SessionControlsRow extends ConsumerWidget {
   final SessionsState sessions;
   final bool keybarVisible;
   final String themeLabel;
-  final double fontSize;
+  final String themeKey;
   final String fontFamily;
   final VoidCallback onClose;
 
@@ -284,145 +407,236 @@ class _SessionControlsRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final hasActive = activeId != null;
+    final themeIndex = terminalPalettes.indexWhere((p) => p.key == themeKey);
+    final fontIndex = terminalFontFamilies.indexWhere(
+      (f) => f.id == fontFamily,
+    );
+
     return Padding(
       key: const Key('session-menu-controls'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Cycle the ACTIVE session's terminal palette (#601, #571). The
-          // current theme label sits next to the icon so the control still
-          // communicates state without a full row.
-          InkWell(
-            key: const Key('session-menu-theme-cycle'),
-            borderRadius: BorderRadius.circular(8),
-            onTap: !hasActive
-                ? null
-                : () => ref
-                      .read(sessionAppearanceProvider.notifier)
-                      .cycleTheme(activeId!),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.palette_outlined, size: 20),
-                  const SizedBox(width: 6),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 64),
-                    child: Text(
-                      themeLabel,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
+          // 1. Theme PICKER (#724). Tapping opens a scrollable bottom sheet of
+          // ALL palettes with the current one marked; selecting one sets +
+          // persists the ACTIVE session's theme. The current label sits next to
+          // the glyph so the control still communicates state at a glance.
+          Expanded(
+            flex: 3,
+            child: _PickerChip(
+              itemKey: const Key('session-menu-theme-cycle'),
+              icon: Icons.palette_outlined,
+              label: themeLabel,
+              enabled: hasActive,
+              onTap: () {
+                // #664: the menu is a full-screen OverlayEntry whose tap barrier
+                // sits ABOVE any pushed route, so a bottom sheet shown while the
+                // menu is open is un-tappable underneath the barrier. Capture the
+                // app Navigator + the notifier/store (closing the menu disposes
+                // this widget's `ref`), close the menu, THEN show the sheet —
+                // same idiom as the "Profiles & settings" / Files affordances. We
+                // mutate the session by id (`activeId!`), so closing first is safe.
+                final navContext = Navigator.of(context).context;
+                final appearance = ref.read(sessionAppearanceProvider.notifier);
+                final store = ref.read(profilesStoreProvider);
+                onClose();
+                _showPickerSheet(
+                  navigatorContext: navContext,
+                  title: 'Theme',
+                  count: terminalPalettes.length,
+                  selectedIndex: themeIndex,
+                  labelOf: (i) => terminalPalettes[i].label,
+                  onPick: (i) =>
+                      _pickTheme(appearance, store, sessions, activeId!, i),
+                );
+              },
             ),
           ),
-          // Font-size stepper for the ACTIVE session (#601): − [value] +.
-          IconButton(
-            key: const Key('session-menu-fontsize-dec'),
+          // 2. Font-size − / + (#724): NO numeric value between them. A muted
+          // "Aa" glyph stands in for the value so the pair still reads as a
+          // font-size control. Each button is a ~44px tap target.
+          _StepButton(
+            itemKey: const Key('session-menu-fontsize-dec'),
             tooltip: 'Decrease font size',
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.remove),
-            onPressed: !hasActive
-                ? null
-                : () => _stepFont(ref, sessions, activeId!, -kFontSizeStep),
+            icon: Icons.remove,
+            enabled: hasActive,
+            onTap: () => _stepFont(ref, sessions, activeId!, -kFontSizeStep),
           ),
-          SizedBox(
-            width: 22,
-            child: Text(
-              '${fontSize.round()}',
-              key: const Key('session-menu-fontsize'),
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall,
+          Text(
+            'Aa',
+            key: const Key('session-menu-fontsize-glyph'),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          IconButton(
-            key: const Key('session-menu-fontsize-inc'),
+          _StepButton(
+            itemKey: const Key('session-menu-fontsize-inc'),
             tooltip: 'Increase font size',
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.add),
-            onPressed: !hasActive
-                ? null
-                : () => _stepFont(ref, sessions, activeId!, kFontSizeStep),
+            icon: Icons.add,
+            enabled: hasActive,
+            onTap: () => _stepFont(ref, sessions, activeId!, kFontSizeStep),
           ),
-          // Cycle the ACTIVE session's terminal FONT FAMILY (#679): the
-          // bundled monospace faces (JetBrains Mono / Fira Code / Cascadia
-          // Code), mirroring the PWA terminal's font picker. Tap advances to
-          // the next face; the current family's label sits next to the glyph
-          // so the control communicates state without a full row (same idiom
-          // as the theme cycle). PER-SESSION + persisted onto the profile
-          // (#640 idiom). Monochrome Material icon — no emoji
-          // (feedback_monochrome_icons_no_emoji). Disabled with no active
-          // session, like the sibling controls.
-          InkWell(
-            key: const Key('session-menu-fontfamily-cycle'),
-            borderRadius: BorderRadius.circular(8),
-            onTap: !hasActive
-                ? null
-                : () => _cycleFontFamily(ref, sessions, activeId!),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.text_fields, size: 20),
-                  const SizedBox(width: 6),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 64),
-                    child: Text(
-                      _fontFamilyLabel(fontFamily),
-                      key: const Key('session-menu-fontfamily-label'),
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
-                    ),
+          // 3. Font-family PICKER (#724, was a cycle in #679). Same idiom as the
+          // theme picker: tap opens a bottom sheet of the bundled faces with the
+          // current one marked; selecting sets + persists the ACTIVE session's
+          // family onto its profile (#640 idiom).
+          Expanded(
+            flex: 3,
+            child: _PickerChip(
+              itemKey: const Key('session-menu-fontfamily-cycle'),
+              labelKey: const Key('session-menu-fontfamily-label'),
+              icon: Icons.text_fields,
+              label: _fontFamilyLabel(fontFamily),
+              enabled: hasActive,
+              onTap: () {
+                // See the theme picker above (#664): capture the navigator +
+                // notifier/store, close the overlay menu (which disposes `ref`),
+                // then show the sheet so it isn't trapped under the barrier.
+                final navContext = Navigator.of(context).context;
+                final appearance = ref.read(sessionAppearanceProvider.notifier);
+                final store = ref.read(profilesStoreProvider);
+                onClose();
+                _showPickerSheet(
+                  navigatorContext: navContext,
+                  title: 'Font',
+                  count: terminalFontFamilies.length,
+                  selectedIndex: fontIndex,
+                  labelOf: (i) => terminalFontFamilies[i].label,
+                  onPick: (i) => _pickFontFamily(
+                    appearance,
+                    store,
+                    sessions,
+                    activeId!,
+                    terminalFontFamilies[i].id,
                   ),
-                ],
-              ),
+                );
+              },
             ),
           ),
           // Files moved to a PER-ROW affordance (#649): each session row now
-          // carries its own `session-menu-files-${id}` icon next to its X, so
-          // the browser opens for THAT row's session rather than only the
-          // active one. The active-only control here was removed to avoid a
-          // redundant second entry point.
-          // Keybar visibility toggle. Filled icon = visible, outlined = hidden,
-          // so the glyph itself communicates the toggle state (no SwitchListTile
-          // row needed). PER-SESSION (#573): flips THIS (active) session's flag
-          // only — sibling sessions keep their own keybar state. Disabled with
-          // no active session, mirroring the other controls.
-          IconButton(
-            key: const Key('session-menu-keybar-toggle'),
+          // carries its own `session-menu-files-${id}` icon next to its X.
+          // 4. Keybar visibility toggle. Filled icon = visible, outlined =
+          // hidden, so the glyph itself communicates the toggle state.
+          // PER-SESSION (#573): flips THIS (active) session's flag only.
+          _StepButton(
+            itemKey: const Key('session-menu-keybar-toggle'),
             tooltip: keybarVisible ? 'Hide keybar' : 'Show keybar',
-            visualDensity: VisualDensity.compact,
-            isSelected: keybarVisible,
-            icon: const Icon(Icons.keyboard_outlined),
-            selectedIcon: const Icon(Icons.keyboard),
-            onPressed: !hasActive
-                ? null
-                : () => ref
-                      .read(sessionAppearanceProvider.notifier)
-                      .toggleKeybarVisible(activeId!),
+            icon: keybarVisible ? Icons.keyboard : Icons.keyboard_outlined,
+            selected: keybarVisible,
+            enabled: hasActive,
+            onTap: () => ref
+                .read(sessionAppearanceProvider.notifier)
+                .toggleKeybarVisible(activeId!),
           ),
-          // Disconnect the ACTIVE session (#607). Fully closes (disconnect +
+          // 5. Disconnect the ACTIVE session (#607). Fully closes (disconnect +
           // dispose + REMOVE the entry) so a re-connect restarts the service
           // (#564).
-          IconButton(
-            key: const Key('terminal-disconnect-button'),
+          _StepButton(
+            itemKey: const Key('terminal-disconnect-button'),
             tooltip: 'Disconnect',
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.link_off),
-            onPressed: !hasActive
-                ? null
-                : () {
-                    onClose();
-                    ref.read(sessionsProvider.notifier).close(activeId!);
-                  },
+            icon: Icons.link_off,
+            enabled: hasActive,
+            onTap: () {
+              onClose();
+              ref.read(sessionsProvider.notifier).close(activeId!);
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+/// A tappable picker affordance: a monochrome glyph + current-value label that
+/// opens a picker sheet on tap (#724). Fills its [Expanded] slot so the theme
+/// and font controls are evenly proportioned, with a ~44px-tall tap target.
+class _PickerChip extends StatelessWidget {
+  const _PickerChip({
+    required this.itemKey,
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onTap,
+    this.labelKey,
+  });
+
+  final Key itemKey;
+  final Key? labelKey;
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fg = enabled
+        ? theme.colorScheme.onSurface
+        : theme.colorScheme.onSurface.withValues(alpha: 0.38);
+    return InkWell(
+      key: itemKey,
+      borderRadius: BorderRadius.circular(8),
+      onTap: enabled ? onTap : null,
+      child: Container(
+        height: 44,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 20, color: fg),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                key: labelKey,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(color: fg),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A fixed-size ~44px icon button used for the font − / +, keybar toggle, and
+/// disconnect controls — so every non-picker control in the row is the same
+/// comfortable tap target (#724). [selected] tints the glyph for toggle state.
+class _StepButton extends StatelessWidget {
+  const _StepButton({
+    required this.itemKey,
+    required this.tooltip,
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+    this.selected = false,
+  });
+
+  final Key itemKey;
+  final String tooltip;
+  final IconData icon;
+  final bool enabled;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = selected ? theme.colorScheme.primary : null;
+    return IconButton(
+      key: itemKey,
+      tooltip: tooltip,
+      iconSize: 20,
+      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      color: color,
+      icon: Icon(icon),
+      onPressed: enabled ? onTap : null,
     );
   }
 }
