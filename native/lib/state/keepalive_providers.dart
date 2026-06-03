@@ -11,8 +11,28 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../platform/desktop.dart';
 import '../services/keepalive_task.dart';
+import '../ssh/ssh_session.dart';
 import 'session_host_providers.dart';
 import 'sessions.dart';
+
+/// Label of the single session currently holding the keep-alive service open
+/// (#709 slice 1). Returns the entry's `label` (`user@host:port` or the saved
+/// profile title) when EXACTLY one session is in a service-holding state
+/// (`connected`/`reconnecting`), else null so the controller falls back to the
+/// count form. Mirrors `KeepaliveController._holdsService`: a session counts as
+/// "connected" for notification purposes in both states.
+String? _soleConnectedSessionLabel(SessionsState sessions) {
+  SessionEntry? sole;
+  for (final e in sessions.entries) {
+    final state = e.proxy.data.state;
+    if (state == SshSessionState.connected ||
+        state == SshSessionState.reconnecting) {
+      if (sole != null) return null; // more than one — use the count form
+      sole = e;
+    }
+  }
+  return sole?.label;
+}
 
 /// Selects the keep-alive gateway for the current platform (#577). Desktop has
 /// no foreground service (the process persists), so it uses a no-op gateway;
@@ -89,6 +109,13 @@ final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
     enabled: ref.read(keepaliveEnabledProvider),
     onServiceStopped: () =>
         ref.read(taskSshGatewayProvider).markServiceStopped(),
+    // #709 slice 1: when exactly one session is connected, label the ongoing
+    // notification with that session's `user@host` (or saved title). The
+    // controller only consults this on a single-session count, so we return the
+    // label of the sole connected entry. ref.read (not watch) keeps this
+    // provider from rebuilding — the resolver is pulled on demand at update time.
+    notificationLabelResolver: () =>
+        _soleConnectedSessionLabel(ref.read(sessionsProvider)),
   );
   // Initial attach for whatever sessions already exist when this controller
   // is first read (typically zero on cold start, but the proxy/session

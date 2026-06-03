@@ -47,6 +47,15 @@ class FakeKeepaliveGateway implements KeepaliveGateway {
   }
 
   @override
+  Future<bool> updateService({
+    required String notificationTitle,
+    required String notificationText,
+  }) async {
+    calls.add('update:$notificationText');
+    return true;
+  }
+
+  @override
   Future<bool> stopService() async {
     calls.add('stop');
     _running = false;
@@ -94,6 +103,164 @@ Future<void> _drain() async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // #709 slice 1: pure count → notification-text mapping.
+  group('keepaliveNotificationText', () {
+    test('0 connected → minimal handshake text', () {
+      expect(keepaliveNotificationText(0), 'Connecting…');
+    });
+
+    test('1 connected, no label → singular count form', () {
+      expect(keepaliveNotificationText(1), '1 session connected');
+    });
+
+    test('1 connected, empty/whitespace label → singular count form', () {
+      expect(
+        keepaliveNotificationText(1, hostLabel: ''),
+        '1 session connected',
+      );
+      expect(
+        keepaliveNotificationText(1, hostLabel: '   '),
+        '1 session connected',
+      );
+    });
+
+    test('1 connected, with label → "Connected — <label>"', () {
+      expect(
+        keepaliveNotificationText(1, hostLabel: 'me@example.com'),
+        'Connected — me@example.com',
+      );
+    });
+
+    test('1 connected trims surrounding whitespace on the label', () {
+      expect(
+        keepaliveNotificationText(1, hostLabel: '  me@host  '),
+        'Connected — me@host',
+      );
+    });
+
+    test('N>1 connected → plural count form (label ignored)', () {
+      expect(keepaliveNotificationText(2), '2 sessions connected');
+      expect(
+        keepaliveNotificationText(3, hostLabel: 'me@host'),
+        '3 sessions connected',
+      );
+    });
+  });
+
+  // #709 slice 1: the controller drives updateService on count changes while
+  // the service stays running, and renders the single-session host label.
+  group('KeepaliveController notification updates (#709)', () {
+    test(
+      'start shows the single-session label when a resolver is set',
+      () async {
+        final gateway = FakeKeepaliveGateway();
+        final controller = KeepaliveController(
+          gateway: gateway,
+          notificationLabelResolver: () => 'me@host:22',
+        );
+        final session = StubSession();
+        controller.attach(session);
+
+        session.emit(SshSessionState.connected);
+        await _drain();
+        expect(gateway.calls, contains('start:Connected — me@host:22'));
+
+        await controller.dispose();
+        await session.dispose();
+      },
+    );
+
+    test('second session updates notification to plural count', () async {
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(
+        gateway: gateway,
+        notificationLabelResolver: () => 'me@host:22',
+      );
+      final s1 = StubSession();
+      final s2 = StubSession();
+      controller.attach(s1);
+      controller.attach(s2);
+
+      s1.emit(SshSessionState.connected);
+      await _drain();
+      expect(controller.connectedCount, 1);
+      expect(gateway.calls, contains('start:Connected — me@host:22'));
+
+      s2.emit(SshSessionState.connected);
+      await _drain();
+      expect(controller.connectedCount, 2);
+      // Service stays running (no second start); count text pushed via update.
+      expect(gateway.calls, contains('update:2 sessions connected'));
+      expect(
+        gateway.calls.where((c) => c.startsWith('start:')).length,
+        1,
+        reason: 'second session must not re-start the service',
+      );
+
+      await controller.dispose();
+      await s1.dispose();
+      await s2.dispose();
+    });
+
+    test('disconnecting one of two pushes a single-session update', () async {
+      final gateway = FakeKeepaliveGateway();
+      // The UI resolver returns the sole connected session's label; emulate it
+      // here with a flag the test flips as it drives the stub session counts.
+      var oneConnected = false;
+      final controller = KeepaliveController(
+        gateway: gateway,
+        notificationLabelResolver: () => oneConnected ? 'me@host:22' : null,
+      );
+      final s1 = StubSession();
+      final s2 = StubSession();
+      controller.attach(s1);
+      controller.attach(s2);
+
+      s1.emit(SshSessionState.connected);
+      s2.emit(SshSessionState.connected);
+      await _drain();
+      expect(controller.connectedCount, 2);
+
+      // One drops → back to a single connected session; the resolver now yields
+      // the surviving label, and the controller pushes a silent update.
+      oneConnected = true;
+      s2.emit(SshSessionState.disconnected);
+      await _drain();
+      expect(controller.connectedCount, 1);
+      expect(gateway.calls, contains('update:Connected — me@host:22'));
+      expect(
+        await gateway.isRunningService,
+        isTrue,
+        reason: 'service must stay running while one session remains',
+      );
+
+      await controller.dispose();
+      await s1.dispose();
+      await s2.dispose();
+    });
+
+    test('no label resolver → count form on start and update', () async {
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final s1 = StubSession();
+      final s2 = StubSession();
+      controller.attach(s1);
+      controller.attach(s2);
+
+      s1.emit(SshSessionState.connected);
+      await _drain();
+      expect(gateway.calls, contains('start:1 session connected'));
+
+      s2.emit(SshSessionState.connected);
+      await _drain();
+      expect(gateway.calls, contains('update:2 sessions connected'));
+
+      await controller.dispose();
+      await s1.dispose();
+      await s2.dispose();
+    });
+  });
+
   group('KeepaliveController', () {
     test('starts service when session enters connected', () async {
       final gateway = FakeKeepaliveGateway();
@@ -103,8 +270,11 @@ void main() {
 
       session.emit(SshSessionState.connecting);
       await _drain();
-      expect(gateway.calls, isEmpty,
-          reason: 'no service start while still connecting');
+      expect(
+        gateway.calls,
+        isEmpty,
+        reason: 'no service start while still connecting',
+      );
 
       session.emit(SshSessionState.connected);
       await _drain();
@@ -157,10 +327,7 @@ void main() {
 
     test('does not start service when disabled', () async {
       final gateway = FakeKeepaliveGateway();
-      final controller = KeepaliveController(
-        gateway: gateway,
-        enabled: false,
-      );
+      final controller = KeepaliveController(gateway: gateway, enabled: false);
       final session = StubSession();
       controller.attach(session);
 
@@ -191,25 +358,29 @@ void main() {
       await session.dispose();
     });
 
-    test('toggle back on starts service if a session is still connected',
-        () async {
-      final gateway = FakeKeepaliveGateway();
-      final controller =
-          KeepaliveController(gateway: gateway, enabled: false);
-      final session = StubSession();
-      controller.attach(session);
+    test(
+      'toggle back on starts service if a session is still connected',
+      () async {
+        final gateway = FakeKeepaliveGateway();
+        final controller = KeepaliveController(
+          gateway: gateway,
+          enabled: false,
+        );
+        final session = StubSession();
+        controller.attach(session);
 
-      session.emit(SshSessionState.connected);
-      await _drain();
-      expect(await gateway.isRunningService, isFalse);
+        session.emit(SshSessionState.connected);
+        await _drain();
+        expect(await gateway.isRunningService, isFalse);
 
-      controller.enabled = true;
-      await _drain();
-      expect(await gateway.isRunningService, isTrue);
+        controller.enabled = true;
+        await _drain();
+        expect(await gateway.isRunningService, isTrue);
 
-      await controller.dispose();
-      await session.dispose();
-    });
+        await controller.dispose();
+        await session.dispose();
+      },
+    );
 
     test('detach decrements connected count and stops if zero', () async {
       final gateway = FakeKeepaliveGateway();
@@ -244,15 +415,21 @@ void main() {
 
       session.emit(SshSessionState.reconnecting);
       await _drain();
-      expect(await gateway.isRunningService, isTrue,
-          reason: 'service must stay running across transient reconnects');
+      expect(
+        await gateway.isRunningService,
+        isTrue,
+        reason: 'service must stay running across transient reconnects',
+      );
       expect(controller.connectedCount, 1);
 
       session.emit(SshSessionState.connected);
       await _drain();
       expect(await gateway.isRunningService, isTrue);
-      expect(controller.connectedCount, 1,
-          reason: 'no double-count when transitioning back to connected');
+      expect(
+        controller.connectedCount,
+        1,
+        reason: 'no double-count when transitioning back to connected',
+      );
 
       await controller.dispose();
       await session.dispose();
@@ -304,16 +481,17 @@ void main() {
       addTearDown(pair.dispose);
       final controller = KeepaliveController(gateway: fakeGateway);
 
-      final proxy =
-          SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
+      final proxy = SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
       addTearDown(proxy.dispose);
       controller.attach(proxy);
 
       // Push a `connected` state event from the task side.
-      pair.taskSide.send(SshStateEvent(
-        sessionId: 'sid',
-        state: SshSessionState.connected.name,
-      ).toJson());
+      pair.taskSide.send(
+        SshStateEvent(
+          sessionId: 'sid',
+          state: SshSessionState.connected.name,
+        ).toJson(),
+      );
       await _drain();
 
       expect(fakeGateway.calls.first, 'init');
@@ -330,15 +508,16 @@ void main() {
       addTearDown(pair.dispose);
       final controller = KeepaliveController(gateway: fakeGateway);
 
-      final proxy =
-          SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
+      final proxy = SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
       addTearDown(proxy.dispose);
       controller.attach(proxy);
 
-      pair.taskSide.send(SshStateEvent(
-        sessionId: 'sid',
-        state: SshSessionState.connected.name,
-      ).toJson());
+      pair.taskSide.send(
+        SshStateEvent(
+          sessionId: 'sid',
+          state: SshSessionState.connected.name,
+        ).toJson(),
+      );
       await _drain();
       expect(await fakeGateway.isRunningService, isTrue);
 
@@ -356,25 +535,31 @@ void main() {
       addTearDown(pair.dispose);
       final controller = KeepaliveController(gateway: fakeGateway);
 
-      final proxy =
-          SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
+      final proxy = SshSessionProxy(sessionId: 'sid', gateway: pair.uiSide);
       addTearDown(proxy.dispose);
       controller.attach(proxy);
 
-      pair.taskSide.send(SshStateEvent(
-        sessionId: 'sid',
-        state: SshSessionState.connected.name,
-      ).toJson());
+      pair.taskSide.send(
+        SshStateEvent(
+          sessionId: 'sid',
+          state: SshSessionState.connected.name,
+        ).toJson(),
+      );
       await _drain();
       expect(await fakeGateway.isRunningService, isTrue);
 
-      pair.taskSide.send(SshStateEvent(
-        sessionId: 'sid',
-        state: SshSessionState.reconnecting.name,
-      ).toJson());
+      pair.taskSide.send(
+        SshStateEvent(
+          sessionId: 'sid',
+          state: SshSessionState.reconnecting.name,
+        ).toJson(),
+      );
       await _drain();
-      expect(await fakeGateway.isRunningService, isTrue,
-          reason: 'service must stay running across transient reconnects');
+      expect(
+        await fakeGateway.isRunningService,
+        isTrue,
+        reason: 'service must stay running across transient reconnects',
+      );
       expect(controller.connectedCount, 1);
 
       await controller.dispose();

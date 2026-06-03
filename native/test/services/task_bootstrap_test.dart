@@ -53,6 +53,15 @@ class FakeKeepaliveGateway implements KeepaliveGateway {
   }
 
   @override
+  Future<bool> updateService({
+    required String notificationTitle,
+    required String notificationText,
+  }) async {
+    calls.add('update');
+    return true;
+  }
+
+  @override
   Future<bool> stopService() async {
     calls.add('stop');
     _running = false;
@@ -69,54 +78,71 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('FlutterForegroundSshGateway buffering (#539)', () {
-    test('buffers commands sent before ready, flushes in order after ready',
-        () async {
-      final pair = StubFftTransportPair();
-      addTearDown(pair.dispose);
+    test(
+      'buffers commands sent before ready, flushes in order after ready',
+      () async {
+        final pair = StubFftTransportPair();
+        addTearDown(pair.dispose);
 
-      // Capture what the UI side actually pushes toward the task.
-      final received = <Map<String, dynamic>>[];
-      pair.taskSide.registerReceiver((data) {
-        received.add(Map<String, dynamic>.from(data as Map));
-      });
+        // Capture what the UI side actually pushes toward the task.
+        final received = <Map<String, dynamic>>[];
+        pair.taskSide.registerReceiver((data) {
+          received.add(Map<String, dynamic>.from(data as Map));
+        });
 
-      final ui = FlutterForegroundSshGateway(transport: pair.uiSide);
-      addTearDown(ui.dispose);
+        final ui = FlutterForegroundSshGateway(transport: pair.uiSide);
+        addTearDown(ui.dispose);
 
-      // The task isolate hasn't signalled ready yet. Send three commands in a
-      // specific order: connect, input, resize.
-      ui.send(SshConnectCommand(
-        sessionId: 'sid',
-        host: 'h',
-        port: 22,
-        username: 'u',
-        authJson: const {'type': 'password', 'password': 'p'},
-      ).toJson());
-      ui.send(SshResizeCommand(sessionId: 'sid', cols: 80, rows: 24).toJson());
-      await _drain();
+        // The task isolate hasn't signalled ready yet. Send three commands in a
+        // specific order: connect, input, resize.
+        ui.send(
+          SshConnectCommand(
+            sessionId: 'sid',
+            host: 'h',
+            port: 22,
+            username: 'u',
+            authJson: const {'type': 'password', 'password': 'p'},
+          ).toJson(),
+        );
+        ui.send(
+          SshResizeCommand(sessionId: 'sid', cols: 80, rows: 24).toJson(),
+        );
+        await _drain();
 
-      expect(received, isEmpty,
-          reason: 'commands must be buffered until the task is ready');
+        expect(
+          received,
+          isEmpty,
+          reason: 'commands must be buffered until the task is ready',
+        );
 
-      // Task signals ready (the first inbound payload the UI ever sees).
-      pair.taskSide.send(const SshTaskReadyEvent().toJson());
-      await _drain();
+        // Task signals ready (the first inbound payload the UI ever sees).
+        pair.taskSide.send(const SshTaskReadyEvent().toJson());
+        await _drain();
 
-      expect(received.length, 2,
-          reason: 'buffered commands flush once ready arrives');
-      expect(received[0]['kind'], SshTaskCommandKind.connect.name);
-      expect(received[1]['kind'], SshTaskCommandKind.resize.name,
-          reason: 'order must be preserved: connect before resize');
+        expect(
+          received.length,
+          2,
+          reason: 'buffered commands flush once ready arrives',
+        );
+        expect(received[0]['kind'], SshTaskCommandKind.connect.name);
+        expect(
+          received[1]['kind'],
+          SshTaskCommandKind.resize.name,
+          reason: 'order must be preserved: connect before resize',
+        );
 
-      // After ready, sends pass through immediately.
-      ui.send(SshInputCommand(
-        sessionId: 'sid',
-        bytes: Uint8List.fromList('x'.codeUnits),
-      ).toJson());
-      await _drain();
-      expect(received.length, 3);
-      expect(received[2]['kind'], SshTaskCommandKind.input.name);
-    });
+        // After ready, sends pass through immediately.
+        ui.send(
+          SshInputCommand(
+            sessionId: 'sid',
+            bytes: Uint8List.fromList('x'.codeUnits),
+          ).toJson(),
+        );
+        await _drain();
+        expect(received.length, 3);
+        expect(received[2]['kind'], SshTaskCommandKind.input.name);
+      },
+    );
 
     test('any inbound payload (not only ready) flushes the buffer', () async {
       // Defensive: even if the first task→UI payload is a state event rather
@@ -131,13 +157,15 @@ void main() {
       final ui = FlutterForegroundSshGateway(transport: pair.uiSide);
       addTearDown(ui.dispose);
 
-      ui.send(SshConnectCommand(
-        sessionId: 'sid',
-        host: 'h',
-        port: 22,
-        username: 'u',
-        authJson: const {'type': 'password', 'password': 'p'},
-      ).toJson());
+      ui.send(
+        SshConnectCommand(
+          sessionId: 'sid',
+          host: 'h',
+          port: 22,
+          username: 'u',
+          authJson: const {'type': 'password', 'password': 'p'},
+        ).toJson(),
+      );
       await _drain();
       expect(received, isEmpty);
 
@@ -156,33 +184,42 @@ void main() {
       final pair = InMemoryGatewayPair();
       addTearDown(pair.dispose);
 
-      final container = ProviderContainer(overrides: [
-        // UI talks to the in-memory pair so no platform channels are touched.
-        taskSshGatewayProvider.overrideWithValue(pair.uiSide),
-        // The keepalive controller used by the starter seam uses the fake
-        // foreground-task gateway so we can observe startService.
-        keepaliveServiceStarterProvider.overrideWith((ref) {
-          final controller = KeepaliveController(gateway: fakeGateway);
-          ref.onDispose(controller.dispose);
-          return controller.ensureStarted;
-        }),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          // UI talks to the in-memory pair so no platform channels are touched.
+          taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+          // The keepalive controller used by the starter seam uses the fake
+          // foreground-task gateway so we can observe startService.
+          keepaliveServiceStarterProvider.overrideWith((ref) {
+            final controller = KeepaliveController(gateway: fakeGateway);
+            ref.onDispose(controller.dispose);
+            return controller.ensureStarted;
+          }),
+        ],
+      );
       addTearDown(container.dispose);
 
       final notifier = container.read(sessionsProvider.notifier);
-      notifier.addOrActivate(const SshConnectParams(
-        host: 'h',
-        port: 22,
-        username: 'u',
-        auth: SshAuth.password('p'),
-      ));
+      notifier.addOrActivate(
+        const SshConnectParams(
+          host: 'h',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
       await _drain();
 
-      expect(fakeGateway.calls, contains('start'),
-          reason: 'addOrActivate must start the foreground service');
+      expect(
+        fakeGateway.calls,
+        contains('start'),
+        reason: 'addOrActivate must start the foreground service',
+      );
       // start happens via ensureStarted → init then start.
-      expect(fakeGateway.calls.indexOf('init'),
-          lessThan(fakeGateway.calls.indexOf('start')));
+      expect(
+        fakeGateway.calls.indexOf('init'),
+        lessThan(fakeGateway.calls.indexOf('start')),
+      );
     });
 
     test('ensureStarted is idempotent — no double start', () async {
@@ -194,8 +231,11 @@ void main() {
       await controller.ensureStarted();
       await _drain();
 
-      expect(fakeGateway.calls.where((c) => c == 'start').length, 1,
-          reason: 'second ensureStarted must not start a second service');
+      expect(
+        fakeGateway.calls.where((c) => c == 'start').length,
+        1,
+        reason: 'second ensureStarted must not start a second service',
+      );
     });
   });
 }

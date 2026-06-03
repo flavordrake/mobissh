@@ -121,6 +121,16 @@ abstract class KeepaliveGateway {
     required String notificationText,
   });
 
+  /// Update the ongoing notification's title/text WITHOUT re-starting the
+  /// foreground service (#709 slice 1). Used to reflect the live session count
+  /// as sessions connect/disconnect. The keep-alive channel is configured with
+  /// `onlyAlertOnce: true`, so repeated updates are silent — no sound/vibration
+  /// re-alert per change. No-op when the service is not running.
+  Future<bool> updateService({
+    required String notificationTitle,
+    required String notificationText,
+  });
+
   Future<bool> stopService();
 }
 
@@ -140,6 +150,27 @@ ForegroundTaskOptions buildKeepaliveTaskOptions() {
     allowWakeLock: true,
     allowWifiLock: false,
   );
+}
+
+/// Pure mapping from the live connected-session count to the FGS notification
+/// text (#709 slice 1). Kept top-level + side-effect-free so the mapping is
+/// unit-testable without binding to the foreground-task plugin.
+///
+///   - 0 connected → the minimal handshake text ("Connecting…"). This is only
+///     shown transiently while the service is started on connect-initiation
+///     (#539) before any session reaches `connected`; the service stops once
+///     no sessions remain.
+///   - 1 connected → "Connected — `hostLabel`" when a label is available
+///     (e.g. `user@host`), else the count form "1 session connected".
+///   - N greater than 1 → "N sessions connected".
+String keepaliveNotificationText(int count, {String? hostLabel}) {
+  if (count <= 0) return 'Connecting…';
+  if (count == 1) {
+    final label = hostLabel?.trim();
+    if (label != null && label.isNotEmpty) return 'Connected — $label';
+    return '1 session connected';
+  }
+  return '$count sessions connected';
 }
 
 /// No-op keep-alive gateway for desktop (macOS / Linux / Windows, #577).
@@ -165,6 +196,12 @@ class NoopKeepaliveGateway implements KeepaliveGateway {
 
   @override
   Future<bool> startService({
+    required String notificationTitle,
+    required String notificationText,
+  }) async => true;
+
+  @override
+  Future<bool> updateService({
     required String notificationTitle,
     required String notificationText,
   }) async => true;
@@ -238,6 +275,23 @@ class FlutterForegroundTaskGateway implements KeepaliveGateway {
   }
 
   @override
+  Future<bool> updateService({
+    required String notificationTitle,
+    required String notificationText,
+  }) async {
+    // Silent update: the channel is `onlyAlertOnce: true` (importance/priority
+    // LOW), so changing the ongoing notification's text as sessions come and go
+    // does NOT re-alert (no sound/vibration). `updateService` throws if the
+    // service isn't running — that's surfaced as a failure (caught by the
+    // caller's tolerant wrapper), not an exception that breaks the FGS.
+    final result = await FlutterForegroundTask.updateService(
+      notificationTitle: notificationTitle,
+      notificationText: notificationText,
+    );
+    return result is ServiceRequestSuccess;
+  }
+
+  @override
   Future<bool> stopService() async {
     final result = await FlutterForegroundTask.stopService();
     return result is ServiceRequestSuccess;
@@ -258,9 +312,12 @@ class KeepaliveController {
     KeepaliveGateway? gateway,
     bool enabled = true,
     void Function()? onServiceStopped,
+    String? Function()? notificationLabelResolver,
   }) : _gateway = gateway ?? FlutterForegroundTaskGateway(),
        // ignore: prefer_initializing_formals
-       _onServiceStopped = onServiceStopped {
+       _onServiceStopped = onServiceStopped,
+       // ignore: prefer_initializing_formals
+       _notificationLabelResolver = notificationLabelResolver {
     _enabled = enabled;
   }
 
@@ -270,6 +327,14 @@ class KeepaliveController {
   /// UI↔task gateway can reset to not-ready and re-buffer commands until the
   /// next isolate generation re-handshakes (#564 reconnect fix).
   final void Function()? _onServiceStopped;
+
+  /// Optional resolver for the single-session notification label (#709 slice
+  /// 1). Consulted only when exactly one session is connected, to render
+  /// "Connected — `user@host`" instead of the bare "1 session connected".
+  /// Returns null when no label is readily available (the count form is used).
+  /// Lives UI-side (the count-owning controller reads `sessionsProvider`); the
+  /// start-only starter controller leaves it null.
+  final String? Function()? _notificationLabelResolver;
   bool _enabled = true;
   int _connectedCount = 0;
   final Map<Object, StreamSubscription<SshSessionData>> _subscriptions = {};
@@ -347,16 +412,31 @@ class KeepaliveController {
     var wasConnected = _holdsService(snapshot().state);
     if (wasConnected) {
       _connectedCount += 1;
-      unawaited(_startIfStopped());
+      if (_connectedCount == 1) {
+        unawaited(_startIfStopped());
+      } else {
+        unawaited(_refreshNotification());
+      }
     }
     _subscriptions[session] = stream.listen((data) {
       final isConnected = _holdsService(data.state);
       if (isConnected && !wasConnected) {
         _connectedCount += 1;
-        unawaited(_startIfStopped());
+        // 0→1 starts the service (text set at start). 1→N+1 keeps it running,
+        // so push the new count into the ongoing notification (#709 slice 1).
+        if (_connectedCount == 1) {
+          unawaited(_startIfStopped());
+        } else {
+          unawaited(_refreshNotification());
+        }
       } else if (!isConnected && wasConnected) {
         _connectedCount = (_connectedCount - 1).clamp(0, 1 << 30);
-        if (_connectedCount == 0) unawaited(_stopIfRunning());
+        if (_connectedCount == 0) {
+          unawaited(_stopIfRunning());
+        } else {
+          // N→M (still >0): service stays up, update the count text (#709).
+          unawaited(_refreshNotification());
+        }
       } else if (!isConnected &&
           _connectedCount == 0 &&
           _isTerminal(data.state)) {
@@ -387,7 +467,12 @@ class KeepaliveController {
     final (_, SshSessionData Function() snapshot) = _viewOf(session);
     if (_holdsService(snapshot().state)) {
       _connectedCount = (_connectedCount - 1).clamp(0, 1 << 30);
-      if (_connectedCount == 0) await _stopIfRunning();
+      if (_connectedCount == 0) {
+        await _stopIfRunning();
+      } else {
+        // Still >0 connected: keep the service, update the count text (#709).
+        await _refreshNotification();
+      }
     }
   }
 
@@ -439,13 +524,39 @@ class KeepaliveController {
     ctrace('ui.keepalive', '_startIfStopped: calling startService...');
     final ok = await _gateway.startService(
       notificationTitle: 'MobiSSH',
-      notificationText: _connectedCount == 0
-          ? 'Connecting…'
-          : _connectedCount == 1
-          ? '1 session connected'
-          : '$_connectedCount sessions connected',
+      notificationText: _notificationText(),
     );
     ctrace('ui.keepalive', '_startIfStopped: startService → $ok');
+  }
+
+  /// Compute the current notification text from the live connected count,
+  /// consulting [_notificationLabelResolver] for the single-session host label
+  /// (#709 slice 1). Delegates to the pure [keepaliveNotificationText] mapping.
+  String _notificationText() {
+    final label = _connectedCount == 1
+        ? _notificationLabelResolver?.call()
+        : null;
+    return keepaliveNotificationText(_connectedCount, hostLabel: label);
+  }
+
+  /// Push the current notification text into the ongoing FGS notification
+  /// without restarting the service (#709 slice 1). No-op when the service is
+  /// not running or the gateway is uninitialized — the text is set at start in
+  /// those cases. Silent: the channel is `onlyAlertOnce: true`, so this never
+  /// re-alerts. Tolerant of a missing platform plugin (same policy as
+  /// [ensureStarted]) — a notification refresh must never break keep-alive.
+  Future<void> _refreshNotification() async {
+    if (!_enabled) return;
+    if (!_gateway.isInitialized) return;
+    try {
+      if (!await _gateway.isRunningService) return;
+      await _gateway.updateService(
+        notificationTitle: 'MobiSSH',
+        notificationText: _notificationText(),
+      );
+    } catch (e) {
+      ctrace('ui.keepalive', '_refreshNotification: EXCEPTION — $e');
+    }
   }
 
   Future<void> _stopIfRunning({bool notifyGateway = true}) async {
