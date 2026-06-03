@@ -366,6 +366,37 @@ bool ghosttyShouldRefreshOnLifecycle(
   return prev != AppLifecycleState.resumed;
 }
 
+/// Whether the terminal should be FOCUSED on first connect (#717).
+///
+/// On the ghostty backend flterm's [TerminalView] is built `autofocus: false`,
+/// so on first connect the terminal isn't focused and flterm's
+/// scroll/interaction is INERT until the user taps to raise the keyboard (which
+/// is what finally focuses it). The owner wants vertical scroll to work
+/// immediately on connect WITHOUT having to tap up the keyboard first. The fix
+/// is to `controller.requestFocus()` once per connect — focus ONLY, NOT
+/// `showKeyboard()` (#693/#706 deliberately separated focus from raising the
+/// IME, so the keyboard must NOT auto-pop on connect; a later tap still raises
+/// it).
+///
+/// Guards (all must hold):
+///   - [active]: this is the ACTIVE session's view. `_SessionTerminalBody`
+///     renders every session in an `IndexedStack` (terminal_screen.dart), so a
+///     BACKGROUND session's view is mounted but OFFSTAGE. Focusing it would
+///     steal focus from the visible session — so only the active view focuses.
+///   - [connected]: the session is live (a dead PTY has nothing to interact
+///     with).
+///   - NOT [alreadyFocused]: fire ONCE per connect, not on every rebuild — we
+///     must not keep stealing focus (e.g. from the compose bar) on each frame.
+///
+/// Pure (no FFI / no widget) → unit-testable headless.
+bool ghosttyShouldFocusOnConnect({
+  required bool active,
+  required bool connected,
+  required bool alreadyFocused,
+}) {
+  return active && connected && !alreadyFocused;
+}
+
 /// The padding flterm's [TerminalView] is built with (`EdgeInsets.all(4)`), in
 /// logical px (#699). flterm wraps its `Scrollable` + render box in a
 /// `Padding(padding: widget.padding)`, so the grid's top-left is offset by this
@@ -1370,6 +1401,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// the resume burst single-shot.
   AppLifecycleState? _lastLifecycle;
 
+  /// #717: whether THIS connect has already focused the terminal. flterm's
+  /// `TerminalView` is `autofocus: false`, so on first connect the terminal is
+  /// unfocused and flterm scroll/interaction is inert until a tap raises the
+  /// keyboard (which focuses it). We `requestFocus()` ONCE per connect (focus
+  /// only, NOT showKeyboard — the IME must not auto-pop) when this is the active
+  /// session's view, gated by [ghosttyShouldFocusOnConnect]. Set true after the
+  /// focus fires; reset false on disconnect so a reconnect re-focuses.
+  bool _focusedThisConnect = false;
+
   @override
   void initState() {
     super.initState();
@@ -1418,7 +1458,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // not the pre-shellReady default that gets dropped. Re-fires on reconnect.
       _shellReadySub = proxy.shellReady.listen((_) {
         if (!mounted) return;
+        // #717: a shellReady tick is a fresh connect (re-fires on reconnect), so
+        // reset the per-connect focus latch and re-focus this connect. flterm is
+        // autofocus:false, so without this the terminal stays unfocused and its
+        // scroll/interaction is inert until a tap raises the keyboard.
+        _focusedThisConnect = false;
         _armResizeResync();
+        _focusTerminalOnConnect('shellReady');
       });
     } catch (e) {
       // If libghostty's native .so failed to load, surface it instead of a
@@ -1515,6 +1561,51 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     proxy.sendResize(_cols, _rows);
     gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
+  }
+
+  /// #717: focus the terminal ONCE per connect so flterm scroll/interaction is
+  /// live immediately — WITHOUT raising the keyboard.
+  ///
+  /// flterm's `TerminalView` is `autofocus: false`, so on first connect the
+  /// terminal isn't focused and flterm's gestures (scroll/select) are inert
+  /// until the user taps to raise the keyboard (which is what finally focuses
+  /// it). The owner wants vertical scroll to work the moment the session
+  /// connects. So on `shellReady` we `controller.requestFocus()` — focus ONLY,
+  /// NEVER `showKeyboard()`: #693/#706 deliberately separated focus from raising
+  /// the IME, so the keyboard must NOT auto-pop on connect (a later tap still
+  /// raises it via the gesture router's onTap).
+  ///
+  /// Guarded by [ghosttyShouldFocusOnConnect]:
+  ///   - ACTIVE-session only: `_SessionTerminalBody` renders every session in an
+  ///     `IndexedStack`, so a BACKGROUND session's view is mounted but offstage.
+  ///     Focusing it would steal focus from the visible session, so we read
+  ///     [activeSessionIdProvider] and bail if this isn't the active session.
+  ///   - connected only (a dead PTY has nothing to interact with);
+  ///   - once per connect via [_focusedThisConnect] (reset on each shellReady) so
+  ///     we don't keep stealing focus on every rebuild.
+  void _focusTerminalOnConnect(String trigger) {
+    if (!mounted) return;
+    final controller = _controller;
+    final proxy = _proxy;
+    if (controller == null || proxy == null) return;
+    final connected = proxy.data.state == SshSessionState.connected;
+    final active = ref.read(activeSessionIdProvider) == widget.sessionId;
+    if (!ghosttyShouldFocusOnConnect(
+      active: active,
+      connected: connected,
+      alreadyFocused: _focusedThisConnect,
+    )) {
+      gtrace(
+        'ghostty-connect-focus $trigger: skip '
+        '(active=$active connected=$connected '
+        'alreadyFocused=$_focusedThisConnect)',
+      );
+      return;
+    }
+    _focusedThisConnect = true;
+    // Focus ONLY — NOT showKeyboard(). The keyboard must NOT auto-pop on connect.
+    controller.requestFocus();
+    gtrace('ghostty-connect-focus $trigger: focused (no keyboard)');
   }
 
   /// #704: on app switch-away-and-back, RE-FIT then REFRESH the flterm view.
