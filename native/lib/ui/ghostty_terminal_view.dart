@@ -41,12 +41,28 @@
 // "select mode" toggle — see [kGhosttyScrollSettings] / [kGhosttySelectSettings]
 // and `_selectMode`.
 //
+// #690 fix (SWIPE forwarded to the REMOTE as a mouse-button DRAG): distinct
+// from #688's LOCAL selection. When the remote enables mouse mode (DECSET
+// 1000/1002/1003/1006, e.g. tmux), flterm's `TerminalGestureDetector` forwards a
+// finger swipe to the PTY as a button1 press+motion+release — a DRAG — which tmux
+// reads as a mouse SELECTION (its own selection styling appears). flterm 0.0.3
+// exposes NO interception hook analogous to xterm's `Terminal.mouseHandler` (the
+// #617 fix): the report path is fully internal to its gesture detector,
+// `TerminalGestureSettings` explicitly CANNOT disable mouse tracking, and the
+// only built-in bypass (virtual Shift) leaks into key/scroll encoding and clears
+// on the next keystroke. So we intercept ONE layer up — see
+// [_ScrollInsteadOfMouseDrag] / [ghosttySwipeShouldScrollLocally]. The wheel
+// reports flterm emits for an actual scroll ARE correct (libghostty's own SGR
+// wheel encoding, not xterm-4.0.0's buggy 68/69 — so no #617-style fix is needed
+// for the wheel path here).
+//
 // flterm re-exports libghostty's `Key` input enum, which collides with
 // Flutter's widget `Key`. We only use Flutter's, so hide flterm's.
 
 import 'dart:async';
 
 import 'package:flterm/flterm.dart' hide Key;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -126,6 +142,114 @@ const TerminalGestureSettings kGhosttySelectSettings = TerminalGestureSettings(
   lineSelectMode: LineSelectMode.full,
 );
 
+/// Whether a touch SWIPE should be intercepted and turned into a local scroll
+/// instead of being forwarded to the remote PTY as a mouse-button DRAG (#690).
+///
+/// flterm forwards swipes as button1 press+motion+release ONLY when the remote
+/// has mouse tracking on (`mouseTracking != MouseTracking.none`). When the user
+/// has DELIBERATELY entered select mode we leave flterm's native gestures alone
+/// (so a long-press-drag still works, mirroring #688). So the swipe-scroll
+/// interception is active exactly when mouse tracking is on AND select mode is
+/// off. Pure (no FFI), so it's unit-testable headless.
+bool ghosttySwipeShouldScrollLocally({
+  required MouseTracking mouseTracking,
+  required bool selectMode,
+}) {
+  return mouseTracking != MouseTracking.none && !selectMode;
+}
+
+/// Map a vertical swipe DELTA (logical px the finger moved this update) to a
+/// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
+///
+/// A finger dragging DOWN (positive dy) reveals OLDER content, i.e. scrolls the
+/// viewport UP toward smaller pixel offsets — so the scroll delta is the
+/// negation of the finger delta, matching a natural touch-scroll. Pure.
+double ghosttyScrollDeltaForSwipe(double fingerDy) => -fingerDy;
+
+/// A gesture layer that absorbs touch swipes and drives a
+/// [TerminalScrollController] directly, so the swipe SCROLLS the scrollback
+/// instead of flterm forwarding it to the remote PTY as a button1 DRAG (#690).
+///
+/// Active only while [active] is true (see [ghosttySwipeShouldScrollLocally]).
+///
+/// Why OPAQUE, not translucent: flterm reports tracked mouse via a raw
+/// `Listener` (onPointerDown/Move/Up), which is NOT a gesture-arena participant
+/// — so merely WINNING the arena for the drag would not stop flterm from also
+/// emitting button press/motion on the same pointer. The only way to keep the
+/// swipe off flterm's `Listener` is to be the opaque hit-test target so the
+/// pointer never reaches the terminal below. Because that also swallows taps, we
+/// add a tap recognizer that forwards focus via [onTap] (so tapping still raises
+/// the keyboard) while the vertical-drag recognizer (touch-only) does the scroll.
+///
+/// When [active] is false (mouse mode off, or deliberate select mode on) it is
+/// inert (`IgnorePointer`), so flterm's native scroll/selection is untouched.
+class _ScrollInsteadOfMouseDrag extends StatefulWidget {
+  const _ScrollInsteadOfMouseDrag({
+    required this.active,
+    required this.scrollController,
+    required this.onTap,
+  });
+
+  /// Whether to intercept swipes (mouse tracking on AND select mode off).
+  final bool active;
+
+  /// The SAME controller handed to the flterm [TerminalView] — moving it routes
+  /// through flterm's `_onScrollChanged` → wheel reports / local scroll.
+  final TerminalScrollController scrollController;
+
+  /// Forwarded on a tap so focus/keyboard still work while the overlay is the
+  /// opaque hit-test target (typically `controller.requestFocus`).
+  final VoidCallback onTap;
+
+  @override
+  State<_ScrollInsteadOfMouseDrag> createState() =>
+      _ScrollInsteadOfMouseDragState();
+}
+
+class _ScrollInsteadOfMouseDragState extends State<_ScrollInsteadOfMouseDrag> {
+  void _onUpdate(DragUpdateDetails details) {
+    final controller = widget.scrollController;
+    if (!controller.hasClients) return;
+    final position = controller.position;
+    final target =
+        (position.pixels + ghosttyScrollDeltaForSwipe(details.delta.dy)).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+    if (target == position.pixels) return;
+    controller.jumpTo(target);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.active) {
+      // Inert: flterm's own gesture detector / Scrollable handles everything.
+      return const IgnorePointer(child: SizedBox.expand());
+    }
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: <Type, GestureRecognizerFactory>{
+        VerticalDragGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<VerticalDragGestureRecognizer>(
+              () => VerticalDragGestureRecognizer(
+                // Restrict to touch: a real mouse drag should still reach the
+                // remote (mouse mode wants mouse drags); only FINGER swipes are
+                // re-routed to scroll.
+                supportedDevices: const {PointerDeviceKind.touch},
+              ),
+              (recognizer) => recognizer.onUpdate = _onUpdate,
+            ),
+        TapGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+              () => TapGestureRecognizer(),
+              (recognizer) => recognizer.onTap = widget.onTap,
+            ),
+      },
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
 /// A session terminal rendered with flterm (libghostty). Wires the active
 /// session's proxy I/O to an flterm [TerminalController], applies the
 /// per-session font/size (#686), and exposes copy + select-all affordances that
@@ -143,8 +267,18 @@ class GhosttyTerminalView extends ConsumerStatefulWidget {
 class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   TerminalController? _controller;
 
+  /// Scrollback controller shared with the flterm [TerminalView] so the #690
+  /// swipe-scroll overlay can drive scrollback (→ flterm wheel reports) instead
+  /// of letting flterm forward a swipe as a remote button drag.
+  final TerminalScrollController _scrollController = TerminalScrollController();
+
   /// PTY output (bytes) -> controller.write subscription. Cancelled on dispose.
   StreamSubscription<Uint8List>? _outputSub;
+
+  /// Live remote mouse-tracking mode, mirrored from the controller (#690). The
+  /// controller is a `ChangeNotifier` that fires when the remote toggles mouse
+  /// mode; we rebuild so the swipe-scroll overlay activates/deactivates.
+  MouseTracking _mouseTracking = MouseTracking.none;
 
   String? _initError;
 
@@ -206,12 +340,27 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           // Defensive — a single PTY byte must never crash the session.
         }
       });
+      // Track remote mouse-mode changes so the #690 swipe-scroll overlay turns
+      // on/off as the remote toggles mouse reporting (e.g. tmux mouse on/off).
+      controller.addListener(_syncMouseTracking);
+      _mouseTracking = controller.mouseTracking;
       _controller = controller;
     } catch (e) {
       // If libghostty's native .so failed to load, surface it instead of a
       // blank crash so the device tester can report it (mirrors the spike).
       _initError = 'flterm init failed: $e';
     }
+  }
+
+  /// Mirror the controller's live mouse-tracking mode into [_mouseTracking],
+  /// rebuilding only when it actually changes (the controller notifies on many
+  /// unrelated events too) so the swipe-scroll overlay (#690) follows the remote.
+  void _syncMouseTracking() {
+    final controller = _controller;
+    if (controller == null) return;
+    final next = controller.mouseTracking;
+    if (next == _mouseTracking) return;
+    if (mounted) setState(() => _mouseTracking = next);
   }
 
   SshSessionProxy? _resolveProxy() {
@@ -254,9 +403,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   @override
   void dispose() {
     _outputSub?.cancel();
+    _controller?.removeListener(_syncMouseTracking);
     _controller?.onOutput = null;
     _controller?.onResize = null;
     _controller?.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -290,6 +441,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             autofocus: false,
             theme: buildGhosttyTheme(family: fontFamily, fontSize: fontSize),
             padding: const EdgeInsets.all(4),
+            // #690: share the scroll controller so the overlay below can drive
+            // scrollback (→ flterm wheel reports) under remote mouse mode.
+            scrollController: _scrollController,
             // #688: swipe = scroll-ONLY by default; deliberate long-press-drag
             // selection only while select mode is ON. See the two settings
             // objects' docs for the flterm root cause (touch long-press, not
@@ -297,6 +451,23 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             gestureSettings: _selectMode
                 ? kGhosttySelectSettings
                 : kGhosttyScrollSettings,
+          ),
+        ),
+        // #690: when the remote has mouse mode on (tmux etc.), a finger swipe
+        // would otherwise be forwarded as a button1 DRAG → tmux selection. This
+        // overlay claims the touch vertical-drag and scrolls the scrollback
+        // (flterm then emits canonical wheel reports), so a swipe SCROLLS and
+        // never drags. Inert when mouse mode is off or select mode is on, so
+        // #688's gestures are untouched. Sits below the affordance buttons so
+        // they stay tappable.
+        Positioned.fill(
+          child: _ScrollInsteadOfMouseDrag(
+            active: ghosttySwipeShouldScrollLocally(
+              mouseTracking: _mouseTracking,
+              selectMode: _selectMode,
+            ),
+            scrollController: _scrollController,
+            onTap: controller.requestFocus,
           ),
         ),
         // Selection affordances (bottom-right). flterm's long-press select
