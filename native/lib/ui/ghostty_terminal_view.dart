@@ -114,6 +114,23 @@
 // the buffer is unchanged. Both fire `ghostty-resume-refit`/`-refresh` into the
 // connect/gesture trace so a device repro confirms they ran.
 //
+// #708 fix (swipe AXIS-LOCK): the active overlay used two INDEPENDENT drag
+// recognisers — a `VerticalDragGestureRecognizer` (→ scroll, #690) and a
+// `HorizontalDragGestureRecognizer` (→ window-switch, #702) — competing in the
+// gesture arena. The arena commits to whichever crosses ITS slop first, blind to
+// the OTHER axis, so a deliberate left/right swipe with slight vertical jitter
+// leaked a scroll, and a vertical scroll with horizontal drift tripped a
+// window-switch. The fix replaces both with a SINGLE touch `PanGestureRecognizer`
+// that sees both components: once total travel passes a slop AND one axis clearly
+// dominates (a ratio), it LOCKS to that axis (see [ghosttyAxisLock] /
+// [GhosttySwipeAxis]) and ignores the off-axis for the rest of the gesture —
+// horizontal runs ONLY the #702 window-switch, vertical runs ONLY the #690
+// scroll. The pan loses the arena to LongPress when the finger holds first
+// (selection still wins) and never starts on a tap. The window-switch direction
+// (left=prev/right=next), one-step-per-swipe + status-row report, the local
+// scroll, long-press selection (#705/#706), tap-keyboard/click (#693), resume
+// (#704), and cell metrics (#699) are all unchanged.
+//
 // SMART-SELECT (future, do NOT build here): a future button could select a word/
 // path/URL UNIT at the tap — the PWA's `src/modules/selection.ts _selectableUnitAt`
 // is the spec. The seam is [GhosttySelectionDriver] + [ghosttyCellForPosition]:
@@ -667,6 +684,88 @@ const double kGhosttyWindowSwitchThreshold = 32.0;
 /// Column is irrelevant to the status binding; we use 1. Pure.
 (int col, int row) ghosttyStatusRowCell({required int rows}) => (1, rows);
 
+/// The axis a swipe gesture is LOCKED to once it commits (#708).
+///
+/// #708 root cause: the active overlay used two INDEPENDENT drag recognizers — a
+/// `VerticalDragGestureRecognizer` (→ scroll, #690) and a
+/// `HorizontalDragGestureRecognizer` (→ window-switch, #702) — competing in the
+/// gesture arena. The arena commits to whichever crosses ITS slop first, with no
+/// view of the OTHER axis, so a deliberate horizontal swipe with a little vertical
+/// jitter could fire the vertical (scroll) recogniser, and a vertical scroll with
+/// horizontal drift could trip the horizontal (window-switch) one. The two axes
+/// were not mutually exclusive and the off-axis was too sensitive.
+///
+/// The fix: a SINGLE pan tracker that, once total travel passes a slop, commits to
+/// ONE axis (see [ghosttyAxisLock]) and ignores the other for the rest of the
+/// gesture. This enum is the commit result the router holds.
+enum GhosttySwipeAxis {
+  /// Not yet committed — travel below the slop, or the dominant axis does not
+  /// clearly exceed the off-axis (a diagonal/ambiguous drag). The router does
+  /// NOTHING (no scroll, no window-switch) until the gesture resolves to an axis.
+  none,
+
+  /// Committed HORIZONTAL → ONLY the #702 window-switch runs (accumulate dx; emit
+  /// one wheel report on lift). Vertical movement is IGNORED — no scroll.
+  horizontal,
+
+  /// Committed VERTICAL → ONLY the #690 local scroll runs (drive the scroll
+  /// controller from dy). Horizontal movement is IGNORED — no window-switch.
+  vertical,
+}
+
+/// Decide which axis a swipe of net ([dx], [dy]) logical px commits to (#708).
+///
+/// PURE axis-lock decision, factored out of the router so it's unit-testable
+/// headless. A gesture commits to ONE axis and then ignores the other for its
+/// whole duration, making horizontal (tab-switch) and vertical (scroll) mutually
+/// exclusive per gesture and insensitive to off-axis jitter:
+///
+///   - travel below [slop] (`hypot(dx, dy) < slop`) → [GhosttySwipeAxis.none]
+///     (don't act on tiny jitter at the very start of a touch);
+///   - otherwise the LARGER component is the candidate axis, but it must CLEARLY
+///     dominate: `dominant >= ratio * offAxis`. If it does → that axis; if not
+///     (a diagonal where neither axis clearly wins) → [GhosttySwipeAxis.none],
+///     so the gesture stays uncommitted until it resolves one way.
+///
+/// The caller commits ONCE: after this returns horizontal/vertical the router
+/// holds that lock and does NOT re-ask, so later off-axis drift can never flip a
+/// committed gesture. [ratio] ≥ 1 (a value of 1 means "any margin"); the default
+/// caller passes [kGhosttySwipeAxisLockRatio]. Uses squared comparisons to avoid
+/// a sqrt and stay exact for the slop test.
+GhosttySwipeAxis ghosttyAxisLock(
+  double dx,
+  double dy, {
+  required double slop,
+  required double ratio,
+}) {
+  final adx = dx.abs();
+  final ady = dy.abs();
+  // Below the slop circle → not enough travel to commit yet.
+  if (adx * adx + ady * ady < slop * slop) return GhosttySwipeAxis.none;
+  if (adx >= ady) {
+    // Horizontal candidate: commit only if it clearly exceeds the vertical.
+    return adx >= ady * ratio
+        ? GhosttySwipeAxis.horizontal
+        : GhosttySwipeAxis.none;
+  }
+  // Vertical candidate: commit only if it clearly exceeds the horizontal.
+  return ady >= adx * ratio ? GhosttySwipeAxis.vertical : GhosttySwipeAxis.none;
+}
+
+/// Total travel (logical px) a swipe must cross before [ghosttyAxisLock] will
+/// commit to an axis (#708). Above the per-update jitter seen in the device
+/// gesture log (~1–3px/frame) so a near-still finger never commits, and below
+/// [kGhosttyWindowSwitchThreshold] (32px) so a committed-horizontal swipe still
+/// needs the full net distance to actually step a window.
+const double kGhosttySwipeAxisLockSlop = 12.0;
+
+/// How much the dominant axis must exceed the off-axis for [ghosttyAxisLock] to
+/// commit (#708). 1.5× means a swipe within ~34° of pure horizontal/vertical
+/// locks to that axis; a steeper diagonal stays uncommitted until it resolves.
+/// Tuned with the 14-09-59 device log (real swipes are near-pure-axis: the
+/// horizontal swipes there have net dy≈0, so the ratio is easily satisfied).
+const double kGhosttySwipeAxisLockRatio = 1.5;
+
 /// A gesture ROUTER overlay that absorbs touch and disambiguates a SWIPE from a
 /// deliberate LONG-PRESS (#690, #692).
 ///
@@ -688,9 +787,13 @@ const double kGhosttyWindowSwitchThreshold = 32.0;
 ///     cleared the highlight on lift and left Copy with nothing), so the Copy
 ///     button's `selectedText()` reads it.
 ///
-/// The gesture arena disambiguates for us: a vertical-ish swipe wins the vertical
-/// recogniser (scroll); a horizontal-ish swipe wins the horizontal one (window
-/// switch); if the finger HOLDS first the long-press recogniser wins (select).
+/// #708 axis-lock: a SINGLE pan recogniser (not two independent drag recognisers)
+/// disambiguates by AXIS. Once total travel passes a slop AND one axis clearly
+/// dominates the other (see [ghosttyAxisLock]), the gesture LOCKS to that axis and
+/// ignores the off-axis for its whole duration — a horizontal swipe never scrolls
+/// on vertical jitter, a vertical scroll never steps a window on horizontal drift.
+/// If the finger HOLDS stationary first the long-press recogniser wins (select),
+/// because the pan only claims the arena once movement exceeds its slop.
 ///
 /// Why OPAQUE (when active), not translucent: flterm reports tracked mouse via a
 /// raw `Listener` (onPointerDown/Move/Up), which is NOT a gesture-arena
@@ -793,31 +896,87 @@ class _PointerGestureRouter extends StatefulWidget {
 }
 
 class _PointerGestureRouterState extends State<_PointerGestureRouter> {
-  /// Net horizontal distance (logical px) accumulated across the current
-  /// horizontal drag, summed on each `onUpdate` and evaluated once on `onEnd`
-  /// (#693). One discrete window step per swipe — we never emit mid-drag.
-  double _horizontalDx = 0;
+  /// #708: ONE pan tracker replaces the old independent Vertical/Horizontal drag
+  /// recognisers so a gesture commits to a SINGLE axis and ignores the other for
+  /// its whole duration. State across the pan:
+  ///   - [_panDx]/[_panDy]: net travel since pan-start, fed to [ghosttyAxisLock]
+  ///     while still uncommitted ([_axis] == none);
+  ///   - [_axis]: the committed axis (none until travel passes the slop AND one
+  ///     axis clearly dominates). Once horizontal/vertical it is NOT re-evaluated
+  ///     — off-axis drift can never flip it;
+  ///   - [_windowSwitchDx]: net horizontal travel accumulated ONLY after a
+  ///     horizontal commit, evaluated once on lift for the #702 window-switch.
+  double _panDx = 0;
+  double _panDy = 0;
+  GhosttySwipeAxis _axis = GhosttySwipeAxis.none;
+  double _windowSwitchDx = 0;
 
-  void _onHorizontalStart(DragStartDetails details) {
-    _horizontalDx = 0;
+  void _onPanStart(DragStartDetails details) {
+    _panDx = 0;
+    _panDy = 0;
+    _axis = GhosttySwipeAxis.none;
+    _windowSwitchDx = 0;
   }
 
-  void _onHorizontalUpdate(DragUpdateDetails details) {
-    _horizontalDx += details.delta.dx;
+  void _onPanUpdate(DragUpdateDetails details) {
+    final dx = details.delta.dx;
+    final dy = details.delta.dy;
+    if (_axis == GhosttySwipeAxis.none) {
+      // Still disambiguating: accumulate raw travel and ask the pure helper
+      // whether the gesture has committed to an axis yet.
+      _panDx += dx;
+      _panDy += dy;
+      _axis = ghosttyAxisLock(
+        _panDx,
+        _panDy,
+        slop: kGhosttySwipeAxisLockSlop,
+        ratio: kGhosttySwipeAxisLockRatio,
+      );
+      if (_axis == GhosttySwipeAxis.none) return;
+      // On the commit frame, seed the per-axis accumulator with the travel so
+      // far so the first committed update isn't lost.
+      if (_axis == GhosttySwipeAxis.horizontal) {
+        _windowSwitchDx = _panDx;
+      } else {
+        _applyScroll(_panDy);
+      }
+      return;
+    }
+    // Committed: run ONLY the locked axis; the off-axis component is ignored.
+    if (_axis == GhosttySwipeAxis.horizontal) {
+      _windowSwitchDx += dx; // accumulate for the on-lift window-switch
+    } else {
+      _applyScroll(dy); // drive the local scrollback
+    }
   }
 
-  /// On lift, if the net horizontal travel crossed the threshold, emit ONE
-  /// wheel report at the status-line row so tmux's default `WheelUpStatus`/
-  /// `WheelDownStatus` binding steps one window (#693).
-  void _onHorizontalEnd(DragEndDetails details) {
-    final totalDx = _horizontalDx;
+  /// On lift, finalise the committed axis (#708). A horizontal commit may emit
+  /// ONE window-switch wheel report (#702); a vertical commit already scrolled
+  /// per-update; an uncommitted gesture (jitter/diagonal below the ratio) does
+  /// nothing but is still traced so a device repro shows why it didn't act.
+  void _onPanEnd(DragEndDetails details) {
+    final axis = _axis;
+    final totalDx = axis == GhosttySwipeAxis.horizontal
+        ? _windowSwitchDx
+        : _panDx;
+    final totalDy = _panDy;
+    _axis = GhosttySwipeAxis.none;
+    _windowSwitchDx = 0;
+    _panDx = 0;
+    _panDy = 0;
+    if (axis != GhosttySwipeAxis.horizontal) {
+      // Vertical (scrolled live) or uncommitted: nothing to emit on lift. Trace
+      // the net travel + committed axis so a device repro shows the decision.
+      _trace('swipe-${axis.name}', totalDx, totalDy, null, null, null);
+      return;
+    }
     final decision = ghosttyWindowSwitchForSwipe(
       totalDx,
       kGhosttyWindowSwitchThreshold,
     );
-    _horizontalDx = 0;
     if (decision == GhosttyWindowSwitch.none) {
-      // Still record the swipe so a device repro shows the (sub-threshold) dx.
+      // Committed horizontal but below the window-switch distance — record the
+      // (sub-threshold) dx so a device repro shows the swipe was seen.
       _trace('swipe-h', totalDx, 0, null, null, null);
       return;
     }
@@ -829,15 +988,14 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
     widget.onMouseReport(report);
   }
 
-  void _onScrollUpdate(DragUpdateDetails details) {
+  /// Apply a vertical finger delta to the shared scroll controller (#690),
+  /// natural-direction + clamped. Used only after a VERTICAL axis commit.
+  void _applyScroll(double fingerDy) {
     final controller = widget.scrollController;
     if (!controller.hasClients) return;
     final position = controller.position;
-    final target =
-        (position.pixels + ghosttyScrollDeltaForSwipe(details.delta.dy)).clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        );
+    final target = (position.pixels + ghosttyScrollDeltaForSwipe(fingerDy))
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
     if (target == position.pixels) return;
     controller.jumpTo(target);
   }
@@ -989,33 +1147,26 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
     return RawGestureDetector(
       behavior: HitTestBehavior.opaque,
       gestures: <Type, GestureRecognizerFactory>{
-        VerticalDragGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<VerticalDragGestureRecognizer>(
-              () => VerticalDragGestureRecognizer(
-                // Restrict to touch: a real mouse drag should still reach the
-                // remote (mouse mode wants mouse drags); only FINGER swipes are
-                // re-routed to scroll.
-                supportedDevices: const {PointerDeviceKind.touch},
-              ),
-              (recognizer) => recognizer.onUpdate = _onScrollUpdate,
-            ),
-        // #693: a horizontal touch swipe switches the tmux window. Touch-only
-        // (like the vertical one) so a real mouse drag still reaches the remote.
-        // The arena disambiguates by dominant axis: a vertical-ish swipe wins the
-        // vertical recogniser (scroll), a horizontal-ish swipe wins this one. We
-        // accumulate dx across updates and emit ONE wheel report at the status
-        // row on end — tmux's default Wheel{Up,Down}Status steps one window.
-        HorizontalDragGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<
-              HorizontalDragGestureRecognizer
-            >(
-              () => HorizontalDragGestureRecognizer(
+        // #708: ONE pan recogniser (touch-only) replaces the old independent
+        // Vertical + Horizontal drag recognisers. Those competed in the arena and
+        // committed to whichever crossed ITS slop first, blind to the other axis —
+        // so a horizontal swipe with vertical jitter could scroll, and a scroll
+        // with horizontal drift could step a window. The pan sees BOTH components
+        // and AXIS-LOCKS via [ghosttyAxisLock]: once committed, only the locked
+        // axis runs (horizontal → #702 window-switch on lift; vertical → #690
+        // local scroll), and off-axis drift can't flip it. Touch-only so a real
+        // mouse drag still reaches the remote; loses the arena to LongPress when
+        // the finger holds first (pan only claims once movement passes its slop),
+        // so long-press selection still wins.
+        PanGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<PanGestureRecognizer>(
+              () => PanGestureRecognizer(
                 supportedDevices: const {PointerDeviceKind.touch},
               ),
               (recognizer) => recognizer
-                ..onStart = _onHorizontalStart
-                ..onUpdate = _onHorizontalUpdate
-                ..onEnd = _onHorizontalEnd,
+                ..onStart = _onPanStart
+                ..onUpdate = _onPanUpdate
+                ..onEnd = _onPanEnd,
             ),
         // #692: a deliberate touch long-press-drag drives a remote selection by
         // synthesising SGR mouse reports. Touch-only so it never competes with a
