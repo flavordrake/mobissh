@@ -1632,6 +1632,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   ///      post-frame `setState` to rebuild the subtree and guarantee a repaint
   ///      even if the buffer was unchanged.
   ///
+  ///   3. RE-FOCUS (#718): re-fit + scrollToBottom + setState do NOT actually
+  ///      repaint flterm — its RenderTerminal repaints on its OWN notifier
+  ///      (controller/scroll/focus), scrollToBottom is a no-op at bottom, and a
+  ///      widget setState doesn't drive the render box. So the latest snapshot
+  ///      stays STALE until the user taps (which focuses flterm). Reusing the
+  ///      #717 connect-focus mechanism (reset [_focusedThisConnect], then
+  ///      [_focusTerminalOnConnect]) focuses the ACTIVE session's terminal,
+  ///      forcing the repaint with NO tap and NO keyboard.
+  ///
   /// Guarded: only when the session is connected (a dead PTY has nothing to
   /// re-fit/refresh), and single-shot per resume via the transition gate.
   void _onResume() {
@@ -1659,6 +1668,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       setState(() {});
     });
     gtrace('ghostty-resume-refresh: cols=$_cols rows=$_rows');
+    // 3. RE-FOCUS (#718): the #704 re-fit + scrollToBottom + setState above do
+    //    NOT repaint flterm — its RenderTerminal repaints on its OWN notifier
+    //    (controller/scroll/focus), scrollToBottom is a no-op when already at
+    //    bottom, and a widget setState doesn't drive the render box. So on
+    //    resume the latest snapshot stays UNPAINTED until the user taps (which
+    //    focuses flterm → repaint). #717 already proved focusing fixes the
+    //    analogous first-connect case. Reuse it: reset the per-connect focus
+    //    latch so the resume re-focuses, then call the SAME active-session-
+    //    guarded helper. Focus ONLY (never showKeyboard) — the keyboard must NOT
+    //    auto-pop on resume (the #693/#706/#717 focus-vs-IME separation).
+    _focusedThisConnect = false;
+    _focusTerminalOnConnect('resume');
   }
 
   /// #705: begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT

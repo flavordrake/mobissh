@@ -92,4 +92,56 @@ void main() {
       }
     });
   });
+
+  // #718 — re-fit + scrollToBottom + setState do NOT repaint flterm (its
+  // RenderTerminal repaints on its OWN notifier; scrollToBottom is a no-op at
+  // bottom; a widget setState doesn't drive the render box), so the latest
+  // snapshot stays STALE on resume until the user taps (which focuses flterm).
+  // The fix REUSES the #717 connect-focus mechanism on resume: reset the
+  // per-connect focus latch, then call `_focusTerminalOnConnect('resume')`. That
+  // is gated by the SAME pure `ghosttyShouldFocusOnConnect` guard, so resume
+  // focuses ONLY the ACTIVE, connected session's view (offstage sessions skip),
+  // focus only — never showKeyboard, so the keyboard does NOT auto-pop on resume.
+  group('ghosttyShouldFocusOnConnect — reused on resume (#718)', () {
+    test('resume focuses the ACTIVE, connected session view (latch reset)', () {
+      // _onResume resets _focusedThisConnect to false before calling
+      // _focusTerminalOnConnect, so the guard sees alreadyFocused=false and the
+      // active connected session re-focuses on resume — forcing the repaint with
+      // no tap and no keyboard.
+      expect(
+        ghosttyShouldFocusOnConnect(
+          active: true,
+          connected: true,
+          alreadyFocused: false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('resume does NOT focus a BACKGROUND (offstage) session view', () {
+      // Same active-session guard as first-connect: an offstage session's view
+      // must not steal focus from the visible session on resume.
+      expect(
+        ghosttyShouldFocusOnConnect(
+          active: false,
+          connected: true,
+          alreadyFocused: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('resume does NOT focus a disconnected session', () {
+      // A dead PTY has nothing to interact with — the resume re-focus no-ops,
+      // matching the connected-only guard the connect path uses.
+      expect(
+        ghosttyShouldFocusOnConnect(
+          active: true,
+          connected: false,
+          alreadyFocused: false,
+        ),
+        isFalse,
+      );
+    });
+  });
 }
