@@ -1,10 +1,10 @@
 // Switchable terminal backend (#684, #582).
 //
 // MobiSSH renders session terminals with one of two widgets:
-//   - `xterm` (xterm.dart) — the DEFAULT and the only production-proven path.
-//   - `ghostty` (flterm, powered by libghostty-vt) — opt-in. flterm has native
-//     touch drag-select + copy, which xterm.dart v4 lacks (#582). It's offered
-//     so the owner can device-test drag-select on real sessions.
+//   - `ghostty` (flterm, powered by libghostty-vt) — the DEFAULT (#725). flterm
+//     has native touch drag-select + copy, which xterm.dart v4 lacks (#582).
+//   - `xterm` (xterm.dart) — selectable fallback for anyone who prefers it or
+//     hits a flterm device issue. The original production-proven path.
 //
 // The choice is a persisted GLOBAL preference (NOT per-session): it picks the
 // rendering engine for every new session terminal. It is read at terminal-view
@@ -22,19 +22,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// The terminal rendering engine for session terminals (#684).
 enum TerminalBackend {
-  /// xterm.dart `TerminalView` — the default, production-proven path.
+  /// xterm.dart `TerminalView` — selectable fallback, production-proven path.
   xterm,
 
-  /// flterm `TerminalView` (libghostty-vt) — opt-in, native drag-select (#582).
+  /// flterm `TerminalView` (libghostty-vt) — the default, native drag-select (#582, #725).
   ghostty,
 }
 
 /// SharedPreferences key for the selected terminal backend.
 const String terminalBackendPrefKey = 'mobissh.ui.terminalBackend';
 
-/// Default backend — `xterm`. The switch must ship safely even if flterm has
-/// device issues: the owner simply won't flip it.
-const TerminalBackend terminalBackendDefault = TerminalBackend.xterm;
+/// Default backend — `ghostty` (flterm, #725). flterm's native touch
+/// drag-select + copy is the headline terminal UX, so it ships as the default.
+/// `xterm` stays selectable in Settings → Terminal engine as the fallback for
+/// anyone who prefers it or hits a flterm device issue.
+const TerminalBackend terminalBackendDefault = TerminalBackend.ghostty;
 
 /// Resolve a stored backend id (the enum `name`) to a [TerminalBackend],
 /// falling back to [terminalBackendDefault] for null/unknown values so a stale

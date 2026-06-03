@@ -46,6 +46,7 @@ import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
+import 'package:mobissh/state/terminal_backend.dart';
 import 'package:mobissh/state/terminal_providers.dart';
 import 'package:mobissh/ui/terminal_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -82,6 +83,11 @@ Future<({SessionEntry entry, ProviderContainer container})> _setupConnected(
         ref.onDispose(shell.dispose);
         return shell;
       }),
+      // Ghostty is the default since #725; these are xterm-render assertions
+      // (flterm can't paint headless), so pin the xterm backend.
+      terminalBackendProvider.overrideWith(
+        (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
+      ),
     ],
   );
   addTearDown(container.dispose);
@@ -120,6 +126,11 @@ Future<({SessionEntry entry, ProviderContainer container})> _setup(
       taskSshGatewayProvider.overrideWithValue(pair.uiSide),
       sshShellOpenerProvider.overrideWithValue(
         (ref, sessionId, terminal) async => transport,
+      ),
+      // Ghostty is the default since #725; these are xterm-render assertions
+      // (flterm can't paint headless), so pin the xterm backend.
+      terminalBackendProvider.overrideWith(
+        (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
       ),
     ],
   );
