@@ -18,13 +18,73 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
 void main() {
-  group('ghosttyCellForPosition — pixel -> 1-based viewport cell (#692)', () {
-    test('top-left pixel maps to cell (1, 1)', () {
+  // ghosttyMeasureCellSize lays out a TextPainter, which needs the binding.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('ghosttyMeasureCellSize — REAL flterm cell metrics (#699)', () {
+    test('returns a positive cell whose height is at least its width', () {
+      final size = ghosttyMeasureCellSize(
+        fontSize: 14,
+        fontFamily: 'monospace',
+      );
+      expect(size.width, greaterThan(0));
+      expect(size.height, greaterThan(0));
+      // A terminal cell's line height is >= its advance width. On a real device
+      // it is strictly taller (the gap from overlayHeight/rows is the #699 bug);
+      // the headless test font is square (no real glyph metrics), so assert >=.
+      expect(size.height, greaterThanOrEqualTo(size.width));
+    });
+
+    test('a larger font produces a larger cell (height scales with size)', () {
+      final small = ghosttyMeasureCellSize(
+        fontSize: 10,
+        fontFamily: 'monospace',
+      );
+      final large = ghosttyMeasureCellSize(
+        fontSize: 20,
+        fontFamily: 'monospace',
+      );
+      expect(large.height, greaterThan(small.height));
+      expect(large.width, greaterThan(small.width));
+    });
+
+    test('a higher devicePixelRatio still ceil-snaps to a positive cell', () {
+      final size = ghosttyMeasureCellSize(
+        fontSize: 14,
+        fontFamily: 'monospace',
+        devicePixelRatio: 3.0,
+      );
+      expect(size.width, greaterThan(0));
+      expect(size.height, greaterThan(0));
+    });
+
+    test(
+      'a degenerate devicePixelRatio (<=0) is treated as 1.0, not a crash',
+      () {
+        final size = ghosttyMeasureCellSize(
+          fontSize: 14,
+          fontFamily: 'monospace',
+          devicePixelRatio: 0,
+        );
+        expect(size.width, greaterThan(0));
+        expect(size.height, greaterThan(0));
+      },
+    );
+  });
+
+  group('ghosttyCellForPosition — pixel -> 1-based viewport cell (#692/#699)', () {
+    // #699 fix: the map now divides by the REAL flterm cell size (cellWidth/
+    // cellHeight) and subtracts the 4px flterm padding, instead of deriving the
+    // cell size from overlayHeight/rows (which is LARGER than the real cell
+    // height, so the row index came out too small → selection ABOVE the press).
+    // These cases use realistic metrics: 10px-wide / 17px-tall cells, padding 4.
+
+    test('top-left of the GRID (just past padding) maps to cell (1, 1)', () {
       final (col, row) = ghosttyCellForPosition(
-        dx: 0,
-        dy: 0,
-        width: 800,
-        height: 600,
+        dx: 4, // == padding: first inner pixel
+        dy: 4,
+        cellWidth: 10,
+        cellHeight: 17,
         cols: 80,
         rows: 24,
       );
@@ -32,27 +92,77 @@ void main() {
       expect(row, 1);
     });
 
-    test('a pixel mid-grid maps to the containing cell (1-based)', () {
-      // 800/80 = 10px cols, 600/24 = 25px rows. (105, 70) -> col floor(105/10)=10
-      // (0-based) -> 11 (1-based); row floor(70/25)=2 -> 3 (1-based).
+    test('a touch inside the padding band still clamps to cell (1, 1)', () {
+      // dx,dy < padding → innerDx/innerDy negative → floor < 0 → clamps to 1.
       final (col, row) = ghosttyCellForPosition(
-        dx: 105,
-        dy: 70,
-        width: 800,
-        height: 600,
+        dx: 0,
+        dy: 0,
+        cellWidth: 10,
+        cellHeight: 17,
         cols: 80,
         rows: 24,
       );
-      expect(col, 11);
-      expect(row, 3);
+      expect(col, 1);
+      expect(row, 1);
     });
+
+    test(
+      'a mid-grid pixel maps to the containing cell (padding subtracted)',
+      () {
+        // innerDx = 109-4 = 105 → floor(105/10)=10 → col 11.
+        // innerDy = 174-4 = 170 → floor(170/17)=10 → row 11.
+        final (col, row) = ghosttyCellForPosition(
+          dx: 109,
+          dy: 174,
+          cellWidth: 10,
+          cellHeight: 17,
+          cols: 80,
+          rows: 24,
+        );
+        expect(col, 11);
+        expect(row, 11);
+      },
+    );
+
+    test(
+      '#699 REGRESSION: real cell height puts the touch AT the press row, '
+      'not several rows above (the old overlayH/rows map would land high)',
+      () {
+        // Device-like: overlay 600px tall, 24 rows, but the REAL cell height is
+        // 17px (24*17 = 408px of grid + 4px padding; the rest is slack).
+        // Touch near the visual bottom of the grid, row 23:
+        //   innerDy = 395-4 = 391 → floor(391/17)=23 → row 24 (1-based).
+        const dy = 395.0;
+        final (_, rowFixed) = ghosttyCellForPosition(
+          dx: 50,
+          dy: dy,
+          cellWidth: 10,
+          cellHeight: 17,
+          cols: 80,
+          rows: 24,
+        );
+        expect(rowFixed, 24, reason: 'maps to the row under the finger');
+
+        // The OLD formula (cellHeight = overlayHeight/rows = 600/24 = 25px, no
+        // padding) would have computed floor(395/25)=15 → row 16 — EIGHT rows
+        // too high. Assert the fixed result is NOT that off-by-many row.
+        final oldRow = (dy / (600 / 24)).floor() + 1;
+        expect(oldRow, 16, reason: 'documents the buggy old result');
+        expect(
+          rowFixed,
+          isNot(oldRow),
+          reason: '#699: must not land rows above the press',
+        );
+        expect(rowFixed - oldRow, greaterThanOrEqualTo(4));
+      },
+    );
 
     test('the bottom-right pixel clamps to the last cell (cols, rows)', () {
       final (col, row) = ghosttyCellForPosition(
-        dx: 800,
-        dy: 600,
-        width: 800,
-        height: 600,
+        dx: 100000,
+        dy: 100000,
+        cellWidth: 10,
+        cellHeight: 17,
         cols: 80,
         rows: 24,
       );
@@ -64,8 +174,8 @@ void main() {
       final (col, row) = ghosttyCellForPosition(
         dx: -50,
         dy: -50,
-        width: 800,
-        height: 600,
+        cellWidth: 10,
+        cellHeight: 17,
         cols: 80,
         rows: 24,
       );
@@ -75,8 +185,8 @@ void main() {
       final (col2, row2) = ghosttyCellForPosition(
         dx: 100000,
         dy: 100000,
-        width: 800,
-        height: 600,
+        cellWidth: 10,
+        cellHeight: 17,
         cols: 80,
         rows: 24,
       );
@@ -84,25 +194,43 @@ void main() {
       expect(row2, 24);
     });
 
-    test('degenerate grid (zero cols/rows or size) never divides by zero', () {
-      for (final bad in const [
-        (0, 24, 800.0, 600.0),
-        (80, 0, 800.0, 600.0),
-        (80, 24, 0.0, 600.0),
-        (80, 24, 800.0, 0.0),
-      ]) {
-        final (c, r, w, h) = bad;
-        final (col, row) = ghosttyCellForPosition(
-          dx: 10,
-          dy: 10,
-          width: w,
-          height: h,
-          cols: c,
-          rows: r,
-        );
-        expect(col, greaterThanOrEqualTo(1));
-        expect(row, greaterThanOrEqualTo(1));
-      }
+    test(
+      'degenerate grid (zero cols/rows or cell size) never divides by zero',
+      () {
+        for (final bad in const [
+          (0, 24, 10.0, 17.0),
+          (80, 0, 10.0, 17.0),
+          (80, 24, 0.0, 17.0),
+          (80, 24, 10.0, 0.0),
+        ]) {
+          final (c, r, cw, ch) = bad;
+          final (col, row) = ghosttyCellForPosition(
+            dx: 50,
+            dy: 50,
+            cellWidth: cw,
+            cellHeight: ch,
+            cols: c,
+            rows: r,
+          );
+          expect(col, greaterThanOrEqualTo(1));
+          expect(row, greaterThanOrEqualTo(1));
+        }
+      },
+    );
+
+    test('explicit padding=0 maps from the overlay origin (no offset)', () {
+      // With padding 0, the first cell starts at pixel 0.
+      final (col, row) = ghosttyCellForPosition(
+        dx: 0,
+        dy: 0,
+        cellWidth: 10,
+        cellHeight: 17,
+        cols: 80,
+        rows: 24,
+        padding: 0,
+      );
+      expect(col, 1);
+      expect(row, 1);
     });
   });
 
@@ -265,22 +393,23 @@ void main() {
     });
   });
 
-  group('tap end-to-end: cell mapping feeds the click (#693)', () {
+  group('tap end-to-end: cell mapping feeds the click (#693/#699)', () {
     test('a tap pixel maps to a cell that produces the click reports', () {
-      // 800/80 = 10px cols, 600/24 = 25px rows. Tap at (45, 60):
-      // col floor(45/10)=4 -> 5 (1-based); row floor(60/25)=2 -> 3 (1-based).
+      // 10px-wide / 17px-tall cells, 4px padding. Tap at (49, 55):
+      // innerDx = 49-4 = 45 → floor(45/10)=4 → col 5 (1-based);
+      // innerDy = 55-4 = 51 → floor(51/17)=3 → row 4 (1-based).
       final (col, row) = ghosttyCellForPosition(
-        dx: 45,
-        dy: 60,
-        width: 800,
-        height: 600,
+        dx: 49,
+        dy: 55,
+        cellWidth: 10,
+        cellHeight: 17,
         cols: 80,
         rows: 24,
       );
-      expect((col, row), (5, 3));
+      expect((col, row), (5, 4));
       expect(ghosttyTapClickReports(col: col, row: row), [
-        '\x1b[<0;5;3M',
-        '\x1b[<0;5;3m',
+        '\x1b[<0;5;4M',
+        '\x1b[<0;5;4m',
       ]);
     });
   });
@@ -366,15 +495,18 @@ void main() {
   );
 
   group('swipe end-to-end: dx + status row feed the wheel report (#693)', () {
-    test('swipe RIGHT emits one wheel-DOWN at the status row (next-window)', () {
-      final decision = ghosttyWindowSwitchForSwipe(
-        64,
-        kGhosttyWindowSwitchThreshold,
-      );
-      expect(decision, GhosttyWindowSwitch.next);
-      final (col, row) = ghosttyStatusRowCell(rows: 24);
-      expect(ghosttySgrWheelDown(col: col, row: row), '\x1b[<65;1;24M');
-    });
+    test(
+      'swipe RIGHT emits one wheel-DOWN at the status row (next-window)',
+      () {
+        final decision = ghosttyWindowSwitchForSwipe(
+          64,
+          kGhosttyWindowSwitchThreshold,
+        );
+        expect(decision, GhosttyWindowSwitch.next);
+        final (col, row) = ghosttyStatusRowCell(rows: 24);
+        expect(ghosttySgrWheelDown(col: col, row: row), '\x1b[<65;1;24M');
+      },
+    );
 
     test('swipe LEFT emits one wheel-UP at the status row (prev-window)', () {
       final decision = ghosttyWindowSwitchForSwipe(

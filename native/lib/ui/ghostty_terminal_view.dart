@@ -73,9 +73,18 @@
 //
 // Cell mapping is viewport-relative (1-based col;row), which is exactly what tmux
 // mouse mode expects — and the overlay is active ONLY under mouse tracking, where
-// flterm pins the viewport to the bottom (no scrollback offset to compensate). We
-// derive the cell size from the overlay's laid-out size / the live (cols, rows)
-// captured from `controller.onResize`.
+// flterm pins the viewport to the bottom (no scrollback offset to compensate).
+//
+// #699 fix (selection landed several rows ABOVE the press): the cell map used to
+// DERIVE the cell size from `overlayHeight / rows`, which is LARGER than flterm's
+// real cell height (flterm sizes the grid to exactly `rows * realCellHeight` and
+// leaves slack at the bottom), so dividing dy by it produced a row index too
+// SMALL. flterm derives its cell height from the font's full typographic line
+// height (`measureCellMetrics`, NOT exported), so we reproduce that measurement
+// in [ghosttyMeasureCellSize] and map over the REAL cell size, subtracting the
+// flterm `TerminalView` padding ([kGhosttyTerminalPadding]) the grid is offset
+// by. The router instruments every gesture into the #699 gesture-trace ring
+// (gesture_trace.dart) so a device repro carries the touch->cell numbers.
 //
 // SMART-SELECT (future, do NOT build here): a future button could select a word/
 // path/URL UNIT at the tap — the PWA's `src/modules/selection.ts _selectableUnitAt`
@@ -94,6 +103,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../diagnostics/gesture_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
@@ -168,29 +178,102 @@ bool ghosttySwipeShouldScrollLocally({required MouseTracking mouseTracking}) {
   return mouseTracking != MouseTracking.none;
 }
 
-/// Map a touch pixel position within the terminal viewport to a 1-based
-/// (col, row) terminal cell for SGR mouse reports (#692).
+/// The padding flterm's [TerminalView] is built with (`EdgeInsets.all(4)`), in
+/// logical px (#699). flterm wraps its `Scrollable` + render box in a
+/// `Padding(padding: widget.padding)`, so the grid's top-left is offset by this
+/// much from the overlay origin. The touch->cell map MUST subtract it or every
+/// row/col is shifted toward the origin. Kept in sync with the literal in
+/// [GhosttyTerminalView.build]'s `TerminalView(padding: ...)`.
+const double kGhosttyTerminalPadding = 4.0;
+
+/// The REAL per-cell pixel size flterm renders at, for the touch->cell map
+/// (#699). This is the ROOT-CAUSE fix: flterm derives its cell height from the
+/// font's full typographic line height (`measureCellMetrics`: the height of
+/// `Mgj`, ceil-snapped to the device pixel grid), NOT from `viewportH/rows`.
 ///
-/// [width]/[height] are the laid-out overlay size in logical px; [cols]/[rows]
-/// are the live grid dimensions (from `controller.onResize`). The result is
-/// CLAMPED into `[1, cols] x [1, rows]` so an edge or out-of-range touch never
-/// produces an off-grid report. Viewport-relative (no scrollback offset): the
-/// overlay is active only under mouse tracking, where the viewport is pinned to
-/// the bottom — which is exactly the coordinate space tmux mouse mode expects.
-/// Pure (no FFI), so it's unit-testable headless.
+/// flterm 0.0.3 does NOT export `CellMetrics`/`measureCellMetrics` (its public
+/// `flterm.dart` exports only the widgets/theme/gesture types), and the render
+/// box is private — so we cannot read flterm's geometry directly. Instead we
+/// reproduce its EXACT measurement here with the same `TextPainter` reference
+/// glyphs ('M' advance for width, 'Mgj' height for height) and the same
+/// ceil-to-device-pixel snapping, so our mapping uses the cell size flterm
+/// actually laid the grid out with. Pure Flutter (no FFI) → headless-testable.
+///
+/// [devicePixelRatio] snaps to the same grid flterm uses; default 1.0 keeps the
+/// pure unit tests deterministic. [fontFamilyFallback] mirrors the theme's
+/// fallback chain so width measurement matches the rendered face.
+Size ghosttyMeasureCellSize({
+  required double fontSize,
+  required String fontFamily,
+  FontWeight fontWeight = FontWeight.normal,
+  List<String>? fontFamilyFallback,
+  double devicePixelRatio = 1.0,
+}) {
+  final dpr = devicePixelRatio > 0 ? devicePixelRatio : 1.0;
+  final style = TextStyle(
+    fontSize: fontSize,
+    fontFamily: fontFamily,
+    fontWeight: fontWeight,
+    fontFamilyFallback: fontFamilyFallback,
+  );
+
+  final widthPainter = TextPainter(
+    text: TextSpan(text: 'M', style: style),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final faceWidth = widthPainter.width;
+  widthPainter.dispose();
+
+  // 'Mgj' exercises ascenders + descenders so the height is the full
+  // typographic line extent — exactly what flterm's measureCellMetrics uses.
+  final vertPainter = TextPainter(
+    text: TextSpan(text: 'Mgj', style: style),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final faceHeight = vertPainter.height;
+  vertPainter.dispose();
+
+  double ceilToDevicePixel(double value) => (value * dpr).ceilToDouble() / dpr;
+
+  return Size(ceilToDevicePixel(faceWidth), ceilToDevicePixel(faceHeight));
+}
+
+/// Map a touch pixel position within the terminal viewport to a 1-based
+/// (col, row) terminal cell for SGR mouse reports (#692, fixed #699).
+///
+/// [dx]/[dy] are the raw overlay-local touch coords. [cellWidth]/[cellHeight]
+/// are the REAL flterm cell size (see [ghosttyMeasureCellSize]). [padding] is
+/// the flterm `TerminalView` padding to subtract (the grid is offset by it).
+/// [cols]/[rows] are the live grid dimensions (from `controller.onResize`),
+/// used only to CLAMP the result into `[1, cols] x [1, rows]` so an edge or
+/// out-of-range touch never produces an off-grid report.
+///
+/// #699 root cause: the old map used `cellHeight = overlayHeight / rows`, which
+/// is LARGER than flterm's real cell height (flterm sizes the grid to exactly
+/// `rows * realCellHeight` and leaves slack at the bottom), so dividing dy by it
+/// produced a row index that was too SMALL — the selection landed several rows
+/// ABOVE the press. Using the real cell height + subtracting the padding maps a
+/// touch to the cell directly under the finger.
+///
+/// Viewport-relative (no scrollback offset): the overlay is active only under
+/// mouse tracking, where flterm pins the viewport to the bottom — exactly the
+/// coordinate space tmux mouse mode expects. Pure (no FFI) → unit-testable.
 (int col, int row) ghosttyCellForPosition({
   required double dx,
   required double dy,
-  required double width,
-  required double height,
+  required double cellWidth,
+  required double cellHeight,
   required int cols,
   required int rows,
+  double padding = kGhosttyTerminalPadding,
 }) {
-  if (cols <= 0 || rows <= 0 || width <= 0 || height <= 0) return (1, 1);
-  final cellWidth = width / cols;
-  final cellHeight = height / rows;
-  final col = (dx / cellWidth).floor() + 1;
-  final row = (dy / cellHeight).floor() + 1;
+  if (cols <= 0 || rows <= 0 || cellWidth <= 0 || cellHeight <= 0) {
+    return (1, 1);
+  }
+  final innerDx = dx - padding;
+  final innerDy = dy - padding;
+  final col = (innerDx / cellWidth).floor() + 1;
+  final row = (innerDy / cellHeight).floor() + 1;
   return (col.clamp(1, cols), row.clamp(1, rows));
 }
 
@@ -431,6 +514,9 @@ class _PointerGestureRouter extends StatefulWidget {
     required this.scrollController,
     required this.cols,
     required this.rows,
+    required this.cellWidth,
+    required this.cellHeight,
+    required this.mouseTrackingLabel,
     required this.onTap,
     required this.onMouseReport,
   });
@@ -445,6 +531,17 @@ class _PointerGestureRouter extends StatefulWidget {
   /// Live grid columns/rows (from `controller.onResize`) for pixel->cell mapping.
   final int cols;
   final int rows;
+
+  /// The REAL flterm cell size (logical px), measured by [ghosttyMeasureCellSize]
+  /// from the live theme font (#699). The touch->cell map divides by THIS, not by
+  /// `overlayHeight/rows` — the #699 root-cause fix.
+  final double cellWidth;
+  final double cellHeight;
+
+  /// The live `MouseTracking` state name, recorded into each gesture-trace line
+  /// (#699) so a device repro shows whether mouse mode was on when the offset
+  /// occurred.
+  final String mouseTrackingLabel;
 
   /// Invoked on a tap to FOCUS + raise the soft keyboard (#693). flterm's own
   /// tap only calls `requestFocus()`, which doesn't show the Android IME, so the
@@ -480,19 +577,22 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
   /// wheel report at the status-line row so tmux's default `WheelUpStatus`/
   /// `WheelDownStatus` binding steps one window (#693).
   void _onHorizontalEnd(DragEndDetails details) {
+    final totalDx = _horizontalDx;
     final decision = ghosttyWindowSwitchForSwipe(
-      _horizontalDx,
+      totalDx,
       kGhosttyWindowSwitchThreshold,
     );
     _horizontalDx = 0;
-    if (decision == GhosttyWindowSwitch.none) return;
+    if (decision == GhosttyWindowSwitch.none) {
+      // Still record the swipe so a device repro shows the (sub-threshold) dx.
+      _trace('swipe-h', totalDx, 0, null, null, null);
+      return;
+    }
     final (col, row) = ghosttyStatusRowCell(rows: widget.rows);
     final report = decision == GhosttyWindowSwitch.next
         ? ghosttySgrWheelDown(col: col, row: row) // swipe RIGHT → next-window
-        : ghosttySgrWheelUp(
-            col: col,
-            row: row,
-          ); // swipe LEFT → previous-window
+        : ghosttySgrWheelUp(col: col, row: row); // swipe LEFT → previous-window
+    _trace('swipe-h', totalDx, 0, col, row, report);
     widget.onMouseReport(report);
   }
 
@@ -509,7 +609,10 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
     controller.jumpTo(target);
   }
 
-  /// The overlay's laid-out size, used with (cols, rows) to map touch -> cell.
+  /// The overlay's laid-out size — recorded into the gesture log (#699) as the
+  /// `size=(w,h)` field so a device repro shows the box the touch mapped over.
+  /// The cell map no longer DERIVES the cell size from this (that was the #699
+  /// bug); it uses [widget.cellWidth]/[widget.cellHeight] instead.
   Size get _viewportSize {
     final box = context.findRenderObject();
     if (box is RenderBox && box.hasSize) return box.size;
@@ -517,31 +620,66 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
   }
 
   (int, int) _cellAt(Offset local) {
-    final size = _viewportSize;
     return ghosttyCellForPosition(
       dx: local.dx,
       dy: local.dy,
-      width: size.width,
-      height: size.height,
+      cellWidth: widget.cellWidth,
+      cellHeight: widget.cellHeight,
       cols: widget.cols,
       rows: widget.rows,
     );
   }
 
+  /// Record one gesture event into the #699 gesture log: raw touch pos, the
+  /// laid-out overlay size, the live grid, the computed cell, and any SGR bytes
+  /// emitted. This is what pins the touch->cell offset on the next device repro.
+  void _trace(
+    String type,
+    double dx,
+    double dy,
+    int? col,
+    int? row,
+    String? sgr,
+  ) {
+    final size = _viewportSize;
+    gevent(
+      type: type,
+      dx: dx,
+      dy: dy,
+      width: size.width,
+      height: size.height,
+      cols: widget.cols,
+      rows: widget.rows,
+      col: col,
+      row: row,
+      sgr: sgr,
+      mouseTracking: widget.mouseTrackingLabel,
+      handledBy: 'overlay',
+    );
+  }
+
   void _onLongPressStart(LongPressStartDetails details) {
     widget.onTap(); // focus, mirroring flterm's own long-press-start.
-    final (col, row) = _cellAt(details.localPosition);
+    final local = details.localPosition;
+    final (col, row) = _cellAt(local);
+    final report = ghosttySgrMousePress(col: col, row: row);
+    _trace('longpress-start', local.dx, local.dy, col, row, report);
     final driver = GhosttySelectionDriver(onReport: widget.onMouseReport)
       ..press(col: col, row: row);
     _selection = driver;
   }
 
   void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
-    final (col, row) = _cellAt(details.localPosition);
+    final local = details.localPosition;
+    final (col, row) = _cellAt(local);
+    _trace('longpress-move', local.dx, local.dy, col, row, null);
     _selection?.motion(col: col, row: row);
   }
 
   void _onLongPressEnd(LongPressEndDetails details) {
+    final local = details.localPosition;
+    final (col, row) = _cellAt(local);
+    _trace('longpress-end', local.dx, local.dy, col, row, null);
     _selection?.release();
     _selection = null;
   }
@@ -556,8 +694,14 @@ class _PointerGestureRouterState extends State<_PointerGestureRouter> {
     // Order: focus + raise the keyboard FIRST so the IME comes up regardless of
     // whether the click forwards (the keyboard is the always-on behaviour).
     widget.onTap();
-    if (!ghosttyTapShouldForwardClick(active: widget.active)) return;
-    final (col, row) = _cellAt(details.localPosition);
+    final local = details.localPosition;
+    if (!ghosttyTapShouldForwardClick(active: widget.active)) {
+      _trace('tap', local.dx, local.dy, null, null, null);
+      return;
+    }
+    final (col, row) = _cellAt(local);
+    final report = ghosttySgrMousePress(col: col, row: row);
+    _trace('tap', local.dx, local.dy, col, row, report);
     GhosttySelectionDriver(
       onReport: widget.onMouseReport,
     ).click(col: col, row: row);
@@ -798,6 +942,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // session.
     final fontFamily = ref.watch(sessionFontFamilyProvider(widget.sessionId));
     final fontSize = ref.watch(sessionFontSizeProvider(widget.sessionId));
+    // #699: measure the REAL flterm cell size from the SAME font + DPR flterm
+    // renders with, so the gesture router's touch->cell map divides by the cell
+    // height flterm actually laid out (not overlayHeight/rows — the #699 bug).
+    final theme = buildGhosttyTheme(family: fontFamily, fontSize: fontSize);
+    final devicePixelRatio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
+    final cellSize = ghosttyMeasureCellSize(
+      fontSize: theme.fontSize,
+      fontFamily: theme.fontFamily,
+      fontWeight: theme.fontWeight,
+      fontFamilyFallback: theme.fontFamilyFallback,
+      devicePixelRatio: devicePixelRatio,
+    );
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
@@ -805,8 +961,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           child: TerminalView(
             controller: controller,
             autofocus: false,
-            theme: buildGhosttyTheme(family: fontFamily, fontSize: fontSize),
-            padding: const EdgeInsets.all(4),
+            theme: theme,
+            // #699: kGhosttyTerminalPadding mirrors this literal — the
+            // touch->cell map subtracts it. Keep them in sync.
+            padding: const EdgeInsets.all(kGhosttyTerminalPadding),
             // #690: share the scroll controller so the overlay below can drive
             // scrollback (→ flterm wheel reports) under remote mouse mode.
             scrollController: _scrollController,
@@ -838,6 +996,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             scrollController: _scrollController,
             cols: _cols,
             rows: _rows,
+            // #699: hand the REAL cell size down so the router maps a touch to
+            // the cell flterm actually rendered (root-cause fix for the offset).
+            cellWidth: cellSize.width,
+            cellHeight: cellSize.height,
+            mouseTrackingLabel: _mouseTracking.name,
             // #693: a tap must FOCUS *and* raise the soft keyboard. flterm's own
             // tap calls only `requestFocus()` (terminal_gesture_detector.dart),
             // which doesn't show the Android IME; `showKeyboard()` drives the

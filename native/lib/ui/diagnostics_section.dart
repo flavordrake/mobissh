@@ -13,6 +13,7 @@ import 'package:share_plus/share_plus.dart';
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
+import '../diagnostics/gesture_trace.dart';
 import 'connection_audit.dart';
 import 'top_toast.dart';
 
@@ -87,6 +88,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
       final bundle = assembleFeedbackBundle(
         info: info,
         connectLog: connectLogSnapshot(),
+        gestureLog: gestureLogSnapshot(),
         crashJson: crashJson,
       );
 

@@ -152,6 +152,45 @@ void main() {
       final decoded = jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
       expect(decoded['comment'], 'line1\nline2 "quoted"\nline3');
     });
+
+    test(
+      'attaches the gesture-trace log when present, omits it when empty (#699)',
+      () {
+        final withLog = buildFeedbackPayload(
+          comment: 'selection lands above the press',
+          version: '[v]',
+          gestureLog: const [
+            '08:23:01.123 longpress-start pos=(120.0,400.0) size=(393.0,700.0) '
+                'grid=46x24 cell=(13,24) sgr=ESC[<0;13;24M mouse=any by=overlay',
+          ],
+        );
+        // Server persists this as gestureLogFile + gestureLogEventCount (#699),
+        // mirroring connectLog.
+        final log = withLog['gestureLog'] as List;
+        expect(log.length, 1);
+        expect((log.single as String).contains('cell=(13,24)'), isTrue);
+
+        // No gesture log → the field is omitted entirely.
+        final without = buildFeedbackPayload(comment: 'x', version: '[v]');
+        expect(without.containsKey('gestureLog'), isFalse);
+      },
+    );
+
+    test(
+      'scrubs credential-looking material out of the gesture log (#699)',
+      () {
+        final payload = buildFeedbackPayload(
+          comment: 'x',
+          version: '[v]',
+          gestureLog: const [
+            '10:00:00.000 tap pos=(1.0,1.0) password=hunter2 by=overlay',
+          ],
+        );
+        final log = (payload['gestureLog'] as List).cast<String>();
+        expect(log.every((l) => !l.contains('hunter2')), isTrue);
+        expect(log.any((l) => l.contains('[REDACTED]')), isTrue);
+      },
+    );
   });
 
   group('pngBytesToDataUrl', () {

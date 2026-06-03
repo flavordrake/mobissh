@@ -79,6 +79,32 @@ void main() {
       expect(decoded['ts'], isA<String>());
     });
 
+    test('includes the gesture-trace log when supplied (#699)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        gestureLog: const [
+          '06:00:00.000 longpress-start pos=(120.0,400.0) size=(393.0,700.0) '
+              'grid=46x24 cell=(13,24) sgr=ESC[<0;13;24M mouse=any by=overlay',
+        ],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded['gestureLog'], isA<List<Object?>>());
+      expect((decoded['gestureLog'] as List).single, contains('cell=(13,24)'));
+    });
+
+    test('gestureLog defaults to an empty list when omitted (#699)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded['gestureLog'], isA<List<Object?>>());
+      expect((decoded['gestureLog'] as List), isEmpty);
+    });
+
     test('embeds the last crash report when one is supplied', () {
       const crashJson =
           '{"schema":1,"kind":"flutter","error":"RangeError","ts":"x"}';

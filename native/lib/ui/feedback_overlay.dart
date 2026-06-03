@@ -28,6 +28,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
+import 'package:mobissh/diagnostics/gesture_trace.dart';
 import 'package:mobissh/ui/top_toast.dart';
 
 /// Prod endpoint that ingests bug reports (same one the web form posts to).
@@ -68,6 +69,7 @@ Map<String, Object?> buildFeedbackPayload({
   required String version,
   String? screenshotDataUrl,
   List<String> connectLog = const <String>[],
+  List<String> gestureLog = const <String>[],
 }) {
   final fullComment = comment;
   // First non-empty line → title summary. Never truncate the comment itself.
@@ -94,6 +96,15 @@ Map<String, Object?> buildFeedbackPayload({
   // contract) — defense-in-depth even though ctrace logs lengths only.
   final scrubbedLog = connectLog.map(scrubSecrets).toList(growable: false);
 
+  // #699: the gesture-trace ring (touch->cell mapping diagnostics for the
+  // Ghostty selection-offset bug). The server persists it as `gestureLogFile` +
+  // `gestureLogEventCount`, mirroring connectLog. Scrubbed of any credential-
+  // looking material (rules/security.md / #553 contract) — defense in depth,
+  // though gesture events carry only coords/sizes/SGR bytes.
+  final scrubbedGestureLog = gestureLog
+      .map(scrubSecrets)
+      .toList(growable: false);
+
   return <String, Object?>{
     'title': title,
     // FULL comment — the server stores this untruncated (#661).
@@ -105,6 +116,7 @@ Map<String, Object?> buildFeedbackPayload({
     if (screenshotDataUrl != null && screenshotDataUrl.isNotEmpty)
       'screenshot': screenshotDataUrl,
     if (scrubbedLog.isNotEmpty) 'connectLog': scrubbedLog,
+    if (scrubbedGestureLog.isNotEmpty) 'gestureLog': scrubbedGestureLog,
   };
 }
 
@@ -244,6 +256,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     // the layout before the shot. Capturing immediately is truer; the small
     // affordance pill appearing in its own screenshot is an acceptable trade.
     final connectLog = connectLogSnapshot();
+    final gestureLog = gestureLogSnapshot();
     final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
     final bytes = await widget.screenshotCapturer(_captureKey, dpr);
     if (!mounted) return;
@@ -256,6 +269,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       dataUrl: dataUrl,
       version: version,
       connectLog: connectLog,
+      gestureLog: gestureLog,
     );
   }
 
@@ -263,6 +277,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     required String? dataUrl,
     required String version,
     required List<String> connectLog,
+    required List<String> gestureLog,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -285,6 +300,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       version: version,
       screenshotDataUrl: dataUrl,
       connectLog: connectLog,
+      gestureLog: gestureLog,
     );
     final ok = await widget.submitter.submit(payload);
     // Confirmation as a TOP toast (#667) so it doesn't occlude the bottom
