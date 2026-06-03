@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.6 (2026-06-03) — Ghostty: swipe scrolls, selection is deliberate
+- Ghostty: a swipe now **scrolls the scrollback cleanly** — no more accidental selection block (long-press was grabbing the swipe). Tap the new **select-mode** button (touch-app icon) to deliberately long-press-drag a selection, then Copy; tap it off to return to scroll.
+- Known flterm limits (a fork would be needed): in select mode a long-press-drag still auto-scrolls at the screen edge, and there are no draggable selection-endpoint handles yet.
+
 ## v0.1.5 (2026-06-02) — Ghostty polish (font + gestures)
 - Ghostty now uses your selected per-session font + size (JetBrains Mono default — readable, no more thin default).
 - Vertical drag scrolls the scrollback (it no longer starts a selection); long-press to select, drag to extend, plus Select-All.
