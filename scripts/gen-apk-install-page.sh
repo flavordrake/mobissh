@@ -90,73 +90,48 @@ check_notes_freshness() {
 }
 check_notes_freshness
 
-# Minimal HTML escape (& < >).
-esc() {
-  sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
-}
-
-# The "What to verify" bullets come from the FIRST `## ` section of
-# native-release-notes.md — its `- ` lines, in order, until the next `## `.
-# This is the curated user-facing list; raw git log is not used.
-notes_bullets() {
-  [ -f "$NOTES_FILE" ] || return 0
-  awk '
-    /^## / { if (seen) exit; seen=1; next }
-    seen && /^- / { sub(/^- /, ""); print }
-  ' "$NOTES_FILE"
-}
-
-# Heading shown for the curated section (the first `## ` title, sans marker), so
-# the page reads e.g. "Build 2026-06-01 — reliability sweep (verify on device)".
-notes_heading() {
-  [ -f "$NOTES_FILE" ] || { echo "What to verify"; return 0; }
-  local h
-  h="$(awk '/^## /{sub(/^## /,""); print; exit}' "$NOTES_FILE")"
-  [ -n "$h" ] && echo "$h" || echo "What to verify"
-}
-
-NOTES_HEADING="$(notes_heading | esc)"
-NOTES_HTML=""
-while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  safe="$(printf '%s' "$line" | esc)"
-  NOTES_HTML="${NOTES_HTML}    <li>${safe}</li>"$'\n'
-done < <(notes_bullets)
-if [ -z "$NOTES_HTML" ]; then
-  NOTES_HTML="    <li>(curate user-facing notes in native-release-notes.md)</li>"$'\n'
+# Render the curated release notes to HTML via the `marked` markdown library
+# (scripts/render-release-notes.mjs). This replaced a hand-rolled awk/sed pass
+# that DROPPED indented sub-bullets and rendered **bold** / `code` literally
+# (#713). The renderer splits native-release-notes.md on `## ` headings:
+#   - the FIRST section is the curated "What to verify" list (verifyHtml)
+#   - every SUBSEQUENT section becomes a collapsible <details> (changelogHtml)
+# It emits one JSON object: { heading, verifyHtml, changelogHtml }. marked emits
+# its OWN <ul>, so the template injects verifyHtml directly (no outer <ul>).
+#
+# marked lives in server/node_modules (zero-dep); the renderer resolves it from
+# there. If it fails (marked missing, file unreadable), the renderer exits
+# non-zero and we abort LOUDLY rather than ship a broken page.
+RENDERER="${REPO_ROOT}/scripts/render-release-notes.mjs"
+NOTES_JSON=""
+if [ -f "$NOTES_FILE" ] && [ -f "$RENDERER" ]; then
+  if ! NOTES_JSON="$(node "$RENDERER" "$NOTES_FILE")"; then
+    echo "! render-release-notes.mjs failed — cannot generate install page" >&2
+    echo "!   (is marked installed? run: npm install --prefix server)" >&2
+    exit 1
+  fi
 fi
 
-# Changelog: render EVERY `## ` section AFTER the first as collapsible history,
-# so the page shows build-to-build deltas (the owner couldn't tell the notes had
-# gone stale because only the latest section was shown). Each older section is a
-# <details> (no JS needed). Skips the file's intro prose before the first `## `.
-CHANGELOG_HTML=""
-section=0
-cur_title=""
-cur_items=""
-flush_section() {
-  [ -z "$cur_title" ] && return
-  CHANGELOG_HTML="${CHANGELOG_HTML}  <details class=\"clog\"><summary>${cur_title}</summary><ul>"$'\n'"${cur_items}  </ul></details>"$'\n'
-  cur_title=""
-  cur_items=""
+# Pull the three fields out of the JSON with node (robust against embedded
+# quotes/newlines in the HTML). Defaults cover a missing/empty notes file.
+extract_field() {
+  # $1 = JSON, $2 = field name. Empty JSON → empty output.
+  [ -z "$1" ] && return 0
+  printf '%s' "$1" | node -e '
+    let s = "";
+    process.stdin.on("data", d => s += d);
+    process.stdin.on("end", () => {
+      const o = JSON.parse(s);
+      process.stdout.write(String(o[process.argv[1]] ?? ""));
+    });
+  ' "$2"
 }
-while IFS= read -r line; do
-  case "$line" in
-    '## '*)
-      flush_section
-      section=$((section + 1))
-      if [ "$section" -ge 2 ]; then
-        cur_title="$(printf '%s' "${line#'## '}" | esc)"
-      fi
-      ;;
-    '- '*)
-      if [ "$section" -ge 2 ]; then
-        cur_items="${cur_items}    <li>$(printf '%s' "${line#'- '}" | esc)</li>"$'\n'
-      fi
-      ;;
-  esac
-done < "$NOTES_FILE"
-flush_section
+
+NOTES_HEADING="$(extract_field "$NOTES_JSON" heading)"
+[ -n "$NOTES_HEADING" ] || NOTES_HEADING="What to verify"
+NOTES_HTML="$(extract_field "$NOTES_JSON" verifyHtml)"
+[ -n "$NOTES_HTML" ] || NOTES_HTML='<ul><li>(curate user-facing notes in native-release-notes.md)</li></ul>'
+CHANGELOG_HTML="$(extract_field "$NOTES_JSON" changelogHtml)"
 
 cat > "$OUT" <<HTMLEOF
 <!DOCTYPE html>
@@ -242,8 +217,7 @@ cat > "$OUT" <<HTMLEOF
   </dl>
 
   <h2>What to verify — ${NOTES_HEADING}</h2>
-  <ul>
-${NOTES_HTML}  </ul>
+${NOTES_HTML}
 
   <h2>Changelog</h2>
 ${CHANGELOG_HTML}
