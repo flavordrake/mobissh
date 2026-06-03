@@ -7,6 +7,17 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.8 (2026-06-03) — Ghostty terminal, hardened
+- **Ghostty (flterm) is the recommended engine** — native touch drag-select + copy, precise tmux selection, faster scrolling. Turn it on in **Settings → Terminal engine** (it becomes the default in the next build).
+- Ghostty terminal:
+  - **Long-press to select** (the selection persists — tap **Copy** → system clipboard); **single tap dismisses** it; Copy / Select-all appear only while selecting.
+  - **Tap raises the keyboard**; tapping a tmux status-bar window selects it.
+  - **First connect fills + scrolls** without a keyboard toggle; **app-switch and device-unlock show the latest immediately** (no tap).
+  - **Swipe up/down scrolls; swipe right/left switches tmux windows** (reliably, at any size).
+  - Per-session **theme** (38), **font** (now incl. RobotoMono / UbuntuMono / Cousine), and size — all recolor/retype the live terminal.
+- **Keybar:** sticky **Ctrl** modifier (next to Esc) → next key is Ctrl+<key>; larger, higher-contrast labels; tighter single-character keys.
+- **Reach Profiles / Settings from a live session** — session menu → "Profiles & settings" opens over the session (it keeps streaming); back returns. Session-menu font is −/+ and theme/font are pickers.
+
 ## v0.1.7 (2026-06-03) — Ghostty: swipe scrolls in tmux (no selection capture)
 - Ghostty: in tmux / mouse-mode sessions, a **swipe now scrolls the scrollback** (sends wheel events) instead of triggering tmux's selection — the swipe was previously forwarded as a mouse-drag. tmux's precise native selection still works on a deliberate drag (select-mode); plain shells were already fine.
 
