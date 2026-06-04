@@ -93,6 +93,12 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # Deterministic virtual time for timer-lifecycle unit tests (#732 keybar
+  # auto-repeat). Already resolved transitively via flutter_test; pinned as a
+  # direct dev dep so the explicit import is lint-clean (depend_on_referenced_
+  # packages).
+  fake_async: ^1.3.3
+
   # On-emulator acceptance: drives the real app (real foreground-task isolate,
   # real platform channels) against test-sshd. Catches bootstrap/IPC bugs the
   # InMemoryGatewayPair-based widget tests can't see (#539). Run via
