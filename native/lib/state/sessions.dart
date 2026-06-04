@@ -394,3 +394,18 @@ final activeSessionIdProvider = Provider<String?>((ref) {
 final activeSessionEntryProvider = Provider<SessionEntry?>((ref) {
   return ref.watch(sessionsProvider).active;
 });
+
+/// #741: whether the soft keyboard was UP at the moment the active session last
+/// changed (an app-level session-bar swipe-switch).
+///
+/// A session-bar swipe-switch must leave the keyboard state UNCHANGED — if it
+/// was up it must stay up so the bar doesn't jump down out from under the
+/// swiping finger. But the terminal's keyboard state lives in the flterm
+/// `TerminalController` inside each per-session [GhosttyTerminalView] (created in
+/// initState), which the session bar / [SessionsNotifier] cannot reach. So the
+/// OUTGOING view (the one losing active status) writes its keyboard-up state
+/// here as it stops being active, and the INCOMING view (the one becoming
+/// active) reads it to decide whether to re-show the keyboard on the
+/// newly-active terminal. Defaults false (keyboard down) so a cold first
+/// activation never auto-pops the IME.
+final sessionSwitchKeyboardWasUpProvider = StateProvider<bool>((ref) => false);

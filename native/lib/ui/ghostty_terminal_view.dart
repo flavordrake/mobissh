@@ -491,6 +491,63 @@ bool ghosttyShouldCycleFocusForRepaint({
   return active && connected && hasFocus;
 }
 
+/// #741: whether THIS session's view is the one LEAVING active on a session-bar
+/// swipe-switch and so must CAPTURE its current keyboard-up state.
+///
+/// An app-level session-bar swipe switches the active session
+/// (terminal_screen.dart `_SessionBar.onSwipe` → `setActive`). Every session's
+/// terminal is mounted in an `IndexedStack`, so the OUTGOING (focused) view goes
+/// offstage — its `TextInput` connection detaches and the keyboard collapses —
+/// while the INCOMING view is never focused. The bar then jumps down out from
+/// under the finger (the keyboard inset vanished). The keyboard state lives in
+/// each view's flterm controller, unreachable from the bar, so the outgoing view
+/// records whether its keyboard was up (into
+/// [sessionSwitchKeyboardWasUpProvider]) for the incoming view to restore.
+///
+/// True only on a REAL switch AWAY from this session: `prevActiveId` is this
+/// session, `nextActiveId` is a DIFFERENT session. A same-id re-emit (no switch)
+/// and a first-tick `prevActiveId == null` (initial activation, not a switch) do
+/// not capture. Pure (no FFI / no widget) → unit-testable headless.
+bool ghosttyShouldCaptureKeyboardOnSessionSwitch({
+  required String sessionId,
+  required String? prevActiveId,
+  required String? nextActiveId,
+}) {
+  if (prevActiveId == null) return false;
+  if (prevActiveId == nextActiveId) return false;
+  return prevActiveId == sessionId;
+}
+
+/// #741: whether THIS session's view is the one BECOMING active on a session-bar
+/// swipe-switch and so must RE-ATTACH focus (and, per
+/// [ghosttyShouldShowKeyboardOnSessionSwitch], re-show the keyboard) so the IME
+/// never collapses.
+///
+/// True only on a REAL switch INTO this session: `nextActiveId` is this session,
+/// `prevActiveId` is a DIFFERENT non-null session. A same-id re-emit is not a
+/// switch; a first-tick `prevActiveId == null` is the initial activation, which
+/// the #717 connect-focus path already owns (restoring here would fight the
+/// per-connect focus latch and could raise the IME on cold start — the
+/// #693/#717 focus-vs-keyboard separation). Pure → unit-testable headless.
+bool ghosttyShouldRestoreFocusOnSessionSwitch({
+  required String sessionId,
+  required String? prevActiveId,
+  required String? nextActiveId,
+}) {
+  if (prevActiveId == null) return false;
+  if (prevActiveId == nextActiveId) return false;
+  return nextActiveId == sessionId;
+}
+
+/// #741: whether the incoming view must RE-SHOW the keyboard after re-attaching
+/// focus on a session-bar switch. The contract is "leave the keyboard state
+/// UNCHANGED": re-show iff it was up before the switch ([keyboardWasUp], captured
+/// by the outgoing view). When it was down, focus only — the keyboard stays
+/// down. Pure → unit-testable headless.
+bool ghosttyShouldShowKeyboardOnSessionSwitch({required bool keyboardWasUp}) {
+  return keyboardWasUp;
+}
+
 /// The padding flterm's [TerminalView] is built with (`EdgeInsets.all(4)`), in
 /// logical px (#699). flterm wraps its `Scrollable` + render box in a
 /// `Padding(padding: widget.padding)`, so the grid's top-left is offset by this
@@ -2146,6 +2203,77 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     });
   }
 
+  /// #741: keep the keyboard state UNCHANGED across an app-level session-bar
+  /// swipe-switch so the bar never jumps down out from under the finger.
+  ///
+  /// Every session's terminal is mounted in an `IndexedStack`
+  /// (terminal_screen.dart), so switching the active session moves the OUTGOING
+  /// focused view offstage — its `TextInput` connection detaches and the soft
+  /// keyboard collapses — while the INCOMING view is never focused. Each view
+  /// listens to [activeSessionIdProvider] and handles its OWN side of the switch:
+  ///
+  ///   - OUTGOING ([ghosttyShouldCaptureKeyboardOnSessionSwitch]): record whether
+  ///     this terminal's keyboard was UP into [sessionSwitchKeyboardWasUpProvider]
+  ///     so the incoming view can restore it. The capture must happen BEFORE the
+  ///     incoming view's restore reads it; both run synchronously in this same
+  ///     provider tick (one notify → every listener), and the incoming view
+  ///     defers its keyboard show to a post-frame callback, so ordering holds
+  ///     regardless of which view's listener fires first.
+  ///   - INCOMING ([ghosttyShouldRestoreFocusOnSessionSwitch]): re-attach focus
+  ///     to this newly-active terminal and — iff the keyboard was up
+  ///     ([ghosttyShouldShowKeyboardOnSessionSwitch]) — re-show it, so the IME
+  ///     stays up (and the bar stays put). When the keyboard was down, focus
+  ///     only; it stays down. NEVER unconditionally `showKeyboard()` — the
+  ///     #693/#717 focus-vs-IME separation must hold.
+  ///
+  /// The initial activation (`prev == null`) is left to the #717 connect-focus
+  /// path; both gates no-op on it.
+  void _onActiveSessionChanged(String? prev, String? next) {
+    if (!mounted) return;
+    final controller = _controller;
+    if (controller == null) return;
+    if (ghosttyShouldCaptureKeyboardOnSessionSwitch(
+      sessionId: widget.sessionId,
+      prevActiveId: prev,
+      nextActiveId: next,
+    )) {
+      final wasUp = controller.keyboardState == KeyboardState.showing;
+      ref.read(sessionSwitchKeyboardWasUpProvider.notifier).state = wasUp;
+      gtrace('ghostty-session-switch: captured keyboardWasUp=$wasUp');
+    }
+    if (ghosttyShouldRestoreFocusOnSessionSwitch(
+      sessionId: widget.sessionId,
+      prevActiveId: prev,
+      nextActiveId: next,
+    )) {
+      // Re-attach focus synchronously so the IME's input connection follows the
+      // newly-active terminal instead of collapsing with the offstage one.
+      controller.requestFocus();
+      // Read the captured flag and (re-)show the keyboard on a POST-FRAME
+      // callback, NOT synchronously: the outgoing view's capture and this
+      // restore both run in the SAME provider tick (one notify → every
+      // listener), and listener order across the two view instances is
+      // unspecified. Reading at post-frame guarantees the capture (synchronous
+      // in its own listener) has already written the flag, and that the
+      // IndexedStack has put this child onstage so showKeyboard() attaches the
+      // IME to it. NEVER show unconditionally — the #693/#717 focus-vs-IME
+      // separation: keyboard up before → up after; down before → stays down.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final keyboardWasUp = ref.read(sessionSwitchKeyboardWasUpProvider);
+        if (ghosttyShouldShowKeyboardOnSessionSwitch(
+          keyboardWasUp: keyboardWasUp,
+        )) {
+          _controller?.showKeyboard();
+        }
+        gtrace(
+          'ghostty-session-switch: restored focus '
+          '(keyboardWasUp=$keyboardWasUp)',
+        );
+      });
+    }
+  }
+
   /// #705: begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT
   /// cell. Anchor it (held for the drag) and SET `controller.selection` to a
   /// collapsed span at that cell — mapped to absolute buffer rows by adding the
@@ -2324,6 +2452,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (ghosttyShouldRefreshOnLifecycle(effectivePrev, next)) {
         _onResume();
       }
+    });
+    // #741: a session-bar swipe-switch must leave the keyboard state UNCHANGED.
+    // The IndexedStack moves the outgoing focused view offstage (its TextInput
+    // detaches → keyboard collapses) and never focuses the incoming view, so the
+    // bar jumps down out from under the finger. Each view listens for the active
+    // session changing: the OUTGOING view captures its keyboard-up state; the
+    // INCOMING view re-attaches focus and re-shows the keyboard iff it was up.
+    ref.listen<String?>(activeSessionIdProvider, (prev, next) {
+      _onActiveSessionChanged(prev, next);
     });
     final controller = _controller;
     if (controller == null) {
