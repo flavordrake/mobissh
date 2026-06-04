@@ -166,13 +166,22 @@ abstract class KeepaliveGateway {
 /// acquisition happens natively (the plugin grabs a `PARTIAL_WAKE_LOCK` when
 /// the foreground service starts); we can only assert here that the flag is
 /// configured.
+///
+/// #738: `allowWifiLock: true` holds a `WifiManager.WifiLock` while the service
+/// runs so the Wi-Fi radio does NOT power down during Doze. The CPU wake lock
+/// alone keeps timers/CPU alive, but a sleeping Wi-Fi radio silently drops the
+/// TCP/Tailscale socket even with the FGS running — that is the prime cause of
+/// "sessions die during an ordinary screen-off sleep with no real network
+/// loss." The platform-side lock acquisition is verified on a real device
+/// (lock the phone with live sessions, wake → still connected); this builder
+/// only asserts the flag is configured.
 ForegroundTaskOptions buildKeepaliveTaskOptions() {
   return ForegroundTaskOptions(
     eventAction: ForegroundTaskEventAction.nothing(),
     autoRunOnBoot: false,
     autoRunOnMyPackageReplaced: false,
     allowWakeLock: true,
-    allowWifiLock: false,
+    allowWifiLock: true,
   );
 }
 

@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- #738: keep SSH sessions alive through ordinary device sleep. Without a
+         user-granted battery-optimization exemption, Doze defers the app's
+         network and freezes the in-isolate keepalive timer on extended sleep
+         even with the foreground service running, silently dropping live
+         sessions. flutter_foreground_task's requestIgnoreBatteryOptimization()
+         (driven by services/battery_optimization.dart) needs this permission to
+         show the OS exemption dialog. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <application
         android:label="mobissh"
         android:name="${applicationName}"
@@ -44,7 +52,21 @@
              deadlocks at State:idle (#539). #512 declared the permissions but
              omitted this declaration; the bug was latent until #533 made the
              service load-bearing for connect. foregroundServiceType MUST match
-             the type passed to startService (dataSync). -->
+             the type passed to startService (dataSync).
+
+             #738 (dataSync tradeoff — deliberately KEPT): on Android 14+ a
+             `dataSync` FGS has a ~6h/day runtime cap, but it is NOT
+             network-restricted while running — Doze network deferral is gated
+             by battery optimization, not by this FGS type. The real levers for
+             "alive through sleep" are the Wi-Fi lock (allowWifiLock, #738) and
+             the battery-optimization exemption (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+             #738), both addressed without changing the type. Alternatives
+             (connectedDevice, specialUse) carry their own constraints
+             (specialUse requires a Play-policy justification; mismatched types
+             crash startForeground on start — see memory reference_android_manifest_class_fqn).
+             Changing the type blindly risks a crash-on-start regression for an
+             unproven benefit, so we keep dataSync. Revisit only if device
+             telemetry shows the 6h cap (not Wi-Fi/Doze) is the drop cause. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync"

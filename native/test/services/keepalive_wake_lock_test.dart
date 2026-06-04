@@ -19,16 +19,37 @@ void main() {
       expect(options.allowWakeLock, isTrue);
     });
 
-    test('autoRunOnBoot stays false (no boot-time start without user intent)',
-        () {
+    test(
+      'allowWifiLock is true so the Wi-Fi radio stays up during Doze (#738)',
+      () {
+        // The CPU wake lock alone keeps timers/CPU alive but the Wi-Fi radio
+        // can still power down in Doze, silently dropping the TCP/Tailscale
+        // socket. allowWifiLock holds a WifiLock while the service runs.
+        final options = buildKeepaliveTaskOptions();
+        expect(options.allowWifiLock, isTrue);
+      },
+    );
+
+    test('both wake lock AND wifi lock are held together (#738)', () {
       final options = buildKeepaliveTaskOptions();
-      expect(options.autoRunOnBoot, isFalse);
+      expect(options.allowWakeLock, isTrue);
+      expect(options.allowWifiLock, isTrue);
     });
 
-    test('eventAction is nothing (the running socket pump is the heartbeat)',
-        () {
-      final options = buildKeepaliveTaskOptions();
-      expect(options.eventAction, isA<ForegroundTaskEventAction>());
-    });
+    test(
+      'autoRunOnBoot stays false (no boot-time start without user intent)',
+      () {
+        final options = buildKeepaliveTaskOptions();
+        expect(options.autoRunOnBoot, isFalse);
+      },
+    );
+
+    test(
+      'eventAction is nothing (the running socket pump is the heartbeat)',
+      () {
+        final options = buildKeepaliveTaskOptions();
+        expect(options.eventAction, isA<ForegroundTaskEventAction>());
+      },
+    );
   });
 }
