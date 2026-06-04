@@ -197,6 +197,132 @@ void main() {
     host.disposeSyncForTest();
   });
 
+  testWidgets('header shows the session label + a color swatch (#740)', (
+    tester,
+  ) async {
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+
+    final host = SessionHost(
+      gateway: pair.taskSide,
+      controllerFactory: _stubControllerFactory,
+      sftpOpener: (_) async => _ScriptedSftpSession({'/': const []}, const []),
+      snapshotInterval: const Duration(hours: 1),
+    );
+
+    final container = ProviderContainer(
+      overrides: [taskSshGatewayProvider.overrideWithValue(pair.uiSide)],
+    );
+    addTearDown(container.dispose);
+
+    const params = SshConnectParams(
+      host: 'example.com',
+      port: 2222,
+      username: 'alice',
+      auth: SshAuth.password('p'),
+    );
+    final entry = container
+        .read(sessionsProvider.notifier)
+        .addOrActivate(params, title: 'Prod box');
+    entry.proxy.connect(params);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(home: FileBrowserScreen(sessionId: entry.id)),
+      ),
+    );
+    await _pump(tester);
+
+    // Header reflects WHICH server is being browsed (#740).
+    expect(find.text('Prod box'), findsOneWidget);
+    // Color swatch present.
+    expect(find.byKey(const Key('file-browser-swatch')), findsOneWidget);
+
+    host.disposeSyncForTest();
+  });
+
+  testWidgets(
+    'back-to-terminal returns to the correct session (multi-session) (#740)',
+    (tester) async {
+      final pair = InMemoryGatewayPair();
+      addTearDown(pair.dispose);
+
+      final host = SessionHost(
+        gateway: pair.taskSide,
+        controllerFactory: _stubControllerFactory,
+        sftpOpener: (_) async =>
+            _ScriptedSftpSession({'/': const []}, const []),
+        snapshotInterval: const Duration(hours: 1),
+      );
+
+      final container = ProviderContainer(
+        overrides: [taskSshGatewayProvider.overrideWithValue(pair.uiSide)],
+      );
+      addTearDown(container.dispose);
+
+      const paramsA = SshConnectParams(
+        host: 'a-host',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      );
+      const paramsB = SshConnectParams(
+        host: 'b-host',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      );
+      final notifier = container.read(sessionsProvider.notifier);
+      final a = notifier.addOrActivate(paramsA, title: 'Session A');
+      final b = notifier.addOrActivate(paramsB, title: 'Session B');
+      a.proxy.connect(paramsA);
+      b.proxy.connect(paramsB);
+      // A is active; we browse files for B and expect back to land on B.
+      notifier.setActive(a.id);
+      expect(container.read(sessionsProvider).activeId, a.id);
+
+      final navKey = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            navigatorKey: navKey,
+            home: const Scaffold(
+              body: Center(child: Text('terminal-root')),
+            ),
+          ),
+        ),
+      );
+      // Push the browser for session B onto the terminal-root navigator.
+      unawaited(
+        navKey.currentState!.push(
+          MaterialPageRoute<void>(
+            builder: (_) => FileBrowserScreen(sessionId: b.id),
+          ),
+        ),
+      );
+      await _pump(tester);
+
+      expect(
+        find.byKey(const Key('file-browser-back-to-terminal')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const Key('file-browser-back-to-terminal')),
+      );
+      await _pump(tester);
+
+      // Returned to the terminal root...
+      expect(find.text('terminal-root'), findsOneWidget);
+      // ...with session B made active (the one we were browsing), not A.
+      expect(container.read(sessionsProvider).activeId, b.id);
+
+      host.disposeSyncForTest();
+    },
+  );
+
   testWidgets('a list error renders the error state', (tester) async {
     final pair = InMemoryGatewayPair();
     addTearDown(pair.dispose);
