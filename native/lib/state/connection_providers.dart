@@ -66,12 +66,23 @@ final resumeRebindListenerProvider = Provider<void>((ref) {
     // client alive (foreground service + #517 transient reconnect); rebind
     // re-subscribes the UI proxy and re-emits its cached snapshot so the
     // terminal repaints within the 500ms budget (#524).
+    //
+    // #737: rebind alone is NOT enough. During Doze the SSH socket can die
+    // HALF-OPEN — no clean close reaches the app and the keepalive timer is
+    // frozen — so on resume the session is still cached as `connected` over a
+    // DEAD socket. Re-subscribing re-attaches the UI to a dead pipe: input
+    // flows in, nothing comes back, and the transport's `done` never fires so
+    // auto-reconnect is never armed (the wake-frozen bug). After rebinding we
+    // ALSO send a liveness probe so the task side actively pings the socket
+    // (short timeout); a dead session is driven to softDisconnected → reconnect
+    // instead of being trusted and left frozen.
     for (final entry in ref.read(sessionsProvider).entries) {
       final state = entry.proxy.data.state;
       if (state == SshSessionState.connected ||
           state == SshSessionState.softDisconnected ||
           state == SshSessionState.reconnecting) {
         entry.proxy.rebind();
+        entry.proxy.probeLiveness();
       }
     }
   });
