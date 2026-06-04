@@ -16,6 +16,8 @@
 // only when the ACTIVE session's `sessionKeybarVisibleProvider` is true. The
 // toggle lives in the session menu; this widget is just the renderer.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -239,6 +241,89 @@ const List<KeybarKey> kDefaultKeybarKeys = [
   KeybarKey(id: 'keyCtrlD', label: '^D', sequence: '\x04'),
 ];
 
+/// Keys that AUTO-REPEAT on press-and-hold (#732). Cursor / navigation keys
+/// only — holding one repeats the SAME keystroke until release, so arrowing
+/// through shell history / moving the cursor / scrolling a TUI doesn't need
+/// many taps. Keyed on the key id so the set is EXPLICIT and trivial to extend.
+///
+/// Deliberately EXCLUDED: modifier / one-shot keys (Esc, the sticky Ctrl,
+/// Tab), symbol keys (/ - |), the fixed control combos (^C/^Z/^B/^D), Enter
+/// (one line at a time), and Paste (out-of-band). A hold on those does nothing
+/// extra — a single tap still sends exactly once.
+const Set<String> kRepeatEligibleKeyIds = {
+  'keyLeft',
+  'keyUp',
+  'keyDown',
+  'keyRight',
+  'keyHome',
+  'keyEnd',
+  'keyPgUp',
+  'keyPgDn',
+};
+
+/// Whether the keybar key with [id] auto-repeats on press-and-hold (#732).
+bool isRepeatEligibleKeyId(String id) => kRepeatEligibleKeyIds.contains(id);
+
+/// Default press-and-hold timing (#732), matching the standard terminal
+/// key-repeat feel: a brief initial delay before repeating kicks in (so a quick
+/// tap never repeats), then a steady, fast cadence until the finger lifts.
+const Duration kKeyRepeatInitialDelay = Duration(milliseconds: 400);
+const Duration kKeyRepeatInterval = Duration(milliseconds: 60);
+
+/// Drives the press-and-hold auto-repeat for a single keybar key (#732).
+///
+/// Kept as a plain, widget-free state holder (like [CtrlModifier]) so the timer
+/// lifecycle is unit-testable with `fakeAsync` — the keybar widget tap path
+/// hangs the headless harness on Material ripple animations (see
+/// keybar_test.dart).
+///
+/// Lifecycle: [start] schedules an initial-delay [Timer]; when it fires, the
+/// first [onTick] runs and a [Timer.periodic] takes over at [interval], firing
+/// [onTick] each tick. [stop] cancels BOTH timers (idempotent) — call it on
+/// pointer up / cancel / dispose. Because the first tick only fires AFTER
+/// [initialDelay], a quick tap (released before the delay) produces ZERO ticks,
+/// so the tap's single send is never doubled.
+///
+/// The controller is intentionally haptic-agnostic: it fires only [onTick]; the
+/// widget's tick callback does the byte-send AND the per-tick haptic. That
+/// keeps the timer logic cleanly unit-testable (the haptic is device-validated).
+class KeyRepeatController {
+  KeyRepeatController({
+    this.initialDelay = kKeyRepeatInitialDelay,
+    this.interval = kKeyRepeatInterval,
+  });
+
+  final Duration initialDelay;
+  final Duration interval;
+
+  Timer? _initialTimer;
+  Timer? _repeatTimer;
+
+  /// True once the hold has begun (initial-delay or repeat timer is live).
+  bool get isRunning => _initialTimer != null || _repeatTimer != null;
+
+  /// Begin the hold: after [initialDelay], fire [onTick] once and start the
+  /// periodic repeat. Restarting while already running cancels the prior
+  /// schedule first (no overlapping cadence, no leaked timer).
+  void start(void Function() onTick) {
+    stop();
+    _initialTimer = Timer(initialDelay, () {
+      _initialTimer = null;
+      onTick();
+      _repeatTimer = Timer.periodic(interval, (_) => onTick());
+    });
+  }
+
+  /// Cancel the hold immediately. Safe to call when nothing is running and safe
+  /// to call repeatedly (idempotent).
+  void stop() {
+    _initialTimer?.cancel();
+    _initialTimer = null;
+    _repeatTimer?.cancel();
+    _repeatTimer = null;
+  }
+}
+
 class Keybar extends ConsumerStatefulWidget {
   const Keybar({super.key, required this.activeEntry});
 
@@ -286,6 +371,23 @@ class _KeybarState extends ConsumerState<Keybar> {
     if (bytes.isNotEmpty) terminal.textInput(bytes);
   }
 
+  /// One auto-repeat tick for a held nav key (#732). Reuses the SAME byte-send
+  /// the tap path uses ([_onKeyTap] for a non-modifier, non-paste key): apply
+  /// the one-shot Ctrl transform if armed, then forward the bytes. The first
+  /// tick consumes any armed Ctrl exactly as a tap would (one-shot, mirrors
+  /// #694); subsequent ticks send the plain CSI sequence — Ctrl never re-arms
+  /// itself, so a held arrow keeps sending the arrow. A minuscule
+  /// `HapticFeedback.selectionClick()` accompanies each tick (owner: the
+  /// lightest, device-validated). Only eligible keys ever reach here.
+  void _onRepeatTick(KeybarKey k) {
+    final terminal = widget.activeEntry.terminal;
+    final ctrl = ref.read(ctrlModifierProvider.notifier);
+    final wasArmed = ctrl.consume();
+    final bytes = wasArmed ? ctrlTransform(k.sequence) : k.sequence;
+    if (bytes.isNotEmpty) terminal.textInput(bytes);
+    HapticFeedback.selectionClick();
+  }
+
   Future<void> _paste(Terminal terminal) async {
     final data = await Clipboard.getData('text/plain');
     final text = data?.text;
@@ -327,6 +429,12 @@ class _KeybarState extends ConsumerState<Keybar> {
                     // The Ctrl key shows an accented/armed state while sticky.
                     armed: k.isModifier && ctrlArmed,
                     onTap: () => _onKeyTap(k),
+                    // #732: press-and-hold auto-repeat for cursor/nav keys only.
+                    // null for non-eligible keys → no repeat wiring at all (a
+                    // hold does nothing extra, a tap still sends once).
+                    onRepeat: isRepeatEligibleKeyId(k.id)
+                        ? () => _onRepeatTick(k)
+                        : null,
                   ),
                 ),
             ],
@@ -337,11 +445,12 @@ class _KeybarState extends ConsumerState<Keybar> {
   }
 }
 
-class _KeybarButton extends StatelessWidget {
+class _KeybarButton extends StatefulWidget {
   const _KeybarButton({
     required this.keyData,
     required this.onTap,
     this.armed = false,
+    this.onRepeat,
   });
 
   final KeybarKey keyData;
@@ -351,8 +460,40 @@ class _KeybarButton extends StatelessWidget {
   /// highlight so it's clear Ctrl is sticky for the next key.
   final bool armed;
 
+  /// #732: press-and-hold auto-repeat handler. Non-null ONLY for repeat-eligible
+  /// (cursor/nav) keys — a hold then fires this once per repeat tick after the
+  /// initial delay. Null for every other key, which therefore never repeats.
+  final VoidCallback? onRepeat;
+
+  @override
+  State<_KeybarButton> createState() => _KeybarButtonState();
+}
+
+class _KeybarButtonState extends State<_KeybarButton> {
+  // #732: each eligible button owns its own auto-repeat controller so a held
+  // pointer repeats the keystroke. Cancelled on pointer up / cancel / dispose
+  // so a lifted finger stops immediately and an unmounted widget leaks no timer.
+  final KeyRepeatController _repeat = KeyRepeatController();
+
+  @override
+  void dispose() {
+    _repeat.stop();
+    super.dispose();
+  }
+
+  void _onPointerDown(PointerDownEvent _) {
+    final onRepeat = widget.onRepeat;
+    if (onRepeat == null) return; // non-eligible key — never repeats.
+    _repeat.start(onRepeat);
+  }
+
+  void _stopRepeat() => _repeat.stop();
+
   @override
   Widget build(BuildContext context) {
+    final keyData = widget.keyData;
+    final armed = widget.armed;
+    final onTap = widget.onTap;
     final theme = Theme.of(context);
     // #703: a single-character TEXT key (`|`, `/`, `-`, …) gets a narrower min
     // width so it doesn't waste horizontal space. Icon keys and multi-char text
@@ -388,7 +529,7 @@ class _KeybarButton extends StatelessWidget {
             ),
             overflow: TextOverflow.ellipsis,
           );
-    return OutlinedButton(
+    final button = OutlinedButton(
       key: Key('keybar-btn-${keyData.id}'),
       onPressed: onTap,
       style: OutlinedButton.styleFrom(
@@ -427,6 +568,20 @@ class _KeybarButton extends StatelessWidget {
         ),
       ),
       child: child,
+    );
+
+    // #732: a pointer-level Listener drives press-and-hold auto-repeat WITHOUT
+    // interfering with the button's own tap (onPressed still fires exactly once
+    // for a quick tap). For non-eligible keys onRepeat is null and the pointer
+    // handlers are no-ops, so those keys behave exactly as before. Pointer up
+    // AND cancel both stop the repeat so a lifted/slid-off finger halts it
+    // immediately. behavior: deferToChild keeps the button hit-testable.
+    return Listener(
+      onPointerDown: _onPointerDown,
+      onPointerUp: (_) => _stopRepeat(),
+      onPointerCancel: (_) => _stopRepeat(),
+      behavior: HitTestBehavior.deferToChild,
+      child: button,
     );
   }
 }
