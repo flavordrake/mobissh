@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+13 (2026-06-04) — never-frozen wake + session/keyboard/file-browser UX
+- **Wake-from-sleep no longer freezes sessions** — on resume the app probes each session and a dead one reconnects (visible "reconnecting…") instead of silently eating input on a stale screen (#737). (Note: separately, keeping sessions alive *through* sleep is still coming — #738.)
+- **Session menu shows each session's profile color swatch** — quick visual identification across sessions (#739).
+- **Swiping the session bar keeps the keyboard up** — switching sessions no longer dismisses the keyboard / jumps the bar out from under your finger (#741).
+- **File browser shows which server you're browsing** + a one-tap **back to that server's terminal** (#740).
+
 ## v0.1.9 (2026-06-04) — connect-hang fix + hold-to-repeat keys + Ghostty default + tap-to-copy URLs
 - **Connect can no longer silently hang** — if the background service outlived the app, tapping a profile used to do nothing; now the app re-syncs with the live service (and surfaces an error instead of hanging). Fixes "tap connect, no response" (#731).
 - **Hold an arrow / nav key to auto-repeat** — press-and-hold ← ↑ ↓ → (and Home/End/PgUp/PgDn) repeats with a tiny haptic tick; a quick tap still sends one (#732).
