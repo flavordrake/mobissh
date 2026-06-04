@@ -7,7 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
-## v0.1.9 (2026-06-04) — Ghostty default + tap-to-copy URLs + keybar Ctrl on the keyboard
+## v0.1.9 (2026-06-04) — connect-hang fix + hold-to-repeat keys + Ghostty default + tap-to-copy URLs
+- **Connect can no longer silently hang** — if the background service outlived the app, tapping a profile used to do nothing; now the app re-syncs with the live service (and surfaces an error instead of hanging). Fixes "tap connect, no response" (#731).
+- **Hold an arrow / nav key to auto-repeat** — press-and-hold ← ↑ ↓ → (and Home/End/PgUp/PgDn) repeats with a tiny haptic tick; a quick tap still sends one (#732).
 - **Ghostty (flterm) is now the default terminal engine** — xterm is still selectable in **Settings → Terminal engine**.
 - **Tap a URL to copy it** — URLs in terminal output are highlighted; single-tap copies to the clipboard. Tapping elsewhere is unchanged.
 - **Keybar Ctrl now works with the soft keyboard** — arm **Ctrl**, then press a letter on the keyboard (e.g. **R**) → Ctrl+R reaches the shell; Ctrl auto-clears.
