@@ -146,6 +146,14 @@ class SessionHost {
         if (s != null) _emitSnapshot(cmd.sessionId, s);
       case SshHostKeyDecisionCommand():
         _handleHostKeyDecision(cmd);
+      case SshUiHelloCommand():
+        // #731: a fresh UI gateway asking the live task to re-announce
+        // readiness. The Android task isolate normally intercepts this in
+        // `KeepaliveTaskHandler.onReceiveData` (before delivery), so the host
+        // only sees it on the in-process desktop path where the gateway is
+        // always ready and this can't trigger — but handle it defensively by
+        // re-emitting ready so the contract is honoured everywhere.
+        _gateway.send(const SshTaskReadyEvent().toJson());
       case SftpListCommand():
         _handleSftpList(cmd);
       case SftpDownloadCommand():

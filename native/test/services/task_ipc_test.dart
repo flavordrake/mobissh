@@ -63,12 +63,18 @@ void main() {
       expect(restored.sessionId, 'sid');
     });
 
+    test('SshUiHelloCommand round-trips (#731)', () {
+      const cmd = SshUiHelloCommand();
+      final restored = SshTaskCommand.fromJson(cmd.toJson());
+      expect(restored, isA<SshUiHelloCommand>());
+      expect(restored.kind, SshTaskCommandKind.uiHello);
+      // Task-global: empty sentinel sessionId, mirroring SshTaskReadyEvent.
+      expect(restored.sessionId, '');
+    });
+
     test('unknown kind throws FormatException', () {
       expect(
-        () => SshTaskCommand.fromJson({
-          'kind': 'bogus',
-          'sessionId': 'sid',
-        }),
+        () => SshTaskCommand.fromJson({'kind': 'bogus', 'sessionId': 'sid'}),
         throwsFormatException,
       );
     });
@@ -161,21 +167,20 @@ void main() {
         snapshotInterval: const Duration(hours: 1), // disabled in this test
       );
       addTearDown(host.dispose);
-      final proxy = SshSessionProxy(
-        sessionId: 'sid-a',
-        gateway: pair.uiSide,
-      );
+      final proxy = SshSessionProxy(sessionId: 'sid-a', gateway: pair.uiSide);
       addTearDown(proxy.dispose);
 
       final states = <SshSessionState>[];
       final sub = proxy.stream.listen((d) => states.add(d.state));
 
-      proxy.connect(const SshConnectParams(
-        host: 'h',
-        port: 22,
-        username: 'u',
-        auth: SshAuth.password('p'),
-      ));
+      proxy.connect(
+        const SshConnectParams(
+          host: 'h',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       // First state event the host emits is `connecting` from
@@ -195,18 +200,17 @@ void main() {
         snapshotInterval: const Duration(hours: 1),
       );
       addTearDown(host.dispose);
-      final proxy = SshSessionProxy(
-        sessionId: 'sid-x',
-        gateway: pair.uiSide,
-      );
+      final proxy = SshSessionProxy(sessionId: 'sid-x', gateway: pair.uiSide);
       addTearDown(proxy.dispose);
 
-      proxy.connect(const SshConnectParams(
-        host: 'h',
-        port: 22,
-        username: 'u',
-        auth: SshAuth.password('p'),
-      ));
+      proxy.connect(
+        const SshConnectParams(
+          host: 'h',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       // Feed some output through the host so metrics tick.
       host.ingestOutputForTest(
@@ -232,18 +236,17 @@ void main() {
         snapshotInterval: const Duration(hours: 1),
       );
       addTearDown(host.dispose);
-      final proxy = SshSessionProxy(
-        sessionId: 'sid-d',
-        gateway: pair.uiSide,
-      );
+      final proxy = SshSessionProxy(sessionId: 'sid-d', gateway: pair.uiSide);
       addTearDown(proxy.dispose);
 
-      proxy.connect(const SshConnectParams(
-        host: 'h',
-        port: 22,
-        username: 'u',
-        auth: SshAuth.password('p'),
-      ));
+      proxy.connect(
+        const SshConnectParams(
+          host: 'h',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(host.sessionIds, contains('sid-d'));
 

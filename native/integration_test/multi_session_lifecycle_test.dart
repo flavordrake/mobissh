@@ -19,7 +19,9 @@
 //
 // Flow:
 //   1. Connect session A (127.0.0.1:2222) → terminal screen.
-//   2. Session menu → "New session" → connect session B (127.0.0.1:2223).
+//   2. Session menu → "Profiles & settings" (#721 `session-menu-new`, which now
+//      opens the unified connect-home OVER the session via `openConnectHome`)
+//      → connect session B (127.0.0.1:2223) through the embedded ConnectForm.
 //   3. Assert BOTH proxies reach `connected`.
 //
 // Out of scope here (covered elsewhere):
@@ -71,7 +73,7 @@ Future<bool> _pumpUntil(
 }
 
 /// #583: the inline form is gone. An ad-hoc connect (session A from the home
-/// chooser, session B from the pushed New-session chooser) goes through the
+/// chooser, session B from the pushed connect-home #721) goes through the
 /// "New connection" → editor → "Save & connect" flow.
 Future<void> _fillAndSubmit(
   WidgetTester tester, {
@@ -142,7 +144,20 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('session-menu-new')));
     await _pumpFrames(tester, 16);
-    expect(find.byKey(const Key('new-session-page')), findsOneWidget);
+    // #721 "one view": "New session" no longer pushes a dedicated
+    // `new-session-page`; it opens the unified connect-home OVER the live
+    // terminal via `openConnectHome` → `ConnectHomePage(fromSession: true)`
+    // (session_menu.dart:338, main.dart:237/296). The fromSession route shows a
+    // back-to-session affordance keyed `home-back-to-session` (main.dart:298) —
+    // the addressable proof we landed on the pushed connect-home. The embedded
+    // ConnectForm reachable from here is exactly what `adhocPasswordConnect`
+    // drives (new-connection → editor → connect-submit) for session B.
+    expect(
+      find.byKey(const Key('home-back-to-session')),
+      findsOneWidget,
+      reason:
+          'no connect-home pushed over the session — leg 2 is UI-unreachable',
+    );
 
     await _fillAndSubmit(
       tester,
