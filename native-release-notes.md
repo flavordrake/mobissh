@@ -7,8 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
-## v0.1.9 (2026-06-03) — Ghostty default + tap-to-copy URLs
+## v0.1.9 (2026-06-04) — Ghostty default + tap-to-copy URLs + keybar Ctrl on the keyboard
 - **Ghostty (flterm) is now the default terminal engine** — xterm is still selectable in **Settings → Terminal engine**.
+- **Tap a URL to copy it** — URLs in terminal output are highlighted; single-tap copies to the clipboard. Tapping elsewhere is unchanged.
+- **Keybar Ctrl now works with the soft keyboard** — arm **Ctrl**, then press a letter on the keyboard (e.g. **R**) → Ctrl+R reaches the shell; Ctrl auto-clears.
 
 ## v0.1.8 (2026-06-03) — Ghostty terminal, hardened
 - **Ghostty (flterm) is the recommended engine** — native touch drag-select + copy, precise tmux selection, faster scrolling. Turn it on in **Settings → Terminal engine** (it becomes the default in the next build).
