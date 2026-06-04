@@ -192,6 +192,7 @@ class TerminalRenderBox extends RenderBox {
   }) : _paintState = TerminalPaintState(theme, metrics)
          ..blinkVisible = blinkVisible
          ..selection = _renderObserver.selection
+         ..highlights = _renderObserver.highlights
          ..cursorFocused = _renderObserver.hasFocus {
     _atlasHandle = _renderCache.acquireAtlas(
       .fromTheme(
@@ -497,6 +498,9 @@ class TerminalRenderBox extends RenderBox {
     final previousSelection = _paintState.selection;
     final newSelection = _renderObserver.selection;
     _paintState.selection = newSelection;
+    final previousHighlights = _paintState.highlights;
+    final newHighlights = _renderObserver.highlights;
+    _paintState.highlights = newHighlights;
     _paintState.cursorFocused = _renderObserver.hasFocus;
     if (previousSelection != newSelection) {
       final viewportOffset = _terminal.scrollbar.offset;
@@ -506,6 +510,17 @@ class TerminalRenderBox extends RenderBox {
       );
       _pipeline.markSelectionRowsDirty(
         newSelection,
+        viewportOffset: viewportOffset,
+      );
+    }
+    if (!identical(previousHighlights, newHighlights)) {
+      final viewportOffset = _terminal.scrollbar.offset;
+      _pipeline.markHighlightRowsDirty(
+        previousHighlights,
+        viewportOffset: viewportOffset,
+      );
+      _pipeline.markHighlightRowsDirty(
+        newHighlights,
         viewportOffset: viewportOffset,
       );
     }

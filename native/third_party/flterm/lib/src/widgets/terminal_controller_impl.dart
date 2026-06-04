@@ -61,6 +61,7 @@ class TerminalControllerImpl extends TerminalController
 
   FocusNode? _focusNode;
   TerminalSelection? _selection;
+  List<HighlightRange> _highlights = const [];
   ScrollController? _scrollController;
 
   TerminalControllerImpl({TerminalConfig config = const TerminalConfig()})
@@ -148,6 +149,27 @@ class TerminalControllerImpl extends TerminalController
     if (_selection == value) return;
     _selection = value;
     notifyListeners();
+  }
+
+  @override
+  List<HighlightRange> get highlights => _highlights;
+
+  @override
+  set highlights(List<HighlightRange> value) {
+    if (identical(_highlights, value)) return;
+    _highlights = value;
+    notifyListeners();
+  }
+
+  @override
+  HighlightRange? highlightAt({required int row, required int col}) {
+    if (_highlights.isEmpty) return null;
+    final absRow = row + scrollbar.offset;
+    HighlightRange? match;
+    for (final range in _highlights) {
+      if (range.contains(absRow, col)) match = range;
+    }
+    return match;
   }
 
   @override

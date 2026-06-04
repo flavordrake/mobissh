@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flterm/src/foundation/cell_metrics.dart';
+import 'package:flterm/src/foundation/highlight_range.dart';
 import 'package:flterm/src/foundation/terminal_selection.dart';
 import 'package:flterm/src/foundation/terminal_theme.dart';
 import 'package:flterm/src/rendering/atlas/atlas.dart';
@@ -103,6 +104,59 @@ void main() {
       pipeline.sync(terminal, terminalDirty: false);
 
       paint(pipeline);
+    });
+
+    test('highlight dirtying can repaint without terminal changes', () {
+      writeUtf8(terminal, 'hello');
+      pipeline.sync(terminal, terminalDirty: true);
+
+      state.highlights = const [
+        HighlightRange(startRow: 0, startCol: 1, endRow: 0, endCol: 3),
+      ];
+      pipeline.markHighlightRowsDirty(state.highlights, viewportOffset: 0);
+
+      pipeline.sync(terminal, terminalDirty: false);
+
+      paint(pipeline);
+    });
+
+    test('highlight painter fills the highlighted cells', () async {
+      writeUtf8(terminal, 'hello');
+      pipeline.sync(terminal, terminalDirty: true);
+
+      state.highlights = const [
+        HighlightRange(
+          startRow: 0,
+          startCol: 1,
+          endRow: 0,
+          endCol: 3,
+          background: Color(0xFFFF0000),
+        ),
+      ];
+
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      pipeline.paint(canvas);
+      final image = recorder.endRecording().toImageSync(
+        (8 * metrics.cellWidth).round(),
+        (2 * metrics.cellHeight).round(),
+      );
+      addTearDown(image.dispose);
+
+      // The red highlight fill covers cols 1..2 on row 0. Sample near the
+      // top edge of the cell (above the glyph baseline, so no text ink) to
+      // read the fill directly: col 1 is red, col 5 (outside the range) is not.
+      final bytes = (await image.toByteData())!.buffer.asUint8List();
+      int rgbAt(int x, int y) {
+        final i = (y * image.width + x) * 4;
+        return (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+      }
+
+      const sampleY = 1;
+      final insideX = (1 * metrics.cellWidth + metrics.cellWidth / 2).round();
+      final outsideX = (5 * metrics.cellWidth + metrics.cellWidth / 2).round();
+      expect(rgbAt(insideX, sampleY), 0xFF0000);
+      expect(rgbAt(outsideX, sampleY), isNot(0xFF0000));
     });
   });
 }

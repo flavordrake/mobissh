@@ -335,6 +335,9 @@ class _TestRenderObserver implements TerminalRenderObserver {
   TerminalSelection? get selection => null;
 
   @override
+  List<HighlightRange> get highlights => const [];
+
+  @override
   void addListener(VoidCallback listener) {}
 
   @override
