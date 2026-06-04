@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+18 (2026-06-04) — URL highlight drawn inside the terminal (no more drift)
+- **URL highlight is now painted by the terminal itself** (forked flterm), using its real cell metrics — so it sits exactly on the URL on every row and tracks scroll/wrap automatically. This replaces the overlay that kept drifting (#748/#699/#723). It now shows as a subtle tint on the URL rather than an underline — tell me if you'd rather have the underline back. (#755 — foundation for OSC-8 links + path links next.)
+
 ## v0.1.9+17 (2026-06-04) — shorter keybar + URL highlight on scroll/wrap
 - **Shorter keybar** — collapsed the margin + padding so the bar is noticeably less tall; the key labels/glyphs are the same readable size (#752).
 - **URL highlight clears when you scroll** — no more stale underline floating over shifted text; it disappears during a scroll and re-applies once it settles (#750).
