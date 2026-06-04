@@ -181,6 +181,7 @@ import '../state/ui_prefs_providers.dart';
 import 'ghostty_url_detector.dart';
 import 'keybar.dart';
 import 'top_toast.dart';
+import 'url_action_overlay.dart';
 
 /// Apply the shared armed keybar Ctrl modifier (#728) to a SOFT-KEYBOARD
 /// keystroke flowing through flterm's `controller.onOutput`.
@@ -874,6 +875,23 @@ List<String> ghosttyTapClickReports({required int col, required int row}) => [
 /// land as literal text). Pure, so the gating decision is unit-testable.
 bool ghosttyTapShouldForwardClick({required bool active}) => active;
 
+/// Whether a LONG-PRESS should show the URL Copy/Open action menu instead of
+/// starting a selection (#734).
+///
+/// #726 wired single-tap-to-copy on the ghostty (default) terminal, but the
+/// long-press → Copy/Open menu (`showUrlActions` / url_action_overlay.dart) was
+/// only wired into the xterm branch. #734 wires it into the ghostty long-press:
+/// on a long-press the router hit-tests the press cell against the SAME detected
+/// URL ranges tap-copy uses ([ghosttyUrlAtCell] over the parent's `_urlMatches`).
+/// If a URL is at the cell ([urlAtCell] non-null) the router shows the action menu
+/// and SUPPRESSES the #705/#706 selection for that gesture; otherwise the existing
+/// long-press selection starts unchanged. So the URL hit-test WINS over selection.
+///
+/// This trivial predicate factors the decision out of the widget so it's
+/// unit-testable headless (and names the rule at the call site). Pure.
+bool ghosttyLongPressShowsUrlMenu(GhosttyUrlMatch? urlAtCell) =>
+    urlAtCell != null;
+
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
 /// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
 ///
@@ -1119,6 +1137,7 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
     required this.onSelectionClear,
     required this.urlAtCell,
     required this.onUrlTap,
+    required this.onUrlLongPress,
   });
 
   /// Whether to intercept touch (the remote has mouse tracking on).
@@ -1204,6 +1223,17 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
   /// selection-dismiss path.
   final void Function(GhosttyUrlMatch match) onUrlTap;
 
+  /// #734: a LONG-PRESS that lands on a detected URL shows the Copy/Open action
+  /// menu (`showUrlActions`) instead of starting a selection. The parent builds
+  /// the highlight rects + anchor and calls `showUrlActions`; [match] is the URL
+  /// at the pressed cell and [globalAnchor] is the long-press global position the
+  /// menu anchors near. When this fires the selection gesture is SUPPRESSED for
+  /// the rest of the long-press (no `onSelectionStart`/`onSelectionExtend`), so
+  /// the URL hit-test WINS over the #705/#706 selection. Off any URL this never
+  /// fires and selection starts as today.
+  final void Function(GhosttyUrlMatch match, Offset globalAnchor)
+  onUrlLongPress;
+
   @override
   State<GhosttyPointerGestureRouter> createState() =>
       _GhosttyPointerGestureRouterState();
@@ -1225,6 +1255,14 @@ class _GhosttyPointerGestureRouterState
   double _panDy = 0;
   GhosttySwipeAxis _axis = GhosttySwipeAxis.none;
   double _windowSwitchDx = 0;
+
+  /// #734: true while the IN-PROGRESS long-press landed on a detected URL and so
+  /// drives the Copy/Open action menu instead of a selection. Set in
+  /// [_onLongPressStart] when the pressed cell hits a URL; while true the
+  /// move/end handlers do NOT extend/finish a selection (the menu owns the
+  /// gesture). Reset on every long-press-start so a later off-URL press selects
+  /// normally.
+  bool _longPressOnUrl = false;
 
   void _onPanStart(DragStartDetails details) {
     _panDx = 0;
@@ -1405,6 +1443,19 @@ class _GhosttyPointerGestureRouterState
     widget.onFocus(); // focus only — a selection must NOT pop the keyboard.
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
+    // #734: URL hit-test WINS over selection. Map the pressed cell to a detected
+    // URL (the SAME 1-based→0-based convention as the tap-copy path, #726). If
+    // the press lands ON a URL, show the Copy/Open action menu and SUPPRESS the
+    // selection for the rest of this long-press; otherwise start the #705/#706
+    // selection unchanged.
+    final url = widget.urlAtCell(col - 1, row - 1);
+    if (ghosttyLongPressShowsUrlMenu(url)) {
+      _longPressOnUrl = true;
+      _trace('longpress-url', local.dx, local.dy, col, row, 'menu');
+      widget.onUrlLongPress(url!, details.globalPosition);
+      return;
+    }
+    _longPressOnUrl = false;
     // #705: drive flterm's LOCAL selection (NOT a tmux SGR drag, which tmux's
     // default copy-and-cancel would clear on release). Anchor a collapsed
     // selection at the pressed cell; the parent adds the scroll offset.
@@ -1413,6 +1464,9 @@ class _GhosttyPointerGestureRouterState
   }
 
   void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
+    // #734: while the URL menu owns this long-press, a drag must NOT extend a
+    // selection (the gesture belongs to the menu).
+    if (_longPressOnUrl) return;
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
     // #705: extend the LOCAL selection's END to the dragged cell so the
@@ -1422,6 +1476,11 @@ class _GhosttyPointerGestureRouterState
   }
 
   void _onLongPressEnd(LongPressEndDetails details) {
+    // #734: a URL-menu long-press has no selection to finalise.
+    if (_longPressOnUrl) {
+      _longPressOnUrl = false;
+      return;
+    }
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
     // #705: do NOTHING that clears the selection — leave `controller.selection`
@@ -1703,6 +1762,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// 0 until the first resize is sent.
   int _lastSentCols = 0;
   int _lastSentRows = 0;
+
+  /// #734: the REAL flterm cell size last measured in [build] (via
+  /// [ghosttyMeasureCellSize]), captured so [_showUrlMenu] can build the URL's
+  /// on-screen highlight rects with the SAME geometry the router + highlight
+  /// painter use — without re-reading the per-session font providers off-build.
+  Size _lastCellSize = Size.zero;
 
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
   /// long-press-start, held while the finger drags so each extend rebuilds the
@@ -2386,6 +2451,57 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (mounted) showTopToast(context, 'Copied URL');
   }
 
+  /// #734: show the Copy/Open action menu for a long-pressed URL — the SAME
+  /// `showUrlActions` overlay (`url_action_overlay.dart`, keys `url-action-menu`/
+  /// `url-action-copy`/`url-action-open`) the xterm path uses, so Copy →
+  /// clipboard + toast and Open → `launchUrl` (external). Reuses the detected
+  /// [match] ranges (#726) — no duplicate detection.
+  ///
+  /// Builds the URL's on-screen highlight rects from the match's 0-based viewport
+  /// cell range using the SAME geometry the [GhosttyUrlHighlightPainter] +
+  /// gesture router use: [kGhosttyTerminalPadding] + the live [_lastCellSize],
+  /// then offset by the view's render-box GLOBAL origin (the overlay layer is
+  /// rooted, so it wants global coords). A soft-wrapped URL spans rows → one rect
+  /// per row segment, mirroring [ghosttyCellInUrl]'s geometry.
+  void _showUrlMenu(GhosttyUrlMatch match, Offset globalAnchor) {
+    if (!mounted) return;
+    final rects = _urlGlobalRects(match);
+    showUrlActions(
+      context,
+      match.url,
+      highlightRects: rects,
+      anchor: globalAnchor,
+    );
+  }
+
+  /// The GLOBAL on-screen rects for [match]'s cell range (#734). One per row the
+  /// URL occupies: the start row's tail, every interior row full-width, the end
+  /// row's head — matching [ghosttyCellInUrl]'s hit-test geometry. Empty (the
+  /// menu still shows, anchored at the press) if the layout isn't measurable yet.
+  List<Rect> _urlGlobalRects(GhosttyUrlMatch match) {
+    final cell = _lastCellSize;
+    if (cell.width <= 0 || cell.height <= 0) return const [];
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return const [];
+    final origin = box.localToGlobal(Offset.zero);
+    final cols = _cols > 0 ? _cols : _lastSentCols;
+    final rects = <Rect>[];
+    for (var row = match.startRow; row <= match.endRow; row++) {
+      final startCol = row == match.startRow ? match.startCol : 0;
+      final endCol = row == match.endRow
+          ? match.endCol
+          : (cols > 0 ? cols : match.endCol);
+      if (endCol <= startCol) continue;
+      final left = kGhosttyTerminalPadding + startCol * cell.width;
+      final top = kGhosttyTerminalPadding + row * cell.height;
+      final width = (endCol - startCol) * cell.width;
+      rects.add(
+        Rect.fromLTWH(origin.dx + left, origin.dy + top, width, cell.height),
+      );
+    }
+    return rects;
+  }
+
   Future<void> _copySelection() async {
     final controller = _controller;
     if (controller == null) return;
@@ -2503,6 +2619,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       fontFamilyFallback: theme.fontFamilyFallback,
       devicePixelRatio: devicePixelRatio,
     );
+    // #734: remember the live cell size so a long-press URL menu can build its
+    // highlight rects with the same geometry the router maps touches with.
+    _lastCellSize = cellSize;
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
@@ -2635,6 +2754,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             urlAtCell: (col, row) =>
                 ghosttyUrlAtCell(_urlMatches, col: col, row: row),
             onUrlTap: _copyUrl,
+            // #734: a long-press on a detected URL shows the Copy/Open action
+            // menu (the same `showUrlActions` overlay the xterm path uses). The
+            // parent builds the on-screen highlight rects + anchor from the match
+            // and hands them to the overlay.
+            onUrlLongPress: _showUrlMenu,
           ),
         ),
         // Selection affordances (bottom-right). #712: shown ONLY while a

@@ -77,6 +77,7 @@ void main() {
             onSelectionClear: () {},
             urlAtCell: (_, _) => null,
             onUrlTap: (_) {},
+            onUrlLongPress: (_, _) {},
           ),
         ),
       ),
