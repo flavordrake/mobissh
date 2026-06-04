@@ -142,11 +142,22 @@ void main() {
   });
 
   group('keybar sizing (#703 — uniform text size, narrow single-char keys)', () {
-    test('button min height holds the 44px touch-target floor', () {
-      // #615 shrank this to ~33; #696 restored the comfortable 44px tap target.
-      // #703 keeps the height floor — only horizontal width shrinks for
-      // single-char keys, never the tap-target height.
-      expect(kKeybarButtonMinHeight, greaterThanOrEqualTo(44));
+    test('button min height is a tight, tappable touch height (#752)', () {
+      // #615 shrank this to ~33; #696 restored a 44px tap target. #752 collapses
+      // the VERTICAL dead space again — the key now hugs its (unchanged ~18px)
+      // label rather than the old 44px floor — while staying tappable. Only the
+      // height shrinks; the horizontal min-widths are unchanged.
+      expect(kKeybarButtonMinHeight, lessThan(44));
+      expect(
+        kKeybarButtonMinHeight,
+        greaterThanOrEqualTo(kKeybarLabelFontSize),
+        reason: 'must still clear its own (unchanged) label height',
+      );
+      expect(
+        kKeybarButtonMinHeight,
+        greaterThanOrEqualTo(28),
+        reason: 'still a reasonable, tappable touch height',
+      );
     });
 
     test('all text labels share ONE uniform size — the ESC size (#703)', () {
@@ -191,8 +202,8 @@ void main() {
       // The compose-bar bottomReserve consumes this. It must cover the button
       // height plus the scroll-view vertical padding with a small margin.
       expect(kKeybarReserve, greaterThanOrEqualTo(kKeybarButtonMinHeight));
-      // Still meaningfully tighter than the old hardcoded 96.
-      expect(kKeybarReserve, lessThanOrEqualTo(72));
+      // #752: the bar shrank, so the reserve is tighter than the old 56.
+      expect(kKeybarReserve, lessThanOrEqualTo(56));
     });
 
     test('keybar palette is high-contrast and monochrome (#696)', () {

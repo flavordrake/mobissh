@@ -41,8 +41,16 @@ import '../state/sessions.dart';
 /// button style below.
 ///
 /// Old values (pre-#615): minWidth 48, minHeight 44, icon 18, label 14.
+///
+/// #752: the bar was too TALL — it ate terminal real estate. The 44px height
+/// floor forced ~26px of dead vertical space around an ~18px label. #752
+/// collapses the VERTICAL spacing only (this floor, the scroll-view vertical
+/// padding, and the per-key vertical padding) so each key HUGS its (unchanged)
+/// label. The font (kKeybarLabelFontSize 14) and icon (kKeybarIconSize 18) are
+/// untouched — keys stay just as readable. The horizontal min WIDTHs are
+/// unchanged so keys stay comfortably tappable; only the height shrinks.
 const double kKeybarButtonMinWidth = 44;
-const double kKeybarButtonMinHeight = 44;
+const double kKeybarButtonMinHeight = 32; // #752: was 44 (collapsed dead space)
 const double kKeybarIconSize = 18;
 
 /// Single-character TEXT keys (`|`, `/`, `-` and any other 1-glyph label) are
@@ -70,10 +78,10 @@ const double kKeybarLabelFontSize = 14;
 const double kKeybarEscFontSize = 14;
 
 /// Vertical space (logical px) the keybar occupies, used as the compose-bar
-/// bottom reserve. Button height (44) + the 3px top/bottom scroll-view padding,
+/// bottom reserve. Button height (32) + the 2px top/bottom scroll-view padding,
 /// rounded up for a small safety margin so a docked compose panel clears the
-/// chrome.
-const double kKeybarReserve = 56;
+/// chrome. #752: tracks the collapsed bar height (was 56 for the old 44px bar).
+const double kKeybarReserve = 40;
 
 /// High-contrast keybar palette (#696). Owner device feedback: the old
 /// dark-blue (theme `surfaceContainerHigh`) bar + dim `onSurface` labels were
@@ -417,7 +425,9 @@ class _KeybarState extends ConsumerState<Keybar> {
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           // #615: tighter vertical padding (was 4) to shrink the strip ~25%.
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+          // #752: trimmed again (3 → 2) to collapse the bar's outer margin so
+          // the keys hug the chrome edges; horizontal padding is unchanged.
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -541,11 +551,13 @@ class _KeybarButtonState extends State<_KeybarButton> {
         foregroundColor: fg,
         // #696: trim the internal padding so the label fits without growing the
         // bar height. The comfortable tap target is preserved via minimumSize
-        // (44px height) below. #703: single-char keys also trim horizontal
-        // padding so they read as tight, narrow keys.
+        // below. #703: single-char keys also trim horizontal padding so they
+        // read as tight, narrow keys. #752: collapse the per-key VERTICAL
+        // padding (2 → 1) so the key hugs its (unchanged) label glyph; the
+        // horizontal padding is untouched so keys stay tappable.
         padding: EdgeInsets.symmetric(
           horizontal: isSingleChar ? 2 : 6,
-          vertical: 2,
+          vertical: 1,
         ),
         // #703: single-char text keys use a narrower min width so they don't
         // waste space; multi-char and icon keys keep the full width. Height is
