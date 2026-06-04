@@ -22,6 +22,7 @@ import '../services/session_messages.dart';
 import '../services/sftp_download.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
+import '../state/ui_prefs_providers.dart';
 import 'pdf_viewer_screen.dart';
 import 'top_toast.dart';
 
@@ -331,12 +332,67 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     _list(parent);
   }
 
+  /// #740: return to THIS session's terminal — make the browsed session active
+  /// (so the terminal screen's IndexedStack shows the right one in a
+  /// multi-session setup) and pop back to it. Falls back to a plain pop if the
+  /// session has since gone away.
+  void _backToTerminal() {
+    final notifier = ref.read(sessionsProvider.notifier);
+    final exists = ref
+        .read(sessionsProvider)
+        .entries
+        .any((e) => e.id == widget.sessionId);
+    if (exists) notifier.setActive(widget.sessionId);
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final downloading = _downloadRequestId != null;
+    // #740: resolve which server this browser is for so the header names it and
+    // the swatch matches the session bar (#653). The browser already knows its
+    // [widget.sessionId]; reuse the same label + color sources as terminal_screen.
+    SessionEntry? entry;
+    for (final e in ref.watch(sessionsProvider).entries) {
+      if (e.id == widget.sessionId) {
+        entry = e;
+        break;
+      }
+    }
+    final label = entry?.label ?? 'Files';
+    final swatchColor =
+        ref.watch(sessionColorProvider(widget.sessionId)) ??
+        ref.watch(sessionTerminalThemeProvider(widget.sessionId)).theme.cursor;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Files'),
+        leading: IconButton(
+          key: const Key('file-browser-back-to-terminal'),
+          tooltip: 'Back to terminal',
+          icon: const Icon(Icons.terminal),
+          onPressed: _backToTerminal,
+        ),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              key: const Key('file-browser-swatch'),
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: swatchColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                key: const Key('file-browser-title'),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),
           child: _PathBar(
