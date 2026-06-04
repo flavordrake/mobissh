@@ -10,9 +10,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../platform/desktop.dart';
+import '../services/battery_optimization.dart';
 import '../services/keepalive_task.dart';
 import '../services/session_messages.dart';
 import '../services/task_ssh_gateway.dart';
+import '../ssh/ssh_session.dart';
 import 'session_host_providers.dart';
 import 'sessions.dart';
 
@@ -86,6 +88,46 @@ final keepaliveEnabledProvider =
     StateNotifierProvider<KeepaliveEnabledNotifier, bool>((ref) {
       return KeepaliveEnabledNotifier();
     });
+
+/// Battery-optimization exemption controller (#738). Owns the decision of
+/// whether to prompt the user to exclude the app from Doze battery
+/// optimization (only when not already exempt AND not already asked), so the
+/// keep-alive foreground service can actually keep sessions alive through an
+/// ordinary screen-off sleep. Desktop gets no battery-opt flow (no Doze): the
+/// controller is still constructed but its first-connect trigger is gated off
+/// on desktop below.
+final batteryOptimizationProvider = Provider<BatteryOptimizationController>((
+  ref,
+) {
+  return BatteryOptimizationController();
+});
+
+/// Fires the one-time battery-optimization auto-prompt the first time any
+/// session reaches `connected` (#738). Decoupled from the connect/resume state
+/// machine (#737) — it only OBSERVES the sessions list via `ref.listen`, never
+/// mutates session state. The controller itself guards against re-nagging
+/// (prompts at most once, persists the asked flag), so this listener can fire
+/// freely on every connect without annoying the user. No-op on desktop (no
+/// Doze). Read this provider once at app start to arm the listener.
+final batteryOptimizationFirstConnectTriggerProvider = Provider<void>((ref) {
+  if (ref.read(isDesktopProvider)) return;
+  final controller = ref.read(batteryOptimizationProvider);
+  var prompted = false;
+  bool anyConnected(SessionsState s) =>
+      s.entries.any((e) => e.proxy.data.state == SshSessionState.connected);
+  // If a session is already connected when armed, attempt immediately.
+  if (anyConnected(ref.read(sessionsProvider))) {
+    prompted = true;
+    unawaited(controller.maybePromptOnce());
+  }
+  ref.listen<SessionsState>(sessionsProvider, (_, next) {
+    if (prompted) return;
+    if (anyConnected(next)) {
+      prompted = true;
+      unawaited(controller.maybePromptOnce());
+    }
+  });
+});
 
 /// Singleton KeepaliveController, attached to EVERY session in the collection.
 ///

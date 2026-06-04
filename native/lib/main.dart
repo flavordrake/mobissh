@@ -120,6 +120,14 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     // tracked in the #512 TODO.
     ref.watch(keepaliveControllerProvider);
 
+    // #738: arm the one-time battery-optimization auto-prompt. Fires the OS
+    // exemption dialog the first time a session connects (at most once ever),
+    // so Doze stops deferring the app's network / freezing the keepalive timer
+    // and ordinary screen-off sleeps don't drop live sessions. Only OBSERVES
+    // the sessions list — does not touch the connect/resume state machine
+    // (#737). No-op on desktop.
+    ref.watch(batteryOptimizationFirstConnectTriggerProvider);
+
     // #551: keep the always-on resume-rebind listener alive for the lifetime
     // of the app. Unlike the inline `ref.listen` below (which dies when this
     // router unmounts to show TerminalScreen), this provider rebinds every

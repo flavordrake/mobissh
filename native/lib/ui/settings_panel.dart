@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/battery_optimization.dart';
 import '../state/keepalive_providers.dart';
 import '../state/terminal_backend.dart';
 import '../state/ui_prefs_providers.dart';
@@ -38,6 +39,23 @@ class SettingsPanel extends ConsumerWidget {
           ),
           value: keepalive,
           onChanged: (v) => ref.read(keepaliveEnabledProvider.notifier).set(v),
+        ),
+        // #738: explicit battery-optimization exemption affordance. The
+        // one-time auto-prompt fires on first connect, but a user who declined
+        // (or wants to re-grant) can request it here. Excluding the app from
+        // Doze battery optimization is what lets the keep-alive service hold the
+        // connection through an ordinary screen-off sleep.
+        ListTile(
+          key: const ValueKey('battery-opt-tile'),
+          leading: const Icon(Icons.battery_saver_outlined),
+          title: const Text('Allow background battery use'),
+          subtitle: const Text(
+            'Exclude MobiSSH from battery optimization so Android keeps SSH '
+            'sessions alive while the screen is off. Without this, the system '
+            'may freeze the connection during sleep.',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _requestBatteryOptExemption(context, ref),
         ),
         ListTile(
           key: const ValueKey('font-size-tile'),
@@ -95,5 +113,31 @@ class SettingsPanel extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _requestBatteryOptExemption(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final controller = ref.read(batteryOptimizationProvider);
+    final result = await controller.requestNow();
+    if (messenger == null) return;
+    final String message;
+    switch (result.outcome) {
+      case BatteryOptPromptOutcome.alreadyExempt:
+        message = 'Already excluded from battery optimization.';
+        break;
+      case BatteryOptPromptOutcome.prompted:
+        message = result.granted
+            ? 'Excluded from battery optimization.'
+            : 'Not excluded — sessions may drop during long sleeps.';
+        break;
+      case BatteryOptPromptOutcome.alreadyAsked:
+      case BatteryOptPromptOutcome.unavailable:
+        message = 'Battery optimization settings are unavailable here.';
+        break;
+    }
+    messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 }
