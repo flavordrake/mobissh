@@ -1,0 +1,32 @@
+name: flterm_example
+description: Example app for flterm.
+version: 0.0.1-dev.1
+resolution: workspace
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=3.32.0"
+
+dependencies:
+  flterm:
+    path: ..
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/libghostty-wasm32-freestanding.wasm
+    - assets/fonts/
+
+  fonts:
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700

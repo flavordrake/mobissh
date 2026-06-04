@@ -50,7 +50,13 @@ dependencies:
   # hooks — Android builds with no extra toolchain, proven by spike PR #683).
   # Pinned exact (0.0.3 / libghostty) — beta API surface (reference_terminal_
   # widget_selection memory).
-  flterm: 0.0.3
+  # VENDORED (#755 Slice 1a): forked into native/third_party/flterm/ to add a
+  # source-level structured-text highlight pass (real CellMetrics) in later
+  # slices. Slice 1a is a pure relocation — zero source edits, zero behavior
+  # change. libghostty stays the hosted transitive dep (build hook downloads the
+  # prebuilt ghostty-vt .so unchanged).
+  flterm:
+    path: third_party/flterm
 
   # OS-backed credential vault — replaces PWA's PBKDF2+WebAuthn dance
   flutter_secure_storage: ^9.2.2

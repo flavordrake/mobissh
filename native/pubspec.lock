@@ -244,10 +244,9 @@ packages:
   flterm:
     dependency: "direct main"
     description:
-      name: flterm
-      sha256: "36c31553b3bc188b2a1abe3c8935a2108759e0b44586fcf37d72d1dd9306ede3"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/flterm"
+      relative: true
+    source: path
     version: "0.0.3"
   flutter:
     dependency: "direct main"
