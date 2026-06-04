@@ -31,6 +31,13 @@ enum SshTaskCommandKind {
   /// re-emits its ready event in response.
   uiHello,
 
+  /// UI → task: actively verify a session's socket is still alive after a
+  /// background → resume cycle (#737). The task pings the hosted controller
+  /// (`probeLiveness`) with a short timeout so a zombie-`connected` session
+  /// whose socket died half-open during Doze is declared dead → reconnect,
+  /// instead of being trusted and left frozen.
+  resumeProbe,
+
   // --- SFTP (#559) ---
   /// List a remote directory over the session's SftpClient.
   sftpList,
@@ -180,6 +187,8 @@ sealed class SshTaskCommand {
         );
       case SshTaskCommandKind.uiHello:
         return const SshUiHelloCommand();
+      case SshTaskCommandKind.resumeProbe:
+        return SshResumeProbeCommand(sessionId: sessionId);
       case SshTaskCommandKind.sftpList:
         return SftpListCommand(
           sessionId: sessionId,
@@ -397,6 +406,23 @@ class SshUiHelloCommand extends SshTaskCommand {
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.uiHello;
+
+  @override
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
+}
+
+/// UI → task: actively verify the session's socket is still alive after a
+/// background → resume cycle (#737). The task-side `SessionHost` routes this to
+/// the hosted controller's `probeLiveness()` — an SSH keepalive ping with a
+/// short timeout. A zombie-`connected` session whose socket died half-open
+/// during Doze times out → transitions to `softDisconnected` → the existing
+/// #517/#590 reconnect path re-opens the shell. A live session replies promptly
+/// and stays connected. Per-session, so [sessionId] identifies which session.
+class SshResumeProbeCommand extends SshTaskCommand {
+  const SshResumeProbeCommand({required String sessionId}) : super(sessionId);
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.resumeProbe;
 
   @override
   Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
