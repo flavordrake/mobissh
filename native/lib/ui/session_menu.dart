@@ -655,11 +655,38 @@ class _SessionRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    // #739: profile color swatch for THIS row's session. The per-session color
+    // is seeded from the profile on connect (#653) and read via
+    // `sessionColorProvider`. Unlike the session bar — which falls back to the
+    // theme accent (`session-bar-swatch`) — a colorless session here shows a
+    // NEUTRAL muted dot (`outlineVariant`), never a fake real-looking color
+    // (issue #739). The SAME color identifies the SAME profile everywhere
+    // (PWA `session-dot`).
+    final profileColor = ref.watch(sessionColorProvider(entry.id));
+    final swatchColor = profileColor ?? theme.colorScheme.outlineVariant;
     return ListTile(
       key: Key('session-menu-row-${entry.id}'),
-      leading: Icon(
-        Icons.terminal,
-        color: isActive ? theme.colorScheme.primary : null,
+      // [swatch][terminal] — the small filled circle (profile color, else a
+      // neutral dot) sits immediately left of the existing terminal glyph so the
+      // row reads as `● ⌨ label`, mirroring the profile list / session bar.
+      leading: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            key: Key('session-menu-swatch-${entry.id}'),
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: swatchColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(
+            Icons.terminal,
+            color: isActive ? theme.colorScheme.primary : null,
+          ),
+        ],
       ),
       // #567: the label alone identifies the session (mirrors the PWA's slim
       // session list, which shows the label + a connection dot, no verbose
