@@ -10,6 +10,7 @@ import 'painters/background_painter.dart';
 import 'painters/cursor_painter.dart';
 import 'painters/decoration_painter.dart';
 import 'painters/emoji_painter.dart';
+import 'painters/highlight_painter.dart';
 import 'painters/kitty_graphics_painter.dart';
 import 'painters/shaped_run_painter.dart';
 import 'painters/sprite_painter.dart';
@@ -28,6 +29,7 @@ final class TerminalPainterStack {
   final List<KittyPlacementSnapshot> _kittyAboveText = [];
 
   final BackgroundPainter _backgroundPainter;
+  final HighlightPainter _highlightPainter;
   final DecorationPainter _decorationPainter;
   late final KittyGraphicsPainter _kittyBelowBgPainter;
   late final KittyGraphicsPainter _kittyBelowTextPainter;
@@ -47,6 +49,7 @@ final class TerminalPainterStack {
   }) : _kittyImageCache = KittyImageCache(onImageReady: onImageReady),
        _shapedRunPainter = ShapedRunPainter(_sprites.shaped),
        _backgroundPainter = BackgroundPainter(_state, _sprites),
+       _highlightPainter = HighlightPainter(_state),
        _decorationPainter = DecorationPainter(_sprites) {
     _kittyBelowBgPainter = KittyGraphicsPainter(
       state: _state,
@@ -81,6 +84,7 @@ final class TerminalPainterStack {
   void paint(Canvas canvas) {
     _kittyBelowBgPainter.paint(canvas);
     _backgroundPainter.paint(canvas);
+    _highlightPainter.paint(canvas);
     _kittyBelowTextPainter.paint(canvas);
     _underlinePainter.paint(canvas);
     _textPainter.paint(canvas);

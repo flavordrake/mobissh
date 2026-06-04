@@ -3,7 +3,8 @@ import 'dart:ui';
 
 import 'package:libghostty/libghostty.dart' show Cursor, TerminalColors;
 
-import '../foundation.dart' show CellMetrics, TerminalSelection, TerminalTheme;
+import '../foundation.dart'
+    show CellMetrics, HighlightRange, TerminalSelection, TerminalTheme;
 import 'atlas/atlas.dart';
 
 /// Mutable state shared between [TerminalRenderBox] and all painters.
@@ -35,6 +36,13 @@ class TerminalPaintState {
   int faintAlpha;
 
   TerminalSelection? selection;
+
+  /// Additive structured-text highlight ranges (URLs, paths, regex matches).
+  ///
+  /// Absolute buffer rows; the highlight painter maps them to viewport rows
+  /// using [viewportOffset] each frame. Empty when nothing is highlighted.
+  List<HighlightRange> highlights = const [];
+
   var viewportOffset = 0;
 
   var cursor = const Cursor();

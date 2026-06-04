@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'highlight_range.dart';
 import 'terminal_selection.dart';
 
 /// Observable selection and focus state for the rendering layer.
@@ -31,4 +32,11 @@ abstract class TerminalRenderObserver implements Listenable {
   /// Updated by the gesture detector as the user drags, double-clicks,
   /// or triple-clicks. Set to null when the selection is cleared.
   TerminalSelection? get selection;
+
+  /// Additive structured-text highlight ranges (URLs, paths, regex matches).
+  ///
+  /// Set by the host via `TerminalController.highlights`. Painters draw a
+  /// translucent fill over these ranges using the real cell metrics. Empty
+  /// when nothing is highlighted.
+  List<HighlightRange> get highlights;
 }

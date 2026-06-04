@@ -89,6 +89,28 @@ abstract class TerminalController extends ChangeNotifier
   /// Sets the text selection.
   set selection(TerminalSelection? value);
 
+  @override
+  List<HighlightRange> get highlights;
+
+  /// Sets the structured-text highlight ranges drawn over the grid.
+  ///
+  /// Additive overlay used for URL / path / regex highlights detected by the
+  /// host. Ranges use ABSOLUTE buffer rows (same frame as [selection]) and
+  /// are painted with the terminal's real cell metrics, so they pixel-align
+  /// to the glyph cells and track scroll, wrap, and resize for free. Pass an
+  /// empty list to clear. Does not affect terminal state or selection.
+  set highlights(List<HighlightRange> value);
+
+  /// Returns the highlight range covering the viewport cell at ([row], [col]),
+  /// or null when no range covers it.
+  ///
+  /// [row] and [col] are VIEWPORT-relative (row 0 is the top visible row),
+  /// matching the coordinates a gesture detector produces from a pointer
+  /// position. The returned range's [HighlightRange.payload] recovers what the
+  /// cells represent (e.g. the URL behind a tap). When ranges overlap, the
+  /// last matching range in [highlights] wins.
+  HighlightRange? highlightAt({required int row, required int col});
+
   /// Terminal title set by the running program.
   String get title;
 

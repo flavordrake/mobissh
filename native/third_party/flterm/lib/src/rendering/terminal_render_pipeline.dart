@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:libghostty/libghostty.dart';
 
+import '../foundation/highlight_range.dart';
 import '../foundation/terminal_selection.dart';
 import 'atlas/atlas.dart';
 import 'atlas/sprite_buffer.dart';
@@ -67,6 +68,18 @@ final class TerminalRenderPipeline {
     final top = selection.topRow - viewportOffset;
     final bottom = selection.bottomRow - viewportOffset;
     _frameBuilder.markRowsDirty(top, bottom + 1);
+  }
+
+  void markHighlightRowsDirty(
+    List<HighlightRange> highlights, {
+    required int viewportOffset,
+  }) {
+    if (highlights.isEmpty || _state.rows == 0) return;
+    for (final range in highlights) {
+      final top = range.topRow - viewportOffset;
+      final bottom = range.bottomRow - viewportOffset;
+      _frameBuilder.markRowsDirty(top, bottom + 1);
+    }
   }
 
   void paint(Canvas canvas) => _painters.paint(canvas);

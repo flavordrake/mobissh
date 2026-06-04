@@ -2,6 +2,7 @@ export 'foundation/callbacks.dart';
 export 'foundation/cell_metrics.dart';
 export 'foundation/color_palette.dart';
 export 'foundation/dynamic_color.dart';
+export 'foundation/highlight_range.dart';
 export 'foundation/input_types.dart';
 export 'foundation/platform_map.dart';
 export 'foundation/screen_extension.dart';

@@ -463,6 +463,9 @@ class _TestRenderObserver implements TerminalRenderObserver {
   const _TestRenderObserver({this.selection, this.hasFocus = true});
 
   @override
+  List<HighlightRange> get highlights => const [];
+
+  @override
   void addListener(VoidCallback listener) {}
 
   @override
