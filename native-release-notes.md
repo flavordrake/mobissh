@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+15 (2026-06-04) — long-press a URL to Open it
+- **Long-press a URL in the terminal → Copy / Open menu** — single-tap still copies; long-press now opens a menu with **Open in browser** (and Copy). Finishes the URL feature on the ghostty terminal (#734).
+
 ## v0.1.9+14 (2026-06-04) — keep sessions alive through sleep
 - **Sessions should survive an ordinary sleep now** — the app holds a WiFi lock while sessions are live (so the radio doesn't sleep mid-session) and asks once to be exempted from battery optimization (accept the prompt on first connect, or grant via **Settings → "Allow background battery use"**). With that, ordinary screen-off periods shouldn't drop your sessions (#738). **Device test:** connect 2-3 sessions, lock the phone 5/15/60 min, wake → still live. (Very long/deep Doze can still drop any app's network — that's where #737's graceful reconnect catches it.)
 
