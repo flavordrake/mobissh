@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9 (2026-06-03) — Ghostty default + tap-to-copy URLs
+- **Ghostty (flterm) is now the default terminal engine** — xterm is still selectable in **Settings → Terminal engine**.
+
 ## v0.1.8 (2026-06-03) — Ghostty terminal, hardened
 - **Ghostty (flterm) is the recommended engine** — native touch drag-select + copy, precise tmux selection, faster scrolling. Turn it on in **Settings → Terminal engine** (it becomes the default in the next build).
 - Ghostty terminal:

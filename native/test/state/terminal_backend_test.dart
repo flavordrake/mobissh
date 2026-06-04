@@ -1,8 +1,8 @@
 // Unit tests for the #684 switchable terminal backend preference.
 //
-// Locks the persisted-enum contract: default xterm, hydrate a stored value,
-// set+persist, and a corrupt/unknown stored id falling back to the default
-// (a stale pref must never crash the terminal).
+// Locks the persisted-enum contract: default ghostty (#725), hydrate a stored
+// value, set+persist, and a corrupt/unknown stored id falling back to the
+// default (a stale pref must never crash the terminal).
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/state/terminal_backend.dart';
@@ -21,9 +21,9 @@ void main() {
   });
 
   group('terminalBackendFromId', () {
-    test('null falls back to the default (xterm)', () {
+    test('null falls back to the default (ghostty)', () {
       expect(terminalBackendFromId(null), terminalBackendDefault);
-      expect(terminalBackendDefault, TerminalBackend.xterm);
+      expect(terminalBackendDefault, TerminalBackend.ghostty);
     });
 
     test('known ids parse to the matching enum', () {
@@ -39,10 +39,10 @@ void main() {
   });
 
   group('TerminalBackendNotifier', () {
-    test('defaults to xterm with no stored value', () async {
+    test('defaults to ghostty with no stored value', () async {
       final n = TerminalBackendNotifier(prefs: SharedPreferences.getInstance());
       await _settle();
-      expect(n.state, TerminalBackend.xterm);
+      expect(n.state, TerminalBackend.ghostty);
     });
 
     test('hydrates a stored ghostty value', () async {
@@ -60,7 +60,7 @@ void main() {
       });
       final n = TerminalBackendNotifier(prefs: SharedPreferences.getInstance());
       await _settle();
-      expect(n.state, TerminalBackend.xterm);
+      expect(n.state, TerminalBackend.ghostty);
     });
 
     test('set updates state and persists the enum name', () async {
