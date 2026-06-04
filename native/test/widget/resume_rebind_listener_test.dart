@@ -45,28 +45,34 @@ void main() {
 
     // Create two sessions through the real notifier.
     final notifier = container.read(sessionsProvider.notifier);
-    final e1 = notifier.addOrActivate(const SshConnectParams(
-      host: 'h1',
-      port: 22,
-      username: 'u',
-      auth: SshAuth.password('p'),
-    ));
-    final e2 = notifier.addOrActivate(const SshConnectParams(
-      host: 'h2',
-      port: 22,
-      username: 'u',
-      auth: SshAuth.password('p'),
-    ));
+    final e1 = notifier.addOrActivate(
+      const SshConnectParams(
+        host: 'h1',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      ),
+    );
+    final e2 = notifier.addOrActivate(
+      const SshConnectParams(
+        host: 'h2',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      ),
+    );
 
     // Drive each proxy to `connected` via a task-side state event.
     for (final e in [e1, e2]) {
-      pair.taskSide.send(SshStateEvent(
-        sessionId: e.id,
-        state: SshSessionState.connected.name,
-        host: e.host,
-        port: e.port,
-        username: e.username,
-      ).toJson());
+      pair.taskSide.send(
+        SshStateEvent(
+          sessionId: e.id,
+          state: SshSessionState.connected.name,
+          host: e.host,
+          port: e.port,
+          username: e.username,
+        ).toJson(),
+      );
     }
     // Let the gateway deliver the state events.
     await Future<void>.delayed(Duration.zero);
@@ -87,16 +93,89 @@ void main() {
         AppLifecycleState.resumed;
     // The provider only fires ref.listen on a CHANGE; default is resumed, so
     // bounce through paused first to guarantee a transition.
-    container.read(lifecycleProvider.notifier).state =
-        AppLifecycleState.paused;
+    container.read(lifecycleProvider.notifier).state = AppLifecycleState.paused;
     container.read(lifecycleProvider.notifier).state =
         AppLifecycleState.resumed;
 
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
-    expect(snapshotRequests, containsAll([e1.id, e2.id]),
-        reason: 'every live session must rebind on resume, not just active');
+    expect(
+      snapshotRequests,
+      containsAll([e1.id, e2.id]),
+      reason: 'every live session must rebind on resume, not just active',
+    );
+
+    await sub.cancel();
+  });
+
+  test('resume sends a liveness probe for every live session (#737)', () async {
+    // The wake-frozen fix: rebind() alone re-subscribes to a possibly-dead
+    // session. The listener must ALSO send a resume-probe command so the task
+    // side actively verifies liveness (ping-with-timeout) instead of trusting
+    // the cached `connected` state.
+    final pair = InMemoryGatewayPair();
+    final container = ProviderContainer(
+      overrides: [
+        taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+        keepaliveServiceStarterProvider.overrideWithValue(() async {}),
+      ],
+    );
+    addTearDown(container.dispose);
+    addTearDown(pair.dispose);
+
+    container.read(resumeRebindListenerProvider);
+    final notifier = container.read(sessionsProvider.notifier);
+    final e1 = notifier.addOrActivate(
+      const SshConnectParams(
+        host: 'h1',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      ),
+    );
+    final e2 = notifier.addOrActivate(
+      const SshConnectParams(
+        host: 'h2',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      ),
+    );
+    for (final e in [e1, e2]) {
+      pair.taskSide.send(
+        SshStateEvent(
+          sessionId: e.id,
+          state: SshSessionState.connected.name,
+          host: e.host,
+          port: e.port,
+          username: e.username,
+        ).toJson(),
+      );
+    }
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    final probeRequests = <String>[];
+    final sub = pair.taskSide.incoming.listen((payload) {
+      if (payload['kind'] == SshTaskCommandKind.resumeProbe.name) {
+        probeRequests.add(payload['sessionId'] as String);
+      }
+    });
+
+    container.read(lifecycleProvider.notifier).state = AppLifecycleState.paused;
+    container.read(lifecycleProvider.notifier).state =
+        AppLifecycleState.resumed;
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      probeRequests,
+      containsAll([e1.id, e2.id]),
+      reason:
+          'every live session must get a liveness probe on resume — not just '
+          'a rebind (#737)',
+    );
 
     await sub.cancel();
   });
@@ -114,16 +193,20 @@ void main() {
 
     container.read(resumeRebindListenerProvider);
     final notifier = container.read(sessionsProvider.notifier);
-    final e = notifier.addOrActivate(const SshConnectParams(
-      host: 'h',
-      port: 22,
-      username: 'u',
-      auth: SshAuth.password('p'),
-    ));
-    pair.taskSide.send(SshStateEvent(
-      sessionId: e.id,
-      state: SshSessionState.connected.name,
-    ).toJson());
+    final e = notifier.addOrActivate(
+      const SshConnectParams(
+        host: 'h',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      ),
+    );
+    pair.taskSide.send(
+      SshStateEvent(
+        sessionId: e.id,
+        state: SshSessionState.connected.name,
+      ).toJson(),
+    );
     await Future<void>.delayed(Duration.zero);
 
     final snapshotRequests = <String>[];
@@ -133,14 +216,12 @@ void main() {
       }
     });
 
-    container.read(lifecycleProvider.notifier).state =
-        AppLifecycleState.paused;
+    container.read(lifecycleProvider.notifier).state = AppLifecycleState.paused;
     container.read(lifecycleProvider.notifier).state =
         AppLifecycleState.inactive;
     await Future<void>.delayed(Duration.zero);
 
-    expect(snapshotRequests, isEmpty,
-        reason: 'only resumed triggers rebind');
+    expect(snapshotRequests, isEmpty, reason: 'only resumed triggers rebind');
 
     await sub.cancel();
   });

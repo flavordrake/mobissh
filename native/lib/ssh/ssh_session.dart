@@ -139,6 +139,13 @@ Future<SSHSocket> _defaultSocketOpener(
 /// and the controller should count the attempt + retry until exhausted.
 typedef ReconnectAttempt = Future<bool> Function(SshConnectParams params);
 
+/// Optional override for the application-layer liveness probe (#737, test seam).
+/// Production sends `client.ping()` (an SSH keepalive global-request that awaits
+/// the server's reply). On a half-open socket (Doze) the reply never comes, so
+/// the caller wraps this in a short timeout. Tests inject a completer they
+/// control to simulate a live (resolves) or dead (never resolves / throws) link.
+typedef LivenessProbe = Future<void> Function();
+
 /// Drives a single SSH session through its lifecycle.
 ///
 /// Designed to be wrapped by a Riverpod `NotifierProvider` (see
@@ -158,13 +165,16 @@ class SshSessionController {
     this.reconnectBackoffCap = const Duration(seconds: 30),
     this.unreachableReconnectInterval = const Duration(milliseconds: 1500),
     ReconnectAttempt? reconnectAttemptOverride,
+    LivenessProbe? livenessProbeOverride,
   }) : _hostKeyStore = hostKeyStore ?? HostKeyStore(),
        _openSocket = socketOpener ?? _defaultSocketOpener,
-       _reconnectAttempt = reconnectAttemptOverride;
+       _reconnectAttempt = reconnectAttemptOverride,
+       _livenessProbe = livenessProbeOverride;
 
   final HostKeyStore _hostKeyStore;
   final SshSocketOpener _openSocket;
   final ReconnectAttempt? _reconnectAttempt;
+  final LivenessProbe? _livenessProbe;
 
   /// Timeout for the underlying TCP connect (`SSHSocket.connect`).
   final Duration handshakeTimeout;
@@ -424,6 +434,63 @@ class SshSessionController {
           .then((_) => handleTransportClosed(null))
           .catchError((e) => handleTransportClosed(e)),
     );
+  }
+
+  /// Actively verify the socket is still alive (#737 — wake-from-sleep freeze).
+  ///
+  /// During Doze the SSH TCP socket can die HALF-OPEN: no clean close ever
+  /// reaches the app, and the 15s keepalive timer is frozen by the OS. On
+  /// resume the session is therefore still `connected` over a DEAD socket — the
+  /// UI forwards input into a dead pipe, nothing comes back, and the
+  /// transport's `done` future never resolves so the #517/#590 reconnect path
+  /// is never armed. The session is a zombie.
+  ///
+  /// This sends an immediate application-layer SSH keepalive ping
+  /// (`client.ping()`, a global-request that AWAITS the server's reply) with a
+  /// SHORT [timeout]. If the reply doesn't arrive in time — or the ping throws
+  /// (broken pipe) — the socket is declared dead NOW (not "never"): the session
+  /// transitions `connected → softDisconnected` and the existing reconnect path
+  /// re-opens the shell. A live link replies promptly and the session stays
+  /// `connected`, so a normal wake never triggers a spurious reconnect.
+  ///
+  /// No-op unless currently `connected` (nothing to probe otherwise) or if the
+  /// user has disconnected. Safe to call repeatedly (e.g. on every resume).
+  Future<void> probeLiveness({
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    if (_userDisconnected) return;
+    if (_data.state != SshSessionState.connected) return;
+    if (_lastParams == null) return;
+
+    final probe = _livenessProbe ?? _defaultLivenessProbe;
+    var alive = false;
+    try {
+      await probe().timeout(timeout);
+      alive = true;
+    } catch (e) {
+      // TimeoutException (half-open socket — no reply) or a transport error
+      // (broken pipe). Either way the link is dead.
+      ctrace('task.ssh', 'probeLiveness: FAILED — $e → softDisconnected');
+    }
+    if (alive) {
+      ctrace('task.ssh', 'probeLiveness: alive');
+      return;
+    }
+    // Re-check state: a real transport close could have raced in while we
+    // awaited the probe and already moved us off `connected`.
+    if (_userDisconnected || _data.state != SshSessionState.connected) return;
+    _lastErrorUnreachable = false;
+    _emit(_data.copyWith(state: SshSessionState.softDisconnected));
+    _scheduleReconnect(null);
+  }
+
+  Future<void> _defaultLivenessProbe() async {
+    final client = _client;
+    if (client == null) {
+      // No live client but state says connected — treat as dead.
+      throw StateError('no client to ping');
+    }
+    await client.ping();
   }
 
   /// Called when the SSH client's transport future resolves — either cleanly

@@ -58,6 +58,7 @@ class SessionHost {
     SftpSessionOpener? sftpOpener,
     HostShellOpener? shellOpener,
     this.snapshotInterval = const Duration(seconds: 2),
+    this.resumeProbeTimeout = const Duration(seconds: 4),
   }) : _gateway = gateway,
        _factory = controllerFactory ?? _defaultControllerFactory,
        _sftpOpener = sftpOpener,
@@ -87,6 +88,11 @@ class SessionHost {
   /// How often a snapshot is pushed to the UI side. Tests use a short
   /// interval; production defaults to two seconds.
   final Duration snapshotInterval;
+
+  /// Timeout for the resume liveness probe (#737). A `connected` session whose
+  /// ping doesn't reply within this window is declared dead → reconnect. Short
+  /// so a frozen wake recovers in a few seconds, not "never". Tests shrink it.
+  final Duration resumeProbeTimeout;
 
   StreamSubscription<Map<String, dynamic>>? _commandSub;
   Timer? _snapshotTimer;
@@ -154,6 +160,16 @@ class SessionHost {
         // always ready and this can't trigger — but handle it defensively by
         // re-emitting ready so the contract is honoured everywhere.
         _gateway.send(const SshTaskReadyEvent().toJson());
+      case SshResumeProbeCommand():
+        // #737: actively verify the session's socket survived Doze rather than
+        // trusting the cached `connected` state. The controller pings with a
+        // short timeout; a dead half-open socket → softDisconnected → reconnect.
+        final hosted = _sessions[cmd.sessionId];
+        if (hosted != null) {
+          unawaited(
+            hosted.controller.probeLiveness(timeout: resumeProbeTimeout),
+          );
+        }
       case SftpListCommand():
         _handleSftpList(cmd);
       case SftpDownloadCommand():

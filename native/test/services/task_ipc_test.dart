@@ -72,6 +72,14 @@ void main() {
       expect(restored.sessionId, '');
     });
 
+    test('SshResumeProbeCommand round-trips (#737)', () {
+      const cmd = SshResumeProbeCommand(sessionId: 'host:22:user:1');
+      final restored = SshTaskCommand.fromJson(cmd.toJson());
+      expect(restored, isA<SshResumeProbeCommand>());
+      expect(restored.kind, SshTaskCommandKind.resumeProbe);
+      expect(restored.sessionId, 'host:22:user:1');
+    });
+
     test('unknown kind throws FormatException', () {
       expect(
         () => SshTaskCommand.fromJson({'kind': 'bogus', 'sessionId': 'sid'}),

@@ -41,10 +41,7 @@ class ProxySnapshot {
 
 /// UI-side proxy. One instance per `sessionId`.
 class SshSessionProxy {
-  SshSessionProxy({
-    required this.sessionId,
-    required this.gateway,
-  }) {
+  SshSessionProxy({required this.sessionId, required this.gateway}) {
     _bind();
   }
 
@@ -70,8 +67,7 @@ class SshSessionProxy {
       StreamController<SshTaskEvent>.broadcast();
 
   SshSessionData _data = const SshSessionData();
-  ProxySnapshot _snapshot =
-      const ProxySnapshot(state: SshSessionState.idle);
+  ProxySnapshot _snapshot = const ProxySnapshot(state: SshSessionState.idle);
   StreamSubscription<Map<String, dynamic>>? _eventSub;
   bool _bound = false;
   bool _disposed = false;
@@ -134,6 +130,17 @@ class SshSessionProxy {
     if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
   }
 
+  /// Ask the task side to actively verify this session's socket is still alive
+  /// (#737). Sent on `AppLifecycleState.resumed` alongside [rebind]: a session
+  /// whose socket died half-open during Doze is still cached as `connected`, so
+  /// rebind alone re-attaches to a dead pipe (input in, nothing out — frozen).
+  /// The task pings with a short timeout; a dead probe drives the session to
+  /// `softDisconnected` → reconnect, a live one stays connected.
+  void probeLiveness() {
+    if (_disposed) return;
+    gateway.send(SshResumeProbeCommand(sessionId: sessionId).toJson());
+  }
+
   /// Send a connect command across the gateway. The task-side host turns
   /// this into `SshSessionController.connect(...)`.
   ///
@@ -143,14 +150,16 @@ class SshSessionProxy {
   /// `SshSessionController.connect`, so call sites that previously awaited
   /// the controller call continue to compile (#533).
   Future<void> connect(SshConnectParams params, {String? title}) async {
-    gateway.send(SshConnectCommand(
-      sessionId: sessionId,
-      host: params.host,
-      port: params.port,
-      username: params.username,
-      authJson: SessionHost.encodeAuth(params.auth),
-      title: title,
-    ).toJson());
+    gateway.send(
+      SshConnectCommand(
+        sessionId: sessionId,
+        host: params.host,
+        port: params.port,
+        username: params.username,
+        authJson: SessionHost.encodeAuth(params.auth),
+        title: title,
+      ).toJson(),
+    );
   }
 
   /// Send a disconnect command.
@@ -174,10 +183,12 @@ class SshSessionProxy {
   void _sendHostKeyDecision(bool accepted) {
     if (_disposed) return;
     if (_data.pendingHostKey == null) return;
-    gateway.send(SshHostKeyDecisionCommand(
-      sessionId: sessionId,
-      accepted: accepted,
-    ).toJson());
+    gateway.send(
+      SshHostKeyDecisionCommand(
+        sessionId: sessionId,
+        accepted: accepted,
+      ).toJson(),
+    );
     // Optimistically clear the prompt; the authoritative state (authenticating
     // / failed) arrives as a follow-up state event from the task side.
     _data = _data.copyWith(clearPendingHostKey: true);
@@ -186,42 +197,50 @@ class SshSessionProxy {
 
   /// Send keystroke / paste bytes to the remote PTY through the gateway.
   void sendInput(Uint8List bytes) {
-    gateway.send(SshInputCommand(
-      sessionId: sessionId,
-      bytes: bytes,
-    ).toJson());
+    gateway.send(SshInputCommand(sessionId: sessionId, bytes: bytes).toJson());
   }
 
   /// Request a directory listing over SFTP (#559). The matching
   /// [SftpListingEvent] (or [SftpErrorEvent]) arrives on [sftpEvents] with the
   /// same [requestId].
   void sftpList({required String requestId, required String path}) {
-    gateway.send(SftpListCommand(
-      sessionId: sessionId,
-      requestId: requestId,
-      path: path,
-    ).toJson());
+    gateway.send(
+      SftpListCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        path: path,
+      ).toJson(),
+    );
   }
 
   /// Request a single-file download over SFTP (#559). Chunks + completion
   /// arrive on [sftpEvents] keyed by [requestId].
   void sftpDownload({required String requestId, required String path}) {
-    gateway.send(SftpDownloadCommand(
-      sessionId: sessionId,
-      requestId: requestId,
-      path: path,
-    ).toJson());
+    gateway.send(
+      SftpDownloadCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        path: path,
+      ).toJson(),
+    );
   }
 
   /// Send a PTY resize to the remote.
-  void sendResize(int cols, int rows, {int pixelWidth = 0, int pixelHeight = 0}) {
-    gateway.send(SshResizeCommand(
-      sessionId: sessionId,
-      cols: cols,
-      rows: rows,
-      pixelWidth: pixelWidth,
-      pixelHeight: pixelHeight,
-    ).toJson());
+  void sendResize(
+    int cols,
+    int rows, {
+    int pixelWidth = 0,
+    int pixelHeight = 0,
+  }) {
+    gateway.send(
+      SshResizeCommand(
+        sessionId: sessionId,
+        cols: cols,
+        rows: rows,
+        pixelWidth: pixelWidth,
+        pixelHeight: pixelHeight,
+      ).toJson(),
+    );
   }
 
   /// Tear down the proxy. The task-side session continues running unless
