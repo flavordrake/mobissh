@@ -609,6 +609,73 @@ Size ghosttyMeasureCellSize({
   return Size(ceilToDevicePixel(faceWidth), ceilToDevicePixel(faceHeight));
 }
 
+/// The pixels of a cell that sit BELOW the alphabetic baseline (descender +
+/// below-glyph slack), for the URL-underline geometry (#748).
+///
+/// flterm lays each cell's line box out top-aligned: the glyph top is at the
+/// cell top, and the ALPHABETIC BASELINE sits `ascent` px down from there. The
+/// visible bottom of ordinary URL glyphs (letters/digits/`./:-_~?=&%`) is the
+/// baseline — the cell's full bottom (`cellHeight`) is `cellHeight - ascent`
+/// px LOWER, in the descender/line-gap below the text. Drawing the underline at
+/// the raw cell bottom therefore floats it in that gap (#748: "drawn lower",
+/// "worse further down" as the gap repeats every row).
+///
+/// We measure the ascent from the SAME `'Mgj'` reference the cell HEIGHT uses
+/// (`computeDistanceToActualBaseline(alphabetic)`) so the baseline we compute is
+/// exactly the one flterm renders against. Returns the below-baseline slack
+/// (>= 0). Pure Flutter (no FFI) -> headless-testable.
+double ghosttyMeasureBelowBaselineSlack({
+  required double fontSize,
+  required String fontFamily,
+  FontWeight fontWeight = FontWeight.normal,
+  List<String>? fontFamilyFallback,
+}) {
+  final style = TextStyle(
+    fontSize: fontSize,
+    fontFamily: fontFamily,
+    fontWeight: fontWeight,
+    fontFamilyFallback: fontFamilyFallback,
+  );
+  final painter = TextPainter(
+    text: TextSpan(text: 'Mgj', style: style),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final height = painter.height;
+  final ascent = painter.computeDistanceToActualBaseline(
+    TextBaseline.alphabetic,
+  );
+  painter.dispose();
+  if (ascent.isNaN || ascent <= 0 || ascent >= height) return 0.0;
+  return height - ascent;
+}
+
+/// The y (in overlay-local px) at which a URL underline should be drawn for a
+/// 0-based viewport [row] (#748). Pure + testable.
+///
+/// The cell's TOP is `padding + row * cellHeight`; its BASELINE is
+/// `+ (cellHeight - belowBaselineSlack)` (= top + ascent). The underline hugs
+/// the glyph's visible bottom: a hair ([gap], ~1.5px) BELOW the baseline,
+/// clamped so it never crosses below the raw cell bottom. Because each row's y
+/// is anchored to ITS OWN cell baseline (no running accumulator beyond the exact
+/// `row * cellHeight` cell pitch), there is no per-row DRIFT — row 0 and a high
+/// row both hug their own glyph.
+double ghosttyUrlUnderlineY({
+  required double padding,
+  required double cellHeight,
+  required double belowBaselineSlack,
+  required int row,
+  double gap = 1.5,
+}) {
+  final cellTop = padding + row * cellHeight;
+  final cellBottom = cellTop + cellHeight;
+  final slack = belowBaselineSlack.clamp(0.0, cellHeight);
+  final baseline = cellBottom - slack;
+  final y = baseline + gap;
+  // Never sink below the raw cell bottom (keeps the underline inside the cell
+  // even for fonts with negligible descender slack).
+  return y <= cellBottom ? y : cellBottom;
+}
+
 /// Map a touch pixel position within the terminal viewport to a 1-based
 /// (col, row) terminal cell for SGR mouse reports (#692, fixed #699).
 ///
@@ -1652,6 +1719,7 @@ class GhosttyUrlHighlightPainter extends CustomPainter {
     required this.cellHeight,
     required this.cols,
     required this.color,
+    this.belowBaselineSlack = 0.0,
     this.padding = kGhosttyTerminalPadding,
   });
 
@@ -1666,6 +1734,12 @@ class GhosttyUrlHighlightPainter extends CustomPainter {
   /// The grid width, used to extend an interior/start row's underline to the
   /// full row when a URL wraps.
   final int cols;
+
+  /// The px of a cell BELOW the alphabetic baseline (#748,
+  /// [ghosttyMeasureBelowBaselineSlack]). The underline hugs the glyph's visible
+  /// bottom (baseline + a hair) rather than the raw cell bottom, so it sits
+  /// directly under the URL text instead of floating in the line gap below it.
+  final double belowBaselineSlack;
 
   /// The underline colour (the theme's accent / selection colour) so the
   /// highlight is theme-consistent (#716).
@@ -1688,8 +1762,15 @@ class GhosttyUrlHighlightPainter extends CustomPainter {
         if (endCol <= startCol) continue;
         final x0 = padding + startCol * cellWidth;
         final x1 = padding + endCol * cellWidth;
-        // Underline sits ~1px above the cell's bottom edge.
-        final y = padding + (row + 1) * cellHeight - 1.5;
+        // #748: hug the glyph's visible bottom (baseline + a hair), NOT the raw
+        // cell bottom — the raw bottom floats in the descender/line-gap below
+        // the text, and that gap repeats every row ("worse further down").
+        final y = ghosttyUrlUnderlineY(
+          padding: padding,
+          cellHeight: cellHeight,
+          belowBaselineSlack: belowBaselineSlack,
+          row: row,
+        );
         canvas.drawLine(Offset(x0, y), Offset(x1, y), paint);
       }
     }
@@ -1701,6 +1782,7 @@ class GhosttyUrlHighlightPainter extends CustomPainter {
       old.cellWidth != cellWidth ||
       old.cellHeight != cellHeight ||
       old.cols != cols ||
+      old.belowBaselineSlack != belowBaselineSlack ||
       old.padding != padding ||
       !_sameMatches(old.matches, matches);
 
@@ -2622,6 +2704,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #734: remember the live cell size so a long-press URL menu can build its
     // highlight rects with the same geometry the router maps touches with.
     _lastCellSize = cellSize;
+    // #748: the cell's below-baseline slack, so the URL underline hugs the
+    // glyph's visible bottom (baseline + a hair) instead of the raw cell bottom
+    // (which floats in the line gap below the text). Same font as the cell-size
+    // measurement, so the baseline matches what flterm renders against.
+    final belowBaselineSlack = ghosttyMeasureBelowBaselineSlack(
+      fontSize: theme.fontSize,
+      fontFamily: theme.fontFamily,
+      fontWeight: theme.fontWeight,
+      fontFamilyFallback: theme.fontFamilyFallback,
+    );
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
@@ -2661,6 +2753,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                 cellHeight: cellSize.height,
                 cols: _cols,
                 color: palette.theme.selection,
+                belowBaselineSlack: belowBaselineSlack,
               ),
             ),
           ),
