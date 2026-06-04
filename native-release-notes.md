@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+16 (2026-06-04) — URL underline alignment
+- **URL underlines now hug the text** — the highlight sat in the gap below the glyphs (worse further down the screen); it's now anchored to each line's baseline so it underlines the URL cleanly on every row (#748).
+
 ## v0.1.9+15 (2026-06-04) — long-press a URL to Open it
 - **Long-press a URL in the terminal → Copy / Open menu** — single-tap still copies; long-press now opens a menu with **Open in browser** (and Copy). Finishes the URL feature on the ghostty terminal (#734).
 
