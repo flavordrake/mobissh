@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+19 (2026-06-04) — selection clears when the content under it changes
+- **Touch selection no longer lingers over redrawn content** — after you select, a tmux/remote redraw (or live output) now clears the selection instead of leaving the highlight stranded on whatever scrolled into its place. A pure scrollback swipe still keeps + tracks the selection; tap-to-dismiss unchanged (#760).
+
 ## v0.1.9+18 (2026-06-04) — URL highlight drawn inside the terminal (no more drift)
 - **URL highlight is now painted by the terminal itself** (forked flterm), using its real cell metrics — so it sits exactly on the URL on every row and tracks scroll/wrap automatically. This replaces the overlay that kept drifting (#748/#699/#723). It now shows as a subtle tint on the URL rather than an underline — tell me if you'd rather have the underline back. (#755 — foundation for OSC-8 links + path links next.)
 
