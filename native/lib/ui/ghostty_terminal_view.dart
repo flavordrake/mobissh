@@ -609,71 +609,51 @@ Size ghosttyMeasureCellSize({
   return Size(ceilToDevicePixel(faceWidth), ceilToDevicePixel(faceHeight));
 }
 
-/// The pixels of a cell that sit BELOW the alphabetic baseline (descender +
-/// below-glyph slack), for the URL-underline geometry (#748).
+/// Map detected URL [matches] (0-based VIEWPORT cells) to flterm
+/// [HighlightRange]s in ABSOLUTE buffer-row space (#755 Slice 1c).
 ///
-/// flterm lays each cell's line box out top-aligned: the glyph top is at the
-/// cell top, and the ALPHABETIC BASELINE sits `ascent` px down from there. The
-/// visible bottom of ordinary URL glyphs (letters/digits/`./:-_~?=&%`) is the
-/// baseline — the cell's full bottom (`cellHeight`) is `cellHeight - ascent`
-/// px LOWER, in the descender/line-gap below the text. Drawing the underline at
-/// the raw cell bottom therefore floats it in that gap (#748: "drawn lower",
-/// "worse further down" as the gap repeats every row).
+/// This is the source-level replacement for the old `GhosttyUrlHighlightPainter`
+/// Flutter overlay (the #748/#699/#723 underline-drift bug): instead of the host
+/// re-deriving cell geometry and painting OVER the terminal, the detected ranges
+/// are fed to `controller.highlights` and flterm's own `HighlightPainter` draws
+/// them using its REAL `CellMetrics`, re-reading `viewportOffset` each frame — so
+/// scroll, wrap, and resize track for free with no host-side geometry.
 ///
-/// We measure the ascent from the SAME `'Mgj'` reference the cell HEIGHT uses
-/// (`computeDistanceToActualBaseline(alphabetic)`) so the baseline we compute is
-/// exactly the one flterm renders against. Returns the below-baseline slack
-/// (>= 0). Pure Flutter (no FFI) -> headless-testable.
-double ghosttyMeasureBelowBaselineSlack({
-  required double fontSize,
-  required String fontFamily,
-  FontWeight fontWeight = FontWeight.normal,
-  List<String>? fontFamilyFallback,
+/// Coordinate mapping (mirrors flterm's selection plumbing — viewport-relative
+/// then shifted to the absolute, top-anchored buffer frame):
+///   - [GhosttyUrlMatch] rows are 0-based VIEWPORT rows (0 == top visible row);
+///     flterm's [HighlightRange] rows are ABSOLUTE buffer rows (row 0 == oldest
+///     scrollback line). So `absoluteRow = viewportRow + viewportOffset`, where
+///     [viewportOffset] is the controller's live `scrollbar.offset` (exactly the
+///     value flterm's highlight painter re-reads each frame).
+///   - Columns map straight across: both are 0-based with an EXCLUSIVE end col.
+///
+/// Each range carries `payload = match.url` so a later unified hit-test
+/// (`controller.highlightAt(...).payload`) can recover the URL (Slice 5; the
+/// tap/long-press hit-test still uses the existing `ghosttyUrlAtCell` path here).
+/// The highlight is a subtle [color] background fill (the theme's selection
+/// colour) — flterm's painter always draws the background and only draws an
+/// underline when one is supplied, so the fill IS the highlight here.
+///
+/// Empty [matches] -> empty list (clears `controller.highlights`). Pure (no FFI /
+/// no widget) -> unit-testable headless.
+List<HighlightRange> ghosttyUrlMatchesToHighlights(
+  List<GhosttyUrlMatch> matches, {
+  required int viewportOffset,
+  required Color color,
 }) {
-  final style = TextStyle(
-    fontSize: fontSize,
-    fontFamily: fontFamily,
-    fontWeight: fontWeight,
-    fontFamilyFallback: fontFamilyFallback,
-  );
-  final painter = TextPainter(
-    text: TextSpan(text: 'Mgj', style: style),
-    textDirection: TextDirection.ltr,
-  )..layout();
-  final height = painter.height;
-  final ascent = painter.computeDistanceToActualBaseline(
-    TextBaseline.alphabetic,
-  );
-  painter.dispose();
-  if (ascent.isNaN || ascent <= 0 || ascent >= height) return 0.0;
-  return height - ascent;
-}
-
-/// The y (in overlay-local px) at which a URL underline should be drawn for a
-/// 0-based viewport [row] (#748). Pure + testable.
-///
-/// The cell's TOP is `padding + row * cellHeight`; its BASELINE is
-/// `+ (cellHeight - belowBaselineSlack)` (= top + ascent). The underline hugs
-/// the glyph's visible bottom: a hair ([gap], ~1.5px) BELOW the baseline,
-/// clamped so it never crosses below the raw cell bottom. Because each row's y
-/// is anchored to ITS OWN cell baseline (no running accumulator beyond the exact
-/// `row * cellHeight` cell pitch), there is no per-row DRIFT — row 0 and a high
-/// row both hug their own glyph.
-double ghosttyUrlUnderlineY({
-  required double padding,
-  required double cellHeight,
-  required double belowBaselineSlack,
-  required int row,
-  double gap = 1.5,
-}) {
-  final cellTop = padding + row * cellHeight;
-  final cellBottom = cellTop + cellHeight;
-  final slack = belowBaselineSlack.clamp(0.0, cellHeight);
-  final baseline = cellBottom - slack;
-  final y = baseline + gap;
-  // Never sink below the raw cell bottom (keeps the underline inside the cell
-  // even for fonts with negligible descender slack).
-  return y <= cellBottom ? y : cellBottom;
+  if (matches.isEmpty) return const [];
+  return [
+    for (final m in matches)
+      HighlightRange(
+        startRow: m.startRow + viewportOffset,
+        startCol: m.startCol,
+        endRow: m.endRow + viewportOffset,
+        endCol: m.endCol,
+        background: color,
+        payload: m.url,
+      ),
+  ];
 }
 
 /// Map a touch pixel position within the terminal viewport to a 1-based
@@ -967,53 +947,16 @@ bool ghosttyLongPressShowsUrlMenu(GhosttyUrlMatch? urlAtCell) =>
 /// negation of the finger delta, matching a natural touch-scroll. Pure.
 double ghosttyScrollDeltaForSwipe(double fingerDy) => -fingerDy;
 
-/// What the URL re-detector should do on a controller notify (#750).
+/// The URL re-detect debounce (ms) — coalesce a streaming-output / scroll burst
+/// into one scan so we don't re-scan every PTY byte or scroll tick (#726).
 ///
-/// The flterm `TerminalController` is a `ChangeNotifier` that fires on BOTH
-/// ordinary output (the buffer grew) AND a scroll (the visible viewport shifted
-/// to a different `scrollbar.offset`). #726's re-detect ran the SAME 120ms
-/// debounce for both, so during a tmux scroll — a REMOTE full-screen redraw that
-/// shifts the visible text — the cached underlines kept painting at their old
-/// cells for the whole debounce window, floating over the now-shifted content
-/// (#750). The fix discriminates the two:
-enum GhosttyUrlDetectAction {
-  /// Ordinary output (the scroll offset did NOT change): keep #726's debounced
-  /// re-detect with NO pre-clear, so streaming output doesn't flicker the
-  /// existing (still-correct) underlines.
-  outputDebounce,
-
-  /// A real SCROLL (the scroll offset changed): immediately CLEAR the cached
-  /// matches (the underlines vanish — no stale float over the shifted text),
-  /// then re-detect on a SHORT settle debounce after the last scroll event so
-  /// the underlines reappear at the correct positions once the scroll stops.
-  scrollClearAndSettle,
-}
-
-/// Decide whether a controller notify is a SCROLL or ordinary OUTPUT, from the
-/// flterm scrollback offset before/after (#750). A CHANGED offset means the
-/// viewport scrolled (clear-then-settle); an UNCHANGED offset means output grew
-/// under a pinned viewport (the existing debounce, no pre-clear). Pure (no FFI /
-/// no widget) → unit-testable headless.
-GhosttyUrlDetectAction ghosttyUrlDetectAction({
-  required int prevScrollOffset,
-  required int nextScrollOffset,
-}) {
-  return prevScrollOffset != nextScrollOffset
-      ? GhosttyUrlDetectAction.scrollClearAndSettle
-      : GhosttyUrlDetectAction.outputDebounce;
-}
-
-/// The settle debounce (ms after the LAST scroll event) before re-detecting URLs
-/// (#750). Short — just long enough to coalesce a fast scroll's burst of offset
-/// changes into ONE re-scan once the finger/inertia stops — so the underlines
-/// reappear promptly. Distinct from the #726 output debounce
-/// ([kGhosttyUrlOutputDebounceMs]); a scroll CLEARS immediately and only the
-/// REAPPEAR is debounced.
-const int kGhosttyUrlScrollSettleMs = 90;
-
-/// The #726 output re-detect debounce (ms) — coalesce a streaming-output burst
-/// into one scan so we don't re-scan every PTY byte. Named so the scroll-settle
-/// constant ([kGhosttyUrlScrollSettleMs]) reads as a deliberate sibling.
+/// #755 Slice 1c collapsed the old #750 scroll-vs-output discriminator into this
+/// single debounce: the URL highlight now lives in flterm's `controller.highlights`
+/// in ABSOLUTE buffer-row space, and flterm's own `HighlightPainter` re-reads the
+/// `viewportOffset` each frame — so an already-detected highlight TRACKS a scroll
+/// for free, with no stale float and no need to clear-and-settle. A controller
+/// notify (output OR scroll) just schedules one debounced re-detect so any NEW
+/// content (streamed output, or rows scrolled into view) picks up its URLs.
 const int kGhosttyUrlOutputDebounceMs = 120;
 
 /// SGR-1006 WHEEL-UP report at the 1-based ([col], [row]) cell (#693).
@@ -1743,105 +1686,20 @@ class _GhosttyPointerGestureRouterState
   }
 }
 
-/// Paints the URL HIGHLIGHT overlay above the flterm [TerminalView] (#726).
+/// Whether two detected-URL match lists are identical (#726/#755). Used by
+/// [_GhosttyTerminalViewState._detectUrls] to skip a `setState` (and the
+/// `controller.highlights` rebuild) when a re-detect produced the same ranges,
+/// so streaming output doesn't churn the highlight pass.
 ///
-/// flterm 0.0.3 has exactly ONE selection and no multi-range highlight API, so
-/// detected URLs can't be marked via the controller. Instead this CustomPainter
-/// draws a subtle UNDERLINE under each URL's cell range, using the SAME
-/// #723-correct cell metrics ([cellWidth]/[cellHeight]) and the
-/// [kGhosttyTerminalPadding] the grid is offset by — so the underline lands
-/// exactly under the on-screen text. It repaints when the [matches] list, the
-/// cell metrics, or the [color] change (the parent re-runs detection on a
-/// debounced controller notify + on scroll, and rebuilds this painter), so the
-/// highlights follow scroll + resize.
-///
-/// Each [GhosttyUrlMatch] is in 0-based VIEWPORT cells ([endCol] exclusive). A
-/// single-row URL underlines `[startCol, endCol)` on its row; a soft-wrapped URL
-/// underlines the start row's tail, every interior row full-width, and the end
-/// row's head — matching [ghosttyCellInUrl]'s hit-test geometry so what's
-/// underlined is exactly what a tap copies. Pure paint (no FFI) — the geometry
-/// is exercised by the matcher tests via the shared cell model.
-class GhosttyUrlHighlightPainter extends CustomPainter {
-  GhosttyUrlHighlightPainter({
-    required this.matches,
-    required this.cellWidth,
-    required this.cellHeight,
-    required this.cols,
-    required this.color,
-    this.belowBaselineSlack = 0.0,
-    this.padding = kGhosttyTerminalPadding,
-  });
-
-  /// The detected URL ranges to underline (0-based viewport cells).
-  final List<GhosttyUrlMatch> matches;
-
-  /// The REAL flterm cell size (see [ghosttyMeasureCellSize]) — the underline
-  /// geometry MUST use this, not `size/rows`, to land under the rendered text.
-  final double cellWidth;
-  final double cellHeight;
-
-  /// The grid width, used to extend an interior/start row's underline to the
-  /// full row when a URL wraps.
-  final int cols;
-
-  /// The px of a cell BELOW the alphabetic baseline (#748,
-  /// [ghosttyMeasureBelowBaselineSlack]). The underline hugs the glyph's visible
-  /// bottom (baseline + a hair) rather than the raw cell bottom, so it sits
-  /// directly under the URL text instead of floating in the line gap below it.
-  final double belowBaselineSlack;
-
-  /// The underline colour (the theme's accent / selection colour) so the
-  /// highlight is theme-consistent (#716).
-  final Color color;
-
-  /// The flterm [TerminalView] padding the grid is offset by ([kGhosttyTerminalPadding]).
-  final double padding;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (cellWidth <= 0 || cellHeight <= 0 || matches.isEmpty) return;
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-    for (final m in matches) {
-      for (var row = m.startRow; row <= m.endRow; row++) {
-        final startCol = row == m.startRow ? m.startCol : 0;
-        final endCol = row == m.endRow ? m.endCol : cols;
-        if (endCol <= startCol) continue;
-        final x0 = padding + startCol * cellWidth;
-        final x1 = padding + endCol * cellWidth;
-        // #748: hug the glyph's visible bottom (baseline + a hair), NOT the raw
-        // cell bottom — the raw bottom floats in the descender/line-gap below
-        // the text, and that gap repeats every row ("worse further down").
-        final y = ghosttyUrlUnderlineY(
-          padding: padding,
-          cellHeight: cellHeight,
-          belowBaselineSlack: belowBaselineSlack,
-          row: row,
-        );
-        canvas.drawLine(Offset(x0, y), Offset(x1, y), paint);
-      }
-    }
+/// (Replaces the old `GhosttyUrlHighlightPainter._sameMatches`; the painter was
+/// deleted in #755 Slice 1c when the URL highlight moved to flterm's
+/// `controller.highlights` source-level pass.)
+bool ghosttySameUrlMatches(List<GhosttyUrlMatch> a, List<GhosttyUrlMatch> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
   }
-
-  @override
-  bool shouldRepaint(GhosttyUrlHighlightPainter old) =>
-      old.color != color ||
-      old.cellWidth != cellWidth ||
-      old.cellHeight != cellHeight ||
-      old.cols != cols ||
-      old.belowBaselineSlack != belowBaselineSlack ||
-      old.padding != padding ||
-      !_sameMatches(old.matches, matches);
-
-  static bool _sameMatches(List<GhosttyUrlMatch> a, List<GhosttyUrlMatch> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
+  return true;
 }
 
 /// A session terminal rendered with flterm (libghostty). Wires the active
@@ -1900,6 +1758,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// painter use — without re-reading the per-session font providers off-build.
   Size _lastCellSize = Size.zero;
 
+  /// #755: the session theme's selection colour, captured in [build] from the
+  /// live palette, so the off-build URL re-detect ([_detectUrls]) can colour the
+  /// `controller.highlights` ranges without re-reading the theme provider. The
+  /// flterm highlight painter draws this as a subtle per-cell background fill
+  /// under each detected URL (theme-consistent, #716). Defaults to a translucent
+  /// accent until the first build sets it.
+  Color _lastHighlightColor = const Color(0x335B9BD5);
+
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
   /// long-press-start, held while the finger drags so each extend rebuilds the
   /// flterm `TerminalSelection` with this fixed start and the moving end. Null
@@ -1922,28 +1788,28 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// listener drives the rebuild — no second listener.
   bool _hasSelection = false;
 
-  /// #726: the URLs currently detected in the VISIBLE viewport, highlighted by
-  /// [GhosttyUrlHighlightPainter] and hit-tested by a tap (single-tap copies the
-  /// URL). Re-detected on a DEBOUNCED controller notify (output/scroll) via
+  /// #726: the URLs currently detected in the VISIBLE viewport (0-based viewport
+  /// cells), hit-tested by a tap/long-press (single-tap copies the URL, #726;
+  /// long-press shows the action menu, #734). The HIGHLIGHT itself is no longer
+  /// painted from this by a host overlay — #755 Slice 1c feeds these (mapped to
+  /// ABSOLUTE buffer rows) into `controller.highlights` so flterm's own
+  /// `HighlightPainter` draws them with real cell metrics (the #748/#699/#723
+  /// drift fix). Re-detected on a DEBOUNCED controller notify (output/scroll) via
   /// [_scheduleUrlDetect] so streaming output doesn't re-scan every byte.
   List<GhosttyUrlMatch> _urlMatches = const [];
 
   /// #726: debounce timer for URL re-detection. The controller notifies on every
-  /// output write; coalesce a burst into a single scan after a short idle.
+  /// output write AND every scroll; coalesce a burst into a single scan after a
+  /// short idle. #755 Slice 1c collapsed the old #750 scroll-settle timer into
+  /// this one (the highlight tracks scroll in flterm now, so no clear-and-settle).
   Timer? _urlDebounce;
 
-  /// #750: SETTLE timer for re-detecting URLs after a SCROLL. A scroll CLEARS the
-  /// underlines immediately (so they don't float over shifted text), then this
-  /// short debounce re-detects once the scroll stops. Separate from
-  /// [_urlDebounce] so an output burst mid-scroll can't reapply stale underlines
-  /// before the scroll settles. Cancelled on dispose.
-  Timer? _urlScrollSettle;
-
-  /// #750: the flterm scrollback offset (`scrollbar.offset`) seen on the previous
-  /// controller notify, so [ghosttyUrlDetectAction] can tell a SCROLL (offset
-  /// changed) from ordinary OUTPUT (offset unchanged). -1 until the first notify
-  /// (the first tick is treated as output → the #726 debounce, never a clear).
-  int _lastScrollOffset = -1;
+  /// #755: the viewport offset used the LAST time URL highlights were pushed to
+  /// `controller.highlights`. The detector always reads the ACTIVE SCREEN, so
+  /// identical matches at a NEW offset must still re-anchor their absolute buffer
+  /// rows — [_detectUrls] re-pushes when this differs from the live offset, not
+  /// only when the matches change. -1 until the first push.
+  int _lastPushedOffset = -1;
 
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
@@ -2057,76 +1923,36 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     _reanchorSelectionOnGrowth();
     _syncMouseTracking();
     _syncHasSelection();
-    // #726/#750: the visible buffer may have changed. Discriminate a SCROLL (the
-    // scrollback offset shifted → the visible text moved) from ordinary OUTPUT
-    // (offset unchanged → buffer grew under a pinned viewport):
-    //   - SCROLL  → clear the underlines NOW (no stale float over shifted text)
-    //               + re-detect on a short settle after the scroll stops (#750);
-    //   - OUTPUT  → the existing #726 debounce, NO pre-clear (no flicker).
-    final controller = _controller;
-    final nextOffset = controller == null
-        ? _lastScrollOffset
-        : _scrollOffsetOf(controller);
-    final prevOffset = _lastScrollOffset;
-    _lastScrollOffset = nextOffset;
-    // The first notify (prevOffset == -1) is treated as output so a cold start
-    // never clears before the first detect.
-    final action = prevOffset < 0
-        ? GhosttyUrlDetectAction.outputDebounce
-        : ghosttyUrlDetectAction(
-            prevScrollOffset: prevOffset,
-            nextScrollOffset: nextOffset,
-          );
-    switch (action) {
-      case GhosttyUrlDetectAction.scrollClearAndSettle:
-        _clearUrlMatchesNow();
-        _scheduleUrlSettle();
-      case GhosttyUrlDetectAction.outputDebounce:
-        _scheduleUrlDetect();
-    }
+    // #726: the visible buffer may have changed (output streamed, or the viewport
+    // scrolled). Re-detect URLs on a single debounce. #755 Slice 1c dropped the
+    // old #750 scroll-vs-output discriminator: the URL highlight now lives in
+    // flterm's `controller.highlights` in ABSOLUTE buffer-row space, and flterm's
+    // own painter re-reads the viewport offset each frame — so an already-detected
+    // highlight tracks a scroll for free (no stale float, no clear-and-settle).
+    // The debounced re-detect just picks up any NEW content (streamed output, or
+    // rows scrolled into view) and re-anchors highlights at the live offset.
+    _scheduleUrlDetect();
   }
 
-  /// The flterm scrollback offset, defensively (a formatter/FFI hiccup must never
-  /// crash the session) — 0 if the controller can't report it.
-  int _scrollOffsetOf(TerminalController controller) {
+  /// #726: read the flterm viewport scroll offset, defensively (a formatter/FFI
+  /// hiccup must never crash the session) — 0 if the controller can't report it.
+  /// This is the value flterm's highlight painter re-reads each frame, so the
+  /// host maps detected viewport rows to absolute buffer rows with the SAME
+  /// offset (#755).
+  int _viewportOffsetOf(TerminalController controller) {
     try {
       return controller.scrollbar.offset;
     } catch (_) {
-      return _lastScrollOffset < 0 ? 0 : _lastScrollOffset;
+      return 0;
     }
   }
 
-  /// #750: on a real SCROLL, clear the cached URL matches IMMEDIATELY so the
-  /// underlines vanish instead of floating over the now-shifted text. Cancels any
-  /// pending #726 output debounce so a mid-scroll output burst can't reapply the
-  /// stale underlines before the scroll settles.
-  void _clearUrlMatchesNow() {
-    _urlDebounce?.cancel();
-    if (_urlMatches.isEmpty) return;
-    if (mounted) setState(() => _urlMatches = const []);
-  }
-
-  /// #750: re-detect URLs once a scroll SETTLES — a short debounce after the last
-  /// scroll event so the underlines reappear at the correct positions. Restarted
-  /// on every scroll notify (the burst coalesces to one re-scan). Also cancels
-  /// the #726 output debounce so the two schedulers don't double-fire.
-  void _scheduleUrlSettle() {
-    _urlDebounce?.cancel();
-    _urlScrollSettle?.cancel();
-    _urlScrollSettle = Timer(
-      const Duration(milliseconds: kGhosttyUrlScrollSettleMs),
-      _detectUrls,
-    );
-  }
-
-  /// #726: debounce a URL re-detection on OUTPUT. The controller fires on every
-  /// output write; coalesce a burst into one scan ~120ms after the last notify so
-  /// streaming output stays cheap. A short delay also lets flterm settle the
-  /// grid before we read it. Cancelled/replaced on each notify; cleared on
-  /// dispose. Also cancels a pending scroll-settle so a settle and an output
-  /// debounce never both fire.
+  /// #726: debounce a URL re-detection. The controller fires on every output
+  /// write AND every scroll; coalesce a burst into one scan ~120ms after the last
+  /// notify so streaming/scroll stays cheap. A short delay also lets flterm settle
+  /// the grid before we read it. Cancelled/replaced on each notify; cleared on
+  /// dispose.
   void _scheduleUrlDetect() {
-    _urlScrollSettle?.cancel();
     _urlDebounce?.cancel();
     _urlDebounce = Timer(
       const Duration(milliseconds: kGhosttyUrlOutputDebounceMs),
@@ -2134,17 +1960,22 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     );
   }
 
-  /// #726: read the VISIBLE viewport text from flterm and re-detect URLs.
+  /// #726: read the VISIBLE viewport text from flterm, re-detect URLs, and push
+  /// them to flterm's source-level highlight pass (#755 Slice 1c).
   ///
   /// The buffer READ uses flterm's public
   /// `controller.createFormatter(format: plain, unwrap: false).format()`, which
   /// returns the ACTIVE SCREEN (visible viewport, NOT scrollback) as plain text,
   /// one VISIBLE ROW per `\n`. We split on `\n` to get the per-row strings and
   /// hand them to the PURE [detectGhosttyUrls] matcher with the live grid width
-  /// ([_cols]) — which re-joins soft-wrapped rows and maps each URL to a viewport
-  /// cell range. Only rebuilds when the match list actually changes (the painter
-  /// + tap hit-test read [_urlMatches]). Defensive: a formatter/FFI error must
-  /// never crash the session, so it falls back to no highlights.
+  /// ([_cols]) — which re-joins soft-wrapped rows and maps each URL to a 0-based
+  /// VIEWPORT cell range. We keep [_urlMatches] (viewport cells) for the tap /
+  /// long-press hit-test ([ghosttyUrlAtCell]), and ALSO feed the matches —
+  /// mapped to ABSOLUTE buffer rows via the live viewport offset — into
+  /// `controller.highlights`, where flterm's own `HighlightPainter` draws them
+  /// with real cell metrics (the #748/#699/#723 underline-drift fix). Only
+  /// rebuilds when the match list actually changes. Defensive: a formatter/FFI
+  /// error must never crash the session, so it falls back to no highlights.
   void _detectUrls() {
     if (!mounted) return;
     final controller = _controller;
@@ -2167,8 +1998,38 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // A formatter/FFI hiccup must not crash the session — drop highlights.
       next = const [];
     }
-    if (GhosttyUrlHighlightPainter._sameMatches(_urlMatches, next)) return;
+    // Re-push when the matches changed OR the viewport offset moved since the
+    // last push: the detector always reads the ACTIVE SCREEN, so identical
+    // matches at a NEW offset must still re-anchor their absolute buffer rows.
+    final offset = _viewportOffsetOf(controller);
+    if (ghosttySameUrlMatches(_urlMatches, next) &&
+        offset == _lastPushedOffset) {
+      return;
+    }
+    _pushHighlights(controller, next, offset: offset);
     if (mounted) setState(() => _urlMatches = next);
+  }
+
+  /// Map the detected viewport-cell [matches] to ABSOLUTE buffer-row
+  /// [HighlightRange]s (via the live viewport [offset]) and set them on the
+  /// flterm [controller]'s source-level highlight pass (#755 Slice 1c). The
+  /// highlight colour is the session theme's selection colour (theme-consistent,
+  /// #716); `_lastHighlightColor` is captured in [build] from the live palette so
+  /// the off-build re-detect can colour the ranges without re-reading providers.
+  /// [offset] defaults to the live viewport offset (read off the controller) so
+  /// the build-time recolour and the detect-time push share one mapping.
+  void _pushHighlights(
+    TerminalController controller,
+    List<GhosttyUrlMatch> matches, {
+    int? offset,
+  }) {
+    final off = offset ?? _viewportOffsetOf(controller);
+    _lastPushedOffset = off;
+    controller.highlights = ghosttyUrlMatchesToHighlights(
+      matches,
+      viewportOffset: off,
+      color: _lastHighlightColor,
+    );
   }
 
   /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
@@ -2664,8 +2525,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// [match] ranges (#726) — no duplicate detection.
   ///
   /// Builds the URL's on-screen highlight rects from the match's 0-based viewport
-  /// cell range using the SAME geometry the [GhosttyUrlHighlightPainter] +
-  /// gesture router use: [kGhosttyTerminalPadding] + the live [_lastCellSize],
+  /// cell range using the SAME geometry the gesture router uses:
+  /// [kGhosttyTerminalPadding] + the live [_lastCellSize],
   /// then offset by the view's render-box GLOBAL origin (the overlay layer is
   /// rooted, so it wants global coords). A soft-wrapped URL spans rows → one rect
   /// per row segment, mirroring [ghosttyCellInUrl]'s geometry.
@@ -2750,7 +2611,6 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     _resyncTimers.clear();
     _urlDebounce?.cancel();
-    _urlScrollSettle?.cancel();
     _outputSub?.cancel();
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
@@ -2829,16 +2689,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #734: remember the live cell size so a long-press URL menu can build its
     // highlight rects with the same geometry the router maps touches with.
     _lastCellSize = cellSize;
-    // #748: the cell's below-baseline slack, so the URL underline hugs the
-    // glyph's visible bottom (baseline + a hair) instead of the raw cell bottom
-    // (which floats in the line gap below the text). Same font as the cell-size
-    // measurement, so the baseline matches what flterm renders against.
-    final belowBaselineSlack = ghosttyMeasureBelowBaselineSlack(
-      fontSize: theme.fontSize,
-      fontFamily: theme.fontFamily,
-      fontWeight: theme.fontWeight,
-      fontFamilyFallback: theme.fontFamilyFallback,
-    );
+    // #755: the URL highlight is now drawn by flterm's own painter from
+    // `controller.highlights` (real cell metrics, no host overlay). Capture the
+    // theme's selection colour so the off-build re-detect colours new ranges; if
+    // the theme just changed, recolour the already-detected highlights in place
+    // so cycling the session theme recolours existing URL highlights too.
+    final highlightColor = palette.theme.selection;
+    if (highlightColor != _lastHighlightColor) {
+      _lastHighlightColor = highlightColor;
+      _pushHighlights(controller, _urlMatches);
+    }
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
@@ -2862,27 +2722,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             gestureSettings: kGhosttyScrollSettings,
           ),
         ),
-        // #726: URL highlight overlay — a subtle underline under each detected
-        // URL's cell range, drawn with the SAME #723-correct cell metrics + the
-        // flterm padding so it lands under the on-screen text. IgnorePointer so
-        // it never steals the tap (the gesture router below handles tap-to-copy).
-        // Repaints when _urlMatches / metrics change (debounced re-detection on
-        // controller notify), so it follows scroll + resize. Uses the theme's
-        // selection colour for theme consistency (#716).
-        Positioned.fill(
-          child: IgnorePointer(
-            child: CustomPaint(
-              painter: GhosttyUrlHighlightPainter(
-                matches: _urlMatches,
-                cellWidth: cellSize.width,
-                cellHeight: cellSize.height,
-                cols: _cols,
-                color: palette.theme.selection,
-                belowBaselineSlack: belowBaselineSlack,
-              ),
-            ),
-          ),
-        ),
+        // #726/#755 Slice 1c: the URL highlight is no longer a host overlay. The
+        // detected ranges are fed to `controller.highlights` ([_detectUrls] →
+        // [_pushHighlights]) and flterm's own `HighlightPainter` draws them
+        // INSIDE the terminal using its real cell metrics, re-reading the viewport
+        // offset each frame — so the highlight hugs the glyphs and tracks scroll /
+        // wrap / resize with no host-side geometry (the #748/#699/#723 fix). The
+        // old `GhosttyUrlHighlightPainter` CustomPaint overlay (the drift source)
+        // is deleted.
         // #690/#692/#693: routes touch so the remote (tmux) behaves. When mouse
         // mode is ON the overlay is OPAQUE and routes the gesture: a finger SWIPE
         // scrolls the scrollback (flterm emits canonical wheel reports — never a
