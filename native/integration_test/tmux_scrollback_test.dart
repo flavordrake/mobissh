@@ -26,6 +26,7 @@ import 'package:integration_test/integration_test.dart';
 
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/sessions.dart';
+import 'package:mobissh/state/terminal_backend.dart';
 
 import 'support/connect_helpers.dart';
 
@@ -37,7 +38,18 @@ void main() {
   ) async {
     FlutterForegroundTask.initCommunicationPort();
 
-    final container = ProviderContainer();
+    // #727 made ghostty the DEFAULT backend; under ghostty TerminalScreen mounts
+    // GhosttyTerminalView and SKIPS the xterm-only #617 wheel-SGR scrollback path
+    // (terminal_screen.dart:871-994), and there is no `terminal-view-$id` key to
+    // drag nor an xterm `Terminal.buffer` to snapshot. This test validates the
+    // xterm wheel-SGR → tmux copy-mode scrollback, so pin the xterm backend.
+    final container = ProviderContainer(
+      overrides: [
+        terminalBackendProvider.overrideWith(
+          (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
+        ),
+      ],
+    );
     addTearDown(container.dispose);
 
     await tester.pumpWidget(

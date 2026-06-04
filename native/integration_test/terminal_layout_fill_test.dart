@@ -33,6 +33,7 @@ import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/state/session_host_providers.dart';
+import 'package:mobissh/state/terminal_backend.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
 
 import 'support/connect_helpers.dart';
@@ -67,6 +68,16 @@ class _ResizeSpyGateway implements TaskSshGateway {
   }
 
   @override
+  void sendControl(Map<String, dynamic> payload) =>
+      _delegate.sendControl(payload);
+
+  @override
+  bool get isReady => _delegate.isReady;
+
+  @override
+  void markServiceAlreadyRunning() => _delegate.markServiceAlreadyRunning();
+
+  @override
   Stream<Map<String, dynamic>> get incoming => _delegate.incoming;
 
   @override
@@ -87,7 +98,18 @@ void main() {
 
       final spy = _ResizeSpyGateway(FlutterForegroundSshGateway());
       final container = ProviderContainer(
-        overrides: [taskSshGatewayProvider.overrideWithValue(spy)],
+        overrides: [
+          taskSshGatewayProvider.overrideWithValue(spy),
+          // #727 made ghostty the DEFAULT backend; under ghostty TerminalScreen
+          // mounts GhosttyTerminalView and SKIPS the xterm-only fit/resize
+          // machinery (terminal_screen.dart:871-994), so the xterm `Terminal`'s
+          // viewHeight + the UI→task resize this test asserts never apply. This
+          // test specifically validates xterm's #625 fill + #600 re-fit/re-send,
+          // so pin the xterm backend (same idiom as the #725 widget tests).
+          terminalBackendProvider.overrideWith(
+            (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
+          ),
+        ],
       );
       addTearDown(container.dispose);
 

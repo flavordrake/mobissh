@@ -17,6 +17,7 @@ import 'dart:async';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../diagnostics/connect_trace.dart';
+import 'session_messages.dart';
 
 /// Build a one-line trace label for a gateway payload. Includes the message
 /// `kind` and (when present) the `host:port` portion of the sessionId so
@@ -42,6 +43,26 @@ String _gwLabel(Map<String, dynamic> p) {
 abstract class TaskSshGateway {
   /// Push a JSON-shaped payload across the channel.
   void send(Map<String, dynamic> payload);
+
+  /// Push a CONTROL payload straight to the transport, REGARDLESS of readiness
+  /// (#731). Unlike [send], this never lands in the not-ready buffer — a
+  /// re-handshake hello must reach a live task even before the gateway has been
+  /// flipped to ready, otherwise it would deadlock waiting on the very ready
+  /// signal it is trying to trigger. The default implementation defers to
+  /// [send] (correct for in-isolate test pairs, which are never not-ready).
+  void sendControl(Map<String, dynamic> payload) => send(payload);
+
+  /// Whether the gateway has seen the task's readiness handshake. UI-side
+  /// gateways buffer until this is true; in-isolate pairs are always ready.
+  bool get isReady => true;
+
+  /// Tell the gateway the foreground service was found "already running" while
+  /// the gateway is still not-ready (#731 — the service outlived the UI
+  /// process). Arms a short timeout: if no readiness handshake arrives, the
+  /// gateway re-sends the hello once and then surfaces a visible error rather
+  /// than buffering a `connect` silently forever. No-op when already ready or
+  /// for in-isolate test pairs.
+  void markServiceAlreadyRunning() {}
 
   /// Inbound payloads from the other side.
   Stream<Map<String, dynamic>> get incoming;
@@ -114,6 +135,17 @@ class _InMemoryGateway implements TaskSshGateway {
     if (_disposed) return;
     if (_sender.isClosed) return;
     _sender.add(payload);
+  }
+
+  @override
+  void sendControl(Map<String, dynamic> payload) => send(payload);
+
+  @override
+  bool get isReady => true;
+
+  @override
+  void markServiceAlreadyRunning() {
+    // In-isolate test pair: always ready, never a stuck not-ready buffer.
   }
 
   @override
@@ -222,12 +254,26 @@ Map<String, dynamic>? _coercePayload(Object? raw) {
 /// front-to-back (preserving connect → input → resize order) and subsequent
 /// sends pass through immediately.
 class FlutterForegroundSshGateway implements TaskSshGateway {
-  FlutterForegroundSshGateway({FftTransport? transport})
-    : _transport = transport ?? const UiSideFftTransport() {
+  FlutterForegroundSshGateway({
+    FftTransport? transport,
+    Duration rehandshakeTimeout = const Duration(seconds: 3),
+    Timer Function(Duration, void Function())? scheduleTimer,
+  }) : _transport = transport ?? const UiSideFftTransport(),
+       _rehandshakeTimeout = rehandshakeTimeout,
+       _scheduleTimer = scheduleTimer ?? Timer.new {
     _cancel = _transport.registerReceiver(_onData);
   }
 
   final FftTransport _transport;
+
+  /// How long to wait for a readiness handshake after the service was found
+  /// "already running" before re-sending the hello / surfacing an error (#731).
+  final Duration _rehandshakeTimeout;
+
+  /// Injectable timer factory so `fakeAsync` tests can drive the re-handshake
+  /// timeout deterministically without real delays. Defaults to [Timer.new].
+  final Timer Function(Duration, void Function()) _scheduleTimer;
+
   final StreamController<Map<String, dynamic>> _incoming =
       StreamController<Map<String, dynamic>>.broadcast();
   void Function()? _cancel;
@@ -240,6 +286,17 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
   /// FIFO queue of payloads sent before the task became ready. Flushed in
   /// order once the first inbound payload arrives.
   final List<Map<String, dynamic>> _outboundBuffer = [];
+
+  /// Pending re-handshake timeout (#731). Non-null while we are waiting on a
+  /// readiness handshake after the service was found "already running".
+  Timer? _rehandshakeTimer;
+
+  /// Whether we've already re-sent the hello once during the current
+  /// not-ready window. The second timeout surfaces an error instead of looping.
+  bool _helloRetried = false;
+
+  @override
+  bool get isReady => _ready;
 
   @override
   Stream<Map<String, dynamic>> get incoming => _incoming.stream;
@@ -259,6 +316,72 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     _transport.send(payload);
   }
 
+  @override
+  void sendControl(Map<String, dynamic> payload) {
+    if (_disposed) return;
+    // Control payloads (the re-handshake hello, #731) MUST bypass the not-ready
+    // buffer — they exist precisely to PROVOKE the readiness the buffer waits
+    // on. Buffering one would deadlock the very flush it triggers.
+    ctrace('ui.gw', 'sendControl ${_gwLabel(payload)} → transport (bypass)');
+    _transport.send(payload);
+  }
+
+  @override
+  void markServiceAlreadyRunning() {
+    if (_disposed || _ready) return;
+    // The foreground service was found running but THIS gateway never saw a
+    // ready handshake (#731 — service outlived the UI process). Arm a timeout:
+    // if no readiness arrives, re-send the hello once, then surface a visible
+    // error rather than buffering forever. Idempotent — re-arming just resets
+    // the window.
+    _rehandshakeTimer?.cancel();
+    _rehandshakeTimer = _scheduleTimer(
+      _rehandshakeTimeout,
+      _onRehandshakeTimeout,
+    );
+  }
+
+  void _onRehandshakeTimeout() {
+    if (_disposed || _ready) return;
+    if (!_helloRetried) {
+      _helloRetried = true;
+      ctrace(
+        'ui.gw',
+        'rehandshake timeout — re-sending hello (n buffered=${_outboundBuffer.length})',
+      );
+      sendControl(const SshUiHelloCommand().toJson());
+      _rehandshakeTimer = _scheduleTimer(
+        _rehandshakeTimeout,
+        _onRehandshakeTimeout,
+      );
+      return;
+    }
+    // Second window elapsed with no readiness — stop hanging silently. Surface a
+    // visible error scoped to the buffered command's session so the UI proxy
+    // turns it into a session error (and the user sees something other than
+    // "tapped, nothing happened"). Drop the dead buffer.
+    final sid = _outboundBuffer
+        .map((p) => p['sessionId'])
+        .whereType<String>()
+        .firstWhere((s) => s.isNotEmpty, orElse: () => '');
+    ctrace(
+      'ui.gw',
+      'rehandshake FAILED — surfacing error for sid=$sid, dropping '
+          '${_outboundBuffer.length} buffered',
+    );
+    _outboundBuffer.clear();
+    if (!_incoming.isClosed) {
+      _incoming.add(
+        SshErrorEvent(
+          sessionId: sid,
+          message:
+              'Background service is unresponsive. Force-stop MobiSSH in '
+              'Android Settings → Apps, then reconnect.',
+        ).toJson(),
+      );
+    }
+  }
+
   void _onData(Object data) {
     if (_disposed) return;
     final map = _coercePayload(data);
@@ -270,6 +393,9 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     // flush anything we buffered during spin-up, in order (#539).
     if (!_ready) {
       _ready = true;
+      _rehandshakeTimer?.cancel();
+      _rehandshakeTimer = null;
+      _helloRetried = false;
       final buffered = List<Map<String, dynamic>>.from(_outboundBuffer);
       _outboundBuffer.clear();
       ctrace(
@@ -300,6 +426,9 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     );
     _ready = false;
     _outboundBuffer.clear();
+    _rehandshakeTimer?.cancel();
+    _rehandshakeTimer = null;
+    _helloRetried = false;
   }
 
   @override
@@ -307,6 +436,8 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
     if (_disposed) return;
     _disposed = true;
     _outboundBuffer.clear();
+    _rehandshakeTimer?.cancel();
+    _rehandshakeTimer = null;
     _cancel?.call();
     _cancel = null;
     if (!_incoming.isClosed) await _incoming.close();
@@ -336,6 +467,17 @@ class TaskSideForegroundGateway implements TaskSshGateway {
   void send(Map<String, dynamic> payload) {
     if (_disposed) return;
     _transport.send(payload);
+  }
+
+  @override
+  void sendControl(Map<String, dynamic> payload) => send(payload);
+
+  @override
+  bool get isReady => true;
+
+  @override
+  void markServiceAlreadyRunning() {
+    // Task side IS the service; readiness handshakes are a UI-side concern.
   }
 
   @override
