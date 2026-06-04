@@ -11,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../platform/desktop.dart';
 import '../services/keepalive_task.dart';
+import '../services/session_messages.dart';
+import '../services/task_ssh_gateway.dart';
 import 'session_host_providers.dart';
 import 'sessions.dart';
 
@@ -22,6 +24,20 @@ KeepaliveGateway _keepaliveGatewayFor(Ref ref) {
   return ref.watch(isDesktopProvider)
       ? const NoopKeepaliveGateway()
       : FlutterForegroundTaskGateway();
+}
+
+/// Re-handshake a fresh-but-not-ready UI gateway when the foreground service
+/// was found ALREADY running (#731 — the FGS outlived the UI process). The
+/// task's `onStart` won't re-fire, so no `SshTaskReadyEvent` reaches the new
+/// gateway and every `connect` buffers forever. Send a `uiHello` via
+/// `sendControl` (bypassing the not-ready buffer) so the live task re-emits its
+/// ready event, and arm the gateway's timeout guard so a missing response
+/// surfaces a visible error instead of an indefinite silent buffer. No-op when
+/// the gateway is already ready.
+void _rehandshakeIfNotReady(TaskSshGateway gateway) {
+  if (gateway.isReady) return;
+  gateway.sendControl(const SshUiHelloCommand().toJson());
+  gateway.markServiceAlreadyRunning();
 }
 
 /// SharedPreferences key. Matches the PWA's localStorage key naming style.
@@ -89,6 +105,8 @@ final keepaliveControllerProvider = Provider<KeepaliveController>((ref) {
     enabled: ref.read(keepaliveEnabledProvider),
     onServiceStopped: () =>
         ref.read(taskSshGatewayProvider).markServiceStopped(),
+    onServiceAlreadyRunning: () =>
+        _rehandshakeIfNotReady(ref.read(taskSshGatewayProvider)),
   );
   // Initial attach for whatever sessions already exist when this controller
   // is first read (typically zero on cold start, but the proxy/session
@@ -159,6 +177,8 @@ final keepaliveServiceStarterProvider = Provider<KeepaliveStarter>((ref) {
     enabled: ref.read(keepaliveEnabledProvider),
     onServiceStopped: () =>
         ref.read(taskSshGatewayProvider).markServiceStopped(),
+    onServiceAlreadyRunning: () =>
+        _rehandshakeIfNotReady(ref.read(taskSshGatewayProvider)),
   );
   ref.listen<bool>(keepaliveEnabledProvider, (_, next) {
     controller.enabled = next;

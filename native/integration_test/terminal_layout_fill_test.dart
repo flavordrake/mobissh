@@ -67,6 +67,16 @@ class _ResizeSpyGateway implements TaskSshGateway {
   }
 
   @override
+  void sendControl(Map<String, dynamic> payload) =>
+      _delegate.sendControl(payload);
+
+  @override
+  bool get isReady => _delegate.isReady;
+
+  @override
+  void markServiceAlreadyRunning() => _delegate.markServiceAlreadyRunning();
+
+  @override
   Stream<Map<String, dynamic>> get incoming => _delegate.incoming;
 
   @override

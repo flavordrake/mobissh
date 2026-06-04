@@ -18,6 +18,7 @@ import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import 'session_host.dart';
+import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
 
 /// Top-level entry point for the foreground task isolate. Must be
@@ -41,11 +42,27 @@ class KeepaliveTaskHandler extends TaskHandler {
   /// which constructs a real host wired to FFT static methods. Tests inject
   /// a stub host bound to a [StubFftTransport] so the wire contract can be
   /// exercised without binding to platform channels.
-  KeepaliveTaskHandler({SessionHostBuilder? hostBuilder})
-    : _hostBuilder = hostBuilder ?? _defaultHostBuilder;
+  KeepaliveTaskHandler({
+    SessionHostBuilder? hostBuilder,
+    TaskSideFftTransport? transportForTest,
+  }) : _hostBuilder = hostBuilder ?? _defaultHostBuilder,
+       // ignore: prefer_initializing_formals
+       _transportForTest = transportForTest;
 
   final SessionHostBuilder _hostBuilder;
+
+  /// Test-only transport seam (#731). When non-null, [onStart] binds the
+  /// task-side gateway to THIS transport instead of constructing a fresh
+  /// FFT-backed one — letting tests observe the task → UI payloads (e.g. the
+  /// ready re-emit triggered by `uiHello`) without binding to platform statics.
+  final TaskSideFftTransport? _transportForTest;
   TaskSideFftTransport? _transport;
+
+  /// The task-side gateway built in [onStart]. Held so [onReceiveData] can
+  /// re-emit [SshTaskReadyEvent] when a fresh UI gateway sends an
+  /// [SshUiHelloCommand] (#731 — the service outlived the UI process and
+  /// `onStart` won't re-fire).
+  TaskSshGateway? _gateway;
   SessionHost? _host;
 
   /// Visible for testing — exposes the host owned by this handler so widget
@@ -57,9 +74,10 @@ class KeepaliveTaskHandler extends TaskHandler {
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     ctrace('task', 'onStart: building SessionHost + gateway');
     startedAt = timestamp;
-    final transport = TaskSideFftTransport();
+    final transport = _transportForTest ?? TaskSideFftTransport();
     final gateway = TaskSideForegroundGateway(transport: transport);
     _transport = transport;
+    _gateway = gateway;
     // The host announces readiness in its constructor (#539): the first
     // task → UI payload it sends is an `SshTaskReadyEvent`, which the UI-side
     // gateway uses to flush any commands buffered during isolate spin-up.
@@ -69,10 +87,25 @@ class KeepaliveTaskHandler extends TaskHandler {
 
   @override
   void onReceiveData(Object data) {
+    // #731: a fresh UI gateway that bound to an already-running service sends an
+    // `uiHello` (via `sendControl`, never buffered) to re-trigger the readiness
+    // handshake that `onStart` would otherwise have sent. Re-emit
+    // `SshTaskReadyEvent` so the new gateway flips ready and flushes its
+    // buffered `connect`. Idempotent — harmless if the gateway is already ready.
+    // Intercepted BEFORE forwarding so the host doesn't try to dispatch it as a
+    // session command.
+    final kind = data is Map ? (data['kind'] ?? data['type']) : null;
+    if (kind == SshTaskCommandKind.uiHello.name) {
+      ctrace('task', 'onReceiveData: uiHello → re-emitting ready (#731)');
+      _gateway?.send(const SshTaskReadyEvent().toJson());
+      return;
+    }
     // Forward the UI-side payload into the gateway transport. The gateway
     // coerces shape; the host dispatches the command.
-    final t = data is Map ? (data['type'] ?? '?') : data.runtimeType;
-    ctrace('task', 'onReceiveData: type=$t transport=${_transport != null}');
+    final t = data is Map
+        ? (data['kind'] ?? data['type'] ?? '?')
+        : data.runtimeType;
+    ctrace('task', 'onReceiveData: kind=$t transport=${_transport != null}');
     _transport?.deliver(data);
   }
 
@@ -88,6 +121,7 @@ class KeepaliveTaskHandler extends TaskHandler {
     final host = _host;
     _host = null;
     _transport = null;
+    _gateway = null;
     if (host != null) {
       // Tear down all hosted sessions cleanly (closes SSHClient + cancels
       // state subs). Errors here are swallowed — the isolate is going away.
@@ -258,9 +292,12 @@ class KeepaliveController {
     KeepaliveGateway? gateway,
     bool enabled = true,
     void Function()? onServiceStopped,
+    void Function()? onServiceAlreadyRunning,
   }) : _gateway = gateway ?? FlutterForegroundTaskGateway(),
        // ignore: prefer_initializing_formals
-       _onServiceStopped = onServiceStopped {
+       _onServiceStopped = onServiceStopped,
+       // ignore: prefer_initializing_formals
+       _onServiceAlreadyRunning = onServiceAlreadyRunning {
     _enabled = enabled;
   }
 
@@ -270,6 +307,14 @@ class KeepaliveController {
   /// UI↔task gateway can reset to not-ready and re-buffer commands until the
   /// next isolate generation re-handshakes (#564 reconnect fix).
   final void Function()? _onServiceStopped;
+
+  /// Called when [_startIfStopped] finds the foreground service ALREADY running
+  /// instead of starting it (#731). When the service outlived the UI process,
+  /// the fresh UI gateway is stuck not-ready (no `onStart` → no ready event), so
+  /// the provider wires this to re-handshake the gateway (send `uiHello` via
+  /// `sendControl` + arm the gateway's timeout guard). No-op on the normal
+  /// cold-start path where the service is started fresh.
+  final void Function()? _onServiceAlreadyRunning;
   bool _enabled = true;
   int _connectedCount = 0;
   final Map<Object, StreamSubscription<SshSessionData>> _subscriptions = {};
@@ -434,6 +479,12 @@ class KeepaliveController {
     final running = await _gateway.isRunningService;
     if (running) {
       ctrace('ui.keepalive', '_startIfStopped: already running — skip');
+      // #731: the service is up but a fresh UI gateway (after the FGS outlived
+      // the UI process) is stuck not-ready because `onStart` won't re-fire.
+      // Re-handshake so the buffered `connect` can flush instead of hanging
+      // silently. Harmless when the gateway is already ready (the callback
+      // guards on readiness).
+      _onServiceAlreadyRunning?.call();
       return;
     }
     ctrace('ui.keepalive', '_startIfStopped: calling startService...');

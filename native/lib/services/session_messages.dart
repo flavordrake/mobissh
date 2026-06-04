@@ -23,6 +23,14 @@ enum SshTaskCommandKind {
   requestSnapshot,
   hostKeyDecision,
 
+  /// UI → task: a fresh UI-side gateway re-handshake request (#731). Sent
+  /// straight to the transport via `sendControl` (NOT buffered) when the
+  /// foreground service is "already running" but the new gateway is not-ready —
+  /// the service outlived the UI process, so `onStart` won't re-fire and no
+  /// `SshTaskReadyEvent` would otherwise reach the new gateway. The task
+  /// re-emits its ready event in response.
+  uiHello,
+
   // --- SFTP (#559) ---
   /// List a remote directory over the session's SftpClient.
   sftpList,
@@ -95,22 +103,22 @@ class SftpEntry {
   final bool isSymlink;
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'path': path,
-        'isDirectory': isDirectory,
-        if (size != null) 'size': size,
-        if (modifyTime != null) 'modifyTime': modifyTime,
-        if (isSymlink) 'isSymlink': true,
-      };
+    'name': name,
+    'path': path,
+    'isDirectory': isDirectory,
+    if (size != null) 'size': size,
+    if (modifyTime != null) 'modifyTime': modifyTime,
+    if (isSymlink) 'isSymlink': true,
+  };
 
   factory SftpEntry.fromJson(Map<String, dynamic> json) => SftpEntry(
-        name: json['name'] as String,
-        path: json['path'] as String,
-        isDirectory: json['isDirectory'] as bool,
-        size: json['size'] as int?,
-        modifyTime: json['modifyTime'] as int?,
-        isSymlink: (json['isSymlink'] as bool?) ?? false,
-      );
+    name: json['name'] as String,
+    path: json['path'] as String,
+    isDirectory: json['isDirectory'] as bool,
+    size: json['size'] as int?,
+    modifyTime: json['modifyTime'] as int?,
+    isSymlink: (json['isSymlink'] as bool?) ?? false,
+  );
 }
 
 /// Base for all UI → task command envelopes. Subclasses are concrete records
@@ -170,6 +178,8 @@ sealed class SshTaskCommand {
           sessionId: sessionId,
           accepted: json['accepted'] as bool,
         );
+      case SshTaskCommandKind.uiHello:
+        return const SshUiHelloCommand();
       case SshTaskCommandKind.sftpList:
         return SftpListCommand(
           sessionId: sessionId,
@@ -208,11 +218,11 @@ class SftpListCommand extends SshTaskCommand {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'path': path,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
+  };
 }
 
 /// UI → task: download the single remote file at [path]. The task streams
@@ -233,11 +243,11 @@ class SftpDownloadCommand extends SshTaskCommand {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'path': path,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
+  };
 }
 
 class SshConnectCommand extends SshTaskCommand {
@@ -265,14 +275,14 @@ class SshConnectCommand extends SshTaskCommand {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'host': host,
-        'port': port,
-        'username': username,
-        'auth': authJson,
-        if (title != null) 'title': title,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'host': host,
+    'port': port,
+    'username': username,
+    'auth': authJson,
+    if (title != null) 'title': title,
+  };
 }
 
 class SshDisconnectCommand extends SshTaskCommand {
@@ -282,15 +292,12 @@ class SshDisconnectCommand extends SshTaskCommand {
   SshTaskCommandKind get kind => SshTaskCommandKind.disconnect;
 
   @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-      };
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
 }
 
 class SshInputCommand extends SshTaskCommand {
   SshInputCommand({required String sessionId, required this.bytes})
-      : super(sessionId);
+    : super(sessionId);
 
   final Uint8List bytes;
 
@@ -299,10 +306,10 @@ class SshInputCommand extends SshTaskCommand {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'bytes': base64Encode(bytes),
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'bytes': base64Encode(bytes),
+  };
 }
 
 class SshResizeCommand extends SshTaskCommand {
@@ -324,27 +331,24 @@ class SshResizeCommand extends SshTaskCommand {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'cols': cols,
-        'rows': rows,
-        'pixelWidth': pixelWidth,
-        'pixelHeight': pixelHeight,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'cols': cols,
+    'rows': rows,
+    'pixelWidth': pixelWidth,
+    'pixelHeight': pixelHeight,
+  };
 }
 
 class SshRequestSnapshotCommand extends SshTaskCommand {
   const SshRequestSnapshotCommand({required String sessionId})
-      : super(sessionId);
+    : super(sessionId);
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.requestSnapshot;
 
   @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-      };
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
 }
 
 /// UI → task: the user's trust decision for a pending host-key challenge
@@ -365,10 +369,37 @@ class SshHostKeyDecisionCommand extends SshTaskCommand {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'accepted': accepted,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'accepted': accepted,
+  };
+}
+
+/// UI → task: a fresh UI-side gateway asks the (already-running) task to
+/// re-announce its readiness (#731). When the foreground service OUTLIVES the
+/// UI process, a new cold launch builds a not-ready [TaskSshGateway] but
+/// `KeepaliveController._startIfStopped` sees the service already running and
+/// skips (re)start — so the task's `onStart` never re-fires and no
+/// [SshTaskReadyEvent] reaches the new gateway, leaving every `connect`
+/// buffered forever. This command is sent via `sendControl` (bypassing the
+/// not-ready buffer) so the live task can re-emit [SshTaskReadyEvent] and flip
+/// the fresh gateway to ready. Task-global, so [sessionId] is the empty
+/// sentinel (mirrors [SshTaskReadyEvent]). Handling on the task side is
+/// idempotent — safe to send even when the gateway is already ready.
+///
+/// [SYNC] paired with [SshTaskReadyEvent] (the task → UI response). The wire
+/// contract is single-codebase (both isolates are this Dart module), so the
+/// round-trip `toJson`/`fromJson` test in `task_ipc_test.dart` is the sync
+/// check — keep this command and its handlers (KeepaliveTaskHandler.onReceiveData,
+/// SessionHost._dispatch) in step.
+class SshUiHelloCommand extends SshTaskCommand {
+  const SshUiHelloCommand() : super('');
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.uiHello;
+
+  @override
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
 }
 
 // ---------------------------------------------------------------------------
@@ -497,19 +528,19 @@ class SshStateEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'state': state,
-        if (error != null) 'error': error,
-        if (host != null) 'host': host,
-        if (port != null) 'port': port,
-        if (username != null) 'username': username,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'state': state,
+    if (error != null) 'error': error,
+    if (host != null) 'host': host,
+    if (port != null) 'port': port,
+    if (username != null) 'username': username,
+  };
 }
 
 class SshOutputEvent extends SshTaskEvent {
   SshOutputEvent({required String sessionId, required this.bytes})
-      : super(sessionId);
+    : super(sessionId);
 
   final Uint8List bytes;
 
@@ -518,10 +549,10 @@ class SshOutputEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'bytes': base64Encode(bytes),
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'bytes': base64Encode(bytes),
+  };
 }
 
 /// Periodic state-of-the-world dump from task → UI. Used to populate the
@@ -554,16 +585,16 @@ class SshSnapshotEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'state': state,
-        'bytesIn': bytesIn,
-        'bytesOut': bytesOut,
-        if (lastKeepaliveRttMs != null) 'lastKeepaliveRttMs': lastKeepaliveRttMs,
-        'reconnectCount': reconnectCount,
-        if (lastReconnectAtMs != null) 'lastReconnectAtMs': lastReconnectAtMs,
-        'scrollbackTail': scrollbackTail,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'state': state,
+    'bytesIn': bytesIn,
+    'bytesOut': bytesOut,
+    if (lastKeepaliveRttMs != null) 'lastKeepaliveRttMs': lastKeepaliveRttMs,
+    'reconnectCount': reconnectCount,
+    if (lastReconnectAtMs != null) 'lastReconnectAtMs': lastReconnectAtMs,
+    'scrollbackTail': scrollbackTail,
+  };
 }
 
 class SshClosedEvent extends SshTaskEvent {
@@ -573,15 +604,12 @@ class SshClosedEvent extends SshTaskEvent {
   SshTaskEventKind get kind => SshTaskEventKind.closed;
 
   @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-      };
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
 }
 
 class SshErrorEvent extends SshTaskEvent {
   const SshErrorEvent({required String sessionId, required this.message})
-      : super(sessionId);
+    : super(sessionId);
 
   final String message;
 
@@ -590,10 +618,10 @@ class SshErrorEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'message': message,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'message': message,
+  };
 }
 
 /// Task → UI: a new (untrusted) host key needs a user trust decision (#536).
@@ -618,13 +646,13 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'host': host,
-        'port': port,
-        'keyType': keyType,
-        'fingerprint': fingerprint,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'host': host,
+    'port': port,
+    'keyType': keyType,
+    'fingerprint': fingerprint,
+  };
 }
 
 /// Task → UI: the foreground task isolate has finished booting (#539). Sent
@@ -642,10 +670,7 @@ class SshTaskReadyEvent extends SshTaskEvent {
   SshTaskEventKind get kind => SshTaskEventKind.ready;
 
   @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-      };
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
 }
 
 /// Task → UI: the PTY shell for [sessionId] is open + writable (#619). Emitted
@@ -662,10 +687,7 @@ class SshShellReadyEvent extends SshTaskEvent {
   SshTaskEventKind get kind => SshTaskEventKind.shellReady;
 
   @override
-  Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-      };
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
 }
 
 // ---------------------------------------------------------------------------
@@ -691,12 +713,12 @@ class SftpListingEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'path': path,
-        'entries': entries.map((e) => e.toJson()).toList(),
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
+    'entries': entries.map((e) => e.toJson()).toList(),
+  };
 }
 
 /// Task → UI: one chunk of a downloading file. Streamed in order; the UI
@@ -721,13 +743,13 @@ class SftpDownloadChunkEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'bytes': base64Encode(bytes),
-        'offset': offset,
-        if (totalBytes != null) 'totalBytes': totalBytes,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'bytes': base64Encode(bytes),
+    'offset': offset,
+    if (totalBytes != null) 'totalBytes': totalBytes,
+  };
 }
 
 /// Task → UI: a download completed successfully. [totalBytes] is the full
@@ -747,11 +769,11 @@ class SftpDownloadDoneEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'totalBytes': totalBytes,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'totalBytes': totalBytes,
+  };
 }
 
 /// Task → UI: an SFTP list/download op failed. Scoped to [requestId] so it
@@ -772,9 +794,9 @@ class SftpErrorEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': kind.name,
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'message': message,
-      };
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'message': message,
+  };
 }
