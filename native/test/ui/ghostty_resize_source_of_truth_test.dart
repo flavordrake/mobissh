@@ -70,6 +70,8 @@ void main() {
             onSelectionExtend: (_, _) {},
             hasSelection: hasSelection ?? () => false,
             onSelectionClear: () {},
+            urlAtCell: (_, _) => null,
+            onUrlTap: (_) {},
           ),
         ),
       ),
