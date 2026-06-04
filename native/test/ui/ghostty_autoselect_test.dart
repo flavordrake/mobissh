@@ -634,6 +634,60 @@ void main() {
     },
   );
 
+  group(
+    'ghosttySelectionInvalidatedByOutput — clear a selection whose content was '
+    'redrawn by remote output (#760)',
+    () {
+      test('active selection + fresh remote output (tmux/alt-screen redraw) '
+          'INVALIDATES (clear): the covered rows now show different text', () {
+        // The #760 bug: a touch selection anchored to absolute rows stays put
+        // when tmux redraws the SAME viewport rows in place via the output
+        // stream → it highlights stale cells. Fresh remote output while a
+        // selection is active must clear it.
+        expect(
+          ghosttySelectionInvalidatedByOutput(
+            hasSelection: true,
+            remoteOutput: true,
+          ),
+          isTrue,
+        );
+      });
+
+      test(
+        'active selection + NO remote output (pure local scrollback scroll) is '
+        'RETAINED: the same content just moved, the absolute frame tracks it',
+        () {
+          // A scroll notify writes no bytes (remoteOutput false). The selection
+          // must NOT clear — it still tracks its content as it slides.
+          expect(
+            ghosttySelectionInvalidatedByOutput(
+              hasSelection: true,
+              remoteOutput: false,
+            ),
+            isFalse,
+          );
+        },
+      );
+
+      test('no active selection is never invalidated (nothing to clear)', () {
+        expect(
+          ghosttySelectionInvalidatedByOutput(
+            hasSelection: false,
+            remoteOutput: true,
+          ),
+          isFalse,
+        );
+        expect(
+          ghosttySelectionInvalidatedByOutput(
+            hasSelection: false,
+            remoteOutput: false,
+          ),
+          isFalse,
+        );
+      });
+    },
+  );
+
   group('ghosttyShouldShowAffordances — Copy/Select-all visible only with a '
       'selection (#712)', () {
     test('an active selection SHOWS the affordance buttons', () {
