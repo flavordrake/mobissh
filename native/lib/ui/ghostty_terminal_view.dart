@@ -967,6 +967,55 @@ bool ghosttyLongPressShowsUrlMenu(GhosttyUrlMatch? urlAtCell) =>
 /// negation of the finger delta, matching a natural touch-scroll. Pure.
 double ghosttyScrollDeltaForSwipe(double fingerDy) => -fingerDy;
 
+/// What the URL re-detector should do on a controller notify (#750).
+///
+/// The flterm `TerminalController` is a `ChangeNotifier` that fires on BOTH
+/// ordinary output (the buffer grew) AND a scroll (the visible viewport shifted
+/// to a different `scrollbar.offset`). #726's re-detect ran the SAME 120ms
+/// debounce for both, so during a tmux scroll — a REMOTE full-screen redraw that
+/// shifts the visible text — the cached underlines kept painting at their old
+/// cells for the whole debounce window, floating over the now-shifted content
+/// (#750). The fix discriminates the two:
+enum GhosttyUrlDetectAction {
+  /// Ordinary output (the scroll offset did NOT change): keep #726's debounced
+  /// re-detect with NO pre-clear, so streaming output doesn't flicker the
+  /// existing (still-correct) underlines.
+  outputDebounce,
+
+  /// A real SCROLL (the scroll offset changed): immediately CLEAR the cached
+  /// matches (the underlines vanish — no stale float over the shifted text),
+  /// then re-detect on a SHORT settle debounce after the last scroll event so
+  /// the underlines reappear at the correct positions once the scroll stops.
+  scrollClearAndSettle,
+}
+
+/// Decide whether a controller notify is a SCROLL or ordinary OUTPUT, from the
+/// flterm scrollback offset before/after (#750). A CHANGED offset means the
+/// viewport scrolled (clear-then-settle); an UNCHANGED offset means output grew
+/// under a pinned viewport (the existing debounce, no pre-clear). Pure (no FFI /
+/// no widget) → unit-testable headless.
+GhosttyUrlDetectAction ghosttyUrlDetectAction({
+  required int prevScrollOffset,
+  required int nextScrollOffset,
+}) {
+  return prevScrollOffset != nextScrollOffset
+      ? GhosttyUrlDetectAction.scrollClearAndSettle
+      : GhosttyUrlDetectAction.outputDebounce;
+}
+
+/// The settle debounce (ms after the LAST scroll event) before re-detecting URLs
+/// (#750). Short — just long enough to coalesce a fast scroll's burst of offset
+/// changes into ONE re-scan once the finger/inertia stops — so the underlines
+/// reappear promptly. Distinct from the #726 output debounce
+/// ([kGhosttyUrlOutputDebounceMs]); a scroll CLEARS immediately and only the
+/// REAPPEAR is debounced.
+const int kGhosttyUrlScrollSettleMs = 90;
+
+/// The #726 output re-detect debounce (ms) — coalesce a streaming-output burst
+/// into one scan so we don't re-scan every PTY byte. Named so the scroll-settle
+/// constant ([kGhosttyUrlScrollSettleMs]) reads as a deliberate sibling.
+const int kGhosttyUrlOutputDebounceMs = 120;
+
 /// SGR-1006 WHEEL-UP report at the 1-based ([col], [row]) cell (#693).
 ///
 /// `CSI < 64 ; col ; row M` — button 64 is the wheel-up code. tmux's DEFAULT
@@ -1883,6 +1932,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// output write; coalesce a burst into a single scan after a short idle.
   Timer? _urlDebounce;
 
+  /// #750: SETTLE timer for re-detecting URLs after a SCROLL. A scroll CLEARS the
+  /// underlines immediately (so they don't float over shifted text), then this
+  /// short debounce re-detects once the scroll stops. Separate from
+  /// [_urlDebounce] so an output burst mid-scroll can't reapply stale underlines
+  /// before the scroll settles. Cancelled on dispose.
+  Timer? _urlScrollSettle;
+
+  /// #750: the flterm scrollback offset (`scrollbar.offset`) seen on the previous
+  /// controller notify, so [ghosttyUrlDetectAction] can tell a SCROLL (offset
+  /// changed) from ordinary OUTPUT (offset unchanged). -1 until the first notify
+  /// (the first tick is treated as output → the #726 debounce, never a clear).
+  int _lastScrollOffset = -1;
+
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
   SshSessionProxy? _proxy;
@@ -1995,19 +2057,81 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     _reanchorSelectionOnGrowth();
     _syncMouseTracking();
     _syncHasSelection();
-    // #726: the visible buffer may have changed (output/scroll) — re-detect URLs
-    // on a debounce so a streaming burst doesn't re-scan every byte.
-    _scheduleUrlDetect();
+    // #726/#750: the visible buffer may have changed. Discriminate a SCROLL (the
+    // scrollback offset shifted → the visible text moved) from ordinary OUTPUT
+    // (offset unchanged → buffer grew under a pinned viewport):
+    //   - SCROLL  → clear the underlines NOW (no stale float over shifted text)
+    //               + re-detect on a short settle after the scroll stops (#750);
+    //   - OUTPUT  → the existing #726 debounce, NO pre-clear (no flicker).
+    final controller = _controller;
+    final nextOffset = controller == null
+        ? _lastScrollOffset
+        : _scrollOffsetOf(controller);
+    final prevOffset = _lastScrollOffset;
+    _lastScrollOffset = nextOffset;
+    // The first notify (prevOffset == -1) is treated as output so a cold start
+    // never clears before the first detect.
+    final action = prevOffset < 0
+        ? GhosttyUrlDetectAction.outputDebounce
+        : ghosttyUrlDetectAction(
+            prevScrollOffset: prevOffset,
+            nextScrollOffset: nextOffset,
+          );
+    switch (action) {
+      case GhosttyUrlDetectAction.scrollClearAndSettle:
+        _clearUrlMatchesNow();
+        _scheduleUrlSettle();
+      case GhosttyUrlDetectAction.outputDebounce:
+        _scheduleUrlDetect();
+    }
   }
 
-  /// #726: debounce a URL re-detection. The controller fires on every output
-  /// write; coalesce a burst into one scan ~120ms after the last notify so
+  /// The flterm scrollback offset, defensively (a formatter/FFI hiccup must never
+  /// crash the session) — 0 if the controller can't report it.
+  int _scrollOffsetOf(TerminalController controller) {
+    try {
+      return controller.scrollbar.offset;
+    } catch (_) {
+      return _lastScrollOffset < 0 ? 0 : _lastScrollOffset;
+    }
+  }
+
+  /// #750: on a real SCROLL, clear the cached URL matches IMMEDIATELY so the
+  /// underlines vanish instead of floating over the now-shifted text. Cancels any
+  /// pending #726 output debounce so a mid-scroll output burst can't reapply the
+  /// stale underlines before the scroll settles.
+  void _clearUrlMatchesNow() {
+    _urlDebounce?.cancel();
+    if (_urlMatches.isEmpty) return;
+    if (mounted) setState(() => _urlMatches = const []);
+  }
+
+  /// #750: re-detect URLs once a scroll SETTLES — a short debounce after the last
+  /// scroll event so the underlines reappear at the correct positions. Restarted
+  /// on every scroll notify (the burst coalesces to one re-scan). Also cancels
+  /// the #726 output debounce so the two schedulers don't double-fire.
+  void _scheduleUrlSettle() {
+    _urlDebounce?.cancel();
+    _urlScrollSettle?.cancel();
+    _urlScrollSettle = Timer(
+      const Duration(milliseconds: kGhosttyUrlScrollSettleMs),
+      _detectUrls,
+    );
+  }
+
+  /// #726: debounce a URL re-detection on OUTPUT. The controller fires on every
+  /// output write; coalesce a burst into one scan ~120ms after the last notify so
   /// streaming output stays cheap. A short delay also lets flterm settle the
   /// grid before we read it. Cancelled/replaced on each notify; cleared on
-  /// dispose.
+  /// dispose. Also cancels a pending scroll-settle so a settle and an output
+  /// debounce never both fire.
   void _scheduleUrlDetect() {
+    _urlScrollSettle?.cancel();
     _urlDebounce?.cancel();
-    _urlDebounce = Timer(const Duration(milliseconds: 120), _detectUrls);
+    _urlDebounce = Timer(
+      const Duration(milliseconds: kGhosttyUrlOutputDebounceMs),
+      _detectUrls,
+    );
   }
 
   /// #726: read the VISIBLE viewport text from flterm and re-detect URLs.
@@ -2626,6 +2750,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     _resyncTimers.clear();
     _urlDebounce?.cancel();
+    _urlScrollSettle?.cancel();
     _outputSub?.cancel();
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
