@@ -72,12 +72,19 @@ String assembleFeedbackBundle({
   required CrashEnvironmentInfo info,
   required List<String> connectLog,
   List<String> gestureLog = const <String>[],
+  List<String> lifecycleLog = const <String>[],
   String? crashJson,
 }) {
   final scrubbedLog = connectLog.map(scrubSecrets).toList(growable: false);
   // #699: gesture-trace ring (touch->cell mapping diagnostics) carried off the
   // device for the Ghostty selection-offset bug. Scrubbed like the connect log.
   final scrubbedGestureLog = gestureLog
+      .map(scrubSecrets)
+      .toList(growable: false);
+  // #759: dedicated lifecycle-event ring (resume-liveness probe outcomes,
+  // reconnect decisions). Survives the 200-event connect-ring churn so the next
+  // wake-frozen occurrence is diagnosable from the bundle alone.
+  final scrubbedLifecycleLog = lifecycleLog
       .map(scrubSecrets)
       .toList(growable: false);
 
@@ -104,6 +111,7 @@ String assembleFeedbackBundle({
     'deviceModel': info.deviceModel,
     'connectLog': scrubbedLog,
     'gestureLog': scrubbedGestureLog,
+    'lifecycleLog': scrubbedLifecycleLog,
     'lastCrash': lastCrash,
     // Null-aware element: the entry is omitted entirely when there is no raw
     // (non-JSON) crash blob to preserve.

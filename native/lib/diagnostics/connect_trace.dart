@@ -27,7 +27,18 @@ import 'package:flutter/foundation.dart';
 /// lines are dropped once the cap is exceeded.
 const int connectLogCapacity = 200;
 
+/// Maximum number of lines retained by the dedicated [lifecycleLog] ring
+/// buffer (#759). Lifecycle events (resume-liveness probe OUTCOME, reconnect
+/// decisions) are LOW-frequency but HIGH-signal, and the 200-event connect ring
+/// churns them off the tail before the +Ns probe RESULT lands (the original
+/// #759 telemetry gap: the report was filed DURING the 4s probe, the outcome
+/// fell off the buffer). This second, smaller ring is reserved for those events
+/// so the NEXT occurrence is unambiguous from telemetry alone. The feedback
+/// bundle ships both rings.
+const int lifecycleLogCapacity = 80;
+
 final List<String> _ring = <String>[];
+final List<String> _lifecycleRing = <String>[];
 
 // Consecutive-duplicate suppression: when the same `[where] msg` repeats
 // back-to-back (e.g. keepalive `recv`/`send` pings), collapse it into the last
@@ -49,6 +60,20 @@ ValueListenable<List<String>> get connectLog => _connectLog;
 /// assembler, #553) can read the log without holding a listener or mutating
 /// the underlying ring.
 List<String> connectLogSnapshot() => List<String>.unmodifiable(_ring);
+
+final ValueNotifier<List<String>> _lifecycleLog = ValueNotifier<List<String>>(
+  const <String>[],
+);
+
+/// Live, read-only view of the dedicated lifecycle-event ring (#759). The
+/// newest line is last.
+ValueListenable<List<String>> get lifecycleLog => _lifecycleLog;
+
+/// Read-only snapshot of the lifecycle-event ring, newest line last (#759).
+/// Bundled into the feedback upload alongside [connectLogSnapshot] so the
+/// resume-liveness probe outcome survives the connect-ring churn.
+List<String> lifecycleLogSnapshot() =>
+    List<String>.unmodifiable(_lifecycleRing);
 
 String _timestamp(DateTime now) {
   String two(int n) => n.toString().padLeft(2, '0');
@@ -82,10 +107,42 @@ void ctrace(String where, String msg) {
   _connectLog.value = List<String>.unmodifiable(_ring);
 }
 
-/// Clears the on-device connect-log ring buffer. Does not affect logcat.
+/// Record a HIGH-signal lifecycle event (#759): resume-liveness probe outcome,
+/// reconnect decision. Appends to the dedicated [lifecycleLog] ring (which
+/// survives the 200-event connect-ring churn) AND to the connect ring (so the
+/// event also appears in-context) AND to logcat. Never suppressed/collapsed —
+/// every lifecycle decision is its own line.
+void clifecycle(String where, String msg) {
+  final key = '[$where] $msg';
+  final ts = _timestamp(DateTime.now());
+  final line = '$ts $key';
+
+  // Dedicated lifecycle ring — the durable record.
+  _lifecycleRing.add(line);
+  while (_lifecycleRing.length > lifecycleLogCapacity) {
+    _lifecycleRing.removeAt(0);
+  }
+  _lifecycleLog.value = List<String>.unmodifiable(_lifecycleRing);
+
+  // Also surface in the connect ring + logcat for in-context reading. Reset the
+  // collapse state so this line is never merged into a preceding ` (×N)` run.
+  _lastKey = null;
+  _lastCount = 0;
+  debugPrint('[CONNECT]$key');
+  _ring.add(line);
+  while (_ring.length > connectLogCapacity) {
+    _ring.removeAt(0);
+  }
+  _connectLog.value = List<String>.unmodifiable(_ring);
+}
+
+/// Clears the on-device connect-log + lifecycle-event ring buffers. Does not
+/// affect logcat.
 void clearConnectLog() {
   _ring.clear();
+  _lifecycleRing.clear();
   _lastKey = null;
   _lastCount = 0;
   _connectLog.value = const <String>[];
+  _lifecycleLog.value = const <String>[];
 }

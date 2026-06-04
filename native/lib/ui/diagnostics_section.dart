@@ -89,6 +89,7 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
         info: info,
         connectLog: connectLogSnapshot(),
         gestureLog: gestureLogSnapshot(),
+        lifecycleLog: lifecycleLogSnapshot(),
         crashJson: crashJson,
       );
 
