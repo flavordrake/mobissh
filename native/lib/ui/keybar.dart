@@ -21,6 +21,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../state/ctrl_modifier_provider.dart';
 import '../state/sessions.dart';
 
 /// Bottom-chrome sizing. These are the single source of truth for the button
@@ -248,35 +249,41 @@ class Keybar extends ConsumerStatefulWidget {
 }
 
 class _KeybarState extends ConsumerState<Keybar> {
-  // #694: sticky one-shot Ctrl modifier, mirroring the PWA's `ctrlActive`.
-  // Tapping the Ctrl key arms it; the next keybar key transforms to its control
-  // byte, then it auto-clears.
-  final CtrlModifier _ctrl = CtrlModifier();
+  // #694 + #728: the sticky one-shot Ctrl modifier now lives in the SHARED
+  // [ctrlModifierProvider] (state/ctrl_modifier_provider.dart) rather than a
+  // widget-local `CtrlModifier`, so the terminal soft-keyboard input path
+  // (flterm `controller.onOutput`) can read + clear the SAME armed state. There
+  // are no letter keys on the bar, so Ctrl+R is typed on the keyboard — #728
+  // makes that path see this arm. The keybar drives the provider (toggle on the
+  // Ctrl key, consume on the next keybar key) and reads it for the armed
+  // highlight; the per-key byte transform still uses the pure [ctrlTransform],
+  // exactly as #694's `CtrlModifier.apply` did.
 
   void _onKeyTap(KeybarKey k) {
     final terminal = widget.activeEntry.terminal;
+    final ctrl = ref.read(ctrlModifierProvider.notifier);
 
-    // The Ctrl modifier key itself: arm/cancel, no byte emitted.
+    // The Ctrl modifier key itself: arm/cancel, no byte emitted. `toggle` mirrors
+    // #694 (a second Ctrl tap cancels). Reading the provider drives the rebuild.
     if (k.isModifier) {
-      setState(_ctrl.arm);
+      ctrl.toggle();
       return;
     }
 
     // Paste pulls from the clipboard out-of-band. If Ctrl was armed, it has no
     // single-letter control meaning, so clear the modifier and paste literally.
     if (k.id == 'keyPaste') {
-      final wasArmed = _ctrl.armed;
-      if (wasArmed) setState(_ctrl.clear);
+      ctrl.disarm();
       _paste(terminal);
       return;
     }
 
-    // Apply the (possibly armed) Ctrl transform and send. `apply` auto-clears
-    // the one-shot modifier; rebuild so the armed highlight clears.
-    final wasArmed = _ctrl.armed;
-    final bytes = _ctrl.apply(k.sequence);
+    // Apply the (possibly armed) one-shot Ctrl transform and send. `consume`
+    // reads + clears the shared modifier (so the keybar highlight clears and the
+    // terminal path won't also see it); the byte transform mirrors #694.
+    final wasArmed = ctrl.consume();
+    final bytes = wasArmed ? ctrlTransform(k.sequence) : k.sequence;
     if (bytes.isNotEmpty) terminal.textInput(bytes);
-    if (wasArmed) setState(() {});
   }
 
   Future<void> _paste(Terminal terminal) async {
@@ -289,6 +296,10 @@ class _KeybarState extends ConsumerState<Keybar> {
 
   @override
   Widget build(BuildContext context) {
+    // #728: the armed-Ctrl highlight reads the SHARED provider so it stays in
+    // sync whether the modifier was consumed by a keybar key OR by a keyboard
+    // keystroke through the terminal input path.
+    final ctrlArmed = ref.watch(ctrlModifierProvider);
     return Material(
       key: const Key('keybar'),
       // #696: high-contrast strip. The bar backs the keys with near-black so the
@@ -314,7 +325,7 @@ class _KeybarState extends ConsumerState<Keybar> {
                   child: _KeybarButton(
                     keyData: k,
                     // The Ctrl key shows an accented/armed state while sticky.
-                    armed: k.isModifier && _ctrl.armed,
+                    armed: k.isModifier && ctrlArmed,
                     onTap: () => _onKeyTap(k),
                   ),
                 ),

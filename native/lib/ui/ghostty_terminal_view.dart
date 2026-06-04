@@ -174,11 +174,48 @@ import 'package:xterm/xterm.dart' as xterm;
 import '../diagnostics/gesture_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
+import '../state/ctrl_modifier_provider.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import 'ghostty_url_detector.dart';
+import 'keybar.dart';
 import 'top_toast.dart';
+
+/// Apply the shared armed keybar Ctrl modifier (#728) to a SOFT-KEYBOARD
+/// keystroke flowing through flterm's `controller.onOutput`.
+///
+/// #694's keybar Ctrl modifier only transformed KEYBAR key presses. There are no
+/// letter keys on the keybar, so to send Ctrl+R the user types R on the soft
+/// keyboard — input that flows through `controller.onOutput(bytes) →
+/// proxy.sendInput` and never reached the keybar's `CtrlModifier`. This is the
+/// PURE decision the terminal input path makes once it has read the shared
+/// [ctrlModifierProvider] armed flag: given [armed] and the typed [bytes], it
+/// returns the bytes to actually send plus whether the one-shot Ctrl should now
+/// be cleared.
+///
+/// Rules (mirroring the keybar's [ctrlTransform] for parity):
+///   - NOT [armed]            → passthrough, `shouldClear == false` (nothing to clear);
+///   - armed + single ASCII letter (a–z/A–Z) → `& 0x1f` control byte, cleared;
+///   - armed + single non-letter (digit, symbol, CR, …) → [ctrlTransform]
+///     (which passes non-letters through unchanged), still cleared (one-shot);
+///   - armed + multi-byte (len > 1: IME / paste / a CSI escape) → passthrough
+///     UNCHANGED so multi-char input is never corrupted, still cleared so the
+///     sticky Ctrl can't get stuck.
+///
+/// Pure (no FFI / no widget / no provider) → unit-testable headless.
+({String bytes, bool shouldClear}) ghosttyApplyArmedCtrl({
+  required bool armed,
+  required String bytes,
+}) {
+  if (!armed) return (bytes: bytes, shouldClear: false);
+  // Multi-byte IME / paste / escape sequences pass through untouched — only a
+  // single typed character carries a Ctrl meaning. The one-shot still clears.
+  if (bytes.length != 1) return (bytes: bytes, shouldClear: true);
+  // Single char: the keybar's transform maps a letter → its control byte and
+  // leaves a non-letter unchanged, so keybar-key and keyboard-key Ctrl match.
+  return (bytes: ctrlTransform(bytes), shouldClear: true);
+}
 
 /// Build the flterm [ColorPalette] for the per-session theme [palette] (#716).
 ///
@@ -1692,7 +1729,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // shell.
       controller.onOutput = (bytes) {
         if (proxy.data.state != SshSessionState.connected) return;
-        proxy.sendInput(bytes);
+        proxy.sendInput(_applyArmedCtrlToKeystroke(bytes));
       };
       // Grid resize -> PTY resize. flterm reports (cols, rows); the proxy's
       // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
@@ -1835,6 +1872,36 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (e.id == widget.sessionId) return e.proxy;
     }
     return null;
+  }
+
+  /// Apply the shared armed keybar Ctrl modifier (#728) to a soft-keyboard
+  /// keystroke before it is forwarded to the PTY.
+  ///
+  /// The keybar's Ctrl key arms [ctrlModifierProvider] (in addition to its own
+  /// #694 `CtrlModifier`); there are no letter keys on the keybar, so to send
+  /// Ctrl+R the user types R on the soft keyboard — which flterm delivers here as
+  /// `controller.onOutput` bytes. When Ctrl is armed we transform the next typed
+  /// character to its control byte and CLEAR the one-shot.
+  ///
+  /// Byte-level care (mirrors [ghosttyApplyArmedCtrl] but stays on bytes so
+  /// multi-byte UTF-8 is never round-tripped): only a SINGLE ASCII byte (< 0x80)
+  /// can carry a Ctrl-letter meaning, so we decode just that one byte, run the
+  /// pure helper, and re-encode the single transformed char. Any multi-byte input
+  /// (IME / paste / a CSI escape) passes through UNCHANGED — but the one-shot Ctrl
+  /// still clears so it can't get stuck. When Ctrl is NOT armed this is a no-op
+  /// fast path returning the original bytes untouched.
+  Uint8List _applyArmedCtrlToKeystroke(Uint8List bytes) {
+    final notifier = ref.read(ctrlModifierProvider.notifier);
+    // One-shot: read+clear. If it wasn't armed, forward the bytes verbatim.
+    if (!notifier.consume()) return bytes;
+    // Only a single ASCII byte can be a Ctrl-letter; anything else (multi-byte
+    // UTF-8 / IME / paste / escape) passes through unchanged.
+    if (bytes.length != 1 || bytes[0] >= 0x80) return bytes;
+    final result = ghosttyApplyArmedCtrl(
+      armed: true,
+      bytes: String.fromCharCode(bytes[0]),
+    );
+    return Uint8List.fromList(result.bytes.codeUnits);
   }
 
   /// #702: on `shellReady`, force a resize re-sync now, then a short burst of
