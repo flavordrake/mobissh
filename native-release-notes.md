@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+17 (2026-06-04) — shorter keybar + URL highlight on scroll/wrap
+- **Shorter keybar** — collapsed the margin + padding so the bar is noticeably less tall; the key labels/glyphs are the same readable size (#752).
+- **URL highlight clears when you scroll** — no more stale underline floating over shifted text; it disappears during a scroll and re-applies once it settles (#750).
+- **Wrapped URLs** — the matcher joins soft-wrapped rows so a link spanning two lines underlines both (full-width wraps; #751). *If a specific wrapped URL still misses its 2nd line, tell me — there's a known trailing-pad edge I'll harden.*
+
 ## v0.1.9+16 (2026-06-04) — URL underline alignment
 - **URL underlines now hug the text** — the highlight sat in the gap below the glyphs (worse further down the screen); it's now anchored to each line's baseline so it underlines the URL cleanly on every row (#748).
 
