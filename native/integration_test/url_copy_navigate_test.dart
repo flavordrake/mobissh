@@ -1,7 +1,12 @@
-// On-emulator acceptance (#570 "copy & navigate URLs" — Slice 1): terminal URL
-// long-press → identify the URL → Copy/Open action menu, on a REAL rendered
-// terminal (real cell metrics, real scroll offset), not a synthetic widget-test
-// surface.
+// On-emulator acceptance (#570 "copy & navigate URLs"): terminal URL long-press
+// → identify the URL → Copy/Open action menu, on a REAL rendered terminal (real
+// cell metrics, real scroll offset), not a synthetic widget-test surface.
+//
+// BACKEND: this is xterm-only machinery (the long-press GestureDetector +
+// hit-test + url-action overlay live in the xterm branch of TerminalScreen; the
+// ghostty default at terminal_screen.dart:871 skips it). The container below
+// pins `TerminalBackend.xterm` so the path under test mounts. Ghostty URL
+// detection is a deferred follow-up (#684).
 //
 // Flow:
 //   1. Connect to test-sshd (reusing the connect harness).
@@ -35,6 +40,7 @@ import 'package:xterm/xterm.dart';
 
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/sessions.dart';
+import 'package:mobissh/state/terminal_backend.dart';
 import 'package:mobissh/ui/terminal_screen.dart' as term_screen;
 import 'package:mobissh/ui/url_action_overlay.dart' as url_overlay;
 
@@ -52,7 +58,18 @@ void main() {
     url_overlay.debugUrlOpenerOverride = (u) async => true;
     addTearDown(() => url_overlay.debugUrlOpenerOverride = null);
 
-    final container = ProviderContainer();
+    // #727 made ghostty the DEFAULT backend; the #570 URL long-press →
+    // Copy/Open menu is xterm-only machinery (terminal_screen.dart:871-994
+    // skips `_onTerminalLongPress` / the `terminal-view-$id` GestureDetector and
+    // the xterm `Terminal.buffer` this test round-trips). Pin the xterm backend
+    // so the long-press hit-test + url-action menu under test actually mount.
+    final container = ProviderContainer(
+      overrides: [
+        terminalBackendProvider.overrideWith(
+          (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
+        ),
+      ],
+    );
     addTearDown(container.dispose);
 
     await tester.pumpWidget(

@@ -44,6 +44,7 @@ import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_session.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
+import 'package:mobissh/state/terminal_backend.dart';
 
 import 'support/connect_helpers.dart';
 
@@ -103,7 +104,18 @@ void main() {
 
       final spy = _InputSpyGateway(FlutterForegroundSshGateway());
       final container = ProviderContainer(
-        overrides: [taskSshGatewayProvider.overrideWithValue(spy)],
+        overrides: [
+          taskSshGatewayProvider.overrideWithValue(spy),
+          // #727 made ghostty the DEFAULT backend, which mounts
+          // GhosttyTerminalView and SKIPS the xterm-only #617 wheel-SGR handler
+          // and the #624 liveness gate on `terminal.onOutput`
+          // (terminal_screen.dart:871-994) — plus there is no `terminal-view-$id`
+          // key to drag. This test asserts the xterm wheel-SGR → PTY path is
+          // gated when dead, so pin the xterm backend (same idiom as #725).
+          terminalBackendProvider.overrideWith(
+            (ref) => TerminalBackendNotifier()..set(TerminalBackend.xterm),
+          ),
+        ],
       );
       addTearDown(container.dispose);
 
