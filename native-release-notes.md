@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+14 (2026-06-04) — keep sessions alive through sleep
+- **Sessions should survive an ordinary sleep now** — the app holds a WiFi lock while sessions are live (so the radio doesn't sleep mid-session) and asks once to be exempted from battery optimization (accept the prompt on first connect, or grant via **Settings → "Allow background battery use"**). With that, ordinary screen-off periods shouldn't drop your sessions (#738). **Device test:** connect 2-3 sessions, lock the phone 5/15/60 min, wake → still live. (Very long/deep Doze can still drop any app's network — that's where #737's graceful reconnect catches it.)
+
 ## v0.1.9+13 (2026-06-04) — never-frozen wake + session/keyboard/file-browser UX
 - **Wake-from-sleep no longer freezes sessions** — on resume the app probes each session and a dead one reconnects (visible "reconnecting…") instead of silently eating input on a stale screen (#737). (Note: separately, keeping sessions alive *through* sleep is still coming — #738.)
 - **Session menu shows each session's profile color swatch** — quick visual identification across sessions (#739).
