@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+21 (2026-06-05) — wrapped URLs highlight precisely
+- **A URL that wraps across lines now highlights as exactly one link** — using the terminal's own soft-wrap info instead of guessing from line width. No more bleeding the highlight across nearby URLs or capturing only part of a wrapped one; long-press resolves the whole URL from either line (#764).
+
 ## v0.1.9+20 (2026-06-05) — frozen sessions detected on unlock
 - **A frozen session is now caught on unlock** — after a long time away, if a session's remote shell is dead/frozen (even though SSH still "answers"), the app nudges it and, if it's truly unresponsive, flips it to reconnecting instead of leaving it frozen under a green dot. Healthy/idle sessions are untouched. **Device test:** lock the phone a long while → unlock → a frozen session should recover on its own. The exact outcome is now logged in Diagnostics (and the feedback upload) so any miss is diagnosable (#759).
 
