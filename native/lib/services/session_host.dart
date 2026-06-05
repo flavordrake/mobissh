@@ -23,6 +23,7 @@ import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../ssh/da2_responder.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_shell.dart';
@@ -522,6 +523,9 @@ class SessionHost {
         return;
       }
       hosted.shell = transport;
+      // Fresh attach => fresh DA2 handshake: clear any buffered partial query
+      // from a prior shell so we answer THIS attach's `ESC[>c` cleanly (#osc8).
+      hosted.da2Responder.reset();
       // Wire the output listener BEFORE announcing shell-ready (#619). The UI's
       // run-on-connect command fires on shell-ready, writes to stdin, and the
       // shell echoes + runs it immediately. If we announced ready first (the
@@ -538,9 +542,24 @@ class SessionHost {
           // producing output — the nudge check watches this counter advance.
           hosted.remoteByteEvents += 1;
           hosted.lastRemoteByteAtMs = _nowMs();
-          hosted.appendScrollback(bytes);
+          // Intercept tmux's DA2 query and answer as `tmux` so tmux forwards
+          // OSC-8 hyperlinks to us (the query is swallowed; our reply goes back
+          // over stdin). On non-tmux hosts no query arrives and `forward` is the
+          // input untouched. See [Da2HyperlinkResponder].
+          final scan = hosted.da2Responder.scan(bytes);
+          if (scan.hasReply) {
+            final shell = hosted.shell;
+            if (shell != null) {
+              for (final reply in scan.replies) {
+                shell.send(reply);
+              }
+            }
+          }
+          final forward = scan.forward;
+          if (forward.isEmpty) return;
+          hosted.appendScrollback(forward);
           _gateway.send(
-            SshOutputEvent(sessionId: sessionId, bytes: bytes).toJson(),
+            SshOutputEvent(sessionId: sessionId, bytes: forward).toJson(),
           );
         },
         onError: (Object e, StackTrace st) {
@@ -917,6 +936,13 @@ class _HostedSession {
   SshShellTransport? shell;
   StreamSubscription<Uint8List>? shellSub;
   bool shellOpening = false;
+
+  /// Intercepts tmux's DA2 (Secondary Device Attributes) query in the remote
+  /// byte stream and answers as a `tmux`-class terminal so tmux advertises the
+  /// `hyperlinks` feature and FORWARDS OSC-8 links (instead of stripping them)
+  /// to this client. See [Da2HyperlinkResponder]. Reset per shell open so a
+  /// reconnect re-answers the fresh attach's query.
+  final Da2HyperlinkResponder da2Responder = Da2HyperlinkResponder();
 
   /// Monotonic count of remote-output CHUNKS actually received from the shell
   /// (#759). Bumped only by the live shell-output listener (and the test
