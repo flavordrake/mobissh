@@ -64,6 +64,30 @@ class TerminalControllerImpl extends TerminalController
   List<HighlightRange> _highlights = const [];
   ScrollController? _scrollController;
 
+  /// #767: registered structured-text patterns keyed by [TextPattern.id], and
+  /// the matches the last re-scan produced. The detection is owned HERE (not the
+  /// app) so it reads the terminal's own cells and re-anchors across scroll /
+  /// wrap / resize / eviction by re-scanning, mirroring how [_selection] /
+  /// [_highlights] are controller-owned overlay state.
+  final Map<String, TextPattern> _textPatterns = <String, TextPattern>{};
+  List<StructuredMatch> _detectionMatches = const [];
+  static const _detectionScanner = StructuredTextScanner();
+
+  /// #767: debounce for the cell re-scan. The terminal notifies on every output
+  /// write AND every scroll; coalesce a burst into one scan so streaming output
+  /// doesn't re-scan every byte. Cancelled on dispose.
+  Timer? _detectionDebounce;
+
+  /// #767: how many scrollback rows ABOVE the active viewport the re-scan reads.
+  /// Bounded so detection never walks unbounded history on every notify — only
+  /// the active screen plus this many recent scrollback rows are scanned, which
+  /// covers a URL the user just scrolled near without an O(scrollback) cost.
+  static const int _detectionScrollbackWindow = 200;
+
+  /// #767: debounce window (ms) for the cell re-scan. Mirrors the app's old
+  /// 120ms URL re-detect debounce, now owned by the controller.
+  static const int _detectionDebounceMs = 120;
+
   TerminalControllerImpl({TerminalConfig config = const TerminalConfig()})
     : _config = config,
       _keyEvent = vt.KeyEvent(),
@@ -173,6 +197,100 @@ class TerminalControllerImpl extends TerminalController
   }
 
   @override
+  void registerTextPattern(TextPattern pattern) {
+    _textPatterns[pattern.id] = pattern;
+    // Scan synchronously so a freshly-registered pattern highlights any URLs
+    // already on screen without waiting for the next output/scroll notify.
+    _rescanDetections();
+  }
+
+  @override
+  void clearTextPatterns() {
+    if (_textPatterns.isEmpty && _detectionMatches.isEmpty) return;
+    _textPatterns.clear();
+    _detectionDebounce?.cancel();
+    _detectionMatches = const [];
+    // Clear only the detection-driven highlights (which are the only writer of
+    // _highlights once a pattern is registered).
+    highlights = const [];
+  }
+
+  @override
+  StructuredMatch? matchAt({required int row, required int col}) {
+    if (_detectionMatches.isEmpty) return null;
+    final absRow = row + scrollbar.offset;
+    final snappedCol = terminal.snapColToWideBoundary(
+      row,
+      col,
+      inclusive: true,
+    );
+    StructuredMatch? match;
+    for (final m in _detectionMatches) {
+      if (m.contains(absRow, snappedCol)) match = m;
+    }
+    return match;
+  }
+
+  /// #767: schedule a DEBOUNCED cell re-scan. Driven by [_onTerminalChanged]
+  /// (the same notify cycle as highlights), so streaming output / scrolling
+  /// coalesce into one scan. No-op when no pattern is registered.
+  void _scheduleDetectionRescan() {
+    if (_textPatterns.isEmpty) return;
+    _detectionDebounce?.cancel();
+    _detectionDebounce = Timer(
+      const Duration(milliseconds: _detectionDebounceMs),
+      _rescanDetections,
+    );
+  }
+
+  /// #767: re-scan the active screen plus a bounded scrollback window for every
+  /// registered pattern, store the matches, and ASSIGN the resulting absolute-
+  /// coordinate ranges to [highlights] (the existing painter draws them). A
+  /// fresh scan emits absolute rows from the CURRENT scrollback length, so
+  /// scrollback eviction is corrected by construction (no ghost mark). Defensive:
+  /// a formatter/FFI hiccup must never crash the session, so it falls back to no
+  /// detection.
+  void _rescanDetections() {
+    if (_textPatterns.isEmpty) {
+      _detectionMatches = const [];
+      return;
+    }
+    List<StructuredMatch> matches;
+    try {
+      _renderState.update(terminal);
+      final visibleRows = _renderState.rows;
+      final cols = _renderState.cols;
+      if (visibleRows <= 0 || cols <= 0) {
+        matches = const [];
+      } else {
+        // The active viewport occupies screen rows [scrollbackRows,
+        // scrollbackRows + visibleRows). Scan that plus up to
+        // _detectionScrollbackWindow rows of recent scrollback above it, so a
+        // URL just scrolled near is picked up without an O(scrollback) walk.
+        final scrollback = terminal.scrollbackRows;
+        final startAbs = scrollback - _detectionScrollbackWindow < 0
+            ? 0
+            : scrollback - _detectionScrollbackWindow;
+        final endAbs = scrollback + visibleRows; // exclusive
+        final reader = _ScreenCellReader(
+          terminal: terminal,
+          cols: cols,
+          startAbsRow: startAbs,
+          endAbsRow: endAbs,
+        );
+        matches = _detectionScanner.scan(
+          reader,
+          _textPatterns.values.toList(growable: false),
+        );
+      }
+    } catch (_) {
+      matches = const [];
+    }
+    _detectionMatches = matches;
+    highlights = [for (final m in matches) ...m.ranges];
+  }
+
+  @override
   List<bool> get viewportRowWraps {
     _renderState.update(terminal);
     final rows = _renderState.rows;
@@ -279,6 +397,7 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   void dispose() {
+    _detectionDebounce?.cancel();
     terminal.removeListener(_onTerminalChanged);
     detach();
     _keyEvent.dispose();
@@ -895,6 +1014,10 @@ class TerminalControllerImpl extends TerminalController
     }
 
     _scrollToBottomOnOutput();
+    // #767: a notify means the cells may have changed (output streamed) or the
+    // viewport scrolled; re-scan registered structured-text patterns on a
+    // debounce so the highlights track new content. No-op when none registered.
+    _scheduleDetectionRescan();
     if (changed) notifyListeners();
   }
 
@@ -975,5 +1098,79 @@ class TerminalControllerImpl extends TerminalController
     if (code < _space || code == _del) return null;
     if (code >= _macFunctionKeyStart && code <= _macFunctionKeyEnd) return null;
     return character;
+  }
+}
+
+/// #767: a [CellReader] over a [Terminal]'s ABSOLUTE screen rows, for the
+/// structured-text re-scan.
+///
+/// Reads cells via `GridRef.at(terminal, ..., pointTag: PointTag.screen)`,
+/// where screen row 0 is the OLDEST scrollback line — exactly the absolute,
+/// top-anchored frame [HighlightRange]/[TerminalSelection] use, so the scanner
+/// emits ranges already in that frame. The native handle is short-lived: each
+/// [cellContent]/[rowWrap] resolves a fresh [GridRef] and disposes it
+/// immediately (a `GridRef` is only valid until the next terminal operation).
+/// Local row `r` maps to absolute screen row `startAbsRow + r`; [baseAbsRow]
+/// reports that base so a fresh scan after eviction emits corrected rows.
+class _ScreenCellReader implements CellReader {
+  _ScreenCellReader({
+    required this.terminal,
+    required this.cols,
+    required int startAbsRow,
+    required int endAbsRow,
+  }) : _startAbsRow = startAbsRow,
+       rows = (endAbsRow - startAbsRow) < 0 ? 0 : endAbsRow - startAbsRow;
+
+  final Terminal terminal;
+  final int _startAbsRow;
+
+  @override
+  final int cols;
+
+  @override
+  final int rows;
+
+  @override
+  int get baseAbsRow => _startAbsRow;
+
+  @override
+  String cellContent(int row, int col) {
+    final absRow = _startAbsRow + row;
+    GridRef? ref;
+    try {
+      ref = GridRef.at(
+        terminal,
+        col: col,
+        row: absRow,
+        pointTag: PointTag.screen,
+      );
+      // A wide-character spacer tail carries no text of its own; the head cell
+      // holds the glyph. Treat the tail as blank so columns stay aligned.
+      if (ref.wide == CellWidth.spacerTail) return '';
+      return ref.content;
+    } catch (_) {
+      return '';
+    } finally {
+      ref?.dispose();
+    }
+  }
+
+  @override
+  bool rowWrap(int row) {
+    final absRow = _startAbsRow + row;
+    GridRef? ref;
+    try {
+      ref = GridRef.at(
+        terminal,
+        col: 0,
+        row: absRow,
+        pointTag: PointTag.screen,
+      );
+      return ref.rowWrap;
+    } catch (_) {
+      return false;
+    } finally {
+      ref?.dispose();
+    }
   }
 }

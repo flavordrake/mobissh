@@ -28,6 +28,13 @@ export 'src/foundation/dynamic_color.dart' show DynamicColor;
 export 'src/foundation/highlight_range.dart'
     show HighlightRange, HighlightTheme;
 export 'src/foundation/input_types.dart' show KeyboardState, MouseAutoHide;
+export 'src/foundation/structured_text.dart'
+    show
+        CellReader,
+        HighlightStyle,
+        StructuredMatch,
+        StructuredTextScanner,
+        TextPattern;
 export 'src/foundation/terminal_config.dart'
     show ScrollToBottom, TerminalConfig;
 export 'src/foundation/terminal_gesture_settings.dart'

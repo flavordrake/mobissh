@@ -22,21 +22,24 @@ import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
-import 'package:mobissh/ui/ghostty_url_detector.dart';
 
 void main() {
-  // A single detected URL occupying viewport cells (col 4..14) on row 2 (0-based).
-  const urlMatch = GhosttyUrlMatch(
-    url: 'https://example.com',
-    startCol: 4,
-    startRow: 2,
-    endCol: 15, // exclusive
-    endRow: 2,
+  // #767: a single detected match occupying viewport cells (col 4..14) on row 2
+  // (0-based). The detection now lives inside the terminal as a flterm
+  // StructuredMatch; the router hit-tests via `urlAtCell` → controller.matchAt.
+  // Here we stand in a StructuredMatch directly (no native .so) so the router
+  // gesture-routing decision (#734) is still smoke-tested headless.
+  const urlMatch = StructuredMatch(
+    patternId: 'url',
+    payload: 'https://example.com',
+    ranges: [
+      HighlightRange(startRow: 2, startCol: 4, endRow: 2, endCol: 15),
+    ],
   );
 
   // Records of each routing callback the router fires, so a test can assert which
   // path a long-press took.
-  late List<GhosttyUrlMatch> urlLongPresses;
+  late List<StructuredMatch> urlLongPresses;
   late List<(int, int)> selectionStarts;
   late List<(int, int)> selectionExtends;
 
@@ -74,7 +77,7 @@ void main() {
                 hasSelection: () => false,
                 onSelectionClear: () {},
                 urlAtCell: (col, row) =>
-                    ghosttyUrlAtCell(const [urlMatch], col: col, row: row),
+                    urlMatch.contains(row, col) ? urlMatch : null,
                 onUrlTap: (_) {},
                 onUrlLongPress: (m, _) => urlLongPresses.add(m),
               ),
@@ -106,7 +109,7 @@ void main() {
         hasLength(1),
         reason: 'a long-press on a detected URL shows the Copy/Open menu',
       );
-      expect(urlLongPresses.single.url, 'https://example.com');
+      expect(urlLongPresses.single.payload, 'https://example.com');
     });
 
     testWidgets('does NOT start a selection (URL hit-test wins)', (

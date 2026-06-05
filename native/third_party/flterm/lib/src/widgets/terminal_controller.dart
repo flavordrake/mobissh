@@ -111,6 +111,36 @@ abstract class TerminalController extends ChangeNotifier
   /// last matching range in [highlights] wins.
   HighlightRange? highlightAt({required int row, required int col});
 
+  /// Registers a structured-text [pattern] for in-terminal detection (#767).
+  ///
+  /// The terminal scans its OWN cells (content + authoritative soft-wrap +
+  /// wide-char width) for the pattern's regex on a DEBOUNCED tick driven by the
+  /// same cell-update cycle that fires [highlights]/notify, and assigns the
+  /// resulting [HighlightRange]s (in absolute buffer coords) to [highlights] so
+  /// the existing painter draws them — tracking scroll, wrap, resize, and
+  /// scrollback eviction for free. Registering a pattern with an [TextPattern.id]
+  /// that already exists replaces it. Triggers an immediate re-scan.
+  ///
+  /// This is the in-fork replacement for app-side detection that re-pushed
+  /// highlights on every notify (the #748/#750/#751/#764 drift root cause).
+  void registerTextPattern(TextPattern pattern);
+
+  /// Removes all registered structured-text patterns and clears any highlights
+  /// they produced (#767). Use this, then [registerTextPattern], to restyle
+  /// detection (e.g. on a theme change).
+  void clearTextPatterns();
+
+  /// Returns the structured-text match covering the VIEWPORT cell at
+  /// ([row], [col]), or null when none covers it (#767).
+  ///
+  /// [row]/[col] are VIEWPORT-relative (row 0 is the top visible row); the
+  /// controller maps them to the absolute buffer frame (`absRow = row +
+  /// scrollbar.offset`) and snaps [col] to a wide-character boundary before
+  /// hit-testing. The returned [StructuredMatch.payload] recovers what the
+  /// cells represent (e.g. the URL behind a tap/long-press). When matches
+  /// overlap, the last detected one wins.
+  StructuredMatch? matchAt({required int row, required int col});
+
   /// The AUTHORITATIVE per-visible-row soft-wrap flags for the active screen.
   ///
   /// Element `[r]` is `true` iff visible row `r` is soft-wrapped onto row
