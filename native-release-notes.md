@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.9+20 (2026-06-05) — frozen sessions detected on unlock
+- **A frozen session is now caught on unlock** — after a long time away, if a session's remote shell is dead/frozen (even though SSH still "answers"), the app nudges it and, if it's truly unresponsive, flips it to reconnecting instead of leaving it frozen under a green dot. Healthy/idle sessions are untouched. **Device test:** lock the phone a long while → unlock → a frozen session should recover on its own. The exact outcome is now logged in Diagnostics (and the feedback upload) so any miss is diagnosable (#759).
+
 ## v0.1.9+19 (2026-06-04) — selection clears when the content under it changes
 - **Touch selection no longer lingers over redrawn content** — after you select, a tmux/remote redraw (or live output) now clears the selection instead of leaving the highlight stranded on whatever scrolled into its place. A pure scrollback swipe still keeps + tracks the selection; tap-to-dismiss unchanged (#760).
 
