@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+25 (2026-06-05) — OSC-8 links now work THROUGH tmux (the real fix)
+- **URLs in tmux are now detected exactly.** tmux was silently stripping the embedded hyperlink because MobiSSH didn't advertise hyperlink support; the app now identifies itself so tmux forwards the link. So a URL from Claude CLI / gh inside tmux gets ONE bubble over the whole (even wrapped) link and **tap-to-copy copies the exact full URL**. This is what +22..+24 were chasing — the detection was right, tmux just wasn't passing the link through. **Verify:** view this conversation (or any gh/Claude output) in tmux → a wrapped URL bubbles end-to-end; long-press → Open / copy gives the complete link. (#767/#771)
+
 ## v0.1.10+24 (2026-06-05) — exact URLs via OSC-8 hyperlinks (wrap-proof) + copy fix
 - **URLs from modern tools (Claude CLI, gh, …) are now detected exactly** by reading the hyperlink the tool already embeds — so a URL that wraps across lines gets ONE bubble over the whole link, and **tap-to-copy copies the exact full URL** (no more partial). This is wrap/indent/tmux-proof because the link target is carried in the text, not guessed from layout. Plain-text URLs (older tools) still use the visual detector. (#767)
 - **Install page now shows the full version** (e.g. 0.1.10+24) next to the build date.
