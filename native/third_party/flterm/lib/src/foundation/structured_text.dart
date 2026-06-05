@@ -452,49 +452,50 @@ class StructuredTextScanner {
     TextPattern pattern,
   ) {
     final base = reader.baseAbsRow;
-    final matches = <StructuredMatch>[];
-    String? runUri;
-    var runGlyphs = <_Glyph>[];
 
-    void flush() {
-      if (runUri == null || runGlyphs.isEmpty) {
-        runUri = null;
-        runGlyphs = [];
-        return;
+    // Group ALL cells sharing the same hyperlink URI into ONE match — regardless
+    // of intervening NON-link cells (trailing wrap padding) or row breaks.
+    // libghostty attaches the SAME URI to every cell of a link, so same-URI cells
+    // ARE the link even when an APP wraps it at its own content width (narrower
+    // than the terminal) and PADS the rest of the row: that padding is a non-link
+    // gap that must NOT split the link (the device bug — the link's first row
+    // bubbled, the padded continuation did not). A flush-on-gap run breaks there;
+    // grouping by URI does not. (No hyperlink-id is exposed by libghostty, so URI
+    // is the grouping key; the rare case of the identical URI appearing as two
+    // separate on-screen links merges into one anchor — harmless: both bubble and
+    // copy the same exact URI.) `_rangesFor` turns the collected glyphs into one
+    // range PER ROW, so a wrapped link spans its rows; intra-row padding is simply
+    // absent from the glyph list and thus from the ranges.
+    final byUri = <String, List<_Glyph>>{};
+    final order = <String>[];
+    for (var r = 0; r < rows; r++) {
+      final absRow = base + r;
+      for (var c = 0; c < cols; c++) {
+        final uri = reader.hyperlinkAt(r, c);
+        if (uri == null) continue;
+        final glyphs = byUri.putIfAbsent(uri, () {
+          order.add(uri);
+          return <_Glyph>[];
+        });
+        glyphs.add(_Glyph(uri, absRow, c));
       }
-      final ranges = _rangesFor(runGlyphs, 0, runGlyphs.length, pattern.style,
-          runUri!);
+    }
+
+    final matches = <StructuredMatch>[];
+    for (final uri in order) {
+      final glyphs = byUri[uri]!;
+      final ranges =
+          _rangesFor(glyphs, 0, glyphs.length, pattern.style, uri);
       if (ranges.isNotEmpty) {
         matches.add(
           StructuredMatch(
             patternId: pattern.id,
             ranges: ranges,
-            payload: runUri!,
+            payload: uri,
           ),
         );
       }
-      runUri = null;
-      runGlyphs = [];
     }
-
-    for (var r = 0; r < rows; r++) {
-      final absRow = base + r;
-      for (var c = 0; c < cols; c++) {
-        final uri = reader.hyperlinkAt(r, c);
-        if (uri == null) {
-          flush();
-          continue;
-        }
-        if (runUri != null && uri != runUri) {
-          // A different URI begins on this cell — close the prior run and start
-          // a fresh one at this cell.
-          flush();
-        }
-        runUri = uri;
-        runGlyphs.add(_Glyph(uri, absRow, c));
-      }
-    }
-    flush();
     return matches;
   }
 
@@ -592,8 +593,16 @@ class StructuredTextScanner {
       final rowAbs = glyphs[i].absRow;
       final startCol = glyphs[i].col;
       var lastCol = startCol;
-      // Extend while still on the same absolute row and within the match.
-      while (i < end && glyphs[i].absRow == rowAbs) {
+      i++;
+      // Extend while on the SAME row AND col-contiguous. A col GAP breaks the
+      // range so the highlight never covers a non-match cell — needed for the
+      // OSC-8 source, whose same-URI glyphs can skip cells (an app's wrap padding
+      // between the link's rows, or a non-link cell between same-URI cells). The
+      // regex path is unaffected: its glyphs come from the padded logical line, so
+      // they are always col-contiguous within a row.
+      while (i < end &&
+          glyphs[i].absRow == rowAbs &&
+          glyphs[i].col == lastCol + 1) {
         lastCol = glyphs[i].col;
         i++;
       }

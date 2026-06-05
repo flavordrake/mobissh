@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+26 (2026-06-05) — wrapped URLs finally bubble across BOTH lines
+- **A URL that wraps now gets ONE bubble over the whole link**, both lines, with the exact full URL on copy. The link was reaching the app correctly (both lines were underlined), but our detector split it on the blank padding the app leaves at the end of the first line — so only the first line bubbled. Fixed: the link is now grouped by its identity, not by unbroken runs. **Verify:** view this conversation (or any gh/Claude output) in tmux → a wrapped URL bubbles end-to-end; long-press → Open / copy gives the complete link. (#767)
+
 ## v0.1.10+25 (2026-06-05) — OSC-8 links now work THROUGH tmux (the real fix)
 - **URLs in tmux are now detected exactly.** tmux was silently stripping the embedded hyperlink because MobiSSH didn't advertise hyperlink support; the app now identifies itself so tmux forwards the link. So a URL from Claude CLI / gh inside tmux gets ONE bubble over the whole (even wrapped) link and **tap-to-copy copies the exact full URL**. This is what +22..+24 were chasing — the detection was right, tmux just wasn't passing the link through. **Verify:** view this conversation (or any gh/Claude output) in tmux → a wrapped URL bubbles end-to-end; long-press → Open / copy gives the complete link. (#767/#771)
 

@@ -457,6 +457,39 @@ void main() {
     );
 
     test(
+      'an OSC-8 link APP-wrapped with trailing PADDING still spans both rows '
+      '(the 0.1.10+22..+25 device bug)',
+      () {
+        // cols=15. Row 0 holds the link in cols 0-9 then PADDING (cols 10-14 have
+        // NO hyperlink) — an app (e.g. the Claude TUI) wrapped the link at its own
+        // content width, NARROWER than the terminal. Row 1 continues the SAME URI.
+        // The trailing-padding gap must NOT split the link: the device bug was the
+        // first row bubbled while the padded continuation did not, because the
+        // scanner flushed its run on the gap. Grouping by URI fixes it.
+        const uri = 'https://mobissh.example/native-20260605T160732+0000.apk';
+        final reader = _FakeCellReader(
+          ['https://aa', 'bb.apk'],
+          cols: 15,
+          wraps: [false, false], // app/hard wrap — NO soft-wrap flag
+          hyperlinks: [
+            [for (var c = 0; c < 15; c++) c < 'https://aa'.length ? uri : null],
+            [for (var c = 0; c < 15; c++) c < 'bb.apk'.length ? uri : null],
+          ],
+        );
+        final matches = scanner.scan(reader, [osc8]);
+        expect(matches, hasLength(1),
+            reason: 'one link, NOT split by the trailing-pad gap');
+        final m = matches.single;
+        expect(m.payload, uri);
+        final spannedRows = {for (final r in m.ranges) r.startRow};
+        expect(spannedRows, {0, 1},
+            reason: 'the bubble must span BOTH rows despite row-0 trailing pad');
+        expect(m.contains(1, 1), isTrue,
+            reason: 'hit-test resolves the padded continuation');
+      },
+    );
+
+    test(
       'two DIFFERENT URIs on adjacent cells → TWO separate osc8 matches',
       () {
         const a = 'https://a.example/one';
@@ -480,20 +513,33 @@ void main() {
       },
     );
 
-    test('a blank (non-hyperlinked) cell BREAKS a run into two matches', () {
-      const uri = 'https://x.example/p';
-      // Same URI on cols 0-1 and 3-4, with a non-link gap at col 2 → two runs.
-      final reader = _FakeCellReader(
-        ['ab cd'],
-        cols: 5,
-        hyperlinks: [
-          [uri, uri, null, uri, uri],
-        ],
-      );
-      final matches = scanner.scan(reader, [uri == uri ? osc8 : osc8]);
-      expect(matches, hasLength(2), reason: 'a non-link gap splits the run');
-      expect(matches.every((m) => m.payload == uri), isTrue);
-    });
+    test(
+      'same-URI cells separated by a non-link gap → ONE match (same link), the '
+      'gap excluded from the ranges',
+      () {
+        const uri = 'https://x.example/p';
+        // Same URI on cols 0-1 and 3-4, non-link gap at col 2. libghostty puts the
+        // SAME URI on every cell of a link, so these ARE one link (an app wrapped
+        // or padded it) — grouped into ONE match; the gap col 2 is in NO range.
+        final reader = _FakeCellReader(
+          ['ab cd'],
+          cols: 5,
+          hyperlinks: [
+            [uri, uri, null, uri, uri],
+          ],
+        );
+        final matches = scanner.scan(reader, [osc8]);
+        expect(matches, hasLength(1), reason: 'same URI → one link');
+        final m = matches.single;
+        expect(m.payload, uri);
+        expect(m.ranges, hasLength(2),
+            reason: 'the gap splits the RANGES, not the match');
+        expect(m.ranges[0].startCol, 0);
+        expect(m.ranges[0].endCol, 2);
+        expect(m.ranges[1].startCol, 3);
+        expect(m.ranges[1].endCol, 5);
+      },
+    );
 
     test('no hyperlinks at all → no osc8 matches', () {
       final reader = _FakeCellReader(['plain text'], cols: 20);
