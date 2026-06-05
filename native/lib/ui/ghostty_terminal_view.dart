@@ -803,6 +803,35 @@ TerminalSelection? ghosttyReanchorForEviction(
 bool ghosttyTapShouldDismissSelection({required bool hasSelection}) =>
     hasSelection;
 
+/// Whether an active selection should be INVALIDATED (cleared) because fresh
+/// REMOTE OUTPUT redrew the content under it (#760).
+///
+/// #760 root cause: a touch selection (#705/#706) is anchored to ABSOLUTE buffer
+/// rows. [ghosttyReanchorForEviction] keeps it on its CONTENT while the
+/// primary-screen scrollback FILLS or EVICTS (the same text just slides). But
+/// the common "scroll" here is a tmux / remote REDRAW: tmux runs on the ALTERNATE
+/// screen (no scrollback, `scrollbar.offset` pinned at 0) and replaces the
+/// content AT THE SAME viewport rows via the OUTPUT stream — the local offset
+/// never changes, so the absolute-row selection stays put over now-DIFFERENT
+/// text and highlights stale/irrelevant cells ("highlighted nothing"). The
+/// selected text is gone, so the selection is meaningless and must clear.
+///
+/// The rule that distinguishes a redraw from a pure LOCAL scrollback scroll: a
+/// scrollback scroll fires a controller notify with NO `controller.write()` (no
+/// new bytes — the same content just moves, which the absolute frame already
+/// tracks), whereas a remote redraw arrives as fresh PTY bytes written to the
+/// controller. So we clear ONLY when [hasSelection] AND fresh [remoteOutput]
+/// caused this notify — never on a pure scroll. This mirrors the #750 URL
+/// clear-on-change but for selection. (Conservative-but-correct: on the primary
+/// screen, streaming output also clears the short-lived selection — selections
+/// are select → Copy → done; a desktop-style persist-through-output isn't
+/// expected on a live mobile tmux. Eviction tracking still runs FIRST for the
+/// in-flight scrollback-fill case.) Pure → unit-testable headless.
+bool ghosttySelectionInvalidatedByOutput({
+  required bool hasSelection,
+  required bool remoteOutput,
+}) => hasSelection && remoteOutput;
+
 /// Whether the bottom-right selection affordance buttons (Copy + Select-all)
 /// should be SHOWN (#712).
 ///
@@ -1788,6 +1817,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// listener drives the rebuild — no second listener.
   bool _hasSelection = false;
 
+  /// #760: set true immediately before a remote PTY-output `controller.write()`
+  /// and consumed by the very next [_onControllerChanged], so the controller
+  /// notify driven by that write can be distinguished from a notify driven by a
+  /// pure LOCAL scrollback scroll (which writes no bytes). When an active
+  /// selection's covered content is REDRAWN by remote output (the tmux/alt-screen
+  /// case where the absolute-row frame can't self-correct), the selection is
+  /// stale and is cleared (see [ghosttySelectionInvalidatedByOutput]). A pure
+  /// scroll leaves this false, so the selection is retained and tracks.
+  bool _remoteOutputPending = false;
+
   /// #726: the URLs currently detected in the VISIBLE viewport (0-based viewport
   /// cells), hit-tested by a tap/long-press (single-tap copies the URL, #726;
   /// long-press shows the action menu, #734). The HIGHLIGHT itself is no longer
@@ -1881,6 +1920,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // dispose() cancels it.
       _outputSub = proxy.output.listen((bytes) {
         try {
+          // #760: mark that the imminent controller notify is driven by fresh
+          // REMOTE output (not a local scroll), so _onControllerChanged can
+          // invalidate a selection whose covered content was just redrawn.
+          _remoteOutputPending = true;
           controller.write(bytes);
         } catch (_) {
           // Defensive — a single PTY byte must never crash the session.
@@ -1920,7 +1963,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// FIRST and reads the controller directly (no setState), so it doesn't depend
   /// on the mouse-mode rebuild.
   void _onControllerChanged() {
+    // #760: consume the remote-output flag for THIS notify before anything else
+    // can re-enter. A notify is either a remote write (flag set just before
+    // controller.write) or a local event (scroll / mouse-mode / selection set);
+    // only the former should invalidate a selection whose content was redrawn.
+    final remoteOutput = _remoteOutputPending;
+    _remoteOutputPending = false;
     _reanchorSelectionOnGrowth();
+    // #760: if a selection is active and this notify was driven by fresh remote
+    // output (a tmux/alt-screen redraw replaces the covered rows in place — the
+    // absolute-row frame can't track that), clear the now-stale selection. A
+    // pure local scrollback scroll (no write → remoteOutput false) is retained.
+    _invalidateSelectionOnRedraw(remoteOutput);
     _syncMouseTracking();
     _syncHasSelection();
     // #726: the visible buffer may have changed (output streamed, or the viewport
@@ -2509,6 +2563,27 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       return;
     }
     controller.selection = reanchored;
+  }
+
+  /// #760: clear an active selection whose covered content was REDRAWN by remote
+  /// output. Runs from [_onControllerChanged] AFTER [_reanchorSelectionOnGrowth]
+  /// (so a still-valid primary-screen scrollback selection has already tracked
+  /// its eviction) and is gated by [ghosttySelectionInvalidatedByOutput]: it
+  /// clears ONLY when a selection is active AND this notify was driven by fresh
+  /// remote bytes ([remoteOutput] — set by the output subscription just before
+  /// `controller.write`). A pure LOCAL scrollback scroll passes [remoteOutput]
+  /// false, so the selection is RETAINED and keeps tracking its content. This is
+  /// the #760 fix for the tmux/alt-screen redraw the absolute-row frame can't
+  /// self-correct (and the conservative clear-on-next-output for the live
+  /// streaming case — selections are short-lived: select → Copy → done).
+  void _invalidateSelectionOnRedraw(bool remoteOutput) {
+    final controller = _controller;
+    if (controller == null) return;
+    final invalidate = ghosttySelectionInvalidatedByOutput(
+      hasSelection: controller.selection != null,
+      remoteOutput: remoteOutput,
+    );
+    if (invalidate) _clearSelection();
   }
 
   /// #726: copy a tapped URL to the clipboard + confirm via a top-toast. Invoked
