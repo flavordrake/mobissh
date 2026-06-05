@@ -59,6 +59,12 @@ class TerminalControllerImpl extends TerminalController
   );
   var _lastDevicePixelRatio = 1.0;
 
+  /// #767 Slice B: the most recent grid padding (the [TerminalView] insets the
+  /// grid by this). Stored so the anchor geometry resolver ([anchorRects]) lays
+  /// out a range in the SAME padded, logical-pixel space the grid renders in, so
+  /// a widget-layer decorator pixel-aligns to the glyph cells.
+  EdgeInsets _lastPadding = EdgeInsets.zero;
+
   FocusNode? _focusNode;
   TerminalSelection? _selection;
   List<HighlightRange> _highlights = const [];
@@ -229,6 +235,41 @@ class TerminalControllerImpl extends TerminalController
       if (m.contains(absRow, snappedCol)) match = m;
     }
     return match;
+  }
+
+  @override
+  List<StructuredAnchor> get anchors {
+    if (_detectionMatches.isEmpty) return const [];
+    return [for (final m in _detectionMatches) StructuredAnchor.fromMatch(m)];
+  }
+
+  @override
+  List<Rect> anchorRects(HighlightRange range) {
+    final metrics = _lastMetrics;
+    if (metrics.cellWidth <= 0 || metrics.cellHeight <= 0) return const [];
+    _renderState.update(terminal);
+    // The grid padding offsets every cell rect into the TerminalView's local
+    // space, so a widget-layer decorator pixel-aligns to the glyphs. The pure
+    // [AnchorGeometry] does the offset/clip math (unit-tested headless); this
+    // wrapper supplies the live metrics/offset/dimensions from FFI.
+    return AnchorGeometry.rectsFor(
+      range,
+      metrics: metrics,
+      viewportOffset: scrollbar.offset,
+      cols: _renderState.cols,
+      viewportRows: _renderState.rows,
+      origin: Offset(_lastPadding.left, _lastPadding.top),
+    );
+  }
+
+  @override
+  int? anchorGutterRow(HighlightRange range) {
+    _renderState.update(terminal);
+    return AnchorGeometry.gutterRowFor(
+      range,
+      viewportOffset: scrollbar.offset,
+      viewportRows: _renderState.rows,
+    );
   }
 
   /// #767: schedule a DEBOUNCED cell re-scan. Driven by [_onTerminalChanged]
@@ -501,6 +542,7 @@ class TerminalControllerImpl extends TerminalController
     required double devicePixelRatio,
   }) {
     _lastMetrics = metrics;
+    _lastPadding = padding;
     _lastDevicePixelRatio = devicePixelRatio;
     final cellWidthPx = (metrics.cellWidth * devicePixelRatio).round();
     final cellHeightPx = (metrics.cellHeight * devicePixelRatio).round();

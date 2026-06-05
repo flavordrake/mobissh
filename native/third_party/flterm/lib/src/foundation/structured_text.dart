@@ -163,6 +163,56 @@ final class StructuredMatch {
   }
 }
 
+/// A persistent structured-text ANCHOR exposed to the widget layer (#767 Slice B).
+///
+/// The fork OWNS persistent cell-sequence anchoring (the [StructuredTextScanner]
+/// re-anchors matches across scroll/wrap/resize/eviction by re-scanning the live
+/// cells). Slice A painted those matches with one baked-in [HighlightPainter]
+/// style. Slice B instead EXPOSES the matches as anchors so the widget layer can
+/// inject ITS OWN per-pattern decorators (a URL bubble/chip, a future file-path
+/// or commit-sha treatment) WITHOUT the fork picking a paint style — the
+/// "unblock persistent understanding of where the cells are so decorators can be
+/// injected without constant maintenance" requirement.
+///
+/// An anchor is a thin, immutable view over a single [StructuredMatch]: the
+/// [patternId] that produced it, the opaque [payload] the cells represent (e.g.
+/// the normalized URL), and the per-row absolute-coordinate [ranges] it occupies
+/// (one per soft-wrapped row). The widget resolves a range to CURRENT viewport
+/// pixel rects each frame via `TerminalController.anchorRects`, so a decorator
+/// tracks scroll/wrap/resize/eviction with NO re-detection.
+@immutable
+final class StructuredAnchor {
+  /// The [TextPattern.id] that produced this anchor's underlying match.
+  final String patternId;
+
+  /// The opaque value the anchored cells represent (e.g. the URL string).
+  final Object payload;
+
+  /// The per-row absolute-coordinate ranges this anchor occupies — one per row
+  /// a soft-wrapped match spans (a single-row match has exactly one).
+  final List<HighlightRange> ranges;
+
+  const StructuredAnchor({
+    required this.patternId,
+    required this.payload,
+    required this.ranges,
+  });
+
+  /// Builds an anchor from a detected [StructuredMatch].
+  StructuredAnchor.fromMatch(StructuredMatch match)
+    : patternId = match.patternId,
+      payload = match.payload,
+      ranges = match.ranges;
+
+  /// Returns true if the cell at ABSOLUTE ([row], [col]) falls in any range.
+  bool contains(int row, int col) {
+    for (final range in ranges) {
+      if (range.contains(row, col)) return true;
+    }
+    return false;
+  }
+}
+
 /// Read-only view of a terminal's cells for the [StructuredTextScanner].
 ///
 /// The headless seam between the scanner (pure Dart, unit-testable) and

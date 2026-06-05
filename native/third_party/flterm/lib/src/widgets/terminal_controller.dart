@@ -1,3 +1,5 @@
+import 'dart:ui' show Rect;
+
 import 'package:flutter/foundation.dart' hide Key;
 import 'package:libghostty/libghostty.dart';
 
@@ -140,6 +142,39 @@ abstract class TerminalController extends ChangeNotifier
   /// cells represent (e.g. the URL behind a tap/long-press). When matches
   /// overlap, the last detected one wins.
   StructuredMatch? matchAt({required int row, required int col});
+
+  /// The current detected structured-text ANCHORS (#767 Slice B).
+  ///
+  /// One [StructuredAnchor] per match the last cell re-scan produced, in
+  /// detection order, each carrying its [TextPattern.id], opaque payload, and
+  /// per-row absolute-coordinate [HighlightRange]s. The fork OWNS the persistent
+  /// cell-sequence anchoring (re-scan re-anchors across scroll/wrap/resize/
+  /// eviction); this getter EXPOSES the anchors so the WIDGET layer can inject
+  /// its own per-pattern decorators (a URL bubble/chip, a future path/commit-sha
+  /// treatment) instead of every pattern being forced through the one built-in
+  /// [highlights] paint pass. Empty when nothing is detected.
+  List<StructuredAnchor> get anchors;
+
+  /// Resolves a [HighlightRange] to its CURRENT viewport pixel rects (#767 B).
+  ///
+  /// Given one of an anchor's per-row [HighlightRange]s (absolute buffer coords),
+  /// returns the logical-pixel [Rect]s — one per VISIBLE row segment, hugging the
+  /// matched cells — in the grid's padded local space (the [TerminalView]'s
+  /// padding offset is already applied), using the live [CellMetrics] and the
+  /// current viewport scroll offset. Rows scrolled out of view contribute no
+  /// rect, so a fully off-screen range returns an EMPTY list. Recomputes from the
+  /// live offset/metrics every call, so a decorator built over these rects tracks
+  /// scroll/wrap/resize/eviction with NO re-detection ("without constant
+  /// maintenance"). Empty when the grid is not laid out yet.
+  List<Rect> anchorRects(HighlightRange range);
+
+  /// The VIEWPORT row index a gutter decorator for [range] should mark, or null
+  /// when the range is fully off-screen (#767 Slice B).
+  ///
+  /// The top visible row the range occupies (its first row still inside the
+  /// viewport). Exposed for a FUTURE gutter decorator (a margin glyph beside a
+  /// matched line); the URL bubble decorator does not use it.
+  int? anchorGutterRow(HighlightRange range);
 
   /// The AUTHORITATIVE per-visible-row soft-wrap flags for the active screen.
   ///

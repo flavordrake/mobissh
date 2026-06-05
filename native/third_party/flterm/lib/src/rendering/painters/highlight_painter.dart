@@ -60,8 +60,19 @@ class HighlightPainter implements TerminalPainter {
           Offset.zero,
         );
 
-        _fillPaint.color = range.background ?? HighlightTheme.defaultBackground;
-        canvas.drawRect(rect, _fillPaint);
+        // #767 Slice B: only fill when the range OPTS IN with a background.
+        // This painter draws ABOVE the text layer, so an unconditional fill (the
+        // old `?? defaultBackground`) painted OVER and HID the glyphs — wrong for
+        // a no-background style (e.g. a URL anchor whose decorator is the widget-
+        // layer BUBBLE outline, not a fill). A null background now draws nothing
+        // here (the optional underline branch is unchanged), leaving the glyphs
+        // visible. This painter remains ONE optional built-in decorator, not the
+        // mechanism every pattern is forced through.
+        final background = range.background;
+        if (background != null) {
+          _fillPaint.color = background;
+          canvas.drawRect(rect, _fillPaint);
+        }
 
         final underline = range.underline;
         if (underline != null) {

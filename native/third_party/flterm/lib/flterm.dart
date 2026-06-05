@@ -32,6 +32,7 @@ export 'src/foundation/structured_text.dart'
     show
         CellReader,
         HighlightStyle,
+        StructuredAnchor,
         StructuredMatch,
         StructuredTextScanner,
         TextPattern;

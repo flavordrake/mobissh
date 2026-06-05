@@ -1,17 +1,20 @@
-// On-emulator GHOSTTY in-terminal URL detection smoke (#767 Slice A).
+// On-emulator GHOSTTY in-terminal URL detection smoke (#767 Slice A + B).
 //
 // #767 moved URL detection INSIDE the forked flterm terminal: a registered
 // `url` TextPattern scans the terminal's OWN cells, stores marks in ABSOLUTE
-// buffer coords, and assigns `controller.highlights`. flterm's own painter
-// re-reads the viewport offset each frame, so a detected highlight tracks
-// scroll / wrap / resize / scrollback EVICTION for free — no app-side re-sync
-// (the #748/#750/#751/#764 drift root cause is gone).
+// buffer coords, and re-anchors them across scroll / wrap / resize / scrollback
+// EVICTION by re-scanning — no app-side re-sync (the #748/#750/#751/#764 drift
+// root cause is gone). Slice B exposed those marks as `controller.anchors` and
+// the widget layer draws a URL BUBBLE decorator over them (the orchestrator
+// validates the bubble VISUALLY on the emulator; this test asserts the STATE
+// that drives it: highlights / anchors / matchAt).
 //
 // This validates the device-class behaviour a headless test cannot: print a
 // (potentially wrapping) URL, push it UP into scrollback by streaming more
-// output, then assert the controller STILL detects + highlights the URL and
-// `matchAt` resolves it on the row it now occupies — i.e. the mark followed its
-// content instead of drifting or vanishing.
+// output, then assert the controller STILL detects the URL (highlights AND
+// anchors carry its payload) and `matchAt` resolves it on the row it now
+// occupies — i.e. the mark followed its content instead of drifting or
+// vanishing.
 //
 // The ghostty backend is the DEFAULT (#727), so no backend override is needed.
 // The view exposes its live flterm controller via
@@ -121,10 +124,19 @@ void main() {
         isTrue,
         reason: 'in-terminal URL detection never highlighted the printed URL',
       );
+      // #767 Slice B: the same detection surfaces as a `url` ANCHOR carrying the
+      // URL payload — what the bubble decorator renders over.
+      expect(
+        controller!.anchors.any(
+          (a) => a.patternId == 'url' && a.payload == url,
+        ),
+        isTrue,
+        reason: 'detected URL was not exposed as a url anchor (Slice B)',
+      );
 
       // Record the URL's absolute start row BEFORE scrolling it away.
       HighlightRange urlRange() =>
-          controller!.highlights.firstWhere((r) => r.payload == url);
+          controller.highlights.firstWhere((r) => r.payload == url);
       final beforeAbsRow = urlRange().startRow;
 
       // Push the URL UP into scrollback by streaming a screenful+ of output.
@@ -158,7 +170,7 @@ void main() {
       );
 
       // Scroll the viewport up so the URL row is visible again, then hit-test it.
-      controller!.scrollToTop();
+      controller.scrollToTop();
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 200));
       }

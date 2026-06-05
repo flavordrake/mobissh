@@ -178,6 +178,7 @@ import '../state/ctrl_modifier_provider.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import 'ghostty_terminal_decorators.dart';
 import 'keybar.dart';
 import 'top_toast.dart';
 import 'url_action_overlay.dart';
@@ -1724,13 +1725,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   Size _lastCellSize = Size.zero;
 
   /// #755/#767: the session theme's selection colour, captured in [build] from
-  /// the live palette and handed to the in-terminal `url` pattern's
-  /// [HighlightStyle] (via [_registerUrlPattern]) so detected URLs highlight in
-  /// the theme colour. On a theme change [build] re-registers the pattern with
-  /// the new colour. The flterm highlight painter draws it as a subtle per-cell
-  /// background fill (theme-consistent, #716). Defaults to a translucent accent
-  /// until the first build sets it.
+  /// the live palette. #767 Slice B: it colours the URL BUBBLE decorator (a
+  /// rounded outline, not a fill), recomputed each build so cycling the session
+  /// theme recolours the bubble. Defaults to a translucent accent until the first
+  /// build sets it.
   Color _lastHighlightColor = const Color(0x335B9BD5);
+
+  /// #767 Slice B: the per-pattern decorator registry. Maps a detected anchor's
+  /// pattern id to its visual decorator (the URL bubble today; file-path /
+  /// commit-sha chips in future). The [GhosttyTerminalDecoratorLayer] in [build]
+  /// resolves the controller's live anchors to viewport rects and dispatches them
+  /// here.
+  final GhosttyDecoratorRegistry _decorators =
+      GhosttyDecoratorRegistry.defaults();
 
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
   /// long-press-start, held while the finger drags so each extend rebuilds the
@@ -1856,10 +1863,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // test can assert the in-terminal URL detection tracks scroll/eviction.
       GhosttyTerminalView.debugControllers[widget.sessionId] = controller;
       // #767: register the built-in URL pattern so the terminal detects URLs
-      // over its OWN cells and maintains the highlights across scroll / wrap /
-      // resize / eviction. The initial colour is the default accent; the first
-      // build re-registers with the live session theme's selection colour.
-      _registerUrlPattern(controller, _lastHighlightColor);
+      // over its OWN cells and maintains the anchors across scroll / wrap /
+      // resize / eviction. #767 Slice B: the pattern carries no fill — the URL's
+      // visual is the widget-layer bubble decorator, coloured per the live
+      // session theme in [build].
+      _registerUrlPattern(controller);
       // #702: arm the first-connect resize re-sync on the proxy's shellReady
       // stream. The xterm #666 fit-burst is offstage for ghostty, so this is the
       // ghostty-LOCAL equivalent: once the task-side shell EXISTS, force-re-send
@@ -1923,19 +1931,20 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   }
 
   /// #767: register (or re-register) the built-in `url` structured-text pattern
-  /// on the controller with the current highlight [color]. The terminal then
-  /// detects URLs over its OWN cells and maintains the highlights across scroll /
-  /// wrap / resize / eviction — no app-side detect or push. Re-registering with
-  /// the same id replaces the pattern, so this is also the theme-recolour path:
-  /// on a theme change [build] calls this with the new selection colour and the
-  /// controller re-scans + restyles existing URL highlights in place.
-  void _registerUrlPattern(TerminalController controller, Color color) {
-    controller.registerTextPattern(
-      TextPattern.url(
-        id: _kUrlPatternId,
-        style: HighlightStyle(background: color),
-      ),
-    );
+  /// on the controller. The terminal detects URLs over its OWN cells and
+  /// maintains the ANCHORS across scroll / wrap / resize / eviction — no app-side
+  /// detect or push. Re-registering with the same id replaces the pattern.
+  ///
+  /// #767 Slice B: the pattern carries NO highlight background. The URL's visual
+  /// is now the widget-layer BUBBLE ([GhosttyTerminalDecoratorLayer] →
+  /// [UrlBubbleDecorator]), a rounded OUTLINE hugging the cells — NOT an opaque
+  /// fill painted over the glyphs (which hid the URL text). The fork's
+  /// [HighlightPainter] only fills when a range opts in with a background, so a
+  /// no-background URL anchor leaves the glyphs untouched; the bubble decorator
+  /// draws the affordance instead. The bubble colour comes from the decorator
+  /// layer ([_lastHighlightColor]); this registration is theme-independent.
+  void _registerUrlPattern(TerminalController controller) {
+    controller.registerTextPattern(TextPattern.url(id: _kUrlPatternId));
   }
 
   /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
@@ -2623,16 +2632,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #734: remember the live cell size so a long-press URL menu can build its
     // highlight rects with the same geometry the router maps touches with.
     _lastCellSize = cellSize;
-    // #755/#767: the URL highlight is detected + drawn INSIDE the terminal
-    // (`controller.highlights`, real cell metrics, no host overlay). The detect
-    // and styling now live in the controller's structured-text pattern. When the
-    // session theme changes, re-register the `url` pattern with the new selection
-    // colour so cycling the theme recolours existing + future URL highlights —
-    // clear + re-register IS the restyle path (#767).
+    // #755/#767: URLs are DETECTED + ANCHORED inside the terminal (the `url`
+    // structured-text pattern over its own cells). #767 Slice B: the VISUAL is a
+    // widget-layer BUBBLE decorator ([GhosttyTerminalDecoratorLayer]) coloured
+    // with the live session selection colour — no fill, no host re-detect. The
+    // colourless pattern registration never needs re-registering on a theme
+    // change; we just track the colour the bubble paints in, so cycling the
+    // session theme recolours the bubble on the next build.
     final highlightColor = palette.theme.selection;
     if (highlightColor != _lastHighlightColor) {
       _lastHighlightColor = highlightColor;
-      _registerUrlPattern(controller, highlightColor);
     }
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
@@ -2657,16 +2666,28 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             gestureSettings: kGhosttyScrollSettings,
           ),
         ),
-        // #726/#755/#767: the URL highlight is no longer a host overlay AND no
-        // longer detected by the app. The terminal owns detection: a registered
-        // `url` TextPattern (#767) scans the terminal's OWN cells on its notify
-        // cycle and assigns `controller.highlights`; flterm's `HighlightPainter`
-        // draws them INSIDE the terminal with real cell metrics, re-reading the
-        // viewport offset each frame — so the highlight hugs the glyphs and tracks
-        // scroll / wrap / resize / eviction with NO host-side geometry or re-sync
-        // (the #748/#750/#751/#764 drift root cause is gone). The old
-        // `GhosttyUrlHighlightPainter` overlay AND the app-side detector are
-        // deleted.
+        // #767 Slice B: the per-pattern DECORATOR layer. The terminal OWNS URL
+        // detection + persistent cell-sequence ANCHORING (the `url` TextPattern
+        // scans its own cells; matches re-anchor across scroll/wrap/resize/
+        // eviction by re-scanning — the #748/#750/#751/#764 drift root cause is
+        // gone). This layer reads the controller's live `anchors` + resolves each
+        // to CURRENT viewport rects via `controller.anchorRects`, then draws the
+        // registered decorator — the URL BUBBLE: a rounded OUTLINE hugging the
+        // cells (joined across wrap rows) in the theme accent, NEVER an opaque
+        // fill over the glyphs (which hid the URL text). It listens to the
+        // controller so it repaints as the viewport scrolls, with NO re-detection.
+        // Paint-only (IgnorePointer) — taps/long-presses fall through to the
+        // gesture router below, which owns hit-test (matchAt) + copy/open. The
+        // fork's HighlightPainter still exists as an OPTIONAL fill decorator
+        // (used only when a pattern opts into a background), but URLs use the
+        // bubble, so the colourless `url` pattern paints no fill.
+        Positioned.fill(
+          child: GhosttyTerminalDecoratorLayer(
+            controller: controller,
+            registry: _decorators,
+            color: highlightColor,
+          ),
+        ),
         // #690/#692/#693: routes touch so the remote (tmux) behaves. When mouse
         // mode is ON the overlay is OPAQUE and routes the gesture: a finger SWIPE
         // scrolls the scrollback (flterm emits canonical wheel reports — never a
