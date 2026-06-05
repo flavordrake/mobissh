@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+23 (2026-06-05) — wrapped URLs bubble across BOTH lines (tmux too)
+- **A URL that wraps onto a second line now bubbles the whole link**, not just the first line. tmux hard-wraps without the terminal's soft-wrap flag, so the detector now also joins by the pane width — while still keeping two adjacent URLs separate and ignoring bullet/indented lines. **Verify:** in tmux, print a URL long enough to wrap → the bubble should cover both rows; long-press either half opens the whole URL (#767).
+
 ## v0.1.10+22 (2026-06-05) — URLs get a tappable bubble + diagnosable sessions
 - **URLs now show a rounded "bubble" outline** hugging the link — even across a line wrap — instead of a fill/underline. Clearer, doesn't clash with underlined text. Tap to copy, long-press to open. **Verify:** print a long URL that wraps and a shorter one near it → each gets its own bubble, text stays readable, no bleed between them (#767).
 - **Frozen/disconnected-session reports are now diagnosable** — the session lifecycle log (resume/reconnect probe outcomes) now actually reaches the feedback upload, so a stuck-session report carries the evidence to fix it (#766).

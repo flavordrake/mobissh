@@ -351,7 +351,7 @@ class StructuredTextScanner {
           final content = reader.cellContent(r, c);
           glyphs.add(_Glyph(content.isEmpty ? ' ' : content, absRow, c));
         }
-        if (r < rows - 1 && reader.rowWrap(r)) {
+        if (r < rows - 1 && _continuesOnto(reader, r, cols)) {
           r++;
           continue;
         }
@@ -361,6 +361,54 @@ class StructuredTextScanner {
       r++;
     }
     return lines;
+  }
+
+  /// Whether logical content on local row [r] continues onto row [r]+1.
+  ///
+  /// Prefer libghostty's AUTHORITATIVE soft-wrap flag. When it is absent — as
+  /// under tmux, which HARD-wraps at the pane width and never sets the flag —
+  /// fall back to a wrap-width signal: row [r] fills the width (its last cell is
+  /// non-blank) AND row [r]+1 begins with a BARE continuation. "Bare" excludes a
+  /// blank/whitespace start, a bullet marker, and a fresh URL scheme — so a
+  /// genuinely wrapped URL joins under tmux, while a COMPLETE URL that happens to
+  /// fill the width is NOT merged into the next line's separate content (#764
+  /// over-capture stays fixed even without the flag).
+  bool _continuesOnto(CellReader reader, int r, int cols) {
+    if (reader.rowWrap(r)) return true;
+    if (reader.cellContent(r, cols - 1).isEmpty) return false; // not full width
+    final next = r + 1;
+    if (reader.cellContent(next, 0).isEmpty) return false; // blank/ws start
+    return !_startsNewBlock(reader, next, cols);
+  }
+
+  /// Whether row [row] STARTS a new block rather than continuing the prior row:
+  /// a leading bullet marker (a bullet glyph followed by a space — NOT a URL
+  /// hyphen like the '-' in 'mobissh-native', which is followed by a non-space)
+  /// or a fresh URL scheme ('http://', 'https://', 'www.'). Leading whitespace
+  /// is already excluded by the col-0 blank check in [_continuesOnto].
+  bool _startsNewBlock(CellReader reader, int row, int cols) {
+    const bullets = {'-', '*', '+', '•', '·', '▪', '◦', '‣'};
+    final c0 = reader.cellContent(row, 0);
+    if (bullets.contains(c0) &&
+        cols > 1 &&
+        reader.cellContent(row, 1).isEmpty) {
+      return true;
+    }
+    final head = _rowHead(reader, row, cols, 8).toLowerCase();
+    return head.startsWith('http://') ||
+        head.startsWith('https://') ||
+        head.startsWith('www.');
+  }
+
+  /// The first [n] characters of row [row] (blank cells as spaces).
+  String _rowHead(CellReader reader, int row, int cols, int n) {
+    final lim = n < cols ? n : cols;
+    final sb = StringBuffer();
+    for (var c = 0; c < lim; c++) {
+      final ch = reader.cellContent(row, c);
+      sb.write(ch.isEmpty ? ' ' : ch);
+    }
+    return sb.toString();
   }
 
   /// Map a match's character span `[start, end)` in a logical line back to

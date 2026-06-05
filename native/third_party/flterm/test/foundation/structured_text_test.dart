@@ -207,6 +207,83 @@ void main() {
     );
   });
 
+  group('hard-wrap (tmux: no soft-wrap flag) (#767)', () {
+    test('a URL hard-wrapped by tmux (rowWrap NOT set) joins across rows', () {
+      // tmux hard-wraps at the pane width and never sets the soft-wrap flag.
+      // cols=15. Row 0 fills the width with the URL head; row 1 continues with a
+      // BARE (non-scheme, non-formatting) tail. wraps all false.
+      final reader = _FakeCellReader(
+        [
+          'https://ex.io/a', // 15 chars FULL, no rowWrap (tmux)
+          'bcdef done', // bare continuation 'bcdef' then ' done'
+        ],
+        cols: 15,
+        wraps: [false, false],
+      );
+      final matches = scanner.scan(reader, [urlPattern]);
+      expect(matches, hasLength(1), reason: 'the wrapped URL joins via width');
+      final m = matches.single;
+      expect(m.payload, 'https://ex.io/abcdef');
+      expect(m.ranges, hasLength(2));
+      expect(m.ranges[0].startRow, 0);
+      expect(m.ranges[0].endCol, 15);
+      expect(m.ranges[1].startRow, 1);
+      expect(m.ranges[1].startCol, 0);
+      expect(m.ranges[1].endCol, 5); // 'bcdef'
+    });
+
+    test(
+      'a complete URL exactly filling the width is NOT merged into an adjacent '
+      'NEW URL on the next row (#764 over-capture stays fixed without rowWrap)',
+      () {
+        final reader = _FakeCellReader(
+          [
+            'https://one.com', // 15 chars FULL, complete URL
+            'https://two.com', // next row STARTS WITH A SCHEME -> its own URL
+          ],
+          cols: 15,
+          wraps: [false, false],
+        );
+        final matches = scanner.scan(reader, [urlPattern]);
+        expect(matches, hasLength(2), reason: 'two separate URLs, not merged');
+        expect(matches[0].payload, 'https://one.com');
+        expect(matches[1].payload, 'https://two.com');
+        expect(matches[0].ranges, hasLength(1));
+        expect(matches[1].ranges, hasLength(1));
+      },
+    );
+
+    test('a full-width URL row is NOT joined to a bullet-prefixed next line', () {
+      final reader = _FakeCellReader(
+        [
+          'https://ex.io/aa', // 16 chars FULL
+          '- a new bullet line', // bullet marker '- ' -> new block
+        ],
+        cols: 16,
+        wraps: [false, false],
+      );
+      final matches = scanner.scan(reader, [urlPattern]);
+      expect(matches, hasLength(1));
+      expect(matches.single.payload, 'https://ex.io/aa');
+      expect(matches.single.ranges, hasLength(1), reason: 'single row, no join');
+    });
+
+    test('a full-width URL row is NOT joined to a whitespace-indented line', () {
+      final reader = _FakeCellReader(
+        [
+          'https://ex.io/aa', // 16 chars FULL
+          '  indented prose', // leading space -> new block
+        ],
+        cols: 16,
+        wraps: [false, false],
+      );
+      final matches = scanner.scan(reader, [urlPattern]);
+      expect(matches, hasLength(1));
+      expect(matches.single.payload, 'https://ex.io/aa');
+      expect(matches.single.ranges, hasLength(1));
+    });
+  });
+
   group('StructuredMatch.contains (hit-test halves) (#767)', () {
     late StructuredMatch wrapped;
     late StructuredMatch other;
