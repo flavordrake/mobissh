@@ -178,6 +178,106 @@ void main() {
       },
     );
 
+    test('probeLiveness returns TRUE when the ping answers (#759)', () async {
+      final controller = SshSessionController(
+        reconnectDelay: Duration.zero,
+        livenessProbeOverride: () async {}, // answers immediately
+      );
+      controller.debugSetConnectedForTest(_params);
+
+      final alive = await controller.probeLiveness(
+        timeout: const Duration(milliseconds: 50),
+      );
+
+      expect(
+        alive,
+        isTrue,
+        reason:
+            'a transport ping that answers reports alive so the host '
+            'can decide whether to escalate to the nudge check',
+      );
+      expect(controller.data.state, SshSessionState.connected);
+
+      await controller.dispose();
+    });
+
+    test('probeLiveness returns FALSE when the ping fails (#759)', () async {
+      final controller = SshSessionController(
+        reconnectDelay: Duration.zero,
+        maxReconnectAttempts: 3,
+        livenessProbeOverride: () => Completer<void>().future,
+        reconnectAttemptOverride: (_) async => true,
+      );
+      controller.debugSetConnectedForTest(_params);
+
+      final alive = await controller.probeLiveness(
+        timeout: const Duration(milliseconds: 10),
+      );
+
+      expect(
+        alive,
+        isFalse,
+        reason: 'a failed ping reports dead AND drives the reconnect path',
+      );
+
+      await controller.dispose();
+    });
+
+    test(
+      'softDisconnectForResume drives connected → softDisconnected → reconnect '
+      '(#759)',
+      () async {
+        final reconnects = <String>[];
+        final controller = SshSessionController(
+          reconnectDelay: Duration.zero,
+          maxReconnectAttempts: 3,
+          reconnectAttemptOverride: (p) async {
+            reconnects.add('reconnect:${p.host}');
+            return true;
+          },
+        );
+        controller.debugSetConnectedForTest(_params);
+
+        final states = <SshSessionState>[];
+        final sub = controller.stream.listen((d) => states.add(d.state));
+
+        controller.softDisconnectForResume();
+        for (var i = 0; i < 20; i++) {
+          await Future<void>.delayed(Duration.zero);
+          if (controller.data.state == SshSessionState.connected) break;
+        }
+
+        expect(states, contains(SshSessionState.softDisconnected));
+        expect(reconnects, contains('reconnect:example'));
+
+        await sub.cancel();
+        await controller.dispose();
+      },
+    );
+
+    test('softDisconnectForResume is a no-op when NOT connected', () async {
+      var reconnectCalled = false;
+      final controller = SshSessionController(
+        reconnectDelay: Duration.zero,
+        reconnectAttemptOverride: (_) async {
+          reconnectCalled = true;
+          return true;
+        },
+      );
+      // Never connected.
+      expect(controller.data.state, SshSessionState.idle);
+
+      controller.softDisconnectForResume();
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(controller.data.state, SshSessionState.idle);
+      expect(reconnectCalled, isFalse);
+
+      await controller.dispose();
+    });
+
     test('a user-disconnected session is not probed/reconnected', () async {
       var reconnectCalled = false;
       final controller = SshSessionController(

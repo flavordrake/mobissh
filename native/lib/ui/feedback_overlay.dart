@@ -70,6 +70,7 @@ Map<String, Object?> buildFeedbackPayload({
   String? screenshotDataUrl,
   List<String> connectLog = const <String>[],
   List<String> gestureLog = const <String>[],
+  List<String> lifecycleLog = const <String>[],
 }) {
   final fullComment = comment;
   // First non-empty line → title summary. Never truncate the comment itself.
@@ -105,6 +106,14 @@ Map<String, Object?> buildFeedbackPayload({
       .map(scrubSecrets)
       .toList(growable: false);
 
+  // #759: dedicated lifecycle-event ring (resume-liveness probe outcomes,
+  // reconnect decisions) — the durable record that survives the connect-ring
+  // churn so a wake-frozen report carries the probe outcome. Scrubbed like the
+  // others (defense in depth; lifecycle lines carry no credentials).
+  final scrubbedLifecycleLog = lifecycleLog
+      .map(scrubSecrets)
+      .toList(growable: false);
+
   return <String, Object?>{
     'title': title,
     // FULL comment — the server stores this untruncated (#661).
@@ -117,6 +126,7 @@ Map<String, Object?> buildFeedbackPayload({
       'screenshot': screenshotDataUrl,
     if (scrubbedLog.isNotEmpty) 'connectLog': scrubbedLog,
     if (scrubbedGestureLog.isNotEmpty) 'gestureLog': scrubbedGestureLog,
+    if (scrubbedLifecycleLog.isNotEmpty) 'lifecycleLog': scrubbedLifecycleLog,
   };
 }
 
@@ -257,6 +267,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     // affordance pill appearing in its own screenshot is an acceptable trade.
     final connectLog = connectLogSnapshot();
     final gestureLog = gestureLogSnapshot();
+    final lifecycleLog = lifecycleLogSnapshot();
     final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
     final bytes = await widget.screenshotCapturer(_captureKey, dpr);
     if (!mounted) return;
@@ -270,6 +281,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       version: version,
       connectLog: connectLog,
       gestureLog: gestureLog,
+      lifecycleLog: lifecycleLog,
     );
   }
 
@@ -278,6 +290,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     required String version,
     required List<String> connectLog,
     required List<String> gestureLog,
+    required List<String> lifecycleLog,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -301,6 +314,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       screenshotDataUrl: dataUrl,
       connectLog: connectLog,
       gestureLog: gestureLog,
+      lifecycleLog: lifecycleLog,
     );
     final ok = await widget.submitter.submit(payload);
     // Confirmation as a TOP toast (#667) so it doesn't occlude the bottom

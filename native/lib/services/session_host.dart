@@ -58,11 +58,15 @@ class SessionHost {
     SftpSessionOpener? sftpOpener,
     HostShellOpener? shellOpener,
     this.snapshotInterval = const Duration(seconds: 2),
-    this.resumeProbeTimeout = const Duration(seconds: 4),
+    this.resumeProbeTimeout = const Duration(seconds: 2),
+    this.resumeStaleThreshold = const Duration(seconds: 20),
+    this.resumeNudgeWindow = const Duration(seconds: 2),
+    int Function()? nowMs,
   }) : _gateway = gateway,
        _factory = controllerFactory ?? _defaultControllerFactory,
        _sftpOpener = sftpOpener,
-       _shellOpener = shellOpener ?? _defaultShellOpener {
+       _shellOpener = shellOpener ?? _defaultShellOpener,
+       _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch) {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
     ctrace('task.host', 'ctor: listening; sending SshTaskReadyEvent');
@@ -92,7 +96,27 @@ class SessionHost {
   /// Timeout for the resume liveness probe (#737). A `connected` session whose
   /// ping doesn't reply within this window is declared dead → reconnect. Short
   /// so a frozen wake recovers in a few seconds, not "never". Tests shrink it.
+  /// Shortened 4s → 2s (#759) so detection is faster and the stale window does
+  /// not let a green dot sit over frozen content for long.
   final Duration resumeProbeTimeout;
+
+  /// How long with NO fresh remote bytes before a session is considered "stale
+  /// going into resume" (#759). Only a session that is BOTH stale-before AND
+  /// unresponsive to the nudge is reconnected — a session that produced fresh
+  /// bytes within this window is left connected even if the nudge is silent
+  /// (conservative gate against churning a healthy idle session).
+  final Duration resumeStaleThreshold;
+
+  /// How long to wait after sending the end-to-end nudge (a benign channel
+  /// resize that makes a live tmux/shell REDRAW) for fresh remote bytes to
+  /// arrive (#759). Bounded so the resume decision resolves quickly. If no fresh
+  /// bytes arrive in this window the session is declared STALE → reconnect.
+  final Duration resumeNudgeWindow;
+
+  /// Injectable monotonic-ish clock (ms since epoch). Real production uses
+  /// `DateTime.now()`; tests inject a controllable clock so the staleness gate
+  /// is deterministic under `fakeAsync` (#759).
+  final int Function() _nowMs;
 
   StreamSubscription<Map<String, dynamic>>? _commandSub;
   Timer? _snapshotTimer;
@@ -161,15 +185,11 @@ class SessionHost {
         // re-emitting ready so the contract is honoured everywhere.
         _gateway.send(const SshTaskReadyEvent().toJson());
       case SshResumeProbeCommand():
-        // #737: actively verify the session's socket survived Doze rather than
-        // trusting the cached `connected` state. The controller pings with a
-        // short timeout; a dead half-open socket → softDisconnected → reconnect.
-        final hosted = _sessions[cmd.sessionId];
-        if (hosted != null) {
-          unawaited(
-            hosted.controller.probeLiveness(timeout: resumeProbeTimeout),
-          );
-        }
+        // #737/#759: actively verify the session survived Doze rather than
+        // trusting the cached `connected` state. Transport ping (#737) PLUS an
+        // end-to-end nudge check (#759) for the transport-alive-but-shell-frozen
+        // case a ping cannot catch.
+        _handleResumeProbe(cmd.sessionId);
       case SftpListCommand():
         _handleSftpList(cmd);
       case SftpDownloadCommand():
@@ -186,6 +206,123 @@ class SessionHost {
       hosted.controller.acceptHostKey();
     } else {
       hosted.controller.rejectHostKey();
+    }
+  }
+
+  /// End-to-end resume liveness (#759).
+  ///
+  /// The #737 transport ping answers whenever SSH is up — but after deep Doze
+  /// the link can be a zombie that still ACKs at the transport layer while the
+  /// remote tmux/shell is FROZEN, or the real link dropped and a stale socket
+  /// lingers. A transport ping cannot catch an app-level freeze. So:
+  ///
+  ///   1. Capture the fresh-remote-byte counter + whether the session was STALE
+  ///      going into resume (no remote output for [resumeStaleThreshold]).
+  ///   2. Run the transport ping ([SshSessionController.probeLiveness]). If it
+  ///      FAILS the controller already drove softDisconnected → reconnect
+  ///      (#737) — done. Telemetry: `ping-failed → reconnect`.
+  ///   3. Ping answered. If the session was NOT stale (produced fresh bytes
+  ///      recently) leave it connected — `alive(recent-bytes)`. (Conservative:
+  ///      never churn a healthy idle session.)
+  ///   4. Ping answered AND stale-before: send a benign NUDGE (a no-op channel
+  ///      resize that makes a live tmux/shell REDRAW → fresh bytes) and wait
+  ///      [resumeNudgeWindow]:
+  ///        - fresh bytes arrived → `alive(fresh-bytes-after-nudge)`, stay.
+  ///        - NO fresh bytes → STALE/FROZEN → `softDisconnectForResume()` drives
+  ///          softDisconnected → reconnect. Telemetry:
+  ///          `STALE(no-bytes-after-nudge) → reconnect`.
+  ///
+  /// Only the (stale-before AND no-bytes-after-nudge) combination triggers the
+  /// NEW reconnect path; everything else stays connected. Reconnect is cheap for
+  /// tmux (re-attach) but we deliberately do not churn responsive sessions.
+  Future<void> _handleResumeProbe(String sessionId) async {
+    final hosted = _sessions[sessionId];
+    if (hosted == null) return;
+    final controller = hosted.controller;
+
+    final countBefore = hosted.remoteByteEvents;
+    final lastByteAt = hosted.lastRemoteByteAtMs;
+    final now = _nowMs();
+    // Stale-before: never saw a remote byte, OR the last one is older than the
+    // threshold. A brand-new connection with no output yet counts as stale (it
+    // has nothing to prove it's responsive), but it will answer the nudge if
+    // healthy.
+    final staleBefore =
+        lastByteAt == null ||
+        (now - lastByteAt) >= resumeStaleThreshold.inMilliseconds;
+
+    // (1)+(2): transport ping (#737). Returns false when it failed and the
+    // session was already driven into reconnect.
+    final pingAlive = await controller.probeLiveness(
+      timeout: resumeProbeTimeout,
+    );
+    if (!pingAlive) {
+      // Controller emitted the `ping-failed → reconnect` lifecycle line.
+      return;
+    }
+
+    // (3): ping answered but session was responsive recently — leave connected.
+    if (!staleBefore) {
+      clifecycle('task.host', 'resume-liveness: alive(recent-bytes)');
+      return;
+    }
+
+    // The session may have been torn down or moved off connected while we
+    // awaited the ping. If it's no longer hosted/connected, nothing to nudge.
+    if (!_sessions.containsKey(sessionId) ||
+        controller.data.state != SshSessionState.connected) {
+      return;
+    }
+
+    // Conservative: the end-to-end check needs a live shell channel to nudge and
+    // to observe redraw bytes. With no shell open (the session reached connected
+    // but the PTY isn't up yet, or this is a #737-style controller-only test)
+    // there is nothing to nudge — fall back to the #737 ping-only verdict and
+    // leave the (ping-alive) session connected rather than false-reconnecting.
+    if (hosted.shell == null) {
+      clifecycle('task.host', 'resume-liveness: alive(no-shell, ping-only)');
+      return;
+    }
+
+    // (4): stale-before — send the end-to-end nudge and watch for fresh bytes.
+    _sendLivenessNudge(hosted);
+    await Future<void>.delayed(resumeNudgeWindow);
+
+    // Re-resolve: a real close / reconnect could have raced in.
+    final after = _sessions[sessionId];
+    if (after == null) return;
+    if (after.controller.data.state != SshSessionState.connected) return;
+
+    if (after.remoteByteEvents > countBefore) {
+      clifecycle(
+        'task.host',
+        'resume-liveness: alive(fresh-bytes-after-nudge)',
+      );
+      return;
+    }
+    // Stale-before AND no fresh bytes after the nudge → frozen/dead end-to-end.
+    after.controller.softDisconnectForResume();
+  }
+
+  /// Send a benign channel nudge that forces a live remote tmux/shell to redraw
+  /// (#759): a window-resize toggling the columns by one and back. Non-intrusive
+  /// (no keystrokes injected into the shell, no command run), but a responsive
+  /// PTY answers with a repaint → fresh remote bytes the nudge check can see.
+  /// A frozen shell / dead link produces nothing. No-op when no shell is open.
+  void _sendLivenessNudge(_HostedSession hosted) {
+    final shell = hosted.shell;
+    if (shell == null) return;
+    final cols = hosted.metrics.lastCols ?? 80;
+    final rows = hosted.metrics.lastRows ?? 24;
+    try {
+      // Toggle off-by-one then back to the real dims so the final geometry is
+      // unchanged but the remote sees a resize → SIGWINCH → redraw.
+      shell.resize(cols + 1, rows);
+      shell.resize(cols, rows);
+    } catch (_) {
+      // dartssh2 throws on non-positive dims / closed channel; a closed channel
+      // means the transport is already gone and the controller's own close path
+      // will drive reconnect. Swallow — the nudge is best-effort.
     }
   }
 
@@ -379,6 +516,11 @@ class SessionHost {
       hosted.shellSub = transport.output.listen(
         (bytes) {
           hosted.metrics.bytesIn += bytes.length;
+          // Record a fresh-remote-byte event for the #759 resume-liveness check.
+          // This is the ground truth that the REMOTE (not just the transport) is
+          // producing output — the nudge check watches this counter advance.
+          hosted.remoteByteEvents += 1;
+          hosted.lastRemoteByteAtMs = _nowMs();
           hosted.appendScrollback(bytes);
           _gateway.send(
             SshOutputEvent(sessionId: sessionId, bytes: bytes).toJson(),
@@ -630,6 +772,10 @@ class SessionHost {
     final hosted = _sessions[sessionId];
     if (hosted == null) return;
     hosted.metrics.bytesIn += bytes.length;
+    // Mirror the live listener so the #759 resume-liveness check sees fresh
+    // remote bytes through the test ingest seam too.
+    hosted.remoteByteEvents += 1;
+    hosted.lastRemoteByteAtMs = _nowMs();
     hosted.appendScrollback(bytes);
     _gateway.send(SshOutputEvent(sessionId: sessionId, bytes: bytes).toJson());
   }
@@ -742,6 +888,20 @@ class _HostedSession {
   SshShellTransport? shell;
   StreamSubscription<Uint8List>? shellSub;
   bool shellOpening = false;
+
+  /// Monotonic count of remote-output CHUNKS actually received from the shell
+  /// (#759). Bumped only by the live shell-output listener (and the test
+  /// ingest seam) — NOT by snapshot replay or scrollback hydration — so it is a
+  /// faithful "fresh bytes from the remote" signal. The resume-liveness check
+  /// captures this before nudging and re-reads it after the nudge window to
+  /// decide whether a transport-alive session is actually responsive end-to-end.
+  int remoteByteEvents = 0;
+
+  /// Wall-clock (ms since epoch) of the most recent remote-output chunk, or
+  /// null if none has arrived yet (#759). Drives the `staleBefore` gate: a
+  /// session that produced fresh bytes recently is NOT escalated to the nudge
+  /// check on resume (conservative — don't churn a healthy idle session).
+  int? lastRemoteByteAtMs;
 
   /// Monotonic token bumped each time the shell is dropped (#590). An in-flight
   /// [SessionHost._ensureShell] open captures this before awaiting and discards

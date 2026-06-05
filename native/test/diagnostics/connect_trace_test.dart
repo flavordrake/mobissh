@@ -19,10 +19,16 @@ void main() {
     final lines = connectLog.value;
     expect(lines.length, n, reason: 'buffer must cap at $n');
     // Oldest 10 (line 0..9) dropped; newest retained at the end.
-    expect(lines.first, contains('line 10'),
-        reason: 'oldest lines should be dropped');
-    expect(lines.last, contains('line ${n + 9}'),
-        reason: 'newest line should be retained at the end');
+    expect(
+      lines.first,
+      contains('line 10'),
+      reason: 'oldest lines should be dropped',
+    );
+    expect(
+      lines.last,
+      contains('line ${n + 9}'),
+      reason: 'newest line should be retained at the end',
+    );
   });
 
   test('lines are appended in call order, newest last', () {
@@ -40,7 +46,10 @@ void main() {
   test('line includes a HH:mm:ss.SSS timestamp and the where tag', () {
     ctrace('ui.proxy', 'hello');
     final line = connectLog.value.single;
-    expect(line, matches(RegExp(r'^\d{2}:\d{2}:\d{2}\.\d{3} \[ui\.proxy\] hello$')));
+    expect(
+      line,
+      matches(RegExp(r'^\d{2}:\d{2}:\d{2}\.\d{3} \[ui\.proxy\] hello$')),
+    );
   });
 
   test('appending notifies listeners with a fresh list instance', () {
@@ -54,8 +63,11 @@ void main() {
     final after = connectLog.value;
 
     expect(notifications, 1, reason: 'a single append fires one notification');
-    expect(identical(before, after), isFalse,
-        reason: 'value must be a new list so ValueListenableBuilder rebuilds');
+    expect(
+      identical(before, after),
+      isFalse,
+      reason: 'value must be a new list so ValueListenableBuilder rebuilds',
+    );
   });
 
   test('consecutive identical lines collapse into one with a ×N count', () {
@@ -78,8 +90,11 @@ void main() {
     expect(lines.length, 3);
     expect(lines[0], contains('[ui.gw] recv output (×2)'));
     expect(lines[1], contains('[ui.gw] send input'));
-    expect(lines[1], isNot(contains('×')),
-        reason: 'a single occurrence has no count suffix');
+    expect(
+      lines[1],
+      isNot(contains('×')),
+      reason: 'a single occurrence has no count suffix',
+    );
     expect(lines[2], contains('[ui.gw] recv output'));
     expect(lines[2], isNot(contains('×')));
   });
@@ -93,8 +108,11 @@ void main() {
     ctrace('ui.gw', 'recv output');
     ctrace('ui.gw', 'recv output');
 
-    expect(notifications, 2,
-        reason: 'each call notifies, even when collapsing the line');
+    expect(
+      notifications,
+      2,
+      reason: 'each call notifies, even when collapsing the line',
+    );
   });
 
   test('clearConnectLog empties the buffer and notifies', () {
@@ -110,5 +128,62 @@ void main() {
     clearConnectLog();
     expect(connectLog.value, isEmpty);
     expect(cleared, isTrue);
+  });
+
+  group('lifecycle ring (#759)', () {
+    test(
+      'clifecycle appends to BOTH the lifecycle ring and the connect ring',
+      () {
+        clifecycle('task.host', 'resume-liveness: alive(recent-bytes)');
+
+        expect(
+          lifecycleLog.value.single,
+          contains('resume-liveness: alive(recent-bytes)'),
+        );
+        expect(
+          connectLog.value.single,
+          contains('resume-liveness: alive(recent-bytes)'),
+          reason: 'the event must also show in-context in the connect ring',
+        );
+      },
+    );
+
+    test('a lifecycle event SURVIVES the connect-ring churn', () {
+      clifecycle(
+        'task.host',
+        'resume-liveness: STALE(no-bytes-after-nudge) '
+            '→ reconnect',
+      );
+      // Flood the connect ring past its cap so the lifecycle line is evicted
+      // from the connect ring — but the dedicated ring must still retain it.
+      for (var i = 0; i < connectLogCapacity + 50; i++) {
+        ctrace('ui.gw', 'recv $i');
+      }
+
+      expect(
+        lifecycleLogSnapshot().join('\n'),
+        contains('STALE(no-bytes-after-nudge)'),
+        reason:
+            'the dedicated ring must outlive the connect-ring churn — the '
+            'whole point of #759 telemetry retention',
+      );
+    });
+
+    test('clifecycle is never collapsed into a preceding ×N run', () {
+      ctrace('ui.gw', 'recv output');
+      ctrace('ui.gw', 'recv output');
+      clifecycle('task.host', 'resume-liveness: ping-failed → reconnect');
+
+      final lines = connectLog.value;
+      expect(lines.last, contains('ping-failed → reconnect'));
+      expect(lines.last, isNot(contains('×')));
+    });
+
+    test('clearConnectLog also clears the lifecycle ring', () {
+      clifecycle('task.host', 'resume-liveness: alive(recent-bytes)');
+      expect(lifecycleLog.value, isNotEmpty);
+      clearConnectLog();
+      expect(lifecycleLog.value, isEmpty);
+    });
   });
 }

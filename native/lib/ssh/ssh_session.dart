@@ -455,12 +455,21 @@ class SshSessionController {
   ///
   /// No-op unless currently `connected` (nothing to probe otherwise) or if the
   /// user has disconnected. Safe to call repeatedly (e.g. on every resume).
-  Future<void> probeLiveness({
+  ///
+  /// Returns `true` when the transport ping replied (link answered — the
+  /// session is left `connected`), `false` when the ping failed/timed out and
+  /// the session was driven into the reconnect path (#737). The caller
+  /// ([SessionHost]) uses the return value to decide whether to escalate to the
+  /// END-TO-END nudge check (#759): a ping that answers does NOT prove the
+  /// REMOTE shell/tmux is responsive — only that SSH is up — so when the session
+  /// was already stale going into resume the host nudges the channel and watches
+  /// for fresh remote bytes.
+  Future<bool> probeLiveness({
     Duration timeout = const Duration(seconds: 4),
   }) async {
-    if (_userDisconnected) return;
-    if (_data.state != SshSessionState.connected) return;
-    if (_lastParams == null) return;
+    if (_userDisconnected) return false;
+    if (_data.state != SshSessionState.connected) return false;
+    if (_lastParams == null) return false;
 
     final probe = _livenessProbe ?? _defaultLivenessProbe;
     var alive = false;
@@ -470,15 +479,42 @@ class SshSessionController {
     } catch (e) {
       // TimeoutException (half-open socket — no reply) or a transport error
       // (broken pipe). Either way the link is dead.
-      ctrace('task.ssh', 'probeLiveness: FAILED — $e → softDisconnected');
+      clifecycle('task.ssh', 'probeLiveness: ping-failed → reconnect ($e)');
     }
     if (alive) {
-      ctrace('task.ssh', 'probeLiveness: alive');
-      return;
+      // Transport answered. This is NOT proof the remote shell is live (#759);
+      // the host decides whether to escalate to the nudge check. Stay connected.
+      ctrace('task.ssh', 'probeLiveness: ping-alive (transport answered)');
+      return true;
     }
     // Re-check state: a real transport close could have raced in while we
     // awaited the probe and already moved us off `connected`.
-    if (_userDisconnected || _data.state != SshSessionState.connected) return;
+    if (_userDisconnected || _data.state != SshSessionState.connected) {
+      return false;
+    }
+    _lastErrorUnreachable = false;
+    _emit(_data.copyWith(state: SshSessionState.softDisconnected));
+    _scheduleReconnect(null);
+    return false;
+  }
+
+  /// Declare the current `connected` session STALE/DEAD at the APPLICATION layer
+  /// (#759) and drive it through the existing reconnect path. Used by
+  /// [SessionHost] when the transport ping answered but an end-to-end nudge
+  /// produced NO fresh remote bytes (a frozen tmux/shell over a live socket).
+  ///
+  /// No-op unless currently `connected` (the ping-fail path in [probeLiveness]
+  /// may already have moved us off `connected`) or if the user disconnected.
+  /// Reuses the same `connected → softDisconnected → reconnect` machinery as a
+  /// clean server close, so #517/#590 reconnect behaviour is unchanged.
+  void softDisconnectForResume() {
+    if (_userDisconnected) return;
+    if (_data.state != SshSessionState.connected) return;
+    if (_lastParams == null) return;
+    clifecycle(
+      'task.ssh',
+      'probeLiveness: STALE(no-bytes-after-nudge) → reconnect',
+    );
     _lastErrorUnreachable = false;
     _emit(_data.copyWith(state: SshSessionState.softDisconnected));
     _scheduleReconnect(null);

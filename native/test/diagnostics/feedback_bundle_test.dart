@@ -94,6 +94,38 @@ void main() {
       expect((decoded['gestureLog'] as List).single, contains('cell=(13,24)'));
     });
 
+    test('includes the lifecycle-event log when supplied (#759)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        lifecycleLog: const [
+          '19:22:19.001 [task.host] resume-liveness: '
+              'STALE(no-bytes-after-nudge) → reconnect',
+        ],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded['lifecycleLog'], isA<List<Object?>>());
+      expect(
+        (decoded['lifecycleLog'] as List).single,
+        contains('STALE(no-bytes-after-nudge)'),
+        reason:
+            'the resume-liveness outcome must survive into the bundle so '
+            'the next wake-frozen report is diagnosable (#759)',
+      );
+    });
+
+    test('lifecycleLog defaults to an empty list when omitted (#759)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded['lifecycleLog'], isA<List<Object?>>());
+      expect((decoded['lifecycleLog'] as List), isEmpty);
+    });
+
     test('gestureLog defaults to an empty list when omitted (#699)', () {
       final blob = assembleFeedbackBundle(
         info: info,
