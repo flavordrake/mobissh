@@ -80,6 +80,16 @@ enum SshTaskEventKind {
   /// An SFTP operation failed (list or download). Carries the request id so
   /// the UI can match it to the in-flight op without tearing down the session.
   sftpError,
+
+  /// Task → UI: one HIGH-signal lifecycle telemetry line (#759/#766). The
+  /// `clifecycle` writers (resume-liveness probe OUTCOME, reconnect decisions)
+  /// run in the foreground-task isolate, whose `lifecycleLog` ring is a SEPARATE
+  /// per-isolate copy the UI never reads. The feedback bundle is assembled in
+  /// the UI isolate, so without forwarding the lifecycle ring it ships EMPTY
+  /// (#766 meta-bug). This event carries each lifecycle line across the boundary
+  /// so the UI-side ring — the one the bundle reads — actually contains them.
+  /// Task-global, so [sessionId] is the empty sentinel (mirrors ready).
+  lifecycle,
 }
 
 /// One remote filesystem entry surfaced to the file browser (#559). Kept small
@@ -528,6 +538,8 @@ sealed class SshTaskEvent {
           requestId: json['requestId'] as String,
           message: json['message'] as String,
         );
+      case SshTaskEventKind.lifecycle:
+        return SshLifecycleEvent(line: json['line'] as String);
     }
   }
 }
@@ -714,6 +726,43 @@ class SshShellReadyEvent extends SshTaskEvent {
 
   @override
   Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
+}
+
+/// Task → UI: one already-formatted lifecycle telemetry line (#759/#766).
+///
+/// The lifecycle ring (`clifecycle` / `lifecycleLog`) is written ONLY in the
+/// foreground-task isolate (resume-liveness probe outcomes, reconnect
+/// decisions). Its ring is a per-isolate static, so the copy the UI-side
+/// feedback bundle reads is otherwise EMPTY — the #766 meta-bug where every
+/// real device report shipped with NO lifecycle log. The task forwards each
+/// `clifecycle` line as one of these events; the UI-side gateway records it
+/// into the UI isolate's lifecycle ring so the bundle (assembled in the UI
+/// isolate) actually carries it.
+///
+/// [line] is the fully-formatted ring line (`HH:mm:ss.SSS [where] msg`). It is
+/// recorded verbatim on the UI side rather than re-timestamped so the original
+/// task-side timestamp is preserved. Task-global, so [sessionId] is the empty
+/// sentinel (mirrors [SshTaskReadyEvent]).
+///
+/// [SYNC] single-codebase wire contract (both isolates are this Dart module);
+/// the round-trip test in `task_ipc_test.dart` is the sync check. Keep the
+/// forwarder (SessionHost) and the UI-side recorder (FlutterForegroundSshGateway)
+/// in step.
+class SshLifecycleEvent extends SshTaskEvent {
+  const SshLifecycleEvent({required this.line}) : super('');
+
+  /// The fully-formatted lifecycle ring line, preserved verbatim.
+  final String line;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.lifecycle;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'line': line,
+  };
 }
 
 // ---------------------------------------------------------------------------

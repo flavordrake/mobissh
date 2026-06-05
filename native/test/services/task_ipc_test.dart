@@ -133,6 +133,16 @@ void main() {
       final restored = SshTaskEvent.fromJson(ev.toJson()) as SshOutputEvent;
       expect(restored.bytes, bytes);
     });
+
+    test('SshLifecycleEvent preserves the formatted line verbatim (#766)', () {
+      const line = '12:34:56.789 [task.host] resume-liveness: STALE → reconnect';
+      const ev = SshLifecycleEvent(line: line);
+      final restored = SshTaskEvent.fromJson(ev.toJson()) as SshLifecycleEvent;
+      expect(restored.line, line);
+      // Task-global: empty sentinel sessionId (mirrors SshTaskReadyEvent).
+      expect(restored.sessionId, '');
+      expect(restored.kind, SshTaskEventKind.lifecycle);
+    });
   });
 
   group('SessionHost.encodeAuth', () {

@@ -40,6 +40,21 @@ const int lifecycleLogCapacity = 80;
 final List<String> _ring = <String>[];
 final List<String> _lifecycleRing = <String>[];
 
+/// Optional sink invoked with every formatted lifecycle line as it is recorded
+/// by [clifecycle] (#766). The lifecycle ring is written ONLY in the
+/// foreground-task isolate, but the feedback bundle is assembled in the UI
+/// isolate — a SEPARATE per-isolate copy of [_lifecycleRing] the bundle reads
+/// is otherwise always empty (the #766 meta-bug: real device reports shipped
+/// with NO lifecycle log). The task isolate sets this forwarder (see
+/// `SessionHost`) so each lifecycle line is shipped across the UI↔task gateway
+/// to the UI isolate, where the gateway calls [recordLifecycleLine] to land it
+/// in the UI-side ring the bundle reads.
+///
+/// Null by default: pure diagnostics with NO IPC coupling. Only the task
+/// isolate's host arms it; clearing it (set to null) on host dispose detaches
+/// the forwarder.
+void Function(String line)? lifecycleForwarder;
+
 // Consecutive-duplicate suppression: when the same `[where] msg` repeats
 // back-to-back (e.g. keepalive `recv`/`send` pings), collapse it into the last
 // line as ` (×N)` instead of spamming a new line per occurrence — both in the
@@ -129,6 +144,43 @@ void clifecycle(String where, String msg) {
   _lastKey = null;
   _lastCount = 0;
   debugPrint('[CONNECT]$key');
+  _ring.add(line);
+  while (_ring.length > connectLogCapacity) {
+    _ring.removeAt(0);
+  }
+  _connectLog.value = List<String>.unmodifiable(_ring);
+
+  // Ship the formatted line across the isolate boundary if a forwarder is armed
+  // (#766). Defensive: a forwarder failure must never break telemetry capture.
+  final forward = lifecycleForwarder;
+  if (forward != null) {
+    try {
+      forward(line);
+    } catch (_) {
+      // Swallow — diagnostics must not throw into the lifecycle hot path.
+    }
+  }
+}
+
+/// Records an already-formatted lifecycle [line] (`HH:mm:ss.SSS [where] msg`)
+/// into the dedicated [lifecycleLog] ring AND the connect ring (#766).
+///
+/// Counterpart to [clifecycle] for lines that ORIGINATED in another isolate:
+/// the foreground-task isolate forwards each lifecycle line across the gateway,
+/// and the UI-side gateway calls this so the line lands in the UI isolate's
+/// ring — the one the feedback bundle reads. The line is stored verbatim (its
+/// original task-side timestamp preserved), and the forwarder is NOT re-invoked
+/// (no echo back across the boundary). Never collapsed into a preceding ×N run.
+void recordLifecycleLine(String line) {
+  _lifecycleRing.add(line);
+  while (_lifecycleRing.length > lifecycleLogCapacity) {
+    _lifecycleRing.removeAt(0);
+  }
+  _lifecycleLog.value = List<String>.unmodifiable(_lifecycleRing);
+
+  _lastKey = null;
+  _lastCount = 0;
+  debugPrint('[CONNECT]$line');
   _ring.add(line);
   while (_ring.length > connectLogCapacity) {
     _ring.removeAt(0);

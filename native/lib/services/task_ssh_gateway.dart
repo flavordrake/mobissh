@@ -389,6 +389,19 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
       ctrace('ui.gw', 'recv: uncoercible payload ${data.runtimeType}');
       return;
     }
+    // #766: lifecycle telemetry forwarded from the task isolate. Record the
+    // (already-formatted) line into THIS (UI) isolate's lifecycle ring — the
+    // copy the feedback bundle reads — then return. It is NOT a session event,
+    // so it never reaches the proxy/_incoming. Intercepting here (where every
+    // inbound payload passes, session-agnostic) avoids the per-session proxy's
+    // sessionId filter dropping a task-global line. A lifecycle line must also
+    // count as proof-of-life: it can't flip _ready (only the ready handshake /
+    // a real event does that), but if we're already ready it lands cleanly.
+    if (map['kind'] == SshTaskEventKind.lifecycle.name) {
+      final line = map['line'];
+      if (line is String) recordLifecycleLine(line);
+      return;
+    }
     // First inbound payload proves the task isolate is alive and listening:
     // flush anything we buffered during spin-up, in order (#539).
     if (!_ready) {

@@ -186,4 +186,90 @@ void main() {
       expect(lifecycleLog.value, isEmpty);
     });
   });
+
+  group('lifecycle forwarder (#766)', () {
+    tearDown(() => lifecycleForwarder = null);
+
+    test('clifecycle invokes the forwarder with the formatted line', () {
+      final forwarded = <String>[];
+      lifecycleForwarder = forwarded.add;
+
+      clifecycle('task.host', 'resume-liveness: STALE → reconnect');
+
+      expect(forwarded, hasLength(1));
+      // The forwarded line is the SAME formatted line stored in the ring, so the
+      // task-side timestamp is preserved across the boundary.
+      expect(forwarded.single, lifecycleLog.value.single);
+      expect(forwarded.single, contains('[task.host]'));
+      expect(forwarded.single, contains('STALE → reconnect'));
+    });
+
+    test('ctrace does NOT invoke the lifecycle forwarder', () {
+      final forwarded = <String>[];
+      lifecycleForwarder = forwarded.add;
+
+      ctrace('ui.gw', 'recv state');
+
+      expect(
+        forwarded,
+        isEmpty,
+        reason: 'only lifecycle events forward, not ordinary connect traces',
+      );
+    });
+
+    test('a throwing forwarder never breaks clifecycle recording', () {
+      lifecycleForwarder = (_) => throw StateError('boom');
+
+      // Must not throw, and must still record locally.
+      clifecycle('task.host', 'resume-liveness: alive(recent-bytes)');
+
+      expect(
+        lifecycleLog.value.single,
+        contains('alive(recent-bytes)'),
+        reason: 'a forwarder failure is swallowed; local capture is preserved',
+      );
+    });
+
+    test(
+      'recordLifecycleLine lands a pre-formatted line in BOTH rings verbatim',
+      () {
+        const line = '12:34:56.789 [task.ssh] probeLiveness: ping-failed';
+
+        recordLifecycleLine(line);
+
+        // Stored verbatim — NOT re-timestamped — so the originating isolate's
+        // timestamp survives.
+        expect(lifecycleLogSnapshot().single, line);
+        expect(connectLog.value.single, line);
+      },
+    );
+
+    test('recordLifecycleLine does NOT re-invoke the forwarder (no echo)', () {
+      final forwarded = <String>[];
+      lifecycleForwarder = forwarded.add;
+
+      recordLifecycleLine('12:00:00.000 [task.host] alive');
+
+      expect(
+        forwarded,
+        isEmpty,
+        reason:
+            'a forwarded line recorded on the receiving side must not bounce '
+            'back across the boundary',
+      );
+    });
+
+    test('recordLifecycleLine survives connect-ring churn', () {
+      recordLifecycleLine('09:00:00.000 [task.host] STALE → reconnect');
+      for (var i = 0; i < connectLogCapacity + 50; i++) {
+        ctrace('ui.gw', 'recv $i');
+      }
+
+      expect(
+        lifecycleLogSnapshot().join('\n'),
+        contains('STALE → reconnect'),
+        reason: 'the dedicated ring outlives the connect-ring churn',
+      );
+    });
+  });
 }
