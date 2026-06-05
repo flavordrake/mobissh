@@ -70,15 +70,19 @@ void main() {
     });
   });
 
-  group('detectGhosttyUrls — soft-wrap join (#726, #570 parity)', () {
+  group('detectGhosttyUrls — soft-wrap join (#726, #570 parity, #764)', () {
     test('a URL across a soft-wrap → joined into one multi-row range', () {
-      // cols=10: row 0 is FULL (10 chars, soft-wraps) and the URL continues on
-      // row 1. The matcher joins them and detects the whole URL across the wrap.
-      // row0: "x http://e"  (10 chars, fills the grid → soft-wrapped)
-      // row1: "x.co/p end"  (continues the URL: ".co/p" then " end")
+      // cols=10: row 0 soft-wraps (authoritative rowWraps[0]=true) and the URL
+      // continues on row 1. The matcher joins them and detects the whole URL.
+      // row0: "x http://e"  (soft-wrapped)
+      // row1: "x.co/p end"  (continues the URL: "x.co/p" then " end")
       const row0 = 'x http://e';
       const row1 = 'x.co/p end';
-      final matches = detectGhosttyUrls([row0, row1], cols: 10);
+      final matches = detectGhosttyUrls(
+        [row0, row1],
+        cols: 10,
+        rowWraps: const [true, false],
+      );
       expect(matches, hasLength(1));
       final m = matches.single;
       expect(m.url, 'http://ex.co/p');
@@ -91,18 +95,22 @@ void main() {
       expect(m.endCol, 6);
     });
 
-    test('a full row that ends a natural line is NOT joined to the next', () {
-      // row0 is full width BUT row1 starts a brand-new logical line; the width
-      // heuristic still joins (no rowWrap flag available) — documented limit.
-      // Here we assert the URL on row1 alone is detected with the joined offset.
-      const row0 = '0123456789'; // 10 chars, full → treated as wrapped
+    test('a full-width row that is NOT wrapped is NOT joined (#764 fix)', () {
+      // row0 exactly fills cols=10 BUT libghostty reports rowWrap=false: row1
+      // starts a brand-new logical line. The OLD width heuristic wrongly joined
+      // them (over-capture); the authoritative flag keeps them separate, so the
+      // URL on row1 is detected on row1 with its real column.
+      const row0 = '0123456789'; // 10 chars, full but NOT a soft-wrap
       const row1 = 'go https://z.io';
-      final matches = detectGhosttyUrls([row0, row1], cols: 10);
+      final matches = detectGhosttyUrls(
+        [row0, row1],
+        cols: 10,
+        rowWraps: const [false, false],
+      );
       expect(matches, hasLength(1));
       final m = matches.single;
       expect(m.url, 'https://z.io');
-      // Joined text = row0(10) + row1; "https://z.io" starts at joined offset
-      // 10 + 3 = 13 → row 1, col 3.
+      // NOT joined → the URL starts on row 1 at its true column (after "go ").
       expect(m.startRow, 1);
       expect(m.startCol, 3);
     });

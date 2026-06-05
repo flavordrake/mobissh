@@ -2047,7 +2047,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         formatter.dispose();
       }
       final rows = text.split('\n');
-      next = detectGhosttyUrls(rows, cols: _cols);
+      // #764: join soft-wrapped rows by libghostty's AUTHORITATIVE per-row wrap
+      // flag (`controller.viewportRowWraps`), never the old row-width guess —
+      // so a wrapped URL spans exactly its rows and adjacent URLs don't bleed.
+      next = detectGhosttyUrls(
+        rows,
+        cols: _cols,
+        rowWraps: controller.viewportRowWraps,
+      );
     } catch (_) {
       // A formatter/FFI hiccup must not crash the session — drop highlights.
       next = const [];
