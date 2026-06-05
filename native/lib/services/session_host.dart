@@ -69,6 +69,17 @@ class SessionHost {
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch) {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
+    // #766: arm the lifecycle forwarder so every `clifecycle` line written in
+    // THIS (task) isolate is shipped across the gateway to the UI isolate, where
+    // it lands in the UI-side lifecycle ring the feedback bundle actually reads.
+    // Without this, the bundle (assembled UI-side) ships an EMPTY lifecycle log
+    // even though the task isolate recorded the probe outcomes — the meta-bug.
+    // Held in [_lifecycleForward] so dispose can detach exactly our closure.
+    _lifecycleForward = (line) {
+      if (_disposed) return;
+      _gateway.send(SshLifecycleEvent(line: line).toJson());
+    };
+    lifecycleForwarder = _lifecycleForward;
     ctrace('task.host', 'ctor: listening; sending SshTaskReadyEvent');
     // Announce readiness as the FIRST task → UI payload (#539). The host is the
     // component that actually consumes commands, so its existence is the true
@@ -121,6 +132,12 @@ class SessionHost {
   StreamSubscription<Map<String, dynamic>>? _commandSub;
   Timer? _snapshotTimer;
   bool _disposed = false;
+
+  /// The exact lifecycle-forwarder closure this host installed into the global
+  /// [lifecycleForwarder] (#766). Held so dispose detaches OUR closure only —
+  /// it won't clobber a forwarder a different host installed afterward (matters
+  /// for the desktop / in-process path where hosts share one isolate).
+  void Function(String line)? _lifecycleForward;
 
   final Map<String, _HostedSession> _sessions = {};
 
@@ -780,9 +797,20 @@ class SessionHost {
     _gateway.send(SshOutputEvent(sessionId: sessionId, bytes: bytes).toJson());
   }
 
+  /// Detach this host's lifecycle forwarder from the global hook (#766) — but
+  /// only if it is still ours (a later host in the same isolate may have armed
+  /// its own). Idempotent.
+  void _detachLifecycleForwarder() {
+    if (identical(lifecycleForwarder, _lifecycleForward)) {
+      lifecycleForwarder = null;
+    }
+    _lifecycleForward = null;
+  }
+
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _detachLifecycleForwarder();
     _snapshotTimer?.cancel();
     _snapshotTimer = null;
     await _commandSub?.cancel();
@@ -801,6 +829,7 @@ class SessionHost {
   @visibleForTesting
   void disposeSyncForTest() {
     _disposed = true;
+    _detachLifecycleForwarder();
     _snapshotTimer?.cancel();
     _snapshotTimer = null;
     _commandSub?.cancel();

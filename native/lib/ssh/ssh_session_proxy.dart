@@ -320,6 +320,11 @@ class SshSessionProxy {
         // It only reaches here for the matching (empty) sessionId, which no
         // real proxy uses, but handle it for switch exhaustiveness.
         break;
+      case SshLifecycleEvent():
+        // Task-global lifecycle telemetry (#766). The UI-side gateway already
+        // recorded it into the lifecycle ring before _incoming, so a per-session
+        // proxy has nothing to do — handle it for switch exhaustiveness only.
+        break;
       case SftpListingEvent():
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():
