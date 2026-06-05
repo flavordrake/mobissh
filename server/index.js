@@ -900,7 +900,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { screenshot, logs, title, comment, userAgent, url, version, connectLog, gestureLog } = data;
+        const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog } = data;
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
         fs.mkdirSync(reportDir, { recursive: true });
@@ -912,6 +912,26 @@ const server = http.createServer((req, res) => {
           screenshotFile = `${ts}-bug-report.png`;
           fs.writeFileSync(path.join(reportDir, screenshotFile), Buffer.from(imgData, 'base64'));
           console.log(`[bug-report] screenshot: ${screenshotFile}`);
+        }
+
+        // #repro: a recorded burst of frames (in-app 10s "video"). Save each as a
+        // zero-padded PNG so the orchestrator can assemble them with ffmpeg
+        // (`ffmpeg -framerate 5 -i ${ts}-bug-report.frame-%03d.png out.mp4`).
+        let frameCount = 0;
+        let framesPattern = '';
+        if (Array.isArray(frames) && frames.length > 0) {
+          const MAX_FRAMES = 120; // guard against abuse
+          const n = Math.min(frames.length, MAX_FRAMES);
+          for (let i = 0; i < n; i++) {
+            const f = frames[i];
+            if (typeof f !== 'string' || !f) continue;
+            const fData = f.replace(/^data:image\/\w+;base64,/, '');
+            const name = `${ts}-bug-report.frame-${String(i + 1).padStart(3, '0')}.png`;
+            fs.writeFileSync(path.join(reportDir, name), Buffer.from(fData, 'base64'));
+            frameCount++;
+          }
+          framesPattern = `${ts}-bug-report.frame-%03d.png`;
+          console.log(`[bug-report] frames: ${frameCount} (${framesPattern})`);
         }
 
         // Full free-text body. The native in-app feedback (#661) sends the
@@ -969,6 +989,8 @@ const server = http.createServer((req, res) => {
           userAgent,
           ts,
           screenshotFile,
+          frameCount,
+          framesPattern,
           connectLogFile,
           connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
           gestureLogFile,

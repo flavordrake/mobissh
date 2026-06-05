@@ -40,7 +40,10 @@ Future<Uint8List> _fakeCapturer(GlobalKey key, double dpr) async {
 // This is the configuration that exposed the "just blinks" bug (the overlay's
 // own context has no Navigator ancestor). The keys give it a below-Navigator
 // context to show the sheet + confirmation from.
-Widget _harness({required FeedbackSubmitter submitter}) {
+Widget _harness({
+  required FeedbackSubmitter submitter,
+  ScreenshotCapturer? capturer,
+}) {
   final navigatorKey = GlobalKey<NavigatorState>();
   final messengerKey = GlobalKey<ScaffoldMessengerState>();
   return MaterialApp(
@@ -51,7 +54,7 @@ Widget _harness({required FeedbackSubmitter submitter}) {
       messengerKey: messengerKey,
       submitter: submitter,
       versionResolver: () async => '[1.0.0+9 deadbee]',
-      screenshotCapturer: _fakeCapturer,
+      screenshotCapturer: capturer ?? _fakeCapturer,
       child: child ?? const SizedBox.shrink(),
     ),
     home: const Scaffold(body: Center(child: Text('SOME SCREEN CONTENT'))),
@@ -163,4 +166,77 @@ void main() {
       clearConnectLog();
     },
   );
+
+  testWidgets(
+    'long-pressing RECORDS a burst of frames and attaches them to the report',
+    (tester) async {
+      var captures = 0;
+      Future<Uint8List> countingCapturer(GlobalKey key, double dpr) async {
+        captures++;
+        return Uint8List.fromList([0x89, 0x50, 0x4e, 0x47]);
+      }
+
+      final submitter = _RecordingSubmitter();
+      await tester.pumpWidget(
+        _harness(submitter: submitter, capturer: countingCapturer),
+      );
+      await tester.pumpAndSettle();
+
+      // Long-press starts the burst; the pill flips to a REC indicator.
+      await tester.longPress(find.byKey(const Key('feedback-affordance')));
+      await tester.pump();
+      expect(find.byKey(const Key('feedback-recording')), findsOneWidget);
+
+      // Advance through the ~10s window (200ms interval) — drive explicit pumps
+      // (NOT pumpAndSettle, which would spin on the active recording loop).
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+      await tester.pumpAndSettle();
+
+      // It captured MANY frames during the window (not just one).
+      expect(captures, greaterThan(5));
+      // The comment sheet opened after the burst finished.
+      expect(find.byKey(const Key('feedback-comment-field')), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('feedback-comment-field')),
+        'here is the wrapped-URL repro',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('feedback-submit-button')));
+      await tester.pumpAndSettle();
+
+      // The payload carries the frame burst as data URLs (capped at 50).
+      final frames = submitter.lastPayload!['frames'] as List;
+      expect(frames.length, greaterThan(5));
+      expect(frames.length, lessThanOrEqualTo(50));
+      expect(
+        (frames.first as String).startsWith('data:image/png;base64,'),
+        isTrue,
+      );
+      // A single tap still produces a one-shot screenshot and NO frames.
+    },
+  );
+
+  testWidgets('a single TAP still sends one screenshot and NO frames', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter();
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('feedback-affordance')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('feedback-comment-field')),
+      'single shot',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('feedback-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(submitter.lastPayload!.containsKey('frames'), isFalse);
+    expect(submitter.lastPayload!.containsKey('screenshot'), isTrue);
+  });
 }

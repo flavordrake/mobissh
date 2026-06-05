@@ -68,6 +68,7 @@ Map<String, Object?> buildFeedbackPayload({
   required String comment,
   required String version,
   String? screenshotDataUrl,
+  List<String> frameDataUrls = const <String>[],
   List<String> connectLog = const <String>[],
   List<String> gestureLog = const <String>[],
   List<String> lifecycleLog = const <String>[],
@@ -124,6 +125,10 @@ Map<String, Object?> buildFeedbackPayload({
     'source': 'native-in-app',
     if (screenshotDataUrl != null && screenshotDataUrl.isNotEmpty)
       'screenshot': screenshotDataUrl,
+    // #repro: a burst of frames recorded over ~10s so the owner can show a
+    // MOVING repro (tmux/layout/wrap/scroll). The server saves each as a
+    // numbered PNG; the orchestrator assembles them into a video with ffmpeg.
+    if (frameDataUrls.isNotEmpty) 'frames': frameDataUrls,
     if (scrubbedLog.isNotEmpty) 'connectLog': scrubbedLog,
     if (scrubbedGestureLog.isNotEmpty) 'gestureLog': scrubbedGestureLog,
     if (scrubbedLifecycleLog.isNotEmpty) 'lifecycleLog': scrubbedLifecycleLog,
@@ -256,7 +261,87 @@ class FeedbackOverlay extends StatefulWidget {
 class _FeedbackOverlayState extends State<FeedbackOverlay> {
   final GlobalKey _captureKey = GlobalKey();
 
+  // #repro: long-press the Feedback pill to RECORD a ~10s burst of screenshots
+  // (default). The owner performs the repro during the window; each frame is the
+  // SAME RepaintBoundary the single-shot uses, so it captures the terminal
+  // (flterm renders in-tree). The server saves the frames as a numbered PNG
+  // sequence; the orchestrator assembles them into a video with ffmpeg. This is
+  // the "show me a moving repro" tool — a static shot can't convey tmux/wrap/
+  // scroll dynamics, and the device config differs from the emulator.
+  static const Duration kReproDuration = Duration(seconds: 10);
+  static const Duration kReproInterval = Duration(milliseconds: 200);
+  static const int kReproMaxFrames = 50;
+  // Capture frames at a REDUCED, DPR-independent resolution so ~50 PNGs stay a
+  // manageable upload — a repro needs motion, not pixel fidelity.
+  static const double kReproPixelRatio = 0.6;
+
+  bool _recording = false;
+  int _reproRemainingSecs = 0;
+
+  /// Records a burst of frames over [kReproDuration] (or until stopped / capped),
+  /// then opens the comment sheet with the frames attached. Tap (or long-press)
+  /// while recording stops early.
+  Future<void> _recordRepro() async {
+    if (_recording) {
+      setState(() => _recording = false); // long-press while recording → stop
+      return;
+    }
+    // Trace rings snapshotted at the START — they keep accumulating during the
+    // window, so the report carries what happened across the whole repro.
+    final connectLog = connectLogSnapshot();
+    final gestureLog = gestureLogSnapshot();
+    final lifecycleLog = lifecycleLogSnapshot();
+
+    setState(() {
+      _recording = true;
+      _reproRemainingSecs = kReproDuration.inSeconds;
+    });
+
+    final frames = <Uint8List>[];
+    final maxTicks =
+        (kReproDuration.inMilliseconds / kReproInterval.inMilliseconds).ceil();
+    final ticksPerSec =
+        (1000 / kReproInterval.inMilliseconds).round().clamp(1, 1000);
+    for (var i = 0; i < maxTicks && frames.length < kReproMaxFrames; i++) {
+      if (!_recording || !mounted) break;
+      final bytes =
+          await widget.screenshotCapturer(_captureKey, kReproPixelRatio);
+      if (!mounted) break;
+      if (bytes.isNotEmpty) frames.add(bytes);
+      if (i % ticksPerSec == 0) {
+        final remaining = kReproDuration.inSeconds - (i ~/ ticksPerSec);
+        setState(() => _reproRemainingSecs = remaining < 0 ? 0 : remaining);
+      }
+      await Future<void>.delayed(kReproInterval);
+    }
+
+    if (mounted) setState(() => _recording = false);
+    if (!mounted) return;
+
+    final frameUrls = <String>[];
+    for (final f in frames) {
+      final url = pngBytesToDataUrl(f);
+      if (url != null) frameUrls.add(url);
+    }
+    if (frameUrls.isEmpty) return; // nothing captured — abort quietly
+
+    final version = await widget.versionResolver();
+    if (!mounted) return;
+    await _showCommentSheet(
+      dataUrl: frameUrls.last, // last frame doubles as the static screenshot
+      frameDataUrls: frameUrls,
+      version: version,
+      connectLog: connectLog,
+      gestureLog: gestureLog,
+      lifecycleLog: lifecycleLog,
+    );
+  }
+
   Future<void> _onTap() async {
+    if (_recording) {
+      setState(() => _recording = false); // tap while recording → stop
+      return;
+    }
     // Snapshot the connect-trace ring + rasterize the screen at the EXACT
     // moment of tap. We deliberately DON'T hide the affordance and pump a frame
     // first: that rebuild + extra frames can let a pending layout settle (e.g.
@@ -291,6 +376,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     required List<String> connectLog,
     required List<String> gestureLog,
     required List<String> lifecycleLog,
+    List<String> frameDataUrls = const <String>[],
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -312,6 +398,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       comment: comment,
       version: version,
       screenshotDataUrl: dataUrl,
+      frameDataUrls: frameDataUrls,
       connectLog: connectLog,
       gestureLog: gestureLog,
       lifecycleLog: lifecycleLog,
@@ -344,12 +431,14 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
           right: 0,
           child: Center(
             child: Opacity(
-              opacity: 0.5,
+              opacity: _recording ? 0.95 : 0.5,
               child: Material(
                 type: MaterialType.transparency,
                 child: InkWell(
                   key: const Key('feedback-affordance'),
                   onTap: _onTap,
+                  // #repro: long-press to record a ~10s burst; tap stops it early.
+                  onLongPress: _recording ? null : _recordRepro,
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -357,19 +446,41 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
+                      color: _recording
+                          ? Colors.red.shade600
+                          : Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        Icon(Icons.feedback_outlined, size: 14),
-                        SizedBox(width: 4),
-                        Text('Feedback', style: TextStyle(fontSize: 11)),
-                      ],
-                    ),
+                    child: _recording
+                        ? Row(
+                            key: const Key('feedback-recording'),
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.fiber_manual_record,
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'REC ${_reproRemainingSecs}s · tap to stop',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(Icons.feedback_outlined, size: 14),
+                              SizedBox(width: 4),
+                              Text('Feedback', style: TextStyle(fontSize: 11)),
+                            ],
+                          ),
                   ),
                 ),
               ),
