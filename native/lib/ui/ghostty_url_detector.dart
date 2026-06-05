@@ -10,21 +10,24 @@
 // the view passes that text + grid metrics in.
 //
 // How the view reads the visible buffer text (the flterm API found, #726):
-// flterm 0.0.3's public `TerminalController` exposes `createFormatter(format:
-// plain, unwrap: false).format()`, which returns the ACTIVE SCREEN (the visible
+// the forked `TerminalController` exposes `createFormatter(format: plain,
+// unwrap: false).format()`, which returns the ACTIVE SCREEN (the visible
 // viewport — NOT scrollback) as plain text, one VISIBLE ROW per `\n`-separated
-// line. (The internal `terminal`/`GridRef`/`lineBoundaryAt` row API and the
-// libghostty `Selection`/`PointTag` types are NOT exported, so per-row grid
-// reads aren't available publicly — the row-joined formatter output is.) The
-// view splits that on `\n` to get the per-row strings this matcher consumes.
+// line. The view splits that on `\n` to get the per-row strings this matcher
+// consumes.
 //
-// SOFT-WRAP joining (like the PWA #570): a terminal soft-wraps a long logical
-// line across several viewport rows with NO break character. `unwrap: false`
-// keeps those as separate rows, so this matcher RE-JOINS them: a row whose
-// trimmed-right content fills the FULL grid width ([cols]) is treated as
-// soft-wrapped into the next row, and a URL spanning the wrap is detected on the
-// joined logical line, then mapped back to a multi-row cell range. This is the
-// standard width heuristic (flterm's own `rowWrap` flag is internal/unexported).
+// SOFT-WRAP joining — AUTHORITATIVE (#764, replacing the #751 width heuristic):
+// a terminal soft-wraps a long logical line across several viewport rows with NO
+// break character. `unwrap: false` keeps those as separate rows, so this matcher
+// RE-JOINS them — but it no longer GUESSES the wrap from row width. The fork now
+// surfaces libghostty's own per-row soft-wrap flag (`rowGetWrap`) as
+// `controller.viewportRowWraps`: element `[r]` is true iff visible row `r` is
+// soft-wrapped onto row `r + 1`. The view passes that list in as [rowWraps], and
+// this matcher joins row `r` into `r + 1` IFF `rowWraps[r]` is true. A URL
+// spanning a wrap is detected on the joined logical line, then mapped back to a
+// multi-row cell range that terminates at the URL's real end — so two adjacent
+// URLs yield two separate ranges and a full-width-but-NOT-wrapped row (the case
+// the old width heuristic mis-joined) is never merged.
 //
 // OUT OF SCOPE for Slice 1 (do NOT add here): long-press options menu / Open
 // (Slice 2), file paths (Slice 3), scrollback URLs. Visible buffer + URLs only.
@@ -130,47 +133,43 @@ class _LogicalLine {
   }
 }
 
-/// Whether viewport [row] (its right-trimmed text [content]) soft-wraps into the
-/// next row — i.e. its content fills the FULL grid width [cols] with no trailing
-/// blank (the standard width heuristic, since flterm's `rowWrap` flag isn't
-/// exported). A row shorter than [cols] ended naturally (a real line break).
-bool _rowSoftWraps(String content, int cols) =>
-    cols > 0 && content.length >= cols;
-
 /// Assemble visible [rows] (one string per viewport row, top-first) into
-/// logical lines, joining soft-wrapped rows by the [cols]-width heuristic.
+/// logical lines, joining soft-wrapped rows by the AUTHORITATIVE [rowWraps]
+/// flags (#764): row `i` continues onto row `i + 1` IFF `rowWraps[i]` is true.
 ///
-/// Each row is right-padded to [cols] when joined so a character offset in the
-/// joined text maps cleanly to (offset % cols, rows[offset ~/ cols]) — a URL
-/// that wraps mid-row then continues on the next row keeps contiguous cells.
-List<_LogicalLine> _logicalLines(List<String> rows, int cols) {
+/// Each joined row contributes its FULL [cols] cells (right-padded to [cols]) so
+/// a character offset in the joined text maps cleanly to
+/// `(offset % cols, rows[offset ~/ cols])` — a URL that wraps mid-row then
+/// continues on the next row keeps contiguous cells. The FINAL row of a logical
+/// line is NOT padded (its real length terminates the line), so a URL ending on
+/// that row maps to its true end column. A missing/short [rowWraps] entry is
+/// treated as `false` (no wrap) — never guessed from width.
+List<_LogicalLine> _logicalLines(
+  List<String> rows,
+  int cols,
+  List<bool> rowWraps,
+) {
+  bool wrapsInto(int i) => i >= 0 && i < rowWraps.length && rowWraps[i];
+
   final lines = <_LogicalLine>[];
   var i = 0;
   while (i < rows.length) {
     final memberRows = <int>[i];
     final buffer = StringBuffer();
-    // A soft-wrapped row contributes its FULL [cols] cells (right-padded) so the
-    // next row's text continues at a clean row boundary in the flat offset map.
-    var current = rows[i];
-    while (_rowSoftWraps(_trimRight(current), cols) && i + 1 < rows.length) {
-      buffer.write(_padRight(current, cols));
+    // While the AUTHORITATIVE flag says this row soft-wraps into the next, pad
+    // it to a full [cols] row and continue assembling the same logical line.
+    while (wrapsInto(i) && i + 1 < rows.length) {
+      buffer.write(_padRight(rows[i], cols));
       i++;
-      current = rows[i];
       memberRows.add(i);
     }
-    buffer.write(current);
+    // The terminating row contributes its real text (NOT padded) so the line
+    // ends exactly where the on-screen content ends.
+    buffer.write(rows[i]);
     lines.add(_LogicalLine(buffer.toString(), memberRows, cols));
     i++;
   }
   return lines;
-}
-
-String _trimRight(String s) {
-  var end = s.length;
-  while (end > 0 && (s.codeUnitAt(end - 1) == 0x20)) {
-    end--;
-  }
-  return s.substring(0, end);
 }
 
 String _padRight(String s, int width) {
@@ -185,23 +184,32 @@ String _normalizeUrl(String raw) {
   return 'https://$raw';
 }
 
-/// Detect http/https/www URLs in the VISIBLE viewport [rows] (#726).
+/// Detect http/https/www URLs in the VISIBLE viewport [rows] (#726, #764).
 ///
 /// [rows] is one string per visible viewport row (top-first), as read from
 /// `controller.createFormatter(format: plain, unwrap: false).format()` split on
-/// `\n`. [cols] is the grid width, used to (a) re-join soft-wrapped rows into a
-/// logical line and (b) map a URL's character offset back to viewport cells.
+/// `\n`. [cols] is the grid width, used to map a URL's character offset back to
+/// viewport cells.
+///
+/// [rowWraps] is the AUTHORITATIVE per-row soft-wrap flag list from
+/// `controller.viewportRowWraps` (libghostty's `rowGetWrap`): `rowWraps[r]` is
+/// true iff visible row `r` is soft-wrapped onto row `r + 1`. Soft-wrapped rows
+/// are joined into one logical line by THIS flag — never guessed from row width
+/// (the #751/#764 over/under-capture bug). When omitted (e.g. a caller that has
+/// no wrap info), every row is treated as a self-contained line (no joining).
 ///
 /// Returns one [GhosttyUrlMatch] per URL with its 0-based viewport cell range
-/// ([endCol] exclusive). A URL spanning a soft-wrap yields a multi-row range.
+/// ([endCol] exclusive). A URL spanning a soft-wrap yields a multi-row range
+/// terminating at the URL's real end; two adjacent URLs yield two ranges.
 /// Pure (no FFI / no widget) → unit-testable headless.
 List<GhosttyUrlMatch> detectGhosttyUrls(
   List<String> rows, {
   required int cols,
+  List<bool> rowWraps = const [],
 }) {
   if (cols <= 0 || rows.isEmpty) return const [];
   final matches = <GhosttyUrlMatch>[];
-  for (final line in _logicalLines(rows, cols)) {
+  for (final line in _logicalLines(rows, cols, rowWraps)) {
     for (final m in _kUrlPattern.allMatches(line.text)) {
       var raw = m.group(0)!;
       // Trim trailing sentence punctuation / unbalanced closers from the END.

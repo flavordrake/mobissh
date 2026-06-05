@@ -111,6 +111,22 @@ abstract class TerminalController extends ChangeNotifier
   /// last matching range in [highlights] wins.
   HighlightRange? highlightAt({required int row, required int col});
 
+  /// The AUTHORITATIVE per-visible-row soft-wrap flags for the active screen.
+  ///
+  /// Element `[r]` is `true` iff visible row `r` is soft-wrapped onto row
+  /// `r + 1` (a long logical line continued with no break character), as
+  /// reported by libghostty's `rowGetWrap` — the same source the selection
+  /// logic walks for logical-line boundaries. The list length equals the
+  /// viewport row count; the last element is always `false` (no row below to
+  /// wrap into).
+  ///
+  /// Callers pair this with the per-row text from
+  /// `createFormatter(unwrap: false)` to join soft-wrapped rows EXACTLY (no
+  /// width/trailing-pad guessing): join row `r` into `r + 1` iff
+  /// `viewportRowWraps[r]` is true. Used by the URL detector (#764) so a
+  /// wrapped URL spans precisely its rows and adjacent URLs never bleed.
+  List<bool> get viewportRowWraps;
+
   /// Terminal title set by the running program.
   String get title;
 

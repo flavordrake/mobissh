@@ -173,6 +173,22 @@ class TerminalControllerImpl extends TerminalController
   }
 
   @override
+  List<bool> get viewportRowWraps {
+    _renderState.update(terminal);
+    final rows = _renderState.rows;
+    if (rows <= 0) return const [];
+    final wraps = List<bool>.filled(rows, false);
+    // The bottom visible row can never soft-wrap into a row below the viewport,
+    // so leave its flag false and only probe rows above it.
+    for (var r = 0; r < rows - 1; r++) {
+      final ref = GridRef.at(terminal, col: 0, row: r);
+      wraps[r] = ref.rowWrap;
+      ref.dispose();
+    }
+    return wraps;
+  }
+
+  @override
   String get title => terminal.title;
 
   @override
