@@ -15,7 +15,10 @@ class _FakeCellReader implements CellReader {
     required this.cols,
     List<bool>? wraps,
     this.baseAbsRow = 0,
-  }) : _rows = [
+    List<List<String?>>? hyperlinks,
+    // ignore: prefer_initializing_formals
+  }) : _hyperlinks = hyperlinks,
+       _rows = [
          for (final t in rowTexts)
            List<String>.generate(
              cols,
@@ -26,6 +29,11 @@ class _FakeCellReader implements CellReader {
 
   final List<List<String>> _rows;
   final List<bool> _wraps;
+
+  /// Per-cell OSC-8 hyperlink URIs: `_hyperlinks[row][col]` is the full URI or
+  /// null when the cell carries no hyperlink. Null overall → no hyperlinks at
+  /// all (the plain-text case), matching a terminal that emitted no OSC-8.
+  final List<List<String?>>? _hyperlinks;
 
   @override
   final int cols;
@@ -44,6 +52,42 @@ class _FakeCellReader implements CellReader {
 
   @override
   bool rowWrap(int row) => row >= 0 && row < _wraps.length && _wraps[row];
+
+  @override
+  String? hyperlinkAt(int row, int col) {
+    final links = _hyperlinks;
+    if (links == null) return null;
+    if (row < 0 || row >= links.length) return null;
+    final rowLinks = links[row];
+    if (col < 0 || col >= rowLinks.length) return null;
+    return rowLinks[col];
+  }
+}
+
+/// Build a per-cell hyperlink map for [_FakeCellReader] from a list of
+/// per-row [uri] strings: every cell on a row whose text is non-blank (and
+/// within `uri.length`) carries [rowUris]'s URI; blanks/out-of-range cells are
+/// null. A `null` row URI means the row carries no hyperlink at all.
+///
+/// This mirrors how libghostty attaches the SAME OSC-8 URI to EVERY visible
+/// cell of the link — including wrapped continuation rows — so a maximal
+/// same-URI run spans the wrap by construction.
+List<List<String?>> _hyperlinkMap(
+  List<String> rowTexts,
+  List<String?> rowUris, {
+  required int cols,
+}) {
+  return [
+    for (var r = 0; r < rowTexts.length; r++)
+      List<String?>.generate(cols, (c) {
+        final uri = r < rowUris.length ? rowUris[r] : null;
+        if (uri == null) return null;
+        final t = rowTexts[r];
+        // A cell carries the URI iff it holds a visible glyph of the link.
+        if (c >= t.length) return null;
+        return t[c] == ' ' ? null : uri;
+      }),
+  ];
 }
 
 void main() {
@@ -373,6 +417,202 @@ void main() {
       );
       expect(scanner.scan(reader, [urlPattern]), isEmpty);
     });
+  });
+
+  group('OSC-8 hyperlink source (#767 Slice B)', () {
+    final osc8 = TextPattern.osc8();
+
+    test(
+      'a hyperlink run spanning TWO rows → ONE osc8 match, payload = the full '
+      'URI, ranges span both rows',
+      () {
+        // The VISIBLE text wraps ('short visi' / 'ble') but EVERY cell carries
+        // the SAME full URI — libghostty attaches it to the wrapped cells too.
+        const uri = 'https://example.com/a/very/long/path/that/wraps';
+        final rowTexts = ['short visi', 'ble rest'];
+        final reader = _FakeCellReader(
+          rowTexts,
+          cols: 10,
+          // The link covers 'short visi' on row 0 and 'ble' on row 1.
+          hyperlinks: [
+            [for (var c = 0; c < 10; c++) c < 'short visi'.length ? uri : null],
+            [for (var c = 0; c < 10; c++) c < 'ble'.length ? uri : null],
+          ],
+        );
+        final matches = scanner.scan(reader, [osc8]);
+        expect(matches, hasLength(1), reason: 'one maximal same-URI run');
+        final m = matches.single;
+        expect(m.patternId, 'osc8');
+        expect(m.payload, uri, reason: 'payload is the exact full URI');
+        expect(m.ranges, hasLength(2), reason: 'one range per wrapped row');
+        expect(m.ranges[0].startRow, 0);
+        expect(m.ranges[0].startCol, 0);
+        expect(m.ranges[0].endCol, 'short visi'.length);
+        expect(m.ranges[1].startRow, 1);
+        expect(m.ranges[1].startCol, 0);
+        expect(m.ranges[1].endCol, 'ble'.length);
+        // The continuation row resolves the FULL URI by hit-test.
+        expect(m.contains(1, 1), isTrue);
+      },
+    );
+
+    test(
+      'two DIFFERENT URIs on adjacent cells → TWO separate osc8 matches',
+      () {
+        const a = 'https://a.example/one';
+        const b = 'https://b.example/two';
+        // 'AAABBB': cols 0-2 carry uri a, cols 3-5 carry uri b — adjacent, no gap.
+        final reader = _FakeCellReader(
+          ['AAABBB'],
+          cols: 6,
+          hyperlinks: [
+            [a, a, a, b, b, b],
+          ],
+        );
+        final matches = scanner.scan(reader, [osc8]);
+        expect(matches, hasLength(2), reason: 'a URI change splits the run');
+        final byPayload = {for (final m in matches) m.payload: m};
+        expect(byPayload.keys, containsAll(<String>[a, b]));
+        expect(byPayload[a]!.ranges.single.startCol, 0);
+        expect(byPayload[a]!.ranges.single.endCol, 3);
+        expect(byPayload[b]!.ranges.single.startCol, 3);
+        expect(byPayload[b]!.ranges.single.endCol, 6);
+      },
+    );
+
+    test('a blank (non-hyperlinked) cell BREAKS a run into two matches', () {
+      const uri = 'https://x.example/p';
+      // Same URI on cols 0-1 and 3-4, with a non-link gap at col 2 → two runs.
+      final reader = _FakeCellReader(
+        ['ab cd'],
+        cols: 5,
+        hyperlinks: [
+          [uri, uri, null, uri, uri],
+        ],
+      );
+      final matches = scanner.scan(reader, [uri == uri ? osc8 : osc8]);
+      expect(matches, hasLength(2), reason: 'a non-link gap splits the run');
+      expect(matches.every((m) => m.payload == uri), isTrue);
+    });
+
+    test('no hyperlinks at all → no osc8 matches', () {
+      final reader = _FakeCellReader(['plain text'], cols: 20);
+      expect(scanner.scan(reader, [osc8]), isEmpty);
+    });
+  });
+
+  group('OSC-8 wins over the regex URL pattern (de-dup, #767 Slice B)', () {
+    final osc8 = TextPattern.osc8();
+    final urlPattern = TextPattern.url();
+
+    test(
+      'a hyperlinked URL whose VISIBLE text is ALSO URL-shaped → only the osc8 '
+      'match (regex suppressed on those cells, no double-cover)',
+      () {
+        // The visible text is itself a URL the regex would match, but its cells
+        // carry a DIFFERENT, fuller OSC-8 URI. OSC-8 must win: ONE osc8 match,
+        // the regex match over the same cells is suppressed.
+        const visible = 'https://ex.io/2026';
+        const fullUri = 'https://ex.io/2026-06-05/full/real/target.apk';
+        final reader = _FakeCellReader(
+          [visible],
+          cols: visible.length,
+          hyperlinks: [
+            [for (var c = 0; c < visible.length; c++) fullUri],
+          ],
+        );
+        // Run BOTH sources together (the controller registers both).
+        final matches = scanner.scan(reader, [urlPattern, osc8]);
+        expect(
+          matches,
+          hasLength(1),
+          reason: 'osc8 wins; the overlapping regex match is suppressed',
+        );
+        final m = matches.single;
+        expect(m.patternId, 'osc8');
+        expect(m.payload, fullUri, reason: 'the exact full OSC-8 URI');
+      },
+    );
+
+    test(
+      'a hyperlinked URL spanning a wrap suppresses the PARTIAL first-row regex '
+      'match → ONE anchor spanning both rows, not a partial bubble beside it',
+      () {
+        // Row 0 holds a URL-shaped head the regex would match on its own; the
+        // full link wraps to row 1. Every cell carries the full URI.
+        const fullUri = 'https://mobissh.example/mobissh-native-20260605.apk';
+        final rowTexts = ['https://mobis', 'sh.example/x'];
+        final reader = _FakeCellReader(
+          rowTexts,
+          cols: 13,
+          wraps: [true, false],
+          hyperlinks: _hyperlinkMap(
+            rowTexts,
+            [fullUri, fullUri],
+            cols: 13,
+          ),
+        );
+        final matches = scanner.scan(reader, [urlPattern, osc8]);
+        expect(
+          matches,
+          hasLength(1),
+          reason: 'one osc8 anchor; the partial regex head is suppressed',
+        );
+        final m = matches.single;
+        expect(m.patternId, 'osc8');
+        expect(m.payload, fullUri);
+        expect(m.ranges, hasLength(2), reason: 'spans both wrapped rows');
+      },
+    );
+
+    test(
+      'a PLAIN-TEXT URL with NO OSC-8 still detected by the regex (de-dup does '
+      'not break plain-text-only detection)',
+      () {
+        // No hyperlink map at all → the regex behaves exactly as today.
+        final reader = _FakeCellReader(
+          ['see https://plain.example here'],
+          cols: 40,
+        );
+        final matches = scanner.scan(reader, [urlPattern, osc8]);
+        expect(matches, hasLength(1));
+        expect(matches.single.patternId, 'url');
+        expect(matches.single.payload, 'https://plain.example');
+      },
+    );
+
+    test(
+      'a plain-text URL on ONE row and a hyperlinked URL on ANOTHER → both '
+      'detected (regex for the plain one, osc8 for the linked one)',
+      () {
+        const fullUri = 'https://linked.example/full/path';
+        final reader = _FakeCellReader(
+          [
+            'plain https://plain.example x',
+            'https://visible.example',
+          ],
+          cols: 30,
+          hyperlinks: [
+            // Row 0: no hyperlink (plain text).
+            List<String?>.filled(30, null),
+            // Row 1: the whole visible URL is hyperlinked to a fuller URI.
+            [
+              for (var c = 0; c < 30; c++)
+                c < 'https://visible.example'.length ? fullUri : null,
+            ],
+          ],
+        );
+        final matches = scanner.scan(reader, [urlPattern, osc8]);
+        final byId = <String, List<StructuredMatch>>{};
+        for (final m in matches) {
+          byId.putIfAbsent(m.patternId, () => []).add(m);
+        }
+        expect(byId['url'], hasLength(1), reason: 'the plain URL via regex');
+        expect(byId['url']!.single.payload, 'https://plain.example');
+        expect(byId['osc8'], hasLength(1), reason: 'the linked URL via osc8');
+        expect(byId['osc8']!.single.payload, fullUri);
+      },
+    );
   });
 
   group('edge cases', () {

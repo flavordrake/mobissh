@@ -1215,4 +1215,26 @@ class _ScreenCellReader implements CellReader {
       ref?.dispose();
     }
   }
+
+  @override
+  String? hyperlinkAt(int row, int col) {
+    final absRow = _startAbsRow + row;
+    GridRef? ref;
+    try {
+      ref = GridRef.at(
+        terminal,
+        col: col,
+        row: absRow,
+        pointTag: PointTag.screen,
+      );
+      // libghostty attaches the FULL OSC-8 URI to every cell of the link
+      // (including wrapped continuation rows), so reading it per-cell yields the
+      // exact link that spans all wrapped rows by construction (#767 Slice B).
+      return ref.hyperlinkUri;
+    } catch (_) {
+      return null;
+    } finally {
+      ref?.dispose();
+    }
+  }
 }

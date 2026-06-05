@@ -87,6 +87,16 @@ void main() {
       expect(decorator!.patternId, kGhosttyUrlPatternId);
     });
 
+    test('defaults registers the OSC-8 bubble decorator (#767 Slice B)', () {
+      final registry = GhosttyDecoratorRegistry.defaults();
+      expect(registry.patternIds, contains(kGhosttyOsc8PatternId));
+      final decorator = registry.forPattern(kGhosttyOsc8PatternId);
+      // The OSC-8 anchor renders the SAME bubble affordance as a regex URL,
+      // routed by its own pattern id.
+      expect(decorator, isA<UrlBubbleDecorator>());
+      expect(decorator!.patternId, kGhosttyOsc8PatternId);
+    });
+
     test('returns null for an unregistered pattern (e.g. future path/sha)', () {
       final registry = GhosttyDecoratorRegistry.defaults();
       expect(registry.forPattern('path'), isNull);

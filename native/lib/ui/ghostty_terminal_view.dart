@@ -1773,7 +1773,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
 
   /// #767: the URL pattern id registered on the controller, so a theme-recolour
   /// (clear + re-register) and the initial registration share one identity.
-  static const String _kUrlPatternId = 'url';
+  static const String _kUrlPatternId = kGhosttyUrlPatternId;
+
+  /// #767 Slice B: the OSC-8 hyperlink source id — the PRIMARY, exact URL
+  /// source registered ALONGSIDE the regex `url` pattern. The terminal reads the
+  /// OSC-8 URI off its own cells, so a wrapped link spans all rows and copy/open
+  /// get the exact full URI; an OSC-8 match wins over an overlapping regex one.
+  static const String _kOsc8PatternId = kGhosttyOsc8PatternId;
 
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
@@ -1944,6 +1950,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// draws the affordance instead. The bubble colour comes from the decorator
   /// layer ([_lastHighlightColor]); this registration is theme-independent.
   void _registerUrlPattern(TerminalController controller) {
+    // #767 Slice B: register the OSC-8 hyperlink source as the PRIMARY, exact
+    // URL source ALONGSIDE the regex `url` pattern. The scanner runs both and
+    // an OSC-8 match WINS over an overlapping regex one (the partial first-row
+    // `https://…` over a hyperlink's visible text is suppressed), so a
+    // hyperlinked URL yields ONE exact anchor spanning all its wrapped rows. A
+    // plain-text URL (no OSC-8) still falls to the regex pattern unchanged.
+    controller.registerTextPattern(TextPattern.osc8(id: _kOsc8PatternId));
     controller.registerTextPattern(TextPattern.url(id: _kUrlPatternId));
   }
 

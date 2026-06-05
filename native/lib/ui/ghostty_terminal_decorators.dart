@@ -31,6 +31,12 @@ import 'package:flterm/flterm.dart';
 /// view registers on the controller so the registry can route URL anchors here.
 const String kGhosttyUrlPatternId = 'url';
 
+/// The id of the OSC-8 HYPERLINK pattern/decorator (#767 Slice B). The PRIMARY,
+/// exact URL source: the terminal reads the OSC-8 URI off its own cells (no
+/// regex), so a wrapped link spans all its rows and the payload is the exact
+/// full URI. Its anchor renders the SAME bubble affordance as a regex URL.
+const String kGhosttyOsc8PatternId = 'osc8';
+
 /// Per-anchor render input handed to a [GhosttyTerminalDecorator] (#767 B).
 ///
 /// [rects] are the anchor's CURRENT viewport pixel rects (one per visible
@@ -79,7 +85,12 @@ class GhosttyDecoratorRegistry {
   /// commit shas / issue refs #631) register additional decorators here, each
   /// with its own glyph/chip styling, alongside a matching controller pattern.
   factory GhosttyDecoratorRegistry.defaults() {
-    return GhosttyDecoratorRegistry(const [UrlBubbleDecorator()]);
+    return GhosttyDecoratorRegistry(const [
+      UrlBubbleDecorator(),
+      // #767 Slice B: an OSC-8 hyperlink anchor renders the SAME bubble as a
+      // regex URL — same affordance, exact full URI behind it.
+      UrlBubbleDecorator(patternId: kGhosttyOsc8PatternId),
+    ]);
   }
 
   final Map<String, GhosttyTerminalDecorator> _byPattern;
@@ -95,10 +106,13 @@ class GhosttyDecoratorRegistry {
 /// The default URL decorator: a rounded-rect OUTLINE BUBBLE hugging the URL's
 /// cells, joined visually across wrap rows (#767 Slice B). Never an opaque fill.
 class UrlBubbleDecorator extends GhosttyTerminalDecorator {
-  const UrlBubbleDecorator();
+  /// [patternId] selects which pattern's anchors this bubble renders — the
+  /// regex `url` pattern by default, or the OSC-8 `osc8` source (#767 Slice B),
+  /// which draws the identical bubble over the exact-URI hyperlink anchors.
+  const UrlBubbleDecorator({this.patternId = kGhosttyUrlPatternId});
 
   @override
-  String get patternId => kGhosttyUrlPatternId;
+  final String patternId;
 
   @override
   Widget build(BuildContext context, List<GhosttyDecoratedAnchor> anchors) {
