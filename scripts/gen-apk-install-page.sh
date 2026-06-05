@@ -48,6 +48,13 @@ else
   GIT_HASH="$(git -C "$REPO_ROOT" rev-parse --short HEAD) (page-regen, APK commit unknown)"
 fi
 
+# The full app version (versionName+build, e.g. 0.1.10+24) read from the BUILD's
+# pubspec — shown on the page next to the date and folded into the feedback
+# version field so a report identifies the exact version, not just the stamp.
+extract_version() { grep -m1 '^version:' "${REPO_ROOT}/native/pubspec.yaml" | sed 's/^version:[[:space:]]*//' | tr -d '[:space:]'; }
+APP_VERSION="$(extract_version || true)"
+[[ -z "$APP_VERSION" ]] && APP_VERSION="unknown"
+
 # Derive an absolute human time + a unix epoch from the compact build stamp
 # (YYYYMMDDThhmmss+zzzz) so the page can show BOTH "how new" forms (owner ask):
 #   - absolute: "2026-06-01 12:32 UTC" (always correct, no JS)
@@ -208,6 +215,7 @@ cat > "$OUT" <<HTMLEOF
   <a class="install" href="./${STABLE_APK}" download>⬇︎ Install latest APK</a>
 
   <dl class="meta">
+    <dt>Version</dt><dd>${APP_VERSION}</dd>
     <dt>Build</dt>
     <dd>
       ${BUILD_HUMAN}
@@ -231,7 +239,7 @@ ${CHANGELOG_HTML}
        The orchestrator watches test-results/uploads/ and triages each report
        against the workstream active at that hash. -->
   <form class="fb" id="fb-form"
-        data-version="${TS} ${GIT_HASH}"
+        data-version="${APP_VERSION} ${TS} ${GIT_HASH}"
         data-build="${BUILD_HUMAN}">
     <h2>Feedback on this build</h2>
     <p class="scoped">Tagged to build <strong>${BUILD_HUMAN}</strong> · ${GIT_HASH} — so it's scoped to exactly what's shipping now.</p>

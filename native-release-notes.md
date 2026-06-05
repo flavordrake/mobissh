@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+24 (2026-06-05) — exact URLs via OSC-8 hyperlinks (wrap-proof) + copy fix
+- **URLs from modern tools (Claude CLI, gh, …) are now detected exactly** by reading the hyperlink the tool already embeds — so a URL that wraps across lines gets ONE bubble over the whole link, and **tap-to-copy copies the exact full URL** (no more partial). This is wrap/indent/tmux-proof because the link target is carried in the text, not guessed from layout. Plain-text URLs (older tools) still use the visual detector. (#767)
+- **Install page now shows the full version** (e.g. 0.1.10+24) next to the build date.
+
 ## v0.1.10+23 (2026-06-05) — wrapped URLs bubble across BOTH lines (tmux too)
 - **A URL that wraps onto a second line now bubbles the whole link**, not just the first line. tmux hard-wraps without the terminal's soft-wrap flag, so the detector now also joins by the pane width — while still keeping two adjacent URLs separate and ignoring bullet/indented lines. **Verify:** in tmux, print a URL long enough to wrap → the bubble should cover both rows; long-press either half opens the whole URL (#767).
 
