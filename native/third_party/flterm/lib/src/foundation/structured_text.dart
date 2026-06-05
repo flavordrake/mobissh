@@ -81,12 +81,25 @@ final class TextPattern {
   /// detector's sentence-punctuation / unbalanced-closer trim.
   final String trailingTrim;
 
+  /// Whether this pattern is the regex-FREE OSC-8 HYPERLINK source (#767 Slice
+  /// B) rather than a [regex]-driven text matcher. When true the scanner
+  /// IGNORES [regex]/[trailingTrim]/[normalize] and instead walks the reader's
+  /// cells, grouping MAXIMAL runs of adjacent cells that share the SAME non-null
+  /// [CellReader.hyperlinkAt] URI into one [StructuredMatch] (payload = the URI).
+  /// Because libghostty attaches the full OSC-8 URI to EVERY visible cell of the
+  /// link — including soft/hard-wrapped continuation rows — a wrapped link spans
+  /// its rows by construction, with NO regex, width, or wrap heuristic, and the
+  /// payload is the EXACT full URI (so copy/open get the real link). An OSC-8
+  /// match always WINS over an overlapping [regex] match (see [StructuredTextScanner.scan]).
+  final bool isOsc8Source;
+
   const TextPattern({
     required this.id,
     required this.regex,
     this.style = const HighlightStyle(),
     this.normalize,
     this.trailingTrim = '',
+    this.isOsc8Source = false,
   });
 
   /// The built-in URL pattern (#726/#764 moved in-fork, #767).
@@ -105,7 +118,36 @@ final class TextPattern {
       normalize: _normalizeUrl,
     );
   }
+
+  /// The built-in OSC-8 HYPERLINK source (#767 Slice B) — the PRIMARY, exact
+  /// URL source.
+  ///
+  /// Unlike [TextPattern.url] (a regex over the visible glyph text), this reads
+  /// the OSC-8 hyperlink URI libghostty attaches to each cell
+  /// ([CellReader.hyperlinkAt]). The scanner groups maximal same-URI cell runs
+  /// into one match whose payload is the EXACT full URI — so a wrapped link
+  /// spans all its rows by construction and copy/open get the real link, with no
+  /// regex / wrap / width heuristic. An OSC-8 match WINS over an overlapping
+  /// regex URL match (the partial first-row `https://…` the regex would catch is
+  /// suppressed on the hyperlinked cells), so a hyperlinked URL yields ONE exact
+  /// anchor, not a partial regex bubble beside it. [style] supplies the highlight
+  /// color (omitted by the app — the widget-layer bubble draws the affordance).
+  factory TextPattern.osc8({String id = 'osc8', HighlightStyle style =
+      const HighlightStyle()}) {
+    return TextPattern(
+      id: id,
+      // Unused for an OSC-8 source — the scanner walks cells, not text. A
+      // never-matching regex keeps [regex] non-null without false positives.
+      regex: _kNeverMatch,
+      style: style,
+      isOsc8Source: true,
+    );
+  }
 }
+
+/// A regex that matches nothing — the placeholder [TextPattern.regex] for an
+/// OSC-8 source, whose detection walks cells rather than running a regex.
+final RegExp _kNeverMatch = RegExp(r'(?!x)x');
 
 /// The URL regex (moved verbatim from the app's `ghostty_url_detector.dart`,
 /// #767). Matches absolute http/https URLs and bare `www.` hosts; the
@@ -243,6 +285,17 @@ abstract interface class CellReader {
 
   /// Whether local [row] is soft-wrapped onto local [row]+1 (authoritative).
   bool rowWrap(int row);
+
+  /// The OSC-8 HYPERLINK URI attached to the cell at local ([row], [col]), or
+  /// null when the cell carries no hyperlink (#767 Slice B).
+  ///
+  /// libghostty attaches the FULL OSC-8 URI to EVERY visible cell of a link —
+  /// including soft/hard-wrapped continuation rows — so the OSC-8 source can
+  /// group maximal same-URI runs into one match spanning all wrapped rows by
+  /// construction. The real controller reads `GridRef.hyperlinkUri`; the test
+  /// fake supplies a per-cell URI map. A blank/spacer-tail cell carries no
+  /// hyperlink (null), so a non-link gap naturally breaks a run.
+  String? hyperlinkAt(int row, int col);
 }
 
 /// One character of a logical line, tagged with the absolute cell it came from.
@@ -295,12 +348,36 @@ class StructuredTextScanner {
     final cols = reader.cols;
     if (rows <= 0 || cols <= 0) return const [];
 
-    final lines = _assembleLines(reader, rows, cols);
+    final regexPatterns = [for (final p in patterns) if (!p.isOsc8Source) p];
+    final osc8Patterns = [for (final p in patterns) if (p.isOsc8Source) p];
+
+    // OSC-8 FIRST: it is the PRIMARY, exact source and WINS over any overlapping
+    // regex match. Collect the hyperlinked cells so an overlapping regex match
+    // (the partial first-row `https://…` over the link's visible text) is
+    // suppressed — yielding ONE exact anchor, not a partial bubble beside it.
     final matches = <StructuredMatch>[];
+    final hyperlinkedCells = <int, Set<int>>{}; // absRow -> set of cols
+    if (osc8Patterns.isNotEmpty) {
+      for (final pattern in osc8Patterns) {
+        for (final m in _scanOsc8(reader, rows, cols, pattern)) {
+          matches.add(m);
+          for (final range in m.ranges) {
+            final set = hyperlinkedCells.putIfAbsent(range.startRow, () => {});
+            for (var c = range.startCol; c < range.endCol; c++) {
+              set.add(c);
+            }
+          }
+        }
+      }
+    }
+
+    if (regexPatterns.isEmpty) return matches;
+
+    final lines = _assembleLines(reader, rows, cols);
     for (final line in lines) {
       final text = line.text;
       if (text.isEmpty) continue;
-      for (final pattern in patterns) {
+      for (final pattern in regexPatterns) {
         for (final m in pattern.regex.allMatches(text)) {
           var start = m.start;
           var end = m.end; // exclusive
@@ -311,6 +388,14 @@ class StructuredTextScanner {
             end--;
           }
           if (end <= start) continue;
+          // De-dup: OSC-8 wins. Drop a regex match that overlaps ANY OSC-8
+          // hyperlinked cell, so a hyperlinked URL (whose visible text is also
+          // URL-shaped) yields only the exact OSC-8 anchor. A plain-text URL
+          // (no OSC-8) is unaffected — the map is empty, so this never fires.
+          if (hyperlinkedCells.isNotEmpty &&
+              _overlapsHyperlink(line.glyphs, start, end, hyperlinkedCells)) {
+            continue;
+          }
           final raw = text.substring(start, end);
           final payload = pattern.normalize?.call(raw) ?? raw;
           final ranges = _rangesFor(
@@ -331,6 +416,85 @@ class StructuredTextScanner {
         }
       }
     }
+    return matches;
+  }
+
+  /// Whether the regex match spanning glyphs `[start, end)` overlaps any cell in
+  /// [hyperlinkedCells] (absRow → covered cols). Used to SUPPRESS a regex match
+  /// over OSC-8-hyperlinked cells so OSC-8 wins the de-dup (#767 Slice B).
+  bool _overlapsHyperlink(
+    List<_Glyph> glyphs,
+    int start,
+    int end,
+    Map<int, Set<int>> hyperlinkedCells,
+  ) {
+    for (var i = start; i < end; i++) {
+      final cols = hyperlinkedCells[glyphs[i].absRow];
+      if (cols != null && cols.contains(glyphs[i].col)) return true;
+    }
+    return false;
+  }
+
+  /// Scan the reader's cells for OSC-8 hyperlink runs (#767 Slice B).
+  ///
+  /// Walks cells in READING ORDER (row 0..rows-1, col 0..cols-1) and groups each
+  /// MAXIMAL contiguous run of cells sharing the SAME non-null
+  /// [CellReader.hyperlinkAt] URI into one [StructuredMatch] (payload = the URI).
+  /// "Contiguous" follows reading order: the next col on the same row, or col 0
+  /// of the next row when the run reaches the row end — so a wrapped link (the
+  /// same URI on row N's tail and row N+1's head) is ONE run spanning both rows
+  /// by construction. A URI CHANGE or a non-link (null) cell ends the run, and a
+  /// run is emitted as per-row [HighlightRange]s in absolute coordinates.
+  List<StructuredMatch> _scanOsc8(
+    CellReader reader,
+    int rows,
+    int cols,
+    TextPattern pattern,
+  ) {
+    final base = reader.baseAbsRow;
+    final matches = <StructuredMatch>[];
+    String? runUri;
+    var runGlyphs = <_Glyph>[];
+
+    void flush() {
+      if (runUri == null || runGlyphs.isEmpty) {
+        runUri = null;
+        runGlyphs = [];
+        return;
+      }
+      final ranges = _rangesFor(runGlyphs, 0, runGlyphs.length, pattern.style,
+          runUri!);
+      if (ranges.isNotEmpty) {
+        matches.add(
+          StructuredMatch(
+            patternId: pattern.id,
+            ranges: ranges,
+            payload: runUri!,
+          ),
+        );
+      }
+      runUri = null;
+      runGlyphs = [];
+    }
+
+    for (var r = 0; r < rows; r++) {
+      final absRow = base + r;
+      for (var c = 0; c < cols; c++) {
+        final uri = reader.hyperlinkAt(r, c);
+        if (uri == null) {
+          flush();
+          continue;
+        }
+        if (runUri != null && uri != runUri) {
+          // A different URI begins on this cell — close the prior run and start
+          // a fresh one at this cell.
+          flush();
+        }
+        runUri = uri;
+        runGlyphs.add(_Glyph(uri, absRow, c));
+      }
+    }
+    flush();
     return matches;
   }
 
