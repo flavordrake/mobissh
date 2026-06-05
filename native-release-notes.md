@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+22 (2026-06-05) — URLs get a tappable bubble + diagnosable sessions
+- **URLs now show a rounded "bubble" outline** hugging the link — even across a line wrap — instead of a fill/underline. Clearer, doesn't clash with underlined text. Tap to copy, long-press to open. **Verify:** print a long URL that wraps and a shorter one near it → each gets its own bubble, text stays readable, no bleed between them (#767).
+- **Frozen/disconnected-session reports are now diagnosable** — the session lifecycle log (resume/reconnect probe outcomes) now actually reaches the feedback upload, so a stuck-session report carries the evidence to fix it (#766).
+
 ## v0.1.9+21 (2026-06-05) — wrapped URLs highlight precisely
 - **A URL that wraps across lines now highlights as exactly one link** — using the terminal's own soft-wrap info instead of guessing from line width. No more bleeding the highlight across nearby URLs or capturing only part of a wrapped one; long-press resolves the whole URL from either line (#764).
 
