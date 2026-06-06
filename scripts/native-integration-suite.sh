@@ -57,6 +57,9 @@ err() { echo "! $*" >&2; }
 needs_second_bridge() {
   case "$1" in
     *multi_session_lifecycle_test.dart) return 0 ;;
+    # #775: the SFTP browser smoke's per-session isolation leg connects a 2nd
+    # session on 2223 to prove each browser shows only its own session's cwd.
+    *sftp_browse_smoke_test.dart) return 0 ;;
     *) return 1 ;;
   esac
 }
