@@ -5,3 +5,8 @@
 # offline. Opt in explicitly with `flutter test --tags integration`.
 tags:
   integration:
+  # `ffi` flags headless tests that load the real libghostty .so on the host VM
+  # (e.g. the replay-based URL-detection acceptance test). NOT excluded by the
+  # fast gate — they run on every commit. The fork (third_party/flterm) uses the
+  # same tag for its detection tests.
+  ffi:
