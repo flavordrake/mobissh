@@ -55,10 +55,19 @@ final pdfTapInterceptorProvider = Provider<PdfTapInterceptor?>(
 
 /// Push the file browser for [sessionId]. The session menu's "Files" item and
 /// any future caller use this single entry point (#559 bullet 4).
-Future<void> openFileBrowser(BuildContext context, String sessionId) {
+///
+/// [initialPath] (#778) opens the browser AT a directory other than `/` — a tap
+/// on a detected absolute file path passes the path so the explorer lands there.
+/// Defaults to `/` (the unchanged session-menu behaviour).
+Future<void> openFileBrowser(
+  BuildContext context,
+  String sessionId, {
+  String initialPath = '/',
+}) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => FileBrowserScreen(sessionId: sessionId),
+      builder: (_) =>
+          FileBrowserScreen(sessionId: sessionId, initialPath: initialPath),
     ),
   );
 }

@@ -119,6 +119,36 @@ final class TextPattern {
     );
   }
 
+  /// The built-in ABSOLUTE FILE PATH pattern (#778, paths Slice 1).
+  ///
+  /// Matches ONLY paths that resolve WITHOUT a working directory, so Slice 1 can
+  /// ship the whole detect→anchor→decorate→tap→explorer pipeline and defer
+  /// pwd-relative resolution to a later slice:
+  ///   * absolute — a leading `/` followed by one or more `/`-separated segments
+  ///     of path chars (`[\w.\-~@+]`), e.g. `/etc/ssh/sshd_config`;
+  ///   * home — `~/…` (a `~` followed by `/` and segments) or a BARE `~`;
+  ///   * explicit-relative — `./x`, `../x`, or a `../` chain, e.g. `../../lib`.
+  /// BARE relative tokens (`src/foo`) are DEFERRED to Slice 3 — including them
+  /// would over-match ordinary prose like `and/or`.
+  ///
+  /// A `://` context is rejected by [_validatePath] so `file://…` (and any other
+  /// scheme whose authority starts with `//`) stays a URL — the URL/OSC-8 source
+  /// wins the de-dup, and this pattern simply declines that span.
+  ///
+  /// Reuses the scanner's wrap-join + `_rangesFor` machinery UNCHANGED — only the
+  /// regex and validate differ from [TextPattern.url]. [style] supplies the
+  /// highlight color (the widget-layer decorator draws the affordance, #767 B).
+  factory TextPattern.path({String id = 'path', HighlightStyle style =
+      const HighlightStyle()}) {
+    return TextPattern(
+      id: id,
+      regex: _kPathPattern,
+      style: style,
+      trailingTrim: _kPathTrailingTrim,
+      normalize: _validatePath,
+    );
+  }
+
   /// The built-in OSC-8 HYPERLINK source (#767 Slice B) — the PRIMARY, exact
   /// URL source.
   ///
@@ -148,6 +178,40 @@ final class TextPattern {
 /// A regex that matches nothing — the placeholder [TextPattern.regex] for an
 /// OSC-8 source, whose detection walks cells rather than running a regex.
 final RegExp _kNeverMatch = RegExp(r'(?!x)x');
+
+/// The ABSOLUTE FILE PATH regex (#778, paths Slice 1). Matches three shapes that
+/// resolve WITHOUT a working directory:
+///   * absolute — `/` + one-or-more `/`-separated segments of path chars;
+///   * home — `~/…` or a BARE `~` (word-bounded so it isn't a stray tilde in
+///     prose like `approx ~3s` — a bare `~` matches only when not followed by a
+///     path char other than `/`);
+///   * explicit-relative — `./…`, `../…`, or a `../` chain.
+/// A path char is `[\w.\-~@+]` (mirrors the issue's class). A NEGATIVE LOOKBEHIND
+/// `(?<![\w.\-~@+:/])` keeps the match from starting MID-token — critically it
+/// rejects the `//` after a `:` (so `https://`/`file://` never starts a path at
+/// the `//`) and from inside another path char run. The match stops at the same
+/// stop set URLs use (whitespace and the few chars shells never put mid-path).
+/// BARE relative tokens (`src/foo`) are deliberately NOT matched (deferred to
+/// Slice 3) — only a leading `/`, `~`, `.` anchors a match.
+final RegExp _kPathPattern = RegExp(
+  r'(?<![\w.\-~@+:/])'
+  r'(?:'
+  r'/(?:[\w.\-~@+]+/?)+' // absolute: /a/b/c
+  r'|~/(?:[\w.\-~@+]+/?)*' // home: ~/a/b
+  r'|~(?![\w.\-@+])' // bare ~ (not ~word)
+  r'|\.\.?/(?:[\w.\-~@+]+/?|\.\.?/)*' // ./x ../x ../../ chains
+  r')',
+);
+
+/// Trailing characters trimmed off the END of a raw path match — a path that
+/// ends a sentence picks up `.,;:!?` and closers; mirrors the URL trim.
+const String _kPathTrailingTrim = '.,;:!?)]}>\'"';
+
+/// Validate a raw path match. Returns the path as its own payload, or null only
+/// for a malformed match the regex can let through (defensive — the regex is the
+/// real gate). A null payload is treated by the scanner as "use raw", so this
+/// never SUPPRESSES a match on its own; the `://` rejection is in the lookbehind.
+String _validatePath(String raw) => raw;
 
 /// The URL regex (moved verbatim from the app's `ghostty_url_detector.dart`,
 /// #767). Matches absolute http/https URLs and bare `www.` hosts; the
