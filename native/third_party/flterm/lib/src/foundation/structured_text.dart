@@ -505,6 +505,14 @@ class StructuredTextScanner {
   /// URL never silently swallows a gap.
   List<_LogicalLine> _assembleLines(CellReader reader, int rows, int cols) {
     final base = reader.baseAbsRow;
+    // Infer the app's WRAP COLUMN — the dominant content-end among long rows. An
+    // app (Claude TUI, gh, a pager) often wraps NARROWER than the terminal and
+    // PADS the rest of the row with blanks, so the terminal's last cell is empty
+    // even on a wrapped row (the device bug: a plain-text URL wrapping at the
+    // CLI's ~53-col content width in a 55-col terminal only bubbled/copied its
+    // first row). Joining must key off where wrapped rows ACTUALLY end, not the
+    // terminal edge.
+    final wrapCol = _inferWrapCol(reader, rows, cols);
     final lines = <_LogicalLine>[];
     var r = 0;
     while (r < rows) {
@@ -512,11 +520,18 @@ class StructuredTextScanner {
       // Accumulate this row and every row it soft-wraps into.
       while (true) {
         final absRow = base + r;
-        for (var c = 0; c < cols; c++) {
+        // Add cells up to the row's CONTENT end only — dropping TRAILING padding.
+        // An app that wraps narrower than the terminal pads the rest of the row
+        // with blanks; if those padding spaces were appended, they would sit
+        // BETWEEN a wrapped URL's two halves and break the match ("https://e" +
+        // "        " + "x.io"). Internal blanks (before content end) are kept (as
+        // spaces) so column positions stay aligned and a gap isn't swallowed.
+        final end = _contentEnd(reader, r, cols);
+        for (var c = 0; c < end; c++) {
           final content = reader.cellContent(r, c);
           glyphs.add(_Glyph(content.isEmpty ? ' ' : content, absRow, c));
         }
-        if (r < rows - 1 && _continuesOnto(reader, r, cols)) {
+        if (r < rows - 1 && _continuesOnto(reader, r, cols, wrapCol)) {
           r++;
           continue;
         }
@@ -530,20 +545,59 @@ class StructuredTextScanner {
 
   /// Whether logical content on local row [r] continues onto row [r]+1.
   ///
-  /// Prefer libghostty's AUTHORITATIVE soft-wrap flag. When it is absent — as
-  /// under tmux, which HARD-wraps at the pane width and never sets the flag —
-  /// fall back to a wrap-width signal: row [r] fills the width (its last cell is
-  /// non-blank) AND row [r]+1 begins with a BARE continuation. "Bare" excludes a
-  /// blank/whitespace start, a bullet marker, and a fresh URL scheme — so a
-  /// genuinely wrapped URL joins under tmux, while a COMPLETE URL that happens to
-  /// fill the width is NOT merged into the next line's separate content (#764
-  /// over-capture stays fixed even without the flag).
-  bool _continuesOnto(CellReader reader, int r, int cols) {
+  /// Prefer libghostty's AUTHORITATIVE soft-wrap flag. When it is absent — tmux
+  /// HARD-wraps with no flag, and an app may wrap NARROWER than the terminal and
+  /// pad the rest — fall back to a wrap-COLUMN signal: row [r]'s CONTENT reaches
+  /// the inferred [wrapCol] (where wrapped rows actually end — NOT the terminal
+  /// edge, which app padding leaves blank) AND row [r]+1 begins with a BARE
+  /// continuation. "Bare" excludes a blank/whitespace start, a bullet marker, and
+  /// a fresh URL scheme — so a genuinely wrapped URL joins, while a COMPLETE URL
+  /// that merely ends a line is NOT merged into the next line's separate content
+  /// (#764 over-capture stays fixed).
+  bool _continuesOnto(CellReader reader, int r, int cols, int wrapCol) {
     if (reader.rowWrap(r)) return true;
-    if (reader.cellContent(r, cols - 1).isEmpty) return false; // not full width
+    if (wrapCol <= 0) return false;
+    // Row r's content must REACH the wrap column (it filled up and wrapped),
+    // within 1 col of slack for a trailing wide-char/pad.
+    if (_contentEnd(reader, r, cols) < wrapCol - 1) return false;
     final next = r + 1;
     if (reader.cellContent(next, 0).isEmpty) return false; // blank/ws start
     return !_startsNewBlock(reader, next, cols);
+  }
+
+  /// The column AFTER the last non-blank cell on local [row] (0 if the row is
+  /// blank). I.e. where the row's visible content ends.
+  int _contentEnd(CellReader reader, int row, int cols) {
+    for (var c = cols - 1; c >= 0; c--) {
+      if (reader.cellContent(row, c).isNotEmpty) return c + 1;
+    }
+    return 0;
+  }
+
+  /// Infer the app's effective WRAP COLUMN: the dominant content-end column
+  /// among "long" rows (content past the half-width) that are followed by a
+  /// non-empty row — i.e. wrap candidates. An app wraps at a consistent column,
+  /// so that column dominates; the MODE (ties → higher) is robust against a stray
+  /// full-terminal-width row that MAX would wrongly latch onto. Returns 0 when
+  /// there are no wrap candidates (nothing to join by width).
+  int _inferWrapCol(CellReader reader, int rows, int cols) {
+    final counts = <int, int>{};
+    final threshold = cols ~/ 2;
+    for (var r = 0; r < rows - 1; r++) {
+      final end = _contentEnd(reader, r, cols);
+      if (end <= threshold) continue;
+      if (_contentEnd(reader, r + 1, cols) == 0) continue; // next row blank
+      counts[end] = (counts[end] ?? 0) + 1;
+    }
+    var best = 0;
+    var bestCount = 0;
+    counts.forEach((col, n) {
+      if (n > bestCount || (n == bestCount && col > best)) {
+        best = col;
+        bestCount = n;
+      }
+    });
+    return best;
   }
 
   /// Whether row [row] STARTS a new block rather than continuing the prior row:

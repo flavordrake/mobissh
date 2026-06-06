@@ -252,6 +252,34 @@ void main() {
   });
 
   group('hard-wrap (tmux: no soft-wrap flag) (#767)', () {
+    test(
+      'a plain-text URL APP-wrapped NARROWER than the terminal (trailing pad) '
+      'joins across rows (0.1.10+27 device bug: CLI-colored, non-OSC-8 URL)',
+      () {
+        // cols=20 terminal; the app wraps at col 12 and PADS the rest, so the
+        // wrapped row's TERMINAL last cell (col 19) is blank — the old full-width
+        // check failed here and only the first row was detected. Sibling long
+        // rows ending at 12 make 12 the inferred wrap column. The URL spans 2→3.
+        final reader = _FakeCellReader(
+          [
+            'prose filler', // 12 — wrap-col sample
+            'more filler.', // 12 — wrap-col sample
+            'aa https://e', // 12 — 'aa ' + URL head, padded to 20 by the fake
+            'x.io/p tail', // continuation 'x.io/p' then ' tail'
+          ],
+          cols: 20,
+          wraps: [false, false, false, false], // app wrap — NO soft-wrap flag
+        );
+        final matches = scanner.scan(reader, [urlPattern]);
+        final url =
+            matches.where((m) => m.payload == 'https://ex.io/p').toList();
+        expect(url, hasLength(1), reason: 'app-padded wrapped URL is ONE match');
+        final rows = {for (final r in url.single.ranges) r.startRow};
+        expect(rows.length >= 2, isTrue,
+            reason: 'spans both rows despite the trailing pad on row 2');
+      },
+    );
+
     test('a URL hard-wrapped by tmux (rowWrap NOT set) joins across rows', () {
       // tmux hard-wraps at the pane width and never sets the soft-wrap flag.
       // cols=15. Row 0 fills the width with the URL head; row 1 continues with a

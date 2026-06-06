@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+28 (2026-06-06) — plain-text wrapped URLs detect + copy in full
+- **A wrapped plain-text URL now bubbles + copies the whole link**, not just the first line. Most URLs in the terminal are plain text the shell/app just colors blue (no embedded hyperlink), and they wrap at the app's own width with blank padding — which defeated the previous detection. Now it figures out where the app wraps and stitches the link back together. **Verify:** a long URL that wraps → one bubble over both lines; tap/long-press copies the complete URL. (#767)
+
 ## v0.1.10+27 (2026-06-05) — record a 10s repro clip from the Feedback pill
 - **Long-press "Feedback" to record a ~10-second screen burst** (tap it to stop early). It captures the screen ~5×/second — including the terminal — then opens the usual comment box and uploads the clip. Use it to show a *moving* repro (a URL wrapping, a layout/tmux quirk, a scroll glitch) instead of a single frozen screenshot. A normal single tap still grabs one screenshot. (#repro)
 
