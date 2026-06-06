@@ -178,8 +178,10 @@ import '../state/ctrl_modifier_provider.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import 'file_browser_screen.dart';
 import 'ghostty_terminal_decorators.dart';
 import 'keybar.dart';
+import 'path_action_overlay.dart';
 import 'top_toast.dart';
 import 'url_action_overlay.dart';
 
@@ -921,6 +923,18 @@ bool ghosttyTapShouldForwardClick({required bool active}) => active;
 /// unit-testable headless (and names the rule at the call site). Pure.
 bool ghosttyLongPressShowsUrlMenu(StructuredMatch? urlAtCell) =>
     urlAtCell != null;
+
+/// Whether a LONG-PRESS should show the PATH Open/Copy action menu instead of
+/// starting a selection (#778, paths Slice 1).
+///
+/// Mirrors [ghosttyLongPressShowsUrlMenu]: a long-press on a detected absolute
+/// file path ([matchAtCell] non-null AND its [StructuredMatch.patternId] is
+/// `path`) shows the path action menu (`showPathActions`) and SUPPRESSES the
+/// selection for that gesture. A URL/OSC-8 match is NOT a path, so this returns
+/// false for those (the URL menu owns them) — the two are mutually exclusive at
+/// a single cell. Pure, so the routing decision is unit-testable headless.
+bool ghosttyLongPressShowsPathMenu(StructuredMatch? matchAtCell) =>
+    matchAtCell != null && matchAtCell.patternId == kGhosttyPathPatternId;
 
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
 /// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
@@ -1781,6 +1795,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// get the exact full URI; an OSC-8 match wins over an overlapping regex one.
   static const String _kOsc8PatternId = kGhosttyOsc8PatternId;
 
+  /// #778 paths Slice 1: the absolute file-path pattern id, registered alongside
+  /// the URL patterns so the terminal also detects/anchors paths over its own
+  /// cells. A `path` match routes a tap to the SFTP explorer (not clipboard).
+  static const String _kPathPatternId = kGhosttyPathPatternId;
+
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
   SshSessionProxy? _proxy;
@@ -1958,6 +1977,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // plain-text URL (no OSC-8) still falls to the regex pattern unchanged.
     controller.registerTextPattern(TextPattern.osc8(id: _kOsc8PatternId));
     controller.registerTextPattern(TextPattern.url(id: _kUrlPatternId));
+    // #778 paths Slice 1: also detect absolute file paths. A `path` anchor gets
+    // its own decorator (folder glyph + dotted underline) and routes a tap to
+    // the SFTP explorer; `://` contexts are rejected so a URL stays a URL.
+    controller.registerTextPattern(TextPattern.path(id: _kPathPatternId));
   }
 
   /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
@@ -2460,12 +2483,28 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (invalidate) _clearSelection();
   }
 
-  /// #726: copy a tapped URL to the clipboard + confirm via a top-toast. Invoked
-  /// when a single tap lands on a highlighted URL (the tap is swallowed). #767:
-  /// the match is a flterm [StructuredMatch]; its payload is the URL string.
+  /// Handle a single-TAP that landed on a detected structured match (the tap is
+  /// swallowed by the router). #726: a `url`/`osc8` match COPIES the URL + shows
+  /// a top-toast. #778: a `path` match OPENS the SFTP explorer at that path
+  /// instead (the primary affordance for a file path is "go there", not copy —
+  /// Copy path lives on the long-press menu). Routed by [StructuredMatch.patternId].
   Future<void> _copyUrl(StructuredMatch match) async {
+    if (match.patternId == _kPathPatternId) {
+      _openPath('${match.payload}');
+      return;
+    }
     await Clipboard.setData(ClipboardData(text: '${match.payload}'));
     if (mounted) showTopToast(context, 'Copied URL');
+  }
+
+  /// #778 paths Slice 1: open the SFTP file explorer AT [path] (the tapped /
+  /// long-press-Open absolute file path). Absolute paths resolve without a pwd,
+  /// so the explorer lands directly at [path]; relative/pwd resolution is a later
+  /// slice. Routes through the single [openFileBrowser] entry point.
+  Future<bool> _openPath(String path) async {
+    if (!mounted) return false;
+    await openFileBrowser(context, widget.sessionId, initialPath: path);
+    return true;
   }
 
   /// #734: show the Copy/Open action menu for a long-pressed URL — the SAME
@@ -2483,6 +2522,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   void _showUrlMenu(StructuredMatch match, Offset globalAnchor) {
     if (!mounted) return;
     final rects = _urlGlobalRects(match);
+    // #778: a `path` long-press shows the PATH menu (Open → explorer, Copy path)
+    // — the file-path analogue of the URL menu. A url/osc8 match keeps the URL
+    // Copy/Open menu. The router suppresses selection for both.
+    if (match.patternId == _kPathPatternId) {
+      showPathActions(
+        context,
+        '${match.payload}',
+        highlightRects: rects,
+        anchor: globalAnchor,
+        onOpen: _openPath,
+      );
+      return;
+    }
     showUrlActions(
       context,
       '${match.payload}',

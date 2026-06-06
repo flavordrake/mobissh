@@ -37,6 +37,11 @@ const String kGhosttyUrlPatternId = 'url';
 /// full URI. Its anchor renders the SAME bubble affordance as a regex URL.
 const String kGhosttyOsc8PatternId = 'osc8';
 
+/// The id of the absolute FILE PATH pattern/decorator (#778, paths Slice 1).
+/// Mirrors the pattern id the view registers so the registry routes path anchors
+/// to [PathDecorator] (a distinct treatment from the URL bubble).
+const String kGhosttyPathPatternId = 'path';
+
 /// Per-anchor render input handed to a [GhosttyTerminalDecorator] (#767 B).
 ///
 /// [rects] are the anchor's CURRENT viewport pixel rects (one per visible
@@ -90,6 +95,9 @@ class GhosttyDecoratorRegistry {
       // #767 Slice B: an OSC-8 hyperlink anchor renders the SAME bubble as a
       // regex URL — same affordance, exact full URI behind it.
       UrlBubbleDecorator(patternId: kGhosttyOsc8PatternId),
+      // #778 paths Slice 1: a file-path anchor gets a DISTINCT treatment — a
+      // leading folder glyph + a thin dotted underline, NOT the URL bubble.
+      PathDecorator(),
     ]);
   }
 
@@ -170,6 +178,126 @@ class _UrlBubblePainter extends CustomPainter {
     // Repaint whenever the anchors (rects/color/payload) differ. The list is
     // rebuilt each frame from the live geometry, so identity is enough to catch
     // scroll/resize/detection changes cheaply.
+    if (identical(old.anchors, anchors)) return false;
+    if (old.anchors.length != anchors.length) return true;
+    for (var i = 0; i < anchors.length; i++) {
+      final a = anchors[i];
+      final b = old.anchors[i];
+      if (a.color != b.color || a.payload != b.payload) return true;
+      if (a.rects.length != b.rects.length) return true;
+      for (var j = 0; j < a.rects.length; j++) {
+        if (a.rects[j] != b.rects[j]) return true;
+      }
+    }
+    return false;
+  }
+}
+
+/// The file-PATH decorator (#778, paths Slice 1) — DISTINCT from the URL bubble.
+///
+/// A path anchor must NOT reuse the URL's outline bubble (so the two affordances
+/// read differently) and must avoid the two paints the fork's painter notes are
+/// wrong for text: an opaque BACKGROUND FILL (hides the glyphs) and a SOLID
+/// UNDERLINE (collides with SGR-4 underline). Instead it draws a leading
+/// monochrome FOLDER glyph in the anchor color (memory
+/// feedback_monochrome_icons_no_emoji — Material icon, currentColor, never an
+/// emoji) plus a thin DOTTED underline in a faded secondary accent. Paint-only;
+/// taps/long-presses fall through to the gesture router.
+class PathDecorator extends GhosttyTerminalDecorator {
+  const PathDecorator({this.patternId = kGhosttyPathPatternId});
+
+  @override
+  final String patternId;
+
+  @override
+  Widget build(BuildContext context, List<GhosttyDecoratedAnchor> anchors) {
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: _PathPainter(anchors),
+        size: Size.infinite,
+      ),
+    );
+  }
+}
+
+/// Paints each path anchor: a leading folder glyph at the first row segment and a
+/// thin dotted underline under every row segment.
+class _PathPainter extends CustomPainter {
+  _PathPainter(this.anchors);
+
+  final List<GhosttyDecoratedAnchor> anchors;
+
+  /// Underline offset below the cell baseline-ish bottom, stroke width, the
+  /// dotted dash/gap, and the folder-glyph size cap, in logical px.
+  static const double _underlineGap = 1.0;
+  static const double _stroke = 1.2;
+  static const double _dash = 2.0;
+  static const double _space = 2.0;
+  static const double _glyphMaxSize = 14.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final anchor in anchors) {
+      if (anchor.rects.isEmpty) continue;
+      // Secondary accent: a faded version of the anchor color so the path reads
+      // as DISTINCT from the (full-strength outline) URL bubble.
+      final underline = Paint()
+        ..color = anchor.color.withValues(alpha: 0.65)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _stroke
+        ..strokeCap = StrokeCap.round
+        ..isAntiAlias = true;
+      for (final rect in anchor.rects) {
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        final y = rect.bottom + _underlineGap;
+        // Dotted underline: short dashes left→right under the row segment.
+        var x = rect.left;
+        while (x < rect.right) {
+          final end = (x + _dash).clamp(rect.left, rect.right);
+          canvas.drawLine(Offset(x, y), Offset(end, y), underline);
+          x += _dash + _space;
+        }
+      }
+      // Leading folder glyph at the first (top-most) row segment, sized to the
+      // row height but capped so it never dominates.
+      final first = anchor.rects.first;
+      final glyphSize = first.height.clamp(8.0, _glyphMaxSize);
+      _paintFolderGlyph(canvas, first, glyphSize, anchor.color);
+    }
+  }
+
+  /// Draw a monochrome folder OUTLINE glyph to the LEFT of the path's first cell
+  /// rect, in the anchor color. Hand-drawn outline (no font dependency) so it is
+  /// theme-compliant currentColor and never an emoji.
+  void _paintFolderGlyph(Canvas canvas, Rect cell, double s, Color color) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+    final w = s * 0.9;
+    final h = s * 0.72;
+    // Position the glyph just left of the path, vertically centered on the row.
+    final left = cell.left - w - 2.0;
+    if (left < 0) return; // no room at the screen edge — skip the glyph
+    final top = cell.top + (cell.height - h) / 2;
+    final tabW = w * 0.45;
+    final tabH = h * 0.22;
+    final path = Path()
+      ..moveTo(left, top + tabH)
+      ..lineTo(left, top + h)
+      ..lineTo(left + w, top + h)
+      ..lineTo(left + w, top + tabH)
+      ..lineTo(left + tabW, top + tabH)
+      ..lineTo(left + tabW - tabH, top)
+      ..lineTo(left + tabH, top)
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PathPainter old) {
     if (identical(old.anchors, anchors)) return false;
     if (old.anchors.length != anchors.length) return true;
     for (var i = 0; i < anchors.length; i++) {

@@ -97,18 +97,26 @@ void main() {
       expect(decorator!.patternId, kGhosttyOsc8PatternId);
     });
 
-    test('returns null for an unregistered pattern (e.g. future path/sha)', () {
+    test('defaults registers the path decorator (#778 paths Slice 1)', () {
       final registry = GhosttyDecoratorRegistry.defaults();
-      expect(registry.forPattern('path'), isNull);
+      expect(registry.patternIds, contains(kGhosttyPathPatternId));
+      final decorator = registry.forPattern(kGhosttyPathPatternId);
+      // A path anchor gets the DISTINCT path treatment, not the URL bubble.
+      expect(decorator, isA<PathDecorator>());
+      expect(decorator!.patternId, kGhosttyPathPatternId);
+    });
+
+    test('returns null for an unregistered pattern (e.g. future sha)', () {
+      final registry = GhosttyDecoratorRegistry.defaults();
       expect(registry.forPattern('commit-sha'), isNull);
     });
 
     test('is extensible with additional decorators', () {
       final registry = GhosttyDecoratorRegistry(const [
         UrlBubbleDecorator(),
-        _StubDecorator('path'),
+        _StubDecorator('commit-sha'),
       ]);
-      expect(registry.forPattern('path'), isA<_StubDecorator>());
+      expect(registry.forPattern('commit-sha'), isA<_StubDecorator>());
       expect(registry.forPattern(kGhosttyUrlPatternId), isA<UrlBubbleDecorator>());
     });
   });
@@ -239,8 +247,8 @@ void main() {
       final controller = await pumpLayer(tester);
       controller.setAnchors([
         StructuredAnchor(
-          patternId: 'path', // no decorator registered in defaults()
-          payload: '/etc/hosts',
+          patternId: 'commit-sha', // no decorator registered in defaults()
+          payload: 'deadbeef',
           ranges: const [
             HighlightRange(startRow: 2, startCol: 0, endRow: 2, endCol: 10),
           ],
