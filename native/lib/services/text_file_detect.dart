@@ -1,0 +1,57 @@
+// Text/code file detection (#776).
+//
+// Pure helpers deciding whether a tapped SFTP entry should route to the in-app
+// text viewer. Detection is by filename extension (case-insensitive) and/or an
+// explicit text-ish MIME type. Kept dependency-free so it's trivially
+// unit-testable and shared between the viewer registry and any future routing.
+
+import 'session_messages.dart';
+
+/// Extensions we treat as previewable text/code/markup. Lowercase, no leading
+/// dot. Conservative on purpose: only formats that decode meaningfully as UTF-8.
+const Set<String> _textExtensions = {
+  'txt', 'text', 'log', 'md', 'markdown', 'rst',
+  'dart', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
+  'py', 'rb', 'go', 'rs', 'java', 'kt', 'kts', 'swift',
+  'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'm', 'mm',
+  'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat',
+  'json', 'jsonc', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'env',
+  'xml', 'html', 'htm', 'css', 'scss', 'less', 'svg',
+  'sql', 'csv', 'tsv', 'properties', 'gradle', 'lock',
+  'gitignore', 'dockerfile', 'makefile',
+};
+
+/// True when [name] ends with a known text/code extension (case-insensitive).
+/// Requires a real extension — a bare `txt` or `noext` does not match.
+bool hasTextExtension(String name) {
+  final dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot == name.length - 1) return false;
+  final ext = name.substring(dot + 1).toLowerCase();
+  return _textExtensions.contains(ext);
+}
+
+/// True when [mime] denotes textual content: any `text/*`, or a known textual
+/// `application/*` type (json, xml, javascript, etc.). MIME parameters
+/// (`; charset=…`) are ignored. Null / empty / binary types are false.
+bool isTextMime(String? mime) {
+  if (mime == null || mime.isEmpty) return false;
+  final base = mime.split(';').first.trim().toLowerCase();
+  if (base.startsWith('text/')) return true;
+  const textApps = {
+    'application/json',
+    'application/xml',
+    'application/javascript',
+    'application/x-yaml',
+    'application/yaml',
+    'application/x-sh',
+    'application/toml',
+  };
+  return textApps.contains(base);
+}
+
+/// True when [entry] is a regular file that looks like text, by extension or by
+/// an explicit [mime]. Directories are never text.
+bool isTextEntry(SftpEntry entry, {String? mime}) {
+  if (entry.isDirectory) return false;
+  return hasTextExtension(entry.name) || isTextMime(mime);
+}

@@ -17,12 +17,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../services/pdf_detect.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_download.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import 'file_viewer_registry.dart';
 import 'pdf_viewer_screen.dart';
 import 'top_toast.dart';
 
@@ -283,11 +283,12 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   }
 
   void _onFileTap(SftpEntry entry) {
-    // #557: a registered PDF interceptor handles `.pdf` files (opens the in-app
-    // preview) instead of downloading. Falls through to download otherwise.
-    final pdfHandler = ref.read(pdfTapInterceptorProvider);
-    if (pdfHandler != null && isPdfEntry(entry)) {
-      pdfHandler(context, widget.sessionId, entry);
+    // #776: consult the file viewer registry. A registered viewer (PDF #557,
+    // text/code #776, …) opens an in-app preview instead of downloading. No
+    // match falls through to the existing download behavior.
+    final viewer = ref.read(fileViewerRegistryProvider).viewerFor(entry);
+    if (viewer != null) {
+      viewer.open(context, widget.sessionId, entry);
       return;
     }
     unawaited(_startDownload(entry));
