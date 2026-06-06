@@ -117,7 +117,9 @@ void main() {
     final fake = _ScriptedSftpSession({
       '/': const [
         SftpEntry(name: 'docs', path: '/docs', isDirectory: true),
-        SftpEntry(name: 'a.txt', path: '/a.txt', isDirectory: false, size: 12),
+        // A binary file with no registered viewer (#776), so tapping it still
+        // exercises the download path rather than opening an in-app preview.
+        SftpEntry(name: 'a.bin', path: '/a.bin', isDirectory: false, size: 12),
       ],
       '/docs': const [
         SftpEntry(
@@ -170,7 +172,7 @@ void main() {
     // Root listing rendered both entries.
     expect(find.byKey(const Key('file-browser-list')), findsOneWidget);
     expect(find.byKey(const Key('file-entry-docs')), findsOneWidget);
-    expect(find.byKey(const Key('file-entry-a.txt')), findsOneWidget);
+    expect(find.byKey(const Key('file-entry-a.bin')), findsOneWidget);
 
     // Navigate into the directory.
     await tester.tap(find.byKey(const Key('file-entry-docs')));
@@ -181,16 +183,16 @@ void main() {
     // Go back up to root.
     await tester.tap(find.byKey(const Key('file-browser-up')));
     await _pump(tester);
-    expect(find.byKey(const Key('file-entry-a.txt')), findsOneWidget);
+    expect(find.byKey(const Key('file-entry-a.bin')), findsOneWidget);
 
     // Tap the file → download runs through the injected sink.
-    await tester.tap(find.byKey(const Key('file-entry-a.txt')));
+    await tester.tap(find.byKey(const Key('file-entry-a.bin')));
     await _pump(tester);
 
     expect(memSink.finished, isTrue);
     expect(memSink.toBytes(), Uint8List.fromList(fileBytes));
     // Success snackbar.
-    expect(find.textContaining('Downloaded a.txt'), findsOneWidget);
+    expect(find.textContaining('Downloaded a.bin'), findsOneWidget);
 
     // Cancel the host's periodic snapshot timer before the framework's
     // pending-timer invariant check (matches multi_session_rebind_test).
