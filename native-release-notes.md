@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+29 (2026-06-06) — tap file paths to open them + view text/code files in-app
+- **Tap an absolute file path in the terminal to open it in the file browser.** Paths like `/etc/hosts`, `~/notes.md`, `./build.log` now show a small folder glyph + dotted underline; **tap** opens that location in the SFTP file browser, **long-press** → Open / Copy path. (Bare *relative* paths like `src/foo` are next — they need the shell's current directory, which your shell doesn't currently report; see #777.) **Verify:** run `ls -la /etc` or print a stack trace → absolute paths get the underline; tap one → file browser opens there. (#778)
+- **Text / code / markdown files open in a built-in viewer.** Tapping a `.txt`/`.dart`/`.md`/`.json`/… file in the file browser now shows it in a read-only, selectable, monospace viewer instead of downloading it; PDFs still open in the PDF viewer, unknown/binary types still download. **Verify:** browse to a text file → it opens in-app and you can scroll/select it. (#776)
+
 ## v0.1.10+28 (2026-06-06) — plain-text wrapped URLs detect + copy in full
 - **A wrapped plain-text URL now bubbles + copies the whole link**, not just the first line. Most URLs in the terminal are plain text the shell/app just colors blue (no embedded hyperlink), and they wrap at the app's own width with blank padding — which defeated the previous detection. Now it figures out where the app wraps and stitches the link back together. **Verify:** a long URL that wraps → one bubble over both lines; tap/long-press copies the complete URL. (#767)
 
