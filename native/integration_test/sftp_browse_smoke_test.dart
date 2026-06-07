@@ -42,6 +42,7 @@ import 'package:mobissh/services/sftp_download.dart';
 import 'package:mobissh/ssh/ssh_session.dart' show SshSessionState;
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/ui/file_browser_screen.dart';
+import 'package:mobissh/ui/file_viewer_registry.dart';
 
 import 'support/connect_helpers.dart';
 
@@ -119,9 +120,40 @@ Future<bool> _reachTerminal(WidgetTester tester) {
   );
 }
 
-/// Assert real LOGIN (not just widget mount): the shell streams a prompt and a
-/// typed marker echoes back through the proxy round-trip. Mirrors
-/// shell_bytes_smoke_test — a mounted terminal with a dead PTY is NOT connected.
+/// Open the session menu reliably (#782). The trigger is the bottom session
+/// bar's full-width InkWell (`session-bar-open-menu`); the `session-menu-button`
+/// Row is just the small icon INSIDE it, whose center can land off the visible
+/// area / under the soft keyboard after a connect — tapping it then "derives an
+/// Offset that would not hit test". So: drop the keyboard, make the bar visible,
+/// and tap the InkWell affordance, then wait for the overlay's "New session" row.
+Future<void> _openSessionMenu(WidgetTester tester) async {
+  // The soft keyboard may be up from the connect form; hide it so the bottom
+  // bar is not pushed up against (or under) the keyboard inset.
+  await tester.testTextInput.receiveAction(TextInputAction.done);
+  await tester.pump(const Duration(milliseconds: 200));
+  final trigger = find.byKey(const Key('session-bar-open-menu'));
+  await tester.ensureVisible(trigger);
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.tap(trigger, warnIfMissed: false);
+  await _pumpUntil(
+    tester,
+    () => find.byKey(const Key('session-menu-new')).evaluate().isNotEmpty,
+    maxSlices: 20,
+  );
+}
+
+/// Assert real LOGIN (not just widget mount): a typed marker echoes back through
+/// the proxy round-trip. A mounted terminal with a dead PTY is NOT connected.
+///
+/// #782: the prior version first waited for ANY pre-existing output ("dead
+/// shell" if none). `proxy.output` is a BROADCAST stream, so a subscriber that
+/// attaches AFTER the login prompt already flushed sees nothing until new bytes
+/// arrive (cf. memory `feedback_ready_signal_before_consumer` / scrollbackTail).
+/// In the isolation case the shell-alive check runs only after BOTH sessions
+/// have settled, so each prompt is long gone and the pre-prompt wait timed out
+/// on a perfectly live shell. The input→echo round-trip is itself the liveness
+/// proof: subscribe, type the marker, and assert the marker echoes back. If the
+/// PTY is dead the marker never returns — the assertion still catches that.
 Future<void> _assertShellAlive(
   WidgetTester tester,
   SessionEntry entry, {
@@ -130,13 +162,8 @@ Future<void> _assertShellAlive(
   final out = <int>[];
   final sub = entry.proxy.output.listen(out.addAll);
   addTearDown(sub.cancel);
-
-  final gotPrompt = await _pumpUntil(tester, () => out.isNotEmpty, maxSlices: 40);
-  expect(
-    gotPrompt,
-    isTrue,
-    reason: 'terminal received ZERO bytes after connect — dead shell',
-  );
+  // Settle the subscription before provoking output.
+  await tester.pump(const Duration(milliseconds: 200));
 
   entry.proxy.sendInput(Uint8List.fromList(utf8.encode('echo $marker\n')));
   final sawMarker = await _pumpUntil(
@@ -144,7 +171,11 @@ Future<void> _assertShellAlive(
     () => utf8.decode(out, allowMalformed: true).contains(marker),
     maxSlices: 40,
   );
-  expect(sawMarker, isTrue, reason: 'typed command never echoed — input dead');
+  expect(
+    sawMarker,
+    isTrue,
+    reason: 'typed command never echoed — dead shell / input dead',
+  );
 }
 
 /// Seed a directory tree on test-sshd THROUGH the live shell, then wait for a
@@ -182,6 +213,36 @@ Future<void> _seedTree(
     maxSlices: 40,
   );
   expect(seeded, isTrue, reason: 'seed never completed on test-sshd ($root)');
+}
+
+/// Close every live session and let the keepalive foreground SERVICE stop
+/// before the next test launches a fresh app (#782). Every other on-emulator
+/// integration file holds exactly ONE testWidgets for this reason: a leftover
+/// connected session + running foreground service from a prior test bleeds into
+/// the next test's connect, which then stalls right after `recv ready` and never
+/// reaches the terminal ("session A no term"). This file runs two cases, so the
+/// first must tear its session down: closing each entry drops the proxy
+/// (`proxy.disconnect()`), the keepalive controller's connected-count falls to
+/// 0, and it stops the service. We pump afterwards so that teardown lands.
+Future<void> _disconnectAll(WidgetTester tester, ProviderContainer container) async {
+  final notifier = container.read(sessionsProvider.notifier);
+  final ids = container
+      .read(sessionsProvider)
+      .entries
+      .map((e) => e.id)
+      .toList(growable: false);
+  for (final id in ids) {
+    notifier.close(id);
+  }
+  // Let disconnect + service-stop settle, and the router fall back to chooser.
+  await _pumpUntil(
+    tester,
+    () => container.read(sessionsProvider).entries.isEmpty,
+    maxSlices: 20,
+  );
+  for (var i = 0; i < 10; i++) {
+    await tester.pump(const Duration(milliseconds: 200));
+  }
 }
 
 /// Navigate the OPEN file browser to [path] via the up/into controls is awkward
@@ -222,6 +283,17 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           downloadSinkFactoryProvider.overrideWithValue(registry.factory),
+          // #782: tapping a `.txt` entry now routes to the in-app text VIEWER
+          // (#776), which streams the file through its own fetcher — NOT the
+          // download sink this test captures. That bypassed the capturing sink,
+          // so `finished` never flipped ("file download never completed") even
+          // though the gateway log proved the bytes round-tripped. Disable the
+          // viewer registry here so the tap falls through to the real DOWNLOAD
+          // path, which is exactly what this case asserts. (The registry doc
+          // states tests may override it; the text viewer has its own coverage.)
+          fileViewerRegistryProvider.overrideWithValue(
+            const FileViewerRegistry([]),
+          ),
         ],
       );
       addTearDown(container.dispose);
@@ -310,6 +382,10 @@ void main() {
         content,
         reason: 'downloaded bytes do not match the seeded file content',
       );
+
+      // #782: tear this session + its foreground service down so the next
+      // test's connect starts clean (see _disconnectAll).
+      await _disconnectAll(tester, container);
     },
   );
 
@@ -340,10 +416,8 @@ void main() {
       expect(await _reachTerminal(tester), isTrue, reason: 'session A no term');
 
       // Session B on port 2223 (2nd bridge → same test-sshd, distinct tuple).
-      await tester.tap(find.byKey(const Key('session-menu-button')));
-      for (var i = 0; i < 16; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
+      // Open the menu via the on-screen affordance (#782) then "New session".
+      await _openSessionMenu(tester);
       await tester.tap(find.byKey(const Key('session-menu-new')));
       for (var i = 0; i < 16; i++) {
         await tester.pump(const Duration(milliseconds: 50));
