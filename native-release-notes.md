@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+30 (2026-06-07) — URL/path outline tracks the text while you scroll back
+- **The URL bubble / file-path underline now follows the text when you scroll back.** It was positioned once and didn't re-resolve on a pure scrollback scroll, so it drifted onto the wrong line in history (it was fine live / near the bottom). Now a scroll re-positions it against the live scroll offset. **Verify:** scroll up through terminal history → a URL bubble or path underline stays hugging its actual text on every row. (#784)
+
 ## v0.1.10+29 (2026-06-06) — tap file paths to open them + view text/code files in-app
 - **Tap an absolute file path in the terminal to open it in the file browser.** Paths like `/etc/hosts`, `~/notes.md`, `./build.log` now show a small folder glyph + dotted underline; **tap** opens that location in the SFTP file browser, **long-press** → Open / Copy path. (Bare *relative* paths like `src/foo` are next — they need the shell's current directory, which your shell doesn't currently report; see #777.) **Verify:** run `ls -la /etc` or print a stack trace → absolute paths get the underline; tap one → file browser opens there. (#778)
 - **Text / code / markdown files open in a built-in viewer.** Tapping a `.txt`/`.dart`/`.md`/`.json`/… file in the file browser now shows it in a read-only, selectable, monospace viewer instead of downloading it; PDFs still open in the PDF viewer, unknown/binary types still download. **Verify:** browse to a text file → it opens in-app and you can scroll/select it. (#776)
