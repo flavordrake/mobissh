@@ -385,8 +385,21 @@ class TerminalControllerImpl extends TerminalController
         _textInput.ensureAttached(keyboardAppearance: _brightness);
       }
     }
+    _scrollController?.removeListener(_onScrollChanged);
     _scrollController = scrollController;
+    _scrollController!.addListener(_onScrollChanged);
   }
+
+  /// #784: a scrollback scroll moves the viewport via the [ScrollController] →
+  /// the render object's `_onScroll` → `terminal.scrollViewport`, which does NOT
+  /// fire the terminal's listeners, so this controller never re-notified and the
+  /// widget-layer structured-text decorators kept rects resolved at the OLD
+  /// offset while the fork's painter (reading the offset from the frame snapshot)
+  /// moved — the outline drifted off its glyphs in scrollback. Forwarding the
+  /// scroll notify here rebuilds the decorator layer, which re-resolves
+  /// [anchorRects] against the live offset in the next build (after the render
+  /// object has applied the scroll), so the outline tracks the glyphs.
+  void _onScrollChanged() => notifyListeners();
 
   @override
   void clear() {
@@ -429,6 +442,7 @@ class TerminalControllerImpl extends TerminalController
     _wasFocused = false;
     _keyboardState = .hidden;
     _preeditText = '';
+    _scrollController?.removeListener(_onScrollChanged);
     _scrollController = null;
     _textInput.detach();
   }

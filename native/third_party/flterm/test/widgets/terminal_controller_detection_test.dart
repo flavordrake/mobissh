@@ -2,11 +2,11 @@
 library;
 
 import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:flterm/src/foundation.dart';
 import 'package:flterm/src/widgets/terminal_controller_impl.dart';
-import 'package:flutter/painting.dart' show EdgeInsets;
+import 'package:flterm/src/widgets/terminal_scroll_controller.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -155,6 +155,83 @@ void main() {
       expect(urlRanges, isNotEmpty);
       expect(urlRanges.every((r) => r.background == const Color(0xFF000002)),
           isTrue);
+    });
+  });
+
+  // #784: the structured-text decorator OUTLINE (URL bubble / path underline)
+  // drifts off its glyphs WHEN SCROLLED BACK. Root cause: the widget-layer
+  // decorator resolves its ABSOLUTE-row anchors to viewport rects against the
+  // LIVE `scrollbar.offset` ([anchorRects]) but only RE-resolves when this
+  // controller notifies. A scrollback SCROLL moves the viewport via the
+  // ScrollController → the render object's `_onScroll` → `terminal.scrollViewport`,
+  // which does NOT fire the terminal's listeners — so the controller never
+  // re-notified on scroll and the decorator kept rects at the OLD offset while
+  // the fork's own painter (offset from the frame snapshot) moved. The contract:
+  // a scroll that changes the viewport offset MUST notify so the decorator
+  // re-resolves and tracks the glyphs.
+  group('TerminalController scroll notify for anchor tracking (#784)', () {
+    Widget host(TerminalScrollController scrollController) => MaterialApp(
+          home: SizedBox(
+            height: 200,
+            child: ListView(
+              controller: scrollController,
+              children: [const SizedBox(height: 2000)],
+            ),
+          ),
+        );
+
+    testWidgets('a scrollback scroll notifies the controller', (tester) async {
+      final controller = TerminalControllerImpl();
+      addTearDown(controller.dispose);
+      final focusNode = FocusNode();
+      addTearDown(focusNode.dispose);
+      final scrollController = TerminalScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(host(scrollController));
+      // Wire the controller to the focus node + scroll controller exactly as the
+      // TerminalView does on mount.
+      controller.attach(focusNode, scrollController);
+
+      var notified = false;
+      controller.addListener(() => notified = true);
+
+      // A pure scrollback scroll — no terminal output. Before the fix this fired
+      // ZERO controller notifies, so the decorator's rects went stale.
+      scrollController.jumpTo(120);
+      await tester.pump();
+
+      expect(
+        notified,
+        isTrue,
+        reason: 'scrolling must notify so the decorator re-resolves anchorRects '
+            'against the live offset (else the outline drifts off its glyphs)',
+      );
+    });
+
+    testWidgets('detach stops forwarding scroll notifies', (tester) async {
+      final controller = TerminalControllerImpl();
+      addTearDown(controller.dispose);
+      final focusNode = FocusNode();
+      addTearDown(focusNode.dispose);
+      final scrollController = TerminalScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(host(scrollController));
+      controller.attach(focusNode, scrollController);
+      controller.detach();
+
+      var notified = false;
+      controller.addListener(() => notified = true);
+      scrollController.jumpTo(120);
+      await tester.pump();
+
+      expect(
+        notified,
+        isFalse,
+        reason: 'after detach the controller must not react to its old scroll '
+            'controller',
+      );
     });
   });
 }
