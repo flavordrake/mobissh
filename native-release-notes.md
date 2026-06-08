@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+34 (2026-06-08) — compose bar polish: top Copy/Paste, grip handle, flick-dock + hold-position
+- **Copy/Paste are now small chips on the top edge of the compose box** — smaller and out of the way, full touch targets preserved.
+- **The drag handle has a real grip**, and the header responds to gestures: **flick up → dock to top, flick down → dock to bottom, hold-then-drag → position it exactly** anywhere on screen. **Verify (device):** flick the grip up/down to dock; press-and-hold then drag to free-position. (#798)
+
 ## v0.1.10+33 (2026-06-08) — Recent Sessions quick-connect + compose history recall
 - **Recent Sessions quick-connect group.** Your recently-connected hosts appear at the top of the connect screen for **one-tap reconnect** (plus "Reconnect All" when there are 2+), shown when you have no active session — PWA parity. **Verify:** connect to a host, disconnect → it appears under "Recent Sessions"; tap → reconnects. (#796)
 - **Compose history recall (▲/▼).** The compose bar now remembers the commands you've sent and lets you recall them with ▲/▼ **without re-sending** — so a long command you composed isn't lost. Survives across sends, per session. **Verify:** send a few commands, open compose, ▲ cycles back through them. (#797)
