@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+31 (2026-06-08) — Feedback records the byte+scroll trace (to fix the sticky scroll for real) + detect URLs anywhere you scroll
+- **Feedback now also captures the raw terminal byte stream + your scroll movements** (scrubbed of secrets), alongside the screenshot. This lets a scroll/repaint bug be replayed EXACTLY off-device and fixed at the source instead of guessed. **To fix the sticky-scroll: reproduce it, then hit Feedback while it's stuck** — that trace is what I need. (#790)
+- **URLs and file paths now get detected wherever you scroll to**, not only near the live prompt. **Verify:** scroll up to a line with a URL/path → it gets its bubble/underline. (#787)
+- (The sticky-scroll itself is NOT fixed yet — this build is the instrument to capture it; #789.)
+
 ## v0.1.10+30 (2026-06-07) — URL/path outline tracks the text while you scroll back
 - **The URL bubble / file-path underline now follows the text when you scroll back.** It was positioned once and didn't re-resolve on a pure scrollback scroll, so it drifted onto the wrong line in history (it was fine live / near the bottom). Now a scroll re-positions it against the live scroll offset. **Verify:** scroll up through terminal history → a URL bubble or path underline stays hugging its actual text on every row. (#784)
 
