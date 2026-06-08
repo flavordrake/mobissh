@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+33 (2026-06-08) — Recent Sessions quick-connect + compose history recall
+- **Recent Sessions quick-connect group.** Your recently-connected hosts appear at the top of the connect screen for **one-tap reconnect** (plus "Reconnect All" when there are 2+), shown when you have no active session — PWA parity. **Verify:** connect to a host, disconnect → it appears under "Recent Sessions"; tap → reconnects. (#796)
+- **Compose history recall (▲/▼).** The compose bar now remembers the commands you've sent and lets you recall them with ▲/▼ **without re-sending** — so a long command you composed isn't lost. Survives across sends, per session. **Verify:** send a few commands, open compose, ▲ cycles back through them. (#797)
+
 ## v0.1.10+32 (2026-06-08) — Feedback now captures the scroll wheel-events you send + keeps your swipes (diagnostic infra)
 - **Feedback now also captures the mouse/wheel events your swipes send to tmux** (mouse-reports only — never your keystrokes) and guarantees your recent swipes stay in the log even through a resize/resume burst. Combined with the new off-device replay tool, an unresponsive-scroll report can now be reproduced exactly and fixed at the source. **To help fix the scroll: reproduce the unresponsive scroll, then hit Feedback.** (#793/#791)
 - Recorder is now provably zero-overhead on the hot path (O(1) eviction).
