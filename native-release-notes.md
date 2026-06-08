@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+37 (2026-06-08) — URL copy fixed + no more off-by-line highlight
+- **Tapping a URL copies the real URL again** (single-line URLs too). Empty embedded-link terminators were anchoring an empty payload, so it copied nothing yet still said "Copied URL" — now an empty match never false-copies. **Verify:** tap a URL → clipboard has the full link. (#810)
+- **The URL/path highlight no longer drifts off the text while scrolling.** Instead of chasing the position mid-scroll (which kept landing a line off), it now **hides while you scroll and re-appears glued to the text once you settle** — it can't be off-by-a-line because it doesn't draw mid-scroll. Tap-to-copy still works throughout. **Verify:** scroll a tmux screen with URLs/paths → no dancing highlight; stop → it snaps onto the text. (#812)
+- Under the hood: session-state hardening (folded a fragile disconnect flag into the lifecycle + auto-reconnect re-arm on resume for failed sessions) — groundwork for the Active-Sessions / reconnect UI next. (#813)
+
 ## v0.1.10+36 (2026-06-08) — smoother scroll + lower background battery
 - **Scrolling does less work.** The URL/path decorator no longer rebuilds on every redraw while you scroll a busy screen (95% fewer rebuilds) — trims the overhead on top of the remote's repaint cost. The clunk scrolling a full-repaint TUI (Claude CLI) is mostly the remote rewriting the whole screen each step; this removes what we add on top. (#805)
 - **Lower background battery.** The app no longer pushes a per-session snapshot every 2s while backgrounded (it stops when you're not looking and re-emits instantly on resume), skips redundant pushes, and drops the 4KB scrollback decode from the periodic path. **The session-keeping locks/keepalive are unchanged — sessions still survive sleep.** (#806) (Bigger battery levers — keepalive interval, Wi-Fi-lock release — deferred pending on-device telemetry.)
