@@ -622,6 +622,45 @@ class SshSessionController {
     _scheduleReconnect(null);
   }
 
+  /// User-initiated FORCE reconnect (#817, Active Sessions UI Reconnect button).
+  ///
+  /// Unlike [resumeReconnectIfStale] (the app-resume re-arm), this:
+  ///  - ignores the staleness threshold — the user tapped Reconnect, so retry
+  ///    NOW rather than waiting for a drop to age past 8s,
+  ///  - clears the user-suppressed bit — tapping Reconnect IS an explicit
+  ///    "revive this session" intent, so it overrides a prior user ✕/Disconnect
+  ///    (`disconnected` by user). The ✕ remains the "forget" action; Reconnect
+  ///    is the "bring it back" action,
+  ///  - and for a session already mid-reconnect (`softDisconnected` /
+  ///    `reconnecting`) it cancels the pending backoff timer and retries
+  ///    immediately ("force now").
+  ///
+  /// Re-enters the existing reconnect path from the controller's held
+  /// [_lastParams] — so NO auth is re-supplied UI-side (creds live task-side).
+  /// No-op for a healthy/connecting session (nothing to reconnect) or when there
+  /// are no params to reconnect with (never reached `connected`).
+  void reconnectNow() {
+    final state = _data.state;
+    final canReconnect =
+        state == SshSessionState.failed ||
+        state == SshSessionState.disconnected ||
+        state == SshSessionState.softDisconnected ||
+        state == SshSessionState.reconnecting;
+    if (!canReconnect) return;
+    if (_lastParams == null) return;
+    // Explicit revive: overrides a prior user disconnect. Keep the bit and the
+    // state-derived suppress predicate consistent — the `reconnecting` emit in
+    // [_scheduleReconnect] moves state off `disconnected`/`failed` (#813).
+    _userDisconnected = false;
+    // Force-now: drop any pending backoff timer and restart with a full budget.
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectAttempts = 0;
+    _lastErrorUnreachable = false;
+    clifecycle('task.ssh', 'reconnectNow: user-forced ${state.name} → reconnect');
+    _scheduleReconnect(null);
+  }
+
   Future<void> _defaultLivenessProbe() async {
     final client = _client;
     if (client == null) {

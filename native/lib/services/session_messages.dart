@@ -38,6 +38,14 @@ enum SshTaskCommandKind {
   /// instead of being trusted and left frozen.
   resumeProbe,
 
+  /// UI -> task: user tapped Reconnect on a dropped session (#817, Active
+  /// Sessions UI). Maps task-side to `SshSessionController.reconnectNow()`,
+  /// which FORCE re-enters the reconnect path from held params (no auth
+  /// re-supply) for a `failed` / `disconnected` / `softDisconnected` /
+  /// `reconnecting` session — ignoring the resume staleness threshold and
+  /// overriding a prior user disconnect (an explicit "revive" intent).
+  reconnect,
+
   /// UI → task: the UI's foreground/background state changed (#806). Carries an
   /// `active` flag — `false` when the UI is backgrounded (`AppLifecycleState.
   /// paused`, proxies unbound), `true` on resume. The task-side host gates its
@@ -208,6 +216,8 @@ sealed class SshTaskCommand {
         return const SshUiHelloCommand();
       case SshTaskCommandKind.resumeProbe:
         return SshResumeProbeCommand(sessionId: sessionId);
+      case SshTaskCommandKind.reconnect:
+        return SshReconnectCommand(sessionId: sessionId);
       case SshTaskCommandKind.setActive:
         return SshSetActiveCommand(active: json['active'] as bool);
       case SshTaskCommandKind.sftpList:
@@ -444,6 +454,20 @@ class SshResumeProbeCommand extends SshTaskCommand {
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.resumeProbe;
+
+  @override
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
+}
+
+/// UI → task: user tapped Reconnect on a dropped session (#817). Maps task-side
+/// to `SshSessionController.reconnectNow()` — a FORCE reconnect from held params
+/// (no auth re-supply) that ignores the resume staleness threshold and overrides
+/// a prior user disconnect. Per-session, so [sessionId] identifies which session.
+class SshReconnectCommand extends SshTaskCommand {
+  const SshReconnectCommand({required String sessionId}) : super(sessionId);
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.reconnect;
 
   @override
   Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};

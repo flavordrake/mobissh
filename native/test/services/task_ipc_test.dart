@@ -80,6 +80,14 @@ void main() {
       expect(restored.sessionId, 'host:22:user:1');
     });
 
+    test('SshReconnectCommand round-trips (#817)', () {
+      const cmd = SshReconnectCommand(sessionId: 'host:22:user:1');
+      final restored = SshTaskCommand.fromJson(cmd.toJson());
+      expect(restored, isA<SshReconnectCommand>());
+      expect(restored.kind, SshTaskCommandKind.reconnect);
+      expect(restored.sessionId, 'host:22:user:1');
+    });
+
     test('SshSetActiveCommand round-trips active flag (#806)', () {
       for (final active in [true, false]) {
         final cmd = SshSetActiveCommand(active: active);

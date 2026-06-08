@@ -221,6 +221,11 @@ class SessionHost {
         // end-to-end nudge check (#759) for the transport-alive-but-shell-frozen
         // case a ping cannot catch.
         _handleResumeProbe(cmd.sessionId);
+      case SshReconnectCommand():
+        // #817: user tapped Reconnect on a dropped session row. Force re-enter
+        // the reconnect path from held params (no auth re-supply). No-op when
+        // the session isn't hosted (already forgotten) or isn't in a drop state.
+        _sessions[cmd.sessionId]?.controller.reconnectNow();
       case SftpListCommand():
         _handleSftpList(cmd);
       case SftpDownloadCommand():

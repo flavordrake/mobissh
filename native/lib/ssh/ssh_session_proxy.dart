@@ -180,6 +180,17 @@ class SshSessionProxy {
     gateway.send(SshDisconnectCommand(sessionId: sessionId).toJson());
   }
 
+  /// Force-reconnect a dropped session (#817, Active Sessions UI). The task-side
+  /// host maps this to `SshSessionController.reconnectNow()`, which re-enters the
+  /// reconnect path from its held params — so NO auth is re-supplied here (creds
+  /// live task-side). State updates (`reconnecting` → `connected` / `failed`)
+  /// arrive asynchronously through [stream]. No-op for a healthy session
+  /// (handled controller-side).
+  void reconnect() {
+    if (_disposed) return;
+    gateway.send(SshReconnectCommand(sessionId: sessionId).toJson());
+  }
+
   /// Accept a pending host-key prompt (#536). Sends a decision command to the
   /// task side (which trusts the key + resolves the controller's verify
   /// callback) and clears the local `pendingHostKey` so the dialog dismisses.

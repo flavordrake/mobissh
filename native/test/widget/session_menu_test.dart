@@ -2,9 +2,15 @@
 //
 // Covers the contract the PWA's session menu exposes:
 //   - tap-to-switch sets activeSessionId and dismisses the menu
-//   - long-press opens the contextual actions sheet
 //   - the keybar toggle flips ONLY the active session's keybar (#573)
 //   - the close affordance on each row removes the entry
+//
+// #817: the long-press contextual actions sheet was removed — the row's
+// Disconnect/Close are now always-visible per-row affordances (the ✕ button,
+// plus a Reconnect button for dropped sessions). A dropped session must be
+// directly actionable, not hidden behind a long-press. The Active-Sessions UI
+// state surface (status dot + per-state action) is covered by
+// `session_menu_active_state_test.dart`.
 //
 // Tests pump bounded frames rather than `pumpAndSettle` — the modal bottom
 // sheet's slide animation can leave the harness waiting forever for a
@@ -106,7 +112,7 @@ void main() {
       expect(find.byKey(const Key('session-menu')), findsNothing);
     });
 
-    testWidgets('long-press opens the contextual actions sheet', (
+    testWidgets('each row exposes an always-visible close (✕) affordance (#817)', (
       tester,
     ) async {
       final container = _makeContainer();
@@ -127,16 +133,17 @@ void main() {
       await tester.tap(find.byKey(const Key('open-menu')));
       await _pumpFrames(tester);
 
-      await tester.longPress(find.byKey(Key('session-menu-row-${entry.id}')));
-      await _pumpFrames(tester);
-
+      // The close (✕) action is directly on the row — no long-press needed.
       expect(
-        find.byKey(const Key('session-menu-action-disconnect')),
+        find.byKey(Key('session-menu-close-${entry.id}')),
         findsOneWidget,
       );
+      // The old long-press contextual sheet is gone (#817).
+      await tester.longPress(find.byKey(Key('session-menu-row-${entry.id}')));
+      await _pumpFrames(tester);
       expect(
-        find.byKey(const Key('session-menu-action-close')),
-        findsOneWidget,
+        find.byKey(const Key('session-menu-action-disconnect')),
+        findsNothing,
       );
     });
 
