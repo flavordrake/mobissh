@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/state/compose_history_providers.dart';
 import 'package:mobissh/state/lifecycle_providers.dart';
 import 'package:mobissh/ui/compose_bar.dart';
 import 'package:xterm/xterm.dart';
@@ -33,21 +34,27 @@ void main() {
     WidgetTester tester,
     List<String> sink, {
     VoidCallback? onClose,
+    String sessionId = 'sess',
+    ProviderContainer? container,
   }) async {
     final terminal = Terminal();
     terminal.onOutput = sink.add;
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
+    final c = container ?? ProviderContainer();
+    if (container == null) addTearDown(c.dispose);
     await tester.pumpWidget(
       UncontrolledProviderScope(
-        container: container,
+        container: c,
         child: MaterialApp(
           home: Scaffold(
             // ComposeBar is a floating panel (returns a Positioned), so it must
             // live inside a Stack (#604).
             body: Stack(
               children: [
-                ComposeBar(terminal: terminal, onClose: onClose ?? () {}),
+                ComposeBar(
+                  terminal: terminal,
+                  sessionId: sessionId,
+                  onClose: onClose ?? () {},
+                ),
               ],
             ),
           ),
@@ -55,7 +62,7 @@ void main() {
       ),
     );
     await tester.pump();
-    return container;
+    return c;
   }
 
   group('byte contract', () {
@@ -429,5 +436,138 @@ void main() {
         reason: 'no re-focus when it was not focused at pause (#633)',
       );
     });
+  });
+
+  group('#797 — IME compose history ring + ▲/▼ recall (PWA parity)', () {
+    // Reads the live controller text out of the compose field.
+    String controllerText(WidgetTester tester) => tester
+        .widget<TextField>(find.byKey(const Key('compose-bar-input')))
+        .controller!
+        .text;
+
+    testWidgets('▲/▼ recall buttons exist in the rail', (tester) async {
+      await pumpBar(tester, <String>[]);
+      expect(find.byKey(const Key('compose-bar-history-up')), findsOneWidget);
+      expect(find.byKey(const Key('compose-bar-history-down')), findsOneWidget);
+    });
+
+    testWidgets('▲/▼ are disabled when history is empty', (tester) async {
+      await pumpBar(tester, <String>[]);
+      final up = tester.widget<IconButton>(
+        find.byKey(const Key('compose-bar-history-up')),
+      );
+      final down = tester.widget<IconButton>(
+        find.byKey(const Key('compose-bar-history-down')),
+      );
+      expect(up.onPressed, isNull, reason: '▲ disabled with no history');
+      expect(down.onPressed, isNull, reason: '▼ disabled with no history');
+    });
+
+    testWidgets(
+      'committing a command pushes it to the per-session history',
+      (tester) async {
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        await pumpBar(tester, <String>[], container: container);
+
+        await tester.enterText(
+          find.byKey(const Key('compose-bar-input')),
+          'ls -la',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('compose-bar-commit')));
+        await tester.pump();
+
+        expect(
+          container.read(composeHistoryProvider.notifier).historyOf('sess'),
+          ['ls -la'],
+        );
+      },
+    );
+
+    testWidgets(
+      'send A,B,C → ▲ recalls C, ▲ again B, ▼ returns to C (PWA cycle)',
+      (tester) async {
+        // A single shared container so history survives the bar across sends
+        // (the bar would normally close+reopen; here onClose is a no-op so the
+        // same State persists, but the durable list lives in the provider).
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        await pumpBar(tester, <String>[], container: container);
+
+        for (final cmd in ['A', 'B', 'C']) {
+          await tester.enterText(
+            find.byKey(const Key('compose-bar-input')),
+            cmd,
+          );
+          await tester.pump();
+          await tester.tap(find.byKey(const Key('compose-bar-commit')));
+          await tester.pump();
+        }
+        // After commits the field is cleared.
+        expect(controllerText(tester), '');
+
+        // ▲ recalls the newest (C).
+        await tester.tap(find.byKey(const Key('compose-bar-history-up')));
+        await tester.pump();
+        expect(controllerText(tester), 'C');
+
+        // ▲ again → older (B).
+        await tester.tap(find.byKey(const Key('compose-bar-history-up')));
+        await tester.pump();
+        expect(controllerText(tester), 'B');
+
+        // ▼ → back toward newer (C).
+        await tester.tap(find.byKey(const Key('compose-bar-history-down')));
+        await tester.pump();
+        expect(controllerText(tester), 'C');
+      },
+    );
+
+    testWidgets('recall populates the buffer WITHOUT sending', (tester) async {
+      final sink = <String>[];
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await pumpBar(tester, sink, container: container);
+
+      // Seed history directly (a prior session/compose), then clear the sink so
+      // we measure only what recall sends.
+      container.read(composeHistoryProvider.notifier).push('sess', 'echo hi');
+      await tester.pump();
+      sink.clear();
+
+      await tester.tap(find.byKey(const Key('compose-bar-history-up')));
+      await tester.pump();
+
+      expect(controllerText(tester), 'echo hi');
+      expect(sink, isEmpty, reason: 'recall must NOT send to the terminal');
+    });
+
+    testWidgets(
+      '▼ past the newest restores the stashed unsent input (PWA stash)',
+      (tester) async {
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        await pumpBar(tester, <String>[], container: container);
+
+        container.read(composeHistoryProvider.notifier).push('sess', 'old');
+        await tester.pump();
+
+        // Type unsent text, then browse up into history (stashes the draft).
+        await tester.enterText(
+          find.byKey(const Key('compose-bar-input')),
+          'draft',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('compose-bar-history-up')));
+        await tester.pump();
+        expect(controllerText(tester), 'old');
+
+        // ▼ past the newest → the stashed draft comes back (not clobbered).
+        await tester.tap(find.byKey(const Key('compose-bar-history-down')));
+        await tester.pump();
+        expect(controllerText(tester), 'draft');
+      },
+    );
   });
 }

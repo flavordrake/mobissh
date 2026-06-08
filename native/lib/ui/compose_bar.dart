@@ -17,9 +17,13 @@
 // soft keyboard. Drag the grip to move it; double-tap the grip to snap between
 // the bottom and top thirds.
 //
-// MVP slice. PWA-parity extras (preview mode + auto-commit ring, history ring,
-// sticky-Ctrl, password direct-mode, autocorrect diff) are backlogged on #599.
-// Icons are monochrome theme-tinted Material icons — never emoji (memory:
+// #797: per-session compose history ring + ▲/▼ recall (PWA parity with
+// src/modules/ime.ts `_commitHistory`) — sent commands are pushed to a
+// per-session ring ([composeHistoryProvider]) so they survive the bar's
+// close-on-send (#614), and ▲/▼ in the rail recall them into the buffer
+// WITHOUT sending. Remaining PWA-parity extras (preview mode + auto-commit
+// ring, sticky-Ctrl, password direct-mode, autocorrect diff) are backlogged on
+// #599. Icons are monochrome theme-tinted Material icons — never emoji (memory:
 // feedback_monochrome_icons_no_emoji).
 
 import 'package:flutter/material.dart';
@@ -27,6 +31,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../state/compose_history_providers.dart';
 import '../state/lifecycle_providers.dart';
 import '../util/terminal_copy_fixup.dart';
 
@@ -50,6 +55,7 @@ class ComposeBar extends ConsumerStatefulWidget {
   const ComposeBar({
     super.key,
     required this.terminal,
+    required this.sessionId,
     required this.onClose,
     this.bottomReserve = 0,
   });
@@ -57,6 +63,11 @@ class ComposeBar extends ConsumerStatefulWidget {
   /// The active session's terminal. Committed text is sent via
   /// `terminal.textInput` (onOutput → proxy.sendInput → PTY), like the keybar.
   final Terminal terminal;
+
+  /// The active session's id (#797). Keys the per-session compose history ring
+  /// ([composeHistoryProvider]) so sent commands survive the bar's close-on-send
+  /// (#614) and can be recalled with ▲/▼ — and never leak between sessions.
+  final String sessionId;
 
   /// Hides the compose bar (clears `composeBarVisibleProvider`).
   final VoidCallback onClose;
@@ -85,6 +96,15 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   /// (lock screen, app switcher) doesn't lose the keyboard mid-compose. If the
   /// field wasn't focused at pause, resume leaves focus alone.
   bool _hadFocusAtPause = false;
+
+  /// History browse cursor (#797) — ephemeral, mirrors the PWA's module-level
+  /// `_historyIndex`/`_historyStash`. `-1` means "not browsing". `_historyStash`
+  /// saves the live (unsent) compose text when browsing begins so ▼ past the
+  /// newest entry can restore it instead of clobbering the draft. The durable
+  /// list lives in [composeHistoryProvider] (per-session), keyed by
+  /// `widget.sessionId`.
+  int _historyIndex = -1;
+  String _historyStash = '';
 
   @override
   void initState() {
@@ -144,17 +164,77 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
           ? '$_bracketedPasteStart$text$_bracketedPasteEnd'
           : text;
       widget.terminal.textInput(payload);
+      // #797: record the sent command in the per-session history ring so it
+      // can be recalled with ▲/▼ even after the panel closes. The notifier
+      // dedups consecutive identical entries and caps the ring.
+      ref
+          .read(composeHistoryProvider.notifier)
+          .push(widget.sessionId, text);
     }
     if (trailing.isNotEmpty) {
       widget.terminal.textInput(trailing);
     }
     _controller.clear();
+    _resetHistoryCursor();
     // #614: hide the panel after sending (both commit and submit).
     widget.onClose();
   }
 
+  /// #797: clear the browse cursor — called after a send or an explicit clear,
+  /// so the next ▲ starts a fresh browse from the newest entry (mirrors the
+  /// PWA resetting `_historyIndex` to -1 on record).
+  void _resetHistoryCursor() {
+    _historyIndex = -1;
+    _historyStash = '';
+  }
+
+  /// #797: recall an entry from the per-session history ring into the compose
+  /// buffer WITHOUT sending. Direction -1 (▲) walks toward older entries; +1
+  /// (▼) toward newer, and past the newest restores the stashed draft. Mirrors
+  /// the PWA `_navigateHistory` cycle exactly (src/modules/ime.ts):
+  ///   - empty history → no-op
+  ///   - not browsing (-1 index): ▲ stashes the live draft and lands on the
+  ///     newest; ▼ is a no-op (already at the newest)
+  ///   - past the newest → restore stash, leave browsing
+  ///   - clamp at the oldest
+  void _recall(int direction) {
+    final history =
+        ref.read(composeHistoryProvider.notifier).historyOf(widget.sessionId);
+    if (history.isEmpty) return;
+    String? next;
+    if (_historyIndex == -1) {
+      if (direction < 0) {
+        _historyStash = _controller.text;
+        _historyIndex = history.length - 1;
+        next = history[_historyIndex];
+      } else {
+        return; // already at the newest — nothing newer to show
+      }
+    } else {
+      _historyIndex += direction;
+      if (_historyIndex >= history.length) {
+        // Past the newest → restore the stashed draft, stop browsing.
+        _historyIndex = -1;
+        next = _historyStash;
+      } else if (_historyIndex < 0) {
+        // Clamp at the oldest.
+        _historyIndex = 0;
+        next = history[0];
+      } else {
+        next = history[_historyIndex];
+      }
+    }
+    _controller.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length),
+    );
+    _focusNode.requestFocus();
+    setState(() {});
+  }
+
   void _clear() {
     _controller.clear();
+    _resetHistoryCursor();
     _focusNode.requestFocus();
   }
 
@@ -218,10 +298,11 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     // Panel width: most of the screen, capped so it reads as a panel.
     final panelWidth = size.width - 24;
     // Tall enough for the top drag bar + the inline pill row (Fix/Copy/Paste,
-    // #638) + the 4-button vertical action rail (close/clear/commit/submit)
-    // WITHOUT overflow — an overflowing Column under Clip.antiAlias clips the
-    // bottom buttons so their taps don't land.
-    const panelHeight = 272.0;
+    // #638) + the 6-button vertical action rail (#797: ▲/▼ history recall, then
+    // close/clear/commit/submit) WITHOUT overflow — an overflowing Column under
+    // Clip.antiAlias clips the bottom buttons so their taps don't land. Bumped
+    // from 272 to 352 to seat the two extra history buttons.
+    const panelHeight = 352.0;
     const margin = 12.0;
     final left = (size.width - panelWidth) / 2;
 
@@ -340,13 +421,19 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
                         ),
                       ),
                     ),
-                    // Vertical action rail (#604/#638): WHOLE-VIEW actions
-                    // only — close / clear / commit / submit. Text actions
-                    // (copy/paste/fix) moved to the inline pill row above.
+                    // Vertical action rail (#604/#638/#797): WHOLE-VIEW actions
+                    // only — ▲/▼ history recall, close, clear, commit, submit.
+                    // Text actions (copy/paste/fix) live in the inline pill row.
                     _ActionRail(
                       hasText: _controller.text.isNotEmpty,
+                      hasHistory: ref
+                          .watch(composeHistoryProvider.select(
+                            (m) => (m[widget.sessionId] ?? const []).isNotEmpty,
+                          )),
                       onClose: widget.onClose,
                       onClear: _clear,
+                      onHistoryUp: () => _recall(-1),
+                      onHistoryDown: () => _recall(1),
                       onCommit: () => _send(trailing: ''),
                       onSubmit: () => _send(trailing: '\r'),
                     ),
@@ -460,22 +547,33 @@ class _Pill extends StatelessWidget {
   }
 }
 
-/// Slim vertical button rail for the compose panel (#604/#638). WHOLE-VIEW
-/// actions only — close / clear / commit / submit. Text actions live in the
-/// pill row. Stacking keeps the editable wide for long composition. Monochrome
-/// theme-tinted icons.
+/// Slim vertical button rail for the compose panel (#604/#638/#797). WHOLE-VIEW
+/// actions only — history-up / history-down / close / clear / commit / submit.
+/// Text actions live in the pill row. Stacking keeps the editable wide for long
+/// composition. Monochrome theme-tinted icons (no emoji — memory:
+/// feedback_monochrome_icons_no_emoji).
 class _ActionRail extends StatelessWidget {
   const _ActionRail({
     required this.hasText,
+    required this.hasHistory,
     required this.onClose,
     required this.onClear,
+    required this.onHistoryUp,
+    required this.onHistoryDown,
     required this.onCommit,
     required this.onSubmit,
   });
 
   final bool hasText;
+
+  /// #797: whether the active session has any recallable sent commands. Both
+  /// ▲ and ▼ are disabled (dimmed) when false — PWA parity with the action
+  /// bar's `disabled` toggle keyed on `_commitHistory.length > 0`.
+  final bool hasHistory;
   final VoidCallback onClose;
   final VoidCallback onClear;
+  final VoidCallback onHistoryUp;
+  final VoidCallback onHistoryDown;
   final VoidCallback onCommit;
   final VoidCallback onSubmit;
 
@@ -488,6 +586,24 @@ class _ActionRail extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          // #797: recall older (▲) / newer (▼) sent commands into the compose
+          // buffer without sending. Disabled when the session has no history.
+          IconButton(
+            key: const Key('compose-bar-history-up'),
+            tooltip: 'Recall older sent command',
+            visualDensity: VisualDensity.compact,
+            iconSize: 20,
+            icon: const Icon(Icons.keyboard_arrow_up),
+            onPressed: hasHistory ? onHistoryUp : null,
+          ),
+          IconButton(
+            key: const Key('compose-bar-history-down'),
+            tooltip: 'Recall newer sent command',
+            visualDensity: VisualDensity.compact,
+            iconSize: 20,
+            icon: const Icon(Icons.keyboard_arrow_down),
+            onPressed: hasHistory ? onHistoryDown : null,
+          ),
           IconButton(
             key: const Key('compose-bar-close'),
             tooltip: 'Hide compose bar',

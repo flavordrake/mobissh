@@ -205,6 +205,9 @@ class TerminalScreen extends ConsumerWidget {
               ComposeBar(
                 key: ValueKey('compose-bar-${activeEntry.id}'),
                 terminal: activeEntry.terminal,
+                // #797: keys the per-session compose history ring so recalled
+                // commands stay isolated to this session.
+                sessionId: activeEntry.id,
                 // Reserve the bottom chrome so a bottom-docked panel never hides
                 // the session bar (#610). Heights are centralized constants
                 // (#615): kSessionBarReserve (session bar) + kKeybarReserve
