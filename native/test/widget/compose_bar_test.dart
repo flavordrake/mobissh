@@ -254,7 +254,9 @@ void main() {
       },
     );
 
-    testWidgets('inline pill row carries Copy, Paste and Fix', (tester) async {
+    testWidgets('inline pill row carries Fix (Copy/Paste moved to border #798)', (
+      tester,
+    ) async {
       await pumpBar(tester, <String>[]);
 
       final pillRow = find.byKey(const Key('compose-bar-pills'));
@@ -263,23 +265,25 @@ void main() {
       expect(
         find.descendant(
           of: pillRow,
-          matching: find.byKey(const Key('compose-bar-copy')),
+          matching: find.byKey(const Key('compose-bar-fix')),
         ),
         findsOneWidget,
+      );
+      // #798: Copy/Paste are no longer pills in this row — they live on the
+      // field's top border.
+      expect(
+        find.descendant(
+          of: pillRow,
+          matching: find.byKey(const Key('compose-bar-copy')),
+        ),
+        findsNothing,
       );
       expect(
         find.descendant(
           of: pillRow,
           matching: find.byKey(const Key('compose-bar-paste')),
         ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: pillRow,
-          matching: find.byKey(const Key('compose-bar-fix')),
-        ),
-        findsOneWidget,
+        findsNothing,
       );
     });
 
@@ -569,5 +573,184 @@ void main() {
         expect(controllerText(tester), 'draft');
       },
     );
+  });
+
+  group('#798 — Copy/Paste on the top border of the field', () {
+    testWidgets('Copy and Paste are small chips on the field top edge', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+
+      final copy = find.byKey(const Key('compose-bar-copy'));
+      final paste = find.byKey(const Key('compose-bar-paste'));
+      final field = find.byKey(const Key('compose-bar-input'));
+      expect(copy, findsOneWidget);
+      expect(paste, findsOneWidget);
+
+      final fieldBox = tester.getRect(field);
+      // The chips must straddle the TOP border of the field — their vertical
+      // centre sits on (within a few px of) the field's top edge, not lower in
+      // the body of the textarea.
+      for (final chip in [copy, paste]) {
+        final box = tester.getRect(chip);
+        expect(
+          (box.center.dy - fieldBox.top).abs() < 24,
+          isTrue,
+          reason: 'chip must sit on the field top border, not in its body',
+        );
+      }
+    });
+
+    testWidgets('Copy/Paste chips are smaller than the inline Fix pill', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+
+      final copyBox = tester.getRect(find.byKey(const Key('compose-bar-copy')));
+      final fixBox = tester.getRect(find.byKey(const Key('compose-bar-fix')));
+      expect(
+        copyBox.width < fixBox.width,
+        isTrue,
+        reason: 'border Copy chip must be smaller than the Fix pill',
+      );
+    });
+
+    testWidgets('Copy/Paste keep an adequate touch target (>=40px)', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+      for (final k in ['compose-bar-copy', 'compose-bar-paste']) {
+        final box = tester.getRect(find.byKey(Key(k)));
+        expect(
+          box.height >= 40 && box.width >= 40,
+          isTrue,
+          reason: '$k must keep a finger-sized hit area via padding',
+        );
+      }
+    });
+
+    testWidgets('Copy still copies the staged text from the border chip', (
+      tester,
+    ) async {
+      String? clipboardText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardText = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        );
+      });
+
+      await pumpBar(tester, <String>[]);
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'border copy',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('compose-bar-copy')));
+      await tester.pump();
+
+      expect(clipboardText, 'border copy');
+    });
+  });
+
+  group('#798 — grip affordance on the drag header', () {
+    testWidgets('a clear grab handle renders inside the drag header', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+      final grip = find.byKey(const Key('compose-bar-grip'));
+      expect(grip, findsOneWidget);
+      // The grip lives inside the drag header (the gesture surface).
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('compose-bar-drag')),
+          matching: grip,
+        ),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('#798 — header gestures: flick-dock + hold-to-position', () {
+    Positioned positioned(WidgetTester tester) => tester.widget<Positioned>(
+      find.ancestor(
+        of: find.byKey(const Key('compose-bar')),
+        matching: find.byType(Positioned),
+      ),
+    );
+
+    testWidgets('flick UP on the header docks the panel to the TOP', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+      // Default dock is top; flick down first so the up-flick is observable.
+      await tester.fling(
+        find.byKey(const Key('compose-bar-drag')),
+        const Offset(0, 120),
+        1000,
+      );
+      await tester.pump();
+      expect(positioned(tester).top, isNull,
+          reason: 'flick down should clear top (bottom dock)');
+
+      await tester.fling(
+        find.byKey(const Key('compose-bar-drag')),
+        const Offset(0, -120),
+        1000,
+      );
+      await tester.pump();
+      final p = positioned(tester);
+      expect(p.top, isNotNull, reason: 'flick up docks to TOP');
+      expect(p.bottom, isNull);
+    });
+
+    testWidgets('flick DOWN on the header docks the panel to the BOTTOM', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+      await tester.fling(
+        find.byKey(const Key('compose-bar-drag')),
+        const Offset(0, 120),
+        1000,
+      );
+      await tester.pump();
+      final p = positioned(tester);
+      expect(p.bottom, isNotNull, reason: 'flick down docks to BOTTOM');
+      expect(p.top, isNull);
+    });
+
+    testWidgets('hold-then-drag free-positions the panel (no snap)', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+      final grip = find.byKey(const Key('compose-bar-drag'));
+      final start = tester.getCenter(grip);
+
+      // Press and HOLD past the long-press threshold so the long-press
+      // recognizer wins the arena, THEN drag — this is the free-position path.
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 600));
+      await gesture.moveBy(const Offset(0, 150));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      final p = positioned(tester);
+      // Free mode anchors by explicit top offset (no snap to an edge).
+      expect(p.top, isNotNull, reason: 'free-position anchors by top offset');
+      expect(p.bottom, isNull);
+      // The panel followed the finger downward from the default top margin.
+      expect(p.top! > 12, isTrue,
+          reason: 'panel tracked the hold-drag down the screen');
+    });
   });
 }

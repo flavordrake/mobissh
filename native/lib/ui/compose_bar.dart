@@ -26,6 +26,7 @@
 // #599. Icons are monochrome theme-tinted Material icons — never emoji (memory:
 // feedback_monochrome_icons_no_emoji).
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -45,11 +46,11 @@ const String _bracketedPasteEnd = '\x1b[201~';
 /// [terminal]. Nothing reaches the SSH session until commit/submit — text
 /// accumulates locally first, so swipe/voice composition (a stream) lands
 /// intact with spaces.
-/// Which edge the compose panel docks to (#610). The anchor is a FIXED margin
-/// from that edge — it does NOT chase the keyboard. Dock TOP to compose with the
-/// keyboard up (panel stays fully visible above it); dock BOTTOM to sit just
-/// above the session bar.
-enum ComposeDock { top, bottom }
+/// Where the compose panel anchors (#610, #798). [top]/[bottom] are the two
+/// FIXED-margin dock anchors a quick FLICK snaps to — the anchor does NOT chase
+/// the keyboard. [free] is the #798 hold-and-drag mode: the panel is pinned to an
+/// exact top offset the finger chose, with NO snap.
+enum ComposeDock { top, bottom, free }
 
 class ComposeBar extends ConsumerStatefulWidget {
   const ComposeBar({
@@ -87,9 +88,16 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   final FocusNode _focusNode = FocusNode();
 
   /// Which edge the panel is docked to. Default TOP so it stays fully visible
-  /// while the keyboard is up (the common swipe/voice compose case). Double-tap
-  /// the grip toggles top↔bottom.
+  /// while the keyboard is up (the common swipe/voice compose case). A flick UP
+  /// docks top, flick DOWN docks bottom; a hold-then-drag switches to
+  /// [ComposeDock.free] and pins [_freeTop] exactly (#798).
   ComposeDock _dock = ComposeDock.top;
+
+  /// #798: the exact top offset (logical px) the panel is pinned to while
+  /// [_dock] == [ComposeDock.free]. Set by a hold-then-drag on the grip header;
+  /// null in the docked modes. No snapping — the panel sits wherever the finger
+  /// left it (clamped on-screen).
+  double? _freeTop;
 
   /// #633: whether the compose field held focus when the app was last paused.
   /// On resume we re-`requestFocus()` only if this is true, so a background swap
@@ -238,6 +246,33 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     _focusNode.requestFocus();
   }
 
+  /// #798: a quick FLICK on the grip header snaps the panel to one of the two
+  /// fixed dock anchors — up → TOP, down → BOTTOM — leaving [ComposeDock.free]
+  /// behind. Mirrors the prior `onVerticalDragEnd` velocity test; extracted so
+  /// it's unit-reasoned and the free-position path can coexist (the long-press
+  /// recognizer wins the arena on a HOLD, so this only fires for fast drags).
+  void _flickDock(double velocity) {
+    if (velocity == 0) return;
+    setState(() {
+      _dock = velocity < 0 ? ComposeDock.top : ComposeDock.bottom;
+      _freeTop = null;
+    });
+  }
+
+  /// #798: a HOLD-then-drag on the grip header free-positions the panel to the
+  /// exact top offset under the finger (no snap). [globalTop] is the desired
+  /// panel-top in global/logical px; we clamp it so the grip stays reachable on
+  /// screen. Switches [_dock] to [ComposeDock.free] and pins [_freeTop].
+  void _freePositionTo(double globalTop, double screenHeight) {
+    // Keep at least the grip header (24px) on screen at top and bottom.
+    final maxTop = (screenHeight - 24).clamp(0.0, double.infinity);
+    final clamped = globalTop.clamp(0.0, maxTop);
+    setState(() {
+      _dock = ComposeDock.free;
+      _freeTop = clamped;
+    });
+  }
+
   /// #638 (was #634): copy the current compose text to the system clipboard
   /// (PWA parity — mirrors the IME compose Copy pill). Keeps focus in the field.
   void _copy() {
@@ -314,12 +349,17 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     // reachable; the panel's ANCHOR stays put regardless of keyboard state.
     final double? topPos;
     final double? bottomPos;
-    if (_dock == ComposeDock.top) {
-      topPos = margin;
-      bottomPos = null;
-    } else {
-      topPos = null;
-      bottomPos = widget.bottomReserve + margin;
+    switch (_dock) {
+      case ComposeDock.top:
+        topPos = margin;
+        bottomPos = null;
+      case ComposeDock.bottom:
+        topPos = null;
+        bottomPos = widget.bottomReserve + margin;
+      case ComposeDock.free:
+        // #798: hold-drag pinned the panel to an exact top offset — no snap.
+        topPos = _freeTop ?? margin;
+        bottomPos = null;
     }
 
     return Positioned(
@@ -338,46 +378,32 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Dock grip (TOP edge, #634): a slim full-width bar so the text
-              // field reclaims the left margin and reads wider. Toggle the panel
-              // between the TOP and BOTTOM margin so the user can keep the
-              // terminal cursor visible. Double-tap or a vertical drag flips the
-              // dock; the anchor is always a fixed margin (#610) — never
-              // free-floating off-screen.
-              GestureDetector(
+              // Drag header (TOP edge, #634/#798): a slim full-width grab bar.
+              // It carries an explicit GRIP affordance (a short pill grabber —
+              // #798) so it reads as draggable, and owns all the move gestures so
+              // they never land on the textarea (textareas intercept touch —
+              // memory mobile-touch). A quick FLICK snaps to a dock anchor (up →
+              // TOP, down → BOTTOM); a HOLD-then-drag free-positions exactly
+              // (#798). Long-press wins the gesture arena on a hold, so the two
+              // never conflict (mirrors ghostty_terminal_view.dart #688/#690).
+              _DragHeader(
                 key: const Key('compose-bar-drag'),
-                behavior: HitTestBehavior.opaque,
-                onVerticalDragEnd: (d) {
-                  final v = d.primaryVelocity ?? 0;
-                  if (v < 0) setState(() => _dock = ComposeDock.top);
-                  if (v > 0) setState(() => _dock = ComposeDock.bottom);
-                },
-                onDoubleTap: () => setState(() {
+                onFlick: _flickDock,
+                onHoldDrag: (globalTop) =>
+                    _freePositionTo(globalTop, size.height),
+                onToggleDock: () => setState(() {
                   _dock = _dock == ComposeDock.top
                       ? ComposeDock.bottom
                       : ComposeDock.top;
+                  _freeTop = null;
                 }),
-                child: Container(
-                  height: 24,
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Icons.drag_handle,
-                    size: 18,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
               ),
-              // #638: inline TEXT-action pill row (Fix / Copy / Paste). These
-              // are TEXT actions on the staged content — distinct from the
-              // right rail's WHOLE-VIEW actions (close/clear/✓/⏎). Mirrors the
-              // PWA's `.ime-paste-overlay` chips (src/modules/ime.ts), same
-              // left→right order. Monochrome, theme-tinted (no emoji).
+              // #638/#798: inline TEXT-action pill row. Fix stays here as a wide
+              // pill; Copy/Paste moved to small chips on the field's TOP BORDER
+              // (#798) — see the Stack around the editable below.
               _PillRow(
                 hasText: _controller.text.isNotEmpty,
                 onFix: _fix,
-                onCopy: _copy,
-                onPaste: _paste,
               ),
               // Field + action rail share the remaining height.
               Expanded(
@@ -385,39 +411,77 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // The editable — gets the width (slim vertical button rail).
+                    // #798: small Copy/Paste chips are overlaid on the field's
+                    // TOP BORDER via a Stack (clipBehavior:none so they straddle
+                    // the outline). The field keeps an extra top inset so the
+                    // chips don't cover the first line of text.
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-                        child: TextField(
-                          key: const Key('compose-bar-input'),
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          autofocus: true,
-                          // THE CRUX: composing/swipe/voice need these ENABLED.
-                          keyboardType: TextInputType.multiline,
-                          textInputAction: TextInputAction.newline,
-                          autocorrect: true,
-                          enableSuggestions: true,
-                          enableIMEPersonalizedLearning: true,
-                          expands: true,
-                          minLines: null,
-                          maxLines: null,
-                          textAlignVertical: TextAlignVertical.top,
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 15,
-                          ),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            hintText: 'Compose (swipe / voice / type)',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            TextField(
+                              key: const Key('compose-bar-input'),
+                              controller: _controller,
+                              focusNode: _focusNode,
+                              autofocus: true,
+                              // THE CRUX: composing/swipe/voice need these ENABLED.
+                              keyboardType: TextInputType.multiline,
+                              textInputAction: TextInputAction.newline,
+                              autocorrect: true,
+                              enableSuggestions: true,
+                              enableIMEPersonalizedLearning: true,
+                              expands: true,
+                              minLines: null,
+                              maxLines: null,
+                              textAlignVertical: TextAlignVertical.top,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 15,
+                              ),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: 'Compose (swipe / voice / type)',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                // #798: extra top inset clears the border chips.
+                                contentPadding: const EdgeInsets.fromLTRB(
+                                  10,
+                                  16,
+                                  10,
+                                  8,
+                                ),
+                              ),
                             ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 8,
+                            // #798: Copy/Paste chips on the TOP BORDER. Centred
+                            // on the outline (top:-2 ≈ the border line) and right-
+                            // aligned so they don't fight the hint text.
+                            Positioned(
+                              top: -2,
+                              right: 8,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _BorderChip(
+                                    buttonKey: const Key('compose-bar-copy'),
+                                    icon: Icons.copy_outlined,
+                                    tooltip: 'Copy compose text',
+                                    onPressed:
+                                        _controller.text.isNotEmpty ? _copy : null,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  _BorderChip(
+                                    buttonKey: const Key('compose-bar-paste'),
+                                    icon: Icons.content_paste_outlined,
+                                    tooltip: 'Paste at cursor',
+                                    onPressed: _paste,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
+                          ],
                         ),
                       ),
                     ),
@@ -448,24 +512,19 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   }
 }
 
-/// Inline TEXT-action pill row (#638). Mirrors the PWA's `.ime-paste-overlay`
-/// chips (src/modules/ime.ts) — same left→right order: Fix, Copy, Paste. These
-/// act on the staged TEXT (not the whole view), so they live as chips next to
-/// the field rather than in the right rail (owner: "the copy paste and fix are
-/// pills not cluttering up the right side for whole view actions"). Monochrome,
-/// theme-tinted — no emoji (memory: feedback_monochrome_icons_no_emoji).
+/// Inline TEXT-action pill row (#638/#798). Mirrors the PWA's `.ime-paste-
+/// overlay` chips (src/modules/ime.ts). #798 moved Copy/Paste to small chips on
+/// the field's TOP BORDER, so this row now carries only the wide Fix pill (the
+/// odd-one-out: it rewrites the staged text rather than touching the clipboard).
+/// Monochrome, theme-tinted — no emoji (memory: feedback_monochrome_icons_no_emoji).
 class _PillRow extends StatelessWidget {
   const _PillRow({
     required this.hasText,
     required this.onFix,
-    required this.onCopy,
-    required this.onPaste,
   });
 
   final bool hasText;
   final VoidCallback onFix;
-  final VoidCallback onCopy;
-  final VoidCallback onPaste;
 
   @override
   Widget build(BuildContext context) {
@@ -480,22 +539,6 @@ class _PillRow extends StatelessWidget {
             label: 'Fix',
             tooltip: 'Collapse terminal soft-wraps into one line',
             onPressed: hasText ? onFix : null,
-          ),
-          const SizedBox(width: 6),
-          _Pill(
-            buttonKey: const Key('compose-bar-copy'),
-            icon: Icons.copy_outlined,
-            label: 'Copy',
-            tooltip: 'Copy compose text',
-            onPressed: hasText ? onCopy : null,
-          ),
-          const SizedBox(width: 6),
-          _Pill(
-            buttonKey: const Key('compose-bar-paste'),
-            icon: Icons.content_paste_outlined,
-            label: 'Paste',
-            tooltip: 'Paste at cursor',
-            onPressed: onPaste,
           ),
         ],
       ),
@@ -540,6 +583,129 @@ class _Pill extends StatelessWidget {
           textStyle: const TextStyle(fontSize: 12),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// #798: a small icon-only chip seated on the field's TOP BORDER (Copy/Paste).
+/// The visual is compact (16px icon, tonal pill) but the tap target stays
+/// finger-sized via a 44px [SizedBox] + an [IconButton] with no constraints
+/// (its splash fills the box). Monochrome, theme-tinted — no emoji.
+class _BorderChip extends StatelessWidget {
+  const _BorderChip({
+    required this.buttonKey,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final Key buttonKey;
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // Full 44px hit area; the visible chip inside is small.
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: IconButton(
+        key: buttonKey,
+        tooltip: tooltip,
+        onPressed: onPressed,
+        padding: EdgeInsets.zero,
+        iconSize: 16,
+        visualDensity: VisualDensity.compact,
+        style: IconButton.styleFrom(
+          minimumSize: const Size(26, 26),
+          fixedSize: const Size(26, 26),
+          backgroundColor: theme.colorScheme.surfaceContainerHighest,
+          foregroundColor: theme.colorScheme.onSurfaceVariant,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(13),
+          ),
+        ),
+        icon: Icon(icon),
+      ),
+    );
+  }
+}
+
+/// #798: the slim drag header at the top of the compose panel. It carries a
+/// clear GRIP affordance (a short pill grabber) and owns the move gestures so
+/// they never reach the textarea (textareas intercept touch — memory
+/// mobile-touch). It uses a [RawGestureDetector] so a quick FLICK (vertical
+/// drag) and a deliberate HOLD-then-drag (long press) can BOTH be recognised:
+/// the long-press recognizer wins the arena once the finger dwells, mirroring
+/// the swipe-vs-long-press split in ghostty_terminal_view.dart (#688/#690).
+///   - Flick → [onFlick] with the end velocity (sign picks the dock anchor).
+///   - Hold-then-drag → [onHoldDrag] with the live global panel-top offset.
+///   - Double-tap → [onToggleDock] (legacy top↔bottom flip, #634).
+class _DragHeader extends StatelessWidget {
+  const _DragHeader({
+    super.key,
+    required this.onFlick,
+    required this.onHoldDrag,
+    required this.onToggleDock,
+  });
+
+  /// Quick flick ended — argument is the primary (vertical) velocity.
+  final ValueChanged<double> onFlick;
+
+  /// Hold-drag in progress — argument is the desired panel TOP in global px
+  /// (finger Y minus a small grab offset so the grip stays under the finger).
+  final ValueChanged<double> onHoldDrag;
+
+  /// Double-tap toggles between the two dock anchors.
+  final VoidCallback onToggleDock;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: <Type, GestureRecognizerFactory>{
+        // Quick vertical drag → flick-to-dock. Loses the arena to the long
+        // press when the finger holds still first (the hold-drag path).
+        VerticalDragGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<
+              VerticalDragGestureRecognizer
+            >(
+              () => VerticalDragGestureRecognizer(),
+              (r) => r.onEnd = (d) => onFlick(d.primaryVelocity ?? 0),
+            ),
+        // Hold (long press) then drag → free-position exactly, no snap.
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+              () => LongPressGestureRecognizer(),
+              (r) => r
+                ..onLongPressMoveUpdate = (d) =>
+                    onHoldDrag(d.globalPosition.dy - 12),
+            ),
+        DoubleTapGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<DoubleTapGestureRecognizer>(
+              () => DoubleTapGestureRecognizer(),
+              (r) => r.onDoubleTap = onToggleDock,
+            ),
+      },
+      child: Container(
+        height: 24,
+        color: theme.colorScheme.surfaceContainerHighest,
+        alignment: Alignment.center,
+        // The grip: a short rounded pill bar that reads as "grab me". Monochrome,
+        // theme-tinted (memory: feedback_monochrome_icons_no_emoji).
+        child: Container(
+          key: const Key('compose-bar-grip'),
+          width: 36,
+          height: 5,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(3),
           ),
         ),
       ),
