@@ -332,11 +332,12 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
 
     // Panel width: most of the screen, capped so it reads as a panel.
     final panelWidth = size.width - 24;
-    // Tall enough for the top drag bar + the inline pill row (Fix/Copy/Paste,
-    // #638) + the 6-button vertical action rail (#797: ▲/▼ history recall, then
-    // close/clear/commit/submit) WITHOUT overflow — an overflowing Column under
-    // Clip.antiAlias clips the bottom buttons so their taps don't land. Bumped
-    // from 272 to 352 to seat the two extra history buttons.
+    // Tall enough for the top header (#819: drag grip + flush-right Fix/Copy/
+    // Paste pill row, no separate pill band) + the 6-button vertical action rail
+    // (#797: ▲/▼ history recall, then close/clear/commit/submit) WITHOUT
+    // overflow — an overflowing Column under Clip.antiAlias clips the bottom
+    // buttons so their taps don't land. #819 folded the old standalone pill band
+    // into the header, reclaiming that vertical space for the text field.
     const panelHeight = 352.0;
     const margin = 12.0;
     final left = (size.width - panelWidth) / 2;
@@ -378,16 +379,23 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Drag header (TOP edge, #634/#798): a slim full-width grab bar.
-              // It carries an explicit GRIP affordance (a short pill grabber —
-              // #798) so it reads as draggable, and owns all the move gestures so
-              // they never land on the textarea (textareas intercept touch —
-              // memory mobile-touch). A quick FLICK snaps to a dock anchor (up →
-              // TOP, down → BOTTOM); a HOLD-then-drag free-positions exactly
-              // (#798). Long-press wins the gesture arena on a hold, so the two
-              // never conflict (mirrors ghostty_terminal_view.dart #688/#690).
+              // Drag header (TOP edge, #634/#798/#819): a slim full-width grab
+              // bar carrying a centered GRIP affordance AND the flush-right
+              // Fix/Copy/Paste pill row (#819). The grip owns all the move
+              // gestures (they never land on the textarea — textareas intercept
+              // touch, memory mobile-touch); the pills are tap targets layered
+              // on top, flush-right, clear of the centered grip. A quick FLICK
+              // snaps to a dock anchor (up → TOP, down → BOTTOM); a HOLD-then-
+              // drag free-positions exactly (#798). Long-press wins the gesture
+              // arena on a hold (mirrors ghostty_terminal_view.dart #688/#690).
+              // #819: the three pills moved here from the old standalone band,
+              // reclaiming that vertical space for the text field.
               _DragHeader(
                 key: const Key('compose-bar-drag'),
+                hasText: _controller.text.isNotEmpty,
+                onFix: _fix,
+                onCopy: _copy,
+                onPaste: _paste,
                 onFlick: _flickDock,
                 onHoldDrag: (globalTop) =>
                     _freePositionTo(globalTop, size.height),
@@ -398,96 +406,56 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
                   _freeTop = null;
                 }),
               ),
-              // #638/#798: inline TEXT-action pill row. Fix stays here as a wide
-              // pill; Copy/Paste moved to small chips on the field's TOP BORDER
-              // (#798) — see the Stack around the editable below.
-              _PillRow(
-                hasText: _controller.text.isNotEmpty,
-                onFix: _fix,
-              ),
               // Field + action rail share the remaining height.
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // The editable — gets the width (slim vertical button rail).
-                    // #798: small Copy/Paste chips are overlaid on the field's
-                    // TOP BORDER via a Stack (clipBehavior:none so they straddle
-                    // the outline). The field keeps an extra top inset so the
-                    // chips don't cover the first line of text.
+                    // #819: no border chips on the field any more, so the text
+                    // starts at the normal top inset, fully clear of the pills
+                    // (which live on the header above).
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            TextField(
-                              key: const Key('compose-bar-input'),
-                              controller: _controller,
-                              focusNode: _focusNode,
-                              autofocus: true,
-                              // THE CRUX: composing/swipe/voice need these ENABLED.
-                              keyboardType: TextInputType.multiline,
-                              textInputAction: TextInputAction.newline,
-                              autocorrect: true,
-                              enableSuggestions: true,
-                              enableIMEPersonalizedLearning: true,
-                              expands: true,
-                              minLines: null,
-                              maxLines: null,
-                              textAlignVertical: TextAlignVertical.top,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 15,
-                              ),
-                              decoration: InputDecoration(
-                                isDense: true,
-                                hintText: 'Compose (swipe / voice / type)',
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                // #798: extra top inset clears the border chips.
-                                contentPadding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  16,
-                                  10,
-                                  8,
-                                ),
-                              ),
+                        child: TextField(
+                          key: const Key('compose-bar-input'),
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          autofocus: true,
+                          // THE CRUX: composing/swipe/voice need these ENABLED.
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.newline,
+                          autocorrect: true,
+                          enableSuggestions: true,
+                          enableIMEPersonalizedLearning: true,
+                          expands: true,
+                          minLines: null,
+                          maxLines: null,
+                          textAlignVertical: TextAlignVertical.top,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 15,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: 'Compose (swipe / voice / type)',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                            // #798: Copy/Paste chips on the TOP BORDER. Centred
-                            // on the outline (top:-2 ≈ the border line) and right-
-                            // aligned so they don't fight the hint text.
-                            Positioned(
-                              top: -2,
-                              right: 8,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  _BorderChip(
-                                    buttonKey: const Key('compose-bar-copy'),
-                                    icon: Icons.copy_outlined,
-                                    tooltip: 'Copy compose text',
-                                    onPressed:
-                                        _controller.text.isNotEmpty ? _copy : null,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  _BorderChip(
-                                    buttonKey: const Key('compose-bar-paste'),
-                                    icon: Icons.content_paste_outlined,
-                                    tooltip: 'Paste at cursor',
-                                    onPressed: _paste,
-                                  ),
-                                ],
-                              ),
+                            contentPadding: const EdgeInsets.fromLTRB(
+                              10,
+                              8,
+                              10,
+                              8,
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
                     // Vertical action rail (#604/#638/#797): WHOLE-VIEW actions
                     // only — ▲/▼ history recall, close, clear, commit, submit.
-                    // Text actions (copy/paste/fix) live in the inline pill row.
+                    // Text actions (copy/paste/fix) live on the header pill row.
                     _ActionRail(
                       hasText: _controller.text.isNotEmpty,
                       hasHistory: ref
@@ -512,54 +480,21 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   }
 }
 
-/// Inline TEXT-action pill row (#638/#798). Mirrors the PWA's `.ime-paste-
-/// overlay` chips (src/modules/ime.ts). #798 moved Copy/Paste to small chips on
-/// the field's TOP BORDER, so this row now carries only the wide Fix pill (the
-/// odd-one-out: it rewrites the staged text rather than touching the clipboard).
-/// Monochrome, theme-tinted — no emoji (memory: feedback_monochrome_icons_no_emoji).
-class _PillRow extends StatelessWidget {
-  const _PillRow({
-    required this.hasText,
-    required this.onFix,
-  });
-
-  final bool hasText;
-  final VoidCallback onFix;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      key: const Key('compose-bar-pills'),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
-      child: Row(
-        children: [
-          _Pill(
-            buttonKey: const Key('compose-bar-fix'),
-            icon: Icons.auto_fix_high_outlined,
-            label: 'Fix',
-            tooltip: 'Collapse terminal soft-wraps into one line',
-            onPressed: hasText ? onFix : null,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// A single chip-style text-action pill (#638). Tonal, compact, monochrome —
-/// reads as a secondary affordance, not a primary button.
+/// A single tonal text-action pill (#638/#819). Compact, monochrome, rounded —
+/// the ONE shape shared by Fix, Copy and Paste (#819). Reads as a secondary
+/// affordance, not a primary button. Icon-only (no label) so all three fit
+/// flush-right on the header without crowding the centered grip; the tooltip
+/// names the action. Fixed 32px height so the three pills are visibly identical.
 class _Pill extends StatelessWidget {
   const _Pill({
     required this.buttonKey,
     required this.icon,
-    required this.label,
     required this.tooltip,
     required this.onPressed,
   });
 
   final Key buttonKey;
   final IconData icon;
-  final String label;
   final String tooltip;
   final VoidCallback? onPressed;
 
@@ -568,91 +503,59 @@ class _Pill extends StatelessWidget {
     final theme = Theme.of(context);
     return Tooltip(
       message: tooltip,
-      child: TextButton.icon(
+      child: TextButton(
         key: buttonKey,
         onPressed: onPressed,
-        icon: Icon(icon, size: 16),
-        label: Text(label),
         style: TextButton.styleFrom(
           visualDensity: VisualDensity.compact,
           foregroundColor: theme.colorScheme.onSurfaceVariant,
           backgroundColor: theme.colorScheme.surfaceContainerHighest,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          minimumSize: const Size(0, 32),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          minimumSize: const Size(40, 32),
+          fixedSize: const Size.fromHeight(32),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: const TextStyle(fontSize: 12),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
         ),
+        child: Icon(icon, size: 18),
       ),
     );
   }
 }
 
-/// #798: a small icon-only chip seated on the field's TOP BORDER (Copy/Paste).
-/// The visual is compact (16px icon, tonal pill) but the tap target stays
-/// finger-sized via a 44px [SizedBox] + an [IconButton] with no constraints
-/// (its splash fills the box). Monochrome, theme-tinted — no emoji.
-class _BorderChip extends StatelessWidget {
-  const _BorderChip({
-    required this.buttonKey,
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final Key buttonKey;
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    // Full 44px hit area; the visible chip inside is small.
-    return SizedBox(
-      width: 44,
-      height: 44,
-      child: IconButton(
-        key: buttonKey,
-        tooltip: tooltip,
-        onPressed: onPressed,
-        padding: EdgeInsets.zero,
-        iconSize: 16,
-        visualDensity: VisualDensity.compact,
-        style: IconButton.styleFrom(
-          minimumSize: const Size(26, 26),
-          fixedSize: const Size(26, 26),
-          backgroundColor: theme.colorScheme.surfaceContainerHighest,
-          foregroundColor: theme.colorScheme.onSurfaceVariant,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
-          ),
-        ),
-        icon: Icon(icon),
-      ),
-    );
-  }
-}
-
-/// #798: the slim drag header at the top of the compose panel. It carries a
-/// clear GRIP affordance (a short pill grabber) and owns the move gestures so
-/// they never reach the textarea (textareas intercept touch — memory
-/// mobile-touch). It uses a [RawGestureDetector] so a quick FLICK (vertical
-/// drag) and a deliberate HOLD-then-drag (long press) can BOTH be recognised:
-/// the long-press recognizer wins the arena once the finger dwells, mirroring
-/// the swipe-vs-long-press split in ghostty_terminal_view.dart (#688/#690).
+/// #798/#819: the slim drag header at the top of the compose panel. It carries a
+/// clear centered GRIP affordance (a short pill grabber) and, flush-RIGHT on the
+/// same border, the unified Fix/Copy/Paste pill row (#819). The grip+header own
+/// the move gestures so they never reach the textarea (textareas intercept touch
+/// — memory mobile-touch); the pills are tap targets layered on top, so a tap on
+/// a pill fires its action while flick/hold/double-tap on the rest of the header
+/// (the centered grip) still drive docking.
+///
+/// Gestures use a [RawGestureDetector] so a quick FLICK (vertical drag) and a
+/// deliberate HOLD-then-drag (long press) can BOTH be recognised: the long-press
+/// recognizer wins the arena once the finger dwells, mirroring the swipe-vs-long-
+/// press split in ghostty_terminal_view.dart (#688/#690).
 ///   - Flick → [onFlick] with the end velocity (sign picks the dock anchor).
 ///   - Hold-then-drag → [onHoldDrag] with the live global panel-top offset.
 ///   - Double-tap → [onToggleDock] (legacy top↔bottom flip, #634).
 class _DragHeader extends StatelessWidget {
   const _DragHeader({
     super.key,
+    required this.hasText,
+    required this.onFix,
+    required this.onCopy,
+    required this.onPaste,
     required this.onFlick,
     required this.onHoldDrag,
     required this.onToggleDock,
   });
+
+  /// Whether the compose field has text — gates Fix/Copy (no-op when empty).
+  final bool hasText;
+  final VoidCallback onFix;
+  final VoidCallback onCopy;
+  final VoidCallback onPaste;
 
   /// Quick flick ended — argument is the primary (vertical) velocity.
   final ValueChanged<double> onFlick;
@@ -667,48 +570,97 @@ class _DragHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return RawGestureDetector(
-      behavior: HitTestBehavior.opaque,
-      gestures: <Type, GestureRecognizerFactory>{
-        // Quick vertical drag → flick-to-dock. Loses the arena to the long
-        // press when the finger holds still first (the hold-drag path).
-        VerticalDragGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<
-              VerticalDragGestureRecognizer
-            >(
-              () => VerticalDragGestureRecognizer(),
-              (r) => r.onEnd = (d) => onFlick(d.primaryVelocity ?? 0),
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // The gesture surface fills the header behind the pills. Taps on a pill
+        // hit the pill (it's a child painted on top, to the right); flick/hold/
+        // double-tap on the rest of the header drive docking. The grip is
+        // centered, clear of the flush-right pills.
+        RawGestureDetector(
+          behavior: HitTestBehavior.opaque,
+          gestures: <Type, GestureRecognizerFactory>{
+            // Quick vertical drag → flick-to-dock. Loses the arena to the long
+            // press when the finger holds still first (the hold-drag path).
+            VerticalDragGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<
+                  VerticalDragGestureRecognizer
+                >(
+                  () => VerticalDragGestureRecognizer(),
+                  (r) => r.onEnd = (d) => onFlick(d.primaryVelocity ?? 0),
+                ),
+            // Hold (long press) then drag → free-position exactly, no snap.
+            LongPressGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<
+                  LongPressGestureRecognizer
+                >(
+                  () => LongPressGestureRecognizer(),
+                  (r) => r
+                    ..onLongPressMoveUpdate = (d) =>
+                        onHoldDrag(d.globalPosition.dy - 12),
+                ),
+            DoubleTapGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<
+                  DoubleTapGestureRecognizer
+                >(
+                  () => DoubleTapGestureRecognizer(),
+                  (r) => r.onDoubleTap = onToggleDock,
+                ),
+          },
+          child: Container(
+            height: 40,
+            color: theme.colorScheme.surfaceContainerHighest,
+            alignment: Alignment.center,
+            // The grip: a short rounded pill bar that reads as "grab me".
+            // Monochrome, theme-tinted (memory: feedback_monochrome_icons_no_emoji).
+            child: Container(
+              key: const Key('compose-bar-grip'),
+              width: 36,
+              height: 5,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.55,
+                ),
+                borderRadius: BorderRadius.circular(3),
+              ),
             ),
-        // Hold (long press) then drag → free-position exactly, no snap.
-        LongPressGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
-              () => LongPressGestureRecognizer(),
-              (r) => r
-                ..onLongPressMoveUpdate = (d) =>
-                    onHoldDrag(d.globalPosition.dy - 12),
-            ),
-        DoubleTapGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<DoubleTapGestureRecognizer>(
-              () => DoubleTapGestureRecognizer(),
-              (r) => r.onDoubleTap = onToggleDock,
-            ),
-      },
-      child: Container(
-        height: 24,
-        color: theme.colorScheme.surfaceContainerHighest,
-        alignment: Alignment.center,
-        // The grip: a short rounded pill bar that reads as "grab me". Monochrome,
-        // theme-tinted (memory: feedback_monochrome_icons_no_emoji).
-        child: Container(
-          key: const Key('compose-bar-grip'),
-          width: 36,
-          height: 5,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(3),
           ),
         ),
-      ),
+        // #819: the unified Fix/Copy/Paste pills, flush-RIGHT on the border.
+        // Layered above the gesture surface so taps fire the pill action; they
+        // sit to the right of the centered grip, so the grip's drag gestures are
+        // unaffected. Order left→right: Fix, Copy, Paste.
+        Positioned(
+          top: 4,
+          bottom: 4,
+          right: 6,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _Pill(
+                buttonKey: const Key('compose-bar-fix'),
+                icon: Icons.auto_fix_high_outlined,
+                tooltip: 'Collapse terminal soft-wraps into one line',
+                onPressed: hasText ? onFix : null,
+              ),
+              const SizedBox(width: 4),
+              _Pill(
+                buttonKey: const Key('compose-bar-copy'),
+                icon: Icons.copy_outlined,
+                tooltip: 'Copy compose text',
+                onPressed: hasText ? onCopy : null,
+              ),
+              const SizedBox(width: 4),
+              _Pill(
+                buttonKey: const Key('compose-bar-paste'),
+                icon: Icons.content_paste_outlined,
+                tooltip: 'Paste at cursor',
+                onPressed: onPaste,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
