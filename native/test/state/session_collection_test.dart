@@ -13,21 +13,47 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/services/session_messages.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/ssh/ssh_session_proxy.dart';
+import 'package:mobissh/state/keepalive_providers.dart';
+import 'package:mobissh/state/profiles_providers.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
+import 'package:mobissh/storage/profiles_store.dart';
+import 'package:mobissh/storage/secrets_store.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-ProviderContainer _makeContainer() {
+ProviderContainer _makeContainer({void Function()? onStart}) {
+  return _makeContainerWithPair(onStart: onStart).$1;
+}
+
+/// Like [_makeContainer] but also returns the in-memory gateway pair so a test
+/// can observe UI→task commands on `pair.taskSide.incoming` (#817).
+///
+/// When [profiles] / [secrets] are supplied they back the profiles + secrets
+/// providers so the #817 Reconnect revive path can re-resolve credentials
+/// deterministically (no platform channels).
+(ProviderContainer, InMemoryGatewayPair) _makeContainerWithPair({
+  void Function()? onStart,
+  ProfilesStore? profiles,
+  SecretsStore? secrets,
+}) {
   final pair = InMemoryGatewayPair();
   final container = ProviderContainer(overrides: [
     taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+    if (onStart != null)
+      keepaliveServiceStarterProvider.overrideWithValue(() async {
+        onStart();
+      }),
+    if (profiles != null) profilesStoreProvider.overrideWithValue(profiles),
+    if (secrets != null) secretsStoreProvider.overrideWithValue(secrets),
   ]);
   addTearDown(() async {
     await pair.dispose();
   });
-  return container;
+  return (container, pair);
 }
 
 SshConnectParams _params({
@@ -157,6 +183,135 @@ void main() {
       final miss =
           notifier.findByProfile(host: 'a', port: 2222, username: 'u');
       expect(miss, isNull);
+    });
+
+    // #817 regression: tapping Reconnect on a dropped session must (re)START the
+    // foreground task isolate AND re-establish the session. Disconnecting the
+    // last session stops the service, tearing down the task isolate + its host
+    // session (held params + creds). A bare proxy.reconnect() then (a) buffers
+    // against a dead isolate and (b) reaches a FRESH host with no record of the
+    // session — a double no-op, so the session never revives (the device-only
+    // bug the emulator gate caught). The fix routes Reconnect through the
+    // notifier, which restarts the service (idempotent starter) and re-resolves
+    // credentials from the saved profile to re-issue a FULL connect — the
+    // task-side host rehosts + connects (or routes to reconnectNow when the
+    // session survived).
+    test('reconnect(id) restarts the service and re-issues a credentialed '
+        'connect from the saved profile', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final profilesStore = ProfilesStore(prefs: prefs);
+      final secretsStore =
+          SecretsStore(backend: InMemorySecretsBackend());
+      // Seed a saved profile matching the session identity + its vault secret.
+      await profilesStore.save([
+        SavedProfile(
+          title: 'host',
+          host: 'h',
+          port: 22,
+          username: 'u',
+          authType: 'password',
+          vaultId: 'vault-1',
+        ),
+      ]);
+      await secretsStore.write('vault-1', {'password': 'sekret'});
+
+      var starts = 0;
+      final (c, pair) = _makeContainerWithPair(
+        onStart: () => starts++,
+        profiles: profilesStore,
+        secrets: secretsStore,
+      );
+      addTearDown(c.dispose);
+
+      // Capture commands the task isolate receives over the gateway.
+      final taskSeen = <Map<String, dynamic>>[];
+      final taskSub = pair.taskSide.incoming.listen(taskSeen.add);
+      addTearDown(taskSub.cancel);
+
+      final entry = c.read(sessionsProvider.notifier).addOrActivate(_params());
+      await Future<void>.delayed(Duration.zero);
+      final startsAfterConnect = starts;
+      expect(startsAfterConnect, greaterThanOrEqualTo(1),
+          reason: 'addOrActivate already starts the service once');
+      taskSeen.clear();
+
+      c.read(sessionsProvider.notifier).reconnect(entry.id);
+      // Settle the starter future + the async profile/secret resolution.
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(starts, greaterThan(startsAfterConnect),
+          reason: 'reconnect must (re)start the keepalive service');
+      final connect = taskSeen.firstWhere(
+        (m) =>
+            m['sessionId'] == entry.id &&
+            m['kind'] == SshTaskCommandKind.connect.name,
+        orElse: () => <String, dynamic>{},
+      );
+      expect(connect, isNotEmpty,
+          reason: 'a credentialed connect must reach the task side on revive');
+      // The re-issued connect must carry the re-resolved auth (no user prompt).
+      expect(connect['auth'], isNotNull,
+          reason: 'revive connect must re-supply auth from the vault');
+    });
+
+    // Fallback: an ad-hoc session with no matching saved profile still revives
+    // via the held-params reconnect command (no creds to re-resolve).
+    test('reconnect(id) with no saved profile falls back to a reconnect '
+        'command', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      var starts = 0;
+      final (c, pair) = _makeContainerWithPair(
+        onStart: () => starts++,
+        profiles: ProfilesStore(prefs: prefs), // empty store
+        secrets: SecretsStore(backend: InMemorySecretsBackend()),
+      );
+      addTearDown(c.dispose);
+      final taskSeen = <Map<String, dynamic>>[];
+      final taskSub = pair.taskSide.incoming.listen(taskSeen.add);
+      addTearDown(taskSub.cancel);
+
+      final entry = c.read(sessionsProvider.notifier).addOrActivate(_params());
+      await Future<void>.delayed(Duration.zero);
+      taskSeen.clear();
+
+      c.read(sessionsProvider.notifier).reconnect(entry.id);
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(
+        taskSeen.any((m) =>
+            m['sessionId'] == entry.id &&
+            m['kind'] == SshTaskCommandKind.reconnect.name),
+        isTrue,
+        reason: 'no saved creds → held-params reconnect command',
+      );
+    });
+
+    test('reconnect(id) on an unknown id is a no-op', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      var starts = 0;
+      final (c, pair) = _makeContainerWithPair(
+        onStart: () => starts++,
+        profiles: ProfilesStore(prefs: prefs),
+        secrets: SecretsStore(backend: InMemorySecretsBackend()),
+      );
+      addTearDown(c.dispose);
+      final taskSeen = <Map<String, dynamic>>[];
+      final taskSub = pair.taskSide.incoming.listen(taskSeen.add);
+      addTearDown(taskSub.cancel);
+
+      c.read(sessionsProvider.notifier).reconnect('does-not-exist');
+      await Future<void>.delayed(Duration.zero);
+      expect(starts, 0,
+          reason: 'unknown id must not start the service');
+      expect(taskSeen, isEmpty,
+          reason: 'unknown id must not send anything');
     });
   });
 }

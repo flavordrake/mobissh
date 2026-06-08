@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../main.dart' show openConnectHome;
+import '../ssh/ssh_session.dart';
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
@@ -310,13 +311,19 @@ class SessionMenu extends ConsumerWidget {
               padding: EdgeInsets.all(16),
               child: Text('No sessions yet.'),
             )
-          else
+          else ...[
             for (final e in sessions.entries)
               _SessionRow(
                 entry: e,
                 isActive: e.id == sessions.activeId,
                 onClose: onClose,
               ),
+            // #817: a "Reconnect all" affordance shown whenever ANY session is
+            // non-connected (dropped/failed/disconnected/connecting). Mirrors the
+            // PWA's `activeSessionList` reconnect-all. It watches every entry's
+            // proxy state so it appears/disappears reactively.
+            _ReconnectAllRow(entries: sessions.entries),
+          ],
           // #721: open the FULL home (Profiles / Settings / Diagnostics) OVER
           // the live terminal — the SAME unified view as first-run, not a
           // reduced connect form. Reaches every setting + profiles without
@@ -654,32 +661,53 @@ class _SessionRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
     // #739: profile color swatch for THIS row's session. The per-session color
     // is seeded from the profile on connect (#653) and read via
-    // `sessionColorProvider`. Unlike the session bar — which falls back to the
-    // theme accent (`session-bar-swatch`) — a colorless session here shows a
-    // NEUTRAL muted dot (`outlineVariant`), never a fake real-looking color
-    // (issue #739). The SAME color identifies the SAME profile everywhere
-    // (PWA `session-dot`).
+    // `sessionColorProvider`. The SAME color identifies the SAME profile
+    // everywhere (PWA `session-dot`).
     final profileColor = ref.watch(sessionColorProvider(entry.id));
-    final swatchColor = profileColor ?? theme.colorScheme.outlineVariant;
+    // #817: the row now reads the session's lifecycle STATE directly (not a
+    // boolean) and surfaces a state-driven status dot + per-state action.
+    // StreamBuilder on the proxy state stream keeps the row reactive as the
+    // session moves connected → softDisconnected/reconnecting → failed without
+    // re-opening the menu — exactly the PWA `activeSessionList` behaviour.
+    return StreamBuilder<SshSessionData>(
+      stream: entry.proxy.stream,
+      initialData: entry.proxy.data,
+      builder: (context, snapshot) {
+        final data = snapshot.data ?? entry.proxy.data;
+        return _buildRow(context, ref, data.state, data.error, profileColor);
+      },
+    );
+  }
+
+  Widget _buildRow(
+    BuildContext context,
+    WidgetRef ref,
+    SshSessionState state,
+    String? error,
+    Color? profileColor,
+  ) {
+    final theme = Theme.of(context);
+    final subtitle = _subtitleFor(theme, state, error);
     return ListTile(
       key: Key('session-menu-row-${entry.id}'),
-      // [swatch][terminal] — the small filled circle (profile color, else a
-      // neutral dot) sits immediately left of the existing terminal glyph so the
-      // row reads as `● ⌨ label`, mirroring the profile list / session bar.
+      // [status dot][terminal] — the dot's COLOR + animation reflect the
+      // session state (#817): solid profile/accent when connected, pulsing
+      // while connecting, amber while reconnecting, red on failure, grey when
+      // user-disconnected. Monochrome theme glyphs only — no emoji
+      // (feedback_monochrome_icons_no_emoji). The profile color is preserved as
+      // the "connected" tint so the SAME color still identifies the profile.
       leading: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            key: Key('session-menu-swatch-${entry.id}'),
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: swatchColor,
-              shape: BoxShape.circle,
-            ),
+          _StatusDot(
+            key: Key('session-menu-status-dot-${entry.id}'),
+            // The swatch key is retained (#739 tests + device screenshots
+            // address it) and now lives on the same dot.
+            swatchKey: Key('session-menu-swatch-${entry.id}'),
+            state: state,
+            profileColor: profileColor,
           ),
           const SizedBox(width: 8),
           Icon(
@@ -688,10 +716,6 @@ class _SessionRow extends ConsumerWidget {
           ),
         ],
       ),
-      // #567: the label alone identifies the session (mirrors the PWA's slim
-      // session list, which shows the label + a connection dot, no verbose
-      // user@host:port subtitle). Dropping the subtitle halves each row's
-      // height and tightens the menu.
       dense: true,
       title: Text(
         entry.label,
@@ -700,11 +724,17 @@ class _SessionRow extends ConsumerWidget {
           fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
         ),
       ),
-      // [file icon][X] — the file icon opens the browser for THIS row's
-      // session (#649); the X disconnects/closes THIS row's session. Both are
-      // per-row so a multi-session menu addresses each session independently.
-      // The file glyph is monochrome (Material `folder_outlined`, currentColor)
-      // — no emoji (feedback_monochrome_icons_no_emoji).
+      // A short status line under the label for non-connected states (#817) so
+      // a dropped session is never an invisible/✕-only tile: "Connecting…",
+      // "Reconnecting…", or the failure reason. Connected rows stay subtitle-
+      // less (the slim #567 direction).
+      subtitle: subtitle,
+      // Trailing action set (#817): a Reconnect button is ADDED for drop states
+      // (softDisconnected/reconnecting/failed/disconnected) — it's omitted while
+      // connected/connecting (nothing to manually reconnect). Files stays a
+      // per-row affordance in EVERY state (#649 contract — the browser handles a
+      // non-live link itself). The ✕ is ALWAYS present and means "forget this
+      // session" (explicit close).
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -714,8 +744,8 @@ class _SessionRow extends ConsumerWidget {
             visualDensity: VisualDensity.compact,
             icon: const Icon(Icons.folder_outlined),
             // Open the file browser for THIS row's session id (its live SSH
-            // connection drives SFTP), not just the active session. Close the
-            // menu first so the browser route isn't covered by the overlay.
+            // connection drives SFTP). Close the menu first so the browser
+            // route isn't covered by the overlay.
             onPressed: () {
               final sessionId = entry.id;
               final navigator = Navigator.of(context);
@@ -723,6 +753,22 @@ class _SessionRow extends ConsumerWidget {
               openFileBrowser(navigator.context, sessionId);
             },
           ),
+          if (_canReconnect(state))
+            IconButton(
+              key: Key('session-menu-reconnect-${entry.id}'),
+              tooltip: 'Reconnect',
+              visualDensity: VisualDensity.compact,
+              // Monochrome replay glyph (mirrors the recents reconnect icon).
+              icon: const Icon(Icons.replay),
+              // Re-enter the connect path for THIS entry from held params
+              // (#817). Routed through the notifier so the foreground task
+              // isolate is (re)started before the reconnect command is sent —
+              // disconnecting the last session stops the service, and a bare
+              // proxy.reconnect() would buffer against a dead isolate forever.
+              // The ✕ remains "forget"; this is "bring it back".
+              onPressed: () =>
+                  ref.read(sessionsProvider.notifier).reconnect(entry.id),
+            ),
           IconButton(
             key: Key('session-menu-close-${entry.id}'),
             tooltip: 'Close session',
@@ -737,37 +783,270 @@ class _SessionRow extends ConsumerWidget {
         ref.read(sessionsProvider.notifier).setActive(entry.id);
         onClose();
       },
-      onLongPress: () => _showRowActions(context, ref),
     );
   }
 
-  void _showRowActions(BuildContext context, WidgetRef ref) {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const Key('session-menu-action-disconnect'),
-              leading: const Icon(Icons.link_off),
-              title: const Text('Disconnect'),
-              onTap: () {
-                entry.proxy.disconnect();
-                Navigator.of(ctx).pop();
-              },
-            ),
-            ListTile(
-              key: const Key('session-menu-action-close'),
-              leading: const Icon(Icons.close),
-              title: const Text('Close session'),
-              onTap: () {
-                ref.read(sessionsProvider.notifier).close(entry.id);
-                Navigator.of(ctx).pop();
-              },
-            ),
-          ],
+  /// True when the session is in a drop state the user can manually reconnect
+  /// from (#817). A live/connecting session is excluded — it's already healthy
+  /// or trying. Reads STATE, never a boolean.
+  static bool _canReconnect(SshSessionState state) {
+    return state == SshSessionState.softDisconnected ||
+        state == SshSessionState.reconnecting ||
+        state == SshSessionState.failed ||
+        state == SshSessionState.disconnected;
+  }
+
+  /// The per-state status line under the row label, or null for `connected`
+  /// (slim — no subtitle) and `idle` (pre-connect, nothing to say yet).
+  Widget? _subtitleFor(
+    ThemeData theme,
+    SshSessionState state,
+    String? error,
+  ) {
+    switch (state) {
+      case SshSessionState.idle:
+      case SshSessionState.connected:
+        return null;
+      case SshSessionState.connecting:
+      case SshSessionState.authenticating:
+      case SshSessionState.awaitingHostKey:
+        return Text(
+          key: Key('session-menu-status-text-${entry.id}'),
+          'Connecting…',
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall,
+        );
+      case SshSessionState.softDisconnected:
+      case SshSessionState.reconnecting:
+        return Text(
+          key: Key('session-menu-status-text-${entry.id}'),
+          'Reconnecting…',
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: Colors.orange.shade700,
+          ),
+        );
+      case SshSessionState.failed:
+        final reason = (error != null && error.trim().isNotEmpty)
+            ? error.trim()
+            : 'Disconnected';
+        return Text(
+          key: Key('session-menu-status-text-${entry.id}'),
+          reason,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        );
+      case SshSessionState.disconnected:
+        return Text(
+          key: Key('session-menu-status-text-${entry.id}'),
+          'Disconnected',
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        );
+    }
+  }
+}
+
+/// State-driven status dot for a session row (#817). The COLOR encodes the
+/// lifecycle state; `connecting`/`reconnecting` pulse to signal "in flight".
+/// Monochrome / theme-derived colors only — no emoji
+/// (feedback_monochrome_icons_no_emoji):
+///   connected → solid profile color (else theme accent)
+///   connecting/authenticating/awaitingHostKey → pulsing accent
+///   softDisconnected/reconnecting → amber
+///   failed → red (theme error)
+///   disconnected (user) / idle → grey (outlineVariant)
+class _StatusDot extends StatefulWidget {
+  const _StatusDot({
+    super.key,
+    required this.swatchKey,
+    required this.state,
+    required this.profileColor,
+  });
+
+  final Key swatchKey;
+  final SshSessionState state;
+  final Color? profileColor;
+
+  @override
+  State<_StatusDot> createState() => _StatusDotState();
+}
+
+class _StatusDotState extends State<_StatusDot>
+    with SingleTickerProviderStateMixin {
+  // Constructed eagerly in initState (NOT `late final`): a lazy field would be
+  // built inside dispose() if it was never animated, and constructing an
+  // AnimationController during unmount does a TickerMode ancestor lookup on a
+  // deactivated widget (crash). Eager construction makes dispose() always safe.
+  late final AnimationController _pulse;
+
+  bool get _pulsing =>
+      widget.state == SshSessionState.connecting ||
+      widget.state == SshSessionState.authenticating ||
+      widget.state == SshSessionState.awaitingHostKey ||
+      widget.state == SshSessionState.softDisconnected ||
+      widget.state == SshSessionState.reconnecting;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+      value: 1.0,
+    );
+    if (_pulsing) _pulse.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(_StatusDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_pulsing && !_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    } else if (!_pulsing && _pulse.isAnimating) {
+      _pulse
+        ..stop()
+        ..value = 1.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  Color _color(ThemeData theme) {
+    switch (widget.state) {
+      // connected (and idle, pre-connect) keep the PROFILE color so the SAME
+      // color still identifies the SAME profile across the app (#739, PWA
+      // `session-dot`). A colorless session shows the neutral fallback — never a
+      // fake real-looking color (#739).
+      case SshSessionState.idle:
+      case SshSessionState.connected:
+        return widget.profileColor ?? theme.colorScheme.outlineVariant;
+      case SshSessionState.connecting:
+      case SshSessionState.authenticating:
+      case SshSessionState.awaitingHostKey:
+        return theme.colorScheme.primary;
+      case SshSessionState.softDisconnected:
+      case SshSessionState.reconnecting:
+        return Colors.orange.shade700;
+      case SshSessionState.failed:
+        return theme.colorScheme.error;
+      case SshSessionState.disconnected:
+        return theme.colorScheme.outlineVariant;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color(Theme.of(context));
+    final dot = Container(
+      key: widget.swatchKey,
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+    if (!_pulsing) return dot;
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.35, end: 1.0).animate(_pulse),
+      child: dot,
+    );
+  }
+}
+
+/// "Reconnect all" affordance (#817), shown only when at least one session is
+/// in a manually-reconnectable drop state. Each tap force-reconnects every
+/// dropped session (held params, no auth re-supply). It watches every entry's
+/// proxy state so it appears/disappears reactively as sessions drop/recover —
+/// mirroring the PWA `activeSessionList` reconnect-all.
+class _ReconnectAllRow extends ConsumerStatefulWidget {
+  const _ReconnectAllRow({required this.entries});
+
+  final List<SessionEntry> entries;
+
+  @override
+  ConsumerState<_ReconnectAllRow> createState() => _ReconnectAllRowState();
+}
+
+class _ReconnectAllRowState extends ConsumerState<_ReconnectAllRow> {
+  final List<StreamSubscription<SshSessionData>> _subs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribe();
+  }
+
+  @override
+  void didUpdateWidget(_ReconnectAllRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-subscribe when the entry set changes (a session added/removed).
+    _resubscribe();
+  }
+
+  void _subscribe() {
+    for (final e in widget.entries) {
+      _subs.add(
+        e.proxy.stream.listen((_) {
+          if (mounted) setState(() {});
+        }),
+      );
+    }
+  }
+
+  void _resubscribe() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
+    _subscribe();
+  }
+
+  @override
+  void dispose() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
+    super.dispose();
+  }
+
+  bool _isDropped(SshSessionState state) {
+    return state == SshSessionState.softDisconnected ||
+        state == SshSessionState.reconnecting ||
+        state == SshSessionState.failed ||
+        state == SshSessionState.disconnected;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dropped =
+        widget.entries.where((e) => _isDropped(e.proxy.data.state)).toList();
+    if (dropped.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: OutlinedButton.icon(
+        key: const Key('session-menu-reconnect-all'),
+        icon: const Icon(Icons.restart_alt, size: 18),
+        label: Text(
+          dropped.length == 1 ? 'Reconnect' : 'Reconnect all (${dropped.length})',
         ),
+        onPressed: () {
+          // Route through the notifier so the foreground task isolate is
+          // (re)started before each reconnect command — see
+          // SessionsNotifier.reconnect (#817).
+          final notifier = ref.read(sessionsProvider.notifier);
+          for (final e in dropped) {
+            notifier.reconnect(e.id);
+          }
+        },
       ),
     );
   }

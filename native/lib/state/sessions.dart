@@ -29,7 +29,9 @@ import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../ui/terminal_mouse_handler.dart';
+import '../storage/profiles_store.dart';
 import 'keepalive_providers.dart';
+import 'profiles_providers.dart';
 import 'recent_sessions.dart';
 import 'session_host_providers.dart';
 
@@ -250,6 +252,108 @@ class SessionsNotifier extends Notifier<SessionsState> {
         state = state.copyWith(activeId: id);
         return;
       }
+    }
+  }
+
+  /// User-initiated FORCE reconnect of a dropped session (#817, Active Sessions
+  /// UI Reconnect button). No-op when [id] is unknown.
+  ///
+  /// Two things must happen for a dropped session to genuinely revive on device:
+  ///
+  /// 1. RESTART the foreground task isolate. Disconnecting the LAST live session
+  ///    drives the keepalive connected-count to 0, which STOPS the foreground
+  ///    service — tearing down the task isolate (and its `SessionHost`, with the
+  ///    controller's held params + creds). The UI↔task gateway goes not-ready, so
+  ///    a bare command would BUFFER against a dead isolate forever (the device
+  ///    bug the emulator gate caught). `ensureStarted()` respawns the isolate;
+  ///    the gateway re-handshakes to ready and flushes buffered commands. It is
+  ///    idempotent, so when the service is still up this is a harmless no-op.
+  ///
+  /// 2. Re-establish the SSH session. When the isolate was torn down, the fresh
+  ///    `SessionHost` has NO record of the session — `SshReconnectCommand` would
+  ///    no-op (`_sessions[id]` is null) because the held params died with it. So
+  ///    we re-resolve credentials from the matching saved profile's vault entry
+  ///    (silent — no user prompt, mirroring the PWA `reconnect-recent` path) and
+  ///    re-issue a full `connect` on the SAME proxy/session id. The task-side
+  ///    `_handleConnect` rehosts + connects when the session is gone, or routes
+  ///    the connect to `reconnectNow()` when the session survived but dropped.
+  ///    Falls back to the bare `proxy.reconnect()` (held-params fast path) for an
+  ///    ad-hoc session with no resolvable saved creds.
+  void reconnect(String id) {
+    SessionEntry? entry;
+    for (final e in state.entries) {
+      if (e.id == id) {
+        entry = e;
+        break;
+      }
+    }
+    final e = entry;
+    if (e == null) return;
+    unawaited(ref.read(keepaliveServiceStarterProvider)());
+    unawaited(_reviveFromProfile(e));
+  }
+
+  /// Re-resolve [entry]'s credentials from its saved profile and re-issue a full
+  /// connect, so a session whose task-side host was torn down (last-session drop
+  /// stopped the foreground service) can be rebuilt without prompting the user
+  /// (#817). Falls back to the held-params `proxy.reconnect()` when no matching
+  /// profile / stored credentials exist. Guarded + fire-and-forget: any failure
+  /// degrades to the bare reconnect rather than wedging the UI.
+  Future<void> _reviveFromProfile(SessionEntry entry) async {
+    try {
+      final profiles = await ref.read(profilesStoreProvider).load();
+      SavedProfile? match;
+      for (final p in profiles) {
+        if (p.identityKey == entry.profileKey) {
+          match = p;
+          break;
+        }
+      }
+      if (match == null) {
+        entry.proxy.reconnect();
+        return;
+      }
+      final secrets = ref.read(secretsStoreProvider);
+      final creds = await loadProfileCredentials(secrets, match);
+      final wantsKey =
+          match.authType == 'key' ||
+          (match.authType == null &&
+              (creds.privateKey != null && creds.privateKey!.isNotEmpty));
+      final SshAuth? auth;
+      if (wantsKey &&
+          creds.privateKey != null &&
+          creds.privateKey!.isNotEmpty) {
+        auth = SshAuth.key(
+          Uint8List.fromList(utf8.encode(creds.privateKey!)),
+          passphrase: (creds.passphrase == null || creds.passphrase!.isEmpty)
+              ? null
+              : creds.passphrase,
+        );
+      } else if (!wantsKey &&
+          creds.password != null &&
+          creds.password!.isNotEmpty) {
+        auth = SshAuth.password(creds.password!);
+      } else {
+        auth = null;
+      }
+      if (auth == null) {
+        // No stored secret to re-supply — fall back to held-params reconnect
+        // (works when the task-side session survived the drop).
+        entry.proxy.reconnect();
+        return;
+      }
+      entry.proxy.connect(
+        SshConnectParams(
+          host: entry.host,
+          port: entry.port,
+          username: entry.username,
+          auth: auth,
+        ),
+        title: entry.title,
+      );
+    } catch (_) {
+      // Best-effort: degrade to the bare held-params reconnect.
+      entry.proxy.reconnect();
     }
   }
 
