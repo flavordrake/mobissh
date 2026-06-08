@@ -72,8 +72,89 @@ Future<TerminalController> replayCast(ReplayCast cast) async {
   return controller;
 }
 
+/// Build a controller with [rows]/[cols], write [url] near the TOP of history,
+/// then push it far up with [trailingRows] of filler so it sits BEYOND the
+/// bottom-anchored detection window. Returns the controller scrolled to TOP so
+/// the URL is on-screen. Registers the pattern AFTER scrolling so the (sync)
+/// re-scan runs at the scrolled-up offset — the #787 condition.
+Future<TerminalController> _scrolledUpUrlController({
+  required String url,
+  required int rows,
+  required int cols,
+  required int trailingRows,
+}) async {
+  final controller = TerminalController(
+    config: TerminalConfig(cols: cols, rows: rows),
+  );
+  // The URL on its own line near the top of history, followed by a blank line
+  // so its soft-wrap flag doesn't join it to the filler below (that wrap-join
+  // behaviour is issue #767's concern, orthogonal to this scan-window test).
+  controller.write(Uint8List.fromList(utf8.encode('$url\r\n\r\n')));
+  // Push it far above the live viewport with many filler rows so it falls
+  // outside a window measured from the bottom of the scrollback.
+  final filler = StringBuffer();
+  for (var i = 0; i < trailingRows; i++) {
+    filler.write('filler row $i\r\n');
+  }
+  controller.write(Uint8List.fromList(utf8.encode(filler.toString())));
+  // Scroll so the URL is back on screen at the top of the viewport.
+  controller.scrollToTop();
+  // Register AFTER scrolling: registration scans synchronously at the current
+  // (scrolled-up) offset.
+  controller.registerTextPattern(TextPattern.url());
+  // Detection re-scan can be debounced; mirror the replay test's settle window.
+  await Future<void>.delayed(const Duration(milliseconds: 250));
+  return controller;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('scroll-window detection coverage (#787)', () {
+    const url = 'https://mobissh.tailbe5094.ts.net/'
+        'mobissh-native-20260607T213707+0000.apk';
+
+    test(
+      'a URL scrolled UP to, far beyond the bottom-anchored scan window, is '
+      'detected at the current scroll position (the #787 miss)',
+      () async {
+        // 250 filler rows >> the 200-row detection window, so the URL near the
+        // top is outside any range measured from the bottom of scrollback.
+        final controller = await _scrolledUpUrlController(
+          url: url,
+          rows: 24,
+          cols: 80,
+          trailingRows: 250,
+        );
+        addTearDown(controller.dispose);
+
+        final hits = controller.anchors.where((a) => a.payload == url).toList();
+        expect(
+          hits,
+          hasLength(1),
+          reason: 'the on-screen URL must be detected wherever the viewport '
+              'sits in scrollback — the scan region follows the viewport, not '
+              'a window anchored to the bottom (#787)',
+        );
+      },
+    );
+
+    test(
+      'near-bottom detection still works (no regression from the window move)',
+      () async {
+        final controller = TerminalController(
+          config: const TerminalConfig(cols: 80, rows: 24),
+        );
+        addTearDown(controller.dispose);
+        controller.registerTextPattern(TextPattern.url());
+        controller.write(Uint8List.fromList(utf8.encode('$url\r\n')));
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+
+        final hits = controller.anchors.where((a) => a.payload == url).toList();
+        expect(hits, hasLength(1));
+      },
+    );
+  });
 
   group('REPLAY real captured tmux grid — URL detection (#767)', () {
     test(
