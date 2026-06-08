@@ -900,7 +900,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, grid } = data;
+        const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, sentSgrTrace, grid } = data;
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
         fs.mkdirSync(reportDir, { recursive: true });
@@ -1008,6 +1008,30 @@ const server = http.createServer((req, res) => {
           console.log(`[bug-report] byte trace: ${byteTraceFile} (${byteTraceEventCount} byte events, ${scrollTraceEventCount} scroll events)`);
         }
 
+        // #793: the sent-SGR trace — the synthesized mouse/wheel SGR reports the
+        // app SENT to the remote (sentSgrTrace: [{tMs,b64}]). In tmux mouse mode
+        // the scroll is wheel-SGR sent TO tmux (local scroll never moves), so
+        // this is the half of #789 the OUTPUT byteTrace can't show. Filtered at
+        // the client send seam to SGR-mouse reports ONLY (never keystrokes), so
+        // no typed secret is ever present. Mirrors the byteTrace branch; capped.
+        let sentSgrTraceFile = '';
+        let sentSgrTraceEventCount = 0;
+        const hasSentSgrTrace = Array.isArray(sentSgrTrace) && sentSgrTrace.length > 0;
+        if (hasSentSgrTrace) {
+          const MAX_SENT_SGR_EVENTS = 8192;
+          const cappedSentSgr = sentSgrTrace.slice(-MAX_SENT_SGR_EVENTS);
+          sentSgrTraceEventCount = cappedSentSgr.length;
+          sentSgrTraceFile = `${ts}-bug-report.sent-sgr-trace.json`;
+          fs.writeFileSync(
+            path.join(reportDir, sentSgrTraceFile),
+            JSON.stringify({
+              grid: (grid && typeof grid === 'object') ? grid : null,
+              sentSgrTrace: cappedSentSgr,
+            }, null, 2),
+          );
+          console.log(`[bug-report] sent-SGR trace: ${sentSgrTraceFile} (${sentSgrTraceEventCount} events)`);
+        }
+
         // Save metadata
         const meta = {
           title: title || `Bug report ${ts}`,
@@ -1030,6 +1054,9 @@ const server = http.createServer((req, res) => {
           byteTraceFile,
           byteTraceEventCount,
           scrollTraceEventCount,
+          // #793: sent-SGR (synthesized mouse/wheel reports the app sent) sidecar.
+          sentSgrTraceFile,
+          sentSgrTraceEventCount,
           grid: (grid && typeof grid === 'object') ? grid : null,
         };
         fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.json`), JSON.stringify(meta, null, 2));

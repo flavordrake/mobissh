@@ -75,6 +75,7 @@ Map<String, Object?> buildFeedbackPayload({
   List<String> lifecycleLog = const <String>[],
   List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
   List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
+  List<Map<String, Object?>> sentSgrTrace = const <Map<String, Object?>>[],
   Map<String, Object?>? grid,
 }) {
   final fullComment = comment;
@@ -146,6 +147,13 @@ Map<String, Object?> buildFeedbackPayload({
     // active (no empty-array / null noise).
     if (byteTrace.isNotEmpty) 'byteTrace': byteTrace,
     if (scrollTrace.isNotEmpty) 'scrollTrace': scrollTrace,
+    // #793: the synthesized mouse/wheel SGR reports the app SENT
+    // (sentSgrTrace: [{tMs,b64}]). In tmux mouse mode the scroll is wheel-SGR
+    // sent TO tmux (local scroll never moves), so this reveals
+    // "swipe → wheel events emitted → tmux scrolled" — the missing half of #789.
+    // Filtered at the send seam to SGR-mouse reports ONLY, so a typed password
+    // is NEVER recorded. Omitted entirely when no session is active.
+    if (sentSgrTrace.isNotEmpty) 'sentSgrTrace': sentSgrTrace,
     'grid': ?grid,
   };
 }
@@ -356,6 +364,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       // reproduced during the burst.
       byteTrace: activeByteTraceSnapshot(),
       scrollTrace: activeScrollTraceSnapshot(),
+      sentSgrTrace: activeSentSgrTraceSnapshot(),
       grid: activeGridSnapshot(),
     );
   }
@@ -381,6 +390,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     // current (buggy) frame the owner is reporting.
     final byteTrace = activeByteTraceSnapshot();
     final scrollTrace = activeScrollTraceSnapshot();
+    final sentSgrTrace = activeSentSgrTraceSnapshot();
     final grid = activeGridSnapshot();
     final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
     final bytes = await widget.screenshotCapturer(_captureKey, dpr);
@@ -398,6 +408,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       lifecycleLog: lifecycleLog,
       byteTrace: byteTrace,
       scrollTrace: scrollTrace,
+      sentSgrTrace: sentSgrTrace,
       grid: grid,
     );
   }
@@ -411,6 +422,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     List<String> frameDataUrls = const <String>[],
     List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
     List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
+    List<Map<String, Object?>> sentSgrTrace = const <Map<String, Object?>>[],
     Map<String, Object?>? grid,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
@@ -439,6 +451,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       lifecycleLog: lifecycleLog,
       byteTrace: byteTrace,
       scrollTrace: scrollTrace,
+      sentSgrTrace: sentSgrTrace,
       grid: grid,
     );
     final ok = await widget.submitter.submit(payload);

@@ -106,6 +106,150 @@ void main() {
     });
   });
 
+  group('sent-SGR ring', () {
+    test('records a synthesized mouse/wheel SGR report', () {
+      final rec = SessionByteRecorder();
+      // A window-switch wheel-down report: CSI<65;1;28M
+      rec.recordSentSgr(Uint8List.fromList(utf8.encode('\x1b[<65;1;28M')));
+      final snap = rec.snapshotSentSgrTrace();
+      expect(snap, hasLength(1));
+      final decoded = utf8.decode(base64Decode(snap.single['b64'] as String));
+      expect(decoded, '\x1b[<65;1;28M');
+      expect(snap.single['tMs'], isA<int>());
+    });
+
+    test('does NOT record a typed keystroke / password line', () {
+      final rec = SessionByteRecorder();
+      // A typed password at a prompt flows through the SAME send seam. The
+      // filter must drop it entirely — it is NOT an SGR-mouse report, so it
+      // never enters the ring. rules/security.md: typed secrets never recorded.
+      rec.recordSentSgr(Uint8List.fromList(utf8.encode('hunter2\r')));
+      rec.recordSentSgr(Uint8List.fromList(utf8.encode('ls -la\n')));
+      // Plain Enter / control keys are not mouse reports either.
+      rec.recordSentSgr(Uint8List.fromList([0x03])); // Ctrl-C
+      expect(rec.snapshotSentSgrTrace(), isEmpty);
+    });
+
+    test('records ONLY the SGR-mouse part is irrelevant — whole chunk in, but '
+        'keystroke chunks dropped; mouse chunks kept', () {
+      final rec = SessionByteRecorder();
+      rec.recordSentSgr(Uint8List.fromList(utf8.encode('password123'))); // drop
+      rec.recordSentSgr(Uint8List.fromList(utf8.encode('\x1b[<0;5;10M'))); // keep (press)
+      rec.recordSentSgr(Uint8List.fromList(utf8.encode('\x1b[<0;5;10m'))); // keep (release)
+      final snap = rec.snapshotSentSgrTrace();
+      expect(snap, hasLength(2));
+      final texts = snap
+          .map((e) => utf8.decode(base64Decode(e['b64'] as String)))
+          .toList();
+      expect(texts, ['\x1b[<0;5;10M', '\x1b[<0;5;10m']);
+    });
+
+    test('evicts oldest sent-SGR events past the count cap', () {
+      final rec = SessionByteRecorder(maxSentSgrEvents: 3);
+      for (var i = 0; i < 6; i++) {
+        rec.recordSentSgr(Uint8List.fromList(utf8.encode('\x1b[<65;$i;1M')));
+      }
+      final snap = rec.snapshotSentSgrTrace();
+      expect(snap, hasLength(3));
+      final texts = snap
+          .map((e) => utf8.decode(base64Decode(e['b64'] as String)))
+          .toList();
+      // Newest three survive.
+      expect(texts, [
+        '\x1b[<65;3;1M',
+        '\x1b[<65;4;1M',
+        '\x1b[<65;5;1M',
+      ]);
+    });
+
+    test('snapshot scrubs the sent-SGR stream (defense in depth)', () {
+      final rec = SessionByteRecorder();
+      // Mouse reports never carry credentials, but the snapshot scrubs as
+      // defense in depth like the output ring. A report is kept; a scrub that
+      // changes nothing preserves the exact bytes.
+      rec.recordSentSgr(Uint8List.fromList(utf8.encode('\x1b[<32;7;3M')));
+      final snap = rec.snapshotSentSgrTrace();
+      expect(
+        utf8.decode(base64Decode(snap.single['b64'] as String)),
+        '\x1b[<32;7;3M',
+      );
+    });
+
+    test('active registry routes the sent-SGR snapshot to the active session', () {
+      final a = registerByteRecorder('s-a');
+      final b = registerByteRecorder('s-b');
+      a.recordSentSgr(Uint8List.fromList(utf8.encode('\x1b[<64;1;1M')));
+      b.recordSentSgr(Uint8List.fromList(utf8.encode('\x1b[<65;1;1M')));
+
+      setActiveByteRecorder('s-a');
+      expect(
+        utf8.decode(
+          base64Decode(activeSentSgrTraceSnapshot().single['b64'] as String),
+        ),
+        '\x1b[<64;1;1M',
+      );
+      setActiveByteRecorder('s-b');
+      expect(
+        utf8.decode(
+          base64Decode(activeSentSgrTraceSnapshot().single['b64'] as String),
+        ),
+        '\x1b[<65;1;1M',
+      );
+    });
+
+    test('sent-SGR snapshot is empty (not null) when no session is active', () {
+      setActiveByteRecorder(null);
+      expect(activeSentSgrTraceSnapshot(), isEmpty);
+    });
+  });
+
+  group('O(1) Queue eviction', () {
+    test('byte ring preserves FIFO order across eviction', () {
+      final rec = SessionByteRecorder(maxBytes: 100, maxEvents: 1000);
+      // 8 chunks of 25 bytes; cap 100 keeps the newest ~4.
+      for (var i = 0; i < 8; i++) {
+        rec.recordBytes(Uint8List(25)..fillRange(0, 25, i));
+      }
+      final snap = rec.snapshotByteTrace();
+      // The surviving chunks are a contiguous newest-first suffix, in order.
+      final firstBytes = snap
+          .map((e) => base64Decode(e['b64'] as String).first)
+          .toList();
+      for (var i = 1; i < firstBytes.length; i++) {
+        expect(firstBytes[i], greaterThan(firstBytes[i - 1]));
+      }
+      // Last is the newest chunk (filled with 7).
+      expect(firstBytes.last, 7);
+    });
+
+    test('byteTotal accounting stays consistent after Queue eviction', () {
+      final rec = SessionByteRecorder(maxBytes: 100, maxEvents: 1000);
+      for (var i = 0; i < 10; i++) {
+        rec.recordBytes(Uint8List(30)..fillRange(0, 30, i));
+      }
+      final snap = rec.snapshotByteTrace();
+      var total = 0;
+      for (final ev in snap) {
+        total += base64Decode(ev['b64'] as String).length;
+      }
+      expect(total, lessThanOrEqualTo(100));
+      // Reported byteTotal matches the sum of surviving chunk lengths.
+      expect(rec.debugByteTotal, total);
+    });
+
+    test('scroll ring preserves FIFO order across Queue eviction', () {
+      final rec = SessionByteRecorder(maxScrollEvents: 4);
+      for (var i = 0; i < 9; i++) {
+        rec.recordScroll(i * 10);
+      }
+      final offsets = rec
+          .snapshotScrollTrace()
+          .map((e) => e['offset'] as int)
+          .toList();
+      expect(offsets, [50, 60, 70, 80]);
+    });
+  });
+
   group('scroll ring', () {
     test('appends scroll offsets as {tMs, offset}', () {
       var clock = 0;
