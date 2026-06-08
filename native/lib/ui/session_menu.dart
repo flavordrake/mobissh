@@ -761,8 +761,13 @@ class _SessionRow extends ConsumerWidget {
               // Monochrome replay glyph (mirrors the recents reconnect icon).
               icon: const Icon(Icons.replay),
               // Re-enter the connect path for THIS entry from held params
-              // (#817). The ✕ remains "forget"; this is "bring it back".
-              onPressed: () => entry.proxy.reconnect(),
+              // (#817). Routed through the notifier so the foreground task
+              // isolate is (re)started before the reconnect command is sent —
+              // disconnecting the last session stops the service, and a bare
+              // proxy.reconnect() would buffer against a dead isolate forever.
+              // The ✕ remains "forget"; this is "bring it back".
+              onPressed: () =>
+                  ref.read(sessionsProvider.notifier).reconnect(entry.id),
             ),
           IconButton(
             key: Key('session-menu-close-${entry.id}'),
@@ -961,16 +966,16 @@ class _StatusDotState extends State<_StatusDot>
 /// dropped session (held params, no auth re-supply). It watches every entry's
 /// proxy state so it appears/disappears reactively as sessions drop/recover —
 /// mirroring the PWA `activeSessionList` reconnect-all.
-class _ReconnectAllRow extends StatefulWidget {
+class _ReconnectAllRow extends ConsumerStatefulWidget {
   const _ReconnectAllRow({required this.entries});
 
   final List<SessionEntry> entries;
 
   @override
-  State<_ReconnectAllRow> createState() => _ReconnectAllRowState();
+  ConsumerState<_ReconnectAllRow> createState() => _ReconnectAllRowState();
 }
 
-class _ReconnectAllRowState extends State<_ReconnectAllRow> {
+class _ReconnectAllRowState extends ConsumerState<_ReconnectAllRow> {
   final List<StreamSubscription<SshSessionData>> _subs = [];
 
   @override
@@ -1034,8 +1039,12 @@ class _ReconnectAllRowState extends State<_ReconnectAllRow> {
           dropped.length == 1 ? 'Reconnect' : 'Reconnect all (${dropped.length})',
         ),
         onPressed: () {
+          // Route through the notifier so the foreground task isolate is
+          // (re)started before each reconnect command — see
+          // SessionsNotifier.reconnect (#817).
+          final notifier = ref.read(sessionsProvider.notifier);
           for (final e in dropped) {
-            e.proxy.reconnect();
+            notifier.reconnect(e.id);
           }
         },
       ),

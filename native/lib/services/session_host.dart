@@ -363,9 +363,26 @@ class SessionHost {
   }
 
   void _handleConnect(SshConnectCommand cmd) {
-    if (_sessions.containsKey(cmd.sessionId)) {
-      // Already hosted — emit the current state so the UI can sync.
-      _emitState(cmd.sessionId, _sessions[cmd.sessionId]!.controller);
+    final existing = _sessions[cmd.sessionId];
+    if (existing != null) {
+      // Already hosted. If the session is in a manually-reconnectable DROP state
+      // (#817), a re-issued connect IS a Reconnect: force-revive it in place from
+      // the controller's held params (no need to rebuild the controller — its
+      // creds + state machine are intact). Otherwise just emit the current state
+      // so the UI can sync (the original dedup-connect contract). This keeps the
+      // UI's Reconnect path uniform: it always re-issues a connect, and the host
+      // routes it to reconnectNow() for a live-but-dropped session or to a fresh
+      // connect when the session was lost (e.g. the foreground isolate was torn
+      // down on the last-session drop and rebuilt empty).
+      if (_isReconnectableDrop(existing.controller.data.state)) {
+        ctrace(
+          'task.host',
+          'connect sid=${cmd.sessionId} on dropped session → reconnectNow()',
+        );
+        existing.controller.reconnectNow();
+      } else {
+        _emitState(cmd.sessionId, existing.controller);
+      }
       return;
     }
     final controller = _factory();
@@ -426,6 +443,16 @@ class SessionHost {
       'connect sid=${cmd.sessionId} → controller.connect(${cmd.host}:${cmd.port})',
     );
     unawaited(controller.connect(params));
+  }
+
+  /// A drop state the user can manually reconnect from (#817) — mirrors the UI's
+  /// `_canReconnect`. A re-issued connect for a session in one of these states is
+  /// treated as a force-reconnect rather than a no-op state sync.
+  static bool _isReconnectableDrop(SshSessionState state) {
+    return state == SshSessionState.softDisconnected ||
+        state == SshSessionState.reconnecting ||
+        state == SshSessionState.failed ||
+        state == SshSessionState.disconnected;
   }
 
   void _handleDisconnect(SshDisconnectCommand cmd) {
