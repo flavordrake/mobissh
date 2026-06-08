@@ -1,7 +1,7 @@
 import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart' hide Key;
-import 'package:libghostty/libghostty.dart';
+import 'package:libghostty/libghostty.dart' hide Listenable;
 
 import '../foundation.dart';
 import 'terminal_controller_impl.dart';
@@ -179,6 +179,23 @@ abstract class TerminalController extends ChangeNotifier
   /// widget-layer decorator's geometry stays in lockstep with the painted text.
   /// Defaults to 0 before the first paint.
   int get paintedViewportOffset;
+
+  /// A [Listenable] that fires ONLY when the inputs a widget-layer decorator
+  /// reads have changed (#805): the detected [anchors] set, or the
+  /// [paintedViewportOffset] the decorator resolves [anchorRects] against.
+  ///
+  /// The controller itself ([this] as a `ChangeNotifier`) notifies on EVERY
+  /// terminal change — cursor blink, mouse-mode toggle, output write, scroll —
+  /// roughly 15×/sec while a full-repaint TUI streams a scroll. A decorator
+  /// layer listening to the controller rebuilds (re-resolves every anchor's
+  /// rects) on all of those, even when nothing it draws changed. Listening to
+  /// THIS narrower notifier instead coalesces the decorator's per-redraw work
+  /// onto only the frames where the decoration geometry actually moves — the
+  /// detection re-scan settles (debounced) or the painted offset advances — so a
+  /// streaming scroll stops re-resolving the markup on every redraw chunk. The
+  /// final, settled decoration is identical; only the redundant mid-fling
+  /// rebuilds are dropped.
+  Listenable get decorationListenable;
 
   /// The VIEWPORT row index a gutter decorator for [range] should mark, or null
   /// when the range is fully off-screen (#767 Slice B).

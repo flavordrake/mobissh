@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:libghostty/libghostty.dart' as vt;
-import 'package:libghostty/libghostty.dart' hide KeyEvent;
+import 'package:libghostty/libghostty.dart' hide KeyEvent, Listenable;
 import 'package:meta/meta.dart';
 
 import '../foundation.dart';
@@ -81,6 +81,15 @@ class TerminalControllerImpl extends TerminalController
   /// #803: set in [dispose] so a pending post-frame notify (scheduled by
   /// [reportPaintedViewportOffset]) is a no-op if it fires after disposal.
   bool _disposed = false;
+
+  /// #805: fires ONLY when a widget-layer decorator's inputs change — the
+  /// detected [_detectionMatches] set (after a settled re-scan) or the
+  /// [_paintedViewportOffset] (after a frame paints a new offset). A decorator
+  /// layer listens to THIS instead of the controller's general notify, so it
+  /// re-resolves anchor rects only when the decoration geometry actually moves,
+  /// not on every one of the ~15 redraw notifies/sec a streaming TUI scroll
+  /// emits. Exposed via [decorationListenable].
+  final _DecorationNotifier _decorationNotifier = _DecorationNotifier();
 
   FocusNode? _focusNode;
   TerminalSelection? _selection;
@@ -264,6 +273,9 @@ class TerminalControllerImpl extends TerminalController
   int get paintedViewportOffset => _paintedViewportOffset;
 
   @override
+  Listenable get decorationListenable => _decorationNotifier;
+
+  @override
   void reportPaintedViewportOffset(int offset) {
     if (offset == _paintedViewportOffset) return;
     _paintedViewportOffset = offset;
@@ -278,6 +290,13 @@ class TerminalControllerImpl extends TerminalController
       _paintedOffsetNotifyScheduled = false;
       if (_disposed) return;
       notifyListeners();
+      // #805: the painted offset moved, so any on-screen anchor's rects shift —
+      // wake the narrow decoration listener so the decorator re-resolves in
+      // lockstep with the painted glyphs (#803). But ONLY when anchors exist:
+      // with nothing detected there is no decoration to move, so a full-repaint
+      // TUI scroll that hasn't surfaced a URL/path doesn't rebuild the (empty)
+      // decorator layer on every frame.
+      if (_detectionMatches.isNotEmpty) _decorationNotifier.notify();
     });
   }
 
@@ -387,6 +406,11 @@ class TerminalControllerImpl extends TerminalController
     }
     _detectionMatches = matches;
     highlights = [for (final m in matches) ...m.ranges];
+    // #805: the detected anchor set just changed (a settled re-scan), so wake the
+    // narrow decoration listener — the decorator layer re-resolves now, not on
+    // every mid-scroll redraw notify. (highlights= already fired the general
+    // notify for the built-in HighlightPainter.)
+    _decorationNotifier.notify();
   }
 
   @override
@@ -528,6 +552,7 @@ class TerminalControllerImpl extends TerminalController
     _keyEncoder.dispose();
     _mouseEncoder.dispose();
     _renderState.dispose();
+    _decorationNotifier.dispose();
     terminal.dispose();
     super.dispose();
   }
@@ -1223,6 +1248,15 @@ class TerminalControllerImpl extends TerminalController
     if (code >= _macFunctionKeyStart && code <= _macFunctionKeyEnd) return null;
     return character;
   }
+}
+
+/// #805: a tiny [ChangeNotifier] whose `notify()` is callable from the
+/// controller, used as the narrow "decoration inputs changed" signal a
+/// widget-layer decorator listens to instead of the controller's general
+/// per-redraw notify. (The base [ChangeNotifier.notifyListeners] is protected,
+/// so this exposes a public trigger.)
+class _DecorationNotifier extends ChangeNotifier {
+  void notify() => notifyListeners();
 }
 
 /// #767: a [CellReader] over a [Terminal]'s ABSOLUTE screen rows, for the

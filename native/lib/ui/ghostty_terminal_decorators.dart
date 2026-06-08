@@ -316,11 +316,15 @@ class _PathPainter extends CustomPainter {
 /// The overlay layer that resolves the controller's live anchors to viewport
 /// rects and dispatches each to its registered decorator (#767 Slice B).
 ///
-/// Listens to the [controller] (a `ChangeNotifier` that fires on output writes,
-/// scroll, resize, …) so the decorators re-resolve + repaint as the viewport
-/// moves — tracking scroll/wrap/resize/eviction with NO re-detection (the fork
-/// re-anchors; this layer just re-reads the live geometry). Sits in the view's
-/// `Stack` above the `TerminalView`, below the gesture/affordance layers.
+/// Listens to the controller's NARROW [TerminalController.decorationListenable]
+/// (#805) — which fires ONLY when the detected anchor set or the painted viewport
+/// offset changes — so the decorators re-resolve + repaint when the decoration
+/// geometry actually moves, NOT on every one of the ~15 redraw notifies/sec a
+/// full-repaint TUI emits while scrolling. It still tracks scroll/wrap/resize/
+/// eviction (the painted-offset and re-scan signals cover those) with NO re-
+/// detection (the fork re-anchors; this layer just re-reads the live geometry),
+/// but a streaming-scroll burst no longer re-resolves the markup on every chunk.
+/// Sits in the view's `Stack` above the `TerminalView`, below the gesture layers.
 class GhosttyTerminalDecoratorLayer extends StatelessWidget {
   const GhosttyTerminalDecoratorLayer({
     super.key,
@@ -343,10 +347,11 @@ class GhosttyTerminalDecoratorLayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: controller,
+      listenable: controller.decorationListenable,
       builder: (context, _) {
         // Group each anchor's live rects under its decorator. Resolved fresh
-        // every build from the current viewport offset/metrics.
+        // on each decoration-changed build from the current viewport offset/
+        // metrics (#805: only when the anchor set or painted offset moves).
         final byDecorator = <GhosttyTerminalDecorator, List<GhosttyDecoratedAnchor>>{};
         for (final anchor in controller.anchors) {
           final decorator = registry.forPattern(anchor.patternId);
