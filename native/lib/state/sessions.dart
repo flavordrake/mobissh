@@ -30,6 +30,7 @@ import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../ui/terminal_mouse_handler.dart';
 import 'keepalive_providers.dart';
+import 'recent_sessions.dart';
 import 'session_host_providers.dart';
 
 /// One row in the session collection.
@@ -265,6 +266,13 @@ class SessionsNotifier extends Notifier<SessionsState> {
       }
     }
     if (removed == null) return;
+    // Recent Sessions parity (#796, PWA #385): closing a session removes its
+    // identity from the recents list, mirroring the PWA `state.ts` close
+    // effect. Fully guarded + fire-and-forget: recents are a convenience and
+    // must never wedge teardown. Any failure (e.g. SharedPreferences binding
+    // not initialized in a pure-notifier unit test) is swallowed rather than
+    // surfaced as an unhandled async error.
+    _removeFromRecents(removed.host, removed.port, removed.username);
     // Dispose async work (proxy.disconnect/close) without blocking the
     // state update. Errors during teardown shouldn't wedge the UI.
     removed.outputSub?.cancel();
@@ -279,6 +287,20 @@ class SessionsNotifier extends Notifier<SessionsState> {
       newActive = remaining.isEmpty ? null : remaining.first.id;
     }
     state = SessionsState(entries: remaining, activeId: newActive);
+  }
+
+  /// Drop a closed session's identity from the recent-sessions list (#796).
+  /// Wrapped in a guarded async closure with a swallowing `catchError` so the
+  /// pure-state `close` contract holds even in unit tests that never init the
+  /// SharedPreferences binding — the recents removal is best-effort.
+  void _removeFromRecents(String host, int port, String username) {
+    Future<void>(() async {
+      final store = ref.read(recentSessionsStoreProvider);
+      await store.remove(host: host, port: port, username: username);
+      ref.invalidate(recentSessionsProvider);
+    }).catchError((Object _) {
+      // Best-effort only — recents are a convenience, never a teardown blocker.
+    });
   }
 }
 

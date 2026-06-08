@@ -32,6 +32,7 @@ import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
 import '../state/profiles_providers.dart';
+import '../state/recent_sessions.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
@@ -58,6 +59,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   StreamSubscription<SshSessionData>? _connectedSub;
   Completer<bool>? _connectedCompleter;
 
+  /// One-shot subscriptions that persist a recent-session entry when their
+  /// session first reaches `connected` (#796). Tracked so [dispose] can cancel
+  /// any that are still armed (session never connected before the chooser
+  /// unmounted), avoiding a leaked stream subscription.
+  final List<StreamSubscription<SshSessionData>> _recentSaveSubs = [];
+
   @override
   void dispose() {
     ctrace('ui.chooser', 'dispose: ProfileChooser state being torn down');
@@ -68,7 +75,49 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     }
     _connectedSub?.cancel();
     _connectedSub = null;
+    for (final s in _recentSaveSubs) {
+      s.cancel();
+    }
+    _recentSaveSubs.clear();
     super.dispose();
+  }
+
+  /// Arm a one-shot: when [entry]'s proxy first reaches `connected`, persist a
+  /// recent-session entry and invalidate [recentSessionsProvider] (#796, PWA
+  /// #385). If the proxy is already `connected` (a dedup re-activate of a live
+  /// session), save immediately. The save is fire-and-forget — recents are a
+  /// convenience, never block the connect path.
+  void _armSaveRecentOnConnected(SessionEntry entry, {required String title}) {
+    final store = ref.read(recentSessionsStoreProvider);
+    void save() {
+      unawaited(
+        store
+            .add(
+              RecentSessionEntry(
+                title: title,
+                host: entry.host,
+                port: entry.port,
+                username: entry.username,
+              ),
+            )
+            .then((_) {
+          if (mounted) ref.invalidate(recentSessionsProvider);
+        }),
+      );
+    }
+
+    if (entry.proxy.data.state == SshSessionState.connected) {
+      save();
+      return;
+    }
+    late final StreamSubscription<SshSessionData> sub;
+    sub = entry.proxy.stream.listen((data) {
+      if (data.state != SshSessionState.connected) return;
+      save();
+      sub.cancel();
+      _recentSaveSubs.remove(sub);
+    });
+    _recentSaveSubs.add(sub);
   }
 
   @override
@@ -116,6 +165,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             child: ProfileList(
               onConnect: _connectFromProfile,
               onEdit: _editProfile,
+              onConnectRecent: _connectFromRecent,
+              onReconnectAll: _reconnectAllRecent,
             ),
           ),
           const SizedBox(height: 4),
@@ -260,6 +311,16 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             proxy: entry.proxy,
             command: initialCommand,
           );
+      // Recent Sessions quick-connect (#796, PWA #385): persist this identity
+      // to the recents list when the session reaches `connected` — NOT on
+      // dispatch (a failed connect must not pollute recents) and NOT for the
+      // `failed` state. Mirrors the PWA which calls `saveRecentSession` on the
+      // `connected` WS message. The whole-app provider is invalidated so the
+      // cold-start chooser shows the new entry next time it's mounted.
+      _armSaveRecentOnConnected(
+        entry,
+        title: title ?? '${params.username}@${params.host}:${params.port}',
+      );
       await entry.proxy.connect(params);
       // Once we've proven network reachability, fire-and-forget a crash upload
       // sweep. Tailscale being down at boot is the common case.
@@ -391,6 +452,43 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       fontFamily: profile.fontFamily,
       colorHex: profile.color,
     );
+  }
+
+  /// #796 Recent Sessions one-tap. Resolve the saved profile matching the
+  /// recent entry's identity (host:port:username) and route through the SAME
+  /// connect path as a profile-row tap (so vault creds + initial-command +
+  /// theme/font/color seeds all apply identically — PWA `reconnect-recent`).
+  ///
+  /// When the source profile was since deleted, fall back to a synthetic
+  /// identity-only profile; [_connectFromProfile]'s no-stored-creds branch then
+  /// opens the editor so the user can re-enter credentials.
+  Future<void> _connectFromRecent(RecentSessionEntry recent) async {
+    final profiles = await ref.read(profilesStoreProvider).load();
+    if (!mounted) return;
+    SavedProfile? match;
+    for (final p in profiles) {
+      if (p.identityKey == recent.identityKey) {
+        match = p;
+        break;
+      }
+    }
+    final profile = match ??
+        SavedProfile(
+          title: recent.title,
+          host: recent.host,
+          port: recent.port,
+          username: recent.username,
+        );
+    await _connectFromProfile(profile);
+  }
+
+  /// #796 "Reconnect All" — connect to every recent entry. Mirrors the PWA's
+  /// `reconnect-all-recent` (the chooser shows it only at >=2 recents).
+  Future<void> _reconnectAllRecent(List<RecentSessionEntry> recents) async {
+    for (final r in recents) {
+      if (!mounted) return;
+      await _connectFromRecent(r);
+    }
   }
 
   /// #579 edit pencil / #583 no-creds fallback. Open the full profile editor;
