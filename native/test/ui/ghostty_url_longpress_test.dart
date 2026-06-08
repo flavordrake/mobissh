@@ -152,6 +152,31 @@ void main() {
     });
   });
 
+  group('#810 copy guards against an EMPTY payload', () {
+    StructuredMatch matchWith(Object payload) => StructuredMatch(
+          patternId: 'osc8',
+          payload: payload,
+          ranges: const [
+            HighlightRange(startRow: 2, startCol: 4, endRow: 2, endCol: 15),
+          ],
+        );
+
+    test('a non-empty payload is copyable', () {
+      expect(
+        ghosttyMatchHasCopyablePayload(matchWith('https://example.com')),
+        isTrue,
+      );
+    });
+
+    test('an EMPTY-string payload is NOT copyable (no "Copied URL" lie)', () {
+      expect(ghosttyMatchHasCopyablePayload(matchWith('')), isFalse);
+    });
+
+    test('a whitespace-only payload is NOT copyable', () {
+      expect(ghosttyMatchHasCopyablePayload(matchWith('   ')), isFalse);
+    });
+  });
+
   group('#734 drag after a URL long-press does not extend a selection', () {
     testWidgets('a long-press-drag on a URL stays on the menu (no extend)', (
       tester,

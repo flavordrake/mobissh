@@ -82,6 +82,28 @@ class TerminalControllerImpl extends TerminalController
   /// [reportPaintedViewportOffset]) is a no-op if it fires after disposal.
   bool _disposed = false;
 
+  /// #812: true while the PAINTED viewport offset is actively CHANGING (a scroll,
+  /// including a tmux-redraw "scroll" where the remote rewrites the grid). Set on
+  /// the rising edge in [reportPaintedViewportOffset]; flipped back to false by
+  /// [_scrollSettleTimer]'s trailing edge after [_scrollSettleMs] of no offset
+  /// change. The widget-layer decorator layer HIDES while this is true and SHOWS
+  /// once it settles, so the decorator never draws during the moment it can't
+  /// reliably track the offset — killing the off-by-line drift class (#784/#803/
+  /// #807) by not drawing mid-scroll instead of chasing the offset.
+  bool _isScrolling = false;
+
+  /// #812: trailing-edge timer that flips [_isScrolling] back to settled. Reset on
+  /// every painted-offset change; when it finally fires (no change for
+  /// [_scrollSettleMs]) the offset is stable, painted==live, so the decorator can
+  /// re-resolve + draw at the exact settled placement. Cancelled on dispose.
+  Timer? _scrollSettleTimer;
+
+  /// #812: how long the painted offset must hold still before the decorator is
+  /// shown again. Within the 120–150ms range the owner specified — long enough to
+  /// ride through a streaming tmux-redraw scroll (chunks ~8ms apart), short enough
+  /// that the bubble reappears promptly once the user lifts off.
+  static const int _scrollSettleMs = 140;
+
   /// #805: fires ONLY when a widget-layer decorator's inputs change — the
   /// detected [_detectionMatches] set (after a settled re-scan) or the
   /// [_paintedViewportOffset] (after a frame paints a new offset). A decorator
@@ -273,12 +295,21 @@ class TerminalControllerImpl extends TerminalController
   int get paintedViewportOffset => _paintedViewportOffset;
 
   @override
+  bool get isScrolling => _isScrolling;
+
+  @override
   Listenable get decorationListenable => _decorationNotifier;
 
   @override
   void reportPaintedViewportOffset(int offset) {
     if (offset == _paintedViewportOffset) return;
     _paintedViewportOffset = offset;
+    // #812: the painted offset just moved → we are scrolling. Enter the scrolling
+    // state (the decorator HIDES) and (re)arm the trailing-edge settle timer; each
+    // further offset change pushes the settle out, so a streaming tmux-redraw
+    // scroll stays "scrolling" for its whole duration. The decorator re-shows only
+    // once the offset holds still for [_scrollSettleMs].
+    _markScrolling();
     // This fires DURING the render box's paint phase, so a synchronous
     // notifyListeners() would rebuild the decorator layer mid-frame (illegal).
     // Defer to a post-frame callback: the decorator then re-resolves its rects
@@ -298,6 +329,42 @@ class TerminalControllerImpl extends TerminalController
       // decorator layer on every frame.
       if (_detectionMatches.isNotEmpty) _decorationNotifier.notify();
     });
+  }
+
+  /// #812: enter (or stay in) the scrolling state and (re)arm the trailing-edge
+  /// settle timer. Called from [reportPaintedViewportOffset], which runs DURING
+  /// the render box's paint phase — so this MUST NOT notify synchronously (that
+  /// would schedule a build mid-frame). It only flips the flag + (re)arms the
+  /// timer; the HIDE rebuild is driven by the post-frame `_decorationNotifier`
+  /// notify already scheduled in [reportPaintedViewportOffset] (which fires when
+  /// anchors exist — exactly when there is a bubble to hide). Each call pushes the
+  /// settle out by [_scrollSettleMs], so a streaming redraw scroll stays hidden
+  /// for its whole duration; [_onScrollSettled] (a Timer callback, not in paint)
+  /// shows it again.
+  void _markScrolling() {
+    if (_disposed) return;
+    // No registered patterns → no decoration to hide/show → don't track scroll
+    // state at all (and don't arm a timer). Mirrors [_scheduleDetectionRescan]'s
+    // no-op, and keeps a pattern-less terminal from leaving a settle timer pending
+    // at the end of a widget test that never registers a decorator.
+    if (_textPatterns.isEmpty) return;
+    _isScrolling = true;
+    _scrollSettleTimer?.cancel();
+    _scrollSettleTimer = Timer(
+      const Duration(milliseconds: _scrollSettleMs),
+      _onScrollSettled,
+    );
+  }
+
+  /// #812: trailing edge — the painted offset has held still for [_scrollSettleMs].
+  /// Leave the scrolling state and wake the decoration listener ONCE so the
+  /// decorator rebuilds and SHOWS, re-resolving anchor rects at the now-stable
+  /// painted offset (painted == live → exact placement, no drift).
+  void _onScrollSettled() {
+    _scrollSettleTimer = null;
+    if (_disposed || !_isScrolling) return;
+    _isScrolling = false;
+    _decorationNotifier.notify();
   }
 
   @override
@@ -545,6 +612,7 @@ class TerminalControllerImpl extends TerminalController
   void dispose() {
     _disposed = true;
     _detectionDebounce?.cancel();
+    _scrollSettleTimer?.cancel();
     terminal.removeListener(_onTerminalChanged);
     detach();
     _keyEvent.dispose();

@@ -937,6 +937,17 @@ bool ghosttyLongPressShowsUrlMenu(StructuredMatch? urlAtCell) =>
 bool ghosttyLongPressShowsPathMenu(StructuredMatch? matchAtCell) =>
     matchAtCell != null && matchAtCell.patternId == kGhosttyPathPatternId;
 
+/// Whether a detected [match]'s payload is a real, copyable string (#810).
+///
+/// The tap-copy path (`_copyUrl`) writes `'${match.payload}'` to the clipboard
+/// and shows a "Copied URL" toast. If the payload stringifies to empty (or
+/// whitespace only) — the #810 device bug, where an empty-URI OSC-8 link
+/// produced a non-null match with no payload — the toast would claim success
+/// while the clipboard stayed empty. This predicate gates the copy so an empty
+/// payload neither writes the clipboard nor toasts. Pure, unit-testable headless.
+bool ghosttyMatchHasCopyablePayload(StructuredMatch match) =>
+    '${match.payload}'.trim().isNotEmpty;
+
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
 /// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
 ///
@@ -2537,6 +2548,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       _openPath('${match.payload}');
       return;
     }
+    // #810: never report a successful copy for an EMPTY payload. An empty-URI
+    // OSC-8 link could surface a non-null match with no payload; copying ""
+    // while toasting "Copied URL" is the "copied but empty" bug. Bail silently
+    // (no clipboard write, no toast) so the tap is a no-op rather than a lie.
+    if (!ghosttyMatchHasCopyablePayload(match)) return;
     await Clipboard.setData(ClipboardData(text: '${match.payload}'));
     if (mounted) showTopToast(context, 'Copied URL');
   }
