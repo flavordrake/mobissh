@@ -573,6 +573,63 @@ void main() {
       final reader = _FakeCellReader(['plain text'], cols: 20);
       expect(scanner.scan(reader, [osc8]), isEmpty);
     });
+
+    test(
+      'an EMPTY-string OSC-8 URI → NO match (the #810 "copied but empty" bug)',
+      () {
+        // libghostty can return an EMPTY string (not null) for a cell inside an
+        // empty-URI / torn-down OSC-8 link (`ESC]8;;ESC\\` appears in the device
+        // trace). An empty URI must NOT create a match: a non-null-but-empty match
+        // is a "URL" with no payload → tap fires "Copied URL" but the clipboard is
+        // empty. The scanner must treat empty/whitespace URIs the same as null.
+        final reader = _FakeCellReader(
+          ['abcde'],
+          cols: 5,
+          hyperlinks: [
+            ['', '', '', '', ''],
+          ],
+        );
+        expect(
+          scanner.scan(reader, [osc8]),
+          isEmpty,
+          reason: 'an empty-string hyperlink URI must not anchor an empty match',
+        );
+      },
+    );
+
+    test(
+      'a whitespace-only OSC-8 URI → NO match (no empty-payload anchor)',
+      () {
+        final reader = _FakeCellReader(
+          ['abc'],
+          cols: 3,
+          hyperlinks: [
+            ['   ', '   ', '   '],
+          ],
+        );
+        expect(scanner.scan(reader, [osc8]), isEmpty);
+      },
+    );
+
+    test(
+      'an empty-URI run NEXT TO a real link → only the real link matches',
+      () {
+        const real = 'https://real.example/p';
+        // cols 0-1 carry an empty URI (must be dropped), cols 2-4 carry a real one.
+        final reader = _FakeCellReader(
+          ['ABcde'],
+          cols: 5,
+          hyperlinks: [
+            ['', '', real, real, real],
+          ],
+        );
+        final matches = scanner.scan(reader, [osc8]);
+        expect(matches, hasLength(1),
+            reason: 'the empty-URI run is dropped; only the real link remains');
+        expect(matches.single.payload, real);
+        expect(matches.single.ranges.single.startCol, 2);
+      },
+    );
   });
 
   group('OSC-8 wins over the regex URL pattern (de-dup, #767 Slice B)', () {
