@@ -172,6 +172,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart' as xterm;
 
 import '../diagnostics/gesture_trace.dart';
+import '../diagnostics/session_byte_recorder.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/ctrl_modifier_provider.dart';
@@ -1833,6 +1834,20 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// focus fires; reset false on disconnect so a reconnect re-focuses.
   bool _focusedThisConnect = false;
 
+  /// #790: per-session byte + scroll recorder (replay-harness trace producer).
+  /// Captures the raw bytes that reach the terminal and the scroll-offset events
+  /// into a bounded backward-looking ring, snapshotted into the bug report so a
+  /// scrollback-render bug can be replayed (#791). Allocation-light: stores the
+  /// existing output Uint8List + a timestamp, no copy on the hot path.
+  late final SessionByteRecorder _byteRecorder = registerByteRecorder(
+    widget.sessionId,
+  );
+
+  /// #790: track the last scroll offset pushed to the recorder so a controller
+  /// notify that didn't move the viewport (mouse-mode / selection / redraw)
+  /// doesn't spam the scroll ring with identical offsets.
+  int _lastRecordedScrollOffset = -1;
+
   @override
   void initState() {
     super.initState();
@@ -1861,6 +1876,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // can never diverge from what the window-switch wheel targets (#719).
         _cols = cols;
         _rows = rows;
+        // #790: record the live viewport grid so the replay harness can lay out
+        // the captured byte stream at the SAME cols×rows the bug occurred at.
+        _byteRecorder.recordGrid(cols, rows);
         _sendResize(cols, rows);
         // #767: a resize changes the cell ranges, but the URL re-detect now lives
         // INSIDE the terminal — the controller re-scans on its own notify cycle,
@@ -1870,6 +1888,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // dispose() cancels it.
       _outputSub = proxy.output.listen((bytes) {
         try {
+          // #790: record the raw output chunk BEFORE writing it to the terminal
+          // — this is the single seam where proxy.output bytes reach the
+          // Terminal, so the recorder captures EXACTLY the input that produced
+          // the rendered (possibly buggy) state. Allocation-light: the recorder
+          // keeps the reference + a timestamp; no copy/encode here.
+          _byteRecorder.recordBytes(bytes);
           // #760: mark that the imminent controller notify is driven by fresh
           // REMOTE output (not a local scroll), so _onControllerChanged can
           // invalidate a selection whose covered content was just redrawn.
@@ -1934,6 +1958,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // absolute-row frame can't track that), clear the now-stale selection. A
     // pure local scrollback scroll (no write → remoteOutput false) is retained.
     _invalidateSelectionOnRedraw(remoteOutput);
+    // #790: record a scroll-offset event when the viewport actually moved. This
+    // notify fires on scroll AND on output/mouse-mode/selection; only an offset
+    // CHANGE is a real scroll, so we de-dupe against the last recorded value to
+    // keep the scroll ring a faithful record of the scroll path (#789) without a
+    // flood of identical offsets.
+    final controller = _controller;
+    if (controller != null) {
+      final offset = _viewportOffsetOf(controller);
+      if (offset != _lastRecordedScrollOffset) {
+        _lastRecordedScrollOffset = offset;
+        _byteRecorder.recordScroll(offset);
+      }
+    }
     _syncMouseTracking();
     _syncHasSelection();
     // #767: URL re-detection now lives INSIDE the terminal. The controller
@@ -2625,6 +2662,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     _controller?.onResize = null;
     _controller?.dispose();
     _scrollController.dispose();
+    // #790: this session's terminal is gone — drop its recorder ring (and clear
+    // the active pointer if it referenced us, so a stale snapshot can't leak).
+    unregisterByteRecorder(widget.sessionId);
     super.dispose();
   }
 

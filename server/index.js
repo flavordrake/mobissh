@@ -900,7 +900,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog } = data;
+        const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, grid } = data;
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
         fs.mkdirSync(reportDir, { recursive: true });
@@ -977,6 +977,37 @@ const server = http.createServer((req, res) => {
           console.log(`[bug-report] gesture log: ${gestureLogFile} (${gestureLog.length} events)`);
         }
 
+        // #790: the replay-harness trace — the raw bytes that reached the
+        // terminal (byteTrace: [{tMs,b64}]) + the scroll-offset events
+        // (scrollTrace: [{tMs,offset}]) + the viewport grid ({cols,rows}). Saved
+        // to a single sidecar so the replay harness (#791) can feed the captured
+        // bytes into a real Terminal at the same grid and replay the scroll to
+        // reproduce a scrollback-render bug. Mirrors the `frames` branch; capped
+        // (the client already bounds the rings, this is a server-side backstop).
+        let byteTraceFile = '';
+        let byteTraceEventCount = 0;
+        let scrollTraceEventCount = 0;
+        const hasByteTrace = Array.isArray(byteTrace) && byteTrace.length > 0;
+        const hasScrollTrace = Array.isArray(scrollTrace) && scrollTrace.length > 0;
+        if (hasByteTrace || hasScrollTrace) {
+          const MAX_BYTE_EVENTS = 8192;
+          const MAX_SCROLL_EVENTS = 8192;
+          const cappedBytes = hasByteTrace ? byteTrace.slice(-MAX_BYTE_EVENTS) : [];
+          const cappedScroll = hasScrollTrace ? scrollTrace.slice(-MAX_SCROLL_EVENTS) : [];
+          byteTraceEventCount = cappedBytes.length;
+          scrollTraceEventCount = cappedScroll.length;
+          byteTraceFile = `${ts}-bug-report.byte-trace.json`;
+          fs.writeFileSync(
+            path.join(reportDir, byteTraceFile),
+            JSON.stringify({
+              grid: (grid && typeof grid === 'object') ? grid : null,
+              byteTrace: cappedBytes,
+              scrollTrace: cappedScroll,
+            }, null, 2),
+          );
+          console.log(`[bug-report] byte trace: ${byteTraceFile} (${byteTraceEventCount} byte events, ${scrollTraceEventCount} scroll events)`);
+        }
+
         // Save metadata
         const meta = {
           title: title || `Bug report ${ts}`,
@@ -995,6 +1026,11 @@ const server = http.createServer((req, res) => {
           connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
           gestureLogFile,
           gestureLogEventCount: Array.isArray(gestureLog) ? gestureLog.length : 0,
+          // #790: replay-harness trace sidecar + counts + the captured grid.
+          byteTraceFile,
+          byteTraceEventCount,
+          scrollTraceEventCount,
+          grid: (grid && typeof grid === 'object') ? grid : null,
         };
         fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.json`), JSON.stringify(meta, null, 2));
 

@@ -29,6 +29,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
 import 'package:mobissh/diagnostics/gesture_trace.dart';
+import 'package:mobissh/diagnostics/session_byte_recorder.dart';
 import 'package:mobissh/ui/top_toast.dart';
 
 /// Prod endpoint that ingests bug reports (same one the web form posts to).
@@ -72,6 +73,9 @@ Map<String, Object?> buildFeedbackPayload({
   List<String> connectLog = const <String>[],
   List<String> gestureLog = const <String>[],
   List<String> lifecycleLog = const <String>[],
+  List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
+  List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
+  Map<String, Object?>? grid,
 }) {
   final fullComment = comment;
   // First non-empty line → title summary. Never truncate the comment itself.
@@ -132,6 +136,17 @@ Map<String, Object?> buildFeedbackPayload({
     if (scrubbedLog.isNotEmpty) 'connectLog': scrubbedLog,
     if (scrubbedGestureLog.isNotEmpty) 'gestureLog': scrubbedGestureLog,
     if (scrubbedLifecycleLog.isNotEmpty) 'lifecycleLog': scrubbedLifecycleLog,
+    // #790: the replay-harness trace. byteTrace = raw bytes that reached the
+    // Terminal ({tMs,b64}); scrollTrace = scroll-offset events ({tMs,offset});
+    // grid = the active session's viewport {cols,rows}. The server (#790)
+    // persists these as `${ts}-bug-report.byte-trace.json` so the captured trace
+    // can be replayed (#791) to reproduce a scrollback-render bug. The byte
+    // stream is ALREADY scrubbed by SessionByteRecorder.snapshotByteTrace() at
+    // snapshot time (rules/security.md). Omitted entirely when no session is
+    // active (no empty-array / null noise).
+    if (byteTrace.isNotEmpty) 'byteTrace': byteTrace,
+    if (scrollTrace.isNotEmpty) 'scrollTrace': scrollTrace,
+    'grid': ?grid,
   };
 }
 
@@ -291,6 +306,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final connectLog = connectLogSnapshot();
     final gestureLog = gestureLogSnapshot();
     final lifecycleLog = lifecycleLogSnapshot();
+    // #790: the byte/scroll recorder is BACKWARD-looking, so snapshot it at the
+    // END (just before the sheet) where the trace covers the bug the owner just
+    // reproduced. Captured below after the frame burst.
 
     setState(() {
       _recording = true;
@@ -334,6 +352,11 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       connectLog: connectLog,
       gestureLog: gestureLog,
       lifecycleLog: lifecycleLog,
+      // #790: backward-looking — snapshot NOW so the trace covers the bug just
+      // reproduced during the burst.
+      byteTrace: activeByteTraceSnapshot(),
+      scrollTrace: activeScrollTraceSnapshot(),
+      grid: activeGridSnapshot(),
     );
   }
 
@@ -353,6 +376,12 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final connectLog = connectLogSnapshot();
     final gestureLog = gestureLogSnapshot();
     final lifecycleLog = lifecycleLogSnapshot();
+    // #790: snapshot the byte/scroll recorder at the EXACT moment of tap — it's
+    // backward-looking, so the rings hold the input + scroll that produced the
+    // current (buggy) frame the owner is reporting.
+    final byteTrace = activeByteTraceSnapshot();
+    final scrollTrace = activeScrollTraceSnapshot();
+    final grid = activeGridSnapshot();
     final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
     final bytes = await widget.screenshotCapturer(_captureKey, dpr);
     if (!mounted) return;
@@ -367,6 +396,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       connectLog: connectLog,
       gestureLog: gestureLog,
       lifecycleLog: lifecycleLog,
+      byteTrace: byteTrace,
+      scrollTrace: scrollTrace,
+      grid: grid,
     );
   }
 
@@ -377,6 +409,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     required List<String> gestureLog,
     required List<String> lifecycleLog,
     List<String> frameDataUrls = const <String>[],
+    List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
+    List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
+    Map<String, Object?>? grid,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -402,6 +437,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       connectLog: connectLog,
       gestureLog: gestureLog,
       lifecycleLog: lifecycleLog,
+      byteTrace: byteTrace,
+      scrollTrace: scrollTrace,
+      grid: grid,
     );
     final ok = await widget.submitter.submit(payload);
     // Confirmation as a TOP toast (#667) so it doesn't occlude the bottom
