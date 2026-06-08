@@ -141,6 +141,19 @@ class SshSessionProxy {
     gateway.send(SshResumeProbeCommand(sessionId: sessionId).toJson());
   }
 
+  /// Tell the task side whether the UI is foregrounded (#806). Sent on
+  /// `AppLifecycleState` transitions (paused → false, resumed → true) so the
+  /// task can gate its periodic snapshot timer — backgrounded, the UI is
+  /// unbound and discards snapshots, so the 2s push (incl. a ~4KB scrollback
+  /// decode) is wasted battery. Task-global: the command carries the empty
+  /// sentinel sessionId, so calling it on ONE proxy suffices (all proxies share
+  /// the gateway). On resume the task re-emits a fresh snapshot itself; the
+  /// proxy's own [rebind] still runs for the cached-frame repaint.
+  void setActive(bool active) {
+    if (_disposed) return;
+    gateway.send(SshSetActiveCommand(active: active).toJson());
+  }
+
   /// Send a connect command across the gateway. The task-side host turns
   /// this into `SshSessionController.connect(...)`.
   ///

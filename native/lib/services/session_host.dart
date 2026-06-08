@@ -134,6 +134,14 @@ class SessionHost {
   Timer? _snapshotTimer;
   bool _disposed = false;
 
+  /// Whether the UI is foregrounded (#806). The UI sends `SshSetActiveCommand`
+  /// on `AppLifecycleState` transitions. While `false` the UI is `unbind()`-ed
+  /// and discards snapshots, so the periodic timer is stopped — the on-demand
+  /// `SshRequestSnapshotCommand` path still answers (audit live view / resume
+  /// rebind). Starts `true`: the host is built when a session connects, which
+  /// only happens with the UI foregrounded, and resume re-asserts it anyway.
+  bool _active = true;
+
   /// The exact lifecycle-forwarder closure this host installed into the global
   /// [lifecycleForwarder] (#766). Held so dispose detaches OUR closure only —
   /// it won't clobber a forwarder a different host installed afterward (matters
@@ -191,7 +199,12 @@ class SessionHost {
         }
       case SshRequestSnapshotCommand():
         final s = _sessions[cmd.sessionId];
-        if (s != null) _emitSnapshot(cmd.sessionId, s);
+        // On-demand (audit live view / resume rebind): always answer, and
+        // include the scrollback tail — this is the path that hydrates the
+        // terminal/audit, so it carries the full payload (#806 C).
+        if (s != null) _emitSnapshot(cmd.sessionId, s, includeScrollback: true);
+      case SshSetActiveCommand():
+        _handleSetActive(cmd.active);
       case SshHostKeyDecisionCommand():
         _handleHostKeyDecision(cmd);
       case SshUiHelloCommand():
@@ -778,14 +791,58 @@ class SessionHost {
     );
   }
 
-  void _pushSnapshots() {
+  /// Handle a UI foreground/background transition (#806). On background
+  /// (`active: false`) stop the periodic snapshot timer — the UI is unbound and
+  /// discards snapshots, so the 2s push is wasted battery (incl. the ~4KB
+  /// scrollback decode). On foreground (`active: true`) restore the 2s timer AND
+  /// emit one fresh FULL snapshot per session immediately so the UI repaints
+  /// from current state without waiting for the next tick. Idempotent: a repeat
+  /// of the current state is a no-op so duplicate lifecycle events don't churn
+  /// the timer. Does NOT touch the SSH session, keepalive, or locks.
+  void _handleSetActive(bool active) {
     if (_disposed) return;
-    for (final entry in _sessions.entries) {
-      _emitSnapshot(entry.key, entry.value);
+    if (_active == active) return;
+    _active = active;
+    if (active) {
+      _snapshotTimer?.cancel();
+      _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
+      // Resume repaint: one fresh full snapshot now (the UI just rebound and
+      // its cached frame may be stale). Dirty-check is bypassed — resume must
+      // always re-emit (#806 A).
+      for (final entry in _sessions.entries) {
+        _emitSnapshot(entry.key, entry.value, includeScrollback: true);
+      }
+    } else {
+      _snapshotTimer?.cancel();
+      _snapshotTimer = null;
     }
   }
 
-  void _emitSnapshot(String sessionId, _HostedSession hosted) {
+  void _pushSnapshots() {
+    if (_disposed) return;
+    for (final entry in _sessions.entries) {
+      // Dirty-check (#806 B): only ship a periodic snapshot when something the
+      // UI renders actually changed since the last periodic push. An idle
+      // session emits nothing — no event, no scrollback decode, no IPC copy.
+      final hosted = entry.value;
+      final sig = hosted.snapshotSignature();
+      if (sig == hosted.lastPushedSignature) continue;
+      hosted.lastPushedSignature = sig;
+      // Periodic payload omits the ~4KB scrollback decode (#806 C): the on-demand
+      // SshRequestSnapshotCommand path (resume / audit-open) carries it.
+      _emitSnapshot(entry.key, hosted, includeScrollback: false);
+    }
+  }
+
+  void _emitSnapshot(
+    String sessionId,
+    _HostedSession hosted, {
+    required bool includeScrollback,
+  }) {
+    // Keep dirty-check honest for any later periodic push: an on-demand emit
+    // re-baselines the signature so the next periodic tick doesn't re-send the
+    // same state it just shipped on demand.
+    hosted.lastPushedSignature = hosted.snapshotSignature();
     _gateway.send(
       SshSnapshotEvent(
         sessionId: sessionId,
@@ -795,7 +852,7 @@ class SessionHost {
         lastKeepaliveRttMs: hosted.metrics.lastKeepaliveRttMs,
         reconnectCount: hosted.metrics.reconnectCount,
         lastReconnectAtMs: hosted.metrics.lastReconnectAtMs,
-        scrollbackTail: hosted.scrollbackTailString(),
+        scrollbackTail: includeScrollback ? hosted.scrollbackTailString() : '',
       ).toJson(),
     );
   }
@@ -969,11 +1026,31 @@ class _HostedSession {
   String? challengedFingerprint;
   final BytesBuilder _scrollback = BytesBuilder(copy: false);
 
+  /// The signature value at the last PERIODIC snapshot push (#806 B). The
+  /// dirty-check compares the current [snapshotSignature] against this and skips
+  /// the push when nothing the UI renders changed. Re-baselined on every emit
+  /// (periodic OR on-demand) so the next periodic tick measures the delta from
+  /// what the UI actually last received. Null until the first push.
+  String? lastPushedSignature;
+
   /// Append raw bytes to the scrollback cache and cap the buffer at ~4KB
   /// (the cap is enforced by [scrollbackTailString], not here, so the latest
   /// bytes always win).
   void appendScrollback(Uint8List bytes) {
     _scrollback.add(bytes);
+  }
+
+  /// A cheap fingerprint of the snapshot-relevant fields (#806 B). When this is
+  /// unchanged since the last periodic push, the periodic snapshot is skipped —
+  /// an idle connected session produces no IPC traffic. Uses the scrollback
+  /// BYTE LENGTH (not a decode) so the dirty-check itself stays allocation-light:
+  /// scrollback only grows via [appendScrollback], so a length change is a
+  /// faithful "new bytes arrived" signal without the ~4KB UTF-8 decode.
+  String snapshotSignature() {
+    final m = metrics;
+    return '${controller.data.state.name}|${m.bytesIn}|${m.bytesOut}|'
+        '${m.lastKeepaliveRttMs}|${m.reconnectCount}|${m.lastReconnectAtMs}|'
+        '${_scrollback.length}';
   }
 
   /// Return the last [maxBytes] of scrollback decoded as UTF-8 (malformed

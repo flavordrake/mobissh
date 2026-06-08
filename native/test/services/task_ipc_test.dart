@@ -80,6 +80,19 @@ void main() {
       expect(restored.sessionId, 'host:22:user:1');
     });
 
+    test('SshSetActiveCommand round-trips active flag (#806)', () {
+      for (final active in [true, false]) {
+        final cmd = SshSetActiveCommand(active: active);
+        final restored = SshTaskCommand.fromJson(cmd.toJson());
+        expect(restored, isA<SshSetActiveCommand>());
+        restored as SshSetActiveCommand;
+        expect(restored.kind, SshTaskCommandKind.setActive);
+        expect(restored.active, active);
+        // Task-global: empty sentinel sessionId (mirrors SshUiHelloCommand).
+        expect(restored.sessionId, '');
+      }
+    });
+
     test('unknown kind throws FormatException', () {
       expect(
         () => SshTaskCommand.fromJson({'kind': 'bogus', 'sessionId': 'sid'}),

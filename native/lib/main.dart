@@ -147,7 +147,13 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // doesn't accumulate state events while the foreground service keeps
         // SSH alive. Rebind on resume re-emits the cached snapshot so the
         // first paint is instant.
-        for (final e in ref.read(sessionsProvider).entries) {
+        final entries = ref.read(sessionsProvider).entries;
+        // #806: tell the task we're backgrounded so it STOPS the 2s snapshot
+        // push (the UI is about to unbind and discard snapshots — the push,
+        // incl. a ~4KB scrollback decode, is wasted battery). Task-global, so
+        // one send suffices. Does NOT touch the SSH socket / keepalive / locks.
+        if (entries.isNotEmpty) entries.first.proxy.setActive(false);
+        for (final e in entries) {
           e.proxy.unbind();
         }
       }
@@ -158,7 +164,13 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // (#524 500ms rebind budget) and requests a fresh task-side
         // snapshot. The setState forces the router to re-resolve route
         // selection from the now-current session data.
-        for (final e in ref.read(sessionsProvider).entries) {
+        final entries = ref.read(sessionsProvider).entries;
+        // #806: tell the task we're foregrounded again so it RESTORES the 2s
+        // snapshot timer and emits one fresh full snapshot per session
+        // immediately (instant repaint). Task-global → one send. The per-proxy
+        // rebind below still runs the cached-frame repaint + SshRequestSnapshot.
+        if (entries.isNotEmpty) entries.first.proxy.setActive(true);
+        for (final e in entries) {
           e.proxy.rebind();
         }
         setState(() {});

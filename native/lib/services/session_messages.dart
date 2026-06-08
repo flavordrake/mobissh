@@ -38,6 +38,15 @@ enum SshTaskCommandKind {
   /// instead of being trusted and left frozen.
   resumeProbe,
 
+  /// UI → task: the UI's foreground/background state changed (#806). Carries an
+  /// `active` flag — `false` when the UI is backgrounded (`AppLifecycleState.
+  /// paused`, proxies unbound), `true` on resume. The task-side host gates its
+  /// periodic snapshot timer on this: backgrounded, the UI discards snapshots,
+  /// so the 2s push (incl. a ~4KB scrollback decode shipped cross-isolate) is
+  /// pure battery waste. Task-global (empty sentinel sessionId) — one app-wide
+  /// state, not per-session.
+  setActive,
+
   // --- SFTP (#559) ---
   /// List a remote directory over the session's SftpClient.
   sftpList,
@@ -199,6 +208,8 @@ sealed class SshTaskCommand {
         return const SshUiHelloCommand();
       case SshTaskCommandKind.resumeProbe:
         return SshResumeProbeCommand(sessionId: sessionId);
+      case SshTaskCommandKind.setActive:
+        return SshSetActiveCommand(active: json['active'] as bool);
       case SshTaskCommandKind.sftpList:
         return SftpListCommand(
           sessionId: sessionId,
@@ -436,6 +447,33 @@ class SshResumeProbeCommand extends SshTaskCommand {
 
   @override
   Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
+}
+
+/// UI → task: the UI moved to the foreground ([active] = true) or background
+/// ([active] = false) (#806). The task-side `SessionHost` gates its periodic
+/// snapshot timer on this: backgrounded, the UI is `unbind()`-ed and discards
+/// every snapshot, so the unconditional 2s push (a per-session `SshSnapshotEvent`
+/// including a ~4KB scrollback UTF-8 decode shipped cross-isolate) is wasted
+/// battery. On `active: false` the host stops the timer; on `active: true` it
+/// restores the 2s timer AND emits one fresh full snapshot immediately so the
+/// UI repaints from current state. Task-global, so [sessionId] is the empty
+/// sentinel (mirrors [SshUiHelloCommand]).
+class SshSetActiveCommand extends SshTaskCommand {
+  const SshSetActiveCommand({required this.active}) : super('');
+
+  /// True = UI foregrounded (resume periodic snapshots); false = backgrounded
+  /// (stop the periodic timer until the next resume).
+  final bool active;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.setActive;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'active': active,
+  };
 }
 
 // ---------------------------------------------------------------------------
