@@ -65,6 +65,23 @@ class TerminalControllerImpl extends TerminalController
   /// a widget-layer decorator pixel-aligns to the glyph cells.
   EdgeInsets _lastPadding = EdgeInsets.zero;
 
+  /// #803: the viewport offset the render box LAST PAINTED the text with — the
+  /// SAME `viewportOffset` the [HighlightPainter] reads from the frame snapshot.
+  /// [anchorRects] resolves against this (not the live `scrollbar.offset`) so the
+  /// widget-layer URL bubble decorator stays in lockstep with the painted glyphs
+  /// during a tmux-redraw scroll (the "dance" #803). Updated by
+  /// [reportPaintedViewportOffset] each frame; the resulting notify is deferred
+  /// to post-frame (the report fires during paint).
+  int _paintedViewportOffset = 0;
+
+  /// #803: guards against scheduling more than one post-frame notify when the
+  /// render box reports a changed painted offset (it reports every frame).
+  bool _paintedOffsetNotifyScheduled = false;
+
+  /// #803: set in [dispose] so a pending post-frame notify (scheduled by
+  /// [reportPaintedViewportOffset]) is a no-op if it fires after disposal.
+  bool _disposed = false;
+
   FocusNode? _focusNode;
   TerminalSelection? _selection;
   List<HighlightRange> _highlights = const [];
@@ -244,6 +261,27 @@ class TerminalControllerImpl extends TerminalController
   }
 
   @override
+  int get paintedViewportOffset => _paintedViewportOffset;
+
+  @override
+  void reportPaintedViewportOffset(int offset) {
+    if (offset == _paintedViewportOffset) return;
+    _paintedViewportOffset = offset;
+    // This fires DURING the render box's paint phase, so a synchronous
+    // notifyListeners() would rebuild the decorator layer mid-frame (illegal).
+    // Defer to a post-frame callback: the decorator then re-resolves its rects
+    // against the offset this frame just painted, landing one frame after the
+    // glyphs but in lockstep with them — no "dance" ahead of the text (#803).
+    if (_paintedOffsetNotifyScheduled) return;
+    _paintedOffsetNotifyScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _paintedOffsetNotifyScheduled = false;
+      if (_disposed) return;
+      notifyListeners();
+    });
+  }
+
+  @override
   List<Rect> anchorRects(HighlightRange range) {
     final metrics = _lastMetrics;
     if (metrics.cellWidth <= 0 || metrics.cellHeight <= 0) return const [];
@@ -251,11 +289,20 @@ class TerminalControllerImpl extends TerminalController
     // The grid padding offsets every cell rect into the TerminalView's local
     // space, so a widget-layer decorator pixel-aligns to the glyphs. The pure
     // [AnchorGeometry] does the offset/clip math (unit-tested headless); this
-    // wrapper supplies the live metrics/offset/dimensions from FFI.
+    // wrapper supplies the live metrics/dimensions from FFI.
+    //
+    // #803: resolve against the PAINTED viewport offset (the frame snapshot the
+    // HighlightPainter uses), NOT the live `scrollbar.offset`. During a tmux
+    // mouse-mode scroll the content is rewritten via output bytes and the live
+    // offset/anchors can move a frame AHEAD of the painted glyphs; pinning the
+    // decorator to the painted offset keeps the bubble in lockstep with the text
+    // it hugs. The render box reports this offset each frame and the controller
+    // notifies post-frame, so a decorator built over these rects still tracks
+    // scroll (#784) and re-detection (#788) — just frame-synced, not ahead.
     return AnchorGeometry.rectsFor(
       range,
       metrics: metrics,
-      viewportOffset: scrollbar.offset,
+      viewportOffset: _paintedViewportOffset,
       cols: _renderState.cols,
       viewportRows: _renderState.rows,
       origin: Offset(_lastPadding.left, _lastPadding.top),
@@ -472,6 +519,7 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   void dispose() {
+    _disposed = true;
     _detectionDebounce?.cancel();
     terminal.removeListener(_onTerminalChanged);
     detach();

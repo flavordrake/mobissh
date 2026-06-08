@@ -618,6 +618,13 @@ class TerminalRenderBox extends RenderBox {
       terminalDirty: terminalDirty,
       preeditText: _preeditText,
     );
+    // #803: hand the offset this frame painted the text with back to the
+    // controller so the widget-layer decorator (URL bubble) resolves its anchor
+    // rects against the SAME frame-synced offset the HighlightPainter uses,
+    // instead of the live scrollbar.offset. The controller defers the resulting
+    // notify to post-frame, so the decorator repaints in lockstep with the
+    // glyphs and the markup no longer dances ahead during a tmux-redraw scroll.
+    _renderObserver.reportPaintedViewportOffset(_paintState.viewportOffset);
   }
 }
 
