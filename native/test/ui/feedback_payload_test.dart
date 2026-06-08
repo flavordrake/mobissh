@@ -191,6 +191,39 @@ void main() {
         expect(log.any((l) => l.contains('[REDACTED]')), isTrue);
       },
     );
+
+    test(
+      'attaches byteTrace / scrollTrace / grid when present, omits when empty '
+      '(#790)',
+      () {
+        final withTrace = buildFeedbackPayload(
+          comment: 'scroll stuck',
+          version: '[v]',
+          byteTrace: const [
+            {'tMs': 0, 'b64': 'aGVsbG8='}, // "hello"
+            {'tMs': 16, 'b64': 'd29ybGQ='}, // "world"
+          ],
+          scrollTrace: const [
+            {'tMs': 0, 'offset': 0},
+            {'tMs': 32, 'offset': 120},
+          ],
+          grid: const {'cols': 80, 'rows': 24},
+        );
+        final bytes = withTrace['byteTrace'] as List;
+        expect(bytes, hasLength(2));
+        expect((bytes.first as Map)['b64'], 'aGVsbG8=');
+        final scroll = withTrace['scrollTrace'] as List;
+        expect(scroll, hasLength(2));
+        expect((scroll.last as Map)['offset'], 120);
+        expect(withTrace['grid'], {'cols': 80, 'rows': 24});
+
+        // No trace → all three fields omitted (no empty-array / null noise).
+        final without = buildFeedbackPayload(comment: 'x', version: '[v]');
+        expect(without.containsKey('byteTrace'), isFalse);
+        expect(without.containsKey('scrollTrace'), isFalse);
+        expect(without.containsKey('grid'), isFalse);
+      },
+    );
   });
 
   group('pngBytesToDataUrl', () {

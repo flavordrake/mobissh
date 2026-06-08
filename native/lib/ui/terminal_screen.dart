@@ -29,6 +29,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../diagnostics/session_byte_recorder.dart';
 import '../ssh/ssh_session.dart';
 import '../state/sessions.dart';
 import '../state/terminal_backend.dart';
@@ -108,6 +109,13 @@ class TerminalScreen extends ConsumerWidget {
 
     final activeEntry = sessions.active ?? entries.first;
     final activeIndex = entries.indexWhere((e) => e.id == activeEntry.id);
+
+    // #790: point the byte/scroll recorder registry at the on-screen session so
+    // the feedback overlay (which has no Riverpod scope of its own) snapshots the
+    // RIGHT session's rings. All sessions are mounted in the IndexedStack, so
+    // this — not each view's initState — is the single place that knows which is
+    // foregrounded. The recorder itself is created lazily by each view.
+    setActiveByteRecorder(activeEntry.id);
 
     // #573: keybar visibility is PER-SESSION — read the ACTIVE session's flag.
     // Switching sessions re-watches the new active id, so each session shows
