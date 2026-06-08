@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+35 (2026-06-08) — URL/path markup no longer dances while scrolling
+- **Fixed: the URL/path highlight "dancing" out of sync with the text while you scroll a tmux screen.** The markup was repositioning a frame *ahead* of the text repaint; it now resolves against the exact frame the terminal painted, so highlight and text move in lockstep. Captured from your trace and pinned with a frame-by-frame replay test. **Verify (device):** scroll a tmux screen with URLs/paths — the bubbles/underlines should stay glued to their text, no dancing. (#803)
+
 ## v0.1.10+34 (2026-06-08) — compose bar polish: top Copy/Paste, grip handle, flick-dock + hold-position
 - **Copy/Paste are now small chips on the top edge of the compose box** — smaller and out of the way, full touch targets preserved.
 - **The drag handle has a real grip**, and the header responds to gestures: **flick up → dock to top, flick down → dock to bottom, hold-then-drag → position it exactly** anywhere on screen. **Verify (device):** flick the grip up/down to dock; press-and-hold then drag to free-position. (#798)
