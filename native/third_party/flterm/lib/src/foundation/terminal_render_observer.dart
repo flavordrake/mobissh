@@ -39,4 +39,16 @@ abstract class TerminalRenderObserver implements Listenable {
   /// translucent fill over these ranges using the real cell metrics. Empty
   /// when nothing is highlighted.
   List<HighlightRange> get highlights;
+
+  /// Report the viewport offset the render box JUST painted the text with
+  /// (#803). The render box calls this at the end of each frame sync, handing
+  /// back the SAME `viewportOffset` the [HighlightPainter] read from the frame
+  /// snapshot. A widget-layer decorator (`GhosttyTerminalDecoratorLayer`)
+  /// resolves its anchor rects against this FRAME-SYNCED offset instead of the
+  /// live `scrollbar.offset`, so the decorator geometry matches the painted
+  /// glyphs on the same frame and the URL markup no longer "dances" ahead of
+  /// the text during a tmux-redraw scroll. Implementations must defer any
+  /// resulting `notifyListeners()` to a post-frame callback (the report fires
+  /// during paint, where a synchronous notify would mutate the tree mid-frame).
+  void reportPaintedViewportOffset(int offset);
 }

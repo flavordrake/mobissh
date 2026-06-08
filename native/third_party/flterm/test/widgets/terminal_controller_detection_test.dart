@@ -160,15 +160,17 @@ void main() {
 
   // #784: the structured-text decorator OUTLINE (URL bubble / path underline)
   // drifts off its glyphs WHEN SCROLLED BACK. Root cause: the widget-layer
-  // decorator resolves its ABSOLUTE-row anchors to viewport rects against the
-  // LIVE `scrollbar.offset` ([anchorRects]) but only RE-resolves when this
-  // controller notifies. A scrollback SCROLL moves the viewport via the
-  // ScrollController → the render object's `_onScroll` → `terminal.scrollViewport`,
-  // which does NOT fire the terminal's listeners — so the controller never
-  // re-notified on scroll and the decorator kept rects at the OLD offset while
-  // the fork's own painter (offset from the frame snapshot) moved. The contract:
-  // a scroll that changes the viewport offset MUST notify so the decorator
-  // re-resolves and tracks the glyphs.
+  // decorator resolves its ABSOLUTE-row anchors to viewport rects via
+  // [anchorRects] but only RE-resolves when this controller notifies. A
+  // scrollback SCROLL moves the viewport via the ScrollController → the render
+  // object's `_onScroll` → `terminal.scrollViewport`, which does NOT fire the
+  // terminal's listeners — so the controller never re-notified on scroll and the
+  // decorator kept rects at the OLD offset while the fork's own painter (offset
+  // from the frame snapshot) moved. The contract: a scroll that changes the
+  // viewport offset MUST notify so the decorator re-resolves and tracks the
+  // glyphs. (#803 then pinned [anchorRects] to the PAINTED offset — the frame
+  // snapshot the painter reads — so the re-resolve lands in lockstep with the
+  // text instead of a frame ahead; this notify contract is what still drives it.)
   group('TerminalController scroll notify for anchor tracking (#784)', () {
     Widget host(TerminalScrollController scrollController) => MaterialApp(
           home: SizedBox(

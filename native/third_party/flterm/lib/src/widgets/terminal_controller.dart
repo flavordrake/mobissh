@@ -168,6 +168,18 @@ abstract class TerminalController extends ChangeNotifier
   /// maintenance"). Empty when the grid is not laid out yet.
   List<Rect> anchorRects(HighlightRange range);
 
+  /// The viewport offset the render box LAST PAINTED the text with (#803).
+  ///
+  /// Mirrors the `viewportOffset` the fork's [HighlightPainter] reads from the
+  /// frame snapshot — the offset of the glyphs currently on screen, NOT the live
+  /// `scrollbar.offset` (which may already point at a frame not yet painted
+  /// during a tmux-redraw scroll). The render box reports it each frame via
+  /// [reportPaintedViewportOffset]; the controller notifies listeners post-frame
+  /// when it changes. [anchorRects] resolves against THIS by default so a
+  /// widget-layer decorator's geometry stays in lockstep with the painted text.
+  /// Defaults to 0 before the first paint.
+  int get paintedViewportOffset;
+
   /// The VIEWPORT row index a gutter decorator for [range] should mark, or null
   /// when the range is fully off-screen (#767 Slice B).
   ///

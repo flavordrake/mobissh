@@ -354,6 +354,9 @@ class _TestRenderObserver implements TerminalRenderObserver {
   List<HighlightRange> get highlights => const [];
 
   @override
+  void reportPaintedViewportOffset(int offset) {}
+
+  @override
   void addListener(VoidCallback listener) {}
 
   @override
