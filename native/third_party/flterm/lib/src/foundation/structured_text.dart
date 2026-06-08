@@ -536,7 +536,13 @@ class StructuredTextScanner {
       final absRow = base + r;
       for (var c = 0; c < cols; c++) {
         final uri = reader.hyperlinkAt(r, c);
-        if (uri == null) continue;
+        // Treat an EMPTY or whitespace-only URI the same as null (no hyperlink).
+        // libghostty can return "" (not null) for a cell inside an empty-URI or
+        // torn-down OSC-8 link (`ESC]8;;ESC\` appears in the #810 device trace);
+        // grouping such cells would yield a NON-NULL match with an EMPTY payload
+        // — a "URL" the tap-copy path reports as "Copied URL" while the clipboard
+        // is empty (#810). An anchor must carry a real link.
+        if (uri == null || uri.trim().isEmpty) continue;
         final glyphs = byUri.putIfAbsent(uri, () {
           order.add(uri);
           return <_Glyph>[];
