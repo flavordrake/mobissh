@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+36 (2026-06-08) — smoother scroll + lower background battery
+- **Scrolling does less work.** The URL/path decorator no longer rebuilds on every redraw while you scroll a busy screen (95% fewer rebuilds) — trims the overhead on top of the remote's repaint cost. The clunk scrolling a full-repaint TUI (Claude CLI) is mostly the remote rewriting the whole screen each step; this removes what we add on top. (#805)
+- **Lower background battery.** The app no longer pushes a per-session snapshot every 2s while backgrounded (it stops when you're not looking and re-emits instantly on resume), skips redundant pushes, and drops the 4KB scrollback decode from the periodic path. **The session-keeping locks/keepalive are unchanged — sessions still survive sleep.** (#806) (Bigger battery levers — keepalive interval, Wi-Fi-lock release — deferred pending on-device telemetry.)
+
 ## v0.1.10+35 (2026-06-08) — URL/path markup no longer dances while scrolling
 - **Fixed: the URL/path highlight "dancing" out of sync with the text while you scroll a tmux screen.** The markup was repositioning a frame *ahead* of the text repaint; it now resolves against the exact frame the terminal painted, so highlight and text move in lockstep. Captured from your trace and pinned with a frame-by-frame replay test. **Verify (device):** scroll a tmux screen with URLs/paths — the bubbles/underlines should stay glued to their text, no dancing. (#803)
 
