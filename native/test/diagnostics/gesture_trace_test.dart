@@ -128,6 +128,47 @@ void main() {
       expect(snap.last, contains('line-${gestureLogCapacity + 24}'));
     });
 
+    test('a flood of non-gesture events does NOT evict recent swipe gestures '
+        '(#793)', () {
+      // The real #790 capture: ~68 ghostty-resync/resume/refit/focus lines
+      // pushed the actual swipe-vertical gestures out of the bounded ring. The
+      // swipe/scroll gesture lines must survive a resume burst.
+      gtrace('swipe-vertical pos=(10.0,200.0) early');
+      gtrace('scroll-local offset=120 early');
+      // Now flood with far more non-gesture events than the capacity.
+      for (var i = 0; i < gestureLogCapacity * 2; i++) {
+        gtrace('ghostty-resync cols=55 rows=28 i=$i');
+      }
+      final snap = gestureLogSnapshot();
+      // The early swipe + scroll gestures are still present despite the flood.
+      expect(
+        snap.any((l) => l.contains('swipe-vertical') && l.contains('early')),
+        isTrue,
+        reason: 'swipe gesture must survive a non-gesture flood',
+      );
+      expect(
+        snap.any((l) => l.contains('scroll-local') && l.contains('early')),
+        isTrue,
+        reason: 'scroll gesture must survive a non-gesture flood',
+      );
+    });
+
+    test('priority (gesture) retention is itself bounded — newest swipes win '
+        '(#793)', () {
+      for (var i = 0; i < gestureLogGestureRetention + 10; i++) {
+        gtrace('swipe-vertical i=$i');
+      }
+      final snap = gestureLogSnapshot();
+      final swipes = snap.where((l) => l.contains('swipe-vertical')).toList();
+      // Retained swipes are capped, and the NEWEST ones survive.
+      expect(swipes.length, lessThanOrEqualTo(gestureLogGestureRetention));
+      expect(swipes.last, contains('i=${gestureLogGestureRetention + 9}'));
+      expect(
+        swipes.any((l) => l.contains('i=0 ') || l.endsWith('i=0')),
+        isFalse,
+      );
+    });
+
     test('clearGestureLog empties the ring and resets collapse state', () {
       gtrace('z');
       gtrace('z');

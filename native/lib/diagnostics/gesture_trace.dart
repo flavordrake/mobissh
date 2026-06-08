@@ -26,6 +26,29 @@ import 'package:flutter/foundation.dart';
 /// long-press-drag plus surrounding taps/swipes.
 const int gestureLogCapacity = 120;
 
+/// #793: the number of MOST-RECENT user-input gesture lines (swipe/scroll) the
+/// ring guarantees to retain even under a flood of non-gesture churn. The real
+/// #790 capture had ~68 `ghostty-resync`/resume/refit/focus lines that pushed
+/// the actual `swipe-vertical` gestures out of the bounded ring. Eviction now
+/// drops the oldest NON-gesture line first; a gesture line is only dropped once
+/// this many newer gesture lines exist — so a resume burst can't drown swipes.
+const int gestureLogGestureRetention = 32;
+
+/// #793: a line is a protected USER-INPUT gesture (vs resync/resume/refit/focus
+/// churn) iff its type token (the first whitespace-delimited word, after the
+/// timestamp prefix the ring adds) starts with `swipe` or `scroll`. Pure.
+bool _isProtectedGestureLine(String stored) {
+  // Stored lines are `"<ts> <type> ..."`; the type is the 2nd token. A raw
+  // pre-format line (no ts) has the type as the 1st token — accept either.
+  for (final token in stored.split(' ')) {
+    if (token.isEmpty) continue;
+    // Skip a leading timestamp token (`HH:MM:SS.mmm`).
+    if (token.length >= 8 && token[2] == ':' && token[5] == ':') continue;
+    return token.startsWith('swipe') || token.startsWith('scroll');
+  }
+  return false;
+}
+
 final List<String> _ring = <String>[];
 
 // Consecutive-duplicate suppression: a long-press-drag held still, or a stream
@@ -118,6 +141,43 @@ String formatGestureEvent({
       'by=$handledBy';
 }
 
+/// #793: cap the ring to [gestureLogCapacity], but protect recent user-input
+/// gesture lines (swipe/scroll) from a non-gesture flood. While over capacity,
+/// evict the OLDEST non-protected line. If none remains to evict (the ring is
+/// all protected gestures), evict the oldest protected line — but only the ones
+/// beyond [gestureLogGestureRetention] newest, so the most recent swipes win and
+/// the protected segment is itself bounded. Allocation-light: a single forward
+/// scan per eviction, no copies.
+void _capRing() {
+  while (_ring.length > gestureLogCapacity) {
+    var evictAt = -1;
+    // Prefer the oldest NON-protected (churn) line.
+    for (var i = 0; i < _ring.length; i++) {
+      if (!_isProtectedGestureLine(_ring[i])) {
+        evictAt = i;
+        break;
+      }
+    }
+    if (evictAt < 0) {
+      // All lines are protected gestures — drop the oldest so the newest
+      // [gestureLogGestureRetention] survive (bounded protected segment).
+      evictAt = 0;
+    }
+    _ring.removeAt(evictAt);
+  }
+  // Bound the protected segment too: keep only the newest
+  // [gestureLogGestureRetention] protected lines so an endless swipe stream
+  // can't itself grow unbounded within the capacity.
+  var protectedCount = 0;
+  for (var i = _ring.length - 1; i >= 0; i--) {
+    if (!_isProtectedGestureLine(_ring[i])) continue;
+    protectedCount++;
+    if (protectedCount > gestureLogGestureRetention) {
+      _ring.removeAt(i);
+    }
+  }
+}
+
 /// Append a raw pre-formatted gesture line to the ring (and logcat). Most call
 /// sites use [gevent] instead; this is the low-level primitive (and what the
 /// duplicate-collapse logic keys on).
@@ -137,9 +197,7 @@ void gtrace(String line) {
   debugPrint('[GESTURE]$line');
 
   _ring.add('$ts $line');
-  while (_ring.length > gestureLogCapacity) {
-    _ring.removeAt(0);
-  }
+  _capRing();
   _gestureLog.value = List<String>.unmodifiable(_ring);
 }
 

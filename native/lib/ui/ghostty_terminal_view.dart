@@ -1865,7 +1865,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // shell.
       controller.onOutput = (bytes) {
         if (proxy.data.state != SshSessionState.connected) return;
-        proxy.sendInput(_applyArmedCtrlToKeystroke(bytes));
+        final sent = _applyArmedCtrlToKeystroke(bytes);
+        // #793: record this only if it's a synthesized mouse/wheel SGR report —
+        // the recorder FILTERS to SGR-mouse bytes, so a typed keystroke (incl. a
+        // password at a prompt) is dropped here and NEVER recorded. In tmux mouse
+        // mode the local scroll is wheel-SGR that flterm emits through onOutput,
+        // so this is the seam that reveals "swipe → wheel events → tmux scrolled".
+        _byteRecorder.recordSentSgr(sent);
+        proxy.sendInput(sent);
       };
       // Grid resize -> PTY resize. flterm reports (cols, rows); the proxy's
       // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
@@ -2866,7 +2873,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
               final proxy = _resolveProxy();
               if (proxy == null) return;
               if (proxy.data.state != SshSessionState.connected) return;
-              proxy.sendInput(Uint8List.fromList(report.codeUnits));
+              final bytes = Uint8List.fromList(report.codeUnits);
+              // #793: capture the synthesized window-switch wheel / tap-click /
+              // selection SGR report the app sends (the recorder filters to
+              // SGR-mouse bytes — never keystrokes).
+              _byteRecorder.recordSentSgr(bytes);
+              proxy.sendInput(bytes);
             },
             // #705: long-press-drag drives flterm's LOCAL selection (persists
             // after release → Copy reads it), not a tmux SGR drag.

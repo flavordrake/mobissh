@@ -29,6 +29,7 @@
 // feedback bundle), and re-encodes — so credential-looking lines NEVER leave the
 // device. Scrubbing at snapshot (cold path) keeps the hot path allocation-light.
 
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -49,6 +50,10 @@ const Duration kByteRecorderMaxAge = Duration(seconds: 30);
 /// Default scroll-ring event cap.
 const int kScrollRecorderMaxEvents = 2048;
 
+/// Default sent-SGR-ring event cap (#793). The synthesized mouse/wheel reports
+/// the app SENDS are short and infrequent; a modest cap holds a full swipe burst.
+const int kSentSgrRecorderMaxEvents = 1024;
+
 class _ByteEvent {
   _ByteEvent(this.tMs, this.bytes);
   final int tMs;
@@ -61,6 +66,31 @@ class _ScrollEvent {
   final int offset;
 }
 
+/// #793: true iff [chunk] is a synthesized SGR-1006 mouse/wheel report — the
+/// ONLY bytes the sent ring is allowed to capture. An SGR-1006 mouse report is
+/// `ESC [ < ... M` (press/motion) or `ESC [ < ... m` (release): byte sequence
+/// `0x1b 0x5b 0x3c` (`ESC[<`) terminated by `M` (0x4d) or `m` (0x6d). A typed
+/// keystroke, password, control char, or Enter is NOT this shape, so it can
+/// never enter the ring — typed secrets are never recorded (rules/security.md).
+/// Pure + allocation-free (byte scan, no decode).
+bool isSentSgrMouseReport(Uint8List chunk) {
+  // Need at least `ESC[<` + terminator.
+  if (chunk.length < 4) return false;
+  if (chunk[0] != 0x1b || chunk[1] != 0x5b || chunk[2] != 0x3c) return false;
+  final last = chunk[chunk.length - 1];
+  if (last != 0x4d && last != 0x6d) return false; // not M / m terminated
+  // Between the prefix and the terminator only digits and ';' are valid in an
+  // SGR-1006 mouse report — reject anything else so a crafted-looking prefix
+  // that actually carries other bytes (and could embed typed content) is dropped.
+  for (var i = 3; i < chunk.length - 1; i++) {
+    final b = chunk[i];
+    final isDigit = b >= 0x30 && b <= 0x39;
+    final isSemi = b == 0x3b;
+    if (!isDigit && !isSemi) return false;
+  }
+  return true;
+}
+
 /// A bounded, backward-looking recorder of the raw bytes written to ONE
 /// session's terminal plus its scroll-offset events. See the file header.
 class SessionByteRecorder {
@@ -69,6 +99,7 @@ class SessionByteRecorder {
     this.maxEvents = kByteRecorderMaxEvents,
     this.maxAge = kByteRecorderMaxAge,
     this.maxScrollEvents = kScrollRecorderMaxEvents,
+    this.maxSentSgrEvents = kSentSgrRecorderMaxEvents,
     int Function()? nowMs,
   }) : _nowMs = nowMs ?? _defaultNowMs;
 
@@ -76,18 +107,26 @@ class SessionByteRecorder {
   final int maxEvents;
   final Duration maxAge;
   final int maxScrollEvents;
+  final int maxSentSgrEvents;
 
   /// Monotonic relative-ms clock. Injected in tests for determinism; production
   /// uses an epoch-anchored elapsed millis.
   final int Function() _nowMs;
 
-  // Ring buffers. Plain growable lists used as FIFO queues — eviction is from
-  // the FRONT (oldest). Allocation-light: no per-event wrapper churn beyond the
-  // small _ByteEvent/_ScrollEvent holders, and crucially NO byte copy/encode on
-  // the hot path.
-  final List<_ByteEvent> _bytes = <_ByteEvent>[];
+  // Ring buffers. ListQueue (#793) used as FIFO queues — eviction is from the
+  // FRONT (oldest) via O(1) `removeFirst`, NOT List.removeAt(0) (O(n) shift on
+  // the hot path). Allocation-light: no per-event wrapper churn beyond the small
+  // _ByteEvent/_ScrollEvent holders, and crucially NO byte copy/encode on the
+  // hot path.
+  final ListQueue<_ByteEvent> _bytes = ListQueue<_ByteEvent>();
   int _byteTotal = 0;
-  final List<_ScrollEvent> _scroll = <_ScrollEvent>[];
+  final ListQueue<_ScrollEvent> _scroll = ListQueue<_ScrollEvent>();
+  // #793: sent-SGR ring — ONLY the synthesized mouse/wheel SGR reports the app
+  // WRITES to the proxy (filtered by [isSentSgrMouseReport]). Reveals "swipe →
+  // wheel events emitted → tmux scrolled" in tmux mouse mode (where the local
+  // scroll never moves). NEVER carries keystrokes, so a typed password can never
+  // be recorded — the filter is the security boundary.
+  final ListQueue<_ByteEvent> _sentSgr = ListQueue<_ByteEvent>();
 
   int? _cols;
   int? _rows;
@@ -119,7 +158,26 @@ class SessionByteRecorder {
       // present. Age eviction may still drop it once it's stale.
       if (_bytes.length == 1 && _bytes.first.tMs >= ageFloor) break;
       _byteTotal -= _bytes.first.bytes.length;
-      _bytes.removeAt(0);
+      _bytes.removeFirst();
+    }
+  }
+
+  /// #793: append a chunk of bytes the app WROTE to the proxy, but ONLY if it is
+  /// a synthesized SGR-1006 mouse/wheel report ([isSentSgrMouseReport]). Any
+  /// other chunk (a typed keystroke, password, control char, Enter) is dropped
+  /// here — it never enters the ring, so typed secrets are never recorded
+  /// (rules/security.md). Hot path: a cheap byte-scan filter, then store the
+  /// reference + timestamp. No copy/encode here (cold path at snapshot).
+  void recordSentSgr(Uint8List chunk) {
+    if (!isSentSgrMouseReport(chunk)) return;
+    final t = _nowMs();
+    _sentSgr.add(_ByteEvent(t, chunk));
+    final ageFloor = t - maxAge.inMilliseconds;
+    while (_sentSgr.isNotEmpty &&
+        (_sentSgr.first.tMs < ageFloor ||
+            _sentSgr.length > maxSentSgrEvents)) {
+      if (_sentSgr.length == 1 && _sentSgr.first.tMs >= ageFloor) break;
+      _sentSgr.removeFirst();
     }
   }
 
@@ -131,7 +189,7 @@ class SessionByteRecorder {
     while (_scroll.isNotEmpty &&
         (_scroll.first.tMs < ageFloor || _scroll.length > maxScrollEvents)) {
       if (_scroll.length == 1 && _scroll.first.tMs >= ageFloor) break;
-      _scroll.removeAt(0);
+      _scroll.removeFirst();
     }
   }
 
@@ -160,6 +218,28 @@ class SessionByteRecorder {
     return out;
   }
 
+  /// #793: snapshot the sent-SGR ring as a list of `{tMs, b64}`, oldest first.
+  /// Scrubs each chunk (defense in depth — mouse reports carry no credentials,
+  /// but the ring uses the same cold-path scrub as the output ring). Encode +
+  /// scrub happen here, not on the hot path.
+  List<Map<String, Object?>> snapshotSentSgrTrace() {
+    final out = <Map<String, Object?>>[];
+    for (final ev in _sentSgr) {
+      final text = utf8.decode(ev.bytes, allowMalformed: true);
+      final scrubbed = scrubSecrets(text);
+      final bytes = identical(scrubbed, text) || scrubbed == text
+          ? ev.bytes
+          : Uint8List.fromList(utf8.encode(scrubbed));
+      out.add(<String, Object?>{'tMs': ev.tMs, 'b64': base64Encode(bytes)});
+    }
+    return out;
+  }
+
+  /// #793 (test-only): the live total of bytes retained in the byte ring, so the
+  /// O(1)-eviction tests can assert `_byteTotal` stays consistent with the
+  /// surviving chunks after `ListQueue` eviction.
+  int get debugByteTotal => _byteTotal;
+
   /// Snapshot the scroll ring as a list of `{tMs, offset}`, oldest first.
   List<Map<String, Object?>> snapshotScrollTrace() {
     return _scroll
@@ -178,6 +258,7 @@ class SessionByteRecorder {
     _bytes.clear();
     _byteTotal = 0;
     _scroll.clear();
+    _sentSgr.clear();
     _cols = null;
     _rows = null;
   }
@@ -229,6 +310,11 @@ List<Map<String, Object?>> activeByteTraceSnapshot() =>
 /// Scroll trace of the active session, or empty when none is active.
 List<Map<String, Object?>> activeScrollTraceSnapshot() =>
     _active?.snapshotScrollTrace() ?? const <Map<String, Object?>>[];
+
+/// #793: sent-SGR trace (synthesized mouse/wheel reports the app sent) of the
+/// active session, or empty when none is active.
+List<Map<String, Object?>> activeSentSgrTraceSnapshot() =>
+    _active?.snapshotSentSgrTrace() ?? const <Map<String, Object?>>[];
 
 /// Grid `{cols, rows}` of the active session, or null when none is active.
 Map<String, Object?>? activeGridSnapshot() => _active?.grid();
