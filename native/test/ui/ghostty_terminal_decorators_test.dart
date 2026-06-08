@@ -41,6 +41,12 @@ class _FakeController extends ChangeNotifier implements TerminalController {
   @override
   List<StructuredAnchor> get anchors => _anchors;
 
+  // #805: the layer now listens to the narrow decoration signal. In this fake
+  // every notify (setAnchors / scrollBy) IS a decoration change, so route it to
+  // the fake's own ChangeNotifier — preserving each test's "notify → rebuild".
+  @override
+  Listenable get decorationListenable => this;
+
   @override
   List<Rect> anchorRects(HighlightRange range) {
     // Lay each row out at a deterministic position, shifted by the scroll.
