@@ -25,6 +25,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'package:mobissh/main.dart' show MobisshApp;
+import 'package:mobissh/services/session_messages.dart';
+import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 
 import 'support/connect_helpers.dart';
@@ -92,10 +94,19 @@ void main() {
     // once in the echoed command line (`echo MARKER`) and once in its stdout
     // (`MARKER`); a single occurrence would just be the command line with the
     // run-on-connect dropped.
+    //
+    // #806 C moved the scrollback decode OFF the periodic snapshot (battery):
+    // periodic `SshSnapshotEvent`s now carry `scrollbackTail: ''`, and only the
+    // ON-DEMAND `SshRequestSnapshotCommand` path (audit live view / resume
+    // rebind) includes the tail. So drive that path each poll — send a snapshot
+    // request, pump to let it round-trip, then read the freshly-hydrated cached
+    // snapshot. This is exactly how the audit screen reads the live scrollback.
+    final gateway = container.read(taskSshGatewayProvider);
     var ran = false;
     for (var i = 0; i < 60; i++) {
+      gateway.send(SshRequestSnapshotCommand(sessionId: entry!.id).toJson());
       await tester.pump(const Duration(milliseconds: 500));
-      final text = entry!.proxy.snapshot.scrollbackTail;
+      final text = entry.proxy.snapshot.scrollbackTail;
       if (marker.allMatches(text).length >= 2) {
         ran = true;
         break;
