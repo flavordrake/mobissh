@@ -21,13 +21,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../ssh/ssh_session.dart';
 import '../state/profiles_providers.dart';
+import '../state/recent_sessions.dart';
 import '../state/sessions.dart';
 import '../storage/profiles_store.dart';
 
 typedef ProfileSelectCallback = void Function(SavedProfile profile);
+typedef RecentSelectCallback = void Function(RecentSessionEntry entry);
+typedef RecentReconnectAllCallback = void Function(
+  List<RecentSessionEntry> entries,
+);
 
 class ProfileList extends ConsumerWidget {
-  const ProfileList({super.key, required this.onConnect, required this.onEdit});
+  const ProfileList({
+    super.key,
+    required this.onConnect,
+    required this.onEdit,
+    this.onConnectRecent,
+    this.onReconnectAll,
+  });
 
   /// Fired when the user taps a profile row. Parent CONNECTS to the chosen
   /// profile immediately (resolve params + vault creds → addOrActivate →
@@ -39,6 +50,14 @@ class ProfileList extends ConsumerWidget {
   /// Fired when the user taps a row's edit pencil. Parent opens the profile
   /// editor pre-populated from the chosen profile (#579).
   final ProfileSelectCallback onEdit;
+
+  /// Fired when the user one-taps a Recent Sessions row (#796, PWA #385).
+  /// Parent resolves the matching saved profile (by identity) and connects.
+  /// Null disables the recents group (e.g. callers that don't quick-connect).
+  final RecentSelectCallback? onConnectRecent;
+
+  /// Fired by "Reconnect All" when 2+ recents exist (#796, PWA #385).
+  final RecentReconnectAllCallback? onReconnectAll;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -63,8 +82,15 @@ class ProfileList extends ConsumerWidget {
         ),
       ),
       data: (profiles) {
+        // Recent Sessions group (#796, PWA #385): a one-tap quick-connect group
+        // shown ABOVE the saved-profile list, ONLY on cold start (no active
+        // sessions) — exactly the PWA's `allSessions.length === 0` guard. It's
+        // disabled entirely when the caller didn't wire [onConnectRecent].
+        final recentsGroup = _buildRecentsGroup(context, ref);
+
+        final Widget profilesSection;
         if (profiles.isEmpty) {
-          return const Padding(
+          profilesSection = const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
             child: Text(
               'No saved profiles. Import from PWA to skip retyping.',
@@ -72,42 +98,149 @@ class ProfileList extends ConsumerWidget {
               style: TextStyle(color: Colors.grey),
             ),
           );
+        } else {
+          profilesSection = Expanded(
+            key: const Key('profile-list-populated'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 4),
+                  child: Text(
+                    'Saved Profiles',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                // #643: the list FILLS the available height instead of a fixed
+                // 220px cap that left ~60% of the screen blank below. `Expanded`
+                // takes whatever vertical room the parent gives (the chooser
+                // places ProfileList in its own Expanded), and the ListView
+                // scrolls within that full height when there are more profiles
+                // than fit. No `shrinkWrap` — the list gets a bounded height
+                // from the Expanded.
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: profiles.length,
+                    itemBuilder: (context, i) {
+                      final p = profiles[i];
+                      return _ProfileTile(
+                        profile: p,
+                        onTap: () => onConnect(p),
+                        onEdit: () => onEdit(p),
+                        onRetry: () => onConnect(p),
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 1),
+              ],
+            ),
+          );
         }
+
         return Column(
-          key: const Key('profile-list-populated'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 4, bottom: 4),
-              child: Text(
-                'Saved Profiles',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-            ),
-            // #643: the list FILLS the available height instead of a fixed
-            // 220px cap that left ~60% of the screen blank below. `Expanded`
-            // takes whatever vertical room the parent gives (the chooser places
-            // ProfileList in its own Expanded), and the ListView scrolls within
-            // that full height when there are more profiles than fit. No
-            // `shrinkWrap` — the list gets a bounded height from the Expanded.
-            Expanded(
-              child: ListView.builder(
-                itemCount: profiles.length,
-                itemBuilder: (context, i) {
-                  final p = profiles[i];
-                  return _ProfileTile(
-                    profile: p,
-                    onTap: () => onConnect(p),
-                    onEdit: () => onEdit(p),
-                    onRetry: () => onConnect(p),
-                  );
-                },
-              ),
-            ),
-            const Divider(height: 1),
+            ?recentsGroup,
+            profilesSection,
           ],
         );
       },
+    );
+  }
+
+  /// Build the Recent Sessions quick-connect group, or null when it should not
+  /// render (no [onConnectRecent] callback, an active session exists, or no
+  /// recents stored). Mirrors the PWA `renderProfiles` recent block (#385):
+  /// header + one-tap rows + a "Reconnect All" button when there are >=2.
+  Widget? _buildRecentsGroup(BuildContext context, WidgetRef ref) {
+    final onTapRecent = onConnectRecent;
+    if (onTapRecent == null) return null;
+
+    // PWA parity: the recents group only shows when there are NO active
+    // sessions (cold start). Once a session exists, the saved-profile list
+    // owns the screen.
+    final hasActiveSession = ref.watch(sessionsProvider).entries.isNotEmpty;
+    if (hasActiveSession) return null;
+
+    final recents = ref.watch(recentSessionsProvider).valueOrNull ?? const [];
+    if (recents.isEmpty) return null;
+
+    return Column(
+      key: const Key('recent-sessions-group'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 4),
+          child: Text(
+            'Recent Sessions',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
+        // shrinkWrap: the group sits above the Expanded saved-profile list, so
+        // it must size to its content rather than demand infinite height.
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: recents.length,
+          itemBuilder: (context, i) {
+            final r = recents[i];
+            return _RecentTile(entry: r, onTap: () => onTapRecent(r));
+          },
+        ),
+        if (recents.length >= 2)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 4),
+            child: OutlinedButton.icon(
+              key: const Key('reconnect-all-recent'),
+              icon: const Icon(Icons.restart_alt, size: 18),
+              label: const Text('Reconnect All'),
+              onPressed: onReconnectAll == null
+                  ? null
+                  : () => onReconnectAll!(List<RecentSessionEntry>.from(recents)),
+            ),
+          ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+/// One Recent Sessions row (#796). A whole-row tap quick-connects (PWA `data-
+/// action="reconnect-recent"`). Monochrome leading dot + a trailing replay glyph
+/// signal "reconnect" without a colorful emoji icon.
+class _RecentTile extends StatelessWidget {
+  const _RecentTile({required this.entry, required this.onTap});
+
+  final RecentSessionEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = entry.title.isNotEmpty
+        ? entry.title
+        : '${entry.username}@${entry.host}:${entry.port}';
+    return ListTile(
+      key: Key('recent-tile-${entry.identityKey}'),
+      dense: true,
+      leading: Icon(
+        Icons.history,
+        size: 18,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+      title: Text(label, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        '${entry.username}@${entry.host}:${entry.port}',
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: IconButton(
+        key: Key('recent-reconnect-${entry.identityKey}'),
+        icon: const Icon(Icons.replay),
+        tooltip: 'Reconnect',
+        onPressed: onTap,
+      ),
+      onTap: onTap,
     );
   }
 }
