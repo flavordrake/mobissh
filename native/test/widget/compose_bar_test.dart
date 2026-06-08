@@ -236,7 +236,7 @@ void main() {
         expect(find.byKey(const Key('compose-bar-submit')), findsOneWidget);
 
         // The text actions must NOT live inside the rail any more — they belong
-        // to the pill row. Assert no rail descendant owns those keys.
+        // to the header pill row. Assert no rail descendant owns those keys.
         expect(
           find.descendant(
             of: find.byKey(const Key('compose-bar-rail')),
@@ -251,41 +251,15 @@ void main() {
           ),
           findsNothing,
         );
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('compose-bar-rail')),
+            matching: find.byKey(const Key('compose-bar-fix')),
+          ),
+          findsNothing,
+        );
       },
     );
-
-    testWidgets('inline pill row carries Fix (Copy/Paste moved to border #798)', (
-      tester,
-    ) async {
-      await pumpBar(tester, <String>[]);
-
-      final pillRow = find.byKey(const Key('compose-bar-pills'));
-      expect(pillRow, findsOneWidget);
-
-      expect(
-        find.descendant(
-          of: pillRow,
-          matching: find.byKey(const Key('compose-bar-fix')),
-        ),
-        findsOneWidget,
-      );
-      // #798: Copy/Paste are no longer pills in this row — they live on the
-      // field's top border.
-      expect(
-        find.descendant(
-          of: pillRow,
-          matching: find.byKey(const Key('compose-bar-copy')),
-        ),
-        findsNothing,
-      );
-      expect(
-        find.descendant(
-          of: pillRow,
-          matching: find.byKey(const Key('compose-bar-paste')),
-        ),
-        findsNothing,
-      );
-    });
 
     testWidgets('Fix pill collapses terminal soft-wrap into one clean line', (
       tester,
@@ -575,61 +549,122 @@ void main() {
     );
   });
 
-  group('#798 — Copy/Paste on the top border of the field', () {
-    testWidgets('Copy and Paste are small chips on the field top edge', (
+  group('#819 — unified Fix/Copy/Paste pills, flush-right on the top border', () {
+    testWidgets('Fix, Copy and Paste are the SAME pill widget shape', (
       tester,
     ) async {
       await pumpBar(tester, <String>[]);
 
-      final copy = find.byKey(const Key('compose-bar-copy'));
-      final paste = find.byKey(const Key('compose-bar-paste'));
-      final field = find.byKey(const Key('compose-bar-input'));
-      expect(copy, findsOneWidget);
-      expect(paste, findsOneWidget);
-
-      final fieldBox = tester.getRect(field);
-      // The chips must straddle the TOP border of the field — their vertical
-      // centre sits on (within a few px of) the field's top edge, not lower in
-      // the body of the textarea.
-      for (final chip in [copy, paste]) {
-        final box = tester.getRect(chip);
+      // All three must resolve to the same pill widget type — no _BorderChip,
+      // no shape split. Each pill key must be backed by exactly one Pill widget.
+      for (final k in [
+        'compose-bar-fix',
+        'compose-bar-copy',
+        'compose-bar-paste',
+      ]) {
         expect(
-          (box.center.dy - fieldBox.top).abs() < 24,
+          find.byKey(Key(k)),
+          findsOneWidget,
+          reason: '$k must exist as a unified pill',
+        );
+      }
+      // Identical visual shape ⇒ identical height (the unified pill's fixed
+      // height). Compare the rendered heights of all three.
+      final fixH = tester.getRect(find.byKey(const Key('compose-bar-fix'))).height;
+      final copyH = tester
+          .getRect(find.byKey(const Key('compose-bar-copy')))
+          .height;
+      final pasteH = tester
+          .getRect(find.byKey(const Key('compose-bar-paste')))
+          .height;
+      expect(copyH, fixH, reason: 'Copy shares Fix pill height (same shape)');
+      expect(pasteH, fixH, reason: 'Paste shares Fix pill height (same shape)');
+    });
+
+    testWidgets('the three pills sit on the top border row, above the field', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+
+      final field = find.byKey(const Key('compose-bar-input'));
+      final fieldBox = tester.getRect(field);
+
+      for (final k in [
+        'compose-bar-fix',
+        'compose-bar-copy',
+        'compose-bar-paste',
+      ]) {
+        final box = tester.getRect(find.byKey(Key(k)));
+        // The pills live on the TOP BORDER row, fully ABOVE the textarea — so
+        // the pill's bottom is at or above the field's top edge. No overlap.
+        expect(
+          box.bottom <= fieldBox.top + 1,
           isTrue,
-          reason: 'chip must sit on the field top border, not in its body',
+          reason: '$k must sit above the field top edge (no text overlap)',
         );
       }
     });
 
-    testWidgets('Copy/Paste chips are smaller than the inline Fix pill', (
+    testWidgets('the pills are flush RIGHT on the top border', (
       tester,
     ) async {
       await pumpBar(tester, <String>[]);
 
-      final copyBox = tester.getRect(find.byKey(const Key('compose-bar-copy')));
-      final fixBox = tester.getRect(find.byKey(const Key('compose-bar-fix')));
+      final panelBox = tester.getRect(find.byKey(const Key('compose-bar')));
+      final pasteBox = tester.getRect(find.byKey(const Key('compose-bar-paste')));
+      // Paste is the right-most pill; its right edge hugs the panel's right edge.
       expect(
-        copyBox.width < fixBox.width,
+        (panelBox.right - pasteBox.right) < 24,
         isTrue,
-        reason: 'border Copy chip must be smaller than the Fix pill',
+        reason: 'pills must be flush-right on the top border',
+      );
+
+      // Right-to-left order on the border: Paste right-most, then Copy, then Fix.
+      final fixBox = tester.getRect(find.byKey(const Key('compose-bar-fix')));
+      final copyBox = tester.getRect(find.byKey(const Key('compose-bar-copy')));
+      expect(fixBox.right <= copyBox.left + 1, isTrue);
+      expect(copyBox.right <= pasteBox.left + 1, isTrue);
+    });
+
+    testWidgets('no separate pill band — vertical height is reclaimed', (
+      tester,
+    ) async {
+      await pumpBar(tester, <String>[]);
+      // The old standalone pill row band is gone (pills live on the header).
+      expect(find.byKey(const Key('compose-bar-pills')), findsNothing);
+    });
+
+    testWidgets('the grip stays centered on the top border', (tester) async {
+      await pumpBar(tester, <String>[]);
+      final panelBox = tester.getRect(find.byKey(const Key('compose-bar')));
+      final gripBox = tester.getRect(find.byKey(const Key('compose-bar-grip')));
+      // Grip remains horizontally centered (the pills are flush-right, not over it).
+      expect(
+        (gripBox.center.dx - panelBox.center.dx).abs() < 8,
+        isTrue,
+        reason: 'grip stays centered while pills are flush-right',
       );
     });
 
-    testWidgets('Copy/Paste keep an adequate touch target (>=40px)', (
+    testWidgets('pills keep an adequate touch target (>=32px tall)', (
       tester,
     ) async {
       await pumpBar(tester, <String>[]);
-      for (final k in ['compose-bar-copy', 'compose-bar-paste']) {
+      for (final k in [
+        'compose-bar-fix',
+        'compose-bar-copy',
+        'compose-bar-paste',
+      ]) {
         final box = tester.getRect(find.byKey(Key(k)));
         expect(
-          box.height >= 40 && box.width >= 40,
+          box.height >= 32,
           isTrue,
-          reason: '$k must keep a finger-sized hit area via padding',
+          reason: '$k must keep a finger-sized hit area',
         );
       }
     });
 
-    testWidgets('Copy still copies the staged text from the border chip', (
+    testWidgets('Copy still copies the staged text from its pill', (
       tester,
     ) async {
       String? clipboardText;

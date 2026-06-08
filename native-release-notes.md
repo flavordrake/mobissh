@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+38 (2026-06-08) — compose action pills cleaned up
+- **Fix / Copy / Paste are now one consistent pill, flush-right on the compose box's top border** — no longer overlapping your text, and the row they used to occupy is reclaimed for the text area. (#819)
+
 ## v0.1.10+37 (2026-06-08) — URL copy fixed + no more off-by-line highlight
 - **Tapping a URL copies the real URL again** (single-line URLs too). Empty embedded-link terminators were anchoring an empty payload, so it copied nothing yet still said "Copied URL" — now an empty match never false-copies. **Verify:** tap a URL → clipboard has the full link. (#810)
 - **The URL/path highlight no longer drifts off the text while scrolling.** Instead of chasing the position mid-scroll (which kept landing a line off), it now **hides while you scroll and re-appears glued to the text once you settle** — it can't be off-by-a-line because it doesn't draw mid-scroll. Tap-to-copy still works throughout. **Verify:** scroll a tmux screen with URLs/paths → no dancing highlight; stop → it snaps onto the text. (#812)
