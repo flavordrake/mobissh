@@ -31,6 +31,7 @@ import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart' show ProfilesStore;
 import 'file_browser_screen.dart';
+import 'session_state_dot.dart';
 
 /// Opens the session menu as a NON-MODAL overlay anchored to the bottom, above
 /// the keyboard. Returns once dismissed (outside tap or an action closes it).
@@ -701,7 +702,7 @@ class _SessionRow extends ConsumerWidget {
       leading: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _StatusDot(
+          SessionStateDot(
             key: Key('session-menu-status-dot-${entry.id}'),
             // The swatch key is retained (#739 tests + device screenshots
             // address it) and now lives on the same dot.
@@ -753,7 +754,7 @@ class _SessionRow extends ConsumerWidget {
               openFileBrowser(navigator.context, sessionId);
             },
           ),
-          if (_canReconnect(state))
+          if (sessionCanReconnect(state))
             IconButton(
               key: Key('session-menu-reconnect-${entry.id}'),
               tooltip: 'Reconnect',
@@ -784,16 +785,6 @@ class _SessionRow extends ConsumerWidget {
         onClose();
       },
     );
-  }
-
-  /// True when the session is in a drop state the user can manually reconnect
-  /// from (#817). A live/connecting session is excluded — it's already healthy
-  /// or trying. Reads STATE, never a boolean.
-  static bool _canReconnect(SshSessionState state) {
-    return state == SshSessionState.softDisconnected ||
-        state == SshSessionState.reconnecting ||
-        state == SshSessionState.failed ||
-        state == SshSessionState.disconnected;
   }
 
   /// The per-state status line under the row label, or null for `connected`
@@ -849,115 +840,6 @@ class _SessionRow extends ConsumerWidget {
           ),
         );
     }
-  }
-}
-
-/// State-driven status dot for a session row (#817). The COLOR encodes the
-/// lifecycle state; `connecting`/`reconnecting` pulse to signal "in flight".
-/// Monochrome / theme-derived colors only — no emoji
-/// (feedback_monochrome_icons_no_emoji):
-///   connected → solid profile color (else theme accent)
-///   connecting/authenticating/awaitingHostKey → pulsing accent
-///   softDisconnected/reconnecting → amber
-///   failed → red (theme error)
-///   disconnected (user) / idle → grey (outlineVariant)
-class _StatusDot extends StatefulWidget {
-  const _StatusDot({
-    super.key,
-    required this.swatchKey,
-    required this.state,
-    required this.profileColor,
-  });
-
-  final Key swatchKey;
-  final SshSessionState state;
-  final Color? profileColor;
-
-  @override
-  State<_StatusDot> createState() => _StatusDotState();
-}
-
-class _StatusDotState extends State<_StatusDot>
-    with SingleTickerProviderStateMixin {
-  // Constructed eagerly in initState (NOT `late final`): a lazy field would be
-  // built inside dispose() if it was never animated, and constructing an
-  // AnimationController during unmount does a TickerMode ancestor lookup on a
-  // deactivated widget (crash). Eager construction makes dispose() always safe.
-  late final AnimationController _pulse;
-
-  bool get _pulsing =>
-      widget.state == SshSessionState.connecting ||
-      widget.state == SshSessionState.authenticating ||
-      widget.state == SshSessionState.awaitingHostKey ||
-      widget.state == SshSessionState.softDisconnected ||
-      widget.state == SshSessionState.reconnecting;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-      value: 1.0,
-    );
-    if (_pulsing) _pulse.repeat(reverse: true);
-  }
-
-  @override
-  void didUpdateWidget(_StatusDot oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_pulsing && !_pulse.isAnimating) {
-      _pulse.repeat(reverse: true);
-    } else if (!_pulsing && _pulse.isAnimating) {
-      _pulse
-        ..stop()
-        ..value = 1.0;
-    }
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  Color _color(ThemeData theme) {
-    switch (widget.state) {
-      // connected (and idle, pre-connect) keep the PROFILE color so the SAME
-      // color still identifies the SAME profile across the app (#739, PWA
-      // `session-dot`). A colorless session shows the neutral fallback — never a
-      // fake real-looking color (#739).
-      case SshSessionState.idle:
-      case SshSessionState.connected:
-        return widget.profileColor ?? theme.colorScheme.outlineVariant;
-      case SshSessionState.connecting:
-      case SshSessionState.authenticating:
-      case SshSessionState.awaitingHostKey:
-        return theme.colorScheme.primary;
-      case SshSessionState.softDisconnected:
-      case SshSessionState.reconnecting:
-        return Colors.orange.shade700;
-      case SshSessionState.failed:
-        return theme.colorScheme.error;
-      case SshSessionState.disconnected:
-        return theme.colorScheme.outlineVariant;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _color(Theme.of(context));
-    final dot = Container(
-      key: widget.swatchKey,
-      width: 10,
-      height: 10,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-    );
-    if (!_pulsing) return dot;
-    return FadeTransition(
-      opacity: Tween<double>(begin: 0.35, end: 1.0).animate(_pulse),
-      child: dot,
-    );
   }
 }
 
@@ -1018,17 +900,11 @@ class _ReconnectAllRowState extends ConsumerState<_ReconnectAllRow> {
     super.dispose();
   }
 
-  bool _isDropped(SshSessionState state) {
-    return state == SshSessionState.softDisconnected ||
-        state == SshSessionState.reconnecting ||
-        state == SshSessionState.failed ||
-        state == SshSessionState.disconnected;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final dropped =
-        widget.entries.where((e) => _isDropped(e.proxy.data.state)).toList();
+    final dropped = widget.entries
+        .where((e) => sessionCanReconnect(e.proxy.data.state))
+        .toList();
     if (dropped.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
