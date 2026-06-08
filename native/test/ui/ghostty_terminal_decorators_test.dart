@@ -38,6 +38,20 @@ class _FakeController extends ChangeNotifier implements TerminalController {
     notifyListeners();
   }
 
+  /// #812: the scrolling-vs-settled signal the layer now gates its draw on. The
+  /// fake defaults to SETTLED (false) so the existing "renders a bubble" tests
+  /// still draw; the #812 hide-on-scroll tests flip it true + notify.
+  bool scrolling = false;
+
+  void setScrolling(bool value) {
+    if (scrolling == value) return;
+    scrolling = value;
+    notifyListeners();
+  }
+
+  @override
+  bool get isScrolling => scrolling;
+
   @override
   List<StructuredAnchor> get anchors => _anchors;
 
@@ -246,6 +260,46 @@ void main() {
       controller.scrollBy(10);
       await tester.pump();
       expect(find.byType(IgnorePointer), findsNothing);
+    });
+
+    testWidgets('#812: HIDES the bubble while scrolling, even with a live anchor',
+        (tester) async {
+      final controller = await pumpLayer(tester);
+      controller.setAnchors([_urlAnchor('https://example.com')]);
+      await tester.pump();
+      // Settled → drawn.
+      expect(find.byType(IgnorePointer), findsOneWidget);
+
+      // Enter the scrolling state: the anchor is STILL detected (tap routing is
+      // unaffected) but the layer must draw NOTHING.
+      controller.setScrolling(true);
+      await tester.pump();
+      expect(
+        find.byType(IgnorePointer),
+        findsNothing,
+        reason: 'the decorator hides while the viewport offset is changing (#812)',
+      );
+      // The anchor is unchanged — only the DRAW is gated, not detection.
+      expect(controller.anchors, isNotEmpty);
+    });
+
+    testWidgets('#812: SHOWS the bubble again once the scroll settles',
+        (tester) async {
+      final controller = await pumpLayer(tester);
+      controller.setAnchors([_urlAnchor('https://example.com')]);
+      controller.setScrolling(true);
+      await tester.pump();
+      expect(find.byType(IgnorePointer), findsNothing);
+
+      // Settle: the layer rebuilds once and re-shows the bubble at the (now
+      // stable) geometry.
+      controller.setScrolling(false);
+      await tester.pump();
+      expect(
+        find.byType(IgnorePointer),
+        findsOneWidget,
+        reason: 'the decorator reappears once the offset is stable (#812)',
+      );
     });
 
     testWidgets('skips anchors whose pattern has no registered decorator',
