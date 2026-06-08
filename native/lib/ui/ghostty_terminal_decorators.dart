@@ -349,6 +349,17 @@ class GhosttyTerminalDecoratorLayer extends StatelessWidget {
     return ListenableBuilder(
       listenable: controller.decorationListenable,
       builder: (context, _) {
+        // #812: HIDE the decorators while the painted viewport offset is changing
+        // (active scroll, incl. a tmux-redraw "scroll"). During scroll the painted
+        // offset and the live geometry can disagree by a row, which made the bubble
+        // drift off its text (#784/#803/#807 chased this and kept reintroducing it).
+        // The robust fix: don't draw at all mid-scroll — draw ONLY once the offset
+        // settles (painted == live → exact placement). Tap-to-copy is UNAFFECTED:
+        // `matchAt`/`anchors` are independent of the draw, so a link stays tappable
+        // throughout the scroll even while its bubble is hidden. The controller
+        // fires `decorationListenable` on both the rising edge (hide) and the
+        // settle (show), so this layer rebuilds exactly twice per scroll.
+        if (controller.isScrolling) return const SizedBox.shrink();
         // Group each anchor's live rects under its decorator. Resolved fresh
         // on each decoration-changed build from the current viewport offset/
         // metrics (#805: only when the anchor set or painted offset moves).

@@ -180,6 +180,19 @@ abstract class TerminalController extends ChangeNotifier
   /// Defaults to 0 before the first paint.
   int get paintedViewportOffset;
 
+  /// Whether the PAINTED viewport offset is actively CHANGING — a scroll, including
+  /// a tmux-redraw "scroll" where the remote rewrites the grid (#812).
+  ///
+  /// True from the moment the painted offset moves until it has held still for a
+  /// short trailing debounce (~140ms). A widget-layer decorator HIDES while this is
+  /// true and SHOWS once it settles, so the decorator never draws during the moment
+  /// it cannot reliably track the offset — the robust fix for the off-by-line drift
+  /// the during-scroll position chase (#784/#803/#807) kept reintroducing. Tap-to-
+  /// copy is UNAFFECTED: [matchAt] / [anchors] are independent of the draw, so a
+  /// link stays tappable throughout a scroll even while its bubble is hidden.
+  /// Defaults to false before the first paint (a static screen draws normally).
+  bool get isScrolling;
+
   /// A [Listenable] that fires ONLY when the inputs a widget-layer decorator
   /// reads have changed (#805): the detected [anchors] set, or the
   /// [paintedViewportOffset] the decorator resolves [anchorRects] against.
