@@ -226,9 +226,39 @@ class SshSessionController {
   Completer<bool>? _hostKeyCompleter;
   SshConnectParams? _lastParams;
   int _reconnectAttempts = 0;
+
+  /// The single authoritative "user intent suppresses auto-reconnect" bit
+  /// (#813). Set by [disconnect], reset by [connect]. This is the one bit the
+  /// issue permits ("keep at most ONE explicit user-intent bit"): the
+  /// `disconnected` state alone is AMBIGUOUS — both a user ✕ (suppress) and an
+  /// involuntary clean close while not-connected (don't suppress) land there —
+  /// so a bit is genuinely required to discriminate them. Read it only through
+  /// [_autoReconnectSuppressed]; the order-dependent CHECK sites (transport
+  /// close, probe, reconnect timer) read STATE, not this flag (per
+  /// `rules/state-management.md`).
   bool _userDisconnected = false;
   Timer? _reconnectTimer;
   Timer? _readyTimer;
+
+  /// Whether the USER explicitly disconnected, suppressing auto-reconnect
+  /// (#813). The owner's rule: ✕/Disconnect is a deliberate "forget" that must
+  /// never be auto-revived. Backed by the single [_userDisconnected] bit and
+  /// kept in lockstep with the state machine — when set, the session is always
+  /// in the `disconnected` terminal state (asserted in
+  /// [_assertSuppressConsistent]).
+  bool get _autoReconnectSuppressed => _userDisconnected;
+
+  /// Debug-only invariant: when the user-intent bit is set, the session MUST be
+  /// in the `disconnected` terminal state. (The converse does NOT hold —
+  /// `disconnected` is also reached by an involuntary clean close.) Guards
+  /// against a future transition setting the bit without driving the state, or
+  /// leaving it set after re-entering a live phase. No-op in release builds.
+  void _assertSuppressConsistent() {
+    assert(
+      !_userDisconnected || _data.state == SshSessionState.disconnected,
+      'user-intent bit set but state=${_data.state.name} (expected disconnected)',
+    );
+  }
 
   /// Most recent state snapshot. Always non-null.
   SshSessionData get data => _data;
@@ -249,6 +279,12 @@ class SshSessionController {
   /// Connection Audit screen (#524).
   int? get lastReconnectAtMs => _lastReconnectAtMs;
   int? _lastReconnectAtMs;
+
+  /// Wall-clock timestamp (ms since epoch) the session entered its current
+  /// terminal-drop state (`failed` or involuntary `disconnected`), or null when
+  /// not in such a state. Drives the staleness check in [resumeReconnectIfStale]
+  /// (#813).
+  int? _terminalSinceMs;
 
   /// Whether the most recent reconnect-triggering error was classified as a
   /// host-unreachable condition (no route, refused, timed out, "no SSH
@@ -274,8 +310,10 @@ class SshSessionController {
       return;
     }
 
-    // Fresh user-initiated connect — clear the disconnect flag so we'll
-    // reconnect again if the socket later flakes (#517).
+    // Fresh user-initiated connect — clear the user-intent bit so we'll
+    // reconnect again if the socket later flakes (#517). The `connecting` emit
+    // below moves state off `disconnected`, keeping the bit and the state-
+    // derived suppress predicate in lockstep (#813).
     _userDisconnected = false;
     _lastParams = params;
 
@@ -467,7 +505,19 @@ class SshSessionController {
   Future<bool> probeLiveness({
     Duration timeout = const Duration(seconds: 4),
   }) async {
-    if (_userDisconnected) return false;
+    _assertSuppressConsistent();
+    // #813: the resume entry point also re-arms a STALE dropped session. A
+    // `failed` (or involuntary-`disconnected`) session has no live socket to
+    // ping — instead of skipping it (the zombie-tile bug), re-enter the
+    // reconnect path from held params. A user disconnect is excluded inside
+    // [resumeReconnectIfStale]. We return false (not alive) for these.
+    if (_data.state == SshSessionState.failed ||
+        _data.state == SshSessionState.disconnected) {
+      await resumeReconnectIfStale();
+      return false;
+    }
+    // A user-disconnected session is `disconnected`, never `connected`, so the
+    // state guard alone excludes it (#813 — read state, not the flag).
     if (_data.state != SshSessionState.connected) return false;
     if (_lastParams == null) return false;
 
@@ -487,9 +537,10 @@ class SshSessionController {
       ctrace('task.ssh', 'probeLiveness: ping-alive (transport answered)');
       return true;
     }
-    // Re-check state: a real transport close could have raced in while we
-    // awaited the probe and already moved us off `connected`.
-    if (_userDisconnected || _data.state != SshSessionState.connected) {
+    // Re-check state: a real transport close (or a user disconnect → the
+    // `disconnected` state) could have raced in while we awaited the probe and
+    // already moved us off `connected`.
+    if (_data.state != SshSessionState.connected) {
       return false;
     }
     _lastErrorUnreachable = false;
@@ -508,7 +559,9 @@ class SshSessionController {
   /// Reuses the same `connected → softDisconnected → reconnect` machinery as a
   /// clean server close, so #517/#590 reconnect behaviour is unchanged.
   void softDisconnectForResume() {
-    if (_userDisconnected) return;
+    _assertSuppressConsistent();
+    // `connected` precondition already excludes a user-disconnected
+    // (`disconnected`) session (#813 — state, not flag).
     if (_data.state != SshSessionState.connected) return;
     if (_lastParams == null) return;
     clifecycle(
@@ -517,6 +570,55 @@ class SshSessionController {
     );
     _lastErrorUnreachable = false;
     _emit(_data.copyWith(state: SshSessionState.softDisconnected));
+    _scheduleReconnect(null);
+  }
+
+  /// Re-arm reconnect for a STALE dropped session on app-resume (#813).
+  ///
+  /// The PWA's `visibilitychange` retry re-attempts a session that gave up
+  /// (`failed`) or dropped involuntarily (`disconnected` reached without a user
+  /// ✕) once it's been dead longer than [staleThreshold]. Native previously
+  /// SKIPPED `failed` on resume, leaving a zombie tile that needed a manual ✕.
+  /// This closes that gap by re-entering the existing reconnect path from the
+  /// controller's held [_lastParams].
+  ///
+  /// Gated on STATE, with the single user-intent bit as the only discriminator:
+  ///  - Only `failed` or `disconnected` re-arm (a live/connecting/reconnecting
+  ///    session is already healthy or trying — nothing to re-arm).
+  ///  - A USER disconnect must never be auto-revived (the owner's "✕ is forget"
+  ///    rule). The `disconnected` state is ambiguous — a user ✕ and an
+  ///    involuntary clean close both land there — so the one permitted
+  ///    user-intent bit ([_autoReconnectSuppressed]) discriminates them: re-arm
+  ///    a `disconnected` session ONLY when it is NOT user-suppressed.
+  ///  - The drop must be at least [staleThreshold] old ([_terminalSinceMs]).
+  ///
+  /// No-op when there are no params to reconnect with. Reuses [_scheduleReconnect]
+  /// so backoff/ceiling/telemetry are identical to a transient drop.
+  Future<void> resumeReconnectIfStale({
+    Duration staleThreshold = const Duration(seconds: 8),
+  }) async {
+    _assertSuppressConsistent();
+    final state = _data.state;
+    final isDrop =
+        state == SshSessionState.failed ||
+        state == SshSessionState.disconnected;
+    if (!isDrop) return;
+    // A user disconnect is a deliberate "forget" — never auto-revive it.
+    if (_autoReconnectSuppressed) return;
+    if (_lastParams == null) return;
+    final since = _terminalSinceMs;
+    if (since != null) {
+      final age = DateTime.now().millisecondsSinceEpoch - since;
+      if (age < staleThreshold.inMilliseconds) return;
+    }
+    clifecycle(
+      'task.ssh',
+      'resume: stale ${state.name} → re-arm reconnect',
+    );
+    // Reset the attempt counter so the re-arm gets a full reconnect budget
+    // rather than inheriting the exhausted count that drove us to `failed`.
+    _reconnectAttempts = 0;
+    _lastErrorUnreachable = false;
     _scheduleReconnect(null);
   }
 
@@ -535,9 +637,11 @@ class SshSessionController {
   /// not invoke this directly.
   @visibleForTesting
   void handleTransportClosed(Object? error) {
-    // Ignore stale done-futures from a previously-torn-down client (e.g.,
-    // user called disconnect() and the old client.done resolves later).
-    if (_userDisconnected) return;
+    _assertSuppressConsistent();
+    // Ignore stale done-futures from a previously-torn-down client. A user
+    // disconnect lands in `disconnected`; a prior failure lands in `failed` —
+    // both terminal. The state check subsumes the old `_userDisconnected` guard
+    // (#813): disconnect() drives `disconnected`, so a late close is ignored.
     if (_data.state == SshSessionState.disconnected ||
         _data.state == SshSessionState.failed) {
       return;
@@ -687,14 +791,17 @@ class SshSessionController {
     _lastReconnectAtMs = DateTime.now().millisecondsSinceEpoch;
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () async {
-      if (_userDisconnected) return;
+      // disconnect() cancels this timer, so reaching here while suppressed
+      // should be impossible — but read the state-derived predicate (not the
+      // flag) as the consistency guard (#813).
+      if (_autoReconnectSuppressed) return;
       _reconnectAttempts += 1;
       // Detach the now-dead client so a fresh connect() can run.
       _client = null;
       // Reset to a state from which connect() will proceed.
       _data = _data.copyWith(state: SshSessionState.idle);
       final ok = await _runReconnectAttempt(params);
-      if (!ok && !_userDisconnected) {
+      if (!ok && !_autoReconnectSuppressed) {
         // Attempt failed — re-schedule directly (not via handleTransportClosed,
         // whose null-error path would treat the idle reset as a clean close and
         // bail). The counter keeps climbing under the same ceiling/backoff until
@@ -855,6 +962,16 @@ class SshSessionController {
       ctrace('task.ssh', 'readyTimer: cancelled (state→${next.state.name})');
       _readyTimer!.cancel();
       _readyTimer = null;
+    }
+    // Stamp when the session enters a terminal involuntary state (`failed`) or
+    // any `disconnected` so the resume re-arm (#813) can tell a STALE dropped
+    // session from a just-now drop. Cleared on every other transition so a
+    // session that reconnects doesn't carry an old timestamp.
+    if (next.state == SshSessionState.failed ||
+        next.state == SshSessionState.disconnected) {
+      _terminalSinceMs ??= DateTime.now().millisecondsSinceEpoch;
+    } else {
+      _terminalSinceMs = null;
     }
     _data = next;
     if (!_stateCtrl.isClosed) {

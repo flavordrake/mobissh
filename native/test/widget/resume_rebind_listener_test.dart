@@ -180,6 +180,69 @@ void main() {
     await sub.cancel();
   });
 
+  test(
+    'resume re-arms a FAILED session — sends a resume probe (#813)',
+    () async {
+      // #813: a session that gave up (`failed`) must be re-armed on resume, not
+      // left as a zombie tile. The listener sends the resume-probe command for
+      // `failed` (and involuntary-`disconnected`) states too; task-side that
+      // re-enters the reconnect path from held params.
+      final pair = InMemoryGatewayPair();
+      final container = ProviderContainer(
+        overrides: [
+          taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+          keepaliveServiceStarterProvider.overrideWithValue(() async {}),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(pair.dispose);
+
+      container.read(resumeRebindListenerProvider);
+      final notifier = container.read(sessionsProvider.notifier);
+      final e = notifier.addOrActivate(
+        const SshConnectParams(
+          host: 'h',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        ),
+      );
+      // Drive the proxy to `failed`.
+      pair.taskSide.send(
+        SshStateEvent(
+          sessionId: e.id,
+          state: SshSessionState.failed.name,
+          error: 'reconnect exhausted',
+        ).toJson(),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(e.proxy.data.state, SshSessionState.failed);
+
+      final probeRequests = <String>[];
+      final sub = pair.taskSide.incoming.listen((payload) {
+        if (payload['kind'] == SshTaskCommandKind.resumeProbe.name) {
+          probeRequests.add(payload['sessionId'] as String);
+        }
+      });
+
+      container.read(lifecycleProvider.notifier).state =
+          AppLifecycleState.paused;
+      container.read(lifecycleProvider.notifier).state =
+          AppLifecycleState.resumed;
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        probeRequests,
+        contains(e.id),
+        reason: 'a failed session must be re-armed on resume, not skipped',
+      );
+
+      await sub.cancel();
+    },
+  );
+
   test('non-resumed lifecycle transitions do NOT rebind (#551)', () async {
     final pair = InMemoryGatewayPair();
     final container = ProviderContainer(
