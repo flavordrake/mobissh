@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+32 (2026-06-08) — Feedback now captures the scroll wheel-events you send + keeps your swipes (diagnostic infra)
+- **Feedback now also captures the mouse/wheel events your swipes send to tmux** (mouse-reports only — never your keystrokes) and guarantees your recent swipes stay in the log even through a resize/resume burst. Combined with the new off-device replay tool, an unresponsive-scroll report can now be reproduced exactly and fixed at the source. **To help fix the scroll: reproduce the unresponsive scroll, then hit Feedback.** (#793/#791)
+- Recorder is now provably zero-overhead on the hot path (O(1) eviction).
+
 ## v0.1.10+31 (2026-06-08) — Feedback records the byte+scroll trace (to fix the sticky scroll for real) + detect URLs anywhere you scroll
 - **Feedback now also captures the raw terminal byte stream + your scroll movements** (scrubbed of secrets), alongside the screenshot. This lets a scroll/repaint bug be replayed EXACTLY off-device and fixed at the source instead of guessed. **To fix the sticky-scroll: reproduce it, then hit Feedback while it's stuck** — that trace is what I need. (#790)
 - **URLs and file paths now get detected wherever you scroll to**, not only near the live prompt. **Verify:** scroll up to a line with a URL/path → it gets its bubble/underline. (#787)
