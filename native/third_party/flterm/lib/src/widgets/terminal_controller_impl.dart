@@ -304,15 +304,26 @@ class TerminalControllerImpl extends TerminalController
       if (visibleRows <= 0 || cols <= 0) {
         matches = const [];
       } else {
-        // The active viewport occupies screen rows [scrollbackRows,
-        // scrollbackRows + visibleRows). Scan that plus up to
-        // _detectionScrollbackWindow rows of recent scrollback above it, so a
-        // URL just scrolled near is picked up without an O(scrollback) walk.
+        // Scan the region that is ACTUALLY ON SCREEN wherever the viewport
+        // currently sits in scrollback, not a range anchored only to the bottom.
+        // The viewport's top absolute row is the scroll offset; it occupies
+        // [viewportTop, viewportTop + visibleRows). Scan that plus up to
+        // _detectionScrollbackWindow rows of margin ABOVE and BELOW it, so a URL
+        // the user scrolled far up to (#787) — or just scrolled near — is picked
+        // up, while the bounded margin keeps this off an O(scrollback) walk.
+        // (Anchored-to-bottom previously missed anything scrolled past the
+        // window.) The margin also gives the wrap-join enough context rows above
+        // the first visible row to assemble a URL that wraps across the boundary.
         final scrollback = terminal.scrollbackRows;
-        final startAbs = scrollback - _detectionScrollbackWindow < 0
+        final viewportTop = scrollbar.offset;
+        final startAbs = viewportTop - _detectionScrollbackWindow < 0
             ? 0
-            : scrollback - _detectionScrollbackWindow;
-        final endAbs = scrollback + visibleRows; // exclusive
+            : viewportTop - _detectionScrollbackWindow;
+        // Clamp the bottom to the last buffer row so we never read past the
+        // active screen (defensive; the reader also guards per-cell).
+        final maxEndAbs = scrollback + visibleRows; // exclusive
+        var endAbs = viewportTop + visibleRows + _detectionScrollbackWindow;
+        if (endAbs > maxEndAbs) endAbs = maxEndAbs;
         final reader = _ScreenCellReader(
           terminal: terminal,
           cols: cols,
@@ -399,7 +410,16 @@ class TerminalControllerImpl extends TerminalController
   /// scroll notify here rebuilds the decorator layer, which re-resolves
   /// [anchorRects] against the live offset in the next build (after the render
   /// object has applied the scroll), so the outline tracks the glyphs.
-  void _onScrollChanged() => notifyListeners();
+  ///
+  /// #787: a scroll also moves the visible region, so the detection scan window
+  /// (now centred on the viewport, not anchored to the bottom) must be
+  /// re-evaluated — otherwise a URL the user scrolled UP to, beyond the last
+  /// scanned range, is never detected. Schedule the same debounced rescan the
+  /// output path uses so a scroll burst coalesces into one scan.
+  void _onScrollChanged() {
+    _scheduleDetectionRescan();
+    notifyListeners();
+  }
 
   @override
   void clear() {
