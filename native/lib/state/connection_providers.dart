@@ -76,11 +76,21 @@ final resumeRebindListenerProvider = Provider<void>((ref) {
     // ALSO send a liveness probe so the task side actively pings the socket
     // (short timeout); a dead session is driven to softDisconnected → reconnect
     // instead of being trusted and left frozen.
+    //
+    // #813: a `failed` (gave up) or involuntary-`disconnected` (dropped, not a
+    // user ✕) session is ALSO re-armed here — the PWA's visibilitychange retry
+    // re-attempts a stale dropped session instead of leaving a zombie tile that
+    // needs a manual ✕. The probe command maps task-side to
+    // `controller.probeLiveness`, which for these drop states re-enters the
+    // reconnect path from held params (`resumeReconnectIfStale`). A user
+    // disconnect is excluded controller-side, so it is never auto-revived.
     for (final entry in ref.read(sessionsProvider).entries) {
       final state = entry.proxy.data.state;
       if (state == SshSessionState.connected ||
           state == SshSessionState.softDisconnected ||
-          state == SshSessionState.reconnecting) {
+          state == SshSessionState.reconnecting ||
+          state == SshSessionState.failed ||
+          state == SshSessionState.disconnected) {
         entry.proxy.rebind();
         entry.proxy.probeLiveness();
       }
