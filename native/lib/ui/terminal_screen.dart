@@ -86,6 +86,18 @@ int debugExplicitFitAppliedCount = 0;
 @visibleForTesting
 int debugForcedPtyResyncCount = 0;
 
+/// Test-only counter: incremented each time an explicit fit (#659) is SKIPPED
+/// because the body is OFFSTAGE (no mounted `TerminalViewState`, e.g. an
+/// IndexedStack child for an inactive session) — #836. The fit does no useful
+/// work offstage and its per-frame `[ui.fit659] no TerminalViewState yet`
+/// ctrace line flooded the 200-event connect ring (~100×/sec), evicting the
+/// real disconnect/state-transition events. We now skip the work every frame
+/// but emit the ctrace line only ONCE per offstage period (see
+/// `_offstageFitLogged`). This counter rises every skipped frame; the connect
+/// log must NOT. Reset it in test `setUp`.
+@visibleForTesting
+int debugOffstageFitSkipCount = 0;
+
 /// #570 — test hook. Set to the URL a long-press hit-test resolved (or null when
 /// a long-press landed on no URL). Lets the on-emulator integration test assert
 /// the tap→cell→URL path end to end without UI scraping. Reset in test `setUp`.
@@ -525,6 +537,17 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// bundled asset font is in effect). Null until the first fit attempt.
   Size? _lastLoggedCellSize;
 
+  /// #836: latch so the offstage-skip ctrace line is emitted at most ONCE per
+  /// offstage period. The fit path is driven per-frame (post-frame callbacks,
+  /// `didChangeMetrics`, font changes, the connect burst); while the body is an
+  /// inactive IndexedStack child there is no mounted `TerminalViewState`, so
+  /// every one of those used to log `no TerminalViewState yet (offstage?)`
+  /// (~100×/sec), flooding the 200-event connect ring and burying the real
+  /// disconnect/state events. We still SKIP the fit each frame, but only log
+  /// the skip once; the latch is cleared the moment a view IS found so a later
+  /// offstage→onstage→offstage cycle is logged again.
+  bool _offstageFitLogged = false;
+
   @override
   void initState() {
     super.initState();
@@ -606,9 +629,23 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     // state by descending our own element subtree instead.
     final state = _findTerminalViewState();
     if (state == null) {
-      ctrace('ui.fit659', '$trigger: no TerminalViewState yet (offstage?)');
+      // #836: offstage (inactive IndexedStack child) — there is no mounted
+      // TerminalViewState to measure, so the fit is pure churn. Always skip the
+      // work, but emit the ctrace line ONLY ONCE per offstage period: the fit
+      // path fires per-frame, so logging every skip floods the 200-event
+      // connect ring (~100×/sec) and evicts the real disconnect/state events
+      // (the symptom this issue reports). The latch is cleared as soon as a
+      // view is found again (below), so a later offstage cycle re-logs.
+      debugOffstageFitSkipCount += 1;
+      if (!_offstageFitLogged) {
+        _offstageFitLogged = true;
+        ctrace('ui.fit659', '$trigger: no TerminalViewState yet (offstage?)');
+      }
       return;
     }
+    // A mounted view exists — re-arm the offstage latch so a future offstage
+    // period is logged once more.
+    _offstageFitLogged = false;
     // `RenderTerminal` is not exported from package:xterm, so the type is left
     // inferred. The getter throws if the viewport hasn't laid out yet (null
     // currentContext) and a detached box would also reject reads — either way a

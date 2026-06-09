@@ -178,6 +178,7 @@ void main() {
     debugConnectRemeasureArmCount = 0;
     debugExplicitFitAppliedCount = 0;
     debugForcedPtyResyncCount = 0;
+    debugOffstageFitSkipCount = 0;
     clearConnectLog();
   });
 
@@ -528,6 +529,155 @@ void main() {
         await _fireFontsChange(tester);
         await tester.pump(const Duration(milliseconds: 50));
         expect(s.entry.terminal.viewHeight, before);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
+  group('offstage fit hygiene (#836)', () {
+    // The device "disconnected with no indication" report shipped a connect-log
+    // that was ~entirely the per-frame `[ui.fit659] no TerminalViewState yet
+    // (offstage?)` line — the fit path fires per-frame (post-frame callbacks,
+    // didChangeMetrics, font changes, the connect burst), and while the body is
+    // offstage (no mounted TerminalViewState) every one logged, flooding the
+    // 200-event ring and burying the actual disconnect. The fix SKIPS the fit
+    // offstage and logs the skip AT MOST ONCE per offstage period.
+
+    testWidgets(
+      'repeated metrics/font events with NO mounted TerminalViewState skip the '
+      'fit and log the offstage line ONLY ONCE — the connect ring does not '
+      'flood (#836)',
+      (tester) async {
+        // Use the DEFAULT (ghostty) backend: TerminalScreen renders the flterm
+        // body, NOT the xterm TerminalView, so `_findTerminalViewState()`
+        // returns null on every fit attempt — the exact "no TerminalViewState
+        // (offstage?)" condition. The metrics/font listeners + the mount/connect
+        // fit all still route through `_explicitFit`, so this faithfully drives
+        // the offstage branch the device hit (the fit659 spam fired while there
+        // was no xterm view to measure).
+        final pair = InMemoryGatewayPair();
+        addTearDown(() async => pair.dispose());
+        final container = ProviderContainer(
+          overrides: [
+            taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+          ],
+        );
+        addTearDown(container.dispose);
+        container
+            .read(sessionsProvider.notifier)
+            .addOrActivate(
+              const SshConnectParams(
+                host: 'h',
+                port: 22,
+                username: 'u',
+                auth: SshAuth.password('p'),
+              ),
+            );
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MaterialApp(home: TerminalScreen()),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        clearConnectLog();
+        final skipsBefore = debugOffstageFitSkipCount;
+
+        // Fire many metrics/font events — each routes through _explicitFit.
+        for (var i = 0; i < 20; i++) {
+          tester.binding.handleMetricsChanged();
+          await _fireFontsChange(tester);
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+
+        // The fit was SKIPPED on each attempt (work avoided)...
+        expect(
+          debugOffstageFitSkipCount,
+          greaterThan(skipsBefore),
+          reason:
+              'fits with no mounted TerminalViewState must be skipped (counted) '
+              '— the fit does no useful work (#836)',
+        );
+
+        // ...but the offstage ctrace line was emitted AT MOST ONCE, so the ring
+        // did not flood. (Before the fix this was one line PER attempt — the
+        // ~100×/sec spam that buried the disconnect.)
+        final offstageLines = connectLogSnapshot()
+            .where((l) => l.contains('offstage?'))
+            .toList();
+        expect(
+          offstageLines.length,
+          lessThanOrEqualTo(1),
+          reason:
+              'the offstage-skip line must be logged at most once per offstage '
+              'period — it must NOT flood the 200-event connect ring and bury '
+              'disconnect events (#836). Got: $offstageLines',
+        );
+
+        // No real fit ran, so neither the explicit-fit nor the forced
+        // PTY-resync counters advanced — pure churn was eliminated.
+        expect(debugExplicitFitAppliedCount, 0);
+        expect(debugForcedPtyResyncCount, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a HIGH-signal lifecycle event survives a flood of offstage-fit lines '
+      '— state transitions are not evicted (#836)',
+      (tester) async {
+        // Even if some offstage spam slips through, a lifecycle event (the kind
+        // a session drop records via clifecycle) lands in the dedicated ring
+        // that outlives connect-ring churn. This is the survivability guarantee.
+        clifecycle('task.host', 'state: connected → softDisconnected');
+
+        // Flood the connect ring with offstage-style fit lines past its cap.
+        for (var i = 0; i < connectLogCapacity + 50; i++) {
+          ctrace('ui.fit659', 'metrics $i: no TerminalViewState yet (offstage?)');
+        }
+
+        expect(
+          lifecycleLogSnapshot().join('\n'),
+          contains('state: connected → softDisconnected'),
+          reason:
+              'the drop transition must outlive an offstage-fit flood — the '
+              'core #836 telemetry-hygiene guarantee',
+        );
+      },
+    );
+
+    testWidgets(
+      'when the view IS mounted the fit still runs — first-connect fill is not '
+      'regressed (#659/#666)',
+      (tester) async {
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        // Onstage + shell-ready: the connect burst must still arm and the fit
+        // must still drive the PTY resize (the #659/#666 first-connect fill).
+        final s = await _setupConnected(tester, transport);
+        for (var i = 0; i < 30; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+
+        expect(
+          debugConnectRemeasureArmCount,
+          greaterThanOrEqualTo(1),
+          reason: 'onstage connect must still arm the fit burst (no regression)',
+        );
+        expect(
+          debugForcedPtyResyncCount,
+          greaterThanOrEqualTo(1),
+          reason: 'onstage connect must still force-resync the PTY (#666)',
+        );
+        expect(s.entry.terminal.viewHeight, greaterThan(24));
+        // The onstage path must NOT have logged any offstage-skip line.
+        expect(
+          connectLogSnapshot().where((l) => l.contains('offstage?')),
+          isEmpty,
+          reason: 'a mounted view must never log the offstage-skip line',
+        );
         expect(tester.takeException(), isNull);
       },
     );
