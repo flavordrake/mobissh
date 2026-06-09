@@ -772,4 +772,87 @@ void main() {
       expect(m.ranges.single.background, const Color(0x44FF0000));
     });
   });
+
+  // #826: a tappable filesystem path NEVER contains shell metacharacters or
+  // globs. On the PRIMARY screen the path detector underlined many SCRIPT tokens
+  // that are NOT openable paths — `${UID}`-bearing vars, `*`/`?`/`[N]` globs,
+  // `$(...)` command substitutions. The char class `[\w.\-~@+]` already excludes
+  // those chars, so the regex matched the TRUNCATED FRAGMENT before the metachar
+  // (`/tmp/.ssh_loaded_` out of `/tmp/.ssh_loaded_${UID}_*`); a trailing negative
+  // lookahead rejects a match whose very next cell is a metachar/glob char. Clean
+  // paths (no adjacent metachar) must STILL match — no over-suppression.
+  group('TextPattern.path() — shell metachar / glob rejection (#826)', () {
+    final pathPattern = TextPattern.path();
+
+    List<String> pathPayloads(String row, {int? cols}) {
+      final reader = _FakeCellReader([row], cols: cols ?? (row.length + 2));
+      return scanner
+          .scan(reader, [pathPattern])
+          .where((m) => m.patternId == 'path')
+          .map((m) => '${m.payload}')
+          .toList();
+    }
+
+    test('shell-var path `/tmp/.ssh_loaded_\${UID}_*` is rejected', () {
+      expect(pathPayloads(r'rm -f /tmp/.ssh_loaded_${UID}_*'), isEmpty);
+    });
+
+    test(r'`/tmp/.ssh_loaded_${UID}_${boot}` (var, no glob) is rejected', () {
+      expect(pathPayloads(r'flag=/tmp/.ssh_loaded_${UID}_${boot}'), isEmpty);
+    });
+
+    test('glob path `~/.ssh/*.pub` is rejected', () {
+      expect(pathPayloads(r'for pub in ~/.ssh/*.pub'), isEmpty);
+    });
+
+    test('glob path `~/.zshrc.bak.*` is rejected', () {
+      expect(pathPayloads(r'ls ~/.zshrc.bak.*'), isEmpty);
+    });
+
+    test('wildcard mid-path `/var/run/com.apple.launchd.*/Listeners` rejected',
+        () {
+      expect(pathPayloads(r'/var/run/com.apple.launchd.*/Listeners'), isEmpty);
+    });
+
+    test('command-substitution `~/.zshrc.bak.\$(date +%s)` is rejected', () {
+      expect(pathPayloads(r'cp ~/.zshrc ~/.zshrc.bak.$(date +%s)'),
+          isNot(contains(r'~/.zshrc.bak.')));
+    });
+
+    test('bracket glob `~/.ssh/id_[rd]sa` is rejected', () {
+      expect(pathPayloads(r'~/.ssh/id_[rd]sa'), isEmpty);
+    });
+
+    test('clean absolute `/etc/hosts` STILL detects (no over-suppression)', () {
+      expect(pathPayloads('see /etc/hosts here'), contains('/etc/hosts'));
+    });
+
+    test('clean home `~/notes.md` STILL detects', () {
+      expect(pathPayloads('open ~/notes.md now'), contains('~/notes.md'));
+    });
+
+    test('clean explicit-relative `./build.log` STILL detects', () {
+      expect(pathPayloads('tail ./build.log'), contains('./build.log'));
+    });
+
+    test('clean parent-relative `../src/x.dart` STILL detects', () {
+      expect(pathPayloads('edit ../src/x.dart'), contains('../src/x.dart'));
+    });
+
+    test('clean long absolute `/etc/ssh/sshd_config` STILL detects', () {
+      expect(pathPayloads('cat /etc/ssh/sshd_config'),
+          contains('/etc/ssh/sshd_config'));
+    });
+
+    test('a path followed by a SPACE then a glob still detects the clean path',
+        () {
+      // The metachar must be ADJACENT to reject; a space-separated glob token is
+      // a different word and must not suppress the clean path before it.
+      expect(pathPayloads('cat /etc/hosts *.txt'), contains('/etc/hosts'));
+    });
+
+    test('the `://` URL context is still NOT a path (file:// stays a URL)', () {
+      expect(pathPayloads('file:///etc/hosts'), isEmpty);
+    });
+  });
 }

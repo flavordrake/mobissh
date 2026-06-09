@@ -56,6 +56,21 @@ ReplayCast loadCast(String path) {
   return ReplayCast(json['cols'] as int, json['rows'] as int, chunks);
 }
 
+/// Load a #790/#793 in-app bug-report `*.byte-trace.json` (grid + ordered
+/// `byteTrace` chunks) into a [ReplayCast]. The recorder's schema differs from
+/// the capture-corpus `*.cast.json` (`grid.cols`/`grid.rows` + `byteTrace[].b64`
+/// vs `cols`/`rows` + `chunks[].b64`); this normalizes it so [replayCast] feeds
+/// the SAME real libghostty parser. Events are sorted by `tMs` for deterministic
+/// replay order.
+ReplayCast loadByteTraceCast(String path) {
+  final json = jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
+  final grid = json['grid'] as Map<String, dynamic>;
+  final events = (json['byteTrace'] as List).cast<Map<String, dynamic>>().toList()
+    ..sort((a, b) => (a['tMs'] as int).compareTo(b['tMs'] as int));
+  final chunks = [for (final e in events) base64Decode(e['b64'] as String)];
+  return ReplayCast(grid['cols'] as int, grid['rows'] as int, chunks);
+}
+
 /// Build a controller sized to the fixture, register the PATH pattern, replay the
 /// captured chunks, and wait past the detection debounce.
 Future<TerminalController> replayCast(ReplayCast cast) async {
@@ -157,6 +172,131 @@ void main() {
           isEmpty,
           reason: 'prose with no leading /, ~/, ./ or ../ tokens must not '
               'produce path anchors — Slice 1 defers bare relative tokens',
+        );
+      },
+    );
+  });
+
+  // #826: the REAL device trace — reading a shell SCRIPT in the Claude CLI on
+  // the PRIMARY screen — over-matched many script tokens carrying shell vars /
+  // globs (`/tmp/.ssh_loaded_${UID}_*`, `~/.ssh/*.pub`, `~/.zshrc.bak.*`,
+  // `/var/run/com.apple.launchd.*/Listeners`). A tappable filesystem path NEVER
+  // contains a metachar, so those candidates must be SUPPRESSED — while a clean
+  // path on the SAME grid (`~/.zshrc`) still detects (no over-suppression).
+  group('REPLAY #826 shell-script grid — metachar/glob paths suppressed', () {
+    // The shell metacharacter / glob chars a real path never holds (the #826
+    // class). No anchor payload may contain any of them.
+    final metachar = RegExp(r'''[${}*?\[\]()`|<>&;='"\\]''');
+
+    test(
+      'NONE of the detected path anchors carry a shell metachar / glob char',
+      () async {
+        final cast = loadByteTraceCast(
+          'test/fixtures/replay/script_paths_metachar_66x34.byte-trace.json',
+        );
+        final controller = await replayCast(cast);
+        addTearDown(controller.dispose);
+
+        final offenders = controller.anchors
+            .where((a) => a.patternId == 'path')
+            .map((a) => '${a.payload}')
+            .where(metachar.hasMatch)
+            .toList();
+
+        expect(
+          offenders,
+          isEmpty,
+          reason: 'a tappable path never contains a shell var/glob — these '
+              'script fragments (e.g. /tmp/.ssh_loaded_, ~/.ssh/) must be '
+              'suppressed, not anchored: $offenders',
+        );
+      },
+    );
+
+    test(
+      'the specific reported false positives are absent from the anchors',
+      () async {
+        final cast = loadByteTraceCast(
+          'test/fixtures/replay/script_paths_metachar_66x34.byte-trace.json',
+        );
+        final controller = await replayCast(cast);
+        addTearDown(controller.dispose);
+
+        final payloads = controller.anchors
+            .where((a) => a.patternId == 'path')
+            .map((a) => '${a.payload}')
+            .toList();
+
+        // The truncated FRAGMENTS the old regex anchored before/around the
+        // metachar in the reported script.
+        for (final frag in const [
+          '/tmp/.ssh_loaded_',
+          '~/.ssh/',
+          '~/.zshrc.bak',
+          '/var/run/com.apple.launchd',
+        ]) {
+          expect(
+            payloads,
+            isNot(contains(frag)),
+            reason: '$frag is a glob/var fragment, not a tappable path',
+          );
+        }
+      },
+    );
+
+    test(
+      'a CLEAN path on the SAME grid still detects (no over-suppression)',
+      () async {
+        final cast = loadByteTraceCast(
+          'test/fixtures/replay/script_paths_metachar_66x34.byte-trace.json',
+        );
+        final controller = await replayCast(cast);
+        addTearDown(controller.dispose);
+
+        final payloads = controller.anchors
+            .where((a) => a.patternId == 'path')
+            .map((a) => '${a.payload}')
+            .toList();
+
+        // `~/.zshrc` appears as a bare, metachar-free home path in the script
+        // ("Backup zshrc before editing: cp ~/.zshrc …"); the precision fix must
+        // NOT suppress it.
+        expect(
+          payloads,
+          contains('~/.zshrc'),
+          reason: 'the clean ~/.zshrc control must STILL detect — the fix '
+              'rejects metachar tokens, not clean paths',
+        );
+      },
+    );
+
+    test(
+      'every detected path anchor is ABSOLUTE-anchored (#778 Slice 1) — no '
+      'bare-relative regex leak',
+      () async {
+        final cast = loadByteTraceCast(
+          'test/fixtures/replay/script_paths_metachar_66x34.byte-trace.json',
+        );
+        final controller = await replayCast(cast);
+        addTearDown(controller.dispose);
+
+        final nonAbsolute = controller.anchors
+            .where((a) => a.patternId == 'path')
+            .map((a) => '${a.payload}')
+            .where((p) =>
+                !(p.startsWith('/') ||
+                    p.startsWith('~') ||
+                    p.startsWith('./') ||
+                    p.startsWith('../')))
+            .toList();
+
+        // Slice 1 (#778) only matches absolute / ~ / ./ / ../ anchors. A bare
+        // token matching would be a SEPARATE regex bug (issue #826 "Also note").
+        expect(
+          nonAbsolute,
+          isEmpty,
+          reason: 'a non-absolute path anchor would be a separate Slice-1 '
+              'regex bug: $nonAbsolute',
         );
       },
     );

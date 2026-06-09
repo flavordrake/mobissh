@@ -179,39 +179,68 @@ final class TextPattern {
 /// OSC-8 source, whose detection walks cells rather than running a regex.
 final RegExp _kNeverMatch = RegExp(r'(?!x)x');
 
-/// The ABSOLUTE FILE PATH regex (#778, paths Slice 1). Matches three shapes that
-/// resolve WITHOUT a working directory:
+/// Shell metacharacter / glob character class (#826). A real, tap-to-open
+/// filesystem path NEVER contains any of these. Members: `$ { } * ? [ ] ( ) `
+/// backtick ` | < > & ; = ' " \` — whitespace already bounds a token. Inside a
+/// `[...]` class only `] \ ^ -` need escaping; the rest are literal.
+const String _kPathMetachar = r'''${}*?\[\]()`|<>&;='"\\''';
+
+/// The ABSOLUTE FILE PATH regex (#778, paths Slice 1; precision #826). Matches
+/// three shapes that resolve WITHOUT a working directory:
 ///   * absolute — `/` + one-or-more `/`-separated segments of path chars;
 ///   * home — `~/…` or a BARE `~` (word-bounded so it isn't a stray tilde in
 ///     prose like `approx ~3s` — a bare `~` matches only when not followed by a
 ///     path char other than `/`);
 ///   * explicit-relative — `./…`, `../…`, or a `../` chain.
 /// A path char is `[\w.\-~@+]` (mirrors the issue's class). A NEGATIVE LOOKBEHIND
-/// `(?<![\w.\-~@+:/])` keeps the match from starting MID-token — critically it
-/// rejects the `//` after a `:` (so `https://`/`file://` never starts a path at
-/// the `//`) and from inside another path char run. The match stops at the same
-/// stop set URLs use (whitespace and the few chars shells never put mid-path).
-/// BARE relative tokens (`src/foo`) are deliberately NOT matched (deferred to
-/// Slice 3) — only a leading `/`, `~`, `.` anchors a match.
+/// keeps the match from starting MID-token — critically it rejects the `//` after
+/// a `:` (so `https://`/`file://` never starts a path at the `//`), from inside
+/// another path char run, AND (#826) immediately AFTER a shell metachar/glob char
+/// so a glob-tail fragment like `/Listeners` in `…launchd.*/Listeners` does not
+/// anchor.
+///
+/// #826: a TRAILING `(?:[metachar][^\s]*)?` group GREEDILY SWALLOWS any adjacent
+/// shell-var/glob suffix INTO the match (e.g. `${UID}_*` after `/tmp/.ssh_loaded_`,
+/// `.*` after `~/.zshrc.bak`). Folding the contamination into the raw match — rather
+/// than relying on a trailing negative lookahead — defeats Dart's greedy
+/// BACKTRACKING, which would otherwise carve a clean-looking sub-path (`~/.zshrc.bak`)
+/// out of a glob token to satisfy a bare lookahead. [_validatePath] then sees the
+/// metachar in the raw and SUPPRESSES the whole candidate. The match stops at the
+/// same stop set URLs use (whitespace). BARE relative tokens (`src/foo`) are
+/// deliberately NOT matched (deferred to Slice 3) — only a leading `/`, `~`, `.`
+/// anchors a match.
 final RegExp _kPathPattern = RegExp(
-  r'(?<![\w.\-~@+:/])'
+  '(?<![\\w.\\-~@+:/$_kPathMetachar])'
   r'(?:'
   r'/(?:[\w.\-~@+]+/?)+' // absolute: /a/b/c
   r'|~/(?:[\w.\-~@+]+/?)*' // home: ~/a/b
   r'|~(?![\w.\-@+])' // bare ~ (not ~word)
   r'|\.\.?/(?:[\w.\-~@+]+/?|\.\.?/)*' // ./x ../x ../../ chains
-  r')',
+  r')'
+  // #826: swallow any adjacent metachar/glob suffix so [_validatePath] can reject
+  // the WHOLE contaminated token (backtracking can't peel off a clean sub-path).
+  '(?:[$_kPathMetachar][^\\s]*)?',
 );
 
 /// Trailing characters trimmed off the END of a raw path match — a path that
 /// ends a sentence picks up `.,;:!?` and closers; mirrors the URL trim.
 const String _kPathTrailingTrim = '.,;:!?)]}>\'"';
 
-/// Validate a raw path match. Returns the path as its own payload, or null only
-/// for a malformed match the regex can let through (defensive — the regex is the
-/// real gate). A null payload is treated by the scanner as "use raw", so this
-/// never SUPPRESSES a match on its own; the `://` rejection is in the lookbehind.
-String _validatePath(String raw) => raw;
+/// Shell metacharacter / glob detector (#826): true iff [raw] contains any char a
+/// real, tap-to-open filesystem path never holds. The path regex deliberately
+/// SWALLOWS an adjacent metachar/glob suffix into the raw match (see
+/// [_kPathPattern]) so this validate sees the whole contaminated token and can
+/// reject it — a backtracking-proof gate the trailing lookahead alone could not be.
+final RegExp _kPathMetacharProbe = RegExp('[$_kPathMetachar]');
+
+/// Validate a raw path match (#826). Returns the path as its own payload, or
+/// `null` to SUPPRESS the candidate when it contains a shell metacharacter / glob
+/// char (`$ { } * ? [ ] ( ) ` backtick ` | < > & ; = ' " \`) — a glob/var token
+/// like `/tmp/.ssh_loaded_${UID}_*` or `~/.ssh/*.pub` is not an openable path.
+/// The scanner DROPS a match whose normalize returns null (the `://` URL case is
+/// additionally rejected by the lookbehind, so `file://…` stays a URL).
+String? _validatePath(String raw) =>
+    _kPathMetacharProbe.hasMatch(raw) ? null : raw;
 
 /// The URL regex (moved verbatim from the app's `ghostty_url_detector.dart`,
 /// #767). Matches absolute http/https URLs and bare `www.` hosts; the
@@ -461,7 +490,13 @@ class StructuredTextScanner {
             continue;
           }
           final raw = text.substring(start, end);
-          final payload = pattern.normalize?.call(raw) ?? raw;
+          // A pattern's normalize MAY reject (return null) to SUPPRESS the match
+          // entirely — used by the path pattern to drop shell-var/glob fragments
+          // (#826). Distinguish "has normalize, returned null → drop" from "no
+          // normalize → use raw": only the former suppresses.
+          final Object? payload =
+              pattern.normalize != null ? pattern.normalize!(raw) : raw;
+          if (payload == null) continue;
           final ranges = _rangesFor(
             line.glyphs,
             start,
