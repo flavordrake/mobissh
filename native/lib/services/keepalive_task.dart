@@ -17,6 +17,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
+import 'attention_notifier_fln.dart';
 import 'session_host.dart';
 import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
@@ -138,8 +139,14 @@ class KeepaliveTaskHandler extends TaskHandler {
 /// the [KeepaliveTaskHandler] without binding to FFT statics.
 typedef SessionHostBuilder = SessionHost Function(TaskSshGateway gateway);
 
-SessionHost _defaultHostBuilder(TaskSshGateway gateway) =>
-    SessionHost(gateway: gateway);
+SessionHost _defaultHostBuilder(TaskSshGateway gateway) => SessionHost(
+  gateway: gateway,
+  // #840 Slice 2: post attention notifications from the task isolate (where the
+  // AttentionSignalScanner runs and is always alive, so backgrounded sessions
+  // still fire). Bound here — desktop/test hosts construct SessionHost without a
+  // notifier, so they fall back to Slice-1 log-only behaviour.
+  attentionNotifier: FlnAttentionNotifier(),
+);
 
 /// Thin wrapper over the static `FlutterForegroundTask` API. Lets us inject a
 /// fake in tests so we don't bind to platform method channels.

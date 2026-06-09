@@ -29,6 +29,7 @@ import '../ssh/ssh_session.dart';
 import '../ssh/ssh_shell.dart';
 import '../ssh/sftp_session.dart';
 import 'attention_signal_scanner.dart';
+import 'session_attention_notification.dart';
 import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
 
@@ -64,10 +65,12 @@ class SessionHost {
     this.resumeStaleThreshold = const Duration(seconds: 20),
     this.resumeNudgeWindow = const Duration(seconds: 2),
     int Function()? nowMs,
+    AttentionNotifier? attentionNotifier,
   }) : _gateway = gateway,
        _factory = controllerFactory ?? _defaultControllerFactory,
        _sftpOpener = sftpOpener,
        _shellOpener = shellOpener ?? _defaultShellOpener,
+       _attentionNotifier = attentionNotifier,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch) {
     _commandSub = _gateway.incoming.listen(_dispatch);
     _snapshotTimer = Timer.periodic(snapshotInterval, (_) => _pushSnapshots());
@@ -143,6 +146,20 @@ class SessionHost {
   /// only happens with the UI foregrounded, and resume re-asserts it anyway.
   bool _active = true;
 
+  /// The currently front-most (active) session id, as last reported by the UI
+  /// via [SshSetActiveCommand.activeSessionId] (#840 Slice 2). Null when unknown.
+  /// Combined with [_active], this drives attention-notification SUPPRESSION:
+  /// the session the user is already looking at (active + foreground) does not
+  /// get a notification.
+  String? _activeSessionId;
+
+  /// Posts attention notifications when a Slice-1 signal is detected (#840
+  /// Slice 2). Null on platforms / tests where no notifier is wired — then the
+  /// detection still LOGS to `clifecycle` (Slice 1 behaviour) but posts nothing.
+  /// Injected so the task isolate binds `flutter_local_notifications` in
+  /// production while tests record posts in memory.
+  final AttentionNotifier? _attentionNotifier;
+
   /// The exact lifecycle-forwarder closure this host installed into the global
   /// [lifecycleForwarder] (#766). Held so dispose detaches OUR closure only —
   /// it won't clobber a forwarder a different host installed afterward (matters
@@ -211,7 +228,7 @@ class SessionHost {
         // terminal/audit, so it carries the full payload (#806 C).
         if (s != null) _emitSnapshot(cmd.sessionId, s, includeScrollback: true);
       case SshSetActiveCommand():
-        _handleSetActive(cmd.active);
+        _handleSetActive(cmd.active, cmd.activeSessionId);
       case SshHostKeyDecisionCommand():
         _handleHostKeyDecision(cmd);
       case SshUiHelloCommand():
@@ -637,18 +654,7 @@ class SessionHost {
           // durable lifecycle ring so the first on-device awaiting-moment proves
           // which form arrives. Defensive — a malformed sequence must never
           // crash the session.
-          try {
-            final signals = hosted.attentionScanner.feed(forward);
-            for (final sig in signals) {
-              clifecycle(
-                'attention',
-                '${sig.kind.name} ${sig.text == null ? '(no text)' : '"${sig.text}"'} '
-                    '(session $sessionId)',
-              );
-            }
-          } catch (e) {
-            clifecycle('attention', 'scan-error: $e (session $sessionId)');
-          }
+          _scanAttention(sessionId, hosted, forward);
           hosted.appendScrollback(forward);
           _gateway.send(
             SshOutputEvent(sessionId: sessionId, bytes: forward).toJson(),
@@ -1006,8 +1012,12 @@ class SessionHost {
   /// from current state without waiting for the next tick. Idempotent: a repeat
   /// of the current state is a no-op so duplicate lifecycle events don't churn
   /// the timer. Does NOT touch the SSH session, keepalive, or locks.
-  void _handleSetActive(bool active) {
+  void _handleSetActive(bool active, [String? activeSessionId]) {
     if (_disposed) return;
+    // Always track the reported active session id (#840 Slice 2) — even when
+    // [active] is unchanged the front-most TAB may have switched, and that must
+    // update suppression. A null id (older UI / none) leaves it unknown.
+    _activeSessionId = activeSessionId;
     if (_active == active) return;
     _active = active;
     if (active) {
@@ -1022,6 +1032,76 @@ class SessionHost {
     } else {
       _snapshotTimer?.cancel();
       _snapshotTimer = null;
+    }
+  }
+
+  /// Observe (don't alter) post-DA2-strip bytes for in-band agent-attention
+  /// signals (#840). Slice 1 LOGS each detection to the durable lifecycle ring;
+  /// Slice 2 ALSO posts an attention notification (with per-session tag +
+  /// suppression). Defensive — a malformed sequence must never crash the
+  /// session, so the whole scan is wrapped.
+  void _scanAttention(String sessionId, _HostedSession hosted, List<int> bytes) {
+    try {
+      final signals = hosted.attentionScanner.feed(bytes);
+      for (final sig in signals) {
+        // Slice 1: durable lifecycle log (kept).
+        clifecycle(
+          'attention',
+          '${sig.kind.name} ${sig.text == null ? '(no text)' : '"${sig.text}"'} '
+              '(session $sessionId)',
+        );
+        // Slice 2: post an attention notification, unless suppressed because
+        // the user is already looking at this session.
+        _maybePostAttention(sessionId, sig);
+      }
+    } catch (e) {
+      clifecycle('attention', 'scan-error: $e (session $sessionId)');
+    }
+  }
+
+  /// Drive the attention scan + post path from a test, mirroring the live PTY
+  /// listener (which `ingestOutputForTest` deliberately does NOT exercise).
+  /// Used by the #840 Slice-2 host test + the emulator integration test seam.
+  @visibleForTesting
+  void feedAttentionForTest(String sessionId, List<int> bytes) {
+    final hosted = _sessions[sessionId];
+    if (hosted == null) return;
+    _scanAttention(sessionId, hosted, bytes);
+  }
+
+  /// Post an attention notification for a Slice-1 detection (#840 Slice 2),
+  /// honouring the suppression rule: skip when [sessionId] is the active session
+  /// AND the app is foregrounded (the user is already looking at it). The
+  /// notification is per-session tagged so a repeat from the same session
+  /// REPLACES rather than stacks. Defensive — never throws into the output
+  /// listener (a post failure must not crash the session). No-op when no
+  /// notifier is wired (e.g. desktop / a test that didn't inject one), in which
+  /// case the Slice-1 `clifecycle` log is the only effect.
+  void _maybePostAttention(String sessionId, AttentionSignal sig) {
+    final notifier = _attentionNotifier;
+    if (notifier == null) return;
+    final post = shouldPostAttention(
+      signalSessionId: sessionId,
+      activeSessionId: _activeSessionId,
+      foreground: _active,
+    );
+    if (!post) {
+      clifecycle('attention', 'suppressed (active+foreground) session $sessionId');
+      return;
+    }
+    try {
+      final n = AttentionNotification.build(sessionId: sessionId, signal: sig);
+      // Fire-and-forget — the post is async (platform channel) but the output
+      // listener is sync; a failure is swallowed (logged) so it can't break the
+      // session byte pipeline.
+      unawaited(
+        notifier.post(n).catchError((Object e) {
+          clifecycle('attention', 'post-error: $e (session $sessionId)');
+        }),
+      );
+      clifecycle('attention', 'posted notification session $sessionId');
+    } catch (e) {
+      clifecycle('attention', 'build-error: $e (session $sessionId)');
     }
   }
 
