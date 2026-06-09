@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+43 (2026-06-09) — URLs/paths detect again inside tmux
+- **URL & path highlighting works inside tmux again.** The +41 fix that stops highlighting inside vim was too broad — tmux also uses the full-screen buffer, so it accidentally turned detection off for your whole tmux session. Now detection is suppressed only in true full-screen apps (vim/less — no mouse mode) and runs normally in tmux (mouse mode). **Verify:** a URL in tmux output gets its bubble again. (#834)
+
 ## v0.1.10+42 (2026-06-09) — Copy works after the screen redraws
 - **Copy now works even after the screen updates under your selection.** A remote redraw (e.g. the tmux status-bar clock ticking ~1s after you select) was clearing the selection, so Copy said "no selection" though it still looked highlighted. The selected text is now remembered until you dismiss it (tap away) — Copy returns it reliably. (#828)
 
