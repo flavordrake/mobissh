@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+48 (2026-06-09) — Copy actually lands in the clipboard (and paste history)
+- **Copy now reliably puts text in the Android clipboard — including Gboard's paste history.** Copies were being written with a blank label, so the system showed the preview chip but the clip didn't surface in your clipboard history (it looked "empty until tapped"). Every copy (URL, selection, path, compose, diagnostics) now writes a properly-labeled clip natively and **reads it back to confirm it's really there** before saying "Copied". **Verify:** copy a URL → it shows in Gboard's clipboard history right away and pastes anywhere. (#845)
+
 ## v0.1.10+47 (2026-06-09) — your typing survives an accidental compose close
 - **Closing/disabling the compose box no longer loses what you typed.** If you dismiss compose (X, toggle-off, switching sessions) with text still in it, that text is now kept two ways: it **reappears in the box when you reopen** compose, and it's also pushed into the **▲ history buffer** so the up-arrow can recall it. Empty input is ignored; sending/clearing drops the draft as before. **Verify:** type without sending, hit X, reopen compose → your text is back (and on ▲). (#842)
 
