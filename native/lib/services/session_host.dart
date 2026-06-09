@@ -406,6 +406,18 @@ class SessionHost {
       // a stall shows WHERE it stopped instead of a blank cursor.
       if (data.state != prevState) {
         _emitConnectStatus(cmd.sessionId, data);
+        // #836: record the transition in the DURABLE lifecycle ring (and forward
+        // it UI-side) so a session drop is observable in the connect-log bundle.
+        // Previously a transition was only echoed to the TERMINAL bytes via
+        // `_emitConnectStatus` — never to the ctrace/lifecycle ring — so a silent
+        // mid-session drop left NO trace event, and even a logged one was evicted
+        // by the per-frame fit659 offstage flood. `clifecycle` lands in the
+        // dedicated ring that survives connect-ring churn and is never collapsed.
+        clifecycle(
+          'task.host',
+          'state: ${prevState.name} → ${data.state.name}'
+              '${data.error != null ? ' (${data.error})' : ''}',
+        );
         prevState = data.state;
       }
       // Drop the prior shell the instant the transport leaves `connected`
