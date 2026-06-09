@@ -27,13 +27,37 @@ void main() {
       expect(payload['sourceWindow'], 3);
     });
 
-    test('per-session tag differs across sessions; same within a session', () {
+    test('per-HOST tag: same host → same tag (replace, not stack); '
+        'different host → distinct tag (#847)', () {
       const sig = AttentionSignal(AttentionKind.osc9, 'ready');
-      final a1 = AttentionNotification.build(sessionId: 'A', signal: sig);
-      final a2 = AttentionNotification.build(sessionId: 'A', signal: sig);
-      final b = AttentionNotification.build(sessionId: 'B', signal: sig);
-      expect(a1.tag, a2.tag); // replace, not stack
-      expect(a1.tag, isNot(b.tag)); // distinct sessions distinct tags
+      // Two DISTINCT sessions to the SAME host (different ports/nonces).
+      final h1a = AttentionNotification.build(
+        sessionId: 'fd-dev:22:user:111',
+        signal: sig,
+      );
+      final h1b = AttentionNotification.build(
+        sessionId: 'fd-dev:2222:user:222',
+        signal: sig,
+      );
+      final h2 = AttentionNotification.build(
+        sessionId: 'other-host:22:user:333',
+        signal: sig,
+      );
+      expect(h1a.tag, h1b.tag,
+          reason: 'same host → one tag → repeats REPLACE, not stack');
+      expect(h1a.tag, isNot(h2.tag), reason: 'distinct hosts → distinct tags');
+      expect(h1a.tag, 'mobissh.attention.fd-dev');
+    });
+
+    test('payload still carries the EXACT originating sessionId (tag is host)',
+        () {
+      const sig = AttentionSignal(AttentionKind.osc9, 'ready');
+      final n = AttentionNotification.build(
+        sessionId: 'fd-dev:2222:user:222',
+        signal: sig,
+      );
+      final payload = jsonDecode(n.payload) as Map;
+      expect(payload['sessionId'], 'fd-dev:2222:user:222');
     });
 
     test('text-less bare bell gets a fixed fallback body, no sourceWindow', () {
@@ -90,46 +114,139 @@ void main() {
     });
   });
 
-  group('shouldPostAttention suppression', () {
-    test('active session AND foreground → suppress (no post)', () {
+  group('hostOfSessionId (#847)', () {
+    test('parses host from host:port:user:nonce', () {
+      expect(hostOfSessionId('fd-dev:22:user:1781037380521'), 'fd-dev');
+      expect(hostOfSessionId('127.0.0.1:2223:testuser:999'), '127.0.0.1');
+    });
+    test('no colon → whole id (defensive)', () {
+      expect(hostOfSessionId('synthetic-id'), 'synthetic-id');
+    });
+    test('leading colon → whole id (degrades safely)', () {
+      expect(hostOfSessionId(':22:user:1'), ':22:user:1');
+    });
+  });
+
+  group('shouldPostAttention HOST-LEVEL suppression (#847)', () {
+    // sessions A and B are DIFFERENT sessions to the SAME host (fd-dev);
+    // session C is to a DIFFERENT host.
+    const sessA = 'fd-dev:22:user:111';
+    const sessB = 'fd-dev:2222:user:222';
+    const sessC = 'other:22:user:333';
+
+    test('foreground + SAME host (same session) → suppress', () {
       expect(
         shouldPostAttention(
-          signalSessionId: 'A',
-          activeSessionId: 'A',
+          signalSessionId: sessA,
+          activeSessionId: sessA,
+          activeHost: 'fd-dev',
           foreground: true,
         ),
         isFalse,
       );
     });
-    test('active session but BACKGROUNDED → post', () {
+    test('foreground + SAME host (DIFFERENT session to that host) → suppress', () {
+      // Looking at session B (same host) while session A bells → suppress.
       expect(
         shouldPostAttention(
-          signalSessionId: 'A',
-          activeSessionId: 'A',
+          signalSessionId: sessA,
+          activeSessionId: sessB,
+          activeHost: 'fd-dev',
+          foreground: true,
+        ),
+        isFalse,
+      );
+    });
+    test('foreground + DIFFERENT host → fire', () {
+      expect(
+        shouldPostAttention(
+          signalSessionId: sessC,
+          activeSessionId: sessA,
+          activeHost: 'fd-dev',
+          foreground: true,
+        ),
+        isTrue,
+      );
+    });
+    test('BACKGROUNDED → always fire (even same host)', () {
+      expect(
+        shouldPostAttention(
+          signalSessionId: sessA,
+          activeSessionId: sessA,
+          activeHost: 'fd-dev',
           foreground: false,
         ),
         isTrue,
       );
     });
-    test('NON-active session while foreground → post', () {
+    test('no activeHost but activeSessionId same host → suppress (fallback)', () {
       expect(
         shouldPostAttention(
-          signalSessionId: 'B',
-          activeSessionId: 'A',
+          signalSessionId: sessA,
+          activeSessionId: sessB, // same host fd-dev
           foreground: true,
         ),
-        isTrue,
+        isFalse,
       );
     });
-    test('no active session → post', () {
+    test('no active host info at all → fire', () {
       expect(
         shouldPostAttention(
-          signalSessionId: 'A',
+          signalSessionId: sessA,
           activeSessionId: null,
           foreground: true,
         ),
         isTrue,
       );
+    });
+  });
+
+  group('AttentionDedupTracker host-level window (#847)', () {
+    test('2 sessions to SAME host within window → 1 allowed', () {
+      var now = 1000;
+      final dedup = AttentionDedupTracker(
+        window: const Duration(seconds: 30),
+        nowMs: () => now,
+      );
+      // First bell (session A on fd-dev) fires.
+      expect(dedup.allow('fd-dev'), isTrue);
+      // 5s later, session B on the SAME host bells → deduped.
+      now += 5000;
+      expect(dedup.allow('fd-dev'), isFalse);
+    });
+
+    test('2 DIFFERENT hosts → both allowed', () {
+      var now = 1000;
+      final dedup = AttentionDedupTracker(
+        window: const Duration(seconds: 30),
+        nowMs: () => now,
+      );
+      expect(dedup.allow('host-a'), isTrue);
+      expect(dedup.allow('host-b'), isTrue);
+    });
+
+    test('same host OUTSIDE the window → allowed again', () {
+      var now = 1000;
+      final dedup = AttentionDedupTracker(
+        window: const Duration(seconds: 30),
+        nowMs: () => now,
+      );
+      expect(dedup.allow('fd-dev'), isTrue);
+      now += 31000; // past the 30s window
+      expect(dedup.allow('fd-dev'), isTrue);
+    });
+
+    test('window measures from last FIRED post, not last attempt', () {
+      var now = 1000;
+      final dedup = AttentionDedupTracker(
+        window: const Duration(seconds: 30),
+        nowMs: () => now,
+      );
+      expect(dedup.allow('h'), isTrue); // fires at t=1000
+      now += 20000; // t=21000, within window → deduped, stamp NOT moved
+      expect(dedup.allow('h'), isFalse);
+      now += 11000; // t=32000, 31s after the FIRED post → allowed again
+      expect(dedup.allow('h'), isTrue);
     });
   });
 

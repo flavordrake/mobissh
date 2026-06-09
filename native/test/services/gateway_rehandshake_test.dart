@@ -58,6 +58,14 @@ class _FakeRunningGateway implements KeepaliveGateway {
   }
 
   @override
+  Future<void> updateService({
+    required String notificationTitle,
+    required String notificationText,
+  }) async {
+    calls.add('update');
+  }
+
+  @override
   Future<bool> stopService() async {
     calls.add('stop');
     running = false;

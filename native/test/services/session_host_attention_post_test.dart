@@ -76,11 +76,38 @@ void main() {
 
     expect(s.notifier.posted, hasLength(1));
     final n = s.notifier.posted.single;
-    expect(n.tag, 'mobissh.attention.h:22:u:1');
+    // #847: tag is now per-HOST (host `h`), not per-session.
+    expect(n.tag, 'mobissh.attention.h');
     expect(n.body, 'Claude — main');
     expect(n.sourceWindow, 3);
     final payload = jsonDecode(n.payload) as Map;
+    // Payload still routes the tap to the EXACT session.
     expect(payload['sessionId'], 'h:22:u:1');
+  });
+
+  test('#847 SUPPRESSED when foregrounded on a DIFFERENT session to the SAME '
+      'host', () async {
+    // Signalling session is h:22:u:1 (host h). The user is foregrounded on a
+    // DIFFERENT session to the SAME host (h:2222:u:2) — the unit of attention is
+    // the host, so the bell is suppressed.
+    final s = await _setup();
+    addTearDown(() async {
+      await s.host.dispose();
+      await s.pair.dispose();
+    });
+    s.pair.uiSide.send(
+      const SshSetActiveCommand(
+        active: true,
+        activeSessionId: 'h:2222:u:2',
+        activeHost: 'h',
+      ).toJson(),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    s.host.feedAttentionForTest('h:22:u:1', _osc9('ready'));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(s.notifier.posted, isEmpty,
+        reason: 'foregrounded on the same host (different session) → suppress');
   });
 
   test('SUPPRESSED when session is active AND app foregrounded', () async {

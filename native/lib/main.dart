@@ -149,6 +149,27 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     // live session on resume even while the user is on the terminal screen.
     ref.watch(resumeRebindListenerProvider);
 
+    // #847: when the front-most session changes while the app is FOREGROUNDED
+    // (a tab switch — `sessionsProvider.notifier.setActive`), push the new
+    // active session id + HOST to the task isolate so attention suppression
+    // follows the user. Without this the task only learned the active session on
+    // pause/resume, so switching tabs while foregrounded left a stale activeHost
+    // and suppressed/fired against the wrong Claude. Only fires on a real
+    // activeId change (not every list mutation) and only while foregrounded
+    // (pause/resume already pushes the state on lifecycle edges).
+    ref.listen<String?>(activeSessionIdProvider, (prevId, nextId) {
+      if (!mounted) return;
+      if (prevId == nextId) return;
+      final sessions = ref.read(sessionsProvider);
+      final entries = sessions.entries;
+      if (entries.isEmpty) return;
+      entries.first.proxy.setActive(
+        true,
+        activeSessionId: sessions.activeId,
+        activeHost: sessions.active?.host,
+      );
+    });
+
     // Phase 4 (#524) lifecycle hook: on `resumed`, force a rebuild so
     // session UI repaints from the existing controller state without
     // reconnecting. The SshSessionController instances live in this isolate
@@ -168,9 +189,15 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // incl. a ~4KB scrollback decode, is wasted battery). Task-global, so
         // one send suffices. Does NOT touch the SSH socket / keepalive / locks.
         if (entries.isNotEmpty) {
+          final sessions = ref.read(sessionsProvider);
           entries.first.proxy.setActive(
             false,
-            activeSessionId: ref.read(sessionsProvider).activeId,
+            activeSessionId: sessions.activeId,
+            // #847: carry the active session's HOST so the task suppresses by
+            // host (the unit of attention is the Claude/host). On background
+            // `active:false` means nothing is suppressed anyway, but we send it
+            // so the host's last-known activeHost stays accurate.
+            activeHost: sessions.active?.host,
           );
         }
         for (final e in entries) {
@@ -190,9 +217,13 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // immediately (instant repaint). Task-global → one send. The per-proxy
         // rebind below still runs the cached-frame repaint + SshRequestSnapshot.
         if (entries.isNotEmpty) {
+          final sessions = ref.read(sessionsProvider);
           entries.first.proxy.setActive(
             true,
-            activeSessionId: ref.read(sessionsProvider).activeId,
+            activeSessionId: sessions.activeId,
+            // #847: carry the active session's HOST so the task host-suppresses
+            // a bell from any (possibly different) session to the same host.
+            activeHost: sessions.active?.host,
           );
         }
         for (final e in entries) {

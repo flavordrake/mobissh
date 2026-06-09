@@ -101,6 +101,28 @@ void main() {
       }
     });
 
+    test('SshSetActiveCommand round-trips activeSessionId + activeHost (#847)',
+        () {
+      final cmd = SshSetActiveCommand(
+        active: true,
+        activeSessionId: 'fd-dev:22:user:1',
+        activeHost: 'fd-dev',
+      );
+      final restored =
+          SshTaskCommand.fromJson(cmd.toJson()) as SshSetActiveCommand;
+      expect(restored.active, isTrue);
+      expect(restored.activeSessionId, 'fd-dev:22:user:1');
+      expect(restored.activeHost, 'fd-dev');
+    });
+
+    test('SshSetActiveCommand omits null activeHost (back-compat)', () {
+      final cmd = SshSetActiveCommand(active: false, activeSessionId: 'x:1:u:1');
+      final json = cmd.toJson();
+      expect(json.containsKey('activeHost'), isFalse);
+      final restored = SshTaskCommand.fromJson(json) as SshSetActiveCommand;
+      expect(restored.activeHost, isNull);
+    });
+
     test('unknown kind throws FormatException', () {
       expect(
         () => SshTaskCommand.fromJson({'kind': 'bogus', 'sessionId': 'sid'}),

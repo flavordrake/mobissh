@@ -47,7 +47,27 @@ const String kAttentionTitle = 'MobiSSH — Claude needs attention';
 
 /// Tag prefix so an attention notification never collides with the
 /// foreground-service keep-alive notification (channel `mobissh_keepalive`).
+/// Keyed by HOST (#847), not session: the unit of attention is the host (the
+/// Claude), so two sessions to the same host share one tag → a repeat REPLACES
+/// rather than stacks (the #847 "two stacked identical alerts" bug).
 const String _tagPrefix = 'mobissh.attention.';
+
+/// Cross-session attention dedup window (#847). Multiple bells from multiple
+/// sessions to the SAME host within this window collapse to ONE notification —
+/// a single underlying Claude event reaching two PTYs should not double-alert.
+/// Tunable; 30s is the owner's starting point.
+const Duration kAttentionDedupWindow = Duration(seconds: 30);
+
+/// Derive the HOST from a sessionId (#847). The session id format is
+/// `host:port:user:createdAtMs` (see `state/sessions.dart`), so the host is the
+/// segment before the first colon. Falls back to the whole id when it has no
+/// colon (defensive — e.g. a synthetic test id), so dedup/suppression still
+/// keys on a stable value. Never returns null.
+String hostOfSessionId(String sessionId) {
+  final i = sessionId.indexOf(':');
+  if (i <= 0) return sessionId;
+  return sessionId.substring(0, i);
+}
 
 /// Android channel id for attention notifications — HIGH importance (loud,
 /// dismissible), DISTINCT from the LOW `mobissh_keepalive` FGS channel.
@@ -78,9 +98,11 @@ class AttentionNotification {
   /// into [sourceWindow]/[payload] instead.
   final String body;
 
-  /// Android notification tag. Keyed by sessionId so a later signal from the
-  /// same session REPLACES the prior notification rather than stacking, while
-  /// distinct sessions get distinct tags (PWA notification-tag parity).
+  /// Android notification tag. Keyed by HOST (#847) so a later signal from the
+  /// same host — including a DIFFERENT session to that host — REPLACES the prior
+  /// notification rather than stacking (the #847 "two stacked identical alerts"
+  /// bug), while distinct hosts get distinct tags. The payload still routes the
+  /// tap to the exact originating session.
   final String tag;
 
   /// Opaque JSON payload the tap carries: `{"sessionId": "...", "sourceWindow": N?}`.
@@ -112,7 +134,10 @@ class AttentionNotification {
     return AttentionNotification(
       title: kAttentionTitle,
       body: body,
-      tag: '$_tagPrefix$sessionId',
+      // Per-HOST tag (#847): two sessions to the same host collapse to one
+      // notification slot (replace, not stack). The tap payload still carries
+      // the exact sessionId so focus routing is unchanged.
+      tag: '$_tagPrefix${hostOfSessionId(sessionId)}',
       payload: jsonEncode(payloadMap),
       sourceWindow: win,
     );
@@ -166,21 +191,72 @@ String? _stripSourceWindow(String? text) {
   return text.replaceFirst(_winRe, '').trimRight();
 }
 
-/// Suppression predicate (#840 Slice 2, step 3). Do NOT post when the signalling
-/// session is BOTH the active session AND the app is foregrounded — the user is
-/// already looking at it. Post in every other case (backgrounded, OR a non-active
-/// session even while foregrounded).
+/// Host-level suppression predicate (#847; supersedes the #840 session-level
+/// rule). The unit of attention is the HOST (the Claude), not the individual
+/// session. Do NOT post when the app is FOREGROUNDED and the front-most session's
+/// HOST equals the signalling session's HOST — the user is already looking at
+/// that Claude, even via a DIFFERENT session to the same host. Post in every
+/// other case: backgrounded, OR foregrounded on a session to a DIFFERENT host.
 ///
 /// [signalSessionId] — the session that produced the signal.
 /// [activeSessionId] — the currently-active (front-most tab) session, or null.
+/// [activeHost] — the HOST of the front-most session, or null when unknown.
 /// [foreground] — whether the app/UI is foregrounded.
 bool shouldPostAttention({
   required String signalSessionId,
   required String? activeSessionId,
+  String? activeHost,
   required bool foreground,
 }) {
-  final isActive = activeSessionId != null && activeSessionId == signalSessionId;
-  return !(isActive && foreground);
+  if (!foreground) return true;
+  final signalHost = hostOfSessionId(signalSessionId);
+  // Prefer the explicit activeHost (the host of the front-most session as
+  // reported by the UI). Fall back to deriving it from activeSessionId so an
+  // older UI (or a path that only knows the id) still host-suppresses correctly.
+  final frontHost = (activeHost != null && activeHost.isNotEmpty)
+      ? activeHost
+      : (activeSessionId != null ? hostOfSessionId(activeSessionId) : null);
+  if (frontHost == null) return true;
+  // Suppress when foregrounded on the SAME host (any session to that host).
+  return frontHost != signalHost;
+}
+
+/// Host-level cross-session dedup (#847). Multiple bells from multiple sessions
+/// to the SAME host within [window] collapse to ONE notification: a single
+/// Claude event reaching two PTYs must not double-alert. Pure + clock-injected
+/// so it is deterministically unit-testable; the host owns one instance and
+/// consults it right before posting.
+class AttentionDedupTracker {
+  AttentionDedupTracker({
+    this.window = kAttentionDedupWindow,
+    int Function()? nowMs,
+  }) : _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// Dedup window. A post for a host within [window] of its last ALLOWED post is
+  /// suppressed.
+  final Duration window;
+  final int Function() _nowMs;
+
+  /// Last ALLOWED post time per host (ms since epoch).
+  final Map<String, int> _lastPostMs = {};
+
+  /// Record a post for [host] and return whether it should actually fire. The
+  /// FIRST post for a host (or the first after the window elapses) returns true
+  /// and stamps the time; a repeat within [window] returns false WITHOUT moving
+  /// the stamp (so the window measures from the last fired post, not the last
+  /// attempt). Keyed by host so two sessions to the same host dedup together.
+  bool allow(String host) {
+    final now = _nowMs();
+    final last = _lastPostMs[host];
+    if (last != null && (now - last) < window.inMilliseconds) {
+      return false;
+    }
+    _lastPostMs[host] = now;
+    return true;
+  }
+
+  /// Forget a host's last-post stamp (e.g. on shell re-open / reset).
+  void reset() => _lastPostMs.clear();
 }
 
 /// Posts (and cancels) attention notifications. Abstracted so the task isolate
