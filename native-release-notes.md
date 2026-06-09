@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+46 (2026-06-09) — Claude attention notifications (jump to the session that needs you)
+- **MobiSSH now notifies you when an agent needs your attention.** When Claude is awaiting input/permission or finishes — any terminal bell or OSC 9/777 notification — a high-priority notification fires, even for a backgrounded or non-active session, and tapping it jumps straight to that session (and, under tmux, toward the source window). It's suppressed when you're already looking at that session. **Inside tmux, add the one-line `alert-bell` hook to `~/.tmux.conf`** so the signal carries through tmux's redraw (a plain shell works as-is). **Verify:** let Claude await your input (or `printf '\a'`) → a "Claude needs attention" notification appears; tap it → you land on that session. (#840)
+
 ## v0.1.10+45 (2026-06-09) — full disconnect telemetry (to fix silent drops at the root)
 - **Every disconnect now records its cause + how long the session was dead before we noticed + a periodic liveness heartbeat** in the diagnostic log (battery-safe — piggybacks the existing tick, no new timer). The measurement layer behind the "disconnected with no indication" fix. **Hit Feedback after any disconnect or silent freeze** and the log captures exactly what happened, so the silent-drop detection can be built + validated from real data. (#838)
 
