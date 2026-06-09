@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+40 (2026-06-09) — disconnected sessions stay reconnectable (recents fixed)
+- **A disconnected session no longer vanishes.** It now appears under an **"Active Sessions"** group on the home/Connect screen with a Reconnect button, and your **Recent Sessions list stops disappearing** when you disconnect or hit "Reconnect all" — the recent list now shows only at a true cold start, and live-but-dropped sessions live in Active Sessions instead. Completes the session-state rework. **Verify:** connect, disconnect → the session stays on the home screen with Reconnect (doesn't vanish); Reconnect-all keeps the list visible. (#809)
+
 ## v0.1.10+39 (2026-06-08) — dropped sessions show a status dot + Reconnect
 - **A dropped/disconnected session now shows its state and a Reconnect button** instead of looking live or making you ✕ it. The session menu shows a color status dot per session (connecting / reconnecting / failed / disconnected) with the reason; **tap Reconnect to revive it** (it also auto-attempts), or ✕ to forget it. **"Reconnect all"** appears when any session is down. **Verify:** drop a session (kill its connection) → it shows amber/red + Reconnect; tap → live shell returns. (#817) (Recents reconciliation — so disconnected sessions also stop vanishing from the Recent list — is the next slice.)
 
