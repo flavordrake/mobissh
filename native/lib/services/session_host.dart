@@ -148,6 +148,12 @@ class SessionHost {
   /// for the desktop / in-process path where hosts share one isolate).
   void Function(String line)? _lifecycleForward;
 
+  /// Minimum spacing between liveness-heartbeat lines per session (#838).
+  /// The heartbeat piggybacks the 2s snapshot tick but only emits this often so
+  /// the durable lifecycle ring isn't churned by alive-pings — yet a silent drop
+  /// is still caught within ~10s by the growing lastActivityAge.
+  static const int _heartbeatIntervalMs = 10000;
+
   final Map<String, _HostedSession> _sessions = {};
 
   /// Sessions visible to tests + the future audit screen wiring.
@@ -418,6 +424,12 @@ class SessionHost {
           'state: ${prevState.name} → ${data.state.name}'
               '${data.error != null ? ' (${data.error})' : ''}',
         );
+        // #838: when this edge is a DROP (left/never-reached `connected` into a
+        // disconnect state), emit ONE structured disconnect line carrying the
+        // CAUSE, end-time→detection LATENCY, transport/keepalive/attempt/intent
+        // context, and a monotonic edge# so a capture reveals double-fires
+        // ("cut once"). Telemetry only — drives no behaviour.
+        _maybeRecordDisconnect(cmd.sessionId, hosted, prevState, data);
         prevState = data.state;
       }
       // Drop the prior shell the instant the transport leaves `connected`
@@ -439,6 +451,9 @@ class SessionHost {
       // disabled by the #533 task-isolate migration and the task-side shell
       // was never wired until now.
       if (data.state == SshSessionState.connected) {
+        // #838: stamp connect time as a latency fallback for a drop that
+        // happens before the remote ever produced a byte.
+        hosted.connectedAtMs = _nowMs();
         unawaited(_ensureShell(cmd.sessionId, hosted));
       }
     });
@@ -660,6 +675,134 @@ class SessionHost {
     );
   }
 
+  /// The disconnect / dropped-into states (#838). Entering one of these from a
+  /// non-drop state is a single DROP edge — the unit the disconnect telemetry
+  /// records once. `reconnecting`/`softDisconnected` are included because they
+  /// are the FIRST observable edge of an involuntary drop (the user sees the
+  /// session leave `connected`); a later `failed` after reconnect-exhaustion is
+  /// a SEPARATE edge and is logged as such, so a capture shows the full chain.
+  static const Set<SshSessionState> _dropStates = {
+    SshSessionState.softDisconnected,
+    SshSessionState.reconnecting,
+    SshSessionState.failed,
+    SshSessionState.disconnected,
+  };
+
+  /// Classify a drop edge's CAUSE from the (prev→new) transition + controller
+  /// context (#838). Pure string label for telemetry; no behaviour depends on
+  /// it. Cause taxonomy mirrors the Phase-0 disconnect-path map.
+  static String _classifyDropCause(
+    SshSessionState prev,
+    SshSessionData data,
+    SshSessionController controller,
+  ) {
+    final next = data.state;
+    if (controller.userInitiatedDisconnect &&
+        next == SshSessionState.disconnected) {
+      return 'user-disconnect';
+    }
+    if (next == SshSessionState.failed) {
+      final err = data.error ?? '';
+      if (err.contains('reconnect exhausted')) return 'reconnect-exhausted';
+      if (err.contains('No SSH response')) return 'handshake-timeout';
+      if (err.contains('Authentication failed')) return 'auth-failed';
+      if (err.contains('Host key rejected')) return 'hostkey-rejected';
+      if (err.contains('TCP connect failed')) return 'tcp-connect-failed';
+      if (err.contains('Could not load private key') ||
+          err.contains('Private key contained no usable identity')) {
+        return 'key-load-failed';
+      }
+      if (err.contains('Transport error')) {
+        return controller.lastErrorUnreachable
+            ? 'transport-unreachable'
+            : 'transport-error';
+      }
+      return 'failed';
+    }
+    if (prev == SshSessionState.connected) {
+      // Left a working session. softDisconnected = clean server close or a
+      // probe/nudge-declared stale link; reconnecting = transient socket error.
+      if (next == SshSessionState.softDisconnected) return 'server-or-stale';
+      if (next == SshSessionState.reconnecting) {
+        return controller.lastErrorUnreachable
+            ? 'socket-unreachable'
+            : 'socket-transient';
+      }
+    }
+    return 'clean-close';
+  }
+
+  /// Emit ONE structured disconnect-cause line per DROP edge (#838).
+  ///
+  /// Fires only on the FIRST edge into a drop state from a non-drop state — so a
+  /// `connected → softDisconnected → reconnecting → failed` chain logs each
+  /// distinct edge once (visible as increasing `edge=`), but a repeated emit of
+  /// the SAME drop state (e.g. a banner update while `failed`) does NOT re-fire.
+  /// This is the "cut once" guard: a true double-fire would show two disconnect
+  /// lines with the SAME prev→new at the same instant.
+  ///
+  /// LATENCY = tDetected − tLastActivity: how long the link was effectively dead
+  /// before we noticed. tLastActivity is the last fresh remote byte (the honest
+  /// "remote is producing output" signal, #759); when the session never produced
+  /// a byte we fall back to the connect time so the number is bounded, flagged
+  /// `latencyFrom=connect`. Allocation-light: one formatted string per drop edge.
+  void _maybeRecordDisconnect(
+    String sessionId,
+    _HostedSession hosted,
+    SshSessionState prev,
+    SshSessionData data,
+  ) {
+    final next = data.state;
+    final isDropEdge = _dropStates.contains(next) && !_dropStates.contains(prev);
+    if (!isDropEdge) return;
+
+    hosted.dropEdges += 1;
+    final now = _nowMs();
+    final lastActivity = hosted.lastRemoteByteAtMs ?? hosted.connectedAtMs;
+    final latencyMs = lastActivity == null ? -1 : (now - lastActivity);
+    final latencyFrom = hosted.lastRemoteByteAtMs != null
+        ? 'lastByte'
+        : (hosted.connectedAtMs != null ? 'connect' : 'none');
+    final controller = hosted.controller;
+    final cause = _classifyDropCause(prev, data, controller);
+
+    clifecycle(
+      'task.host',
+      'disconnect: cause=$cause ${prev.name}→${next.name} '
+          'latencyMs=$latencyMs from=$latencyFrom '
+          'transport=${controller.client != null ? 'open' : 'closed'} '
+          'attempt=${controller.reconnectAttempts} '
+          'intent=${controller.userInitiatedDisconnect ? 'user' : 'auto'} '
+          'edge=${hosted.dropEdges}',
+    );
+  }
+
+  /// Emit a periodic liveness HEARTBEAT for each `connected` session (#838).
+  ///
+  /// Piggybacks the existing snapshot tick — NO new wakeful timer (battery /
+  /// #806). Throttled to [_heartbeatIntervalMs] so it stays allocation-light
+  /// even at the 2s snapshot cadence. The line records perceived-alive + the
+  /// AGE of the last fresh remote byte: a SILENT drop (no transition fires)
+  /// shows up as "heartbeat says alive but lastActivityAgeMs keeps growing" —
+  /// exactly the undetected-drop window #766 will close. Skipped while the UI is
+  /// backgrounded (the snapshot timer is stopped then anyway).
+  void _maybeEmitHeartbeats() {
+    final now = _nowMs();
+    for (final entry in _sessions.entries) {
+      final hosted = entry.value;
+      if (hosted.controller.data.state != SshSessionState.connected) continue;
+      if (now - hosted.lastHeartbeatAtMs < _heartbeatIntervalMs) continue;
+      hosted.lastHeartbeatAtMs = now;
+      final lastActivity = hosted.lastRemoteByteAtMs ?? hosted.connectedAtMs;
+      final ageMs = lastActivity == null ? -1 : (now - lastActivity);
+      clifecycle(
+        'task.host',
+        'heartbeat: alive state=connected lastActivityAgeMs=$ageMs '
+            'edge=${hosted.dropEdges}',
+      );
+    }
+  }
+
   /// One concise terminal line per connect phase so a stall is visible.
   void _emitConnectStatus(String sessionId, SshSessionData data) {
     final String? line;
@@ -864,6 +1007,9 @@ class SessionHost {
 
   void _pushSnapshots() {
     if (_disposed) return;
+    // #838: piggyback the existing snapshot tick to emit liveness heartbeats —
+    // no extra wakeful timer (battery / #806). Throttled inside.
+    _maybeEmitHeartbeats();
     for (final entry in _sessions.entries) {
       // Dirty-check (#806 B): only ship a periodic snapshot when something the
       // UI renders actually changed since the last periodic push. An idle
@@ -1058,6 +1204,23 @@ class _HostedSession {
   /// session that produced fresh bytes recently is NOT escalated to the nudge
   /// check on resume (conservative — don't churn a healthy idle session).
   int? lastRemoteByteAtMs;
+
+  /// Wall-clock (ms since epoch) the session most recently reached `connected`
+  /// (#838). Used as the tLastActivity fallback when a drop happens before the
+  /// remote ever produced a byte, so the disconnect latency is bounded rather
+  /// than -1.
+  int? connectedAtMs;
+
+  /// Monotonic count of DROP edges observed for this session (#838). Stamped on
+  /// each `disconnect:` line as `edge=N` so a capture reveals double-fires
+  /// (a true "cut once" violation = two lines with the same prev→new at once)
+  /// and lets the heartbeat correlate to the most recent drop.
+  int dropEdges = 0;
+
+  /// Wall-clock (ms since epoch) of the last liveness-heartbeat line (#838).
+  /// Throttles the heartbeat to one per [SessionHost._heartbeatIntervalMs]
+  /// even though it piggybacks the faster snapshot tick.
+  int lastHeartbeatAtMs = 0;
 
   /// Monotonic token bumped each time the shell is dropped (#590). An in-flight
   /// [SessionHost._ensureShell] open captures this before awaiting and discards

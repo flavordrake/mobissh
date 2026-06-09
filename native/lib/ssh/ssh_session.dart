@@ -248,6 +248,12 @@ class SshSessionController {
   /// [_assertSuppressConsistent]).
   bool get _autoReconnectSuppressed => _userDisconnected;
 
+  /// Read-only view of the user-intent bit (#838). The disconnect-cause
+  /// classifier reads this to label a drop as user-initiated (✕/Disconnect) vs.
+  /// involuntary, since the `disconnected` state alone is ambiguous between the
+  /// two. Pure telemetry — no behaviour depends on this getter.
+  bool get userInitiatedDisconnect => _userDisconnected;
+
   /// Debug-only invariant: when the user-intent bit is set, the session MUST be
   /// in the `disconnected` terminal state. (The converse does NOT hold —
   /// `disconnected` is also reached by an involuntary clean close.) Guards
