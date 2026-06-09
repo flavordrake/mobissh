@@ -69,6 +69,19 @@ String hostOfSessionId(String sessionId) {
   return sessionId.substring(0, i);
 }
 
+/// Short, human display label for the host of [sessionId] — the first
+/// dot-segment of the host (e.g. `fd-dev` from `fd-dev.tailbe5094.ts.net`), so
+/// an attention notification is differentiated BY SERVER (#847 owner request:
+/// "at minimum differentiate by server") without the long tailnet FQDN. These
+/// are the owner's own machines on a private tailnet — the short host name is
+/// not sensitive and is what the owner uses to tell sessions apart. Falls back
+/// to the full host when there is no dot.
+String hostLabelOfSessionId(String sessionId) {
+  final host = hostOfSessionId(sessionId);
+  final dot = host.indexOf('.');
+  return dot <= 0 ? host : host.substring(0, dot);
+}
+
 /// Android channel id for attention notifications — HIGH importance (loud,
 /// dismissible), DISTINCT from the LOW `mobissh_keepalive` FGS channel.
 const String kAttentionChannelId = 'mobissh_attention';
@@ -92,10 +105,11 @@ class AttentionNotification {
   /// in the title (no host/user leakage in the visible text).
   final String title;
 
-  /// Notification body — the scanner's parsed text (the OSC-9 / OSC-777 /
-  /// hook-line message), or a fixed fallback phrase when the signal had no text
-  /// (a bare BEL). Stripped of any trailing `(win N)` hint, which is structured
-  /// into [sourceWindow]/[payload] instead.
+  /// Notification body — leads with the short host label (#847: differentiate by
+  /// server) followed by the scanner's parsed text (the OSC-9 / OSC-777 /
+  /// hook-line message): `"server — text"`. A text-less signal (a bare BEL) is
+  /// just `"server"`. Stripped of any trailing `(win N)` hint, which is
+  /// structured into [sourceWindow]/[payload] instead.
   final String body;
 
   /// Android notification tag. Keyed by HOST (#847) so a later signal from the
@@ -113,9 +127,6 @@ class AttentionNotification {
   /// Parsed tmux source-window number from a trailing `(win N)` hint, or null.
   final int? sourceWindow;
 
-  /// Fixed fallback body for a text-less signal (a bare bell).
-  static const String _fallbackBody = 'Session needs attention';
-
   /// Build a notification description for [sessionId] from a detected [signal].
   ///
   /// The body is the signal's parsed text with any trailing `(win N)` removed;
@@ -128,7 +139,13 @@ class AttentionNotification {
     final raw = signal.text?.trim();
     final win = parseSourceWindow(raw);
     final stripped = _stripSourceWindow(raw);
-    final body = (stripped == null || stripped.isEmpty) ? _fallbackBody : stripped;
+    // #847: lead the body with the short host label so alerts are differentiated
+    // BY SERVER (owner: "at minimum differentiate by server"). A bare bell (no
+    // text) shows just the server; a signal with text shows "server — text".
+    final label = hostLabelOfSessionId(sessionId);
+    final body = (stripped == null || stripped.isEmpty)
+        ? label
+        : '$label — $stripped';
     final payloadMap = <String, dynamic>{'sessionId': sessionId};
     if (win != null) payloadMap['sourceWindow'] = win;
     return AttentionNotification(

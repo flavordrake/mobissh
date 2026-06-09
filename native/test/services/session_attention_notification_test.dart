@@ -18,7 +18,8 @@ void main() {
 
       expect(n.title, kAttentionTitle);
       // (win N) is stripped from the visible body and structured into payload.
-      expect(n.body, 'Claude — main');
+      // #847: body leads with the host label (differentiate by server).
+      expect(n.body, 'sess-A — Claude — main');
       expect(n.tag, 'mobissh.attention.sess-A');
       expect(n.sourceWindow, 3);
 
@@ -60,19 +61,44 @@ void main() {
       expect(payload['sessionId'], 'fd-dev:2222:user:222');
     });
 
-    test('text-less bare bell gets a fixed fallback body, no sourceWindow', () {
+    test('text-less bare bell body is the host label (differentiate by server), '
+        'no sourceWindow', () {
       const sig = AttentionSignal(AttentionKind.bell, null);
-      final n = AttentionNotification.build(sessionId: 'A', signal: sig);
-      expect(n.body, isNotEmpty);
+      final n = AttentionNotification.build(
+        sessionId: 'fd-dev.tailbe5094.ts.net:22:user:1',
+        signal: sig,
+      );
+      // #847: even a context-less bell names the server (short host label).
+      expect(n.body, 'fd-dev');
       expect(n.sourceWindow, isNull);
       final payload = jsonDecode(n.payload) as Map;
       expect(payload.containsKey('sourceWindow'), isFalse);
     });
 
-    test('osc777 title:body text is carried as the body', () {
+    test('body differentiates by server: distinct hosts → distinct bodies (#847)',
+        () {
+      const sig = AttentionSignal(AttentionKind.bell, null);
+      final a = AttentionNotification.build(
+        sessionId: 'fd-dev.tailbe5094.ts.net:22:u:1',
+        signal: sig,
+      );
+      final b = AttentionNotification.build(
+        sessionId: 'nv-dev.tailbe5094.ts.net:22:u:2',
+        signal: sig,
+      );
+      expect(a.body, 'fd-dev');
+      expect(b.body, 'nv-dev');
+      expect(a.body, isNot(b.body),
+          reason: 'two servers must never show identical notification text');
+    });
+
+    test('osc777 title:body text is carried as the body, host-prefixed', () {
       const sig = AttentionSignal(AttentionKind.osc777, 'MobiSSH: build done');
-      final n = AttentionNotification.build(sessionId: 'A', signal: sig);
-      expect(n.body, 'MobiSSH: build done');
+      final n = AttentionNotification.build(
+        sessionId: 'fd-dev.tailbe5094.ts.net:22:u:1',
+        signal: sig,
+      );
+      expect(n.body, 'fd-dev — MobiSSH: build done');
     });
 
     test('PAYLOAD CARRIES NO SECRET MATERIAL', () {

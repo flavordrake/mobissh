@@ -78,7 +78,8 @@ void main() {
     final n = s.notifier.posted.single;
     // #847: tag is now per-HOST (host `h`), not per-session.
     expect(n.tag, 'mobissh.attention.h');
-    expect(n.body, 'Claude — main');
+    // #847: body leads with the host label (differentiate by server).
+    expect(n.body, 'h — Claude — main');
     expect(n.sourceWindow, 3);
     final payload = jsonDecode(n.payload) as Map;
     // Payload still routes the tap to the EXACT session.
