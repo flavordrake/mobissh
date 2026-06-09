@@ -14,6 +14,8 @@ merged without further work.
 
 ## Reference Documents
 
+**Read `.claude/constitution.md` FIRST — these principles are inviolable and override defaults.**
+
 Before starting work, read these reference docs for project context and best practices.
 They are in `.claude/skills/develop/reference/`:
 
