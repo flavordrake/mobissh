@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'diagnostics/crash_reporter.dart';
 import 'platform/desktop.dart';
 import 'ssh/ssh_session.dart';
+import 'state/attention_providers.dart';
 import 'state/connection_providers.dart';
 import 'state/keepalive_providers.dart';
 import 'state/lifecycle_providers.dart';
@@ -112,6 +113,20 @@ class _RootRouterState extends ConsumerState<RootRouter> {
   final Set<String> _everConnected = <String>{};
 
   @override
+  void initState() {
+    super.initState();
+    // #840 Slice 2: cold-start consume of a pending attention focus. If the app
+    // was launched (process was dead) by tapping an attention notification, the
+    // tap recorded a pending focus in process-death-surviving storage. Consume
+    // it once the first frame settles so sessions exist to focus. Deferred to a
+    // post-frame callback so provider reads happen after the widget mounts.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(ref.read(attentionFocusRouterProvider).consumePending());
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     // Touch the keepalive controller so it attaches to the SSH session
     // controller at app start; this is what starts/stops the foreground
@@ -152,7 +167,12 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // push (the UI is about to unbind and discard snapshots — the push,
         // incl. a ~4KB scrollback decode, is wasted battery). Task-global, so
         // one send suffices. Does NOT touch the SSH socket / keepalive / locks.
-        if (entries.isNotEmpty) entries.first.proxy.setActive(false);
+        if (entries.isNotEmpty) {
+          entries.first.proxy.setActive(
+            false,
+            activeSessionId: ref.read(sessionsProvider).activeId,
+          );
+        }
         for (final e in entries) {
           e.proxy.unbind();
         }
@@ -169,10 +189,20 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // snapshot timer and emits one fresh full snapshot per session
         // immediately (instant repaint). Task-global → one send. The per-proxy
         // rebind below still runs the cached-frame repaint + SshRequestSnapshot.
-        if (entries.isNotEmpty) entries.first.proxy.setActive(true);
+        if (entries.isNotEmpty) {
+          entries.first.proxy.setActive(
+            true,
+            activeSessionId: ref.read(sessionsProvider).activeId,
+          );
+        }
         for (final e in entries) {
           e.proxy.rebind();
         }
+        // #840 Slice 2: a tapped attention notification recorded a pending focus
+        // that survives process death. Consume it on resume (warm) — switch to
+        // the originating session and, if it parses a `(win N)` hint and that
+        // session is a tmux client, select that window.
+        unawaited(ref.read(attentionFocusRouterProvider).consumePending());
         setState(() {});
       }
     });

@@ -71,6 +71,14 @@ dependencies:
   # Persist profile list, settings; small JSON blobs only
   shared_preferences: ^2.3.5
 
+  # Loud, dismissible attention notifications when a remote session (e.g. Claude)
+  # signals for attention (#840 Slice 2). Distinct from the LOW-importance
+  # foreground-service keep-alive notification (flutter_foreground_task) — this
+  # is its own HIGH-importance `mobissh_attention` channel. Posted from the
+  # foreground-task isolate (where the AttentionSignalScanner runs) so it fires
+  # for backgrounded / non-active sessions too.
+  flutter_local_notifications: ^18.0.1
+
   # PBKDF2-HMAC-SHA256 + AES-GCM-256 for vault decryption parity with the
   # PWA's WebCrypto vault (#510). Pure-Dart; no platform channel; runs in
   # flutter_test without a device.

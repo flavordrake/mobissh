@@ -219,7 +219,10 @@ sealed class SshTaskCommand {
       case SshTaskCommandKind.reconnect:
         return SshReconnectCommand(sessionId: sessionId);
       case SshTaskCommandKind.setActive:
-        return SshSetActiveCommand(active: json['active'] as bool);
+        return SshSetActiveCommand(
+          active: json['active'] as bool,
+          activeSessionId: json['activeSessionId'] as String?,
+        );
       case SshTaskCommandKind.sftpList:
         return SftpListCommand(
           sessionId: sessionId,
@@ -483,11 +486,19 @@ class SshReconnectCommand extends SshTaskCommand {
 /// UI repaints from current state. Task-global, so [sessionId] is the empty
 /// sentinel (mirrors [SshUiHelloCommand]).
 class SshSetActiveCommand extends SshTaskCommand {
-  const SshSetActiveCommand({required this.active}) : super('');
+  const SshSetActiveCommand({required this.active, this.activeSessionId})
+    : super('');
 
   /// True = UI foregrounded (resume periodic snapshots); false = backgrounded
   /// (stop the periodic timer until the next resume).
   final bool active;
+
+  /// The currently front-most (active) session id, or null when none / unknown
+  /// (#840 Slice 2). The host uses this together with [active] to SUPPRESS an
+  /// attention notification for the session the user is already looking at.
+  /// Optional + back-compatible: an older UI that omits it leaves the host's
+  /// active-session unknown, which only means it never suppresses (safe).
+  final String? activeSessionId;
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.setActive;
@@ -497,6 +508,7 @@ class SshSetActiveCommand extends SshTaskCommand {
     'kind': kind.name,
     'sessionId': sessionId,
     'active': active,
+    if (activeSessionId != null) 'activeSessionId': activeSessionId,
   };
 }
 

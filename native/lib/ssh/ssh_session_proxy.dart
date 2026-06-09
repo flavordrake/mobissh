@@ -149,9 +149,15 @@ class SshSessionProxy {
   /// sentinel sessionId, so calling it on ONE proxy suffices (all proxies share
   /// the gateway). On resume the task re-emits a fresh snapshot itself; the
   /// proxy's own [rebind] still runs for the cached-frame repaint.
-  void setActive(bool active) {
+  /// [activeSessionId] (#840 Slice 2) tells the task which session is front-most
+  /// so it can SUPPRESS an attention notification for the session the user is
+  /// already looking at (active + foreground). Optional + back-compatible.
+  void setActive(bool active, {String? activeSessionId}) {
     if (_disposed) return;
-    gateway.send(SshSetActiveCommand(active: active).toJson());
+    gateway.send(
+      SshSetActiveCommand(active: active, activeSessionId: activeSessionId)
+          .toJson(),
+    );
   }
 
   /// Send a connect command across the gateway. The task-side host turns
