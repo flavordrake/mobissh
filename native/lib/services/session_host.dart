@@ -28,6 +28,7 @@ import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_shell.dart';
 import '../ssh/sftp_session.dart';
+import 'attention_signal_scanner.dart';
 import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
 
@@ -598,6 +599,8 @@ class SessionHost {
       // Fresh attach => fresh DA2 handshake: clear any buffered partial query
       // from a prior shell so we answer THIS attach's `ESC[>c` cleanly (#osc8).
       hosted.da2Responder.reset();
+      // Fresh attach => fresh attention-signal dedup state (#840).
+      hosted.attentionScanner.reset();
       // Wire the output listener BEFORE announcing shell-ready (#619). The UI's
       // run-on-connect command fires on shell-ready, writes to stdin, and the
       // shell echoes + runs it immediately. If we announced ready first (the
@@ -629,6 +632,23 @@ class SessionHost {
           }
           final forward = scan.forward;
           if (forward.isEmpty) return;
+          // Observe (don't alter) the post-DA2-strip bytes for in-band
+          // agent-attention signals (#840). Slice 1: log each detection to the
+          // durable lifecycle ring so the first on-device awaiting-moment proves
+          // which form arrives. Defensive — a malformed sequence must never
+          // crash the session.
+          try {
+            final signals = hosted.attentionScanner.feed(forward);
+            for (final sig in signals) {
+              clifecycle(
+                'attention',
+                '${sig.kind.name} ${sig.text == null ? '(no text)' : '"${sig.text}"'} '
+                    '(session $sessionId)',
+              );
+            }
+          } catch (e) {
+            clifecycle('attention', 'scan-error: $e (session $sessionId)');
+          }
           hosted.appendScrollback(forward);
           _gateway.send(
             SshOutputEvent(sessionId: sessionId, bytes: forward).toJson(),
@@ -1190,6 +1210,14 @@ class _HostedSession {
   /// to this client. See [Da2HyperlinkResponder]. Reset per shell open so a
   /// reconnect re-answers the fresh attach's query.
   final Da2HyperlinkResponder da2Responder = Da2HyperlinkResponder();
+
+  /// Observes the remote byte stream for in-band agent-attention signals
+  /// (#840): bare BEL, OSC 9, OSC 777, and the `notify-bell.sh` `# <message>`
+  /// line. Slice 1 only LOGS detections to the `clifecycle` ring (no
+  /// notification yet) so the first on-device awaiting-moment reveals which form
+  /// actually arrives. Reset per shell open like [da2Responder]. Observe-only:
+  /// it never alters the forwarded bytes. See [AttentionSignalScanner].
+  final AttentionSignalScanner attentionScanner = AttentionSignalScanner();
 
   /// Monotonic count of remote-output CHUNKS actually received from the shell
   /// (#759). Bumped only by the live shell-output listener (and the test
