@@ -16,6 +16,8 @@
 //     error opens a non-blocking detail dialog (explicit, user-initiated).
 // The row stays reactive by watching the matching session's proxy state stream.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -23,7 +25,9 @@ import '../ssh/ssh_session.dart';
 import '../state/profiles_providers.dart';
 import '../state/recent_sessions.dart';
 import '../state/sessions.dart';
+import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
+import 'session_state_dot.dart';
 
 typedef ProfileSelectCallback = void Function(SavedProfile profile);
 typedef RecentSelectCallback = void Function(RecentSessionEntry entry);
@@ -82,9 +86,16 @@ class ProfileList extends ConsumerWidget {
         ),
       ),
       data: (profiles) {
+        // Active Sessions group (#821 Slice 3, PWA `activeSessionList`): every
+        // live OR dropped session renders at the TOP — connected sessions get a
+        // Switch, dropped ones a Reconnect, all an ✕. This is the Connect-view
+        // surface that keeps a DROPPED session reachable from the home screen
+        // (#809) instead of it vanishing the moment recents are suppressed.
+        final activeGroup = _buildActiveSessionsGroup(context, ref);
+
         // Recent Sessions group (#796, PWA #385): a one-tap quick-connect group
-        // shown ABOVE the saved-profile list, ONLY on cold start (no active
-        // sessions) — exactly the PWA's `allSessions.length === 0` guard. It's
+        // shown ABOVE the saved-profile list, ONLY on cold start (no sessions at
+        // all) — exactly the PWA's `allSessions.length === 0` guard. It's
         // disabled entirely when the caller didn't wire [onConnectRecent].
         final recentsGroup = _buildRecentsGroup(context, ref);
 
@@ -141,6 +152,7 @@ class ProfileList extends ConsumerWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            ?activeGroup,
             ?recentsGroup,
             profilesSection,
           ],
@@ -157,11 +169,13 @@ class ProfileList extends ConsumerWidget {
     final onTapRecent = onConnectRecent;
     if (onTapRecent == null) return null;
 
-    // PWA parity: the recents group only shows when there are NO active
-    // sessions (cold start). Once a session exists, the saved-profile list
-    // owns the screen.
-    final hasActiveSession = ref.watch(sessionsProvider).entries.isNotEmpty;
-    if (hasActiveSession) return null;
+    // PWA parity (#821): the recents group only shows on TRUE cold start — when
+    // there are NO sessions at all (the PWA `allSessions.length === 0` guard).
+    // A DROPPED session is still a live SessionEntry, so it now surfaces in the
+    // Active Sessions group above (never suppressed-invisible, #809). Recents
+    // stay the pure cold-start quick-connect list.
+    final hasAnySession = ref.watch(sessionsProvider).entries.isNotEmpty;
+    if (hasAnySession) return null;
 
     final recents = ref.watch(recentSessionsProvider).valueOrNull ?? const [];
     if (recents.isEmpty) return null;
@@ -203,6 +217,228 @@ class ProfileList extends ConsumerWidget {
           ),
         const Divider(height: 1),
       ],
+    );
+  }
+
+  /// Build the Active Sessions group (#821 Slice 3), or null when there are no
+  /// sessions at all. Mirrors the PWA `activeSessionList` block in
+  /// `loadProfiles`: an "Active Sessions" header, one row per session (connected
+  /// → Switch, dropped → Reconnect, all → ✕), and a "Reconnect all" affordance
+  /// when ANY session is non-connected. Brings the in-session menu's Slice-2
+  /// surface (`session_menu.dart`) to the CONNECT view so a dropped session is
+  /// reconnectable from the home screen instead of vanishing (#809).
+  Widget? _buildActiveSessionsGroup(BuildContext context, WidgetRef ref) {
+    final entries = ref.watch(sessionsProvider).entries;
+    if (entries.isEmpty) return null;
+
+    return Column(
+      key: const Key('active-sessions-group'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 4),
+          child: Text(
+            'Active Sessions',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
+        // shrinkWrap: this group sits above the Expanded saved-profile list, so
+        // it sizes to its content rather than demanding infinite height.
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: entries.length,
+          itemBuilder: (context, i) => _ActiveSessionTile(entry: entries[i]),
+        ),
+        _ActiveReconnectAllRow(entries: entries),
+        const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+/// One Active Sessions row in the Connect view (#821 Slice 3). Mirrors the PWA
+/// `active-session-item`: a state-driven status dot + the session label, a
+/// per-state primary action (Switch when connected, Reconnect when dropped),
+/// and an always-present ✕ (forget). Reactive via a [StreamBuilder] on the
+/// proxy state so the row repaints as the session moves connected ↔ dropped
+/// without re-entering the chooser — exactly the in-menu `_SessionRow` (#817)
+/// behaviour, brought to the home screen.
+class _ActiveSessionTile extends ConsumerWidget {
+  const _ActiveSessionTile({required this.entry});
+
+  final SessionEntry entry;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profileColor = ref.watch(sessionColorProvider(entry.id));
+    return StreamBuilder<SshSessionData>(
+      stream: entry.proxy.stream,
+      initialData: entry.proxy.data,
+      builder: (context, snapshot) {
+        final state = snapshot.data?.state ?? entry.proxy.data.state;
+        return _buildRow(context, ref, state, profileColor);
+      },
+    );
+  }
+
+  Widget _buildRow(
+    BuildContext context,
+    WidgetRef ref,
+    SshSessionState state,
+    Color? profileColor,
+  ) {
+    final canReconnect = sessionCanReconnect(state);
+    return ListTile(
+      key: Key('active-session-tile-${entry.id}'),
+      dense: true,
+      leading: SessionStateDot(
+        key: Key('active-session-dot-${entry.id}'),
+        swatchKey: Key('active-session-swatch-${entry.id}'),
+        state: state,
+        profileColor: profileColor,
+      ),
+      title: Text(entry.label, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        '${entry.username}@${entry.host}:${entry.port}',
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (canReconnect)
+            // Reconnect a dropped session from held params / re-resolved creds
+            // (#817). Routed through the notifier so the foreground task isolate
+            // is (re)started first — a bare proxy.reconnect() would buffer
+            // against a dead isolate forever after a last-session drop.
+            IconButton(
+              key: Key('active-session-reconnect-${entry.id}'),
+              tooltip: 'Reconnect',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.replay),
+              onPressed: () =>
+                  ref.read(sessionsProvider.notifier).reconnect(entry.id),
+            )
+          else
+            // Connected (or still connecting): Switch makes this the active
+            // session and returns to the terminal. `maybePop` returns to the
+            // live terminal when this list is a pushed route OVER a session
+            // (#721); at the cold-start root there's nothing to pop and the
+            // router already shows the terminal for a connected session.
+            IconButton(
+              key: Key('active-session-switch-${entry.id}'),
+              tooltip: 'Switch to session',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.login),
+              onPressed: () {
+                ref.read(sessionsProvider.notifier).setActive(entry.id);
+                Navigator.of(context).maybePop();
+              },
+            ),
+          // ✕ ALWAYS present — "forget this session" (explicit close), the same
+          // contract as the in-menu row (#817).
+          IconButton(
+            key: Key('active-session-close-${entry.id}'),
+            tooltip: 'Close session',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.close),
+            onPressed: () =>
+                ref.read(sessionsProvider.notifier).close(entry.id),
+          ),
+        ],
+      ),
+      // A whole-row tap switches to the session (PWA `data-action="switch"`),
+      // same as the explicit Switch button.
+      onTap: () {
+        ref.read(sessionsProvider.notifier).setActive(entry.id);
+        Navigator.of(context).maybePop();
+      },
+    );
+  }
+}
+
+/// "Reconnect all" for the Connect-view Active Sessions group (#821 Slice 3).
+/// Shown only when at least one session is in a manually-reconnectable drop
+/// state; each tap reconnects every dropped session (held params / re-resolved
+/// creds). Subscribes to every entry's proxy state so it appears/disappears
+/// reactively — the same pattern as the in-menu `_ReconnectAllRow` (#817).
+class _ActiveReconnectAllRow extends ConsumerStatefulWidget {
+  const _ActiveReconnectAllRow({required this.entries});
+
+  final List<SessionEntry> entries;
+
+  @override
+  ConsumerState<_ActiveReconnectAllRow> createState() =>
+      _ActiveReconnectAllRowState();
+}
+
+class _ActiveReconnectAllRowState
+    extends ConsumerState<_ActiveReconnectAllRow> {
+  final List<StreamSubscription<SshSessionData>> _subs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribe();
+  }
+
+  @override
+  void didUpdateWidget(_ActiveReconnectAllRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _resubscribe();
+  }
+
+  void _subscribe() {
+    for (final e in widget.entries) {
+      _subs.add(
+        e.proxy.stream.listen((_) {
+          if (mounted) setState(() {});
+        }),
+      );
+    }
+  }
+
+  void _resubscribe() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
+    _subscribe();
+  }
+
+  @override
+  void dispose() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dropped = widget.entries
+        .where((e) => sessionCanReconnect(e.proxy.data.state))
+        .toList();
+    if (dropped.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: OutlinedButton.icon(
+        key: const Key('active-sessions-reconnect-all'),
+        icon: const Icon(Icons.restart_alt, size: 18),
+        label: Text(
+          dropped.length == 1
+              ? 'Reconnect'
+              : 'Reconnect all (${dropped.length})',
+        ),
+        onPressed: () {
+          final notifier = ref.read(sessionsProvider.notifier);
+          for (final e in dropped) {
+            notifier.reconnect(e.id);
+          }
+        },
+      ),
     );
   }
 }
