@@ -429,6 +429,30 @@ class TerminalControllerImpl extends TerminalController
       _detectionMatches = const [];
       return;
     }
+    // #824: HEURISTIC structured-text detection (the regex `url`/`path` patterns)
+    // is for SHELL OUTPUT, not full-screen alt-screen apps (vim/less/htop use DEC
+    // `?1049h`/`?1047h`). On the alternate screen a `~/.ssh/config` the user is
+    // EDITING in vim isn't navigable and the underline is pure noise, so the
+    // regex patterns are suppressed there. APP-DECLARED OSC-8 hyperlinks
+    // (`isOsc8Source`) are NOT suppressed: an alt-screen TUI that emits a real
+    // OSC-8 link (the owner's tap-to-copy case, #810) deliberately marked it
+    // clickable, so it stays detectable/copyable. The Claude-CLI / repainting-TUI
+    // URL case repaints the PRIMARY screen (#803) and is unaffected on either
+    // count. Detection of the regex patterns resumes on returning to the primary
+    // screen — `_onTerminalChanged` re-scans on the alternate->primary transition.
+    final scanPatterns = _activeScreen == .alternate
+        ? [for (final p in _textPatterns.values) if (p.isOsc8Source) p]
+        : _textPatterns.values.toList(growable: false);
+    if (scanPatterns.isEmpty) {
+      // On the alt-screen with no OSC-8 source registered there is nothing to
+      // detect; drop any anchors carried over from the primary screen so the
+      // underlines vanish the instant vim opens, and wake the decorator.
+      if (_detectionMatches.isEmpty) return;
+      _detectionMatches = const [];
+      highlights = const [];
+      _decorationNotifier.notify();
+      return;
+    }
     List<StructuredMatch> matches;
     try {
       _renderState.update(terminal);
@@ -463,10 +487,7 @@ class TerminalControllerImpl extends TerminalController
           startAbsRow: startAbs,
           endAbsRow: endAbs,
         );
-        matches = _detectionScanner.scan(
-          reader,
-          _textPatterns.values.toList(growable: false),
-        );
+        matches = _detectionScanner.scan(reader, scanPatterns);
       }
     } catch (_) {
       matches = const [];
@@ -1211,7 +1232,10 @@ class TerminalControllerImpl extends TerminalController
     }
 
     final newActiveScreen = terminal.activeScreen;
+    var leftAlternateScreen = false;
     if (newActiveScreen != _activeScreen) {
+      leftAlternateScreen =
+          _activeScreen == .alternate && newActiveScreen == .primary;
       _activeScreen = newActiveScreen;
       if (newActiveScreen == .primary) _applyModes();
       changed = true;
@@ -1235,6 +1259,10 @@ class TerminalControllerImpl extends TerminalController
     // viewport scrolled; re-scan registered structured-text patterns on a
     // debounce so the highlights track new content. No-op when none registered.
     _scheduleDetectionRescan();
+    // #824: returning to the shell (alternate->primary) must resume detection
+    // immediately, not on the next stray notify — re-scan synchronously so the
+    // shell's URLs/paths re-anchor the moment vim exits.
+    if (leftAlternateScreen) _rescanDetections();
     if (changed) notifyListeners();
   }
 
