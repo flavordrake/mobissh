@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+41 (2026-06-09) — bigger arrows + much less path-detection noise
+- **Bigger, solid keybar arrow & nav keys** — filled directional icons (← ↑ ↓ →) and distinct Home/End/PgUp/PgDn glyphs, larger and easier to tell apart (bar height unchanged). (#823)
+- **No URL/path highlighting inside vim** (or any full-screen app) — heuristic detection is for shell output, so it's off on the alt-screen; genuine embedded (OSC-8) links still work everywhere. (#824)
+- **Script paths stop false-matching** — a path with shell variables or globs (`${UID}`, `*`) is no longer underlined as a tappable file. (#826)
+
 ## v0.1.10+40 (2026-06-09) — disconnected sessions stay reconnectable (recents fixed)
 - **A disconnected session no longer vanishes.** It now appears under an **"Active Sessions"** group on the home/Connect screen with a Reconnect button, and your **Recent Sessions list stops disappearing** when you disconnect or hit "Reconnect all" — the recent list now shows only at a true cold start, and live-but-dropped sessions live in Active Sessions instead. Completes the session-state rework. **Verify:** connect, disconnect → the session stays on the home screen with Reconnect (doesn't vanish); Reconnect-all keeps the list visible. (#809)
 
