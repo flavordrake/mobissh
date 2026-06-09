@@ -31,6 +31,7 @@ import 'package:xterm/xterm.dart';
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../ssh/ssh_session.dart';
+import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
 import '../state/terminal_backend.dart';
 import '../state/terminal_providers.dart';
@@ -103,6 +104,22 @@ int debugOffstageFitSkipCount = 0;
 /// the tap→cell→URL path end to end without UI scraping. Reset in test `setUp`.
 @visibleForTesting
 String? debugLastHitUrl;
+
+/// Test-only counter: incremented each time a DEBOUNCED metrics fit actually
+/// fires (#848). `didChangeMetrics` no longer fits per animation frame — it
+/// resets a short settle timer, and only when the keyboard-inset animation stops
+/// does ONE coalesced fit run. A device keyboard hide raises didChangeMetrics
+/// ~once per frame; the old code fitted (and resized every session) on each,
+/// driving the resize storm + 53-row overgrow. This counter lets a widget test
+/// prove N rapid metrics events coalesce into ONE fit. Reset in test `setUp`.
+@visibleForTesting
+int debugMetricsFitCount = 0;
+
+/// The debounce window (#848) that coalesces a keyboard-inset animation's
+/// per-frame `didChangeMetrics` events into a SINGLE settled fit. Long enough to
+/// span the soft-keyboard show/hide animation (~100-250ms on Android), short
+/// enough that a real rotation/resize re-fits promptly.
+const Duration kMetricsSettleDelay = Duration(milliseconds: 120);
 
 class TerminalScreen extends ConsumerWidget {
   const TerminalScreen({super.key});
@@ -519,6 +536,15 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// are cancelled on dispose and never fire against a gone widget.
   final List<Timer> _connectRemeasureTimers = <Timer>[];
 
+  /// #848 — debounce timer for `didChangeMetrics`. A keyboard show/hide animates
+  /// the viewport inset over many frames, each raising didChangeMetrics. Fitting
+  /// on every frame recomputed cols/rows off a TRANSIENT mid-animation height
+  /// (→ the 53-row overgrow) and re-sent a resize to every session each frame
+  /// (the storm). We instead reset this timer on each metrics event and fit ONCE
+  /// after it SETTLES — off the final, chrome-correct viewport. Cancelled on
+  /// dispose so a gone widget is never touched.
+  Timer? _metricsSettleTimer;
+
   /// #666: subscription to the proxy's `shellReady` stream — the
   /// PRODUCTION-reliable "the task-side shell now EXISTS" signal. The #659 arm
   /// hooked `sshShellProvider`, which (unlike the widget-test override) never
@@ -715,6 +741,13 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
       // keyboard toggle / second connect did this incidentally; force makes it
       // deterministic. Only on connect-path triggers (mount/connect/burst) so
       // steady-state fits (metrics/font) don't spam PTY resizes.
+      //
+      // #848: the proxy now DEDUPES identical (cols, rows) at sendResize — which
+      // is exactly this case (local size unchanged). Arm the proxy's one-shot
+      // force bypass so this deliberate re-sync still reaches the PTY through the
+      // dedupe guard. Harmless when the resize routes elsewhere (e.g. the widget
+      // test rewires onResize → transport, not the proxy).
+      _proxyForSession()?.armForceResize();
       terminal.resize(cols, rows, cell.width.round(), cell.height.round());
       debugForcedPtyResyncCount += 1;
       action = 'RESYNC';
@@ -736,6 +769,16 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
 
   static String _fmtSize(Size s) =>
       '${s.width.toStringAsFixed(1)}x${s.height.toStringAsFixed(1)}';
+
+  /// The [SshSessionProxy] backing THIS body's session, or null if the entry is
+  /// gone (mid-teardown). Used by the #666 force-resync to arm the proxy's
+  /// one-shot no-op-guard bypass (#848) before driving `terminal.resize`.
+  SshSessionProxy? _proxyForSession() {
+    for (final e in ref.read(sessionsProvider).entries) {
+      if (e.id == widget.sessionId) return e.proxy;
+    }
+    return null;
+  }
 
   /// #659 — drive an explicit fit on FIRST CONNECT, without needing a keyboard
   /// toggle.
@@ -901,7 +944,20 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// rendered size (#600). Mirrors the PWA's visualViewport resize → re-fit.
   @override
   void didChangeMetrics() {
-    _scheduleExplicitFit('metrics');
+    // #848: DEBOUNCE. A keyboard show/hide animation raises didChangeMetrics
+    // once per frame; fitting per frame measured a transient mid-animation
+    // height (the 53-row overgrow) and re-sent a resize to every session each
+    // frame (the storm tmux redrew into duplicated content). Reset the settle
+    // timer on each event so we fit exactly ONCE, after the inset stops moving —
+    // off the final, chrome-correct viewport. The proxy's no-op guard (#848)
+    // then drops the fit's resize entirely if the settled size is unchanged.
+    if (!mounted) return;
+    _metricsSettleTimer?.cancel();
+    _metricsSettleTimer = Timer(kMetricsSettleDelay, () {
+      if (!mounted) return;
+      debugMetricsFitCount += 1;
+      _scheduleExplicitFit('metrics');
+    });
   }
 
   @override
@@ -909,6 +965,7 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     PaintingBinding.instance.systemFonts.removeListener(_onSystemFontsChanged);
     WidgetsBinding.instance.removeObserver(this);
     _shellReadySub?.cancel();
+    _metricsSettleTimer?.cancel();
     _disarmConnectRemeasure();
     _scrollController.dispose();
     super.dispose();

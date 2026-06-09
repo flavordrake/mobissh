@@ -179,6 +179,7 @@ void main() {
     debugExplicitFitAppliedCount = 0;
     debugForcedPtyResyncCount = 0;
     debugOffstageFitSkipCount = 0;
+    debugMetricsFitCount = 0;
     clearConnectLog();
   });
 
@@ -252,6 +253,134 @@ void main() {
         }
 
         expect(s.entry.terminal.viewHeight, fitted);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a STORM of metrics events (keyboard-hide animation) coalesces into ONE '
+      'settled fit — not one fit per animation frame (#848 debounce)',
+      (tester) async {
+        // The #848 device storm: keyboard hide animates the viewport inset over
+        // many frames; each frame raised didChangeMetrics, which fitted +
+        // resized EVERY frame, for every session. The fix DEBOUNCES the metrics
+        // fit — many rapid inset changes settle into a single fit after the
+        // animation stops. This test fires a burst of metrics events spaced
+        // INSIDE the debounce window and asserts the fit runs exactly ONCE,
+        // after the window elapses — not N times.
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        final s = await _setup(tester, transport);
+        expect(s.entry.terminal.viewHeight, greaterThan(24));
+
+        debugMetricsFitCount = 0;
+
+        // 12 metrics events 10ms apart (~one keyboard-animation worth), all
+        // INSIDE the ~120ms debounce window. A per-frame fit would run ~12×;
+        // the debounce must run 0× while the storm is in flight (each event
+        // resets the settle timer).
+        for (var i = 0; i < 12; i++) {
+          tester.binding.handleMetricsChanged();
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        expect(
+          debugMetricsFitCount,
+          0,
+          reason:
+              'a metrics fit ran WHILE the inset animation was still firing — '
+              'the storm was not debounced. Each event must reset the settle '
+              'timer so no fit runs mid-animation (#848).',
+        );
+
+        // Let the debounce window elapse with no further events — the storm has
+        // SETTLED, so exactly one coalesced fit runs.
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          debugMetricsFitCount,
+          1,
+          reason:
+              'the settled keyboard-hide must drive exactly ONE fit, not one '
+              'per animation frame (#848). Got: $debugMetricsFitCount',
+        );
+
+        // A LATER, separate metrics event (a second keyboard toggle) debounces
+        // independently into one more fit.
+        tester.binding.handleMetricsChanged();
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          debugMetricsFitCount,
+          2,
+          reason:
+              'a subsequent settled metrics event must drive its own single '
+              'fit. Got: $debugMetricsFitCount',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'the settled fit computes rows from the CHROME-EXCLUDED terminal box, not '
+      'the full screen height — no 53-row overgrow (#848)',
+      (tester) async {
+        // The #848 overgrow: a mid-animation fit measured a TRANSIENT height
+        // (the keybar/compose/status chrome had not re-laid-out yet) → 53 rows,
+        // abnormally tall. Because the terminal is laid out inside an Expanded
+        // ABOVE that chrome, its render-box height is ALREADY chrome-excluded;
+        // the bug was reading it mid-animation. With the debounce we fit off the
+        // SETTLED box. This asserts the fitted rows equal what the laid-out
+        // RenderTerminal actually affords — never the (larger) full-screen rows.
+        final transport = FakeSshShellTransport();
+        addTearDown(transport.close);
+        final s = await _setup(tester, transport);
+
+        // Drive a settled metrics fit (the keyboard-hide analog).
+        tester.binding.handleMetricsChanged();
+        await tester.pump(const Duration(milliseconds: 200));
+
+        // The terminal's RenderTerminal box — laid out INSIDE the Expanded above
+        // the keybar/session-bar chrome, so its height is already chrome-
+        // excluded. The fit reads exactly this box (production: _explicitFit).
+        final state = tester.state<TerminalViewState>(
+          find.byType(TerminalView),
+        );
+        final box = state.renderTerminal;
+        const pad = 4.0;
+        final affordedRows = ((box.size.height - pad * 2) ~/ box.cellSize.height)
+            .clamp(1, 1 << 20);
+
+        // The full SCREEN height (the chrome-INCLUDED measurement a mid-animation
+        // fit transiently used → the 53-row overgrow). The chrome-excluded box is
+        // strictly shorter, so it must afford strictly FEWER rows.
+        final screenH = tester.view.physicalSize.height /
+            tester.view.devicePixelRatio;
+        final fullHeightRows =
+            ((screenH - pad * 2) ~/ box.cellSize.height).clamp(1, 1 << 20);
+
+        expect(
+          s.entry.terminal.viewHeight,
+          affordedRows,
+          reason:
+              'the terminal rows must match the chrome-excluded box height '
+              '($affordedRows), proving the settled fit measured the real '
+              'terminal area, not a transient. Got ${s.entry.terminal.viewHeight}',
+        );
+        expect(
+          affordedRows,
+          lessThan(fullHeightRows),
+          reason:
+              'the chrome-excluded box ($affordedRows rows) must be SHORTER '
+              'than a full-screen-height fit ($fullHeightRows rows) — proving '
+              'the chrome is excluded. A fit off the full height is the #848 '
+              '53-row overgrow.',
+        );
+        expect(
+          s.entry.terminal.viewHeight,
+          lessThan(fullHeightRows),
+          reason:
+              'the fitted rows (${s.entry.terminal.viewHeight}) must stay below '
+              'the full-screen-height rows ($fullHeightRows) — the #848 '
+              '53-row overgrow is exactly a full-height (chrome-included) fit',
+        );
         expect(tester.takeException(), isNull);
       },
     );

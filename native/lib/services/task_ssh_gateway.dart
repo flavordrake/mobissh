@@ -14,6 +14,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../diagnostics/connect_trace.dart';
@@ -24,17 +25,27 @@ import 'session_messages.dart';
 /// multi-session traces show which session each event belongs to —
 /// previously every `recv state` / `recv closed` looked identical regardless
 /// of session, making it impossible to tell which session dropped.
+@visibleForTesting
+String gwLabel(Map<String, dynamic> p) => _gwLabel(p);
+
 String _gwLabel(Map<String, dynamic> p) {
   final kind = p['kind'] ?? p['type'] ?? '?';
+  // #848 telemetry hygiene: a resize is the storm payload — carry its grid in
+  // the label so a real dimension change is VISIBLE and so consecutive
+  // same-session resize lines (now rare thanks to the no-op guard) collapse via
+  // ctrace's ×N path instead of looking distinct line-to-line.
+  final dims = kind == 'resize' && p['cols'] is int && p['rows'] is int
+      ? ' ${p['cols']}x${p['rows']}'
+      : '';
   final sid = p['sessionId'];
   if (sid is String && sid.isNotEmpty) {
     final parts = sid.split(':');
     // sessionId format: host:port:user:createdAtMs — host:port is the unique
     // human-readable handle that maps cleanly to a profile.
-    if (parts.length >= 2) return '$kind sid=${parts[0]}:${parts[1]}';
-    return '$kind sid=$sid';
+    if (parts.length >= 2) return '$kind sid=${parts[0]}:${parts[1]}$dims';
+    return '$kind sid=$sid$dims';
   }
-  return '$kind';
+  return '$kind$dims';
 }
 
 /// One half of the UI ↔ task channel. The UI proxy holds the
