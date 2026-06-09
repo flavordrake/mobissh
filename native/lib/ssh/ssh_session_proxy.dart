@@ -72,6 +72,21 @@ class SshSessionProxy {
   bool _bound = false;
   bool _disposed = false;
 
+  /// The PTY grid dimensions LAST SENT for this session via [sendResize] (#848).
+  /// `null` until the first resize. The no-op guard drops a resize whose
+  /// (cols, rows) match these — re-sending identical dims to the PTY is wasteful
+  /// AND makes tmux redraw (the duplicated/ghosted content in the keyboard-hide
+  /// resize storm). One pair per proxy → the guard is inherently per-session.
+  int? _lastSentCols;
+  int? _lastSentRows;
+
+  /// One-shot bypass for the [sendResize] no-op guard (#848/#666). The #666
+  /// connect-resync drives `terminal.resize` with the SAME dims to re-sync a
+  /// stale remote; that fires `onResize` → `sendResize` (sessions.dart) with no
+  /// `force` argument of its own. Arming this just before that `terminal.resize`
+  /// lets the resulting `sendResize` punch through the guard exactly once.
+  bool _forceNextResize = false;
+
   /// Most recent state snapshot. Always non-null.
   SshSessionData get data => _data;
 
@@ -262,12 +277,31 @@ class SshSessionProxy {
   }
 
   /// Send a PTY resize to the remote.
+  ///
+  /// #848 — NO-OP GUARD: a resize whose (cols, rows) are IDENTICAL to the last
+  /// grid sent for this session is DROPPED (no PTY write, no gateway log). On
+  /// keyboard hide the fit/resize path re-fired the same dimensions on every
+  /// animation frame, for every session; each identical resize made tmux redraw
+  /// (the duplicated content) and flooded the connect ring. Deduping at the
+  /// emission point kills most of the storm at the source.
+  ///
+  /// Pass [force] to bypass the guard and re-send identical dims — the #666
+  /// connect-resync deliberately re-pushes the SAME size to re-sync a remote
+  /// that attached at the stale default before layout settled.
   void sendResize(
     int cols,
     int rows, {
     int pixelWidth = 0,
     int pixelHeight = 0,
+    bool force = false,
   }) {
+    final bypass = force || _forceNextResize;
+    _forceNextResize = false;
+    if (!bypass && cols == _lastSentCols && rows == _lastSentRows) {
+      return;
+    }
+    _lastSentCols = cols;
+    _lastSentRows = rows;
     gateway.send(
       SshResizeCommand(
         sessionId: sessionId,
@@ -277,6 +311,15 @@ class SshSessionProxy {
         pixelHeight: pixelHeight,
       ).toJson(),
     );
+  }
+
+  /// Arm a ONE-SHOT bypass of the [sendResize] no-op guard (#848/#666). The
+  /// next `sendResize` for this session — even with identical dims — is forwarded
+  /// to the PTY, then the arm clears. Used by the connect-fit force-resync path,
+  /// which drives `terminal.resize` (→ `onResize` → `sendResize`) to re-sync a
+  /// stale remote without the fit code threading a `force` flag through xterm.
+  void armForceResize() {
+    _forceNextResize = true;
   }
 
   /// Tear down the proxy. The task-side session continues running unless
