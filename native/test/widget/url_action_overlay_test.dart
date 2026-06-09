@@ -18,24 +18,46 @@ void main() {
 
   const url = 'https://example.com/path';
 
-  // Capture clipboard writes via the platform channel mock.
+  // Capture clipboard writes. The copy path now routes through the hardened
+  // `mobissh/clipboard` native channel (#845), which then reads back via the
+  // platform `Clipboard.getData`. Mock BOTH: the native channel records the
+  // write, the platform channel serves the read-back from the same store.
   String? lastClipboard;
 
   setUp(() {
     lastClipboard = null;
     debugUrlOpenerOverride = null;
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-          if (call.method == 'Clipboard.setData') {
-            lastClipboard = (call.arguments as Map)['text'] as String?;
-          }
-          return null;
-        });
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('mobissh/clipboard'),
+      (call) async {
+        if (call.method == 'setText') {
+          lastClipboard = (call.arguments as Map)['text'] as String?;
+          return true;
+        }
+        return null;
+      },
+    );
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        lastClipboard = (call.arguments as Map)['text'] as String?;
+      }
+      if (call.method == 'Clipboard.getData') {
+        return <String, dynamic>{'text': lastClipboard};
+      }
+      return null;
+    });
   });
 
   tearDown(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('mobissh/clipboard'),
+      null,
+    );
+    messenger.setMockMethodCallHandler(SystemChannels.platform, null);
     debugUrlOpenerOverride = null;
   });
 

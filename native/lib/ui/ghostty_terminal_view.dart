@@ -157,11 +157,11 @@
 // Flutter's widget `Key`. We only use Flutter's, so hide flterm's.
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // The PER-SESSION theme palettes (#552/#571) are xterm.dart `TerminalTheme`s
 // (see [terminalPalettes] / [NamedTerminalTheme] in ui_prefs_providers.dart).
@@ -173,6 +173,7 @@ import 'package:xterm/xterm.dart' as xterm;
 
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/session_byte_recorder.dart';
+import '../services/clipboard.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/ctrl_modifier_provider.dart';
@@ -2625,8 +2626,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // while toasting "Copied URL" is the "copied but empty" bug. Bail silently
     // (no clipboard write, no toast) so the tap is a no-op rather than a lie.
     if (!ghosttyMatchHasCopyablePayload(match)) return;
-    await Clipboard.setData(ClipboardData(text: '${match.payload}'));
-    if (mounted) showTopToast(context, 'Copied URL');
+    final ok = await copyToClipboard('${match.payload}');
+    if (ok && mounted) showTopToast(context, 'Copied URL');
   }
 
   /// #778 paths Slice 1: open the SFTP file explorer AT [path] (the tapped /
@@ -2726,8 +2727,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       }
       return;
     }
-    await Clipboard.setData(ClipboardData(text: text));
-    if (mounted) showTopToast(context, 'Copied ${text.length} chars');
+    final ok = await copyToClipboard(text);
+    if (ok && mounted) showTopToast(context, 'Copied ${text.length} chars');
   }
 
   /// Select the whole buffer (incl. scrollback) via flterm's native select-all

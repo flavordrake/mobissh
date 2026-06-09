@@ -20,8 +20,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../services/clipboard.dart';
 import 'top_toast.dart';
 
 /// Pluggable path opener so the widget test can assert "Open was invoked with
@@ -80,9 +80,13 @@ void showPathActions(
       highlightRects: highlightRects,
       anchor: anchor,
       onCopy: () {
-        Clipboard.setData(ClipboardData(text: path));
-        if (identical(_activeEntry, entry)) _dismiss();
-        showTopToastInOverlay(overlay, 'Copied: $path');
+        // Async native write + read-back verify (#845); onCopy is a sync
+        // VoidCallback, so dismiss now and toast once the write completes.
+        unawaited(() async {
+          final ok = await copyToClipboard(path);
+          if (identical(_activeEntry, entry)) _dismiss();
+          if (ok) showTopToastInOverlay(overlay, 'Copied: $path');
+        }());
       },
       onOpen: () async {
         if (identical(_activeEntry, entry)) _dismiss();
