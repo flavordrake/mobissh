@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+42 (2026-06-09) — Copy works after the screen redraws
+- **Copy now works even after the screen updates under your selection.** A remote redraw (e.g. the tmux status-bar clock ticking ~1s after you select) was clearing the selection, so Copy said "no selection" though it still looked highlighted. The selected text is now remembered until you dismiss it (tap away) — Copy returns it reliably. (#828)
+
 ## v0.1.10+41 (2026-06-09) — bigger arrows + much less path-detection noise
 - **Bigger, solid keybar arrow & nav keys** — filled directional icons (← ↑ ↓ →) and distinct Home/End/PgUp/PgDn glyphs, larger and easier to tell apart (bar height unchanged). (#823)
 - **No URL/path highlighting inside vim** (or any full-screen app) — heuristic detection is for shell output, so it's off on the alt-screen; genuine embedded (OSC-8) links still work everywhere. (#824)
