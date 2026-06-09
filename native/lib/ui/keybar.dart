@@ -53,6 +53,16 @@ const double kKeybarButtonMinWidth = 44;
 const double kKeybarButtonMinHeight = 32; // #752: was 44 (collapsed dead space)
 const double kKeybarIconSize = 18;
 
+/// #823: the arrow / navigation glyphs render LARGER than the standard
+/// [kKeybarIconSize] so they read at a glance — the owner found the thin
+/// chevrons hard to differentiate on-device. The size is deliberately capped at
+/// the (unchanged) [kKeybarButtonMinHeight] so the bigger GLYPH never grows the
+/// bar's height (#615/#752 trimmed it on purpose) — only the glyph inside the
+/// existing key gets bigger and solid. Standard icons (Tab/Enter/Paste) stay at
+/// [kKeybarIconSize]; only the arrow/nav keys opt into this larger size via
+/// [KeybarKey.iconSize].
+const double kKeybarNavIconSize = 24;
+
 /// Single-character TEXT keys (`|`, `/`, `-` and any other 1-glyph label) are
 /// NARROWER than multi-char keys so they don't waste width (#703 owner device
 /// feedback). Multi-char text keys (Esc, Tab label, Home, PgUp…) keep the full
@@ -102,6 +112,7 @@ class KeybarKey {
     required this.label,
     required this.sequence,
     this.icon,
+    this.iconSize = kKeybarIconSize,
     this.isModifier = false,
   });
 
@@ -112,6 +123,11 @@ class KeybarKey {
   /// When non-null, the button shows this monochrome icon instead of [label]
   /// text (e.g. Paste). [label] is still used as the accessibility tooltip.
   final IconData? icon;
+
+  /// Size of [icon] when shown. Defaults to the standard [kKeybarIconSize]; the
+  /// arrow / navigation keys opt into the larger [kKeybarNavIconSize] (#823) so
+  /// their solid glyphs read at a glance without growing the bar height.
+  final double iconSize;
 
   /// A sticky modifier key (the Ctrl key, #694) — tapping it ARMS the modifier
   /// rather than emitting [sequence]. Modifier keys carry no literal byte; the
@@ -195,34 +211,70 @@ const List<KeybarKey> kDefaultKeybarKeys = [
   KeybarKey(id: 'keySlash', label: '/', sequence: '/'),
   KeybarKey(id: 'keyDash', label: '-', sequence: '-'),
   KeybarKey(id: 'keyPipe', label: '|', sequence: '|'),
+  // #823: the four arrows use SOLID/FILLED directional glyphs (Icons.arrow_*)
+  // rather than the thin `keyboard_arrow_*` chevrons the owner found hard to
+  // read and differentiate on-device. They render at the larger
+  // [kKeybarNavIconSize] so they read at a glance without growing the bar.
   KeybarKey(
     id: 'keyLeft',
     label: 'Left',
     sequence: '\x1b[D',
-    icon: Icons.keyboard_arrow_left,
+    icon: Icons.arrow_back,
+    iconSize: kKeybarNavIconSize,
   ),
   KeybarKey(
     id: 'keyUp',
     label: 'Up',
     sequence: '\x1b[A',
-    icon: Icons.keyboard_arrow_up,
+    icon: Icons.arrow_upward,
+    iconSize: kKeybarNavIconSize,
   ),
   KeybarKey(
     id: 'keyDown',
     label: 'Down',
     sequence: '\x1b[B',
-    icon: Icons.keyboard_arrow_down,
+    icon: Icons.arrow_downward,
+    iconSize: kKeybarNavIconSize,
   ),
   KeybarKey(
     id: 'keyRight',
     label: 'Right',
     sequence: '\x1b[C',
-    icon: Icons.keyboard_arrow_right,
+    icon: Icons.arrow_forward,
+    iconSize: kKeybarNavIconSize,
   ),
-  KeybarKey(id: 'keyHome', label: 'Home', sequence: '\x1b[H'),
-  KeybarKey(id: 'keyEnd', label: 'End', sequence: '\x1b[F'),
-  KeybarKey(id: 'keyPgUp', label: 'PgUp', sequence: '\x1b[5~'),
-  KeybarKey(id: 'keyPgDn', label: 'PgDn', sequence: '\x1b[6~'),
+  // #823: the page-navigation keys also become SOLID, mutually-distinct glyphs
+  // (single bar-anchored first/last_page for Home/End, double-chevron for the
+  // Page keys) at the larger nav size — they were ambiguous text labels before.
+  // The `label` is still the accessibility tooltip; routing uses `sequence`.
+  KeybarKey(
+    id: 'keyHome',
+    label: 'Home',
+    sequence: '\x1b[H',
+    icon: Icons.first_page,
+    iconSize: kKeybarNavIconSize,
+  ),
+  KeybarKey(
+    id: 'keyEnd',
+    label: 'End',
+    sequence: '\x1b[F',
+    icon: Icons.last_page,
+    iconSize: kKeybarNavIconSize,
+  ),
+  KeybarKey(
+    id: 'keyPgUp',
+    label: 'PgUp',
+    sequence: '\x1b[5~',
+    icon: Icons.keyboard_double_arrow_up,
+    iconSize: kKeybarNavIconSize,
+  ),
+  KeybarKey(
+    id: 'keyPgDn',
+    label: 'PgDn',
+    sequence: '\x1b[6~',
+    icon: Icons.keyboard_double_arrow_down,
+    iconSize: kKeybarNavIconSize,
+  ),
   // #650: was `label: '↵'` (U+21B5), which renders as tofu in the bundled
   // font — the SAME issue the arrows had. Use the monochrome Material icon
   // path (Icons.keyboard_return) so it's clearly an Enter/Return key. The tap
@@ -522,7 +574,10 @@ class _KeybarButtonState extends State<_KeybarButton> {
     final Widget child = keyData.icon != null
         ? Icon(
             keyData.icon,
-            size: kKeybarIconSize,
+            // #823: arrow/nav keys opt into the larger nav size; other icons
+            // keep the standard size. Capped at the bar height so the bigger
+            // glyph never grows the bar.
+            size: keyData.iconSize,
             color: fg,
             semanticLabel: keyData.label,
           )
