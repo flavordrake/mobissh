@@ -18,9 +18,9 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/clipboard.dart';
 import 'top_toast.dart';
 
 /// Pluggable URL opener so the widget test can assert "Open was invoked with
@@ -82,9 +82,14 @@ void showUrlActions(
       highlightRects: highlightRects,
       anchor: anchor,
       onCopy: () {
-        Clipboard.setData(ClipboardData(text: url));
-        if (identical(_activeEntry, entry)) _dismiss();
-        showTopToastInOverlay(overlay, 'Copied: $url');
+        // copyToClipboard is async (native channel write + read-back verify),
+        // but onCopy is a synchronous VoidCallback. Dismiss the menu now and
+        // toast only once the (verified) write completes.
+        unawaited(() async {
+          final ok = await copyToClipboard(url);
+          if (identical(_activeEntry, entry)) _dismiss();
+          if (ok) showTopToastInOverlay(overlay, 'Copied: $url');
+        }());
       },
       onOpen: () async {
         if (identical(_activeEntry, entry)) _dismiss();

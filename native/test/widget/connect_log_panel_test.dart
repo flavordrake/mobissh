@@ -19,8 +19,21 @@ void main() {
   setUp(() {
     clearConnectLog();
     clipboard.clear();
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    // The Copy button now routes through the hardened `mobissh/clipboard`
+    // native channel (#845) + reads back via the platform `Clipboard.getData`.
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('mobissh/clipboard'),
+      (call) async {
+        if (call.method == 'setText') {
+          clipboard['text'] = (call.arguments as Map)['text'];
+          return true;
+        }
+        return null;
+      },
+    );
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'Clipboard.setData') {
         clipboard['text'] = (call.arguments as Map)['text'];
       }
@@ -33,8 +46,13 @@ void main() {
 
   tearDown(() {
     clearConnectLog();
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('mobissh/clipboard'),
+      null,
+    );
+    messenger.setMockMethodCallHandler(SystemChannels.platform, null);
   });
 
   Future<void> pumpBounded(WidgetTester tester) async {

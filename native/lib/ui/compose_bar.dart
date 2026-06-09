@@ -32,6 +32,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../services/clipboard.dart';
 import '../state/compose_history_providers.dart';
 import '../state/lifecycle_providers.dart';
 import '../util/terminal_copy_fixup.dart';
@@ -346,10 +347,10 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
 
   /// #638 (was #634): copy the current compose text to the system clipboard
   /// (PWA parity — mirrors the IME compose Copy pill). Keeps focus in the field.
-  void _copy() {
+  Future<void> _copy() async {
     final text = _controller.text;
     if (text.isEmpty) return;
-    Clipboard.setData(ClipboardData(text: text));
+    await copyToClipboard(text);
     _focusNode.requestFocus();
   }
 

@@ -283,17 +283,36 @@ void main() {
     testWidgets('Copy pill copies the current compose text to the clipboard', (
       tester,
     ) async {
+      // Copy now routes through the hardened `mobissh/clipboard` native channel
+      // (#845) + a platform read-back. Mock both.
       String? clipboardText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('mobissh/clipboard'),
+        (call) async {
+          if (call.method == 'setText') {
+            clipboardText = (call.arguments as Map)['text'] as String?;
+            return true;
+          }
+          return null;
+        },
+      );
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
         (call) async {
           if (call.method == 'Clipboard.setData') {
             clipboardText = (call.arguments as Map)['text'] as String?;
           }
+          if (call.method == 'Clipboard.getData') {
+            return <String, dynamic>{'text': clipboardText};
+          }
           return null;
         },
       );
       addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          const MethodChannel('mobissh/clipboard'),
+          null,
+        );
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           SystemChannels.platform,
           null,
@@ -916,17 +935,35 @@ void main() {
     testWidgets('Copy still copies the staged text from its pill', (
       tester,
     ) async {
+      // Copy routes through the `mobissh/clipboard` native channel (#845).
       String? clipboardText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('mobissh/clipboard'),
+        (call) async {
+          if (call.method == 'setText') {
+            clipboardText = (call.arguments as Map)['text'] as String?;
+            return true;
+          }
+          return null;
+        },
+      );
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
         (call) async {
           if (call.method == 'Clipboard.setData') {
             clipboardText = (call.arguments as Map)['text'] as String?;
           }
+          if (call.method == 'Clipboard.getData') {
+            return <String, dynamic>{'text': clipboardText};
+          }
           return null;
         },
       );
       addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          const MethodChannel('mobissh/clipboard'),
+          null,
+        );
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           SystemChannels.platform,
           null,

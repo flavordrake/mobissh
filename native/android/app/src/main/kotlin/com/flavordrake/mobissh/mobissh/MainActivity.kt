@@ -1,6 +1,9 @@
 package com.flavordrake.mobissh.mobissh
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -45,10 +48,49 @@ class MainActivity : FlutterActivity() {
     private val pickerChannel = "mobissh/storage_picker"
     private val pickerRequestCode = 0xC0DE
 
+    // ── Hardened clipboard write (#845). Flutter's `Clipboard.setData` builds a
+    // `ClipData` with an EMPTY label, which doesn't reliably reach Gboard's
+    // clipboard HISTORY. This channel writes a LABELED plain-text clip so the
+    // copy surfaces in history immediately (not "empty-until-tapped").
+    private val clipboardChannel = "mobissh/clipboard"
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         installNativeCrashHandler()
         installStoragePickerChannel(flutterEngine)
+        installClipboardChannel(flutterEngine)
+    }
+
+    private fun installClipboardChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            clipboardChannel,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setText" -> {
+                    val text = call.argument<String>("text")
+                    val label = call.argument<String>("label") ?: "MobiSSH"
+                    if (text.isNullOrEmpty()) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    // MethodChannel handlers already run on the platform (UI)
+                    // thread; post anyway to be explicit about the requirement.
+                    runOnUiThread {
+                        try {
+                            val clip = ClipData.newPlainText(label, text)
+                            val manager = getSystemService(Context.CLIPBOARD_SERVICE)
+                                as ClipboardManager
+                            manager.setPrimaryClip(clip)
+                            result.success(true)
+                        } catch (err: Throwable) {
+                            result.error("CLIPBOARD_FAILED", err.message, null)
+                        }
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     private fun installStoragePickerChannel(flutterEngine: FlutterEngine) {

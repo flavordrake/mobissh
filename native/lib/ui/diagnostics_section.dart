@@ -7,13 +7,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
 import '../diagnostics/gesture_trace.dart';
+import '../services/clipboard.dart';
 import 'connection_audit.dart';
 import 'top_toast.dart';
 
@@ -278,11 +278,13 @@ class _ConnectLogTile extends StatelessWidget {
                         onPressed: lines.isEmpty
                             ? null
                             : () async {
-                                await Clipboard.setData(
-                                  ClipboardData(text: lines.join('\n')),
+                                final ok = await copyToClipboard(
+                                  lines.join('\n'),
                                 );
                                 if (!context.mounted) return;
-                                showTopToast(context, 'Connect log copied.');
+                                if (ok) {
+                                  showTopToast(context, 'Connect log copied.');
+                                }
                               },
                         icon: const Icon(Icons.copy),
                         label: const Text('Copy'),
