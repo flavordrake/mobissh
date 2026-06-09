@@ -440,7 +440,19 @@ class TerminalControllerImpl extends TerminalController
     // URL case repaints the PRIMARY screen (#803) and is unaffected on either
     // count. Detection of the regex patterns resumes on returning to the primary
     // screen — `_onTerminalChanged` re-scans on the alternate->primary transition.
-    final scanPatterns = _activeScreen == .alternate
+    //
+    // #834: but tmux ALSO runs full-screen on the alternate screen, and tmux is a
+    // SHELL HOST — its content is real shell output with NAVIGABLE URLs, not an
+    // editor's incidental paths. Blanket alt-screen suppression killed detection
+    // for the whole tmux session (the owner's daily-digest URL went unbubbled).
+    // tmux enables MOUSE TRACKING (`?1000/?1002/?1006`), the exact discriminator
+    // the gesture stack already trusts to tell a shell host from a path-editing
+    // TUI (vim/less/htop leave mouse tracking off by default). So suppress the
+    // heuristic patterns only on the alt-screen WITHOUT mouse tracking; with mouse
+    // tracking on (tmux mouse mode) run the full pattern set.
+    final suppressHeuristics =
+        _activeScreen == .alternate && _mouseTracking == .none;
+    final scanPatterns = suppressHeuristics
         ? [for (final p in _textPatterns.values) if (p.isOsc8Source) p]
         : _textPatterns.values.toList(growable: false);
     if (scanPatterns.isEmpty) {
