@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+44 (2026-06-09) — disconnects are now diagnosable (telemetry)
+- **Groundwork for the "disconnected with no indication" fix.** Session state changes are now recorded in the diagnostic log (they weren't before), and the wasteful per-frame fit-logging that was flooding the log while the terminal is offstage is fixed. **If you hit a disconnect with no indication again, tap Feedback** — the log will now show exactly what happened, so the silent-drop detection can be fixed at the root. (#836)
+
 ## v0.1.10+43 (2026-06-09) — URLs/paths detect again inside tmux
 - **URL & path highlighting works inside tmux again.** The +41 fix that stops highlighting inside vim was too broad — tmux also uses the full-screen buffer, so it accidentally turned detection off for your whole tmux session. Now detection is suppressed only in true full-screen apps (vim/less — no mouse mode) and runs normally in tmux (mouse mode). **Verify:** a URL in tmux output gets its bubble again. (#834)
 
