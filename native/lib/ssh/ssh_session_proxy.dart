@@ -152,11 +152,17 @@ class SshSessionProxy {
   /// [activeSessionId] (#840 Slice 2) tells the task which session is front-most
   /// so it can SUPPRESS an attention notification for the session the user is
   /// already looking at (active + foreground). Optional + back-compatible.
-  void setActive(bool active, {String? activeSessionId}) {
+  /// [activeHost] (#847) carries the front-most session's HOST so the task can
+  /// suppress an attention bell from ANY session to the SAME host (the unit of
+  /// attention is the host/Claude, not the individual session).
+  void setActive(bool active, {String? activeSessionId, String? activeHost}) {
     if (_disposed) return;
     gateway.send(
-      SshSetActiveCommand(active: active, activeSessionId: activeSessionId)
-          .toJson(),
+      SshSetActiveCommand(
+        active: active,
+        activeSessionId: activeSessionId,
+        activeHost: activeHost,
+      ).toJson(),
     );
   }
 

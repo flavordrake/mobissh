@@ -47,6 +47,14 @@ class FakeKeepaliveGateway implements KeepaliveGateway {
   }
 
   @override
+  Future<void> updateService({
+    required String notificationTitle,
+    required String notificationText,
+  }) async {
+    calls.add('update:$notificationText');
+  }
+
+  @override
   Future<bool> stopService() async {
     calls.add('stop');
     _running = false;
@@ -68,8 +76,8 @@ class StubSession implements SshSessionController {
   @override
   Stream<SshSessionData> get stream => _ctrl.stream;
 
-  void emit(SshSessionState state) {
-    _data = _data.copyWith(state: state);
+  void emit(SshSessionState state, {String? host, String? username}) {
+    _data = _data.copyWith(state: state, host: host, username: username);
     _ctrl.add(_data);
   }
 
@@ -279,6 +287,136 @@ void main() {
 
       await controller.dispose();
       await session.dispose();
+    });
+  });
+
+  group('keepaliveNotificationText mapper (#847)', () {
+    test('0 connected → Connecting…', () {
+      expect(
+        keepaliveNotificationText(connectedCount: 0, anyReconnecting: false),
+        'Connecting…',
+      );
+    });
+    test('1 connected → Connected — user@host', () {
+      expect(
+        keepaliveNotificationText(
+          connectedCount: 1,
+          anyReconnecting: false,
+          singleConnected:
+              const KeepaliveSessionInfo(host: 'fd-dev', username: 'mfrazier'),
+        ),
+        'Connected — mfrazier@fd-dev',
+      );
+    });
+    test('1 connected, host only → Connected — host', () {
+      expect(
+        keepaliveNotificationText(
+          connectedCount: 1,
+          anyReconnecting: false,
+          singleConnected: const KeepaliveSessionInfo(host: 'fd-dev'),
+        ),
+        'Connected — fd-dev',
+      );
+    });
+    test('N connected → Connected — N sessions', () {
+      expect(
+        keepaliveNotificationText(connectedCount: 3, anyReconnecting: false),
+        'Connected — 3 sessions',
+      );
+    });
+    test('any reconnecting takes priority → Reconnecting… (N connected)', () {
+      expect(
+        keepaliveNotificationText(connectedCount: 2, anyReconnecting: true),
+        'Reconnecting… (2 connected)',
+      );
+      // Even with 0 connected, reconnecting reflects it.
+      expect(
+        keepaliveNotificationText(connectedCount: 0, anyReconnecting: true),
+        'Reconnecting… (0 connected)',
+      );
+    });
+    test('NEVER sits on Connecting… once a session is up', () {
+      final text = keepaliveNotificationText(
+        connectedCount: 1,
+        anyReconnecting: false,
+        singleConnected: const KeepaliveSessionInfo(host: 'h', username: 'u'),
+      );
+      expect(text, isNot('Connecting…'));
+    });
+  });
+
+  group('KeepaliveController FGS text updates (#847)', () {
+    test('updates notification to Connected — user@host on connect', () async {
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final session = StubSession();
+      controller.attach(session);
+
+      session.emit(
+        SshSessionState.connected,
+        host: 'fd-dev',
+        username: 'mfrazier',
+      );
+      await _drain();
+
+      // The running service no longer sits on "Connecting…".
+      expect(
+        gateway.calls.any((c) => c == 'update:Connected — mfrazier@fd-dev') ||
+            gateway.calls.any((c) => c == 'start:Connected — mfrazier@fd-dev'),
+        isTrue,
+        reason: 'FGS text must reflect the connected session, not Connecting…\n'
+            '${gateway.calls}',
+      );
+      // It must NOT remain on a Connecting… text after connect.
+      expect(gateway.calls.last.contains('Connecting…'), isFalse);
+
+      await controller.dispose();
+      await session.dispose();
+    });
+
+    test('reflects reconnecting in the FGS text', () async {
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final session = StubSession();
+      controller.attach(session);
+
+      session.emit(SshSessionState.connected, host: 'h', username: 'u');
+      await _drain();
+      session.emit(SshSessionState.reconnecting, host: 'h', username: 'u');
+      await _drain();
+
+      expect(
+        gateway.calls.any((c) => c.startsWith('update:Reconnecting…')),
+        isTrue,
+        reason: 'reconnect must surface in the FGS text\n${gateway.calls}',
+      );
+
+      await controller.dispose();
+      await session.dispose();
+    });
+
+    test('N connected → Connected — N sessions', () async {
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final a = StubSession();
+      final b = StubSession();
+      controller.attach(a);
+      controller.attach(b);
+
+      a.emit(SshSessionState.connected, host: 'h1', username: 'u');
+      await _drain();
+      b.emit(SshSessionState.connected, host: 'h2', username: 'u');
+      await _drain();
+
+      expect(
+        gateway.calls.any((c) => c == 'update:Connected — 2 sessions'),
+        isTrue,
+        reason: 'two connected sessions must read "2 sessions"\n${gateway.calls}',
+      );
+
+      await controller.dispose();
+      await a.dispose();
+      await b.dispose();
     });
   });
 

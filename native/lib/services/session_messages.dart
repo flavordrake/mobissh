@@ -222,6 +222,7 @@ sealed class SshTaskCommand {
         return SshSetActiveCommand(
           active: json['active'] as bool,
           activeSessionId: json['activeSessionId'] as String?,
+          activeHost: json['activeHost'] as String?,
         );
       case SshTaskCommandKind.sftpList:
         return SftpListCommand(
@@ -486,11 +487,16 @@ class SshReconnectCommand extends SshTaskCommand {
 /// UI repaints from current state. Task-global, so [sessionId] is the empty
 /// sentinel (mirrors [SshUiHelloCommand]).
 class SshSetActiveCommand extends SshTaskCommand {
-  const SshSetActiveCommand({required this.active, this.activeSessionId})
-    : super('');
+  const SshSetActiveCommand({
+    required this.active,
+    this.activeSessionId,
+    this.activeHost,
+  }) : super('');
 
   /// True = UI foregrounded (resume periodic snapshots); false = backgrounded
-  /// (stop the periodic timer until the next resume).
+  /// (stop the periodic timer until the next resume). This IS the "foregrounded"
+  /// signal the #847 host-level attention policy consumes — the app is
+  /// foreground exactly when its periodic-snapshot gate is open.
   final bool active;
 
   /// The currently front-most (active) session id, or null when none / unknown
@@ -499,6 +505,14 @@ class SshSetActiveCommand extends SshTaskCommand {
   /// Optional + back-compatible: an older UI that omits it leaves the host's
   /// active-session unknown, which only means it never suppresses (safe).
   final String? activeSessionId;
+
+  /// The HOST of the currently front-most (active) session (#847). The unit of
+  /// attention is the HOST (the Claude), not the individual session: while the
+  /// app is foregrounded on ANY session to this host, an attention bell from ANY
+  /// (possibly different) session to the SAME host is suppressed — the user is
+  /// already looking at that Claude. Null when none / unknown (older UI), which
+  /// degrades safely to "never host-suppress". Carries no port/auth material.
+  final String? activeHost;
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.setActive;
@@ -509,6 +523,7 @@ class SshSetActiveCommand extends SshTaskCommand {
     'sessionId': sessionId,
     'active': active,
     if (activeSessionId != null) 'activeSessionId': activeSessionId,
+    if (activeHost != null) 'activeHost': activeHost,
   };
 }
 

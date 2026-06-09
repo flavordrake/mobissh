@@ -115,7 +115,9 @@ class FlnAttentionNotifier implements AttentionNotifier {
   @override
   Future<void> cancel(String sessionId) async {
     await _ensureInit();
-    final tag = 'mobissh.attention.$sessionId';
+    // #847: notifications are keyed per-HOST, so cancel the host's slot (a tap
+    // / focus on any session to this host clears the one shared notification).
+    final tag = 'mobissh.attention.${hostOfSessionId(sessionId)}';
     await _plugin.cancel(_idFor(tag), tag: tag);
   }
 }

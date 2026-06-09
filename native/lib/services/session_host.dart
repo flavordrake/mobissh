@@ -153,6 +153,21 @@ class SessionHost {
   /// get a notification.
   String? _activeSessionId;
 
+  /// The HOST of the currently front-most (active) session (#847), as reported
+  /// by the UI via [SshSetActiveCommand.activeHost]. The unit of attention is the
+  /// host: while foregrounded on ANY session to this host, a bell from ANY
+  /// session to the SAME host is suppressed. Null when unknown (degrades to the
+  /// session-id-derived host inside [shouldPostAttention]).
+  String? _activeHost;
+
+  /// Host-level cross-session dedup (#847): collapses multiple bells from
+  /// multiple sessions to the same host (one Claude event reaching two PTYs)
+  /// into ONE notification within [kAttentionDedupWindow]. Shares the host's
+  /// injectable clock so tests are deterministic.
+  late final AttentionDedupTracker _attentionDedup = AttentionDedupTracker(
+    nowMs: _nowMs,
+  );
+
   /// Posts attention notifications when a Slice-1 signal is detected (#840
   /// Slice 2). Null on platforms / tests where no notifier is wired — then the
   /// detection still LOGS to `clifecycle` (Slice 1 behaviour) but posts nothing.
@@ -228,7 +243,7 @@ class SessionHost {
         // terminal/audit, so it carries the full payload (#806 C).
         if (s != null) _emitSnapshot(cmd.sessionId, s, includeScrollback: true);
       case SshSetActiveCommand():
-        _handleSetActive(cmd.active, cmd.activeSessionId);
+        _handleSetActive(cmd.active, cmd.activeSessionId, cmd.activeHost);
       case SshHostKeyDecisionCommand():
         _handleHostKeyDecision(cmd);
       case SshUiHelloCommand():
@@ -1012,12 +1027,18 @@ class SessionHost {
   /// from current state without waiting for the next tick. Idempotent: a repeat
   /// of the current state is a no-op so duplicate lifecycle events don't churn
   /// the timer. Does NOT touch the SSH session, keepalive, or locks.
-  void _handleSetActive(bool active, [String? activeSessionId]) {
+  void _handleSetActive(
+    bool active, [
+    String? activeSessionId,
+    String? activeHost,
+  ]) {
     if (_disposed) return;
-    // Always track the reported active session id (#840 Slice 2) — even when
-    // [active] is unchanged the front-most TAB may have switched, and that must
-    // update suppression. A null id (older UI / none) leaves it unknown.
+    // Always track the reported active session id (#840 Slice 2) + host (#847) —
+    // even when [active] is unchanged the front-most TAB may have switched, and
+    // that must update suppression. A null id/host (older UI / none) leaves it
+    // unknown (degrades to "never host-suppress").
     _activeSessionId = activeSessionId;
+    _activeHost = activeHost;
     if (_active == active) return;
     _active = active;
     if (active) {
@@ -1080,13 +1101,29 @@ class SessionHost {
   void _maybePostAttention(String sessionId, AttentionSignal sig) {
     final notifier = _attentionNotifier;
     if (notifier == null) return;
+    // #847: host-level suppression — looking at ANY session to this host (incl.
+    // a different one) while foregrounded suppresses the bell.
     final post = shouldPostAttention(
       signalSessionId: sessionId,
       activeSessionId: _activeSessionId,
+      activeHost: _activeHost,
       foreground: _active,
     );
     if (!post) {
-      clifecycle('attention', 'suppressed (active+foreground) session $sessionId');
+      clifecycle(
+        'attention',
+        'suppressed (foreground same-host) session $sessionId',
+      );
+      return;
+    }
+    // #847: host-level cross-session dedup — a second bell from another session
+    // to the SAME host within the window collapses into the first notification.
+    final host = hostOfSessionId(sessionId);
+    if (!_attentionDedup.allow(host)) {
+      clifecycle(
+        'attention',
+        'deduped (host $host within window) session $sessionId',
+      );
       return;
     }
     try {
