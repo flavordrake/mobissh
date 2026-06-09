@@ -51,3 +51,52 @@ final composeHistoryProvider =
     NotifierProvider<ComposeHistoryNotifier, Map<String, List<String>>>(
       ComposeHistoryNotifier.new,
     );
+
+/// Per-session restorable compose DRAFT (#842) — the single in-progress
+/// (unsent) buffer that survives the compose bar being dismissed.
+///
+/// WHY (the #842 bug): tapping the bar's X (or toggling the IME off) destroys
+/// the compose bar's `State`, discarding whatever the owner was composing —
+/// often swipe/voice multi-word text that is costly to re-type. The X sits next
+/// to the ▲/▼ history arrows, so it is an easy mis-tap.
+///
+/// On dismissal with non-empty text the bar pushes that text into the
+/// [composeHistoryProvider] ring (the recoverable-via-▲ FLOOR), AND stashes it
+/// here as a single draft. On REOPEN the bar repopulates its field from this
+/// draft (the nicer "restore exactly where you were" UX) and consumes it
+/// ([clear]). Like the history ring it is per-session and lives OUTSIDE the
+/// widget so it survives the bar's teardown. Ephemeral (in-memory) — a draft is
+/// a working buffer, not a durable artifact, so it does not persist across an
+/// app restart.
+class ComposeDraftNotifier extends Notifier<Map<String, String>> {
+  @override
+  Map<String, String> build() => const {};
+
+  /// The stashed draft for [sessionId], or `null` if none.
+  String? draftOf(String sessionId) => state[sessionId];
+
+  /// Stash [text] as the restorable draft for [sessionId]. Empty/whitespace-only
+  /// text CLEARS the slot (a blank buffer is not a draft worth restoring) so a
+  /// later reopen does not repopulate with nothing. Touches ONLY this session's
+  /// entry (per-session isolation).
+  void set(String sessionId, String text) {
+    if (text.trim().isEmpty) {
+      clear(sessionId);
+      return;
+    }
+    state = {...state, sessionId: text};
+  }
+
+  /// Drop the draft for [sessionId] (called once the bar has consumed it on
+  /// reopen, or after a successful send). No-op for an unknown session.
+  void clear(String sessionId) {
+    if (!state.containsKey(sessionId)) return;
+    final next = {...state}..remove(sessionId);
+    state = next;
+  }
+}
+
+final composeDraftProvider =
+    NotifierProvider<ComposeDraftNotifier, Map<String, String>>(
+      ComposeDraftNotifier.new,
+    );

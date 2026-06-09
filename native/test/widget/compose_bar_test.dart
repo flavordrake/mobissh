@@ -21,6 +21,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/state/compose_history_providers.dart';
 import 'package:mobissh/state/lifecycle_providers.dart';
+import 'package:mobissh/state/ui_prefs_providers.dart';
 import 'package:mobissh/ui/compose_bar.dart';
 import 'package:xterm/xterm.dart';
 
@@ -547,6 +548,254 @@ void main() {
         expect(controllerText(tester), 'draft');
       },
     );
+  });
+
+  group('#842 — retain in-progress text on dismissal (no silent loss)', () {
+    // Mounts the bar under a session-keyed visibility toggle, mirroring
+    // terminal_screen (the bar is keyed by session id and only present when
+    // `composeBarVisibleProvider` is true). Removing it from the tree — exactly
+    // what X tap / IME toggle-off / programmatic close do — disposes the State,
+    // which is the universal capture-before-clear point.
+    Future<void> pumpToggleable(
+      WidgetTester tester,
+      ProviderContainer container, {
+      String sessionId = 'sess',
+    }) async {
+      final terminal = Terminal();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  Consumer(
+                    builder: (context, ref, _) {
+                      final visible = ref.watch(composeBarVisibleProvider);
+                      if (!visible) return const SizedBox.shrink();
+                      return ComposeBar(
+                        key: ValueKey('compose-bar-$sessionId'),
+                        terminal: terminal,
+                        sessionId: sessionId,
+                        onClose: () => ref
+                            .read(composeBarVisibleProvider.notifier)
+                            .set(false),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    String controllerText(WidgetTester tester) => tester
+        .widget<TextField>(find.byKey(const Key('compose-bar-input')))
+        .controller!
+        .text;
+
+    testWidgets('X tap with non-empty text pushes it to the history ring', (
+      tester,
+    ) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'the quick brown fox',
+      );
+      await tester.pump();
+
+      // Tap X — hides the bar, which disposes the State.
+      await tester.tap(find.byKey(const Key('compose-bar-close')));
+      await tester.pumpAndSettle();
+
+      expect(
+        container.read(composeHistoryProvider.notifier).historyOf('sess'),
+        ['the quick brown fox'],
+        reason: 'X-dismissed text must land in the history ring (#842 floor)',
+      );
+    });
+
+    testWidgets('dismissing with EMPTY text is a no-op (no blank entry)', (
+      tester,
+    ) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      // Nothing typed.
+      await tester.tap(find.byKey(const Key('compose-bar-close')));
+      await tester.pumpAndSettle();
+
+      expect(
+        container.read(composeHistoryProvider.notifier).historyOf('sess'),
+        isEmpty,
+        reason: 'empty dismissal must not pollute the ring',
+      );
+      expect(
+        container.read(composeDraftProvider.notifier).draftOf('sess'),
+        isNull,
+      );
+    });
+
+    testWidgets('whitespace-only text on dismissal is a no-op', (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        '   \n  ',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('compose-bar-close')));
+      await tester.pumpAndSettle();
+
+      expect(
+        container.read(composeHistoryProvider.notifier).historyOf('sess'),
+        isEmpty,
+      );
+    });
+
+    testWidgets('IME toggle-off (provider set false) captures before clear', (
+      tester,
+    ) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'half typed command',
+      );
+      await tester.pump();
+
+      // Toggle the IME off WITHOUT touching the X — same as the session-bar
+      // compose toggle (terminal_screen's onToggleCompose → toggle()).
+      container.read(composeBarVisibleProvider.notifier).set(false);
+      await tester.pumpAndSettle();
+
+      expect(
+        container.read(composeHistoryProvider.notifier).historyOf('sess'),
+        ['half typed command'],
+        reason: 'toggle-off must also capture before clear (#842)',
+      );
+    });
+
+    testWidgets('a JUST-SENT command is not double-recorded on close', (
+      tester,
+    ) async {
+      // Send (commit) clears the controller AND closes the bar in one shot, so
+      // the dispose-time capture sees an empty buffer. The ring must hold the
+      // sent command exactly once (no duplicate from the dispose path).
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'ls -la',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('compose-bar-commit')));
+      await tester.pumpAndSettle();
+
+      expect(
+        container.read(composeHistoryProvider.notifier).historyOf('sess'),
+        ['ls -la'],
+        reason: 'sent command recorded once, not duplicated by close-capture',
+      );
+    });
+
+    testWidgets('reopening the IME restores the dismissed draft (ideal)', (
+      tester,
+    ) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'restore me exactly',
+      );
+      await tester.pump();
+
+      // Dismiss (X) then reopen.
+      await tester.tap(find.byKey(const Key('compose-bar-close')));
+      await tester.pumpAndSettle();
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await tester.pumpAndSettle();
+
+      expect(
+        controllerText(tester),
+        'restore me exactly',
+        reason: 'reopen must repopulate the field from the stashed draft (#842)',
+      );
+    });
+
+    testWidgets('a sent command does NOT come back as a draft on reopen', (
+      tester,
+    ) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'echo done',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('compose-bar-commit')));
+      await tester.pumpAndSettle();
+
+      // Reopen — the sent text must NOT be restored (it was sent, not abandoned).
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await tester.pumpAndSettle();
+
+      expect(controllerText(tester), '');
+    });
+
+    testWidgets('explicit Clear discards the draft (no restore on reopen)', (
+      tester,
+    ) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await pumpToggleable(tester, container);
+
+      await tester.enterText(
+        find.byKey(const Key('compose-bar-input')),
+        'discard this',
+      );
+      await tester.pump();
+      // Backspace/clear button is a deliberate discard.
+      await tester.tap(find.byKey(const Key('compose-bar-clear')));
+      await tester.pump();
+      // Now dismiss with the field empty.
+      await tester.tap(find.byKey(const Key('compose-bar-close')));
+      await tester.pumpAndSettle();
+
+      // Reopen — nothing restored, and the cleared text isn't in the ring.
+      container.read(composeBarVisibleProvider.notifier).set(true);
+      await tester.pumpAndSettle();
+      expect(controllerText(tester), '');
+      expect(
+        container.read(composeHistoryProvider.notifier).historyOf('sess'),
+        isEmpty,
+      );
+    });
   });
 
   group('#819 — unified Fix/Copy/Paste pills, flush-right on the top border', () {

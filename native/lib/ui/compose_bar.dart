@@ -118,6 +118,23 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   void initState() {
     super.initState();
     _controller.addListener(_onChanged);
+    // #842 (ideal restore): if a draft was stashed when the bar was last
+    // dismissed with in-progress text, repopulate the field with it and CONSUME
+    // the slot, so the owner returns to exactly where they were. The draft is
+    // read once at open (a fresh State is created per open, keyed by session id
+    // in terminal_screen), so reading it in initState is the right moment.
+    final draftNotifier = ref.read(composeDraftProvider.notifier);
+    final draft = draftNotifier.draftOf(widget.sessionId);
+    if (draft != null && draft.isNotEmpty) {
+      _controller.value = TextEditingValue(
+        text: draft,
+        selection: TextSelection.collapsed(offset: draft.length),
+      );
+      // Consume the slot, but DEFER the write — mutating a provider in initState
+      // throws "Tried to modify a provider while the widget tree was building".
+      final sessionId = widget.sessionId;
+      Future.microtask(() => draftNotifier.clear(sessionId));
+    }
     // Grab focus + raise the keyboard the instant the compose bar opens, so the
     // owner can go straight into voice/swipe typing (autofocus alone loses the
     // race against the terminal's focus management). Request after the first
@@ -147,6 +164,54 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
         });
       }
     }
+  }
+
+  /// #842: capture in-progress (unsent) compose text BEFORE the buffer is torn
+  /// down, so an accidental dismissal never silently loses it. Called from
+  /// [deactivate] — NOT dispose: Riverpod invalidates `ref` by the time
+  /// `dispose` runs ("Cannot use ref after the widget was disposed"), whereas in
+  /// `deactivate` the element is being removed from the tree but `ref` is still
+  /// live. `deactivate` is the ONE teardown point shared by EVERY dismissal path
+  /// — X tap, IME toggle-off, programmatic close, session switch — since they
+  /// all remove this `State` from the tree. Empty/whitespace-only text is a
+  /// no-op (never pollute the history ring with a blank entry).
+  ///
+  /// On non-empty text it does two things:
+  ///   1. MINIMUM (the floor): push the text into the per-session history ring
+  ///      so the ▲ "scroll back arrow buffer" recovers it. The ring already
+  ///      dedups a consecutive identical entry, so text that was JUST sent
+  ///      (which clears the controller first, making this a no-op) — or an
+  ///      identical re-dismiss — never double-records.
+  ///   2. IDEAL (clean restore): stash the same text as the single restorable
+  ///      draft so the next open repopulates the field exactly where it was.
+  void _captureBeforeClear() {
+    final text = _controller.text;
+    if (text.trim().isEmpty) return;
+    final sessionId = widget.sessionId;
+    // The notifier objects live in the ProviderContainer, not the widget, so
+    // they outlive this teardown. Resolve them while `ref` is still valid, then
+    // defer the WRITE: deactivate fires DURING the rebuild that removes this
+    // widget (the dismissal toggled a provider), and mutating a provider mid-
+    // build throws "Tried to modify a provider while the widget tree was
+    // building". A microtask runs the writes after the frame settles.
+    final historyNotifier = ref.read(composeHistoryProvider.notifier);
+    final draftNotifier = ref.read(composeDraftProvider.notifier);
+    Future.microtask(() {
+      // MINIMUM (floor): recoverable via the ▲ history ring (dedupes a
+      // consecutive identical entry, so a just-sent command never doubles).
+      historyNotifier.push(sessionId, text);
+      // IDEAL (clean restore): single restorable draft for the next reopen.
+      draftNotifier.set(sessionId, text);
+    });
+  }
+
+  @override
+  void deactivate() {
+    // #842: capture-before-clear on EVERY dismissal path (this fires on X tap,
+    // IME toggle-off, programmatic close, and session switch alike). Done in
+    // deactivate (not dispose) so `ref` is still usable.
+    _captureBeforeClear();
+    super.deactivate();
   }
 
   @override
@@ -184,6 +249,9 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     }
     _controller.clear();
     _resetHistoryCursor();
+    // #842: the text was just sent — drop any stashed draft so the subsequent
+    // dispose-time capture is a no-op and a reopen does NOT restore sent text.
+    ref.read(composeDraftProvider.notifier).clear(widget.sessionId);
     // #614: hide the panel after sending (both commit and submit).
     widget.onClose();
   }
@@ -243,6 +311,9 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   void _clear() {
     _controller.clear();
     _resetHistoryCursor();
+    // #842: an explicit clear is a deliberate discard — drop the stashed draft
+    // too, so dispose doesn't re-capture cleared text and a reopen stays empty.
+    ref.read(composeDraftProvider.notifier).clear(widget.sessionId);
     _focusNode.requestFocus();
   }
 
