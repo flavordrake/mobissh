@@ -688,6 +688,81 @@ void main() {
     },
   );
 
+  group(
+    'ghosttyEffectiveCopyText — Copy honors the snapshot when a #760 redraw '
+    'cleared the live selection (#828)',
+    () {
+      // #828 root cause: under tmux MOUSE MODE the remote (status-bar clock /
+      // cursor) redraws every ~1s. #760's _invalidateSelectionOnRedraw clears
+      // the LOCAL selection on the FIRST remote output after a selection is
+      // made — so ~1s after a deliberate long-press-drag the live selection is
+      // already null, while the painted highlight from the last frame LINGERS
+      // (the user still SEES it). Copy then reads selectedText() == '' and
+      // false-negatives with "No selection". The fix snapshots the selected
+      // text at finalize time; Copy falls back to it so the VISIBLE selection
+      // is honored.
+      test('live selection text WINS when present (normal copy path)', () {
+        // When the live flterm selection still extracts text, that is the
+        // source of truth — the snapshot is only a fallback.
+        expect(
+          ghosttyEffectiveCopyText('live text', 'stale snapshot'),
+          'live text',
+        );
+      });
+
+      test('snapshot is used when the live selection was cleared (#828)', () {
+        // The #760 redraw nulled controller.selection so selectedText() == '',
+        // but the user's deliberate selection text was snapshotted — Copy must
+        // grab THAT, not report "no selection".
+        expect(
+          ghosttyEffectiveCopyText('', 'the selected line'),
+          'the selected line',
+        );
+      });
+
+      test('both empty yields empty (genuine no-selection → still toasts)', () {
+        // No live selection AND no snapshot = there really is nothing to copy;
+        // only THEN does Copy fall through to the "No selection" message.
+        expect(ghosttyEffectiveCopyText('', ''), '');
+      });
+
+      test('a non-empty live selection is preferred over an empty snapshot', () {
+        // Fresh selection, no prior snapshot captured yet → live wins.
+        expect(ghosttyEffectiveCopyText('fresh', ''), 'fresh');
+      });
+    },
+  );
+
+  group(
+    'ghosttyHasCopyableSelection — affordances stay while a snapshot survives a '
+    'redraw (#828)',
+    () {
+      test('a live selection counts (snapshot irrelevant)', () {
+        expect(
+          ghosttyHasCopyableSelection(liveSelection: true, snapshot: ''),
+          isTrue,
+        );
+      });
+
+      test('a surviving snapshot keeps Copy reachable after a #760 clear', () {
+        // The live selection was cleared by the status-bar redraw, but the
+        // snapshot remains — the Copy button must NOT vanish, and a tap must
+        // still dismiss (clearing the snapshot too).
+        expect(
+          ghosttyHasCopyableSelection(liveSelection: false, snapshot: 'x'),
+          isTrue,
+        );
+      });
+
+      test('neither a live selection nor a snapshot → nothing to copy', () {
+        expect(
+          ghosttyHasCopyableSelection(liveSelection: false, snapshot: ''),
+          isFalse,
+        );
+      });
+    },
+  );
+
   group('ghosttyShouldShowAffordances — Copy/Select-all visible only with a '
       'selection (#712)', () {
     test('an active selection SHOWS the affordance buttons', () {

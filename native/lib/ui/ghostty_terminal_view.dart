@@ -800,6 +800,38 @@ bool ghosttySelectionInvalidatedByOutput({
 /// headless.
 bool ghosttyShouldShowAffordances({required bool hasSelection}) => hasSelection;
 
+/// #828: the text Copy should grab, given the LIVE flterm selection's extracted
+/// text and the SNAPSHOT captured when the user finalised the selection.
+///
+/// #828 root cause: under tmux MOUSE MODE the remote redraws continuously (the
+/// status-bar clock ticks ~1/s, the cursor blinks). #760's
+/// [_invalidateSelectionOnRedraw] clears the LOCAL `controller.selection` on the
+/// FIRST remote output after a selection exists — so ~1s after a deliberate
+/// long-press-drag the live selection is already null, while the painted
+/// highlight from the last frame LINGERS on screen (the user still SEES a
+/// selection). `controller.selectedText()` then returns '' and Copy
+/// false-negatives with "No selection" despite a visibly-selected region.
+///
+/// The reconciliation: snapshot the selected text at finalise time (the exact
+/// text the user saw highlighted) and prefer the LIVE extraction when it still
+/// has text (the normal path — and the only one that tracks fresh content),
+/// falling back to the SNAPSHOT when the live selection was cleared by a redraw.
+/// Both empty means there genuinely is nothing to copy (then Copy may toast).
+/// Pure, so the decision is unit-testable headless.
+String ghosttyEffectiveCopyText(String live, String snapshot) =>
+    live.isNotEmpty ? live : snapshot;
+
+/// #828: whether there is a copyable selection to reflect in the UI, given the
+/// LIVE selection presence and the finalised-text [snapshot]. A live selection
+/// always counts; a surviving snapshot keeps Copy reachable after a #760 redraw
+/// cleared the live one (so the affordance buttons don't vanish and a tap still
+/// dismisses it). Mirrors [ghosttyEffectiveCopyText]'s "live OR snapshot" rule
+/// for the visibility/dismiss path. Pure → unit-testable headless.
+bool ghosttyHasCopyableSelection({
+  required bool liveSelection,
+  required String snapshot,
+}) => liveSelection || snapshot.isNotEmpty;
+
 /// SGR-1006 button1-PRESS report at the 1-based ([col], [row]) cell (#692).
 ///
 /// `CSI < 0 ; col ; row M` — button 0 (left), uppercase `M` = press.
@@ -1787,6 +1819,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// listener drives the rebuild — no second listener.
   bool _hasSelection = false;
 
+  /// #828: the TEXT of the selection captured when the user FINALISED it (a
+  /// long-press-drag release, or Select-all). Under tmux mouse mode the remote
+  /// redraws ~1/s, so #760's [_invalidateSelectionOnRedraw] clears the live
+  /// `controller.selection` within a second — before the user can tap Copy —
+  /// while the painted highlight lingers. This snapshot is exactly what the user
+  /// saw highlighted, so Copy ([_copySelection]) falls back to it via
+  /// [ghosttyEffectiveCopyText] instead of false-negativing "No selection".
+  /// Empty when no selection has been finalised, and cleared whenever the
+  /// selection is dismissed or a new one begins ([_clearSelection]).
+  String _lastSelectionText = '';
+
   /// #760: set true immediately before a remote PTY-output `controller.write()`
   /// and consumed by the very next [_onControllerChanged], so the controller
   /// notify driven by that write can be distinguished from a notify driven by a
@@ -2043,10 +2086,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// events too) so the bottom-right affordance buttons show ONLY while a
   /// selection exists. Runs AFTER [_reanchorSelectionOnGrowth], which may CLEAR a
   /// fully-evicted selection, so this reads the post-re-anchor state.
+  ///
+  /// #828: a LIVE selection OR a surviving finalised-text snapshot counts. Under
+  /// tmux mouse mode #760 clears the live selection ~1/s while the user still
+  /// wants to Copy; honoring the snapshot keeps the Copy button on screen (and a
+  /// tap still dismisses it) instead of the button vanishing the moment the
+  /// status bar ticks.
   void _syncHasSelection() {
     final controller = _controller;
     if (controller == null) return;
-    final next = controller.selection != null;
+    final next = ghosttyHasCopyableSelection(
+      liveSelection: controller.selection != null,
+      snapshot: _lastSelectionText,
+    );
     if (next == _hasSelection) return;
     if (mounted) setState(() => _hasSelection = next);
   }
@@ -2423,6 +2475,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (controller == null) return;
     _selAnchorCol = col;
     _selAnchorRow = row;
+    // #828: a fresh selection invalidates the previous finalised-text snapshot.
+    _lastSelectionText = '';
     controller.selection = ghosttySelectionForCells(
       startViewCol: col,
       startViewRow: row,
@@ -2452,6 +2506,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       endViewRow: row,
       scrollOffset: controller.scrollbar.offset,
     );
+    // #828: snapshot the live selection's text on each extend. The LAST extend
+    // before release holds the full drag span, so this captures exactly what the
+    // user saw highlighted — kept so Copy honors it even after a #760 tmux redraw
+    // clears the live `controller.selection` (see [_copySelection]).
+    _lastSelectionText = controller.selectedText();
     // #706: capture the scrollback length the selection was anchored against,
     // so [_reanchorSelectionOnGrowth] can detect later EVICTION and shift the
     // absolute rows to keep the highlight on the same content.
@@ -2462,13 +2521,21 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// #706 (issue 2): clear the active flterm LOCAL selection and forget the
   /// content anchor. Invoked when a single tap lands while a selection is
   /// active (the tap is then swallowed). Idempotent.
-  void _clearSelection() {
+  ///
+  /// #828: [clearSnapshot] controls whether the finalised-text snapshot
+  /// ([_lastSelectionText]) is ALSO dropped. A user DISMISS (tap) or a full
+  /// scrollback EVICTION (the content is gone) clears it (true, the default); a
+  /// #760 tmux-redraw invalidation of the LIVE selection must KEEP it (false) so
+  /// Copy can still honor the selection the user visibly made — that's the whole
+  /// #828 fix.
+  void _clearSelection({bool clearSnapshot = true}) {
     final controller = _controller;
     if (controller == null) return;
     controller.clearSelection();
     _selAnchorCol = null;
     _selAnchorRow = null;
     _selScrollbackLen = null;
+    if (clearSnapshot) _lastSelectionText = '';
   }
 
   /// #706 (issue 1): keep a persisted selection anchored to its CONTENT as
@@ -2535,7 +2602,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       hasSelection: controller.selection != null,
       remoteOutput: remoteOutput,
     );
-    if (invalidate) _clearSelection();
+    // #828: drop the now-stale LIVE selection (the redrawn rows no longer match
+    // the absolute-row span) but KEEP the finalised-text snapshot — under tmux
+    // mouse mode the status bar redraws ~1/s, so this fires within a second of a
+    // deliberate selection, and the user must still be able to Copy what they
+    // visibly selected. [_copySelection] falls back to the snapshot.
+    if (invalidate) _clearSelection(clearSnapshot: false);
   }
 
   /// Handle a single-TAP that landed on a detected structured match (the tap is
@@ -2637,7 +2709,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   Future<void> _copySelection() async {
     final controller = _controller;
     if (controller == null) return;
-    final text = controller.selectedText();
+    // #828: prefer the LIVE selection's text, but fall back to the finalised-text
+    // snapshot when a #760 tmux-redraw cleared the live `controller.selection`
+    // out from under a visibly-selected region. Both empty = genuinely nothing
+    // selected → then (and only then) the "No selection" hint.
+    final text = ghosttyEffectiveCopyText(
+      controller.selectedText(),
+      _lastSelectionText,
+    );
     if (text.isEmpty) {
       if (mounted) {
         showTopToast(
@@ -2663,6 +2742,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // is re-offset on eviction too (and a tap dismisses it like any selection).
     _selAnchorCol = null;
     _selAnchorRow = null;
+    // #828: snapshot the whole-buffer selection text so Copy survives a #760
+    // tmux redraw clearing the live selection, same as the long-press path.
+    _lastSelectionText = controller.selectedText();
     _selScrollbackLen =
         controller.scrollbar.total - controller.scrollbar.visible;
     if (mounted) showTopToast(context, 'Selected all — tap copy to grab it.');
@@ -2903,7 +2985,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // #706 (issue 2): a single tap dismisses an active selection and is
             // swallowed. The parent owns the controller, so it answers "is a
             // selection active?" live and clears it on demand.
-            hasSelection: () => controller.selection != null,
+            // #828: a surviving finalised-text snapshot also counts as "selected"
+            // (the live selection may have been cleared by a #760 tmux redraw),
+            // so a tap still dismisses the visibly-selected region.
+            hasSelection: () => ghosttyHasCopyableSelection(
+              liveSelection: controller.selection != null,
+              snapshot: _lastSelectionText,
+            ),
             onSelectionClear: _clearSelection,
             // #726/#767: resolve a tapped cell (0-based viewport) to a detected
             // structured match. Detection lives INSIDE the terminal now, so we
