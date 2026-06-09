@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+45 (2026-06-09) — full disconnect telemetry (to fix silent drops at the root)
+- **Every disconnect now records its cause + how long the session was dead before we noticed + a periodic liveness heartbeat** in the diagnostic log (battery-safe — piggybacks the existing tick, no new timer). The measurement layer behind the "disconnected with no indication" fix. **Hit Feedback after any disconnect or silent freeze** and the log captures exactly what happened, so the silent-drop detection can be built + validated from real data. (#838)
+
 ## v0.1.10+44 (2026-06-09) — disconnects are now diagnosable (telemetry)
 - **Groundwork for the "disconnected with no indication" fix.** Session state changes are now recorded in the diagnostic log (they weren't before), and the wasteful per-frame fit-logging that was flooding the log while the terminal is offstage is fixed. **If you hit a disconnect with no indication again, tap Feedback** — the log will now show exactly what happened, so the silent-drop detection can be fixed at the root. (#836)
 
