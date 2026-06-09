@@ -77,4 +77,52 @@ void main() {
       expect(notifier.historyOf('s2'), ['alpha']);
     });
   });
+
+  group('compose draft slot (#842)', () {
+    test('set stashes a draft, draftOf returns it', () {
+      final c = makeContainer();
+      final notifier = c.read(composeDraftProvider.notifier);
+      notifier.set('s1', 'in progress text');
+      expect(notifier.draftOf('s1'), 'in progress text');
+    });
+
+    test('unknown session has no draft (null)', () {
+      final c = makeContainer();
+      expect(c.read(composeDraftProvider.notifier).draftOf('nope'), isNull);
+    });
+
+    test('set with empty text clears the slot (no blank draft)', () {
+      final c = makeContainer();
+      final notifier = c.read(composeDraftProvider.notifier);
+      notifier.set('s1', 'something');
+      notifier.set('s1', '');
+      expect(notifier.draftOf('s1'), isNull);
+    });
+
+    test('set with whitespace-only text clears the slot', () {
+      final c = makeContainer();
+      final notifier = c.read(composeDraftProvider.notifier);
+      notifier.set('s1', 'something');
+      notifier.set('s1', '   \n\t ');
+      expect(notifier.draftOf('s1'), isNull);
+    });
+
+    test('clear drops the draft', () {
+      final c = makeContainer();
+      final notifier = c.read(composeDraftProvider.notifier);
+      notifier.set('s1', 'draft');
+      notifier.clear('s1');
+      expect(notifier.draftOf('s1'), isNull);
+    });
+
+    test('per-session isolation: a draft in s1 never leaks into s2', () {
+      final c = makeContainer();
+      final notifier = c.read(composeDraftProvider.notifier);
+      notifier.set('s1', 'one');
+      notifier.set('s2', 'two');
+      notifier.clear('s1');
+      expect(notifier.draftOf('s1'), isNull);
+      expect(notifier.draftOf('s2'), 'two');
+    });
+  });
 }
