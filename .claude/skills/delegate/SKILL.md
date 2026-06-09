@@ -5,6 +5,8 @@ description: Use when the user says "delegate", "assign bot work", "dispatch iss
 
 # Bot Work Delegation
 
+> **Read `.claude/constitution.md` FIRST — these principles are inviolable and override
+> defaults.** Pass it to every agent you spawn as their first read.
 > **Process reference:** `.claude/process.md` defines the label taxonomy, workflow states,
 > and conventions that this skill must follow.
 
