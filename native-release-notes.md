@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+49 (2026-06-09) — notifications that make sense + no keyboard-hide layout glitch
+- **Attention notifications are fixed end-to-end.** The persistent notification no longer sits on "Connecting…" — it shows live state ("Connected — N sessions"). Attention alerts now **name the server** (e.g. "raserver — IT"), so two servers never look identical; a single Claude event reaching two sessions on one host shows **one** alert (not duplicates); and you're **not pinged for a host you're already looking at**. Device-validated: foregrounded on a host → bells suppressed. (#847) — to also get the tmux *window* name in the alert, add the `alert-bell` hook to `~/.tmux.conf`.
+- **Keyboard hide no longer scrambles the terminal.** Hiding the keyboard was firing a storm of resizes across every session, overgrowing the grid and duplicating/ghosting content. Resizes that don't actually change size are now dropped, and the keyboard-hide resize settles once instead of thrashing. (#848)
+
 ## v0.1.10+48 (2026-06-09) — Copy actually lands in the clipboard (and paste history)
 - **Copy now reliably puts text in the Android clipboard — including Gboard's paste history.** Copies were being written with a blank label, so the system showed the preview chip but the clip didn't surface in your clipboard history (it looked "empty until tapped"). Every copy (URL, selection, path, compose, diagnostics) now writes a properly-labeled clip natively and **reads it back to confirm it's really there** before saying "Copied". **Verify:** copy a URL → it shows in Gboard's clipboard history right away and pastes anywhere. (#845)
 
