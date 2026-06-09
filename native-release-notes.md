@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+47 (2026-06-09) — your typing survives an accidental compose close
+- **Closing/disabling the compose box no longer loses what you typed.** If you dismiss compose (X, toggle-off, switching sessions) with text still in it, that text is now kept two ways: it **reappears in the box when you reopen** compose, and it's also pushed into the **▲ history buffer** so the up-arrow can recall it. Empty input is ignored; sending/clearing drops the draft as before. **Verify:** type without sending, hit X, reopen compose → your text is back (and on ▲). (#842)
+
 ## v0.1.10+46 (2026-06-09) — Claude attention notifications (jump to the session that needs you)
 - **MobiSSH now notifies you when an agent needs your attention.** When Claude is awaiting input/permission or finishes — any terminal bell or OSC 9/777 notification — a high-priority notification fires, even for a backgrounded or non-active session, and tapping it jumps straight to that session (and, under tmux, toward the source window). It's suppressed when you're already looking at that session. **Inside tmux, add the one-line `alert-bell` hook to `~/.tmux.conf`** so the signal carries through tmux's redraw (a plain shell works as-is). **Verify:** let Claude await your input (or `printf '\a'`) → a "Claude needs attention" notification appears; tap it → you land on that session. (#840)
 
