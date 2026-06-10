@@ -955,8 +955,15 @@ class SessionHost {
         ).toJson(),
       );
     } catch (e) {
+      // Keep the raw error (incl. the SftpStatusError code) in the diagnostic
+      // log; show the browser a clean empty-state message instead of dumping
+      // `SftpStatusError: No such file(code 2)` in the body (#867).
       ctrace('task.host', 'sftp ls FAILED path=${cmd.path} — $e');
-      _emitSftpError(cmd.sessionId, cmd.requestId, 'List failed: $e');
+      _emitSftpError(
+        cmd.sessionId,
+        cmd.requestId,
+        friendlySftpListError(e, cmd.path),
+      );
     }
   }
 
