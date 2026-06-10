@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+52 (2026-06-10) — markdown renders + switching sessions is quiet
+- **Markdown files render now.** A `.md`/`.markdown` file opens formatted (headings, bold, lists, links, code, tables) instead of raw text, with a top-bar toggle to flip to raw source. Edit-and-save-back is a follow-up (#859). (#854)
+- **Switching to a session no longer pops a redundant "needs attention" for it.** A bell replayed in the catch-up burst right after you switch to a session is now ignored — you just moved there, you can see it. (#856)
+
 ## v0.1.10+51 (2026-06-10) — tap a "build ready" notification to open the link
 - **Attention notifications with a URL are now tappable to open it.** When a signal's text carries a link (e.g. your dev-loop emits `Build ready: https://…`), tapping the notification opens that URL in your browser (and focuses the session). Finish a build remotely → tap → install, no scrolling. (#710) — to surface the link, emit it via the bell/OSC-9 hook (`printf '\033]9;Build ready: <url>\007'`); I can wire the release script to do this automatically.
 
