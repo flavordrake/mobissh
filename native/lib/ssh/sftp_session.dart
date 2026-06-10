@@ -35,6 +35,53 @@ String parentRemotePath(String path) {
   return p.substring(0, idx);
 }
 
+/// Expand a shell-style `~` / `~user` (or a relative) [path] to an absolute
+/// remote path (#867). SFTP has no shell, so it never expands `~` itself — the
+/// browser would pass a literal `~/.claude/...` to `listdir`, which the server
+/// can't resolve (`No such file`, code 2). We expand it here, in the single
+/// SFTP layer every list/stat/read routes through (so the tap-to-navigate path
+/// from #777/#778 is covered too).
+///
+/// [home] is the session's resolved home directory (the realpath of the SFTP
+/// cwd at open, via `SftpClient.absolute('.')`). Rules:
+///   - `~`             → [home]
+///   - `~/rest`        → [home] joined with `rest`
+///   - `~user[/rest]`  → left UNCHANGED. Resolving another user's home cheaply
+///                       needs `/etc/passwd`; rather than guess wrong we defer
+///                       to the server's realpath / the friendly error path.
+///   - absolute (`/…`) → unchanged.
+///   - relative (`rest`) → joined onto [home] (the cwd at SFTP open), so a bare
+///                       `foo` resolves like the shell would.
+String expandTilde(String path, String home) {
+  if (path.isEmpty) return home;
+  if (path == '~') return home;
+  if (path.startsWith('~/')) {
+    return joinRemotePath(home, path.substring(2)); // drop the leading "~/"
+  }
+  // `~user` (not `~` or `~/…`): leave to the server / error path.
+  if (path.startsWith('~')) return path;
+  if (path.startsWith('/')) return path; // already absolute
+  return joinRemotePath(home, path); // relative → resolve against home/cwd
+}
+
+/// Map a raw SFTP list error to a clean, user-facing empty-state message
+/// (#867). The raw `SftpStatusError: No such file(code 2)` is dumped into the
+/// diagnostic log by the caller; the UI shows this friendlier line instead.
+///   - code 2 (no such file)     → `Folder not found: <path>`
+///   - code 3 (permission denied)→ `Permission denied: <path>`
+///   - anything else             → `Couldn't open <path>`
+String friendlySftpListError(Object error, String path) {
+  if (error is SftpStatusError) {
+    switch (error.code) {
+      case 2:
+        return 'Folder not found: $path';
+      case 3:
+        return 'Permission denied: $path';
+    }
+  }
+  return "Couldn't open $path";
+}
+
 /// Abstraction the [SessionHost] talks to. One per live SSH session, opened
 /// lazily on the first SFTP command and reused for subsequent ones.
 abstract class SftpSession {
@@ -71,9 +118,23 @@ class DartSshSftpSession implements SftpSession {
 
   final SftpClient _client;
 
+  /// The session's home directory (realpath of the SFTP cwd at open), resolved
+  /// once via `absolute('.')` and cached. Used to expand `~` (#867).
+  String? _home;
+
+  /// Resolve + cache the session home, then expand any `~`/relative [path] to
+  /// an absolute path the server can resolve (SFTP has no shell). Called by
+  /// every op (list/stat/download) so the literal `~/…` the browser builds
+  /// (incl. the #777/#778 tap path) never reaches `listdir` unexpanded.
+  Future<String> _resolve(String path) async {
+    final home = _home ??= await _client.absolute('.');
+    return expandTilde(path, home);
+  }
+
   @override
   Future<List<SftpEntry>> list(String path) async {
-    final names = await _client.listdir(path);
+    final resolved = await _resolve(path);
+    final names = await _client.listdir(resolved);
     final entries = <SftpEntry>[];
     for (final n in names) {
       // Skip the "." / ".." pseudo-entries — the browser navigates with the
@@ -82,7 +143,9 @@ class DartSshSftpSession implements SftpSession {
       final attr = n.attr;
       entries.add(SftpEntry(
         name: n.filename,
-        path: joinRemotePath(path, n.filename),
+        // Build child paths off the RESOLVED absolute dir so navigation into a
+        // subfolder doesn't re-introduce a `~` segment.
+        path: joinRemotePath(resolved, n.filename),
         isDirectory: attr.isDirectory,
         size: attr.isDirectory ? null : attr.size,
         modifyTime: attr.modifyTime,
@@ -95,7 +158,7 @@ class DartSshSftpSession implements SftpSession {
 
   @override
   Future<int?> sizeOf(String path) async {
-    final attr = await _client.stat(path);
+    final attr = await _client.stat(await _resolve(path));
     return attr.size;
   }
 
@@ -105,7 +168,7 @@ class DartSshSftpSession implements SftpSession {
     required void Function(Uint8List chunk, int offset) onChunk,
     int chunkSize = 64 * 1024,
   }) async {
-    final file = await _client.open(path);
+    final file = await _client.open(await _resolve(path));
     try {
       var offset = 0;
       var total = 0;

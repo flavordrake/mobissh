@@ -7,6 +7,7 @@
 
 import 'dart:typed_data';
 
+import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/session_host.dart';
 import 'package:mobissh/services/session_messages.dart';
@@ -34,12 +35,17 @@ class FakeSftpSession implements SftpSession {
     this.fileBytes = const [],
     this.throwOnList = false,
     this.throwOnDownload = false,
+    this.listError,
   });
 
   final List<SftpEntry> entries;
   final List<int> fileBytes;
   final bool throwOnList;
   final bool throwOnDownload;
+
+  /// When set, [list] throws this instead of the generic boom (#867: exercise
+  /// the SftpStatusError → friendly-message mapping through the host).
+  final Object? listError;
   bool closed = false;
   String? lastListedPath;
   String? lastDownloadedPath;
@@ -47,6 +53,7 @@ class FakeSftpSession implements SftpSession {
   @override
   Future<List<SftpEntry>> list(String path) async {
     lastListedPath = path;
+    if (listError != null) throw listError!;
     if (throwOnList) throw Exception('boom-list');
     return entries;
   }
@@ -183,9 +190,37 @@ void main() {
 
     expect(err, isNotNull);
     expect(err!.requestId, 'sid-err#0');
-    expect(err!.message, contains('List failed'));
+    // #867: a generic (non-SftpStatusError) list failure surfaces the clean
+    // "Couldn't open <path>" message, not a raw exception dump.
+    expect(err!.message, "Couldn't open /nope");
     // The SSH session is still hosted — an SFTP error must not drop it.
     expect(ctx.host.sessionIds, contains('sid-err'));
+
+    await sub.cancel();
+  });
+
+  test('#867 SftpStatusError(code 2) surfaces a friendly "not found"',
+      () async {
+    final fake = FakeSftpSession(
+      listError: SftpStatusError(2, 'No such file'),
+    );
+    final ctx = await setUpConnected('sid-nf', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpErrorEvent? err;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+    });
+
+    ctx.proxy.sftpList(requestId: 'sid-nf#0', path: '/home/ra/.claude/missing');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(err, isNotNull);
+    // The clean empty-state message, NOT the raw "SftpStatusError: …(code 2)".
+    expect(err!.message, 'Folder not found: /home/ra/.claude/missing');
+    expect(err!.message, isNot(contains('SftpStatusError')));
 
     await sub.cancel();
   });
