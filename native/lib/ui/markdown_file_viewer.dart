@@ -29,6 +29,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
+import 'file_browser_screen.dart';
 
 /// Opens a markdown link [href] in the system browser (externalApplication).
 /// Mirrors the terminal URL handler idiom. Injected as a typedef so widget
@@ -133,6 +134,14 @@ class _MarkdownFileViewerScreenState
               tooltip: _raw ? 'Show rendered' : 'Show raw source',
               onPressed: _toggleRaw,
             ),
+          // #855: one-tap return to the terminal (collapses the whole
+          // browser/viewer stack) — conventional top-right close, rightmost.
+          IconButton(
+            key: const Key('markdown-viewer-close-to-terminal'),
+            tooltip: 'Close — back to terminal',
+            icon: const Icon(Icons.close),
+            onPressed: () => dismissFileBrowserStack(context),
+          ),
         ],
       ),
       body: _buildBody(),

@@ -296,14 +296,10 @@ void main() {
           ),
         ),
       );
-      // Push the browser for session B onto the terminal-root navigator.
-      unawaited(
-        navKey.currentState!.push(
-          MaterialPageRoute<void>(
-            builder: (_) => FileBrowserScreen(sessionId: b.id),
-          ),
-        ),
-      );
+      // Push the browser for session B onto the terminal-root navigator via the
+      // real entry point (openFileBrowser names the route so the #855 one-tap
+      // dismissal can pop the whole stack — see kFileBrowserRouteName).
+      unawaited(openFileBrowser(navKey.currentContext!, b.id));
       await _pump(tester);
 
       expect(

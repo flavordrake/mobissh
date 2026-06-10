@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
+import 'file_browser_screen.dart';
 
 /// Full-screen read-only preview route for a single remote text [entry] on
 /// [sessionId].
@@ -86,6 +87,16 @@ class _TextFileViewerScreenState extends ConsumerState<TextFileViewerScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
+        actions: [
+          // #855: one-tap return to the terminal (collapses the whole
+          // browser/viewer stack), not viewer→browser→…→terminal.
+          IconButton(
+            key: const Key('text-viewer-close-to-terminal'),
+            tooltip: 'Close — back to terminal',
+            icon: const Icon(Icons.close),
+            onPressed: () => dismissFileBrowserStack(context),
+          ),
+        ],
       ),
       body: _buildBody(),
     );

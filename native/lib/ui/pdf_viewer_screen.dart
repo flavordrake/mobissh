@@ -21,6 +21,7 @@ import 'package:pdfrx/pdfrx.dart';
 
 import '../services/pdf_fetcher.dart';
 import '../services/session_messages.dart';
+import 'file_browser_screen.dart';
 
 /// Builds the actual page-rendering widget for a fetched [file]. Production
 /// returns a pdfium-backed [PdfViewer.file]; widget tests override this seam
@@ -177,6 +178,14 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
                 ),
               ),
             ),
+          // #855: one-tap return to the terminal (collapses the whole
+          // browser/viewer stack), conventional top-right close.
+          IconButton(
+            key: const Key('pdf-viewer-close-to-terminal'),
+            tooltip: 'Close — back to terminal',
+            icon: const Icon(Icons.close),
+            onPressed: () => dismissFileBrowserStack(context),
+          ),
         ],
       ),
       body: _buildBody(),

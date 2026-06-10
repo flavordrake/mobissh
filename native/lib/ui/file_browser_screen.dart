@@ -40,10 +40,31 @@ final downloadSinkFactoryProvider = Provider<DownloadSinkFactory>(
 typedef PdfTapInterceptor =
     void Function(BuildContext context, String sessionId, SftpEntry entry);
 
+/// Route name shared by every screen in the file-browser stack (the browser
+/// itself plus every in-app viewer it pushes — text, markdown, PDF). The
+/// top-right close affordance (#855) pops the WHOLE stack back to the terminal
+/// in one tap via [dismissFileBrowserStack], regardless of folder depth or
+/// whether a file is open. Naming every stack route the same lets a single
+/// [Navigator.popUntil] collapse the stack and stop at the terminal route
+/// (which is NOT named this).
+const String kFileBrowserRouteName = 'mobissh.fileBrowserStack';
+
+/// Pops the entire file-browser/viewer stack back to the terminal in one
+/// action (#855). Every route pushed within the file browser is named
+/// [kFileBrowserRouteName]; [Navigator.popUntil] removes all of them and stops
+/// at the first route below (the terminal), so depth and open viewers don't
+/// matter — it's always a single pop action.
+void dismissFileBrowserStack(BuildContext context) {
+  Navigator.of(
+    context,
+  ).popUntil((route) => route.settings.name != kFileBrowserRouteName);
+}
+
 /// Default interceptor: push the in-app PDF viewer route.
 void _pushPdfViewer(BuildContext context, String sessionId, SftpEntry entry) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
+      settings: const RouteSettings(name: kFileBrowserRouteName),
       builder: (_) => PdfViewerScreen(sessionId: sessionId, entry: entry),
     ),
   );
@@ -66,6 +87,7 @@ Future<void> openFileBrowser(
 }) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
+      settings: const RouteSettings(name: kFileBrowserRouteName),
       builder: (_) =>
           FileBrowserScreen(sessionId: sessionId, initialPath: initialPath),
     ),
@@ -344,8 +366,10 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
 
   /// #740: return to THIS session's terminal — make the browsed session active
   /// (so the terminal screen's IndexedStack shows the right one in a
-  /// multi-session setup) and pop back to it. Falls back to a plain pop if the
-  /// session has since gone away.
+  /// multi-session setup) and dismiss back to it. Browsing happens in-place
+  /// (one route above the terminal), so from the browser this is a single pop;
+  /// from a viewer route the stack collapses (#855). Falls back gracefully if
+  /// the session has since gone away.
   void _backToTerminal() {
     final notifier = ref.read(sessionsProvider.notifier);
     final exists = ref
@@ -353,7 +377,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         .entries
         .any((e) => e.id == widget.sessionId);
     if (exists) notifier.setActive(widget.sessionId);
-    Navigator.of(context).pop();
+    dismissFileBrowserStack(context);
   }
 
   @override
@@ -403,6 +427,14 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            key: const Key('file-browser-close-to-terminal'),
+            tooltip: 'Close — back to terminal',
+            icon: const Icon(Icons.close),
+            onPressed: _backToTerminal,
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),
           child: _PathBar(
