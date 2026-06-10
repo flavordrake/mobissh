@@ -67,6 +67,7 @@ class SessionHost {
     int Function()? nowMs,
     AttentionNotifier? attentionNotifier,
     this.replayWindow = kAttentionReplayWindow,
+    this.switchGraceWindow = kAttentionSwitchGraceWindow,
   }) : _gateway = gateway,
        _factory = controllerFactory ?? _defaultControllerFactory,
        _sftpOpener = sftpOpener,
@@ -186,6 +187,28 @@ class SessionHost {
   /// tests can disable it ([Duration.zero]) or set a deterministic span; the
   /// window is measured against the host's injected [_nowMs] clock.
   final Duration replayWindow;
+
+  /// JUST-SWITCHED grace window (#856). When [_handleSetActive] changes the
+  /// active HOST (the user switched TO a session on a different host, or the app
+  /// foregrounded onto it), the host arms a short grace for the newly-active
+  /// host: an attention signal for that host within the window is the switch
+  /// CATCH-UP burst (flushed when the session became front-most), not a live
+  /// moment — so it is suppressed (logged `just-switched`) rather than posted.
+  /// This closes the activeHost-propagation RACE the #847 host-suppression can't
+  /// (the catch-up output is scanned before `setActive` lands) and the SWITCH
+  /// case the #851 replay window can't (it only re-arms on a CONNECT, not a
+  /// session switch). Stamped per host in [_switchGraceUntilMs] on the active-host
+  /// CHANGE only (re-asserting the same active host does NOT re-arm, so the window
+  /// can't be extended indefinitely). Composes with — does not replace — #847 +
+  /// #851. Injectable + measured against [_nowMs] so tests are deterministic
+  /// ([Duration.zero] disables it).
+  final Duration switchGraceWindow;
+
+  /// Per-host expiry (ms since epoch, via [_nowMs]) of the just-switched grace
+  /// (#856). A signal whose host has an entry here that is still in the future is
+  /// suppressed as the switch catch-up burst. Stamped on each active-host change
+  /// in [_handleSetActive].
+  final Map<String, int> _switchGraceUntilMs = {};
 
   /// The exact lifecycle-forwarder closure this host installed into the global
   /// [lifecycleForwarder] (#766). Held so dispose detaches OUR closure only —
@@ -1049,8 +1072,20 @@ class SessionHost {
     // even when [active] is unchanged the front-most TAB may have switched, and
     // that must update suppression. A null id/host (older UI / none) leaves it
     // unknown (degrades to "never host-suppress").
+    final prevActiveHost = _activeHost;
     _activeSessionId = activeSessionId;
     _activeHost = activeHost;
+    // #856: when the active HOST actually CHANGES, arm the just-switched grace
+    // for the newly-active host so its switch catch-up burst doesn't post a
+    // redundant attention notification. Only on a real change (new != previous)
+    // so re-asserting the same active host can't extend the window forever, and
+    // only for a known host. The signal-side gate lives in [_maybePostAttention].
+    if (activeHost != null &&
+        activeHost != prevActiveHost &&
+        switchGraceWindow > Duration.zero) {
+      _switchGraceUntilMs[activeHost] =
+          _nowMs() + switchGraceWindow.inMilliseconds;
+    }
     if (_active == active) return;
     _active = active;
     if (active) {
@@ -1135,6 +1170,29 @@ class SessionHost {
               '${replayWindow.inMilliseconds}ms) session $sessionId',
         );
         return;
+      }
+    }
+    // #856: JUST-SWITCHED grace. A signal whose host was made active within the
+    // grace window (see [_handleSetActive]) is the switch CATCH-UP burst flushed
+    // when the user switched TO this session — redundant, since they're now
+    // looking at it. Suppress (log) rather than post. Keyed on the signal's HOST
+    // to match #847's host unit, and gated on the host's injected clock. This
+    // closes the activeHost-propagation race the foreground gate below can't.
+    final signalHost = hostOfSessionId(sessionId);
+    if (switchGraceWindow > Duration.zero) {
+      final graceUntil = _switchGraceUntilMs[signalHost];
+      if (graceUntil != null) {
+        final nowMs = _nowMs();
+        if (nowMs < graceUntil) {
+          clifecycle(
+            'attention',
+            'suppressed (just-switched ${graceUntil - nowMs}ms remaining, host '
+                '$signalHost) session $sessionId',
+          );
+          return;
+        }
+        // Window elapsed — drop the stale stamp so the map doesn't grow.
+        _switchGraceUntilMs.remove(signalHost);
       }
     }
     // #847: host-level suppression — looking at ANY session to this host (incl.
