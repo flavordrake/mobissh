@@ -68,6 +68,22 @@ const Duration kAttentionDedupWindow = Duration(seconds: 30);
 /// connected transition. Tunable; 1.5s is the owner's starting point.
 const Duration kAttentionReplayWindow = Duration(milliseconds: 1500);
 
+/// JUST-SWITCHED grace window (#856). When the user switches TO a session (the
+/// app foregrounds it / it becomes the active host), the host flushes that
+/// session's catch-up output; a bell in that burst would post a REDUNDANT
+/// attention notification for the very session the user just switched to (the
+/// owner: "I switched to fddev and immediately got a pop up that fddev needed my
+/// attention — should not get that, it's redundant"). #847 host-suppression keys
+/// on `activeHost`, but the catch-up output is scanned BEFORE the
+/// `setActive(newHost)` command lands (async gateway race), and #851's replay
+/// window only re-arms on a CONNECT transition — not on a session SWITCH (the
+/// session was already connected). So when the active HOST changes, the host arms
+/// this short grace for the newly-active host: a signal for that host within the
+/// window is suppressed (logged) rather than posted. After the window, posts
+/// normally. Composes with — does not replace — #847 + #851. Tunable; 1.5s
+/// mirrors the replay window's catch-up-burst rationale.
+const Duration kAttentionSwitchGraceWindow = Duration(milliseconds: 1500);
+
 /// Derive the HOST from a sessionId (#847). The session id format is
 /// `host:port:user:createdAtMs` (see `state/sessions.dart`), so the host is the
 /// segment before the first colon. Falls back to the whole id when it has no
