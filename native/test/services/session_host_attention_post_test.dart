@@ -44,6 +44,11 @@ _setup({String sid = 'h:22:u:1'}) async {
     },
     snapshotInterval: const Duration(milliseconds: 50),
     attentionNotifier: notifier,
+    // #851: these tests feed the signal immediately after `connected`; disable
+    // the (re)connect replay-suppression window so they exercise ONLY the #847
+    // foreground/host-dedup suppression they predate (the replay gate has its
+    // own coverage in session_host_attention_replay_test.dart).
+    replayWindow: Duration.zero,
   );
   pair.uiSide.send(
     SshConnectCommand(
