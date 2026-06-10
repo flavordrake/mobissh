@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+55 (2026-06-10) — ~ paths work + notification taps land on the right server
+- **The file browser handles `~` paths.** Navigating to `~/.claude/...` failed with a raw SFTP error because SFTP doesn't expand `~`; it's now expanded to your home dir, and a missing folder shows a clean "Folder not found" instead of a raw error. (#867)
+- **Notification taps land on the right server, reliably.** A tap could resolve to a recently-active *different* server under a timing race; the pending-focus now seq-stamps so the server you actually tapped wins. Also added diagnostic logging that lands in the uploaded report, so any remaining misroute is now traceable. (#870)
+
 ## v0.1.10+54 (2026-06-10) — URL highlights are tappable, aligned, and cleaner
 - **Tapping a highlighted URL works again, and the highlight no longer sits off-by-a-line.** The bubble and the tappable area were using different scroll offsets, so during/after a scroll the URL looked like it was at one line but the tap landed on another (→ it just selected text). Both now use the same painted offset — tap lands on the URL, and the highlight tracks scroll. (#863)
 - **Cleaner URL chip** — vertically centered on the text, a little horizontal padding, and the redundant underline removed. (#864)
