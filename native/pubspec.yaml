@@ -93,6 +93,14 @@ dependencies:
   # <queries> https intent in AndroidManifest to resolve a browser (added).
   url_launcher: ^6.3.0
 
+  # Render markdown files to formatted output in the in-app viewer (#854,
+  # PWA parity). The original `flutter_markdown` was DISCONTINUED by the Flutter
+  # team; `flutter_markdown_plus` is the maintained community fork with the same
+  # `Markdown`/`MarkdownBody` API. Headings, bold/italic, lists, links, code
+  # blocks, and GitHub-flavored tables. Links open via url_launcher
+  # (externalApplication) — same idiom as the terminal URL handler.
+  flutter_markdown_plus: ^1.0.0
+
   # Crash telemetry pipeline (#501 crash-on-launch).
   # http: bridge upload. path_provider: app-docs dir shared with the Kotlin
   # crash writer. device_info_plus + package_info_plus: enrich crash JSON.

@@ -27,6 +27,7 @@ import 'package:mobissh/ssh/ssh_session.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/ui/file_browser_screen.dart';
+import 'package:mobissh/ui/markdown_file_viewer.dart';
 import 'package:mobissh/ui/pdf_viewer_screen.dart';
 import 'package:mobissh/ui/text_file_viewer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -222,8 +223,43 @@ void main() {
     await routesToTextViewer(tester, 'main.dart');
   });
 
-  testWidgets('tapping a .md routes to the text viewer', (tester) async {
-    await routesToTextViewer(tester, 'README.md');
+  testWidgets('tapping a .md routes to the markdown viewer (#854)', (
+    tester,
+  ) async {
+    // #854: `.md` now routes to the dedicated rendered markdown viewer, NOT the
+    // generic monospace text viewer — even though `isTextEntry` also matches it
+    // (the registry orders markdown first; first match wins).
+    final fetcher = _CannedTextFetcher('# Title\n\nbody');
+    final w = _wire(
+      tester,
+      byPath: {
+        '/': const [
+          SftpEntry(
+            name: 'README.md',
+            path: '/README.md',
+            isDirectory: false,
+            size: 14,
+          ),
+        ],
+      },
+      overrides: [textFileFetcherProvider.overrideWithValue(fetcher)],
+    );
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: w.container,
+        child: MaterialApp(home: FileBrowserScreen(sessionId: w.session.id)),
+      ),
+    );
+    await _pump(tester);
+
+    await tester.tap(find.byKey(const Key('file-entry-README.md')));
+    await _pump(tester);
+
+    expect(find.byType(MarkdownFileViewerScreen), findsOneWidget);
+    expect(find.byType(TextFileViewerScreen), findsNothing);
+
+    w.host.disposeSyncForTest();
   });
 
   testWidgets('tapping a .pdf still routes to the PDF viewer (registry)', (
