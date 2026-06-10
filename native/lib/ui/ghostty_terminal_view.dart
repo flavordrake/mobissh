@@ -2074,8 +2074,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // `https://…` over a hyperlink's visible text is suppressed), so a
     // hyperlinked URL yields ONE exact anchor spanning all its wrapped rows. A
     // plain-text URL (no OSC-8) still falls to the regex pattern unchanged.
-    controller.registerTextPattern(TextPattern.osc8(id: _kOsc8PatternId));
-    controller.registerTextPattern(TextPattern.url(id: _kUrlPatternId));
+    // #864: register both URL sources with the EMPTY highlight style (no fill,
+    // no underline) so the bubble decorator is the SINGLE affordance — the app
+    // never co-renders an underline that reads redundant with the chip.
+    controller.registerTextPattern(
+      TextPattern.osc8(id: _kOsc8PatternId, style: kGhosttyUrlHighlightStyle),
+    );
+    controller.registerTextPattern(
+      TextPattern.url(id: _kUrlPatternId, style: kGhosttyUrlHighlightStyle),
+    );
     // #778 paths Slice 1: also detect absolute file paths. A `path` anchor gets
     // its own decorator (folder glyph + dotted underline) and routes a tap to
     // the SFTP explorer; `://` contexts are rejected so a URL stays a URL.
