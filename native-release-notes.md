@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+54 (2026-06-10) — URL highlights are tappable, aligned, and cleaner
+- **Tapping a highlighted URL works again, and the highlight no longer sits off-by-a-line.** The bubble and the tappable area were using different scroll offsets, so during/after a scroll the URL looked like it was at one line but the tap landed on another (→ it just selected text). Both now use the same painted offset — tap lands on the URL, and the highlight tracks scroll. (#863)
+- **Cleaner URL chip** — vertically centered on the text, a little horizontal padding, and the redundant underline removed. (#864)
+
 ## v0.1.10+53 (2026-06-10) — one-tap back to terminal + notification taps land on the right session
 - **X to return to the terminal in one tap.** The file browser and the text/markdown/PDF viewers now have a top-right close button that jumps straight back to the terminal from any folder depth — no more backing out level by level. (#855)
 - **Tapping an attention notification opens the right session.** Tapping e.g. an fddev notification now lands on fddev even if it reconnected (got a new session id) — it falls back to the live session for that server instead of leaving you on whatever was open. (#857)
