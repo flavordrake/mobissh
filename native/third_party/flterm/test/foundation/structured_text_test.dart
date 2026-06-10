@@ -855,4 +855,153 @@ void main() {
       expect(pathPayloads('file:///etc/hosts'), isEmpty);
     });
   });
+
+  // #874: the path detector over-matched a whole shell command as ONE file path.
+  // A device report (0.1.10+55) showed "the whole line in between blocks is
+  // presenting as a file". A path token must TERMINATE at a shell separator /
+  // quote (`; | & < > = ' "`) and yield only the clean prefix — so a command
+  // line like `/workspace/outl/scripts/top-task 2>&1 > /tmp/tt.md; …` underlines
+  // the two REAL paths, not the whole run. Quotes that wrap a path are stripped.
+  // The #826 glob/var/command-sub REJECTION must stay intact (a `$`/`*`/`[]`/`()`
+  // token is suppressed, NOT trimmed to a clean-looking sub-path).
+  group('TextPattern.path() — shell-delimiter termination (#874)', () {
+    final pathPattern = TextPattern.path();
+
+    List<String> pathPayloads(String row, {int? cols}) {
+      final reader = _FakeCellReader([row], cols: cols ?? (row.length + 2));
+      return scanner
+          .scan(reader, [pathPattern])
+          .where((m) => m.patternId == 'path')
+          .map((m) => '${m.payload}')
+          .toList();
+    }
+
+    test(
+      'the offending command line yields the TWO real paths, NOT one giant run',
+      () {
+        const line = '/workspace/outl/scripts/top-task 2>&1 > /tmp/tt.md; '
+            'echo "=== FLAGGED ==="; '
+            "sed -n '/^## Flagged/,/^##/{ /^## [F]/q; p }' /tmp/tt.md | "
+            'head -15; echo;';
+        final got = pathPayloads(line);
+        // The two distinct real paths are present...
+        expect(got, contains('/workspace/outl/scripts/top-task'));
+        expect(got, contains('/tmp/tt.md'));
+        // ...and the detected SET is exactly those two (the second /tmp/tt.md
+        // occurrence dedups in the set) — never the whole command as one path.
+        expect(got.toSet(),
+            {'/workspace/outl/scripts/top-task', '/tmp/tt.md'});
+        // Specifically: nothing swallowed the trailing shell syntax into a path.
+        for (final p in got) {
+          expect(p, isNot(contains(' ')));
+          expect(p, isNot(contains(';')));
+          expect(p, isNot(contains('|')));
+          expect(p, isNot(contains('>')));
+        }
+      },
+    );
+
+    test('a path followed by `; cmd` yields the path ONLY (semicolon)', () {
+      expect(pathPayloads('/tmp/tt.md; echo x'), contains('/tmp/tt.md'));
+      expect(pathPayloads('/tmp/tt.md; echo x'), everyElement(isNot(contains(';'))));
+    });
+
+    test('a path followed by ` | grep` yields the path ONLY (pipe)', () {
+      expect(pathPayloads('/a/b | grep'), contains('/a/b'));
+    });
+
+    test('a path adjacent to `|` (no space) terminates at the pipe', () {
+      expect(pathPayloads('/a/b|grep'), contains('/a/b'));
+      expect(pathPayloads('/a/b|grep'), everyElement(isNot(contains('|'))));
+    });
+
+    test('a path adjacent to `;` (no space) terminates at the semicolon', () {
+      expect(pathPayloads('/a/b;rm'), contains('/a/b'));
+    });
+
+    test('a redirect tail `> /out` yields the source path then the dest path',
+        () {
+      final got = pathPayloads('cat /etc/hosts > /tmp/out');
+      expect(got, contains('/etc/hosts'));
+      expect(got, contains('/tmp/out'));
+    });
+
+    test('a double-quoted path `"/a/b"` is detected, quote-stripped', () {
+      expect(pathPayloads('"/a/b"'), contains('/a/b'));
+      expect(pathPayloads('"/a/b"'), everyElement(isNot(contains('"'))));
+    });
+
+    test('a single-quoted path `\'/a/b\'` is detected, quote-stripped', () {
+      expect(pathPayloads("'/a/b'"), contains('/a/b'));
+      expect(pathPayloads("'/a/b'"), everyElement(isNot(contains("'"))));
+    });
+
+    test('a quoted absolute path inside a command is detected', () {
+      expect(pathPayloads('cat "/etc/ssh/sshd_config"'),
+          contains('/etc/ssh/sshd_config'));
+    });
+
+    test('`/a/b && /c/d` yields both paths (ampersand terminates)', () {
+      final got = pathPayloads('/a/b && /c/d');
+      expect(got, contains('/a/b'));
+      expect(got, contains('/c/d'));
+    });
+
+    // #826 regression guard — glob/var/command-sub tokens MUST still be SUPPRESSED
+    // (terminator-trimming must NOT carve a clean-looking sub-path out of them).
+    test(r'regression: `${UID}` shell-var path STILL rejected (#826)', () {
+      expect(pathPayloads(r'rm -f /tmp/.ssh_loaded_${UID}_*'), isEmpty);
+    });
+
+    test('regression: glob `~/.ssh/*.pub` STILL rejected (#826)', () {
+      expect(pathPayloads(r'for pub in ~/.ssh/*.pub'), isEmpty);
+    });
+
+    test('regression: command-sub `~/.zshrc.bak.\$(date +%s)` STILL rejected',
+        () {
+      expect(pathPayloads(r'cp ~/.zshrc ~/.zshrc.bak.$(date +%s)'),
+          isNot(contains(r'~/.zshrc.bak.')));
+    });
+
+    test('regression: bracket glob `~/.ssh/id_[rd]sa` STILL rejected (#826)',
+        () {
+      expect(pathPayloads(r'~/.ssh/id_[rd]sa'), isEmpty);
+    });
+
+    test('regression: a glob TERMINATED by `;` is STILL rejected, not trimmed',
+        () {
+      // `/a/b*` is a glob; the trailing `;` must NOT rescue a clean `/a/b*`→`/a/b`
+      // — the reject-class `*` suppresses the whole candidate.
+      expect(pathPayloads('/a/b*; echo'), isEmpty);
+    });
+
+    test('regression: clean paths STILL detect (no over-suppression)', () {
+      expect(pathPayloads('see /etc/hosts here'), contains('/etc/hosts'));
+      expect(pathPayloads('open ~/notes.md now'), contains('~/notes.md'));
+      expect(pathPayloads('edit ../src/x.dart'), contains('../src/x.dart'));
+    });
+
+    test(
+      'a genuinely long path that WRAPS still matches WHOLE (no over-correction)',
+      () {
+        // cols=15. Row 0 is full and soft-wraps; the long absolute path spans
+        // both rows and must join into ONE match — the delimiter-termination fix
+        // must not break legitimate wrap-join.
+        final reader = _FakeCellReader(
+          [
+            '/var/lib/postg', // 14 chars, soft-wraps into row 1
+            'resql/data/base', // continuation
+          ],
+          cols: 15,
+          wraps: [true, false],
+        );
+        final got = scanner
+            .scan(reader, [pathPattern])
+            .where((m) => m.patternId == 'path')
+            .map((m) => '${m.payload}')
+            .toList();
+        expect(got, contains('/var/lib/postgresql/data/base'));
+      },
+    );
+  });
 }
