@@ -437,6 +437,115 @@ class TerminalControllerImpl extends TerminalController
     );
   }
 
+  /// #873: SYNCHRONOUSLY re-validate the live detection anchors against the
+  /// CURRENT cells and DROP any whose anchored cell-run no longer carries the
+  /// matched text. Runs on every redraw notify ([_onTerminalChanged]), BEFORE the
+  /// debounced full [_rescanDetections] would fire.
+  ///
+  /// The full re-scan is DEBOUNCED (~120ms) and a streaming TUI keeps cancelling/
+  /// pushing the timer out, so a line REDRAWN in place (tmux/app rewrites the row
+  /// with different content) or SCROLLED past the bounded window left the old
+  /// [StructuredMatch] in [_detectionMatches] — and thus in [anchors]/[matchAt] —
+  /// for the whole debounce window (often far longer under streaming output). The
+  /// widget-layer decorator paints those stale anchors over text that no longer
+  /// contains the match: the "orphaned highlight box" device report (#873).
+  ///
+  /// EVICTION must not wait on the debounce. This prune is the immediate
+  /// counterpart to the rescan: discovery of NEW matches stays debounced (the
+  /// expensive bounded-window scan), but a match whose cells CHANGED is dropped
+  /// the moment the redraw is observed. It re-reads ONLY the rows each existing
+  /// match occupies (cheap) and, using the SAME scanner/patterns, keeps the match
+  /// only if an equivalent same-payload match still covers those cells — so wrap-
+  /// join, normalize (`www.`→`https://`), and OSC-8 grouping all re-validate
+  /// identically to a full scan. A match whose rows fell out of the live buffer
+  /// (evicted / scrolled past) reads zero cells → no re-match → dropped.
+  ///
+  /// Defensive like [_rescanDetections]: any FFI/scan hiccup must never crash the
+  /// session, so a failure leaves the existing matches untouched (the debounced
+  /// full rescan will still correct them) rather than throwing.
+  void _pruneStaleDetections() {
+    if (_detectionMatches.isEmpty) return;
+    // No patterns left (cleared) — nothing legitimately detectable; drop all.
+    if (_textPatterns.isEmpty) {
+      _detectionMatches = const [];
+      highlights = const [];
+      _decorationNotifier.notify();
+      return;
+    }
+    // Mirror [_rescanDetections]'s alt-screen suppression so a prune uses the
+    // SAME pattern set the (debounced) full scan would, and a regex match left
+    // over from the primary screen is re-validated against the OSC-8-only set on
+    // the alt screen (and thus dropped) rather than wrongly kept.
+    final suppressHeuristics =
+        _activeScreen == .alternate && _mouseTracking == .none;
+    final scanPatterns = suppressHeuristics
+        ? [for (final p in _textPatterns.values) if (p.isOsc8Source) p]
+        : _textPatterns.values.toList(growable: false);
+
+    List<StructuredMatch> survivors;
+    try {
+      _renderState.update(terminal);
+      final cols = _renderState.cols;
+      final visibleRows = _renderState.rows;
+      if (cols <= 0 || visibleRows <= 0) {
+        survivors = const [];
+      } else {
+        final scrollback = terminal.scrollbackRows;
+        final maxEndAbs = scrollback + visibleRows; // exclusive buffer bound
+        survivors = <StructuredMatch>[
+          for (final m in _detectionMatches)
+            if (_matchStillPresent(m, scanPatterns, cols, maxEndAbs)) m,
+        ];
+      }
+    } catch (_) {
+      // A read hiccup must not crash or spuriously clear anchors; leave the set
+      // as-is and let the debounced full rescan reconcile.
+      return;
+    }
+
+    if (survivors.length == _detectionMatches.length) return; // nothing dropped
+    _detectionMatches = survivors;
+    highlights = [for (final m in survivors) ...m.ranges];
+    // The anchor set shrank → wake the narrow decoration listener so the
+    // decorator re-resolves and the orphaned box vanishes immediately.
+    _decorationNotifier.notify();
+  }
+
+  /// #873: true iff [match] is STILL present in the current cells — i.e. a fresh
+  /// scan over exactly the rows it occupies (clamped to the live buffer) yields a
+  /// same-payload match. Re-uses the production scanner + patterns so re-
+  /// validation matches detection exactly.
+  bool _matchStillPresent(
+    StructuredMatch match,
+    List<TextPattern> scanPatterns,
+    int cols,
+    int maxEndAbs,
+  ) {
+    if (scanPatterns.isEmpty) return false;
+    var top = match.ranges.first.topRow;
+    var bottom = match.ranges.first.bottomRow;
+    for (final r in match.ranges) {
+      if (r.topRow < top) top = r.topRow;
+      if (r.bottomRow > bottom) bottom = r.bottomRow;
+    }
+    // Clamp to the live buffer; a match whose rows fell out of the buffer
+    // (evicted / scrolled past) yields an empty region → no re-match → drop.
+    final startAbs = top < 0 ? 0 : top;
+    final endAbs = (bottom + 1) > maxEndAbs ? maxEndAbs : bottom + 1; // exclusive
+    if (endAbs - startAbs <= 0) return false;
+    final reader = _ScreenCellReader(
+      terminal: terminal,
+      cols: cols,
+      startAbsRow: startAbs,
+      endAbsRow: endAbs,
+    );
+    final fresh = _detectionScanner.scan(reader, scanPatterns);
+    for (final f in fresh) {
+      if (f.payload == match.payload) return true;
+    }
+    return false;
+  }
+
   /// #767: re-scan the active screen plus a bounded scrollback window for every
   /// registered pattern, store the matches, and ASSIGN the resulting absolute-
   /// coordinate ranges to [highlights] (the existing painter draws them). A
@@ -608,6 +717,10 @@ class TerminalControllerImpl extends TerminalController
   /// scanned range, is never detected. Schedule the same debounced rescan the
   /// output path uses so a scroll burst coalesces into one scan.
   void _onScrollChanged() {
+    // #873: a scroll can move a match out of the bounded scan window; re-validate
+    // live anchors against the current cells immediately (the debounced rescan
+    // below handles DISCOVERY of newly-visible matches).
+    _pruneStaleDetections();
     _scheduleDetectionRescan();
     notifyListeners();
   }
@@ -1287,6 +1400,14 @@ class TerminalControllerImpl extends TerminalController
     }
 
     _scrollToBottomOnOutput();
+    // #873: a redraw may have rewritten the cells UNDER a live anchor (tmux/app
+    // repaints a row, or content scrolled past the bounded window). DISCOVERY of
+    // new matches stays debounced below, but EVICTION of a now-stale anchor must
+    // be immediate — synchronously re-validate the live anchors against the
+    // current cells and drop any whose run no longer carries the matched text, so
+    // no orphaned highlight box lingers through the debounce window. No-op when no
+    // anchors are live or no pattern is registered.
+    _pruneStaleDetections();
     // #767: a notify means the cells may have changed (output streamed) or the
     // viewport scrolled; re-scan registered structured-text patterns on a
     // debounce so the highlights track new content. No-op when none registered.
