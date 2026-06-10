@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+51 (2026-06-10) — tap a "build ready" notification to open the link
+- **Attention notifications with a URL are now tappable to open it.** When a signal's text carries a link (e.g. your dev-loop emits `Build ready: https://…`), tapping the notification opens that URL in your browser (and focuses the session). Finish a build remotely → tap → install, no scrolling. (#710) — to surface the link, emit it via the bell/OSC-9 hook (`printf '\033]9;Build ready: <url>\007'`); I can wire the release script to do this automatically.
+
 ## v0.1.10+50 (2026-06-10) — reconnecting no longer spams notifications
 - **Reconnecting a session no longer bubbles up notifications.** A bell replayed during the reconnect catch-up (old/historical, not a live "Claude needs you" moment) is now ignored — only genuinely live output after the session settles posts a notification. Applies to first connect too. Combined with +49's per-server dedup + naming, reconnect is quiet. (#851) — this stacks on +49's notification fixes; install this to get all of them.
 
