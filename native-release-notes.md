@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+50 (2026-06-10) — reconnecting no longer spams notifications
+- **Reconnecting a session no longer bubbles up notifications.** A bell replayed during the reconnect catch-up (old/historical, not a live "Claude needs you" moment) is now ignored — only genuinely live output after the session settles posts a notification. Applies to first connect too. Combined with +49's per-server dedup + naming, reconnect is quiet. (#851) — this stacks on +49's notification fixes; install this to get all of them.
+
 ## v0.1.10+49 (2026-06-09) — notifications that make sense + no keyboard-hide layout glitch
 - **Attention notifications are fixed end-to-end.** The persistent notification no longer sits on "Connecting…" — it shows live state ("Connected — N sessions"). Attention alerts now **name the server** (e.g. "raserver — IT"), so two servers never look identical; a single Claude event reaching two sessions on one host shows **one** alert (not duplicates); and you're **not pinged for a host you're already looking at**. Device-validated: foregrounded on a host → bells suppressed. (#847) — to also get the tmux *window* name in the alert, add the `alert-bell` hook to `~/.tmux.conf`.
 - **Keyboard hide no longer scrambles the terminal.** Hiding the keyboard was firing a storm of resizes across every session, overgrowing the grid and duplicating/ghosting content. Resizes that don't actually change size are now dropped, and the keyboard-hide resize settles once instead of thrashing. (#848)
