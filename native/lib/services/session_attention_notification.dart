@@ -414,6 +414,46 @@ class MapKeyValueStore implements KeyValueStore {
   }
 }
 
+/// Internal JSON key used to stamp a pending-focus write with a monotonic
+/// sequence number (#870). It is an UNDERSCORE-prefixed, payload-internal field
+/// — `AttentionNotification.parsePayload` already ignores unknown keys, so a
+/// stamped payload round-trips through every existing reader unchanged (the
+/// stamp is never surfaced to the router and never reaches a notification). The
+/// stamp lets `takePending` resolve the write↔read race (#870): a fresh tap's
+/// write carries a HIGHER seq than a stale, never-consumed prior entry, so the
+/// consume can prefer the freshest write.
+const String _kPendingSeqKey = '_seq';
+
+/// Process-wide monotonic sequence source for pending-focus writes (#870).
+/// Each [PendingFocusBridge.setPendingFromPayload] stamps the next value. It is
+/// seeded from the wall clock (so writes from DIFFERENT isolates — the FGS task
+/// isolate's foreground tap vs. the background-tap isolate — order roughly by
+/// real time) but strictly increasing within an isolate (ties broken by an
+/// incrementing counter), so two writes in the same millisecond still order.
+int _lastPendingSeq = 0;
+int _nextPendingSeq() {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final next = now > _lastPendingSeq ? now : _lastPendingSeq + 1;
+  _lastPendingSeq = next;
+  return next;
+}
+
+/// Extract the `_seq` stamp from a stored pending payload, or null when absent
+/// (an unstamped legacy write, or a non-JSON payload). Defensive: never throws.
+int? _seqOf(String? raw) {
+  if (raw == null || raw.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map) {
+      final s = decoded[_kPendingSeqKey];
+      if (s is int) return s;
+    }
+  } catch (_) {
+    // Not JSON / malformed — treat as unstamped.
+  }
+  return null;
+}
+
 /// Cross-isolate "session to focus on next resume/init" hand-off (#840 Slice 2).
 ///
 /// The notification tap is handled outside the UI's Riverpod containers. It
@@ -421,20 +461,69 @@ class MapKeyValueStore implements KeyValueStore {
 /// UI isolate reads + clears it on init (cold) and resume (warm) and calls
 /// `sessionsProvider.notifier.setActive(sessionId)` (then optionally selects the
 /// source window).
+///
+/// #870 race hardening: a foreground tap WRITES the pending entry asynchronously
+/// (cross-isolate, to disk) while the SAME tap also foregrounds the app →
+/// `resumed` → `takePending` READS. If the read beats the write it consumes a
+/// STALE, never-consumed prior entry (e.g. an earlier nv-dev tap) and routes to
+/// the wrong host. `takePending` mitigates this by stamping each write with a
+/// monotonic seq and, on consume, yielding once to let an in-flight fresher
+/// write land — preferring the higher-seq entry so the JUST-TAPPED write wins.
 class PendingFocusBridge {
-  PendingFocusBridge(this._store);
+  PendingFocusBridge(
+    this._store, {
+    this.log,
+    this.raceGrace = const Duration(milliseconds: 16),
+  });
 
   final KeyValueStore _store;
+
+  /// Telemetry seam (#870). Production binds this to `ctrace` so the pending
+  /// WRITE lands in the uploaded connect-log ring; null in unit tests that don't
+  /// assert logging. Logs sid/host only — never auth material.
+  final void Function(String where, String msg)? log;
+
+  /// How long [takePending] yields to let an in-flight cross-isolate write land
+  /// before committing to a consume (#870). Injectable so a unit test can drive
+  /// the race deterministically (a write scheduled inside the grace must win).
+  final Duration raceGrace;
 
   /// Storage key. Namespaced to avoid clashing with other app data.
   static const String _key = 'mobissh.attention.pendingFocus';
 
   /// Record a pending focus from a notification [payload]. Latest write wins.
-  /// A payload that parses to no sessionId is a no-op (nothing to focus).
+  /// A payload that parses to no sessionId is a no-op (nothing to focus). The
+  /// stored value is stamped with a monotonic `_seq` (#870) so a later consume
+  /// can resolve the write↔read race in favour of the freshest write.
   Future<void> setPendingFromPayload(String? payload) async {
     final parsed = AttentionNotification.parsePayload(payload);
-    if (parsed.sessionId == null) return;
-    await _store.setString(_key, payload!);
+    final sid = parsed.sessionId;
+    if (sid == null) return;
+    final stamped = _stampSeq(payload!);
+    await _store.setString(_key, stamped);
+    // #870: log the WRITE so the write/read ORDER is visible in a capture (the
+    // next device report can show whether the consume raced ahead of this).
+    log?.call(
+      'ui.attention',
+      'pending set sid=$sid host=${hostOfSessionId(sid)}',
+    );
+  }
+
+  /// Re-encode [payload] with a fresh monotonic `_seq` stamp (#870). Falls back
+  /// to the raw payload if it isn't a JSON object (a bare-id legacy payload — it
+  /// still round-trips through `parsePayload`, just without a stamp).
+  String _stampSeq(String payload) {
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map) {
+        final m = Map<String, dynamic>.from(decoded);
+        m[_kPendingSeqKey] = _nextPendingSeq();
+        return jsonEncode(m);
+      }
+    } catch (_) {
+      // Non-JSON payload — store verbatim (unstamped).
+    }
+    return payload;
   }
 
   /// Non-destructive read of the pending focus, or `(null, null, null)` when
@@ -447,10 +536,38 @@ class PendingFocusBridge {
 
   /// One-shot consume: returns the pending `(sessionId, sourceWindow?, url?)`
   /// AND clears it so a later resume doesn't re-focus the same session.
+  ///
+  /// #870: resolves the write↔read race. After the initial read it yields once
+  /// (the [_raceGrace] window) and re-reads; if a FRESHER write landed in the
+  /// meantime (a higher `_seq`, e.g. the just-tapped notification's pending
+  /// arriving from another isolate) that fresher entry is consumed instead of
+  /// the stale one. The entry is removed on consume so a never-re-consumed stale
+  /// tap can't be served later.
   Future<({String? sessionId, int? sourceWindow, String? url})>
       takePending() async {
-    final raw = await _store.getString(_key);
-    if (raw != null) await _store.remove(_key);
-    return AttentionNotification.parsePayload(raw);
+    final first = await _store.getString(_key);
+    // Yield once so an in-flight cross-isolate write (the just-tapped pending)
+    // can land before we commit to consuming. A single short yield is enough to
+    // let the FFT disk write flush + the store reflect it; it does NOT block the
+    // resume path meaningfully (sub-frame). We yield even when the first read
+    // was empty: the racing write may not have landed yet at all.
+    await Future<void>.delayed(raceGrace);
+    final second = await _store.getString(_key);
+
+    // Pick the FRESHER of the two reads by seq. If the second read produced a
+    // higher-seq entry (a newer write raced in), prefer it; otherwise keep the
+    // first. Unstamped (legacy) entries sort below any stamped one.
+    final firstSeq = _seqOf(first) ?? -1;
+    final secondSeq = _seqOf(second) ?? -1;
+    final chosen = (second != null && secondSeq > firstSeq) ? second : first;
+
+    if (chosen == null) {
+      return AttentionNotification.parsePayload(null);
+    }
+
+    // Clear the entry so a later resume doesn't re-focus the same session and a
+    // never-consumed stale tap can't be served later (#870).
+    await _store.remove(_key);
+    return AttentionNotification.parsePayload(chosen);
   }
 }

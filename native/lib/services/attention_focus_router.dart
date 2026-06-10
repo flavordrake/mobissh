@@ -21,8 +21,6 @@
 // to detect tmux, how to open a URL) is injected so this class is unit-testable
 // without Flutter.
 
-import 'dart:developer' as developer;
-
 import 'session_attention_notification.dart';
 import 'tmux_window_select.dart';
 
@@ -36,13 +34,15 @@ class AttentionFocusRouter {
     bool Function(String sessionId)? isTmux,
     Future<void> Function(String url)? openUrl,
     String? Function(String host)? resolveLiveSessionForHost,
+    void Function(String where, String msg)? log,
   }) : _bridge = bridge,
        _setActive = setActive,
        _sessionExists = sessionExists,
        _sendInput = sendInput,
        _isTmux = isTmux,
        _openUrl = openUrl,
-       _resolveLiveSessionForHost = resolveLiveSessionForHost;
+       _resolveLiveSessionForHost = resolveLiveSessionForHost,
+       _log = log;
 
   // ignore_for_file: prefer_initializing_formals
   final PendingFocusBridge _bridge;
@@ -65,6 +65,13 @@ class AttentionFocusRouter {
   /// `launchUrl(externalApplication)`. Injected so the launch is unit-testable
   /// without a real browser.
   final Future<void> Function(String url)? _openUrl;
+
+  /// Capturable telemetry seam (#870). Production binds this to `ctrace` so the
+  /// CONSUME route decision lands in the uploaded connect-log ring (the previous
+  /// `developer.log` line was NOT captured, so the +54 wrong-host report had
+  /// zero telemetry). Null in unit tests that don't assert logging. Logs
+  /// sid/host/route only — never auth material.
+  final void Function(String where, String msg)? _log;
 
   /// One-shot consume of any pending focus. Safe to call on init (cold start)
   /// AND resume (warm) — `takePending` clears the record so a later resume
@@ -98,10 +105,14 @@ class AttentionFocusRouter {
       }
     }
 
-    developer.log(
+    // #870: route the focus decision through the injected `_log` seam (bound to
+    // `ctrace` in production) so it lands in the UPLOADED connect-log ring — the
+    // previous `developer.log` line was not captured, leaving the +54 wrong-host
+    // report with zero telemetry. Logs sid/host/route only (no auth material).
+    _log?.call(
+      'ui.attention',
       'focus: payload sid=$payloadSid host=$host → '
       '${sid == null ? 'none' : 'setActive(matched sid=$sid) | $route'}',
-      name: 'attention',
     );
 
     if (sid == null) return null;

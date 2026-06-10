@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../diagnostics/connect_trace.dart';
 import '../services/attention_focus_router.dart';
 import '../services/attention_notifier_fln.dart';
 import '../services/session_attention_notification.dart';
@@ -22,9 +23,17 @@ import 'sessions.dart';
 /// tmux flag from the DA2 handshake is a future refinement; the navigation is
 /// device-gated + best-effort and skips silently on a miss either way.)
 final attentionFocusRouterProvider = Provider<AttentionFocusRouter>((ref) {
-  final bridge = PendingFocusBridge(const FftKeyValueStore());
+  // #870: bind the bridge's pending-WRITE log to `ctrace` so the write lands in
+  // the uploaded connect-log (the UI-isolate consume side). The cold/warm
+  // consume happens here in the UI isolate; foreground/background tap WRITES
+  // happen in the task / background isolate (see attention_notifier_fln.dart),
+  // which bind their own ctrace.
+  final bridge = PendingFocusBridge(const FftKeyValueStore(), log: ctrace);
   return AttentionFocusRouter(
     bridge: bridge,
+    // #870: route the CONSUME focus decision through `ctrace` so the resolved
+    // route (setActive / host-fallback / none) is captured in the connect-log.
+    log: ctrace,
     setActive: (id) => ref.read(sessionsProvider.notifier).setActive(id),
     sessionExists: (id) =>
         ref.read(sessionsProvider).entries.any((e) => e.id == id),

@@ -35,8 +35,12 @@ void attentionNotificationTapBackground(NotificationResponse response) {
   // its next init/resume. Runs in a short-lived background isolate — keep it
   // tiny + tolerant.
   final payload = response.payload;
+  // #870: bind the pending-WRITE log to `ctrace` so the write ORDER is visible
+  // in a capture (this runs in a short-lived background isolate — its ctrace
+  // ring is separate from the UI's, but logcat still shows it).
   unawaited(
-    PendingFocusBridge(FftKeyValueStore()).setPendingFromPayload(payload),
+    PendingFocusBridge(FftKeyValueStore(), log: ctrace)
+        .setPendingFromPayload(payload),
   );
 }
 
@@ -63,9 +67,10 @@ class FlnAttentionNotifier implements AttentionNotifier {
       initSettings,
       onDidReceiveNotificationResponse: (response) {
         // Foreground tap (app alive): record pending focus; the UI consumes it
-        // on the next resume. The background variant covers a dead app.
+        // on the next resume. The background variant covers a dead app. #870:
+        // bind the pending-WRITE log to `ctrace` so the write order is captured.
         unawaited(
-          PendingFocusBridge(FftKeyValueStore())
+          PendingFocusBridge(FftKeyValueStore(), log: ctrace)
               .setPendingFromPayload(response.payload),
         );
       },
