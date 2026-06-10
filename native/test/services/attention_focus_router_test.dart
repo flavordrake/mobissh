@@ -120,6 +120,103 @@ void main() {
       await router.consumePending();
       expect(sent, isEmpty);
     });
+
+    test('URL payload (#710): focuses the session AND opens the URL', () async {
+      final bridge = PendingFocusBridge(MapKeyValueStore());
+      await bridge.setPendingFromPayload(jsonEncode({
+        'sessionId': 'A',
+        'url': 'https://example.com/app.apk',
+      }));
+      final activated = <String>[];
+      final opened = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: activated.add,
+        sessionExists: (_) => true,
+        sendInput: (a, b) {},
+        openUrl: (u) async => opened.add(u),
+      );
+      final focused = await router.consumePending();
+      expect(focused, 'A');
+      expect(activated, ['A'], reason: 'tap still focuses the session');
+      expect(opened, ['https://example.com/app.apk']);
+    });
+
+    test('no url payload (#710): focuses, does NOT call openUrl', () async {
+      final bridge = PendingFocusBridge(MapKeyValueStore());
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': 'A'}));
+      final activated = <String>[];
+      final opened = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: activated.add,
+        sessionExists: (_) => true,
+        sendInput: (a, b) {},
+        openUrl: (u) async => opened.add(u),
+      );
+      await router.consumePending();
+      expect(activated, ['A']);
+      expect(opened, isEmpty);
+    });
+
+    test('malformed / non-http url (#710): not launched', () async {
+      final bridge = PendingFocusBridge(MapKeyValueStore());
+      await bridge.setPendingFromPayload(jsonEncode({
+        'sessionId': 'A',
+        'url': 'javascript:alert(1)',
+      }));
+      final opened = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: (_) {},
+        sessionExists: (_) => true,
+        sendInput: (a, b) {},
+        openUrl: (u) async => opened.add(u),
+      );
+      await router.consumePending();
+      expect(opened, isEmpty, reason: 'only well-formed http(s) URLs launch');
+    });
+
+    test('openUrl that throws does not crash the tap (#710)', () async {
+      final bridge = PendingFocusBridge(MapKeyValueStore());
+      await bridge.setPendingFromPayload(jsonEncode({
+        'sessionId': 'A',
+        'url': 'https://example.com/x',
+      }));
+      final activated = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: activated.add,
+        sessionExists: (_) => true,
+        sendInput: (a, b) {},
+        openUrl: (_) async => throw StateError('launch boom'),
+      );
+      // Must not throw — launch errors are swallowed; focus still happens.
+      final focused = await router.consumePending();
+      expect(focused, 'A');
+      expect(activated, ['A']);
+    });
+
+    test('stale session with url payload → neither setActive nor openUrl (#710)',
+        () async {
+      final bridge = PendingFocusBridge(MapKeyValueStore());
+      await bridge.setPendingFromPayload(jsonEncode({
+        'sessionId': 'gone',
+        'url': 'https://example.com/x',
+      }));
+      final activated = <String>[];
+      final opened = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: activated.add,
+        sessionExists: (_) => false,
+        sendInput: (a, b) {},
+        openUrl: (u) async => opened.add(u),
+      );
+      expect(await router.consumePending(), isNull);
+      expect(activated, isEmpty);
+      expect(opened, isEmpty);
+    });
   });
 
   group('tmuxSelectWindowSequence', () {

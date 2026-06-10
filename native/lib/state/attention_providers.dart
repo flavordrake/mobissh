@@ -6,6 +6,7 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/attention_focus_router.dart';
 import '../services/attention_notifier_fln.dart';
@@ -37,5 +38,13 @@ final attentionFocusRouterProvider = Provider<AttentionFocusRouter>((ref) {
     },
     // See doc above: a parsed (win N) hint implies the owner's tmux setup.
     isTmux: (_) => true,
+    // #710: open an explicitly-signalled URL from the tapped notification in the
+    // system browser. Same idiom as url_action_overlay's _defaultOpen. The
+    // router guards to well-formed http(s) and swallows launch errors.
+    openUrl: (url) async {
+      final uri = Uri.tryParse(url);
+      if (uri == null) return;
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    },
   );
 });

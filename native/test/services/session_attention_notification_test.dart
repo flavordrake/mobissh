@@ -119,6 +119,115 @@ void main() {
       expect(lower.contains('passphrase'), isFalse);
       expect(lower.contains('secret'), isFalse);
     });
+
+    test('PAYLOAD CARRIES NO SECRET MATERIAL even with a URL present (#710)', () {
+      // A signal that carries BOTH a URL and secret-looking material: the URL is
+      // extracted into the payload (intended), but no auth material leaks. The
+      // payload keys stay a closed set of {sessionId, sourceWindow?, url?}.
+      const sig = AttentionSignal(
+        AttentionKind.osc9,
+        'Build ready: https://example.com/app.apk password=hunter2 (win 2)',
+      );
+      final n = AttentionNotification.build(sessionId: 'sess-A', signal: sig);
+      final payload = jsonDecode(n.payload) as Map<String, dynamic>;
+      expect(payload.keys.toSet(), {'sessionId', 'sourceWindow', 'url'});
+      expect(payload['url'], 'https://example.com/app.apk');
+      final lower = n.payload.toLowerCase();
+      expect(lower.contains('hunter2'), isFalse);
+      expect(lower.contains('password'), isFalse);
+    });
+  });
+
+  group('AttentionNotification URL extraction (#710)', () {
+    test('build extracts the first http(s) URL into the payload', () {
+      const sig = AttentionSignal(
+        AttentionKind.osc777,
+        'Build ready: https://example.com/app.apk',
+      );
+      final n = AttentionNotification.build(sessionId: 'sess-A', signal: sig);
+      expect(n.url, 'https://example.com/app.apk');
+      final payload = jsonDecode(n.payload) as Map;
+      expect(payload['url'], 'https://example.com/app.apk');
+      // The URL stays visible in the body (host-prefixed, unchanged).
+      expect(n.body, 'sess-A — Build ready: https://example.com/app.apk');
+    });
+
+    test('http and https both match; first wins', () {
+      const sig = AttentionSignal(
+        AttentionKind.osc9,
+        'see http://a.test/1 then https://b.test/2',
+      );
+      final n = AttentionNotification.build(sessionId: 's', signal: sig);
+      expect(n.url, 'http://a.test/1');
+    });
+
+    test('no URL → no url field and no url payload key', () {
+      const sig = AttentionSignal(AttentionKind.osc9, 'Claude is waiting');
+      final n = AttentionNotification.build(sessionId: 'sess-A', signal: sig);
+      expect(n.url, isNull);
+      final payload = jsonDecode(n.payload) as Map;
+      expect(payload.containsKey('url'), isFalse);
+    });
+
+    test('bare bell (no text) → no url', () {
+      const sig = AttentionSignal(AttentionKind.bell, null);
+      final n = AttentionNotification.build(sessionId: 'fd-dev:22:u:1', signal: sig);
+      expect(n.url, isNull);
+    });
+
+    test('URL with a (win N) suffix: url extracted, body still strips the win', () {
+      const sig = AttentionSignal(
+        AttentionKind.osc9,
+        'ready https://example.com/x (win 3)',
+      );
+      final n = AttentionNotification.build(sessionId: 'fd-dev:22:u:1', signal: sig);
+      expect(n.url, 'https://example.com/x');
+      expect(n.sourceWindow, 3);
+      // (win 3) stripped from body; URL retained.
+      expect(n.body, 'fd-dev — ready https://example.com/x');
+      final payload = jsonDecode(n.payload) as Map;
+      expect(payload['url'], 'https://example.com/x');
+      expect(payload['sourceWindow'], 3);
+    });
+
+    test('parsePayload round-trips url', () {
+      final payload = jsonEncode({
+        'sessionId': 'A',
+        'sourceWindow': 1,
+        'url': 'https://example.com/y',
+      });
+      final parsed = AttentionNotification.parsePayload(payload);
+      expect(parsed.sessionId, 'A');
+      expect(parsed.sourceWindow, 1);
+      expect(parsed.url, 'https://example.com/y');
+    });
+
+    test('parsePayload with no url → null url', () {
+      final parsed =
+          AttentionNotification.parsePayload(jsonEncode({'sessionId': 'A'}));
+      expect(parsed.url, isNull);
+    });
+  });
+
+  group('parseUrl trailing-punctuation trim (#710)', () {
+    test('trims a trailing close-paren + period', () {
+      expect(parseUrl('see (https://x.com/p).'), 'https://x.com/p');
+    });
+    test('trims trailing sentence punctuation', () {
+      expect(parseUrl('ready https://x.com/p,'), 'https://x.com/p');
+      expect(parseUrl('ready https://x.com/p!'), 'https://x.com/p');
+      expect(parseUrl('done: https://x.com/path;'), 'https://x.com/path');
+    });
+    test('keeps interior path characters', () {
+      expect(parseUrl('https://x.com/a/b?q=1&z=2'), 'https://x.com/a/b?q=1&z=2');
+    });
+    test('first http(s) URL only; ignores bare www / non-http schemes', () {
+      expect(parseUrl('go to www.example.com'), isNull);
+      expect(parseUrl('ftp://example.com/x'), isNull);
+      expect(parseUrl('no url here'), isNull);
+      expect(parseUrl(null), isNull);
+      expect(parseUrl(''), isNull);
+    });
   });
 
   group('parseSourceWindow', () {
