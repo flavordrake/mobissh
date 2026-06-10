@@ -83,6 +83,7 @@ final fileViewerRegistryProvider = Provider<FileViewerRegistry>((ref) {
       open: (context, sessionId, entry) {
         Navigator.of(context).push(
           MaterialPageRoute<void>(
+            settings: const RouteSettings(name: kFileBrowserRouteName),
             builder: (_) =>
                 MarkdownFileViewerScreen(sessionId: sessionId, entry: entry),
           ),
@@ -96,6 +97,7 @@ final fileViewerRegistryProvider = Provider<FileViewerRegistry>((ref) {
       open: (context, sessionId, entry) {
         Navigator.of(context).push(
           MaterialPageRoute<void>(
+            settings: const RouteSettings(name: kFileBrowserRouteName),
             builder: (_) =>
                 TextFileViewerScreen(sessionId: sessionId, entry: entry),
           ),
