@@ -332,6 +332,185 @@ void main() {
     });
   });
 
+  // #870: the +54 wrong-host report (tap fd-dev → land on nv-dev) had ZERO
+  // telemetry because the route log went through `developer.log` (not captured
+  // in the uploaded connect-log) and the pending write↔consume race could serve
+  // a STALE prior entry. These tests pin (1) the capturable telemetry seams and
+  // (2) the seq-stamped race resolution.
+  group('AttentionFocusRouter capturable telemetry (#870)', () {
+    test('CONSUME route is logged via the injected log seam (→ ctrace)',
+        () async {
+      const sid = 'fddev:22:me:100';
+      final bridge = PendingFocusBridge(MapKeyValueStore());
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': sid}));
+      final logs = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: (_) {},
+        sessionExists: (_) => true,
+        sendInput: (a, b) {},
+        log: (where, msg) => logs.add('[$where] $msg'),
+      );
+      await router.consumePending();
+      // The route line must be captured (sid + host + resolved route), so the
+      // NEXT device report shows exactly what was consumed.
+      expect(
+        logs,
+        contains(
+          '[ui.attention] focus: payload sid=$sid host=fddev → '
+          'setActive(matched sid=$sid) | setActive',
+        ),
+      );
+    });
+
+    test('CONSUME route logs the host-fallback decision (#857 path)', () async {
+      const staleB = 'fddev:22:me:100';
+      const liveB = 'fddev:22:me:999';
+      final bridge = PendingFocusBridge(MapKeyValueStore());
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': staleB}));
+      final logs = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: (_) {},
+        sessionExists: (id) => id == liveB,
+        sendInput: (a, b) {},
+        resolveLiveSessionForHost: (host) => host == 'fddev' ? liveB : null,
+        log: (where, msg) => logs.add('[$where] $msg'),
+      );
+      await router.consumePending();
+      expect(
+        logs,
+        contains(
+          '[ui.attention] focus: payload sid=$staleB host=fddev → '
+          'setActive(matched sid=$liveB) | host-fallback',
+        ),
+      );
+    });
+
+    test('pending WRITE is logged via the bridge log seam (→ ctrace)', () async {
+      const sid = 'fddev:22:me:100';
+      final writes = <String>[];
+      final bridge = PendingFocusBridge(
+        MapKeyValueStore(),
+        log: (where, msg) => writes.add('[$where] $msg'),
+      );
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': sid}));
+      // The write line must be captured so the write/read ORDER is visible.
+      expect(writes, contains('[ui.attention] pending set sid=$sid host=fddev'));
+    });
+
+    test('write log carries sid/host ONLY — never auth material', () async {
+      // A payload only ever carries sessionId/sourceWindow/url; assert the log
+      // line is exactly the sid+host form (no password/passphrase/key leakage).
+      const sid = 'fddev:22:me:100';
+      final writes = <String>[];
+      final bridge = PendingFocusBridge(
+        MapKeyValueStore(),
+        log: (where, msg) => writes.add(msg),
+      );
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': sid}));
+      expect(writes.single, 'pending set sid=$sid host=fddev');
+    });
+  });
+
+  // #870 race: a foreground tap WRITES pending asynchronously (cross-isolate)
+  // while the same tap foregrounds the app → resume → consume READS. A read that
+  // beats the write must NOT consume a stale prior entry. The seq-stamp + the
+  // grace re-read make the freshest write win.
+  group('PendingFocusBridge stale↔fresh race (#870)', () {
+    test('a FRESH write landing during the consume grace WINS over a stale entry',
+        () async {
+      const staleA = 'nvdev:22:me:100'; // an earlier, never-consumed nv-dev tap
+      const freshB = 'fddev:22:me:200'; // the just-tapped fd-dev notification
+      final store = MapKeyValueStore();
+      // A generous grace so the fresh write deterministically lands inside it.
+      final bridge = PendingFocusBridge(
+        store,
+        raceGrace: const Duration(milliseconds: 50),
+      );
+
+      // The stale entry is already sitting in the store (un-consumed).
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': staleA}));
+
+      // Start the consume (first read gets stale A, then it enters the grace).
+      final consume = bridge.takePending();
+      // The just-tapped fd-dev write lands DURING the grace window — a HIGHER
+      // seq than the stale entry, so the re-read prefers it.
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': freshB}));
+
+      final got = await consume;
+      expect(got.sessionId, freshB,
+          reason: 'the just-tapped fd-dev write must win the race, not nv-dev');
+    });
+
+    test('consume CLEARS the entry (a second consume finds nothing)', () async {
+      const sid = 'fddev:22:me:100';
+      final store = MapKeyValueStore();
+      final bridge = PendingFocusBridge(store);
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': sid}));
+      final first = await bridge.takePending();
+      expect(first.sessionId, sid);
+      final second = await bridge.takePending();
+      expect(second.sessionId, isNull,
+          reason: 'a never-re-consumed stale tap must not be served later');
+    });
+
+    test('end-to-end via the router: stale nv-dev pending, fresh fd-dev tap → '
+        'router routes to fd-dev (not nv-dev)', () async {
+      const staleNv = 'nvdev:22:me:100';
+      const freshFd = 'fddev:22:me:200';
+      final store = MapKeyValueStore();
+      final bridge = PendingFocusBridge(
+        store,
+        raceGrace: const Duration(milliseconds: 50),
+      );
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': staleNv}));
+
+      final activated = <String>[];
+      final router = AttentionFocusRouter(
+        bridge: bridge,
+        setActive: activated.add,
+        sessionExists: (_) => true,
+        sendInput: (a, b) {},
+      );
+
+      final consume = router.consumePending();
+      // The fd-dev tap's pending write lands during the consume grace.
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': freshFd}));
+      final focused = await consume;
+
+      expect(focused, freshFd);
+      expect(activated, [freshFd],
+          reason: 'tap fd-dev must land on fd-dev, never the stale nv-dev entry');
+    });
+
+    test('cold start (process-dead): the single pending is consumed from the '
+        'bridge (no racing write)', () async {
+      // Cold start has exactly ONE pending (written by the dead-app background
+      // tap before launch); no second write races in. It must still consume it.
+      const sid = 'fddev:22:me:100';
+      final store = MapKeyValueStore();
+      final bridge = PendingFocusBridge(store);
+      await bridge.setPendingFromPayload(jsonEncode({'sessionId': sid}));
+      final got = await bridge.takePending();
+      expect(got.sessionId, sid);
+    });
+
+    test('seq stamp is internal — parsePayload still surfaces only id/win/url',
+        () async {
+      const sid = 'fddev:22:me:100';
+      final store = MapKeyValueStore();
+      final bridge = PendingFocusBridge(store);
+      await bridge.setPendingFromPayload(
+        jsonEncode({'sessionId': sid, 'sourceWindow': 4, 'url': 'https://x.io/a'}),
+      );
+      final read = await bridge.readPending();
+      expect(read.sessionId, sid);
+      expect(read.sourceWindow, 4);
+      expect(read.url, 'https://x.io/a');
+    });
+  });
+
   group('tmuxSelectWindowSequence', () {
     test('builds prefix + :select-window -t N + Enter', () {
       final seq = tmuxSelectWindowSequence(7);
