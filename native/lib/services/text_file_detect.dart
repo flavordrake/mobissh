@@ -55,3 +55,32 @@ bool isTextEntry(SftpEntry entry, {String? mime}) {
   if (entry.isDirectory) return false;
   return hasTextExtension(entry.name) || isTextMime(mime);
 }
+
+/// Markdown extensions (lowercase, no leading dot). A subset of
+/// [_textExtensions] that the dedicated markdown viewer renders (#854).
+const Set<String> _markdownExtensions = {'md', 'markdown'};
+
+/// True when [name] ends with a markdown extension (`.md` / `.markdown`,
+/// case-insensitive).
+bool hasMarkdownExtension(String name) {
+  final dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot == name.length - 1) return false;
+  return _markdownExtensions.contains(name.substring(dot + 1).toLowerCase());
+}
+
+/// True when [mime] denotes markdown content (`text/markdown` /
+/// `text/x-markdown`). MIME parameters (`; charset=…`) are ignored.
+bool isMarkdownMime(String? mime) {
+  if (mime == null || mime.isEmpty) return false;
+  final base = mime.split(';').first.trim().toLowerCase();
+  return base == 'text/markdown' || base == 'text/x-markdown';
+}
+
+/// True when [entry] is a regular markdown file, by extension or an explicit
+/// markdown [mime]. Directories are never markdown. Used by the viewer registry
+/// to route `.md`/`.markdown` to the dedicated rendered markdown viewer (#854)
+/// BEFORE the generic monospace text viewer (first-match-wins).
+bool isMarkdownEntry(SftpEntry entry, {String? mime}) {
+  if (entry.isDirectory) return false;
+  return hasMarkdownExtension(entry.name) || isMarkdownMime(mime);
+}

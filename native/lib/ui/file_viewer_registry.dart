@@ -22,6 +22,7 @@ import '../services/pdf_detect.dart';
 import '../services/session_messages.dart';
 import '../services/text_file_detect.dart';
 import 'file_browser_screen.dart';
+import 'markdown_file_viewer.dart';
 import 'text_file_viewer.dart';
 
 /// A single registered in-app viewer.
@@ -56,8 +57,13 @@ class FileViewerRegistry {
 
 /// The active viewer registry. Defaults to the PDF viewer (#557, routed through
 /// the existing [pdfTapInterceptorProvider] so its null-override / spy seam is
-/// preserved) and the text/code viewer (#776). Tests can override this to add,
-/// remove, or stub viewers.
+/// preserved), the markdown viewer (#854), and the text/code viewer (#776).
+/// Tests can override this to add, remove, or stub viewers.
+///
+/// ORDER MATTERS — first match wins. The markdown viewer is registered BEFORE
+/// the generic text viewer so a `.md` / `.markdown` file (which `isTextEntry`
+/// also matches) routes to the rendered markdown viewer, not the raw monospace
+/// one.
 final fileViewerRegistryProvider = Provider<FileViewerRegistry>((ref) {
   return FileViewerRegistry([
     // PDF (#557): delegate to the existing interceptor provider so callers that
@@ -70,7 +76,21 @@ final fileViewerRegistryProvider = Provider<FileViewerRegistry>((ref) {
         ref.read(pdfTapInterceptorProvider)!(context, sessionId, entry);
       },
     ),
-    // Text / code / markdown (#776): read-only preview.
+    // Markdown (#854): rendered HTML + raw toggle (PWA parity). MUST precede the
+    // generic text viewer — `.md`/`.markdown` are also text, first match wins.
+    FileViewer(
+      matches: (entry, {mime}) => isMarkdownEntry(entry, mime: mime),
+      open: (context, sessionId, entry) {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                MarkdownFileViewerScreen(sessionId: sessionId, entry: entry),
+          ),
+        );
+      },
+    ),
+    // Text / code (#776): read-only monospace preview (the fallback for all
+    // other previewable text/code formats).
     FileViewer(
       matches: (entry, {mime}) => isTextEntry(entry, mime: mime),
       open: (context, sessionId, entry) {
