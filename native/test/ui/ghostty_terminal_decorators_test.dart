@@ -97,7 +97,77 @@ StructuredAnchor _urlAnchor(String url, {int row = 2, int startCol = 4}) {
   );
 }
 
+/// A recording [Canvas] that captures every `drawRRect` so a test can assert
+/// the bubble geometry the [UrlBubbleDecorator] painter produces (#864). Only
+/// the methods the painter calls are recorded; everything else is a no-op.
+class _RecordingCanvas implements Canvas {
+  final List<RRect> rrects = <RRect>[];
+
+  @override
+  void drawRRect(RRect rrect, Paint paint) => rrects.add(rrect);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
 void main() {
+  group('#864 URL bubble visual polish', () {
+    test('URL highlight style drops the underline AND the fill', () {
+      // The app paints NO underline/background of its own for a URL — the chip
+      // is the single affordance, so neither co-renders (was "slap"/redundant).
+      expect(kGhosttyUrlHighlightStyle.underline, isNull);
+      expect(kGhosttyUrlHighlightStyle.background, isNull);
+    });
+
+    testWidgets('bubble is padded horizontally and centered DOWN on the cell',
+        (tester) async {
+      // Build the painter for a single-row URL anchor and capture the RRect it
+      // draws, then compare it to the raw cell rect it was given.
+      const cell = Rect.fromLTWH(40, 40, 200, 20);
+      late Widget painter;
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Builder(
+            builder: (context) => painter = const UrlBubbleDecorator().build(
+              context,
+              const [
+                GhosttyDecoratedAnchor(
+                  payload: 'https://example.com',
+                  rects: [cell],
+                  color: Color(0xFF00FF00),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      // Reach the painter via the CustomPaint the decorator builds.
+      final customPaint = (painter as IgnorePointer).child! as CustomPaint;
+      final canvas = _RecordingCanvas();
+      customPaint.painter!.paint(canvas, const Size(400, 400));
+
+      expect(canvas.rrects, hasLength(1));
+      final bubble = canvas.rrects.single.outerRect;
+
+      // HORIZONTAL: the chip is WIDER than the cell — padded on BOTH sides so it
+      // frames the URL rather than clipping the first/last glyph.
+      expect(bubble.left, lessThan(cell.left),
+          reason: 'left edge padded outward');
+      expect(bubble.right, greaterThan(cell.right),
+          reason: 'right edge padded outward');
+      expect(bubble.width, greaterThan(cell.width));
+
+      // VERTICAL: the chip is shifted DOWN — its vertical center sits BELOW the
+      // cell's center (recentred on the glyph ink, not top-heavy).
+      expect(bubble.center.dy, greaterThan(cell.center.dy),
+          reason: 'chip nudged down to centre on the glyphs');
+      // …and it is no taller than the cell (the top slack was insetted away, not
+      // inflated), so the chip hugs the glyph row.
+      expect(bubble.height, lessThanOrEqualTo(cell.height));
+    });
+  });
+
   group('GhosttyDecoratorRegistry', () {
     test('defaults registers the url bubble decorator', () {
       final registry = GhosttyDecoratorRegistry.defaults();

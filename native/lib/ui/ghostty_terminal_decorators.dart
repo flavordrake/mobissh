@@ -42,6 +42,20 @@ const String kGhosttyOsc8PatternId = 'osc8';
 /// to [PathDecorator] (a distinct treatment from the URL bubble).
 const String kGhosttyPathPatternId = 'path';
 
+/// #864: the URL/OSC-8 pattern highlight style — DELIBERATELY EMPTY (no
+/// background fill, no underline). The bubble ([UrlBubbleDecorator]) is the
+/// SINGLE app affordance for a URL: a rounded outline chip. Device feedback
+/// (0.1.10+53) found the chip PLUS an underline read "slap"/redundant, so the
+/// app paints NO underline of its own — the chip stands alone. The fork's
+/// [HighlightPainter] only draws a fill/underline when a range's style opts in,
+/// so a null-on-both style leaves the glyphs untouched and the only URL
+/// affordance is the bubble. Named + asserted so a future change can't silently
+/// reintroduce a co-rendered underline. (A genuine SGR-4 underline emitted by
+/// the remote is the shell's own ink and is unaffected — this only governs the
+/// APP's structured-text decoration.)
+const HighlightStyle kGhosttyUrlHighlightStyle =
+    HighlightStyle(background: null, underline: null);
+
 /// Per-anchor render input handed to a [GhosttyTerminalDecorator] (#767 B).
 ///
 /// [rects] are the anchor's CURRENT viewport pixel rects (one per visible
@@ -142,11 +156,28 @@ class _UrlBubblePainter extends CustomPainter {
 
   final List<GhosttyDecoratedAnchor> anchors;
 
-  /// Outline stroke width and how much the bubble is inflated beyond the raw
-  /// cell rects, in logical px — a hair of breathing room so the outline hugs
-  /// without clipping the glyphs.
+  /// Outline stroke width, in logical px.
   static const double _stroke = 1.5;
-  static const double _inset = 1.0;
+
+  /// #864 visual polish (device feedback, 0.1.10+53):
+  ///
+  /// HORIZONTAL padding added on BOTH sides so the chip FRAMES the URL with a
+  /// little breathing room instead of clipping the first/last glyph — wider than
+  /// the old uniform 1px hug.
+  static const double _padX = 3.0;
+
+  /// VERTICAL inset: the chip is drawn TIGHTER than the raw cell rect on the
+  /// vertical axis. flterm's cell rect spans the full typographic line height
+  /// (ascender + descender slack), so a symmetric inflate left the glyph sitting
+  /// HIGH in the chip with a band of empty space above it ("too much vertical
+  /// space on the first line"). Insetting the box vertically shrinks that slack.
+  static const double _padY = 1.0;
+
+  /// DOWNWARD shift: after insetting, nudge the whole chip DOWN a few logical px
+  /// so it sits CENTERED on the glyphs rather than top-heavy (the cell's empty
+  /// band is at the TOP, so shifting down recentres the outline on the ink).
+  static const double _shiftY = 1.5;
+
   static const double _radius = 5.0;
 
   @override
@@ -158,12 +189,19 @@ class _UrlBubblePainter extends CustomPainter {
         ..strokeWidth = _stroke
         ..color = anchor.color
         ..isAntiAlias = true;
-      // One rounded outline per row segment (a wrapped URL → a chip per row),
-      // each inflated a touch and clamped non-negative so a zero-size rect can't
-      // invert. Drawing per-segment (not one merged path) keeps each wrap row's
-      // chip hugging exactly its cells.
+      // One rounded outline per row segment (a wrapped URL → a chip per row).
+      // #864: pad horizontally (frame the URL), inset vertically (drop the
+      // top-heavy slack), then shift the box DOWN so the chip is vertically
+      // CENTERED on the glyph cell. Clamped non-negative so a zero-size rect
+      // can't invert. Drawing per-segment (not one merged path) keeps each wrap
+      // row's chip hugging exactly its cells.
       for (final rect in anchor.rects) {
-        final bubble = rect.inflate(_inset);
+        final bubble = Rect.fromLTRB(
+          rect.left - _padX,
+          rect.top + _padY + _shiftY,
+          rect.right + _padX,
+          rect.bottom - _padY + _shiftY,
+        );
         if (bubble.width <= 0 || bubble.height <= 0) continue;
         canvas.drawRRect(
           RRect.fromRectAndRadius(bubble, const Radius.circular(_radius)),
