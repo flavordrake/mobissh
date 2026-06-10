@@ -108,9 +108,14 @@ abstract class TerminalController extends ChangeNotifier
   ///
   /// [row] and [col] are VIEWPORT-relative (row 0 is the top visible row),
   /// matching the coordinates a gesture detector produces from a pointer
-  /// position. The returned range's [HighlightRange.payload] recovers what the
-  /// cells represent (e.g. the URL behind a tap). When ranges overlap, the
-  /// last matching range in [highlights] wins.
+  /// position. The controller maps them to the absolute buffer frame via the
+  /// PAINTED viewport offset (`absRow = row + paintedViewportOffset`) — the SAME
+  /// offset [anchorRects] / the [HighlightPainter] resolve the on-screen rects
+  /// against — so the hit-test and the paint geometry stay unified and a tap
+  /// never lands a row off the drawn highlight (#863). The returned range's
+  /// [HighlightRange.payload] recovers what the cells represent (e.g. the URL
+  /// behind a tap). When ranges overlap, the last matching range in
+  /// [highlights] wins.
   HighlightRange? highlightAt({required int row, required int col});
 
   /// Registers a structured-text [pattern] for in-terminal detection (#767).
@@ -136,11 +141,18 @@ abstract class TerminalController extends ChangeNotifier
   /// ([row], [col]), or null when none covers it (#767).
   ///
   /// [row]/[col] are VIEWPORT-relative (row 0 is the top visible row); the
-  /// controller maps them to the absolute buffer frame (`absRow = row +
-  /// scrollbar.offset`) and snaps [col] to a wide-character boundary before
-  /// hit-testing. The returned [StructuredMatch.payload] recovers what the
-  /// cells represent (e.g. the URL behind a tap/long-press). When matches
-  /// overlap, the last detected one wins.
+  /// controller maps them to the absolute buffer frame via the PAINTED viewport
+  /// offset (`absRow = row + paintedViewportOffset`) — the SAME offset the URL
+  /// bubble's paint geometry uses ([anchorRects] / [AnchorGeometry.rectsFor]:
+  /// `viewRow = absRow - paintedViewportOffset`) — and snaps [col] to a
+  /// wide-character boundary before hit-testing. Using the painted offset (not
+  /// the live `scrollbar.offset`, which can lead the painted glyphs by a frame
+  /// during a tmux-redraw scroll, #803) keeps the tappable cell unified with the
+  /// drawn bubble, so a tap anywhere on a painted URL (incl. a `:port` URL or a
+  /// wrapped multi-row URL) resolves to its match instead of landing a row off
+  /// (#863). The returned [StructuredMatch.payload] recovers what the cells
+  /// represent (e.g. the URL behind a tap/long-press). When matches overlap, the
+  /// last detected one wins.
   StructuredMatch? matchAt({required int row, required int col});
 
   /// The current detected structured-text ANCHORS (#767 Slice B).

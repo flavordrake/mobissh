@@ -242,7 +242,15 @@ class TerminalControllerImpl extends TerminalController
   @override
   HighlightRange? highlightAt({required int row, required int col}) {
     if (_highlights.isEmpty) return null;
-    final absRow = row + scrollbar.offset;
+    // #863: map the VIEWPORT row to absolute via the PAINTED offset — the SAME
+    // offset the highlight PAINT geometry uses ([anchorRects]/
+    // [AnchorGeometry.rectsFor]: `viewRow = absRow - _paintedViewportOffset`).
+    // Hit-testing against the LIVE `scrollbar.offset` (which can run a frame
+    // ahead of the painted glyphs during a tmux-redraw scroll, #803) maps the
+    // tapped row to a DIFFERENT absolute row than the one drawn → the tap lands
+    // off the highlight. Resolving both against [_paintedViewportOffset] keeps
+    // paint and hit-test on ONE geometry source so they cannot diverge.
+    final absRow = row + _paintedViewportOffset;
     HighlightRange? match;
     for (final range in _highlights) {
       if (range.contains(absRow, col)) match = range;
@@ -272,7 +280,19 @@ class TerminalControllerImpl extends TerminalController
   @override
   StructuredMatch? matchAt({required int row, required int col}) {
     if (_detectionMatches.isEmpty) return null;
-    final absRow = row + scrollbar.offset;
+    // #863: UNIFY hit-test with paint. The widget-layer URL bubble PAINTS its
+    // anchor rects via [anchorRects] -> [AnchorGeometry.rectsFor], which resolves
+    // a viewport row from the PAINTED offset (`viewRow = absRow -
+    // _paintedViewportOffset`). The tap router maps the tapped pixel to a
+    // viewport `row` and calls this; if we mapped it to absolute via the LIVE
+    // `scrollbar.offset` instead (which can lead the painted glyphs by a frame
+    // during a tmux-redraw scroll, #803), the tappable cell would sit a row off
+    // the painted bubble — the #863 "tap selects instead of copying" + the
+    // off-by-1 highlight. Mapping via [_paintedViewportOffset] makes the tap
+    // consume the EXACT offset the bubble was painted with, so a tap anywhere on
+    // the painted URL (incl. a :port URL or a wrapped multi-row URL) resolves to
+    // its match. They share ONE geometry source and cannot diverge.
+    final absRow = row + _paintedViewportOffset;
     final snappedCol = terminal.snapColToWideBoundary(
       row,
       col,

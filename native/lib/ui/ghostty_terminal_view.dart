@@ -2688,7 +2688,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     final box = context.findRenderObject();
     if (box is! RenderBox || !box.hasSize) return const [];
     final controller = _controller;
-    final offset = controller == null ? 0 : _viewportOffsetOf(controller);
+    // #863: resolve viewport rows from the PAINTED offset (the offset the bubble
+    // decorator / [HighlightPainter] actually drew with), NOT the live
+    // `scrollbar.offset` (`_viewportOffsetOf`). The painted offset can trail the
+    // live offset by a frame during a tmux-redraw scroll (#803); building these
+    // long-press-menu highlight rects from the live offset put the menu's
+    // outline a row off the painted bubble + the tappable region. Consuming
+    // `controller.paintedViewportOffset` here keeps the menu rects, the painted
+    // bubble, and the [matchAt] hit-test all on ONE geometry source.
+    final offset = controller == null ? 0 : controller.paintedViewportOffset;
     final origin = box.localToGlobal(Offset.zero);
     final rects = <Rect>[];
     for (final range in match.ranges) {
