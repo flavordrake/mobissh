@@ -109,6 +109,7 @@ class AttentionNotification {
     required this.tag,
     required this.payload,
     this.sourceWindow,
+    this.url,
   });
 
   /// Notification title — the fixed [kAttentionTitle]. The session is NOT named
@@ -129,13 +130,24 @@ class AttentionNotification {
   /// tap to the exact originating session.
   final String tag;
 
-  /// Opaque JSON payload the tap carries: `{"sessionId": "...", "sourceWindow": N?}`.
+  /// Opaque JSON payload the tap carries:
+  /// `{"sessionId": "...", "sourceWindow": N?, "url": "https://…"?}`.
   /// Routes the tap back to the originating session (and optionally its tmux
-  /// source window). NEVER contains auth material.
+  /// source window), and — when the signal text carried one (#710) — the
+  /// explicitly-signalled URL the tap should OPEN. NEVER contains auth material:
+  /// the URL is extracted from the already-visible signal TEXT (e.g. a
+  /// "Build ready: https://…" dev-loop signal), not from any credential field.
   final String payload;
 
   /// Parsed tmux source-window number from a trailing `(win N)` hint, or null.
   final int? sourceWindow;
+
+  /// The first `http(s)://` URL carried in the signal text (#710), or null when
+  /// the signal carried none. Only an EXPLICITLY-signalled URL becomes tappable
+  /// (the "build ready → tap → install" case) — we never scan arbitrary terminal
+  /// output. The URL also stays visible in [body]; the tap OPENS it (see
+  /// [AttentionFocusRouter]).
+  final String? url;
 
   /// Build a notification description for [sessionId] from a detected [signal].
   ///
@@ -149,6 +161,12 @@ class AttentionNotification {
     final raw = signal.text?.trim();
     final win = parseSourceWindow(raw);
     final stripped = _stripSourceWindow(raw);
+    // #710: extract an explicitly-signalled http(s) URL from the signal text so
+    // the tap can OPEN it (the "Build ready: https://…" dev-loop case). Parsed
+    // from the full raw text (not the win-stripped body) so a `(win N)` suffix
+    // never interferes. The URL stays visible in the body — we only ADD a tap
+    // action, we do not hide or rewrite the text.
+    final url = parseUrl(raw);
     // #847: lead the body with the short host label so alerts are differentiated
     // BY SERVER (owner: "at minimum differentiate by server"). A bare bell (no
     // text) shows just the server; a signal with text shows "server — text".
@@ -158,6 +176,10 @@ class AttentionNotification {
         : '$label — $stripped';
     final payloadMap = <String, dynamic>{'sessionId': sessionId};
     if (win != null) payloadMap['sourceWindow'] = win;
+    // #710: carry the extracted URL so the tap handler can launch it. This is the
+    // ONLY non-id field allowed in the payload, and it comes from the visible
+    // signal text — never from credential material (see the no-secret test).
+    if (url != null) payloadMap['url'] = url;
     return AttentionNotification(
       title: kAttentionTitle,
       body: body,
@@ -167,31 +189,36 @@ class AttentionNotification {
       tag: '$_tagPrefix${hostOfSessionId(sessionId)}',
       payload: jsonEncode(payloadMap),
       sourceWindow: win,
+      url: url,
     );
   }
 
-  /// Parse a payload JSON string back into `(sessionId, sourceWindow?)`.
-  /// Tolerant: a null/empty/malformed payload → `(null, null)` ("no focus").
-  /// Also accepts a bare sessionId string (legacy / defensive).
-  static ({String? sessionId, int? sourceWindow}) parsePayload(String? payload) {
+  /// Parse a payload JSON string back into `(sessionId, sourceWindow?, url?)`.
+  /// Tolerant: a null/empty/malformed payload → `(null, null, null)` ("no
+  /// focus"). Also accepts a bare sessionId string (legacy / defensive).
+  static ({String? sessionId, int? sourceWindow, String? url}) parsePayload(
+    String? payload,
+  ) {
     if (payload == null || payload.isEmpty) {
-      return (sessionId: null, sourceWindow: null);
+      return (sessionId: null, sourceWindow: null, url: null);
     }
     try {
       final decoded = jsonDecode(payload);
       if (decoded is Map) {
         final sid = decoded['sessionId'];
         final win = decoded['sourceWindow'];
+        final u = decoded['url'];
         return (
           sessionId: (sid is String && sid.isNotEmpty) ? sid : null,
           sourceWindow: win is int ? win : null,
+          url: (u is String && u.isNotEmpty) ? u : null,
         );
       }
       // Not a map — treat the whole string as a bare sessionId.
-      return (sessionId: payload, sourceWindow: null);
+      return (sessionId: payload, sourceWindow: null, url: null);
     } catch (_) {
       // Not JSON — treat as a bare sessionId (defensive against older payloads).
-      return (sessionId: payload, sourceWindow: null);
+      return (sessionId: payload, sourceWindow: null, url: null);
     }
   }
 }
@@ -216,6 +243,38 @@ int? parseSourceWindow(String? text) {
 String? _stripSourceWindow(String? text) {
   if (text == null) return null;
   return text.replaceFirst(_winRe, '').trimRight();
+}
+
+/// Match an absolute `http://` / `https://` URL in the signal text (#710). A
+/// focused, http(s)-ONLY matcher (no bare `www.`, no other schemes) — the
+/// notification only makes an EXPLICITLY-signalled web URL tappable (the
+/// "Build ready: https://…" dev-loop case). The character class stops at
+/// whitespace and the few characters terminals/shells never put mid-URL; a
+/// separate trailing trim removes sentence punctuation / unbalanced closers.
+final RegExp _urlRe = RegExp(
+  r'''https?://[^\s<>"'`]+''',
+  caseSensitive: false,
+);
+
+/// Trailing characters trimmed off the END of a raw URL match (#710). Mirrors
+/// the in-fork `structured_text` URL detector so `https://x.com/p).` →
+/// `https://x.com/p`.
+const String _urlTrailingTrim = '.,;:!?)]}>\'"';
+
+/// Extract the FIRST `http(s)://` URL from [text] (#710), trimmed of trailing
+/// sentence punctuation / unbalanced closers. Returns null when [text] is null,
+/// empty, or carries no http(s) URL (bare `www.` and non-http schemes do NOT
+/// match — only an explicitly web-addressable URL becomes tappable). The URL is
+/// taken from the visible signal text and is never auth material.
+String? parseUrl(String? text) {
+  if (text == null || text.isEmpty) return null;
+  final m = _urlRe.firstMatch(text);
+  if (m == null) return null;
+  var url = m.group(0)!;
+  while (url.isNotEmpty && _urlTrailingTrim.contains(url[url.length - 1])) {
+    url = url.substring(0, url.length - 1);
+  }
+  return url.isEmpty ? null : url;
 }
 
 /// Host-level suppression predicate (#847; supersedes the #840 session-level
@@ -362,15 +421,18 @@ class PendingFocusBridge {
     await _store.setString(_key, payload!);
   }
 
-  /// Non-destructive read of the pending focus, or `(null, null)` when none.
-  Future<({String? sessionId, int? sourceWindow})> readPending() async {
+  /// Non-destructive read of the pending focus, or `(null, null, null)` when
+  /// none.
+  Future<({String? sessionId, int? sourceWindow, String? url})>
+      readPending() async {
     final raw = await _store.getString(_key);
     return AttentionNotification.parsePayload(raw);
   }
 
-  /// One-shot consume: returns the pending `(sessionId, sourceWindow?)` AND
-  /// clears it so a later resume doesn't re-focus the same session.
-  Future<({String? sessionId, int? sourceWindow})> takePending() async {
+  /// One-shot consume: returns the pending `(sessionId, sourceWindow?, url?)`
+  /// AND clears it so a later resume doesn't re-focus the same session.
+  Future<({String? sessionId, int? sourceWindow, String? url})>
+      takePending() async {
     final raw = await _store.getString(_key);
     if (raw != null) await _store.remove(_key);
     return AttentionNotification.parsePayload(raw);
