@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+53 (2026-06-10) — one-tap back to terminal + notification taps land on the right session
+- **X to return to the terminal in one tap.** The file browser and the text/markdown/PDF viewers now have a top-right close button that jumps straight back to the terminal from any folder depth — no more backing out level by level. (#855)
+- **Tapping an attention notification opens the right session.** Tapping e.g. an fddev notification now lands on fddev even if it reconnected (got a new session id) — it falls back to the live session for that server instead of leaving you on whatever was open. (#857)
+
 ## v0.1.10+52 (2026-06-10) — markdown renders + switching sessions is quiet
 - **Markdown files render now.** A `.md`/`.markdown` file opens formatted (headings, bold, lists, links, code, tables) instead of raw text, with a top-bar toggle to flip to raw source. Edit-and-save-back is a follow-up (#859). (#854)
 - **Switching to a session no longer pops a redundant "needs attention" for it.** A bell replayed in the catch-up burst right after you switch to a session is now ignored — you just moved there, you can see it. (#856)
