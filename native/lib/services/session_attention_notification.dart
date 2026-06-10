@@ -58,6 +58,16 @@ const String _tagPrefix = 'mobissh.attention.';
 /// Tunable; 30s is the owner's starting point.
 const Duration kAttentionDedupWindow = Duration(seconds: 30);
 
+/// (Re)connect REPLAY-suppression window (#851). A signal that arrives within
+/// this cooldown AFTER a session reaches `connected` (initial connect AND every
+/// reconnect / softDisconnected→connected) is treated as REPLAYED scrollback /
+/// catch-up — tmux re-attach, shell re-init, or buffered history — NOT a live
+/// "Claude needs you now" moment, so it does NOT post a notification (the owner:
+/// "notifications shouldn't bubble up the second I reconnect"). After the window
+/// settles, live signals post normally. The host re-arms this window on every
+/// connected transition. Tunable; 1.5s is the owner's starting point.
+const Duration kAttentionReplayWindow = Duration(milliseconds: 1500);
+
 /// Derive the HOST from a sessionId (#847). The session id format is
 /// `host:port:user:createdAtMs` (see `state/sessions.dart`), so the host is the
 /// segment before the first colon. Falls back to the whole id when it has no

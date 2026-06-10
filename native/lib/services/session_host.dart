@@ -66,6 +66,7 @@ class SessionHost {
     this.resumeNudgeWindow = const Duration(seconds: 2),
     int Function()? nowMs,
     AttentionNotifier? attentionNotifier,
+    this.replayWindow = kAttentionReplayWindow,
   }) : _gateway = gateway,
        _factory = controllerFactory ?? _defaultControllerFactory,
        _sftpOpener = sftpOpener,
@@ -174,6 +175,17 @@ class SessionHost {
   /// Injected so the task isolate binds `flutter_local_notifications` in
   /// production while tests record posts in memory.
   final AttentionNotifier? _attentionNotifier;
+
+  /// (Re)connect REPLAY-suppression window (#851). An attention signal detected
+  /// within this cooldown of the session's most recent `connected` transition
+  /// (see [_HostedSession.connectedAtMs], re-stamped on EVERY connected
+  /// transition — initial connect AND reconnect/softDisconnected→connected) is
+  /// treated as REPLAYED scrollback / catch-up and is NOT posted; only live
+  /// output after the window settles posts. Composes with — does not replace —
+  /// the #847 foreground host-suppression and cross-session dedup. Injectable so
+  /// tests can disable it ([Duration.zero]) or set a deterministic span; the
+  /// window is measured against the host's injected [_nowMs] clock.
+  final Duration replayWindow;
 
   /// The exact lifecycle-forwarder closure this host installed into the global
   /// [lifecycleForwarder] (#766). Held so dispose detaches OUR closure only —
@@ -1072,8 +1084,9 @@ class SessionHost {
               '(session $sessionId)',
         );
         // Slice 2: post an attention notification, unless suppressed because
-        // the user is already looking at this session.
-        _maybePostAttention(sessionId, sig);
+        // the user is already looking at this session (#847) or the signal
+        // arrived inside the (re)connect replay window (#851).
+        _maybePostAttention(sessionId, hosted, sig);
       }
     } catch (e) {
       clifecycle('attention', 'scan-error: $e (session $sessionId)');
@@ -1098,9 +1111,32 @@ class SessionHost {
   /// listener (a post failure must not crash the session). No-op when no
   /// notifier is wired (e.g. desktop / a test that didn't inject one), in which
   /// case the Slice-1 `clifecycle` log is the only effect.
-  void _maybePostAttention(String sessionId, AttentionSignal sig) {
+  void _maybePostAttention(
+    String sessionId,
+    _HostedSession hosted,
+    AttentionSignal sig,
+  ) {
     final notifier = _attentionNotifier;
     if (notifier == null) return;
+    // #851: (re)connect REPLAY suppression. A signal within `replayWindow` of
+    // the session's most recent `connected` transition is REPLAYED scrollback /
+    // catch-up (tmux re-attach, shell re-init, buffered history), not a live
+    // moment — so it must NOT post. `connectedAtMs` is re-stamped on EVERY
+    // connected transition (initial AND reconnect/softDisconnected→connected),
+    // so the window auto-re-arms per reconnect. This is an ADDITIONAL gate that
+    // composes with the #847 foreground-suppression + dedup below.
+    final connectedAt = hosted.connectedAtMs;
+    if (connectedAt != null && replayWindow > Duration.zero) {
+      final sinceConnectedMs = _nowMs() - connectedAt;
+      if (sinceConnectedMs < replayWindow.inMilliseconds) {
+        clifecycle(
+          'attention',
+          'suppressed (reconnect-replay ${sinceConnectedMs}ms < '
+              '${replayWindow.inMilliseconds}ms) session $sessionId',
+        );
+        return;
+      }
+    }
     // #847: host-level suppression — looking at ANY session to this host (incl.
     // a different one) while foregrounded suppresses the bell.
     final post = shouldPostAttention(
