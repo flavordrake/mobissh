@@ -21,6 +21,8 @@
 // to detect tmux, how to open a URL) is injected so this class is unit-testable
 // without Flutter.
 
+import 'dart:developer' as developer;
+
 import 'session_attention_notification.dart';
 import 'tmux_window_select.dart';
 
@@ -33,12 +35,14 @@ class AttentionFocusRouter {
     required void Function(String sessionId, List<int> bytes) sendInput,
     bool Function(String sessionId)? isTmux,
     Future<void> Function(String url)? openUrl,
+    String? Function(String host)? resolveLiveSessionForHost,
   }) : _bridge = bridge,
        _setActive = setActive,
        _sessionExists = sessionExists,
        _sendInput = sendInput,
        _isTmux = isTmux,
-       _openUrl = openUrl;
+       _openUrl = openUrl,
+       _resolveLiveSessionForHost = resolveLiveSessionForHost;
 
   // ignore_for_file: prefer_initializing_formals
   final PendingFocusBridge _bridge;
@@ -46,6 +50,15 @@ class AttentionFocusRouter {
   final bool Function(String sessionId) _sessionExists;
   final void Function(String sessionId, List<int> bytes) _sendInput;
   final bool Function(String sessionId)? _isTmux;
+
+  /// Host-fallback seam (#857). Given a HOST, returns the id of the most-recent
+  /// LIVE session to that host, or null when the host has no live session.
+  /// Used when the payload's EXACT sessionId is no longer live — the host
+  /// reconnected with a fresh `createdAtMs` nonce, so the exact id is stale but
+  /// the user still wants the tap to land on that host's session (NOT the
+  /// previously-active, different-host session — the #857 bug). Null/unwired →
+  /// no fallback (the router gives up on a stale id, as before).
+  final String? Function(String host)? _resolveLiveSessionForHost;
 
   /// URL opener seam (#710), or null when URL-open is unwired (e.g. a test that
   /// only exercises focus routing). Production binds this to
@@ -59,15 +72,46 @@ class AttentionFocusRouter {
   /// when there was nothing pending (or the session no longer exists).
   Future<String?> consumePending() async {
     final pending = await _bridge.takePending();
-    final sid = pending.sessionId;
+    final payloadSid = pending.sessionId;
+    if (payloadSid == null) return null;
+    final host = hostOfSessionId(payloadSid);
+
+    // Resolve the session to actually focus (#857). Prefer the EXACT payload id
+    // when it's still live. Otherwise fall back to the most-recent live session
+    // for the SAME HOST — the host reconnected with a new `createdAtMs` nonce so
+    // the exact id is stale, but the tap must still land on that host (NOT the
+    // previously-active, different-host session — that was the #857 bug). Only
+    // give up when the host has no live session.
+    String? sid;
+    String route;
+    if (_sessionExists(payloadSid)) {
+      sid = payloadSid;
+      route = 'setActive';
+    } else {
+      final fallback = _resolveLiveSessionForHost?.call(host);
+      if (fallback != null && _sessionExists(fallback)) {
+        sid = fallback;
+        route = 'host-fallback';
+      } else {
+        sid = null;
+        route = 'none';
+      }
+    }
+
+    developer.log(
+      'focus: payload sid=$payloadSid host=$host → '
+      '${sid == null ? 'none' : 'setActive(matched sid=$sid) | $route'}',
+      name: 'attention',
+    );
+
     if (sid == null) return null;
-    if (!_sessionExists(sid)) return null;
 
     _setActive(sid);
 
     // GUARDED source-window navigation (device-gated, may be flaky under
     // multi-client tmux). Only when a window hint parsed AND the session is a
-    // tmux client. Absent hint or non-tmux → skip silently.
+    // tmux client. Targets the RESOLVED live session (#857), not the stale
+    // payload id. Absent hint or non-tmux → skip silently.
     final win = pending.sourceWindow;
     if (win != null && (_isTmux?.call(sid) ?? false)) {
       _sendInput(sid, tmuxSelectWindowSequence(win));

@@ -36,6 +36,28 @@ final attentionFocusRouterProvider = Provider<AttentionFocusRouter>((ref) {
         }
       }
     },
+    // #857: host fallback. When the tapped notification's EXACT sessionId is no
+    // longer live (the host reconnected with a new `createdAtMs` nonce), route
+    // to the MOST-RECENT live session for that host — never the previously-active
+    // session to a different host. Session id format is
+    // `host:port:user:createdAtMs`, so "most recent" = the largest trailing
+    // createdAt segment among entries whose host matches.
+    resolveLiveSessionForHost: (host) {
+      String? bestId;
+      int bestCreatedAt = -1;
+      for (final e in ref.read(sessionsProvider).entries) {
+        if (hostOfSessionId(e.id) != host) continue;
+        final lastColon = e.id.lastIndexOf(':');
+        final createdAt = lastColon < 0
+            ? -1
+            : (int.tryParse(e.id.substring(lastColon + 1)) ?? -1);
+        if (createdAt >= bestCreatedAt) {
+          bestCreatedAt = createdAt;
+          bestId = e.id;
+        }
+      }
+      return bestId;
+    },
     // See doc above: a parsed (win N) hint implies the owner's tmux setup.
     isTmux: (_) => true,
     // #710: open an explicitly-signalled URL from the tapped notification in the
