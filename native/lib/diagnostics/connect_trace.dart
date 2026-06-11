@@ -25,7 +25,13 @@ import 'package:flutter/foundation.dart';
 
 /// Maximum number of lines retained by the [connectLog] ring buffer. Older
 /// lines are dropped once the cap is exceeded.
-const int connectLogCapacity = 200;
+///
+/// 600, up from 200 (#879): with 4+ streaming sessions the 200-line ring
+/// churned in ~14 seconds, so by the time the owner long-pressed Feedback the
+/// evidence window had already been eaten — three device reports in a row
+/// shipped with the failure moment missing. 600 lines ≈ a 45–60s window under
+/// the same load; memory cost is trivial (short strings).
+const int connectLogCapacity = 600;
 
 /// Maximum number of lines retained by the dedicated [lifecycleLog] ring
 /// buffer (#759). Lifecycle events (resume-liveness probe OUTCOME, reconnect

@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+57 (2026-06-11) — notification taps actually route + highlights survive scrolling
+- **Tapping a notification now opens the session it names.** The tap's payload was being dropped before any routing ran (the handler was registered in the wrong place) — your "said fd-dev, sent me to raserver" reports. The tap now routes immediately, including when the app was fully closed. (#878)
+- **URL/path highlights survive scrolling into history.** A +56 regression could permanently drop a highlight once its line scrolled up; also fixed a scroll-to-top paint glitch where taps on a highlight resolved against stale rows. (#883)
+- **Bug-report captures hold a 3–4× longer window**, so "it just happened" reports stop missing the moment. (#879)
+
 ## v0.1.10+56 (2026-06-10) — path highlights stop at shell syntax + stray highlights cleared
 - **A path next to shell syntax highlights just the path.** A line like `/path/to/script 2>&1 > /tmp/out; echo …` was highlighting the whole command as one "file"; the path detector now stops at shell delimiters (`; | & > <`, quotes) so only the real paths light up. (#874)
 - **Stray leftover highlight boxes are cleared.** A URL/path highlight whose line scrolled away or got redrawn with different text no longer lingers as an empty box floating over unrelated content — the anchor is dropped as soon as its text is gone. (#873)
