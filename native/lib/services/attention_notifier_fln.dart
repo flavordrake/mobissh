@@ -121,10 +121,6 @@ class FlnAttentionNotifier implements AttentionNotifier {
     _initialized = true;
   }
 
-  /// Stable integer notification id derived from the per-session tag so a repeat
-  /// from the same session REPLACES (same id) rather than stacks.
-  int _idFor(String tag) => tag.hashCode & 0x7fffffff;
-
   @override
   Future<void> post(AttentionNotification n) async {
     await _ensureInit();
@@ -138,7 +134,9 @@ class FlnAttentionNotifier implements AttentionNotifier {
       autoCancel: true,
     );
     await _plugin.show(
-      _idFor(n.tag),
+      // Shared tag→id derivation (#885) so the dead-host tap cancel addresses
+      // the exact id this post used.
+      attentionIdForTag(n.tag),
       n.title,
       n.body,
       NotificationDetails(android: details),
@@ -152,8 +150,8 @@ class FlnAttentionNotifier implements AttentionNotifier {
     await _ensureInit();
     // #847: notifications are keyed per-HOST, so cancel the host's slot (a tap
     // / focus on any session to this host clears the one shared notification).
-    final tag = 'mobissh.attention.${hostOfSessionId(sessionId)}';
-    await _plugin.cancel(_idFor(tag), tag: tag);
+    final tag = attentionTagForHost(hostOfSessionId(sessionId));
+    await _plugin.cancel(attentionIdForTag(tag), tag: tag);
   }
 }
 

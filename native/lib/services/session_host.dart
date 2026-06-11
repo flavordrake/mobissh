@@ -498,6 +498,15 @@ class SessionHost {
         // context, and a monotonic edge# so a capture reveals double-fires
         // ("cut once"). Telemetry only — drives no behaviour.
         _maybeRecordDisconnect(cmd.sessionId, hosted, prevState, data);
+        // #885: a TERMINAL transition (failed / disconnected — NOT the
+        // transient reconnecting/softDisconnected drop states, whose
+        // auto-reconnect can still revive the session) means this session can
+        // never deliver an attention tap again. Cancel the HOST's notification
+        // unless a sibling session to the same host is still live (the #857
+        // host-fallback can still route the tap there).
+        if (_terminalStates.contains(data.state)) {
+          _cancelAttentionForDeadHost(cmd.sessionId);
+        }
         prevState = data.state;
       }
       // Drop the prior shell the instant the transport leaves `connected`
@@ -554,6 +563,12 @@ class SessionHost {
     final hosted = _sessions.remove(cmd.sessionId);
     if (hosted == null) return;
     unawaited(_teardown(cmd.sessionId, hosted));
+    // #885: a user-closed session is terminal, but `_teardown` cancels the
+    // state subscription BEFORE the controller emits `disconnected`, so the
+    // state listener never sees this death — cancel here instead. The session
+    // is already out of [_sessions], so the sibling-live guard only consults
+    // the survivors.
+    _cancelAttentionForDeadHost(cmd.sessionId);
   }
 
   void _handleInput(SshInputCommand cmd) {
@@ -763,6 +778,52 @@ class SessionHost {
     SshSessionState.failed,
     SshSessionState.disconnected,
   };
+
+  /// TERMINAL session states (#885) — the session is gone for good (a user
+  /// close, an exhausted/aborted reconnect). Deliberately EXCLUDES the
+  /// transient drop states (`softDisconnected`/`reconnecting`): their
+  /// auto-reconnect can still revive the session, so its host's attention
+  /// notification can still deliver and must survive them.
+  static const Set<SshSessionState> _terminalStates = {
+    SshSessionState.failed,
+    SshSessionState.disconnected,
+  };
+
+  /// Cancel [sessionId]'s HOST attention notification once the host can no
+  /// longer deliver a tap (#885): every hosted session to that host is in a
+  /// terminal state (or gone). Skips when ANY sibling session to the same host
+  /// is still non-terminal — the #857 host-fallback can still route the tap to
+  /// it. The notifier's `cancel` is host-keyed (#847), so cancelling by the
+  /// dead session's id clears the host's one shared notification slot.
+  /// Best-effort + fire-and-forget: a cancel failure must never break the
+  /// session pipeline. No-op when no notifier is wired (desktop / unit tests
+  /// without one).
+  void _cancelAttentionForDeadHost(String sessionId) {
+    final notifier = _attentionNotifier;
+    if (notifier == null) return;
+    final host = hostOfSessionId(sessionId);
+    for (final entry in _sessions.entries) {
+      if (entry.key == sessionId) continue;
+      if (hostOfSessionId(entry.key) != host) continue;
+      if (!_terminalStates.contains(entry.value.controller.data.state)) {
+        clifecycle(
+          'attention',
+          'cancel skipped (host $host still has live session ${entry.key}) '
+              'session $sessionId',
+        );
+        return;
+      }
+    }
+    clifecycle(
+      'attention',
+      'cancelled (session terminal, host $host dead) session $sessionId',
+    );
+    unawaited(
+      notifier.cancel(sessionId).catchError((Object e) {
+        clifecycle('attention', 'cancel-error: $e (session $sessionId)');
+      }),
+    );
+  }
 
   /// Classify a drop edge's CAUSE from the (prev→new) transition + controller
   /// context (#838). Pure string label for telemetry; no behaviour depends on
@@ -1319,6 +1380,24 @@ class SessionHost {
     _snapshotTimer = null;
     await _commandSub?.cancel();
     _commandSub = null;
+    // #885: a graceful host dispose (FGS stop) kills every session — no
+    // attention notification can deliver afterwards, so cancel each distinct
+    // host's slot. One representative sessionId per host suffices (the
+    // notifier's cancel is host-keyed, #847). A process death never runs this,
+    // so a cold-start tap still finds its notification → the #885 dead-host
+    // reconnect path composes.
+    final notifier = _attentionNotifier;
+    if (notifier != null) {
+      final seenHosts = <String>{};
+      for (final id in _sessions.keys) {
+        if (!seenHosts.add(hostOfSessionId(id))) continue;
+        unawaited(
+          notifier.cancel(id).catchError((Object e) {
+            clifecycle('attention', 'cancel-error: $e (session $id)');
+          }),
+        );
+      }
+    }
     for (final entry in _sessions.entries) {
       await _teardown(entry.key, entry.value);
     }

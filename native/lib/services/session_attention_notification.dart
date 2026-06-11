@@ -52,6 +52,18 @@ const String kAttentionTitle = 'MobiSSH — Claude needs attention';
 /// rather than stacks (the #847 "two stacked identical alerts" bug).
 const String _tagPrefix = 'mobissh.attention.';
 
+/// The Android notification tag for [host]'s attention slot (#847). Shared by
+/// the builder ([AttentionNotification.build]), the platform poster/canceller
+/// (`FlnAttentionNotifier`), and the dead-host tap cancel (#885) so the key
+/// can never drift between the post and the cancel.
+String attentionTagForHost(String host) => '$_tagPrefix$host';
+
+/// Stable non-negative integer notification id derived from [tag], so a repeat
+/// post for the same host REPLACES (same id+tag) and a cancel addresses the
+/// exact posted notification. Shared for the same no-drift reason as
+/// [attentionTagForHost].
+int attentionIdForTag(String tag) => tag.hashCode & 0x7fffffff;
+
 /// Cross-session attention dedup window (#847). Multiple bells from multiple
 /// sessions to the SAME host within this window collapse to ONE notification —
 /// a single underlying Claude event reaching two PTYs should not double-alert.
@@ -202,7 +214,7 @@ class AttentionNotification {
       // Per-HOST tag (#847): two sessions to the same host collapse to one
       // notification slot (replace, not stack). The tap payload still carries
       // the exact sessionId so focus routing is unchanged.
-      tag: '$_tagPrefix${hostOfSessionId(sessionId)}',
+      tag: attentionTagForHost(hostOfSessionId(sessionId)),
       payload: jsonEncode(payloadMap),
       sourceWindow: win,
       url: url,

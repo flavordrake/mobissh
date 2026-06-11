@@ -16,10 +16,19 @@
 //      BOTH focuses the originating session AND opens the URL. Guarded to
 //      well-formed http(s) only; launch errors are swallowed so a tap never
 //      crashes.
+//   4. DEAD HOST (#885): when the payload's host has NO live session at all
+//      (route='none' — cold start after process death, or the session closed),
+//      the tap must never strand the user on the connect view with the
+//      notification still posted. Instead: RECONNECT the host's profile via the
+//      injected [reconnectHost] seam and focus the new session once it exists;
+//      when reconnect is unwired / resolves nothing (no profile, no creds) /
+//      throws, CANCEL the host's notification via [cancelHostNotification] so
+//      the undeliverable notification doesn't dangle. Either way the decision
+//      is logged (`route=reconnect` / `route=cancelled`).
 //
 // The platform/UI wiring (which sessionId is valid, how to send PTY bytes, how
-// to detect tmux, how to open a URL) is injected so this class is unit-testable
-// without Flutter.
+// to detect tmux, how to open a URL, how to reconnect/cancel) is injected so
+// this class is unit-testable without Flutter.
 
 import 'session_attention_notification.dart';
 import 'tmux_window_select.dart';
@@ -34,6 +43,8 @@ class AttentionFocusRouter {
     bool Function(String sessionId)? isTmux,
     Future<void> Function(String url)? openUrl,
     String? Function(String host)? resolveLiveSessionForHost,
+    Future<String?> Function(String host)? reconnectHost,
+    Future<void> Function(String host)? cancelHostNotification,
     void Function(String where, String msg)? log,
   }) : _bridge = bridge,
        _setActive = setActive,
@@ -42,6 +53,8 @@ class AttentionFocusRouter {
        _isTmux = isTmux,
        _openUrl = openUrl,
        _resolveLiveSessionForHost = resolveLiveSessionForHost,
+       _reconnectHost = reconnectHost,
+       _cancelHostNotification = cancelHostNotification,
        _log = log;
 
   // ignore_for_file: prefer_initializing_formals
@@ -59,6 +72,22 @@ class AttentionFocusRouter {
   /// previously-active, different-host session — the #857 bug). Null/unwired →
   /// no fallback (the router gives up on a stale id, as before).
   final String? Function(String host)? _resolveLiveSessionForHost;
+
+  /// Dead-host RECONNECT seam (#885). Given a HOST with no live session,
+  /// triggers that host's profile reconnect (production: resolve the saved
+  /// profile + vault creds and route through the EXISTING connect flow —
+  /// `sessionsProvider.notifier.addOrActivate` + `proxy.connect`, the same path
+  /// a profile-row tap takes) and resolves to the NEW sessionId once the entry
+  /// exists, or null when the host has no profile / no usable stored creds.
+  /// Null/unwired → the router falls through to [_cancelHostNotification].
+  final Future<String?> Function(String host)? _reconnectHost;
+
+  /// Dead-host CANCEL seam (#885). Cancels the HOST's attention notification
+  /// (host-keyed tag, #847) when the tap cannot deliver: no live session AND
+  /// reconnect is unwired or declined. Without this the undeliverable
+  /// notification dangles, promising attention for a session that is gone.
+  /// Best-effort: errors are swallowed (a tap must never crash).
+  final Future<void> Function(String host)? _cancelHostNotification;
 
   /// URL opener seam (#710), or null when URL-open is unwired (e.g. a test that
   /// only exercises focus routing). Production binds this to
@@ -121,7 +150,10 @@ class AttentionFocusRouter {
       '${sid == null ? 'none' : 'setActive(matched sid=$sid) | $route'}',
     );
 
-    if (sid == null) return null;
+    // #885: a tap whose host has NO live session must never silently strand
+    // the user on the connect view — reconnect the host's profile (preferred)
+    // or cancel the now-undeliverable notification.
+    if (sid == null) return _routeDeadHost(host);
 
     _setActive(sid);
 
@@ -148,6 +180,38 @@ class AttentionFocusRouter {
       }
     }
     return sid;
+  }
+
+  /// Dead-host routing (#885): the pending payload's [host] has no live session
+  /// (route='none'). Try the injected profile-reconnect seam first — when it
+  /// resolves a new sessionId, focus it (the tap delivers after all). Otherwise
+  /// (seam unwired, no profile / no creds, or the reconnect threw) cancel the
+  /// host's notification so it can't dangle and promise attention forever.
+  /// Both outcomes log through the capturable seam (#870) — `route=reconnect` /
+  /// `route=cancelled` — so the next device report shows the decision.
+  Future<String?> _routeDeadHost(String host) async {
+    final reconnect = _reconnectHost;
+    if (reconnect != null) {
+      String? newSid;
+      try {
+        newSid = await reconnect(host);
+      } catch (_) {
+        // Best-effort: a failed reconnect degrades to cancel, never crashes.
+        newSid = null;
+      }
+      if (newSid != null) {
+        _setActive(newSid);
+        _log?.call('ui.attention', 'route=reconnect host=$host sid=$newSid');
+        return newSid;
+      }
+    }
+    try {
+      await _cancelHostNotification?.call(host);
+    } catch (_) {
+      // Best-effort: a failed cancel must not crash the tap.
+    }
+    _log?.call('ui.attention', 'route=cancelled host=$host');
+    return null;
   }
 }
 
