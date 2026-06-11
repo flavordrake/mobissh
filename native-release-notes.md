@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+58 (2026-06-11) — notifications can't strand you anymore
+- **Tapping a notification for a disconnected server reconnects it.** If the app was killed or the session closed, the tap now reconnects that server's profile and lands you in it — no more being dumped on the connection list while the notification dangles. If no saved profile/credentials can reconnect it, the stale notification is cancelled instead. (#885)
+- **Attention notifications are cleared when their session ends.** A "needs attention" alert no longer outlives the session it points at. (#885)
+
 ## v0.1.10+57 (2026-06-11) — notification taps actually route + highlights survive scrolling
 - **Tapping a notification now opens the session it names.** The tap's payload was being dropped before any routing ran (the handler was registered in the wrong place) — your "said fd-dev, sent me to raserver" reports. The tap now routes immediately, including when the app was fully closed. (#878)
 - **URL/path highlights survive scrolling into history.** A +56 regression could permanently drop a highlight once its line scrolled up; also fixed a scroll-to-top paint glitch where taps on a highlight resolved against stale rows. (#883)
