@@ -142,6 +142,31 @@ class TerminalControllerImpl extends TerminalController
   /// 120ms URL re-detect debounce, now owned by the controller.
   static const int _detectionDebounceMs = 120;
 
+  /// #883: the COORDINATE-FRAME EPOCH of [_detectionMatches] — the
+  /// scrollbackRows/cols/visibleRows observed when the matches' absolute rows
+  /// were last anchored (a successful [_rescanDetections]) or fully
+  /// re-validated ([_pruneStaleDetections] confirming every match in place).
+  ///
+  /// Absolute `screen` rows are APPEND-STABLE: new output never moves stored
+  /// coordinates while scrollback grows below its cap. They are invalidated
+  /// wholesale only when the frame itself moves: a scrollback PAGE EVICTION at
+  /// the cap (libghostty evicts in large page bursts — observed ≈1139 rows at
+  /// once at cols=40 — visible as scrollbackRows SHRINKING), an `ESC[3J`
+  /// scrollback clear (also a shrink), or a resize REFLOW (cols/rows change).
+  /// The prune compares the live frame against this epoch to tell "the cells
+  /// under this match really changed" (evict, #873) from "the coordinates
+  /// drifted out from under a live match" (keep/re-locate, #883).
+  int _detectionFrameScrollback = 0;
+  int _detectionFrameCols = 0;
+  int _detectionFrameRows = 0;
+
+  /// #883: row slack when re-locating a match after an observed scrollback
+  /// shrink. The observable drop (epoch − current scrollbackRows) undershoots
+  /// the true shift by however many rows were APPENDED in the same burst, so a
+  /// little slack catches small same-burst appends; larger bursts simply defer
+  /// to the debounced rescan.
+  static const int _relocateRowSlack = 4;
+
   TerminalControllerImpl({TerminalConfig config = const TerminalConfig()})
     : _config = config,
       _keyEvent = vt.KeyEvent(),
@@ -457,8 +482,17 @@ class TerminalControllerImpl extends TerminalController
   /// match occupies (cheap) and, using the SAME scanner/patterns, keeps the match
   /// only if an equivalent same-payload match still covers those cells — so wrap-
   /// join, normalize (`www.`→`https://`), and OSC-8 grouping all re-validate
-  /// identically to a full scan. A match whose rows fell out of the live buffer
-  /// (evicted / scrolled past) reads zero cells → no re-match → dropped.
+  /// identically to a full scan.
+  ///
+  /// #883: eviction happens ONLY on a CONFIRMED content change — i.e. when the
+  /// coordinate frame the stored rows were anchored in still holds (scrollback
+  /// has not shrunk, no resize). When the frame has SHIFTED (a scrollback page
+  /// eviction at the cap moves ALL absolute rows down in one large burst; an
+  /// `ESC[3J` clear or a resize reflow invalidates them outright), a mismatch
+  /// at the stored rows proves nothing: the #883 regression evicted live
+  /// anchors here, killing #767's "highlight tracks scroll into scrollback".
+  /// Shifted-frame matches are re-located at the drop-corrected rows (ranges
+  /// updated) or kept for the debounced rescan to re-anchor from content.
   ///
   /// Defensive like [_rescanDetections]: any FFI/scan hiccup must never crash the
   /// session, so a failure leaves the existing matches untouched (the debounced
@@ -483,19 +517,61 @@ class TerminalControllerImpl extends TerminalController
         : _textPatterns.values.toList(growable: false);
 
     List<StructuredMatch> survivors;
+    var changed = false;
     try {
       _renderState.update(terminal);
       final cols = _renderState.cols;
       final visibleRows = _renderState.rows;
       if (cols <= 0 || visibleRows <= 0) {
-        survivors = const [];
+        // #883: a degenerate render state (mid-layout/churn) reads nothing —
+        // it cannot CONFIRM a content change, so it must not evict. Leave the
+        // set as-is; the debounced rescan reconciles once dims are real.
+        return;
       } else {
         final scrollback = terminal.scrollbackRows;
         final maxEndAbs = scrollback + visibleRows; // exclusive buffer bound
-        survivors = <StructuredMatch>[
-          for (final m in _detectionMatches)
-            if (_matchStillPresent(m, scanPatterns, cols, maxEndAbs)) m,
-        ];
+        // #883: the stored absolute rows are only meaningful while the
+        // coordinate frame they were anchored in still holds. A scrollback
+        // SHRINK (page eviction at the cap, `ESC[3J` clear) shifts/erases
+        // history rows; a cols/rows change reflows them. In either case a
+        // mismatch at the stored rows proves NOTHING about the content, so
+        // eviction must not key off it (the #883 over-evict).
+        final frameShifted = scrollback < _detectionFrameScrollback ||
+            cols != _detectionFrameCols ||
+            visibleRows != _detectionFrameRows;
+        final drop = _detectionFrameScrollback - scrollback;
+        var allConfirmed = true;
+        survivors = <StructuredMatch>[];
+        for (final m in _detectionMatches) {
+          final v = _revalidatedMatch(
+            m,
+            scanPatterns,
+            cols,
+            maxEndAbs,
+            frameShifted: frameShifted,
+            drop: drop,
+          );
+          if (v == null) {
+            changed = true; // confirmed gone → evict
+            continue;
+          }
+          if (identical(v, m)) {
+            if (frameShifted) allConfirmed = false; // kept on deferral
+          } else {
+            changed = true; // re-located → ranges updated
+          }
+          survivors.add(v);
+        }
+        // Advance the frame epoch only when every surviving match was
+        // CONFIRMED at the current coordinates (trusted re-validation or a
+        // successful re-locate). A deferral leaves the epoch stale so later
+        // prunes keep treating the frame as shifted until the debounced
+        // rescan re-anchors.
+        if (allConfirmed) {
+          _detectionFrameScrollback = scrollback;
+          _detectionFrameCols = cols;
+          _detectionFrameRows = visibleRows;
+        }
       }
     } catch (_) {
       // A read hiccup must not crash or spuriously clear anchors; leave the set
@@ -503,47 +579,103 @@ class TerminalControllerImpl extends TerminalController
       return;
     }
 
-    if (survivors.length == _detectionMatches.length) return; // nothing dropped
+    if (!changed) return; // nothing dropped or moved
     _detectionMatches = survivors;
     highlights = [for (final m in survivors) ...m.ranges];
-    // The anchor set shrank → wake the narrow decoration listener so the
+    // The anchor set shrank/moved → wake the narrow decoration listener so the
     // decorator re-resolves and the orphaned box vanishes immediately.
     _decorationNotifier.notify();
   }
 
-  /// #873: true iff [match] is STILL present in the current cells — i.e. a fresh
-  /// scan over exactly the rows it occupies (clamped to the live buffer) yields a
-  /// same-payload match. Re-uses the production scanner + patterns so re-
-  /// validation matches detection exactly.
-  bool _matchStillPresent(
+  /// #873/#883: re-validate [match] against the current cells and decide
+  /// evict-vs-keep:
+  ///
+  /// - `null` — CONFIRMED gone: the coordinate frame is trusted
+  ///   ([frameShifted] false: scrollback has not shrunk, no resize since the
+  ///   match was anchored — absolute rows are append-stable, so the stored
+  ///   rows still address the same content) and a fresh scan over exactly
+  ///   those rows no longer yields a same-payload match. The row was redrawn
+  ///   in place with different/erased text → evict synchronously (#873).
+  /// - the SAME instance — kept: either the trusted re-scan still found the
+  ///   payload at its stored rows, or the frame HAS shifted and the match
+  ///   could not be cheaply re-located — then the mismatch proves nothing
+  ///   (the #883 over-evict), so KEEP and defer to the debounced
+  ///   [_rescanDetections], which re-anchors from content (or legitimately
+  ///   drops it once it is outside the bounded window).
+  /// - a NEW instance — the frame shifted but the same-payload match was
+  ///   RE-LOCATED at the drop-corrected rows: keep it with the fresh
+  ///   coordinates so anchors/highlights track the eviction shift
+  ///   immediately instead of waiting out the debounce.
+  ///
+  /// Re-uses the production scanner + patterns so re-validation matches
+  /// detection exactly (wrap-join, normalize, OSC-8 grouping).
+  StructuredMatch? _revalidatedMatch(
     StructuredMatch match,
     List<TextPattern> scanPatterns,
     int cols,
-    int maxEndAbs,
-  ) {
-    if (scanPatterns.isEmpty) return false;
+    int maxEndAbs, {
+    required bool frameShifted,
+    required int drop,
+  }) {
+    if (scanPatterns.isEmpty) return null;
     var top = match.ranges.first.topRow;
     var bottom = match.ranges.first.bottomRow;
     for (final r in match.ranges) {
       if (r.topRow < top) top = r.topRow;
       if (r.bottomRow > bottom) bottom = r.bottomRow;
     }
-    // Clamp to the live buffer; a match whose rows fell out of the buffer
-    // (evicted / scrolled past) yields an empty region → no re-match → drop.
-    final startAbs = top < 0 ? 0 : top;
-    final endAbs = (bottom + 1) > maxEndAbs ? maxEndAbs : bottom + 1; // exclusive
-    if (endAbs - startAbs <= 0) return false;
+
+    if (!frameShifted) {
+      // Trusted frame — #873 semantics, unchanged: scan exactly the stored
+      // rows (clamped to the live buffer). Same-payload found → keep; a
+      // readable mismatch, an erased row, or rows truly beyond the live
+      // buffer → confirmed content change → evict.
+      final startAbs = top < 0 ? 0 : top;
+      final endAbs = (bottom + 1) > maxEndAbs ? maxEndAbs : bottom + 1;
+      if (endAbs - startAbs <= 0) return null;
+      final fresh = _scanWindow(startAbs, endAbs, cols, scanPatterns);
+      for (final f in fresh) {
+        if (f.payload == match.payload) return match;
+      }
+      return null;
+    }
+
+    // Shifted frame (#883). If the shift came from a scrollback shrink, the
+    // content moved UP in absolute rows by AT LEAST the observed drop (same-
+    // burst appends make the true shift larger). Try to re-locate the same
+    // payload there; on success adopt the fresh coordinates.
+    if (drop > 0) {
+      var startAbs = top - drop - _relocateRowSlack;
+      if (startAbs < 0) startAbs = 0;
+      var endAbs = bottom + 1 - drop + _relocateRowSlack;
+      if (endAbs > maxEndAbs) endAbs = maxEndAbs;
+      if (endAbs - startAbs > 0) {
+        final fresh = _scanWindow(startAbs, endAbs, cols, scanPatterns);
+        for (final f in fresh) {
+          if (f.payload == match.payload) return f;
+        }
+      }
+    }
+    // Could not confirm presence OR absence under a shifted frame — keep the
+    // match and let the debounced rescan re-anchor (or drop) it from content.
+    return match;
+  }
+
+  /// Scan absolute screen rows [startAbs, [endAbs]) with the production
+  /// scanner/patterns (the prune's bounded re-read).
+  List<StructuredMatch> _scanWindow(
+    int startAbs,
+    int endAbs,
+    int cols,
+    List<TextPattern> scanPatterns,
+  ) {
     final reader = _ScreenCellReader(
       terminal: terminal,
       cols: cols,
       startAbsRow: startAbs,
       endAbsRow: endAbs,
     );
-    final fresh = _detectionScanner.scan(reader, scanPatterns);
-    for (final f in fresh) {
-      if (f.payload == match.payload) return true;
-    }
-    return false;
+    return _detectionScanner.scan(reader, scanPatterns);
   }
 
   /// #767: re-scan the active screen plus a bounded scrollback window for every
@@ -629,6 +761,14 @@ class TerminalControllerImpl extends TerminalController
           endAbsRow: endAbs,
         );
         matches = _detectionScanner.scan(reader, scanPatterns);
+        // #883: a fresh scan emits absolute rows in the CURRENT coordinate
+        // frame — record that frame as the matches' anchor epoch so the
+        // synchronous prune can tell a real in-place content change (frame
+        // unchanged → evict, #873) from coordinate drift after a scrollback
+        // eviction/clear or a resize reflow (frame shifted → keep/re-locate).
+        _detectionFrameScrollback = scrollback;
+        _detectionFrameCols = cols;
+        _detectionFrameRows = visibleRows;
       }
     } catch (_) {
       matches = const [];
@@ -981,9 +1121,26 @@ class TerminalControllerImpl extends TerminalController
   @override
   void scrollToTop() {
     if (_activeScreen == .alternate) return;
-    terminal.scrollToTop();
+    // #883: jump the ScrollController FIRST, while the FFI scrollbar still
+    // holds the OLD offset. The render box's `_onScroll` derives its scroll
+    // delta as `targetOffset - scrollbar.offset`; with the old order
+    // (`terminal.scrollToTop()` before `jumpTo(0)`) the FFI offset was
+    // already 0 when the jump landed, so the delta was 0 and `_onScroll`
+    // returned WITHOUT marking the frame dirty. The glyphs never repainted
+    // at the top and `reportPaintedViewportOffset(0)` never fired, leaving
+    // [_paintedViewportOffset] stale at the bottom value indefinitely (no
+    // further output → no other repaint refreshes the frame's offset).
+    // [matchAt]/[highlightAt] — which map viewport→absolute via the PAINTED
+    // offset so hit-test and paint share one geometry source (#863) — then
+    // resolved against a wrong absolute row: a tap (or the #767 acceptance
+    // test) on the URL at the top of scrollback found nothing. Jumping first
+    // gives `_onScroll` the real delta → `scrollViewport` + frame-dirty →
+    // the next paint syncs and reports offset 0. `terminal.scrollToTop()`
+    // remains as the backstop for the detached/headless case (no clients)
+    // and is an idempotent no-op after the jump-driven scroll.
     final controller = _scrollController;
     if (controller != null && controller.hasClients) controller.jumpTo(0);
+    terminal.scrollToTop();
   }
 
   @override
