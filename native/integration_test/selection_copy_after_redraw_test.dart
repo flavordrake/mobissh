@@ -34,6 +34,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'package:mobissh/main.dart' show MobisshApp;
+import 'package:mobissh/services/clipboard.dart' show clipboardChannel;
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
@@ -48,10 +49,25 @@ void main() {
     (tester) async {
       FlutterForegroundTask.initCommunicationPort();
 
-      // Capture clipboard writes (the device clipboard is system state; on the
-      // emulator integration harness the platform channel is mocked, so we
-      // intercept Clipboard.setData to read exactly what Copy wrote).
+      // Capture clipboard writes. On-device the app's Copy path writes through
+      // the NATIVE `mobissh/clipboard` MethodChannel (`setText`, #845 labeled
+      // clip) — Flutter's `Clipboard.setData` is only its no-plugin FALLBACK.
+      // Cycle-1 of #883 showed the device telemetry "wrote 129 chars (native)"
+      // while this test's old SystemChannels.platform-only mock observed
+      // nothing: a harness gap, not an app bug. Mock BOTH: the native channel
+      // (the path actually taken on the emulator) and the platform channel
+      // (fallback + the read-back verify's Clipboard.getData).
       String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        clipboardChannel,
+        (call) async {
+          if (call.method == 'setText') {
+            copied = (call.arguments as Map)['text'] as String?;
+            return true;
+          }
+          return null;
+        },
+      );
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
         (call) async {
@@ -65,6 +81,10 @@ void main() {
         },
       );
       addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          clipboardChannel,
+          null,
+        );
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           SystemChannels.platform,
           null,

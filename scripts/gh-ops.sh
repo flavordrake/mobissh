@@ -212,6 +212,27 @@ case "$CMD" in
     gh pr merge "$PR_NUM" "$STRATEGY" --delete-branch
     ;;
 
+  pr-edit)
+    # Update a PR's body (and/or title): pr-edit PR_NUM --body-file FILE [--title T]
+    [ $# -ge 1 ] || { echo "Error: pr-edit requires PR number" >&2; exit 1; }
+    PR_NUM="$1"; shift
+    BODY_FILE=""
+    TITLE=""
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --body-file) BODY_FILE="$2"; shift 2 ;;
+        --title) TITLE="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    ARGS=()
+    [ -n "$BODY_FILE" ] && ARGS+=(--body-file "$BODY_FILE")
+    [ -n "$TITLE" ] && ARGS+=(--title "$TITLE")
+    [ ${#ARGS[@]} -ge 1 ] || { echo "Error: pr-edit needs --body-file and/or --title" >&2; exit 1; }
+    echo "Editing PR #${PR_NUM}" >&2
+    gh pr edit "$PR_NUM" "${ARGS[@]}"
+    ;;
+
   pr-close)
     [ $# -ge 1 ] || { echo "Error: pr-close requires PR number" >&2; exit 1; }
     PR_NUM="$1"; shift

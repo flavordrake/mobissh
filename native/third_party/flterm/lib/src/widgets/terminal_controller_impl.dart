@@ -1121,9 +1121,26 @@ class TerminalControllerImpl extends TerminalController
   @override
   void scrollToTop() {
     if (_activeScreen == .alternate) return;
-    terminal.scrollToTop();
+    // #883: jump the ScrollController FIRST, while the FFI scrollbar still
+    // holds the OLD offset. The render box's `_onScroll` derives its scroll
+    // delta as `targetOffset - scrollbar.offset`; with the old order
+    // (`terminal.scrollToTop()` before `jumpTo(0)`) the FFI offset was
+    // already 0 when the jump landed, so the delta was 0 and `_onScroll`
+    // returned WITHOUT marking the frame dirty. The glyphs never repainted
+    // at the top and `reportPaintedViewportOffset(0)` never fired, leaving
+    // [_paintedViewportOffset] stale at the bottom value indefinitely (no
+    // further output → no other repaint refreshes the frame's offset).
+    // [matchAt]/[highlightAt] — which map viewport→absolute via the PAINTED
+    // offset so hit-test and paint share one geometry source (#863) — then
+    // resolved against a wrong absolute row: a tap (or the #767 acceptance
+    // test) on the URL at the top of scrollback found nothing. Jumping first
+    // gives `_onScroll` the real delta → `scrollViewport` + frame-dirty →
+    // the next paint syncs and reports offset 0. `terminal.scrollToTop()`
+    // remains as the backstop for the detached/headless case (no clients)
+    // and is an idempotent no-op after the jump-driven scroll.
     final controller = _scrollController;
     if (controller != null && controller.hasClients) controller.jumpTo(0);
+    terminal.scrollToTop();
   }
 
   @override
