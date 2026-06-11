@@ -44,6 +44,47 @@ void attentionNotificationTapBackground(NotificationResponse response) {
   );
 }
 
+/// Shared FLN initialization (#878): the same `InitializationSettings` +
+/// HIGH-importance `mobissh_attention` channel creation (idempotent on
+/// Android), used by BOTH registrations so they can't drift:
+///
+///   * the FGS task isolate ([FlnAttentionNotifier._ensureInit]) — needed for
+///     POSTING from the scanner's isolate;
+///   * the UI isolate (`attentionUiFlnInitProvider` in
+///     `state/attention_providers.dart`) — needed for TAP DELIVERY. On Android
+///     a plain tap resumes MainActivity → the UI engine, and the plugin
+///     delivers `onDidReceiveNotificationResponse` only to the isolate that
+///     initialized it in that engine. Before #878 the UI isolate never did, so
+///     every plain-tap payload was silently dropped (the #857/#870 root cause).
+///
+/// [onResponse] is the per-isolate tap callback; the background-ACTION handler
+/// is always the shared top-level [attentionNotificationTapBackground].
+Future<void> initializeAttentionFln(
+  FlutterLocalNotificationsPlugin plugin, {
+  required void Function(NotificationResponse response) onResponse,
+}) async {
+  const initSettings = InitializationSettings(
+    android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+  );
+  await plugin.initialize(
+    initSettings,
+    onDidReceiveNotificationResponse: onResponse,
+    onDidReceiveBackgroundNotificationResponse:
+        attentionNotificationTapBackground,
+  );
+  // Create the HIGH channel explicitly so importance is correct on first post.
+  final android = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  await android?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      kAttentionChannelId,
+      kAttentionChannelName,
+      description: kAttentionChannelDescription,
+      importance: Importance.high,
+    ),
+  );
+}
+
 /// `flutter_local_notifications`-backed [AttentionNotifier].
 ///
 /// Lazily initializes the plugin + the HIGH-importance `mobissh_attention`
@@ -60,33 +101,22 @@ class FlnAttentionNotifier implements AttentionNotifier {
 
   Future<void> _ensureInit() async {
     if (_initialized) return;
-    const initSettings = InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-    );
-    await _plugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: (response) {
-        // Foreground tap (app alive): record pending focus; the UI consumes it
-        // on the next resume. The background variant covers a dead app. #870:
-        // bind the pending-WRITE log to `ctrace` so the write order is captured.
+    // #878: shared init (settings + channel) — see [initializeAttentionFln].
+    // This task-isolate registration is what allows POSTING; tap DELIVERY for
+    // plain taps happens via the UI isolate's registration
+    // (`attentionUiFlnInitProvider`). This isolate's `onResponse` is kept as a
+    // best-effort fallback for any response the platform still hands this
+    // engine (e.g. a tap while the FGS engine is the one resumed).
+    await initializeAttentionFln(
+      _plugin,
+      onResponse: (response) {
+        // #870: bind the pending-WRITE log to `ctrace` so the write order is
+        // captured.
         unawaited(
           PendingFocusBridge(FftKeyValueStore(), log: ctrace)
               .setPendingFromPayload(response.payload),
         );
       },
-      onDidReceiveBackgroundNotificationResponse:
-          attentionNotificationTapBackground,
-    );
-    // Create the HIGH channel explicitly so importance is correct on first post.
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    await android?.createNotificationChannel(
-      const AndroidNotificationChannel(
-        kAttentionChannelId,
-        kAttentionChannelName,
-        description: kAttentionChannelDescription,
-        importance: Importance.high,
-      ),
     );
     _initialized = true;
   }

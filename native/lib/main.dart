@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'diagnostics/connect_trace.dart';
 import 'diagnostics/crash_reporter.dart';
 import 'platform/desktop.dart';
 import 'ssh/ssh_session.dart';
@@ -120,10 +121,31 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     // tap recorded a pending focus in process-death-surviving storage. Consume
     // it once the first frame settles so sessions exist to focus. Deferred to a
     // post-frame callback so provider reads happen after the widget mounts.
+    //
+    // #878: BEFORE that initial consume, register the UI-isolate FLN tap
+    // handler + seed any cold-start launch-details payload
+    // (attentionUiFlnInitProvider). Without the UI-isolate registration a
+    // plain tap delivers to this engine where no handler exists — the payload
+    // was silently dropped (the #857/#870 root cause). Ordering matters: the
+    // launch-details seed must land before consumePending reads the store.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(ref.read(attentionFocusRouterProvider).consumePending());
+      unawaited(_initAttentionTapThenConsume());
     });
+  }
+
+  /// #878 boot ordering: UI-isolate FLN init (+ cold-start launch-details
+  /// seed) FIRST, then the initial pending-focus consume. Init failures are
+  /// logged but never block the consume — a tap recorded by the background
+  /// handler must still route on a degraded boot.
+  Future<void> _initAttentionTapThenConsume() async {
+    try {
+      await ref.read(attentionUiFlnInitProvider.future);
+    } catch (e) {
+      clifecycle('ui.attention', 'fln: UI-isolate init failed: $e');
+    }
+    if (!mounted) return;
+    await ref.read(attentionFocusRouterProvider).consumePending();
   }
 
   @override

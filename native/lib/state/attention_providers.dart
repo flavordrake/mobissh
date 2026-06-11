@@ -4,13 +4,18 @@
 // [PendingFocusBridge] (process-death-surviving), `sessionsProvider.setActive`,
 // session existence, and PTY input for the guarded tmux select-window.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../platform/desktop.dart';
 import '../services/attention_focus_router.dart';
 import '../services/attention_notifier_fln.dart';
+import '../services/attention_tap_ui.dart';
 import '../services/session_attention_notification.dart';
 import 'sessions.dart';
 
@@ -78,4 +83,49 @@ final attentionFocusRouterProvider = Provider<AttentionFocusRouter>((ref) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     },
   );
+});
+
+/// UI-isolate FLN registration (#878). MUST run at app boot, BEFORE the boot
+/// path's initial `consumePending()`.
+///
+/// Root cause being fixed: `initialize()` was only ever called in the FGS task
+/// isolate (for posting). A plain notification tap resumes MainActivity → the
+/// UI engine, and the plugin delivers `onDidReceiveNotificationResponse` only
+/// to the isolate that initialized it IN THAT ENGINE — so every tap payload
+/// was dropped and the pending-focus write never happened (the confirmed root
+/// of the #857/#870 wrong-host saga).
+///
+/// This provider:
+///   1. initializes FLN in the UI isolate via the SHARED
+///      [initializeAttentionFln] (same settings + idempotent channel creation
+///      as the task isolate — no copy-paste drift), with a tap handler that
+///      writes pending AND immediately consumes (the tap IS the resume);
+///   2. checks `getNotificationAppLaunchDetails()`: a process-death tap seeds
+///      pending BEFORE the initial consume runs (`main.dart` awaits this
+///      provider's future first).
+///
+/// Telemetry flows through `clifecycle` (#766): its durable 80-line ring ships
+/// in the feedback upload and survives connect-ring churn. Desktop (#577) has
+/// no FLN/FGS machinery → no-op.
+final attentionUiFlnInitProvider = FutureProvider<void>((ref) async {
+  if (ref.watch(isDesktopProvider)) return;
+  final binding = AttentionUiTapBinding(
+    // clifecycle-bound bridge: the pending WRITE line lands in the uploaded
+    // lifecycle ring (the task/background-isolate writes only reach logcat).
+    bridge: PendingFocusBridge(const FftKeyValueStore(), log: clifecycle),
+    consume: () => ref.read(attentionFocusRouterProvider).consumePending(),
+    log: clifecycle,
+  );
+  final plugin = FlutterLocalNotificationsPlugin();
+  await initializeAttentionFln(
+    plugin,
+    onResponse: (response) => unawaited(binding.handleTap(response.payload)),
+  );
+  clifecycle('ui.attention', 'fln: UI-isolate tap handler registered');
+  // Cold start: a tap on a dead process launches the app with the response in
+  // the launch details — seed it as pending so the initial consume routes it.
+  final details = await plugin.getNotificationAppLaunchDetails();
+  if (details?.didNotificationLaunchApp ?? false) {
+    await binding.seedColdStart(details!.notificationResponse?.payload);
+  }
 });
