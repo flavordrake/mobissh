@@ -51,9 +51,31 @@ if [ ! -f "$MSG_FILE" ]; then
   exit 2
 fi
 
+# Auto-bump the build number (version: X.Y.Z+N → +N+1) so a ship can never go
+# out self-reporting the previous version (happened on +56: pubspec was passed
+# but never edited, so the binary reported +55). If pubspec.yaml already has an
+# UNCOMMITTED version change (a deliberate manual bump, e.g. a minor-version
+# jump), respect it and skip the auto-bump.
+PUBSPEC="native/pubspec.yaml"
+if git diff --quiet HEAD -- "$PUBSPEC"; then
+  CUR_VERSION="$(grep -E '^version:' "$PUBSPEC" | head -1 | awk '{print $2}')"
+  BASE="${CUR_VERSION%+*}"
+  BUILD="${CUR_VERSION##*+}"
+  if [[ "$CUR_VERSION" == *+* && "$BUILD" =~ ^[0-9]+$ ]]; then
+    NEW_VERSION="${BASE}+$((BUILD + 1))"
+    sed -i "s/^version: .*/version: ${NEW_VERSION}/" "$PUBSPEC"
+    echo "> auto-bumped version: ${CUR_VERSION} → ${NEW_VERSION}"
+  else
+    echo "! ship-native: cannot parse build number in '${CUR_VERSION}' — bump manually" >&2
+    exit 2
+  fi
+else
+  echo "> pubspec.yaml already modified (manual bump) — keeping it as-is"
+fi
+
 if [ "${#PATHS[@]}" -gt 0 ]; then
   echo "> staging ${#PATHS[@]} path(s): ${PATHS[*]}"
-  git add -- "${PATHS[@]}"
+  git add -- "${PATHS[@]}" "$PUBSPEC"
 else
   echo "> staging all modified tracked files (git add -u)"
   git add -u
