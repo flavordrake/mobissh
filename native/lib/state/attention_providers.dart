@@ -5,6 +5,7 @@
 // session existence, and PTY input for the guarded tmux select-window.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -17,6 +18,9 @@ import '../services/attention_focus_router.dart';
 import '../services/attention_notifier_fln.dart';
 import '../services/attention_tap_ui.dart';
 import '../services/session_attention_notification.dart';
+import '../ssh/ssh_connect_params.dart';
+import '../storage/profiles_store.dart';
+import 'profiles_providers.dart';
 import 'sessions.dart';
 
 /// Builds the [AttentionFocusRouter] bound to the live session collection.
@@ -72,6 +76,26 @@ final attentionFocusRouterProvider = Provider<AttentionFocusRouter>((ref) {
       }
       return bestId;
     },
+    // #885: dead-host tap → reconnect the host's PROFILE through the EXISTING
+    // connect flow (the same addOrActivate + proxy.connect path a profile-row
+    // tap takes — see connect_form `_connectFromProfile` and
+    // `SessionsNotifier._reviveFromProfile`). Resolves to the new session's id
+    // once the entry exists so the router can focus it; null when no saved
+    // profile matches the host or it has no usable stored credentials (then
+    // the router cancels the notification instead).
+    reconnectHost: (host) => _reconnectHostFromProfile(ref, host),
+    // #885: dead-host tap with no reconnectable profile → cancel the host's
+    // notification so it can't dangle. Deliberately a BARE plugin cancel (the
+    // shared tag/id helpers guarantee it addresses the posted slot), NOT
+    // `FlnAttentionNotifier.cancel` — its lazy `_ensureInit` would re-run
+    // `plugin.initialize` in this (UI) isolate and clobber the #878
+    // tap-binding registration. By tap time the UI isolate is already
+    // initialized via [attentionUiFlnInitProvider].
+    cancelHostNotification: (host) async {
+      final tag = attentionTagForHost(host);
+      await FlutterLocalNotificationsPlugin()
+          .cancel(attentionIdForTag(tag), tag: tag);
+    },
     // See doc above: a parsed (win N) hint implies the owner's tmux setup.
     isTmux: (_) => true,
     // #710: open an explicitly-signalled URL from the tapped notification in the
@@ -84,6 +108,77 @@ final attentionFocusRouterProvider = Provider<AttentionFocusRouter>((ref) {
     },
   );
 });
+
+/// Dead-host tap reconnect (#885): resolve [host]'s saved profile + vault
+/// credentials and re-connect through the EXISTING connect flow
+/// (`sessionsProvider.notifier.addOrActivate` + `proxy.connect` — the same
+/// path a profile-row / recent-session tap takes, and the same credential
+/// resolution as `SessionsNotifier._reviveFromProfile`). Returns the new
+/// session's id once the entry exists (the router focuses it), or null when no
+/// profile matches the host / it has no usable stored secret — the router then
+/// cancels the dangling notification instead. Best-effort: any failure resolves
+/// null (→ cancel), never throws into the tap.
+Future<String?> _reconnectHostFromProfile(Ref ref, String host) async {
+  try {
+    final profiles = await ref.read(profilesStoreProvider).load();
+    SavedProfile? match;
+    for (final p in profiles) {
+      if (p.host == host) {
+        match = p;
+        break;
+      }
+    }
+    if (match == null) {
+      ctrace('ui.attention', 'reconnectHost: no profile for host=$host');
+      return null;
+    }
+    final secrets = ref.read(secretsStoreProvider);
+    final creds = await loadProfileCredentials(secrets, match);
+    final wantsKey =
+        match.authType == 'key' ||
+        (match.authType == null &&
+            (creds.privateKey != null && creds.privateKey!.isNotEmpty));
+    final SshAuth? auth;
+    if (wantsKey && creds.privateKey != null && creds.privateKey!.isNotEmpty) {
+      auth = SshAuth.key(
+        Uint8List.fromList(utf8.encode(creds.privateKey!)),
+        passphrase: (creds.passphrase == null || creds.passphrase!.isEmpty)
+            ? null
+            : creds.passphrase,
+      );
+    } else if (!wantsKey &&
+        creds.password != null &&
+        creds.password!.isNotEmpty) {
+      auth = SshAuth.password(creds.password!);
+    } else {
+      auth = null;
+    }
+    if (auth == null) {
+      ctrace(
+        'ui.attention',
+        'reconnectHost: no stored creds for host=$host — cannot reconnect',
+      );
+      return null;
+    }
+    final params = SshConnectParams(
+      host: match.host,
+      port: match.port,
+      username: match.username,
+      auth: auth,
+    );
+    // The existing connect flow: addOrActivate dedupes by host:port:user,
+    // starts the keepalive service, creates the per-session proxy + terminal,
+    // and makes the new entry active; the connect is dispatched on its proxy.
+    final entry = ref
+        .read(sessionsProvider.notifier)
+        .addOrActivate(params, title: match.title);
+    unawaited(entry.proxy.connect(params, title: match.title));
+    return entry.id;
+  } catch (e) {
+    ctrace('ui.attention', 'reconnectHost failed for host=$host: $e');
+    return null;
+  }
+}
 
 /// UI-isolate FLN registration (#878). MUST run at app boot, BEFORE the boot
 /// path's initial `consumePending()`.
