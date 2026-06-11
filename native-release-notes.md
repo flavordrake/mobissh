@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+56 (2026-06-10) — path highlights stop at shell syntax + stray highlights cleared
+- **A path next to shell syntax highlights just the path.** A line like `/path/to/script 2>&1 > /tmp/out; echo …` was highlighting the whole command as one "file"; the path detector now stops at shell delimiters (`; | & > <`, quotes) so only the real paths light up. (#874)
+- **Stray leftover highlight boxes are cleared.** A URL/path highlight whose line scrolled away or got redrawn with different text no longer lingers as an empty box floating over unrelated content — the anchor is dropped as soon as its text is gone. (#873)
+- **Notification-routing diagnostics.** Added capturable telemetry around the tap→session hand-off (which pending entry won the timing race, which session the app actually activated) so a wrong-route can finally be read from an uploaded report. (routing fix pending a capture)
+
 ## v0.1.10+55 (2026-06-10) — ~ paths work + notification taps land on the right server
 - **The file browser handles `~` paths.** Navigating to `~/.claude/...` failed with a raw SFTP error because SFTP doesn't expand `~`; it's now expanded to your home dir, and a missing folder shows a clean "Folder not found" instead of a raw error. (#867)
 - **Notification taps land on the right server, reliably.** A tap could resolve to a recently-active *different* server under a timing race; the pending-focus now seq-stamps so the server you actually tapped wins. Also added diagnostic logging that lands in the uploaded report, so any remaining misroute is now traceable. (#870)

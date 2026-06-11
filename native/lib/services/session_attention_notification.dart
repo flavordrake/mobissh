@@ -561,6 +561,25 @@ class PendingFocusBridge {
     final secondSeq = _seqOf(second) ?? -1;
     final chosen = (second != null && secondSeq > firstSeq) ? second : first;
 
+    // #875: log the race RESOLUTION UI-side (this runs in the UI isolate, so it
+    // lands in the UPLOADED connect ring — unlike the WRITE log, which fires in
+    // the throwaway tap isolate and is never captured). Shows whether the grace
+    // let a fresher write land (`raced-in`) or the consume committed to the
+    // first read (`first` — the wrong-host suspect when the cross-isolate write
+    // hadn't flushed within the grace). Sids/seqs only; never auth material.
+    String sidShort(String? raw) {
+      final sid = AttentionNotification.parsePayload(raw).sessionId;
+      return sid == null ? 'none' : hostOfSessionId(sid);
+    }
+
+    final racedIn = second != null && secondSeq > firstSeq;
+    log?.call(
+      'ui.attention',
+      'takePending: first=${sidShort(first)}/$firstSeq '
+      'second=${sidShort(second)}/$secondSeq '
+      '→ ${sidShort(chosen)} (${racedIn ? 'raced-in' : 'first'})',
+    );
+
     if (chosen == null) {
       return AttentionNotification.parsePayload(null);
     }

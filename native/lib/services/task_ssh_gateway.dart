@@ -45,6 +45,20 @@ String _gwLabel(Map<String, dynamic> p) {
     if (parts.length >= 2) return '$kind sid=${parts[0]}:${parts[1]}$dims';
     return '$kind sid=$sid$dims';
   }
+  // #875: setActive carries its target in `activeSessionId`/`activeHost`, NOT
+  // `sessionId` — so the prior label logged a bare `setActive` with no target,
+  // hiding the ONE field that proves which session the UI activated (the
+  // ground truth for the notification-routing reports). Surface it.
+  if (kind == 'setActive') {
+    final asid = p['activeSessionId'];
+    final target = (asid is String && asid.isNotEmpty)
+        ? asid.split(':').take(2).join(':')
+        : (p['activeHost'] is String && (p['activeHost'] as String).isNotEmpty
+              ? p['activeHost'] as String
+              : 'none');
+    final act = p['active'] == false ? ' (inactive)' : '';
+    return 'setActive sid=$target$act';
+  }
   return '$kind$dims';
 }
 

@@ -80,7 +80,13 @@ class AttentionFocusRouter {
   Future<String?> consumePending() async {
     final pending = await _bridge.takePending();
     final payloadSid = pending.sessionId;
-    if (payloadSid == null) return null;
+    if (payloadSid == null) {
+      // #875: log the empty consume too. Without this, a resume with no pending
+      // is indistinguishable in a capture from a tap whose cross-isolate write
+      // never landed (the silent wrong-route case) — both produced zero lines.
+      _log?.call('ui.attention', 'consume: no pending focus (resume/cold)');
+      return null;
+    }
     final host = hostOfSessionId(payloadSid);
 
     // Resolve the session to actually focus (#857). Prefer the EXACT payload id
