@@ -65,6 +65,9 @@ class _ScriptedSftpSession implements SftpSession {
   }
 
   @override
+  Future<int> upload(String path, Uint8List bytes) async => bytes.length;
+
+  @override
   Future<void> close() async {}
 }
 

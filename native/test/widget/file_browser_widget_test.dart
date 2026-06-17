@@ -59,6 +59,9 @@ class _ScriptedSftpSession implements SftpSession {
   }
 
   @override
+  Future<int> upload(String path, Uint8List bytes) async => bytes.length;
+
+  @override
   Future<void> close() async {}
 }
 
@@ -373,6 +376,8 @@ class _ThrowingSftpSession implements SftpSession {
     required void Function(Uint8List chunk, int offset) onChunk,
     int chunkSize = 64 * 1024,
   }) async => 0;
+  @override
+  Future<int> upload(String path, Uint8List bytes) async => bytes.length;
   @override
   Future<void> close() async {}
 }
