@@ -30,6 +30,41 @@ bool hasTextExtension(String name) {
   return _textExtensions.contains(ext);
 }
 
+/// Well-known filenames that carry no extension but are conventionally plain
+/// text/config. Compared case-insensitively against the full name. Mirrors the
+/// PWA's content-class fall-through for extensionless text (#893).
+const Set<String> _extensionlessTextNames = {
+  'config',
+  'dockerfile',
+  'makefile',
+  'rakefile',
+  'gemfile',
+  'procfile',
+  'license',
+  'readme',
+  'authorized_keys',
+  'known_hosts',
+  'hosts',
+};
+
+/// True when [name] has no real extension yet is conventionally text:
+///   (a) a bare dotfile — leading dot, no inner dot (`.bashrc`, `.gitconfig`,
+///       `.vimrc`). Files like `.tmux.conf` already match by their `.conf`
+///       extension, so this only covers the no-extension case (PWA `isDotfile`).
+///   (b) a well-known extensionless name (`config`, `Dockerfile`, `LICENSE`,
+///       `known_hosts`, …), case-insensitive.
+/// A bare `config` arriving as the basename of `~/.ssh/config` is the motivating
+/// case (#893).
+bool isExtensionlessTextName(String name) {
+  if (name.isEmpty) return false;
+  // (a) bare dotfile: leading dot and no further dot.
+  if (name.startsWith('.') && name.indexOf('.', 1) == -1) return true;
+  // (b) well-known extensionless names (must genuinely have no extension).
+  final dot = name.lastIndexOf('.');
+  if (dot > 0 && dot != name.length - 1) return false;
+  return _extensionlessTextNames.contains(name.toLowerCase());
+}
+
 /// True when [mime] denotes textual content: any `text/*`, or a known textual
 /// `application/*` type (json, xml, javascript, etc.). MIME parameters
 /// (`; charset=…`) are ignored. Null / empty / binary types are false.
@@ -49,11 +84,16 @@ bool isTextMime(String? mime) {
   return textApps.contains(base);
 }
 
-/// True when [entry] is a regular file that looks like text, by extension or by
-/// an explicit [mime]. Directories are never text.
+/// True when [entry] is a regular file that looks like text, by a known
+/// extension, a well-known extensionless name / bare dotfile, or an explicit
+/// text [mime]. Directories are never text. This single classifier drives the
+/// view router (and, once SFTP write lands, the edit gate) — matching the PWA's
+/// single `getPreviewType()` (#893).
 bool isTextEntry(SftpEntry entry, {String? mime}) {
   if (entry.isDirectory) return false;
-  return hasTextExtension(entry.name) || isTextMime(mime);
+  return hasTextExtension(entry.name) ||
+      isExtensionlessTextName(entry.name) ||
+      isTextMime(mime);
 }
 
 /// Markdown extensions (lowercase, no leading dot). A subset of

@@ -66,6 +66,50 @@ void main() {
     });
   });
 
+  group('isExtensionlessTextName', () {
+    test('matches bare dotfiles (leading dot, no inner dot)', () {
+      for (final n in ['.bashrc', '.zshrc', '.gitconfig', '.vimrc', '.profile']) {
+        expect(isExtensionlessTextName(n), isTrue, reason: n);
+      }
+    });
+
+    test('matches well-known extensionless names, case-insensitive', () {
+      for (final n in [
+        'config',
+        'Dockerfile',
+        'dockerfile',
+        'Makefile',
+        'Rakefile',
+        'Gemfile',
+        'Procfile',
+        'LICENSE',
+        'license',
+        'README',
+        'authorized_keys',
+        'known_hosts',
+        'hosts',
+      ]) {
+        expect(isExtensionlessTextName(n), isTrue, reason: n);
+      }
+    });
+
+    test('does not match files with a real extension', () {
+      for (final n in ['photo.png', 'archive.tar.gz', 'app.bin', 'a.txt']) {
+        expect(isExtensionlessTextName(n), isFalse, reason: n);
+      }
+    });
+
+    test('does not match dotfiles with an inner dot (handled by extension)', () {
+      expect(isExtensionlessTextName('.tmux.conf'), isFalse);
+      expect(isExtensionlessTextName('.env.local'), isFalse);
+    });
+
+    test('does not match unknown bare names', () {
+      expect(isExtensionlessTextName('photo'), isFalse);
+      expect(isExtensionlessTextName('binaryblob'), isFalse);
+    });
+  });
+
   group('isTextEntry', () {
     test('true for a text-extension file', () {
       expect(isTextEntry(file('a.txt')), isTrue);
@@ -73,6 +117,15 @@ void main() {
 
     test('true for a text MIME even without a text extension', () {
       expect(isTextEntry(file('blob'), mime: 'text/plain'), isTrue);
+    });
+
+    test('true for extensionless well-known text names', () {
+      // .ssh/config arrives as basename `config`.
+      expect(isTextEntry(file('config')), isTrue);
+      expect(isTextEntry(file('Dockerfile')), isTrue);
+      expect(isTextEntry(file('.bashrc')), isTrue);
+      expect(isTextEntry(file('LICENSE')), isTrue);
+      expect(isTextEntry(file('known_hosts')), isTrue);
     });
 
     test('false for directories', () {
@@ -88,6 +141,20 @@ void main() {
     test('false for binary files', () {
       expect(isTextEntry(file('app.bin')), isFalse);
       expect(isTextEntry(file('doc.pdf')), isFalse);
+      expect(isTextEntry(file('photo.png')), isFalse);
+      expect(isTextEntry(file('archive.tar.gz')), isFalse);
+    });
+  });
+
+  group('isMarkdownEntry stays distinct (ordered first in registry)', () {
+    test('markdown extension is markdown', () {
+      expect(isMarkdownEntry(file('README.md')), isTrue);
+      expect(isMarkdownEntry(file('notes.markdown')), isTrue);
+    });
+
+    test('non-markdown text is not markdown', () {
+      expect(isMarkdownEntry(file('config')), isFalse);
+      expect(isMarkdownEntry(file('a.txt')), isFalse);
     });
   });
 }
