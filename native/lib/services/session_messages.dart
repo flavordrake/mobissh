@@ -61,6 +61,11 @@ enum SshTaskCommandKind {
 
   /// Download a single remote file; the task streams chunks back.
   sftpDownload,
+
+  /// Upload (whole-file write) a single remote file (#892). The bytes are
+  /// carried inline; the task opens the resolved path write|create|truncate and
+  /// writes them, then replies with a terminal [SftpUploadDoneEvent].
+  sftpUpload,
 }
 
 /// Envelope kind discriminator for task → UI events.
@@ -94,8 +99,13 @@ enum SshTaskEventKind {
   /// A download finished — total bytes + the request id.
   sftpDownloadDone,
 
-  /// An SFTP operation failed (list or download). Carries the request id so
-  /// the UI can match it to the in-flight op without tearing down the session.
+  /// A whole-file upload finished — total bytes written + the request id
+  /// (#892). The writer seam completes its future on this.
+  sftpUploadDone,
+
+  /// An SFTP operation failed (list, download, or upload). Carries the request
+  /// id so the UI can match it to the in-flight op without tearing down the
+  /// session.
   sftpError,
 
   /// Task → UI: one HIGH-signal lifecycle telemetry line (#759/#766). The
@@ -236,6 +246,13 @@ sealed class SshTaskCommand {
           requestId: json['requestId'] as String,
           path: json['path'] as String,
         );
+      case SshTaskCommandKind.sftpUpload:
+        return SftpUploadCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+          bytes: Uint8List.fromList(base64Decode(json['bytes'] as String)),
+        );
     }
   }
 }
@@ -291,6 +308,36 @@ class SftpDownloadCommand extends SshTaskCommand {
     'sessionId': sessionId,
     'requestId': requestId,
     'path': path,
+  };
+}
+
+/// UI → task: WHOLE-FILE upload of [bytes] to the remote file at [path] (#892).
+/// The task opens the resolved path `write | create | truncate` and writes the
+/// bytes, then replies with a terminal [SftpUploadDoneEvent] (or [SftpErrorEvent]
+/// on failure), all keyed by [requestId]. Mirrors [SftpDownloadCommand]. Chunked
+/// upload is a later slice — text files are small enough to carry inline.
+class SftpUploadCommand extends SshTaskCommand {
+  SftpUploadCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+    required this.bytes,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+  final Uint8List bytes;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpUpload;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
+    'bytes': base64Encode(bytes),
   };
 }
 
@@ -621,6 +668,12 @@ sealed class SshTaskEvent {
           requestId: json['requestId'] as String,
           totalBytes: json['totalBytes'] as int,
         );
+      case SshTaskEventKind.sftpUploadDone:
+        return SftpUploadDoneEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          totalBytes: json['totalBytes'] as int,
+        );
       case SshTaskEventKind.sftpError:
         return SftpErrorEvent(
           sessionId: sessionId,
@@ -940,8 +993,33 @@ class SftpDownloadDoneEvent extends SshTaskEvent {
   };
 }
 
-/// Task → UI: an SFTP list/download op failed. Scoped to [requestId] so it
-/// surfaces as an in-browser error (snackbar) without disturbing the SSH
+/// Task → UI: a whole-file upload completed successfully (#892). [totalBytes]
+/// is the number of bytes written; the writer seam completes its future on
+/// this. Mirrors [SftpDownloadDoneEvent].
+class SftpUploadDoneEvent extends SshTaskEvent {
+  const SftpUploadDoneEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.totalBytes,
+  }) : super(sessionId);
+
+  final String requestId;
+  final int totalBytes;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpUploadDone;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'totalBytes': totalBytes,
+  };
+}
+
+/// Task → UI: an SFTP list/download/upload op failed. Scoped to [requestId] so
+/// it surfaces as an in-browser error (snackbar) without disturbing the SSH
 /// session itself.
 class SftpErrorEvent extends SshTaskEvent {
   const SftpErrorEvent({
