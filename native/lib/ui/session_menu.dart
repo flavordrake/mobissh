@@ -746,12 +746,15 @@ class _SessionRow extends ConsumerWidget {
             icon: const Icon(Icons.folder_outlined),
             // Open the file browser for THIS row's session id (its live SSH
             // connection drives SFTP). Close the menu first so the browser
-            // route isn't covered by the overlay.
+            // route isn't covered by the overlay. #891: open at the profile's
+            // default directory (else SFTP home) via openFileBrowserForSession.
             onPressed: () {
               final sessionId = entry.id;
               final navigator = Navigator.of(context);
               onClose();
-              openFileBrowser(navigator.context, sessionId);
+              unawaited(
+                openFileBrowserForSession(navigator.context, ref, sessionId),
+              );
             },
           ),
           if (sessionCanReconnect(state))

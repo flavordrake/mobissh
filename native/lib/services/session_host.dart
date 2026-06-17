@@ -304,6 +304,8 @@ class SessionHost {
         _handleSftpList(cmd);
       case SftpDownloadCommand():
         _handleSftpDownload(cmd);
+      case SftpUploadCommand():
+        _handleSftpUpload(cmd);
     }
   }
 
@@ -1064,6 +1066,28 @@ class SessionHost {
     } catch (e) {
       ctrace('task.host', 'sftp download FAILED path=${cmd.path} — $e');
       _emitSftpError(cmd.sessionId, cmd.requestId, 'Download failed: $e');
+    }
+  }
+
+  Future<void> _handleSftpUpload(SftpUploadCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      final written = await sftp.upload(cmd.path, cmd.bytes);
+      if (_disposed) return;
+      _gateway.send(
+        SftpUploadDoneEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          totalBytes: written,
+        ).toJson(),
+      );
+    } catch (e) {
+      ctrace('task.host', 'sftp upload FAILED path=${cmd.path} — $e');
+      _emitSftpError(cmd.sessionId, cmd.requestId, 'Upload failed: $e');
     }
   }
 

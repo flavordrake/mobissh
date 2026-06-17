@@ -5,9 +5,9 @@
 // an SFTP subsystem channel over the authenticated `SSHClient`; tests inject a
 // [FakeSftpSession] and never touch a socket.
 //
-// Scope (Slice 1): list a directory + download one file (chunked). Upload,
-// mkdir, rename, delete are deliberately absent — they are Slice 2 (#559 says
-// keep this small + shippable). Add them here when that lands.
+// Scope: list a directory + download one file (chunked) + WHOLE-FILE upload
+// (#892, the foundation for file editing). mkdir, rename, delete, and chunked
+// upload remain deliberately absent — add them here when those land.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -102,6 +102,12 @@ abstract class SftpSession {
   /// server omits the size.
   Future<int?> sizeOf(String path);
 
+  /// WHOLE-FILE upload (#892): write [bytes] to the remote file at [path],
+  /// opening it write|create|truncate (replacing any existing content). Reuses
+  /// the same `~`/relative resolution as the read ops so `~/.ssh/config` works.
+  /// Returns the number of bytes written. Chunked upload is a later slice.
+  Future<int> upload(String path, Uint8List bytes);
+
   /// Release the underlying SFTP channel.
   Future<void> close();
 }
@@ -178,6 +184,25 @@ class DartSshSftpSession implements SftpSession {
         total += chunk.length;
       }
       return total;
+    } finally {
+      await file.close();
+    }
+  }
+
+  @override
+  Future<int> upload(String path, Uint8List bytes) async {
+    // Open the RESOLVED path write|create|truncate so a `~/…` or relative path
+    // (#867) lands at the right place and any existing content is replaced
+    // (whole-file write, #892). `truncate` requires `create` per the SFTP spec.
+    final file = await _client.open(
+      await _resolve(path),
+      mode: SftpFileOpenMode.write |
+          SftpFileOpenMode.create |
+          SftpFileOpenMode.truncate,
+    );
+    try {
+      await file.writeBytes(bytes);
+      return bytes.length;
     } finally {
       await file.close();
     }

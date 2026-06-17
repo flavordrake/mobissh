@@ -20,6 +20,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_download.dart';
 import '../ssh/ssh_session_proxy.dart';
+import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import 'file_viewer_registry.dart';
@@ -91,6 +92,60 @@ Future<void> openFileBrowser(
       builder: (_) =>
           FileBrowserScreen(sessionId: sessionId, initialPath: initialPath),
     ),
+  );
+}
+
+/// Resolve a saved profile's [defaultPath] (#891) to the browser's initial
+/// listing path. A non-empty path opens the browser THERE; an empty one falls
+/// back to `'~'` (the SFTP home), which the SFTP layer's `_resolve()`/
+/// [expandTilde] (#867) turns into the session's realpath home. `~`/relative
+/// paths and absolutes pass straight through to the same resolver, and an
+/// invalid path surfaces as the browser's friendly empty-state — never a crash.
+String resolveBrowserInitialPath(String defaultPath) {
+  final trimmed = defaultPath.trim();
+  return trimmed.isEmpty ? '~' : trimmed;
+}
+
+/// Open the file browser for [sessionId] starting at its saved profile's
+/// `defaultPath` (#891), falling back to the SFTP home when unset. Looks the
+/// profile up by the session's `host:port:username` identity via
+/// [profilesStoreProvider]; an ad-hoc (never-saved) session simply has no match
+/// and opens at home. This is the entry point the session menu + terminal "Files"
+/// affordances use — the absolute-tap path (#778) still calls [openFileBrowser]
+/// with an explicit `initialPath` and is unaffected.
+Future<void> openFileBrowserForSession(
+  BuildContext context,
+  WidgetRef ref,
+  String sessionId,
+) async {
+  var defaultPath = '';
+  // Find the session's identity (host:port:username) so we can match a profile.
+  String? profileKey;
+  for (final e in ref.read(sessionsProvider).entries) {
+    if (e.id == sessionId) {
+      profileKey = e.profileKey;
+      break;
+    }
+  }
+  if (profileKey != null) {
+    try {
+      final profiles = await ref.read(profilesStoreProvider).load();
+      for (final p in profiles) {
+        if (p.identityKey == profileKey) {
+          defaultPath = p.defaultPath;
+          break;
+        }
+      }
+    } catch (_) {
+      // Profile lookup failure degrades to home — never block opening the
+      // browser on a storage hiccup.
+    }
+  }
+  if (!context.mounted) return;
+  await openFileBrowser(
+    context,
+    sessionId,
+    initialPath: resolveBrowserInitialPath(defaultPath),
   );
 }
 
