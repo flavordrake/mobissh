@@ -34,7 +34,13 @@ void main() {
     ) async {
       await tester.pumpWidget(
         const ProviderScope(
-          child: MaterialApp(home: Scaffold(body: SettingsPanel())),
+          child: MaterialApp(
+            // Mirror production (settings_screen.dart) — the grown panel (#888
+            // Detection group) overflows a bare bounded Scaffold body.
+            home: Scaffold(
+              body: SingleChildScrollView(child: SettingsPanel()),
+            ),
+          ),
         ),
       );
       await _pumpFrames(tester);
@@ -55,7 +61,11 @@ void main() {
 
       await tester.pumpWidget(
         const ProviderScope(
-          child: MaterialApp(home: Scaffold(body: SettingsPanel())),
+          child: MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(child: SettingsPanel()),
+            ),
+          ),
         ),
       );
       await _pumpFrames(tester);
@@ -76,7 +86,11 @@ void main() {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: const MaterialApp(home: Scaffold(body: SettingsPanel())),
+          child: const MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(child: SettingsPanel()),
+            ),
+          ),
         ),
       );
       await _pumpFrames(tester);

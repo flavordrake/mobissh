@@ -11,7 +11,12 @@ Future<void> pumpSettings(WidgetTester tester) async {
   await tester.pumpWidget(
     const ProviderScope(
       child: MaterialApp(
-        home: Scaffold(body: SettingsPanel()),
+        // Mirror production (settings_screen.dart): the panel lives in a
+        // SingleChildScrollView. Mounting it bare in a bounded Scaffold body
+        // overflows now that the panel has grown (the Detection group, #888).
+        home: Scaffold(
+          body: SingleChildScrollView(child: SettingsPanel()),
+        ),
       ),
     ),
   );
