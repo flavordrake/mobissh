@@ -276,6 +276,25 @@ class SshSessionProxy {
     );
   }
 
+  /// Request a WHOLE-FILE upload over SFTP (#892). [bytes] are written to the
+  /// remote file at [path] (write|create|truncate). The terminal
+  /// [SftpUploadDoneEvent] (or [SftpErrorEvent]) arrives on [sftpEvents] keyed
+  /// by [requestId]. Foundation for in-app file editing.
+  void sftpUpload({
+    required String requestId,
+    required String path,
+    required Uint8List bytes,
+  }) {
+    gateway.send(
+      SftpUploadCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        path: path,
+        bytes: bytes,
+      ).toJson(),
+    );
+  }
+
   /// Send a PTY resize to the remote.
   ///
   /// #848 — NO-OP GUARD: a resize whose (cols, rows) are IDENTICAL to the last
@@ -407,9 +426,10 @@ class SshSessionProxy {
       case SftpListingEvent():
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():
+      case SftpUploadDoneEvent():
       case SftpErrorEvent():
-        // SFTP results (#559) — forward to the file browser, which matches by
-        // request id. They never touch the SSH lifecycle state.
+        // SFTP results (#559/#892) — forward to the file browser / writer seam,
+        // which match by request id. They never touch the SSH lifecycle state.
         if (!_sftpCtrl.isClosed) _sftpCtrl.add(event);
     }
   }

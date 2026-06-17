@@ -57,6 +57,8 @@ class _ScriptedSftpSession implements SftpSession {
     int chunkSize = 64 * 1024,
   }) async => 0;
   @override
+  Future<int> upload(String path, Uint8List bytes) async => bytes.length;
+  @override
   Future<void> close() async {}
 }
 

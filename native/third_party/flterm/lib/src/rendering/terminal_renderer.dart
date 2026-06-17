@@ -560,7 +560,18 @@ class TerminalRenderBox extends RenderBox {
     if (_paintState.rows == 0 || _performingLayout) return;
 
     if (_terminal.scrollbackRows != _lastScrollbackRows) {
-      _needsFrameSync = true;
+      // #887: scrollback grew (the steady-state case: a full shell streaming
+      // output pushes rows into history). `performLayout` only re-marks the
+      // frame dirty when the GRID size changed (`gridChanged ||
+      // atlasReconfigured`) — for plain output the grid is unchanged, so a
+      // bare `markNeedsLayout()` recomputes scroll extents but NEVER adds this
+      // box to the needs-PAINT set (markNeedsLayout does not imply
+      // markNeedsPaint in Flutter). The new glyph rows then stayed unpainted —
+      // only the independently-driven decoration layer (`_decorationNotifier`)
+      // repainted — until an unrelated event (route push / scroll / keystroke)
+      // forced a frame. `_markFrameDirty()` sets `_needsFrameSync` AND calls
+      // markNeedsPaint, so the glyphs repaint in lockstep with the new output.
+      _markFrameDirty();
       markNeedsLayout();
       return;
     }
