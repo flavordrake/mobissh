@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+60 (2026-06-17) — profile default directory + toggleable detection + config-file viewing
+- **Profiles can set a default directory.** A new optional "Default directory" field opens the file browser straight to e.g. `/files` on a VPS/seedbox instead of the SSH home. (#891)
+- **Link & path detection is now a setting.** Settings has a Detection group — turn URL and file-path highlighting on/off independently (defaults on). (#888 Part A)
+- **Extensionless config files open as text.** A bare `config`, `~/.ssh/config`, `Dockerfile`, or dotfile now opens in the file viewer instead of being unviewable; binary files show a "download instead" notice rather than garbled text. (#893)
+
 ## v0.1.10+59 (2026-06-17) — fixes terminal text rendering as blank
 - **Terminal text no longer goes invisible.** Freshly-printed output (especially lines with a detected path/URL) could render as just a highlight with no text until something forced a repaint (e.g. opening Diagnostics). The glyph layer now always repaints with the decoration. (#887)
 
