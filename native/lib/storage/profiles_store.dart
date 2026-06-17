@@ -38,6 +38,7 @@ class SavedProfile {
     this.vaultId,
     this.keyVaultId,
     this.initialCommand,
+    this.defaultPath = '',
   });
 
   final String title;
@@ -78,6 +79,19 @@ class SavedProfile {
 
   /// Optional command to send after auth — preserved verbatim from the PWA.
   final String? initialCommand;
+
+  /// Optional file-browser starting directory (#891). Empty string = current
+  /// behaviour (open at the SFTP home). Crucial for VPS/seedbox hosts (Whatbox)
+  /// where the SFTP home is NOT where you work — you want to land in e.g.
+  /// `/files` or `~/downloads`. Per-PROFILE (a property of the host), seeded
+  /// into the file browser's initial listing on open and resolved through the
+  /// SFTP `_resolve()` chokepoint (#867 — `~`/relative expand against the
+  /// session home; absolute passes through; invalid → friendly empty-state).
+  ///
+  /// Stored as a plain string; an absent field on an OLD profile JSON reads
+  /// back as '' (migration via [_coerceDefaultPath] — no key bump, per
+  /// .claude/rules code-style), so legacy profiles keep their current behaviour.
+  final String defaultPath;
 
   /// Identity key for dedupe / lookup. Matches the PWA's behavior of treating
   /// (host:port:username) as the unique constraint.
@@ -124,6 +138,16 @@ class SavedProfile {
     return null;
   }
 
+  /// Validate a raw stored default path (#891). Returns the trimmed string when
+  /// it's a non-empty String; anything else (null, absent on an OLD profile,
+  /// non-String) yields '' so legacy profiles + corrupt values fall back to the
+  /// SFTP-home behaviour (corrupt-resilience per .claude/rules — no crash, no
+  /// key bump). This IS the schema migration for the absent-field case.
+  static String _coerceDefaultPath(Object? raw) {
+    if (raw is String) return raw.trim();
+    return '';
+  }
+
   Map<String, dynamic> toJson() {
     final out = <String, dynamic>{
       'title': title,
@@ -141,6 +165,9 @@ class SavedProfile {
     if (initialCommand != null && initialCommand!.isNotEmpty) {
       out['initialCommand'] = initialCommand;
     }
+    // #891: omit when empty so old profiles + default-empty ones stay byte-for-
+    // byte identical (absent field is the migration signal, not a key bump).
+    if (defaultPath.isNotEmpty) out['defaultPath'] = defaultPath;
     return out;
   }
 
@@ -206,6 +233,8 @@ class SavedProfile {
       initialCommand = initialCommandRaw;
     }
 
+    final String defaultPath = _coerceDefaultPath(json['defaultPath']);
+
     return SavedProfile(
       title: title,
       host: hostRaw,
@@ -219,6 +248,7 @@ class SavedProfile {
       vaultId: vaultId,
       keyVaultId: keyVaultId,
       initialCommand: initialCommand,
+      defaultPath: defaultPath,
     );
   }
 
@@ -229,6 +259,7 @@ class SavedProfile {
     double? fontSize,
     String? fontFamily,
     String? theme,
+    String? defaultPath,
   }) {
     return SavedProfile(
       title: title ?? this.title,
@@ -243,6 +274,7 @@ class SavedProfile {
       vaultId: vaultId ?? this.vaultId,
       keyVaultId: keyVaultId ?? this.keyVaultId,
       initialCommand: initialCommand,
+      defaultPath: defaultPath ?? this.defaultPath,
     );
   }
 
@@ -529,6 +561,7 @@ class ProfilesStore {
             vaultId: profile.vaultId,
             keyVaultId: profile.keyVaultId,
             initialCommand: profile.initialCommand,
+            defaultPath: profile.defaultPath,
           );
           updated++;
           continue;
