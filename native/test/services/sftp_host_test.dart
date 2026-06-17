@@ -5,6 +5,7 @@
 // Verifies the host emits the right request-id-scoped events and that errors
 // surface as SftpErrorEvent without tearing the session down.
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -35,6 +36,7 @@ class FakeSftpSession implements SftpSession {
     this.fileBytes = const [],
     this.throwOnList = false,
     this.throwOnDownload = false,
+    this.throwOnUpload = false,
     this.listError,
   });
 
@@ -42,6 +44,7 @@ class FakeSftpSession implements SftpSession {
   final List<int> fileBytes;
   final bool throwOnList;
   final bool throwOnDownload;
+  final bool throwOnUpload;
 
   /// When set, [list] throws this instead of the generic boom (#867: exercise
   /// the SftpStatusError → friendly-message mapping through the host).
@@ -49,6 +52,11 @@ class FakeSftpSession implements SftpSession {
   bool closed = false;
   String? lastListedPath;
   String? lastDownloadedPath;
+
+  /// Records what the host wrote (#892): the resolved-or-literal path and the
+  /// exact bytes, so a test can assert the upload reached the wrapper intact.
+  String? lastUploadedPath;
+  Uint8List? lastUploadedBytes;
 
   @override
   Future<List<SftpEntry>> list(String path) async {
@@ -79,6 +87,14 @@ class FakeSftpSession implements SftpSession {
       }
     }
     return all.length;
+  }
+
+  @override
+  Future<int> upload(String path, Uint8List bytes) async {
+    lastUploadedPath = path;
+    lastUploadedBytes = Uint8List.fromList(bytes);
+    if (throwOnUpload) throw Exception('boom-upload');
+    return bytes.length;
   }
 
   @override
@@ -169,6 +185,94 @@ void main() {
     expect(done!.totalBytes, 10);
     expect(chunks.first.totalBytes, 10); // size resolved up front
     expect(fake.lastDownloadedPath, '/a.bin');
+
+    await sub.cancel();
+  });
+
+  test('sftpUpload records path + bytes then emits a done event', () async {
+    final fake = FakeSftpSession();
+    final ctx = await setUpConnected('sid-up', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpUploadDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpUploadDoneEvent) done = e;
+    });
+
+    final payload = Uint8List.fromList(utf8.encode('hello world\n'));
+    ctx.proxy.sftpUpload(
+      requestId: 'sid-up#write0',
+      path: '~/.ssh/config',
+      bytes: payload,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(fake.lastUploadedPath, '~/.ssh/config');
+    expect(fake.lastUploadedBytes, payload);
+    expect(done, isNotNull);
+    expect(done!.requestId, 'sid-up#write0');
+    expect(done!.totalBytes, payload.length);
+
+    await sub.cancel();
+  });
+
+  test('upload failure surfaces as SftpErrorEvent, session survives', () async {
+    final fake = FakeSftpSession(throwOnUpload: true);
+    final ctx = await setUpConnected('sid-uperr', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpErrorEvent? err;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+    });
+
+    ctx.proxy.sftpUpload(
+      requestId: 'sid-uperr#write0',
+      path: '/etc/hosts',
+      bytes: Uint8List.fromList([1, 2, 3]),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(err, isNotNull);
+    expect(err!.requestId, 'sid-uperr#write0');
+    expect(err!.message, contains('Upload failed'));
+    // An SFTP error must not drop the SSH session.
+    expect(ctx.host.sessionIds, contains('sid-uperr'));
+
+    await sub.cancel();
+  });
+
+  test('upload on an unhosted session emits not-connected error', () async {
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+    final host = SessionHost(
+      gateway: pair.taskSide,
+      controllerFactory: _stubControllerFactory,
+      sftpOpener: (_) async => FakeSftpSession(),
+      snapshotInterval: const Duration(hours: 1),
+    );
+    addTearDown(host.dispose);
+    final proxy = SshSessionProxy(sessionId: 'ghost-up', gateway: pair.uiSide);
+    addTearDown(proxy.dispose);
+
+    SftpErrorEvent? err;
+    final sub = proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+    });
+
+    proxy.sftpUpload(
+      requestId: 'ghost-up#write0',
+      path: '/x',
+      bytes: Uint8List.fromList([0]),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(err, isNotNull);
+    expect(err!.message, contains('not connected'));
 
     await sub.cancel();
   });

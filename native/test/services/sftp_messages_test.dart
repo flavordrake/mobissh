@@ -78,6 +78,23 @@ void main() {
       expect(restored.requestId, 'sid#7');
       expect(restored.path, '/etc/hosts');
     });
+
+    test('SftpUploadCommand preserves request id, path + binary bytes', () {
+      // Include high/zero bytes so a non-base64-clean serialisation would fail.
+      final bytes = Uint8List.fromList([0, 255, 10, 13, 127, 200]);
+      final cmd = SftpUploadCommand(
+        sessionId: 'sid',
+        requestId: 'sid#write0',
+        path: '~/.ssh/config',
+        bytes: bytes,
+      );
+      final restored =
+          SshTaskCommand.fromJson(cmd.toJson()) as SftpUploadCommand;
+      expect(restored.sessionId, 'sid');
+      expect(restored.requestId, 'sid#write0');
+      expect(restored.path, '~/.ssh/config');
+      expect(restored.bytes, bytes);
+    });
   });
 
   group('SFTP event round-trip', () {
@@ -125,6 +142,18 @@ void main() {
       final restored =
           SshTaskEvent.fromJson(ev.toJson()) as SftpDownloadDoneEvent;
       expect(restored.totalBytes, 123456);
+    });
+
+    test('SftpUploadDoneEvent preserves totalBytes + request id', () {
+      const ev = SftpUploadDoneEvent(
+        sessionId: 'sid',
+        requestId: 'sid#write0',
+        totalBytes: 4096,
+      );
+      final restored =
+          SshTaskEvent.fromJson(ev.toJson()) as SftpUploadDoneEvent;
+      expect(restored.requestId, 'sid#write0');
+      expect(restored.totalBytes, 4096);
     });
 
     test('SftpErrorEvent preserves message + request id', () {

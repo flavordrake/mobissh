@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+59 (2026-06-17) — fixes terminal text rendering as blank
+- **Terminal text no longer goes invisible.** Freshly-printed output (especially lines with a detected path/URL) could render as just a highlight with no text until something forced a repaint (e.g. opening Diagnostics). The glyph layer now always repaints with the decoration. (#887)
+
 ## v0.1.10+58 (2026-06-11) — notifications can't strand you anymore
 - **Tapping a notification for a disconnected server reconnects it.** If the app was killed or the session closed, the tap now reconnects that server's profile and lands you in it — no more being dumped on the connection list while the notification dangles. If no saved profile/credentials can reconnect it, the stale notification is cancelled instead. (#885)
 - **Attention notifications are cleared when their session ends.** A "needs attention" alert no longer outlives the session it points at. (#885)

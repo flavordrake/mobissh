@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/battery_optimization.dart';
+import '../state/detection_providers.dart';
 import '../state/keepalive_providers.dart';
 import '../state/terminal_backend.dart';
 import '../state/ui_prefs_providers.dart';
@@ -20,6 +21,7 @@ class SettingsPanel extends ConsumerWidget {
     final keepalive = ref.watch(keepaliveEnabledProvider);
     final fontSize = ref.watch(fontSizeProvider);
     final backend = ref.watch(terminalBackendProvider);
+    final detection = ref.watch(detectionSettingsProvider);
     return ExpansionTile(
       key: const ValueKey('settings-section'),
       leading: const Icon(Icons.settings_outlined),
@@ -110,6 +112,43 @@ class SettingsPanel extends ConsumerWidget {
             onSelectionChanged: (sel) =>
                 ref.read(terminalBackendProvider.notifier).set(sel.first),
           ),
+        ),
+        // #888 Part A: in-terminal structured-text DETECTION. Master switch +
+        // per-type toggles (URLs, file paths). When a type is off, the flterm
+        // controller never registers that pattern (no scan, no decoration);
+        // changes re-apply LIVE. Detection is a Ghostty-engine affordance —
+        // xterm has no structured detection. Monochrome outlined icons only.
+        SwitchListTile(
+          key: const ValueKey('detection-master-toggle'),
+          secondary: const Icon(Icons.search_outlined),
+          title: const Text('Detect links & paths in terminal'),
+          subtitle: const Text(
+            'Find URLs and file paths in terminal output and make them '
+            'tappable. Applies to the Ghostty engine.',
+          ),
+          value: detection.enabled,
+          onChanged: (v) =>
+              ref.read(detectionSettingsProvider.notifier).setEnabled(v),
+        ),
+        SwitchListTile(
+          key: const ValueKey('detection-url-toggle'),
+          secondary: const Icon(Icons.link_outlined),
+          title: const Text('URLs'),
+          subtitle: const Text('Detect and tap http/https links.'),
+          value: detection.url,
+          onChanged: detection.enabled
+              ? (v) => ref.read(detectionSettingsProvider.notifier).setUrl(v)
+              : null,
+        ),
+        SwitchListTile(
+          key: const ValueKey('detection-path-toggle'),
+          secondary: const Icon(Icons.folder_outlined),
+          title: const Text('File paths'),
+          subtitle: const Text('Detect absolute paths and open them in files.'),
+          value: detection.path,
+          onChanged: detection.enabled
+              ? (v) => ref.read(detectionSettingsProvider.notifier).setPath(v)
+              : null,
         ),
       ],
     );

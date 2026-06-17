@@ -177,6 +177,7 @@ import '../services/clipboard.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/ctrl_modifier_provider.dart';
+import '../state/detection_providers.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
@@ -2068,25 +2069,38 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// draws the affordance instead. The bubble colour comes from the decorator
   /// layer ([_lastHighlightColor]); this registration is theme-independent.
   void _registerUrlPattern(TerminalController controller) {
-    // #767 Slice B: register the OSC-8 hyperlink source as the PRIMARY, exact
-    // URL source ALONGSIDE the regex `url` pattern. The scanner runs both and
-    // an OSC-8 match WINS over an overlapping regex one (the partial first-row
-    // `https://…` over a hyperlink's visible text is suppressed), so a
-    // hyperlinked URL yields ONE exact anchor spanning all its wrapped rows. A
-    // plain-text URL (no OSC-8) still falls to the regex pattern unchanged.
-    // #864: register both URL sources with the EMPTY highlight style (no fill,
-    // no underline) so the bubble decorator is the SINGLE affordance — the app
-    // never co-renders an underline that reads redundant with the chip.
-    controller.registerTextPattern(
-      TextPattern.osc8(id: _kOsc8PatternId, style: kGhosttyUrlHighlightStyle),
-    );
-    controller.registerTextPattern(
-      TextPattern.url(id: _kUrlPatternId, style: kGhosttyUrlHighlightStyle),
-    );
-    // #778 paths Slice 1: also detect absolute file paths. A `path` anchor gets
-    // its own decorator (folder glyph + dotted underline) and routes a tap to
-    // the SFTP explorer; `://` contexts are rejected so a URL stays a URL.
-    controller.registerTextPattern(TextPattern.path(id: _kPathPatternId));
+    // #888 Part A: detection is gated on the GLOBAL detection settings. Read
+    // them HERE so registration reflects the current toggles; a live change
+    // re-runs this (after clearTextPatterns) via the build() ref.listen below.
+    // Each NOT-registered pattern means zero scan + zero decoration for that
+    // type (the controller no-ops on an empty pattern set). Master OFF →
+    // register nothing.
+    final detection = ref.read(detectionSettingsProvider);
+    if (detection.detectUrls) {
+      // #767 Slice B: register the OSC-8 hyperlink source as the PRIMARY, exact
+      // URL source ALONGSIDE the regex `url` pattern. The scanner runs both and
+      // an OSC-8 match WINS over an overlapping regex one (the partial first-row
+      // `https://…` over a hyperlink's visible text is suppressed), so a
+      // hyperlinked URL yields ONE exact anchor spanning all its wrapped rows. A
+      // plain-text URL (no OSC-8) still falls to the regex pattern unchanged.
+      // The URL toggle gates BOTH sources (one user-facing "URLs" type).
+      // #864: register both URL sources with the EMPTY highlight style (no fill,
+      // no underline) so the bubble decorator is the SINGLE affordance — the app
+      // never co-renders an underline that reads redundant with the chip.
+      controller.registerTextPattern(
+        TextPattern.osc8(id: _kOsc8PatternId, style: kGhosttyUrlHighlightStyle),
+      );
+      controller.registerTextPattern(
+        TextPattern.url(id: _kUrlPatternId, style: kGhosttyUrlHighlightStyle),
+      );
+    }
+    if (detection.detectPaths) {
+      // #778 paths Slice 1: also detect absolute file paths. A `path` anchor
+      // gets its own decorator (folder glyph + dotted underline) and routes a
+      // tap to the SFTP explorer; `://` contexts are rejected so a URL stays a
+      // URL.
+      controller.registerTextPattern(TextPattern.path(id: _kPathPatternId));
+    }
   }
 
   /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
@@ -2813,6 +2827,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // INCOMING view re-attaches focus and re-shows the keyboard iff it was up.
     ref.listen<String?>(activeSessionIdProvider, (prev, next) {
       _onActiveSessionChanged(prev, next);
+    });
+    // #888 Part A: LIVE re-apply of the detection toggles. When the global
+    // detection settings change, clear the registered patterns (drops anchors +
+    // highlights cleanly) and re-run registration against the new settings — so
+    // turning URL/path detection off removes existing decorations immediately,
+    // and turning it back on re-scans the current cells. No restart needed.
+    ref.listen<DetectionSettings>(detectionSettingsProvider, (prev, next) {
+      if (prev == next) return;
+      final c = _controller;
+      if (c == null) return;
+      c.clearTextPatterns();
+      _registerUrlPattern(c);
     });
     final controller = _controller;
     if (controller == null) {

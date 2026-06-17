@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:libghostty/libghostty.dart' as vt;
@@ -112,6 +113,21 @@ class TerminalControllerImpl extends TerminalController
   /// not on every one of the ~15 redraw notifies/sec a streaming TUI scroll
   /// emits. Exposed via [decorationListenable].
   final _DecorationNotifier _decorationNotifier = _DecorationNotifier();
+
+  /// #887: set while a [_onTerminalChanged] notify that arrived MID-FRAME has
+  /// already scheduled its deferred side-effects to the next post-frame
+  /// callback. libghostty's [Terminal.resize] — invoked synchronously from
+  /// [TerminalRenderBox.performLayout] when the grid is re-sized (SFTP browser
+  /// opens, keyboard inset changes the layout) — fires the terminal listener
+  /// DURING the layout/paint phase. Running the prune's `highlights=` notify
+  /// (→ the widget's `_updateTextInputGeometry` reading `RenderBox.size`) or
+  /// `_decorationNotifier.notify()` (→ an `AnimatedBuilder`/`setState`) then is
+  /// illegal ("RenderBox.size accessed beyond the scope…" / "Build scheduled
+  /// during frame"). When mid-frame we DEFER those effects to the next
+  /// post-frame callback; this flag coalesces a burst of mid-frame notifies in
+  /// the same frame into a single deferral. The normal (non-layout) notify path
+  /// stays synchronous so #873 eviction remains immediate when it is safe.
+  bool _deferredFrameWorkScheduled = false;
 
   FocusNode? _focusNode;
   TerminalSelection? _selection;
@@ -1556,19 +1572,66 @@ class TerminalControllerImpl extends TerminalController
       changed = true;
     }
 
+    // #767: a notify means the cells may have changed (output streamed) or the
+    // viewport scrolled; re-scan registered structured-text patterns on a
+    // debounce so the highlights track new content. No-op when none registered.
+    // This only (re)arms a Timer — safe to run mid-frame (it fires outside it).
+    _scheduleDetectionRescan();
+
+    // #887: the remaining work emits notifications that REBUILD or read layout
+    // geometry — `_scrollToBottomOnOutput` (scroll controller notify), the
+    // prune/synchronous rescan (`highlights=` general notify +
+    // `_decorationNotifier.notify()`), and the `changed` notify. When this
+    // terminal notify arrived DURING a frame's layout/paint phase (libghostty's
+    // `Terminal.resize` fired synchronously from `performLayout`), running them
+    // now throws "RenderBox.size accessed beyond the scope…" /
+    // "Build scheduled during frame". Defer to the next post-frame callback in
+    // that case; run synchronously otherwise so #873 eviction stays immediate.
+    _runOrDeferFrameWork(leftAlternateScreen, changed);
+  }
+
+  /// #887: the notify-producing tail of [_onTerminalChanged]. Runs synchronously
+  /// when it is safe to schedule rebuilds / read render geometry, and is
+  /// otherwise deferred (whole) to one post-frame callback. See
+  /// [_deferredFrameWorkScheduled].
+  void _runOrDeferFrameWork(bool leftAlternateScreen, bool changed) {
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    final midFrame = phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks;
+    if (!midFrame) {
+      _applyFrameWork(leftAlternateScreen, changed);
+      return;
+    }
+    // Mid-frame: coalesce this and any further mid-frame notifies in the SAME
+    // frame into one post-frame pass. `leftAlternateScreen`/`changed` need not
+    // be carried — the deferred pass re-reads the live terminal state (the
+    // prune/rescan read cells directly) and always notifies, which is the
+    // superset of what an individual mid-frame notify would have done.
+    if (_deferredFrameWorkScheduled) return;
+    _deferredFrameWorkScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _deferredFrameWorkScheduled = false;
+      if (_disposed) return;
+      // Re-derive leftAlternateScreen would require remembering it; the
+      // post-frame pass simply runs the full detection reconcile + notify.
+      // Force a synchronous rescan so a vim-exit that happened mid-frame still
+      // re-anchors immediately on the next frame (parity with the inline path).
+      _applyFrameWork(true, true);
+    });
+  }
+
+  /// #887: the deferrable side-effects extracted from [_onTerminalChanged].
+  void _applyFrameWork(bool leftAlternateScreen, bool changed) {
+    if (_disposed) return;
     _scrollToBottomOnOutput();
     // #873: a redraw may have rewritten the cells UNDER a live anchor (tmux/app
     // repaints a row, or content scrolled past the bounded window). DISCOVERY of
-    // new matches stays debounced below, but EVICTION of a now-stale anchor must
-    // be immediate — synchronously re-validate the live anchors against the
+    // new matches stays debounced (above), but EVICTION of a now-stale anchor
+    // must be immediate — synchronously re-validate the live anchors against the
     // current cells and drop any whose run no longer carries the matched text, so
     // no orphaned highlight box lingers through the debounce window. No-op when no
     // anchors are live or no pattern is registered.
     _pruneStaleDetections();
-    // #767: a notify means the cells may have changed (output streamed) or the
-    // viewport scrolled; re-scan registered structured-text patterns on a
-    // debounce so the highlights track new content. No-op when none registered.
-    _scheduleDetectionRescan();
     // #824: returning to the shell (alternate->primary) must resume detection
     // immediately, not on the next stray notify — re-scan synchronously so the
     // shell's URLs/paths re-anchor the moment vim exits.

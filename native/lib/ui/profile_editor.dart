@@ -98,6 +98,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
   late final TextEditingController _portCtrl;
   late final TextEditingController _userCtrl;
   late final TextEditingController _initialCommandCtrl;
+  late final TextEditingController _defaultPathCtrl;
   late final TextEditingController _colorCtrl;
 
   /// Selected theme = a PWA `ThemeName` key from [terminalPalettes] (#613). The
@@ -126,6 +127,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     _portCtrl = TextEditingController(text: p.port.toString());
     _userCtrl = TextEditingController(text: p.username);
     _initialCommandCtrl = TextEditingController(text: p.initialCommand ?? '');
+    _defaultPathCtrl = TextEditingController(text: p.defaultPath);
     _colorCtrl = TextEditingController(text: p.color ?? '');
     // Seed the picker from the profile's stored theme key when it maps to a
     // known palette; otherwise fall back to the default palette's key.
@@ -152,6 +154,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     _portCtrl.dispose();
     _userCtrl.dispose();
     _initialCommandCtrl.dispose();
+    _defaultPathCtrl.dispose();
     _colorCtrl.dispose();
     _passwordCtrl.dispose();
     _keyCtrl.dispose();
@@ -251,6 +254,8 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
         vaultId: vaultId,
         keyVaultId: keyVaultId,
         initialCommand: _emptyToNull(_initialCommandCtrl.text),
+        // #891: optional file-browser starting dir. Trim; empty = SFTP home.
+        defaultPath: _defaultPathCtrl.text.trim(),
       );
 
       await store.upsert(updated, previousIdentityKey: _originalIdentityKey);
@@ -427,6 +432,21 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
                 decoration: const InputDecoration(
                   labelText: 'Initial command (optional)',
                   hintText: 'e.g. tmux attach || tmux',
+                ),
+                autocorrect: false,
+                enableSuggestions: false,
+              ),
+              const SizedBox(height: 12),
+              // #891: optional file-browser starting directory. Empty = SFTP
+              // home (current behaviour). Crucial for VPS/seedbox hosts where
+              // the home dir isn't where you work (e.g. `/files`).
+              TextField(
+                key: const Key('profile-editor-default-path'),
+                controller: _defaultPathCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Default directory (optional)',
+                  hintText: 'e.g. /files or ~/downloads',
+                  prefixIcon: Icon(Icons.folder_outlined),
                 ),
                 autocorrect: false,
                 enableSuggestions: false,
