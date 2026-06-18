@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/battery_optimization.dart';
 import '../state/detection_providers.dart';
 import '../state/keepalive_providers.dart';
+import '../state/sessions.dart';
 import '../state/terminal_backend.dart';
 import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
@@ -126,12 +127,33 @@ class SettingsPanel extends ConsumerWidget {
           title: const Text('Terminal: tmux control mode (experimental)'),
           subtitle: const Text(
             'Drive tmux via control mode (-CC): authoritative windows/size + '
-            'real switch gestures. Requires tmux on the host. Applies to new '
-            'sessions / after a restart.',
+            'real switch gestures. Requires tmux on the host. Live sessions '
+            'reconnect to apply.',
           ),
           value: controlMode,
-          onChanged: (v) =>
-              ref.read(tmuxControlModeProvider.notifier).set(v),
+          onChanged: (v) async {
+            // #913: persist + sync the per-isolate global (read at connect time).
+            await ref.read(tmuxControlModeProvider.notifier).set(v);
+            // #916: the flag is read ONCE at connect — flipping it on a LIVE
+            // session does nothing until a reconnect (the owner's "hadn't
+            // reconnected after control mode on": gestures fired into a still-
+            // scrape session). Trigger a clean reconnect of every connected
+            // session so the new mode actually engages, and surface a hint.
+            final reconnected = ref
+                .read(sessionsProvider.notifier)
+                .reconnectForControlModeChange();
+            if (reconnected > 0 && context.mounted) {
+              final mode = v ? 'control mode' : 'scrape mode';
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Reconnecting $reconnected session'
+                    '${reconnected == 1 ? '' : 's'} to apply $mode…',
+                  ),
+                ),
+              );
+            }
+          },
         ),
         // #888 Part A: in-terminal structured-text DETECTION. Master switch +
         // per-type toggles (URLs, file paths). When a type is off, the flterm

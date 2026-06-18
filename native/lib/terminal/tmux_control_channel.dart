@@ -48,6 +48,7 @@
 // Exercised by `test/terminal/tmux_control_channel_test.dart` (fast unit gate)
 // and the on-emulator `integration_test/cc_render_test.dart` parity test.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -294,5 +295,103 @@ class TmuxControlChannel {
     final w = _paneWindow[paneId];
     if (w == null) return true;
     return w == active;
+  }
+}
+
+/// The trailing-edge settle window that coalesces a BURST of control-mode
+/// `refresh-client -C` writes into ONE final-size write (#916). The control
+/// channel writes `refresh-client -C` from TWO sources — the UI resize handler
+/// AND the redraw-on-active-window-switch — and on a real multi-client host both
+/// can fire many times in quick succession (the multi-client size clamp makes
+/// tmux re-lay-out + push `%layout-change`/`%session-window-changed`, which
+/// re-fires our redraw → a feedback STORM, the `58,57 ↔ 58,34` alternation the
+/// owner saw). This settle outlasts that churn so the burst collapses to one
+/// write at the size things settled at. Matches `kGhosttyResizeSettle` (the PTY
+/// path's keyboard-settle, #903) so control mode is tamed the SAME way the
+/// scrape path was — the very thing #903/#905 fixed, now applied to refresh-client.
+const Duration kRefreshClientSettle = Duration(milliseconds: 250);
+
+/// Per-session coalescer for control-mode `refresh-client -C` writes (#916).
+///
+/// PURE Dart, mirrors `GhosttyResizeCoalescer` (the PTY-path coalescer) so the
+/// control-mode resize primitive gets the IDENTICAL trailing-edge-settle taming:
+/// [submit] each desired (cols, rows); once the size has been STABLE for [settle]
+/// the coalescer invokes [onSettled] ONCE with the FINAL size (never dropped —
+/// the #903/#905 lesson). Intermediate sizes in a burst never reach [onSettled].
+/// A size equal to the last EMITTED one is dropped (dedup) — an active-window
+/// switch that needs a repaint at the SAME size uses [requestRedraw] instead,
+/// which forces exactly one settled write through even when the dims are
+/// unchanged. [cancel] drops a pending write on shell drop / reconnect so a
+/// dead channel never storms.
+class RefreshClientCoalescer {
+  RefreshClientCoalescer({
+    required this.onSettled,
+    this.settle = kRefreshClientSettle,
+    Timer Function(Duration, void Function())? scheduleTimer,
+  }) : _scheduleTimer = scheduleTimer ?? Timer.new;
+
+  /// Called with the FINAL settled (cols, rows) once the size stops changing for
+  /// [settle]. In the host this writes `refresh-client -C cols,rows` to the shell.
+  final void Function(int cols, int rows) onSettled;
+
+  /// The settle window the size must stay stable for before [onSettled] fires.
+  final Duration settle;
+
+  final Timer Function(Duration, void Function()) _scheduleTimer;
+
+  Timer? _timer;
+  int? _pendingCols;
+  int? _pendingRows;
+  bool _forceNextEmit = false;
+
+  int? _lastEmittedCols;
+  int? _lastEmittedRows;
+
+  /// Test/telemetry: how many times [onSettled] actually fired. A storm of N
+  /// switches / resizes must increment this by AT MOST one per settled size.
+  int sendCount = 0;
+
+  /// Record a desired size (a UI resize). Resets the settle timer; the
+  /// refresh-client is sent only once the size stops changing for [settle].
+  void submit(int cols, int rows) {
+    _pendingCols = cols;
+    _pendingRows = rows;
+    _timer?.cancel();
+    _timer = _scheduleTimer(settle, _fire);
+  }
+
+  /// Request a coalesced REDRAW at the current pending size (an active-window
+  /// switch). Like [submit] but FORCES the next settled emit even if the dims
+  /// equal the last emitted size — a window switch must repaint the new window's
+  /// content. Still debounced: a storm of switches collapses to ONE write. Falls
+  /// back to [cols]/[rows] when no size has been submitted yet (first frames).
+  void requestRedraw(int cols, int rows) {
+    _pendingCols ??= cols;
+    _pendingRows ??= rows;
+    _forceNextEmit = true;
+    _timer?.cancel();
+    _timer = _scheduleTimer(settle, _fire);
+  }
+
+  void _fire() {
+    _timer = null;
+    final cols = _pendingCols;
+    final rows = _pendingRows;
+    if (cols == null || rows == null) return;
+    final force = _forceNextEmit;
+    _forceNextEmit = false;
+    if (!force && cols == _lastEmittedCols && rows == _lastEmittedRows) return;
+    _lastEmittedCols = cols;
+    _lastEmittedRows = rows;
+    sendCount += 1;
+    onSettled(cols, rows);
+  }
+
+  /// Cancel any pending write (shell drop / reconnect / teardown). Does NOT emit
+  /// — a dead channel must never storm a stale refresh-client.
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
+    _forceNextEmit = false;
   }
 }
