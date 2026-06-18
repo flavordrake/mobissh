@@ -401,6 +401,133 @@ bool ghosttyShouldResyncResize({
 /// no-op (no stray resize).
 const List<int> kGhosttyResyncBurstMs = [120, 350, 700, 1200];
 
+/// #903 — the settle window that coalesces a keyboard-animation / layout-reflow
+/// burst of `controller.onResize` events into a SINGLE PTY resize at the FINAL
+/// stable size.
+///
+/// Root cause (tmux-state-trace, SINGLE client): flterm fires `onResize` for
+/// EVERY layout change, and the ghostty path sent each straight to the PTY. A
+/// soft-keyboard show/hide animates the viewport inset over many frames — flterm
+/// recomputes its grid each frame, so one keyboard toggle logged a cascade
+/// (`44→43→42→38→37→35→34` in a second). The proxy's #848 no-op guard only drops
+/// IDENTICAL dims; each animation frame is a DISTINCT height, so every one
+/// reached tmux → regrid → repaint race. A window switch shows the same shape as
+/// a transient `34→36→34` reflow blip.
+///
+/// 120ms (the xterm #848 `kMetricsSettleDelay`) is too SHORT — the keyboard
+/// animation spans longer, so intermediate frames still slip past it. This window
+/// must OUTLAST the soft-keyboard show/hide animation (~100–300ms on Android) so
+/// the resize fires once the inset stops moving, off the FINAL chrome-correct
+/// viewport. Long enough to span the animation; short enough that a real
+/// rotation/resize re-syncs promptly.
+const Duration kGhosttyResizeSettle = Duration(milliseconds: 250);
+
+/// #903 — coalesces a burst of grid sizes into ONE settled PTY resize.
+///
+/// Pure (no FFI / no widget / no provider) → unit-testable headless. flterm
+/// can't render headless, so the storm fix lives in this testable seam rather
+/// than inside the widget's `onResize` closure.
+///
+/// Wire-up: `controller.onResize` calls [submit] with each live grid; once the
+/// size has been STABLE for [settle] the coalescer calls [onSettled] ONCE with the
+/// final dims. Intermediate animation-frame sizes never reach [onSettled]. A
+/// transient excursion that returns to the start (the window-switch `34→36→34`
+/// blip) coalesces to the original size — and because that equals what was last
+/// submitted-as-settled, [skipIfUnchanged] drops it so no spurious resize fires.
+///
+/// The #666/#702 forced resync must NOT be debounced (it re-pushes the CURRENT
+/// size the instant the shell exists). It calls [flushNow] to send immediately,
+/// cancelling any pending debounce.
+class GhosttyResizeCoalescer {
+  GhosttyResizeCoalescer({
+    required this.onSettled,
+    this.settle = kGhosttyResizeSettle,
+    Timer Function(Duration, void Function())? scheduleTimer,
+  }) :
+       // Injectable for headless tests (a fake scheduler fires synchronously);
+       // production uses a real `Timer`.
+       _scheduleTimer = scheduleTimer ?? Timer.new;
+
+  /// Called with the FINAL settled (cols, rows) once the size stops changing
+  /// for [settle]. In the widget this is `_sendResize` (which records the #719
+  /// last-sent grid + writes the PTY).
+  final void Function(int cols, int rows) onSettled;
+
+  /// The settle window the resize must stay stable for before [onSettled] fires.
+  final Duration settle;
+
+  final Timer Function(Duration, void Function()) _scheduleTimer;
+
+  Timer? _timer;
+  int? _pendingCols;
+  int? _pendingRows;
+
+  /// The dims the coalescer last EMITTED via [onSettled] (so an excursion that
+  /// returns to the last settled size emits nothing). Null until the first emit.
+  int? _lastEmittedCols;
+  int? _lastEmittedRows;
+
+  /// Test/telemetry: how many times [onSettled] was actually invoked. A keyboard
+  /// toggle's N animation frames must increment this by AT MOST one.
+  int sendCount = 0;
+
+  /// The last dims submitted (the live grid the gesture map mirrors), regardless
+  /// of whether they've settled yet. Null until the first [submit].
+  int? get pendingCols => _pendingCols;
+  int? get pendingRows => _pendingRows;
+
+  /// Record a new live grid. Resets the settle timer; the resize is sent only
+  /// once the size stops changing for [settle].
+  void submit(int cols, int rows) {
+    _pendingCols = cols;
+    _pendingRows = rows;
+    _timer?.cancel();
+    _timer = _scheduleTimer(settle, _fire);
+  }
+
+  void _fire() {
+    _timer = null;
+    final cols = _pendingCols;
+    final rows = _pendingRows;
+    if (cols == null || rows == null) return;
+    // The settled size equals the last one we emitted (e.g. a `34→36→34`
+    // excursion that returned to 34) → nothing changed, emit nothing. This
+    // mirrors the proxy's #848 no-op guard but at the coalescing seam, so the
+    // transient never even reaches the gateway.
+    if (cols == _lastEmittedCols && rows == _lastEmittedRows) return;
+    _lastEmittedCols = cols;
+    _lastEmittedRows = rows;
+    sendCount += 1;
+    onSettled(cols, rows);
+  }
+
+  /// Send the CURRENT size to the PTY immediately, bypassing the debounce.
+  /// Used by the #666/#702 forced resync (re-pushes the same dims the instant
+  /// the shell exists). Cancels any pending debounce and resets the
+  /// last-emitted gate so the forced send always lands. Falls back to the
+  /// supplied [cols]/[rows] when nothing has been submitted yet.
+  void flushNow(int cols, int rows) {
+    _timer?.cancel();
+    _timer = null;
+    _pendingCols = cols;
+    _pendingRows = rows;
+    // A FORCED resync deliberately re-sends even an unchanged size (the #666
+    // re-push of the same dims once the shell exists), so it always lands —
+    // the dedup gate is set to the just-sent size for the NEXT debounce. The
+    // proxy still owns the #666 one-shot force-bypass of ITS no-op guard.
+    _lastEmittedCols = cols;
+    _lastEmittedRows = rows;
+    sendCount += 1;
+    onSettled(cols, rows);
+  }
+
+  /// Cancel any pending debounce (dispose / teardown). Does NOT emit.
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
+  }
+}
+
 /// Whether an app-lifecycle transition warrants a Ghostty resume re-fit +
 /// refresh (#704).
 ///
@@ -1737,6 +1864,15 @@ class GhosttyTerminalView extends ConsumerStatefulWidget {
   static final Map<String, TerminalController> debugControllers =
       <String, TerminalController>{};
 
+  /// #903: the live resize coalescer per sessionId, exposed for the on-emulator
+  /// integration test so it can read `sendCount` — the number of PTY resizes
+  /// ACTUALLY sent — and assert a keyboard-toggle / window-switch burst stays
+  /// BOUNDED (one per settled size), not a per-animation-frame storm. Set in
+  /// initState, cleared on dispose. Test-only — no production code reads it.
+  @visibleForTesting
+  static final Map<String, GhosttyResizeCoalescer> debugResizeCoalescers =
+      <String, GhosttyResizeCoalescer>{};
+
   @override
   ConsumerState<GhosttyTerminalView> createState() =>
       _GhosttyTerminalViewState();
@@ -1873,6 +2009,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// so dispose cancels them and a gone widget is never re-synced.
   final List<Timer> _resyncTimers = <Timer>[];
 
+  /// #903: coalesces flterm's per-layout-change `onResize` burst (a keyboard
+  /// animation's per-frame regrids, the window-switch reflow blip) into a SINGLE
+  /// settled PTY resize. Initialised in [initState] so its [onSettled] callback is
+  /// the same single `_sendResize` seam (which records the #719 last-sent grid).
+  /// The #666/#702 forced resync calls [GhosttyResizeCoalescer.flushNow] to
+  /// bypass the debounce. Cancelled on dispose.
+  late final GhosttyResizeCoalescer _resizeCoalescer;
+
   /// #704: the lifecycle state seen on the previous `ref.listen` tick, so
   /// [ghosttyShouldRefreshOnLifecycle] can detect a transition INTO `resumed`
   /// (and not double-fire on a `resumed → resumed` repeat). Null until the
@@ -1913,6 +2057,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       return;
     }
     _proxy = proxy;
+    // #903: the coalescer's send seam is `_sendResize` (which records the #719
+    // last-sent grid + writes the PTY). Created before `controller.onResize` is
+    // wired so the first resize is debounced too.
+    _resizeCoalescer = GhosttyResizeCoalescer(
+      onSettled: _sendResize,
+    );
+    // #903 (test-only): expose the coalescer so the emulator integration test
+    // can read `sendCount` and assert the resize count is BOUNDED.
+    GhosttyTerminalView.debugResizeCoalescers[widget.sessionId] =
+        _resizeCoalescer;
     try {
       final controller = TerminalController();
       // Keystrokes (controller.onOutput) -> SSH stdin. Gate on a LIVE session,
@@ -1934,15 +2088,24 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
       // mirror (cols, rows) so the #692 gesture router can map touch -> cell.
       controller.onResize = (cols, rows) {
-        // Mirror the live grid (for the touch->cell map) AND send the resize
-        // through the single [_sendResize] helper so the rows tmux is told about
-        // can never diverge from what the window-switch wheel targets (#719).
+        // Mirror the live grid SYNCHRONOUSLY (the touch->cell map + gesture
+        // router read `_cols`/`_rows` every gesture, so they must track flterm's
+        // real grid the instant it changes — only the PTY SEND is debounced).
         _cols = cols;
         _rows = rows;
         // #790: record the live viewport grid so the replay harness can lay out
         // the captured byte stream at the SAME cols×rows the bug occurred at.
         _byteRecorder.recordGrid(cols, rows);
-        _sendResize(cols, rows);
+        // #903: COALESCE the PTY resize. flterm fires `onResize` for EVERY
+        // layout change — a soft-keyboard show/hide animates the inset over many
+        // frames (per-frame regrid → the `44→43→…→34` storm) and a window switch
+        // reflows ~2 rows transiently (`34→36→34`). Sending each straight to the
+        // PTY made tmux regrid mid-interaction and race every redraw (the repaint
+        // fail #887/#898/#900 were chasing). The coalescer debounces to the FINAL
+        // settled size: intermediate frames never reach tmux, and a transient
+        // that returns to the start emits nothing. The #719 last-sent grid is
+        // still recorded by `_sendResize` (the coalescer's send seam).
+        _resizeCoalescer.submit(cols, rows);
         // #767: a resize changes the cell ranges, but the URL re-detect now lives
         // INSIDE the terminal — the controller re-scans on its own notify cycle,
         // so the host no longer schedules detection here.
@@ -2216,7 +2379,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       );
       return;
     }
-    _sendResize(_cols, _rows);
+    // #903: a forced resync must NOT be debounced — it re-pushes the CURRENT
+    // size the instant the shell exists (#666/#702), so flush immediately and
+    // cancel any pending coalesce. The proxy still owns the #666 one-shot
+    // force-bypass of its no-op guard.
+    _resizeCoalescer.flushNow(_cols, _rows);
     gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
   }
 
@@ -2787,6 +2954,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       t.cancel();
     }
     _resyncTimers.clear();
+    // #903: drop any pending coalesced resize so a gone widget never resizes,
+    // and drop the test-only handle if it's still ours.
+    _resizeCoalescer.cancel();
+    if (GhosttyTerminalView.debugResizeCoalescers[widget.sessionId] ==
+        _resizeCoalescer) {
+      GhosttyTerminalView.debugResizeCoalescers.remove(widget.sessionId);
+    }
     _outputSub?.cancel();
     // #767 (test-only): drop the debug controller handle if it's still ours.
     if (GhosttyTerminalView.debugControllers[widget.sessionId] == _controller) {
