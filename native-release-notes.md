@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+62 (2026-06-18) — fixes tmux window-switch repainting only every other time
+- **Switching tmux windows reliably repaints now.** +61 still updated the screen only on alternate switches (swipe once works, next doesn't); the renderer was depending on one-shot row "damage" that an earlier paint had already consumed. On an alternate-screen redraw it now re-reads the full visible grid, so every window switch shows the right window. (#900)
+
 ## v0.1.10+61 (2026-06-17) — fixes stale display after switching tmux windows
 - **Switching tmux windows now repaints the screen.** Tapping the status bar to switch windows could leave the old window's text on screen with only the cursor moving (intermittent) — a redraw arriving mid-layout was being dropped. The terminal now always repaints on a screen update. (#898)
 
