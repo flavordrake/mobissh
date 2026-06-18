@@ -19,6 +19,22 @@ void main() {
       expect(cmd, endsWith('\n'));
     });
 
+    test('entryCommand is attach-OR-create (#913) — never a bare attach', () {
+      // `new-session -A -s mobissh` attaches to an existing `mobissh` session if
+      // present, else CREATES it. A bare `attach` fails with "no sessions" on a
+      // host with no running tmux (e.g. a fresh test-sshd), so the rollout entry
+      // MUST be attach-or-create. Lock the exact string.
+      expect(
+        text(TmuxControlChannel.entryCommand),
+        'tmux -CC new-session -A -s mobissh\n',
+      );
+      expect(
+        text(TmuxControlChannel.entryCommand),
+        isNot(contains('attach')),
+        reason: 'a bare `attach` fails "no sessions" on a host without tmux',
+      );
+    });
+
     test('resizeCommand is the refresh-client -C single resize primitive', () {
       expect(
         text(TmuxControlChannel.resizeCommand(120, 40)),

@@ -34,6 +34,7 @@ import '../state/connection_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/recent_sessions.dart';
 import '../state/sessions.dart';
+import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
 import 'host_key_dialog.dart';
@@ -321,6 +322,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         entry,
         title: title ?? '${params.username}@${params.host}:${params.port}',
       );
+      // #913: read the persisted tmux-control-mode opt-in at connect time. The
+      // notifier keeps the per-isolate `tmuxControlMode` global in sync with this
+      // value; reading the provider here also guarantees it's constructed (and
+      // hydrated) before `proxy.connect` reads that global to populate
+      // `SshConnectCommand.controlMode`. Default OFF → scrape path unchanged.
+      ref.read(tmuxControlModeProvider);
       await entry.proxy.connect(params);
       // Once we've proven network reachability, fire-and-forget a crash upload
       // sweep. Tailscale being down at boot is the common case.
