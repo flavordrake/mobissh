@@ -11,6 +11,7 @@ import '../services/battery_optimization.dart';
 import '../state/detection_providers.dart';
 import '../state/keepalive_providers.dart';
 import '../state/terminal_backend.dart';
+import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 
 class SettingsPanel extends ConsumerWidget {
@@ -21,6 +22,7 @@ class SettingsPanel extends ConsumerWidget {
     final keepalive = ref.watch(keepaliveEnabledProvider);
     final fontSize = ref.watch(fontSizeProvider);
     final backend = ref.watch(terminalBackendProvider);
+    final controlMode = ref.watch(tmuxControlModeProvider);
     final detection = ref.watch(detectionSettingsProvider);
     return ExpansionTile(
       key: const ValueKey('settings-section'),
@@ -112,6 +114,24 @@ class SettingsPanel extends ConsumerWidget {
             onSelectionChanged: (sel) =>
                 ref.read(terminalBackendProvider.notifier).set(sel.first),
           ),
+        ),
+        // #913 Part D: tmux control-mode (`tmux -CC`) opt-in. Default OFF — the
+        // proven screen-scrape path stays the default; enabling this drives
+        // `SshConnectCommand.controlMode` so NEW sessions enter control mode for
+        // authoritative window/size + real switch gestures. Read at connect time
+        // (restart-to-apply, like the engine selector). Monochrome outlined icon.
+        SwitchListTile(
+          key: const ValueKey('tmux-control-mode-toggle'),
+          secondary: const Icon(Icons.cable_outlined),
+          title: const Text('Terminal: tmux control mode (experimental)'),
+          subtitle: const Text(
+            'Drive tmux via control mode (-CC): authoritative windows/size + '
+            'real switch gestures. Requires tmux on the host. Applies to new '
+            'sessions / after a restart.',
+          ),
+          value: controlMode,
+          onChanged: (v) =>
+              ref.read(tmuxControlModeProvider.notifier).set(v),
         ),
         // #888 Part A: in-terminal structured-text DETECTION. Master switch +
         // per-type toggles (URLs, file paths). When a type is off, the flterm
