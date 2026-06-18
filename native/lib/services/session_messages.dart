@@ -229,6 +229,7 @@ sealed class SshTaskCommand {
           username: json['username'] as String,
           authJson: Map<String, dynamic>.from(json['auth'] as Map),
           title: json['title'] as String?,
+          controlMode: json['controlMode'] as bool? ?? false,
         );
       case SshTaskCommandKind.disconnect:
         return SshDisconnectCommand(sessionId: sessionId);
@@ -397,6 +398,7 @@ class SshConnectCommand extends SshTaskCommand {
     required this.username,
     required this.authJson,
     this.title,
+    this.controlMode = false,
   }) : super(sessionId);
 
   final String host;
@@ -408,6 +410,15 @@ class SshConnectCommand extends SshTaskCommand {
   /// auth shape without breaking the wire contract.
   final Map<String, dynamic> authJson;
   final String? title;
+
+  /// Whether the session should enter tmux control mode (`tmux -CC`) on shell
+  /// open (#911). The `tmuxControlMode` flag is a per-ISOLATE global; the host
+  /// runs in the foreground-task isolate, so a flag flipped in the UI isolate
+  /// (settings toggle, or the emulator parity tests) never reaches it. This
+  /// carries the UI-isolate's desired state across the gateway so the host
+  /// isolate enters control mode for THIS session. Defaults false so the
+  /// shipped scrape path is unchanged unless the UI explicitly opts in.
+  final bool controlMode;
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.connect;
@@ -421,6 +432,7 @@ class SshConnectCommand extends SshTaskCommand {
     'username': username,
     'auth': authJson,
     if (title != null) 'title': title,
+    if (controlMode) 'controlMode': true,
   };
 }
 

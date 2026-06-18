@@ -120,27 +120,45 @@ void main() {
           reason: 'control-mode grid received ZERO bytes — %output never demuxed');
 
       // Build a session with THREE windows (0,1,2). Window 0 already exists.
+      // tmux makes the newly-created window active, so after this the active
+      // window is window 2 (the last created). Settle so the channel processes
+      // both %window-add + %session-window-changed before the first gesture.
       ctl('new-window -t :1 -n cc_w1');
       ctl('new-window -t :2 -n cc_w2');
-      // Give each window a UNIQUE, identifiable marker via send-keys so its
-      // %output carries it when that window is active + repainting. The simple
-      // `echo WORD` form survives the (now-atomic) command path.
-      await tester.pump(const Duration(milliseconds: 500));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+
+      // Settle after a gesture BEFORE echoing the target window's marker: the
+      // gesture (a `previous-window` / `next-window` / `select-window` control
+      // command) and the marker `send-keys` are SEPARATE async IPC envelopes. If
+      // the marker echoes before the channel has processed the authoritative
+      // `%session-window-changed`, the target window's %output is filtered out as
+      // non-active and lost. Pumping between them lets the switch settle first.
+      Future<void> settle() async {
+        for (var i = 0; i < 4; i++) {
+          await tester.pump(const Duration(milliseconds: 500));
+        }
+      }
 
       // 1) SWIPE-style switch via REAL previous-window: from window 2 step back to
       //    window 1 and confirm the grid repaints to window 1's content.
       out.clear();
       entry.proxy.sendTmuxGesture(TmuxWindowGesture.previousWindow);
+      await settle();
       ctl('send-keys -t :1 "echo CC_GEST_W1_AAA" Enter');
       expect(await waitFor('CC_GEST_W1_AAA'), isTrue,
-          reason: 'previous-window (swipe) did not repaint to window 1');
+          reason: 'previous-window (swipe) did not repaint to window 1. '
+              'Saw: ${rendered()}');
 
       // 2) SWIPE-style switch via REAL next-window: window 1 → window 2.
       out.clear();
       entry.proxy.sendTmuxGesture(TmuxWindowGesture.nextWindow);
+      await settle();
       ctl('send-keys -t :2 "echo CC_GEST_W2_BBB" Enter');
       expect(await waitFor('CC_GEST_W2_BBB'), isTrue,
-          reason: 'next-window (swipe) did not repaint to window 2');
+          reason: 'next-window (swipe) did not repaint to window 2. '
+              'Saw: ${rendered()}');
 
       // 3) STATUS-TAP switch via REAL select-window: tap the LEFT third of the
       //    status line → window 0. The host maps the column to the window from the
@@ -151,9 +169,11 @@ void main() {
         statusCol: 3,
         statusCols: 90,
       );
+      await settle();
       ctl('send-keys -t :0 "echo CC_GEST_W0_CCC" Enter');
       expect(await waitFor('CC_GEST_W0_CCC'), isTrue,
-          reason: 'status-tap select-window did not repaint to window 0');
+          reason: 'status-tap select-window did not repaint to window 0. '
+              'Saw: ${rendered()}');
 
       // 4) DETERMINISM: run the switch sequence REPEATEDLY (the old bug was
       //    intermittent). Each cycle: select-window 1, 2, 0 and confirm a fresh
@@ -168,6 +188,7 @@ void main() {
             statusCol: w == 0 ? 3 : (w == 1 ? 45 : 85),
             statusCols: 90,
           );
+          await settle();
           final marker = 'CC_GEST_CYCLE_${cycle}_W$w';
           ctl('send-keys -t :$w "echo $marker" Enter');
           expect(await waitFor(marker), isTrue,

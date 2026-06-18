@@ -15,6 +15,7 @@ import 'dart:typed_data';
 import '../services/session_host.dart';
 import '../services/session_messages.dart';
 import '../services/task_ssh_gateway.dart';
+import '../terminal/tmux_control_mode_flag.dart';
 import 'ssh_connect_params.dart';
 import 'ssh_session.dart';
 
@@ -198,6 +199,10 @@ class SshSessionProxy {
         username: params.username,
         authJson: SessionHost.encodeAuth(params.auth),
         title: title,
+        // #911: carry the UI-isolate control-mode flag across the gateway so the
+        // (separate) foreground-task isolate that opens the shell enters `tmux
+        // -CC`. A per-isolate global set in the UI never reaches the task host.
+        controlMode: tmuxControlMode,
       ).toJson(),
     );
   }

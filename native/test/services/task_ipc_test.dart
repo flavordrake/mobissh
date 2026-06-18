@@ -26,6 +26,7 @@ void main() {
         username: 'user',
         authJson: SessionHost.encodeAuth(const SshAuth.password('secret')),
         title: 'My host',
+        controlMode: true,
       );
       final restored = SshTaskCommand.fromJson(cmd.toJson());
       expect(restored, isA<SshConnectCommand>());
@@ -36,6 +37,27 @@ void main() {
       expect(restored.username, 'user');
       expect(restored.authJson, cmd.authJson);
       expect(restored.title, 'My host');
+      // #911: the control-mode bit crosses the gateway so the task isolate
+      // (which owns the shell + the per-isolate `tmuxControlMode` global) enters
+      // `tmux -CC`. A UI-isolate flag never reaches the task isolate otherwise.
+      expect(restored.controlMode, isTrue);
+    });
+
+    test('SshConnectCommand controlMode defaults false + omitted from json', () {
+      final cmd = SshConnectCommand(
+        sessionId: 'host:22:user:1',
+        host: 'host',
+        port: 22,
+        username: 'user',
+        authJson: SessionHost.encodeAuth(const SshAuth.password('secret')),
+      );
+      expect(cmd.controlMode, isFalse);
+      // Omitted when false so the default wire shape is unchanged (the shipped
+      // scrape path sends no extra field).
+      expect(cmd.toJson().containsKey('controlMode'), isFalse);
+      final restored =
+          SshTaskCommand.fromJson(cmd.toJson()) as SshConnectCommand;
+      expect(restored.controlMode, isFalse);
     });
 
     test('SshInputCommand preserves binary bytes', () {

@@ -534,6 +534,16 @@ class SessionHost {
       }
       return;
     }
+    // #911: apply the UI-isolate's desired control-mode state to THIS (task)
+    // isolate's global before the shell opens. `tmuxControlMode` is a per-isolate
+    // global, and the host runs in the foreground-task isolate — a flag flipped
+    // in the UI isolate (settings toggle / emulator parity tests) otherwise never
+    // reaches `_ensureShell`, so `tmux -CC` is never entered and control commands
+    // are dropped. The connect command carries the bit across the gateway.
+    tmuxControlMode = cmd.controlMode;
+    ctrace('task.host',
+        'connect sid=${cmd.sessionId} controlMode=${cmd.controlMode}');
+
     final controller = _factory();
     final hosted = _HostedSession(controller: controller);
     _sessions[cmd.sessionId] = hosted;
