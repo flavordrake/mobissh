@@ -23,6 +23,8 @@ import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../terminal/tmux_control_channel.dart';
+import '../terminal/tmux_control_mode_flag.dart';
 import '../ssh/da2_responder.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
@@ -264,11 +266,29 @@ class SessionHost {
         if (s != null) {
           s.metrics.lastCols = cmd.cols;
           s.metrics.lastRows = cmd.rows;
-          // Resize the live PTY so the remote shell wraps to the viewport.
-          try {
-            s.shell?.resize(cmd.cols, cmd.rows);
-          } catch (_) {
-            // dartssh2 throws on non-positive dims; the next real resize fixes it.
+          final tmux = s.tmuxChannel;
+          if (tmux != null) {
+            // #909 control mode: `refresh-client -C cols,rows` is the SINGLE
+            // resize primitive — tmux owns the layout math so the app grid and
+            // tmux size cannot diverge. The UI's trailing-edge settle coalescer
+            // (GhosttyResizeCoalescer) already guarantees this carries the FINAL
+            // settled size (never dropped — the #903/#905 lesson). We do NOT also
+            // resize the PTY winsize: in -CC the channel runs `tmux -CC`, whose
+            // own terminal size is irrelevant; the inner client size is what
+            // refresh-client -C sets.
+            try {
+              s.shell?.send(TmuxControlChannel.resizeCommand(cmd.cols, cmd.rows));
+            } catch (_) {
+              // Channel closed mid-resize; the next connect re-syncs.
+            }
+          } else {
+            // Scrape path (default): resize the live PTY so the remote shell
+            // wraps to the viewport.
+            try {
+              s.shell?.resize(cmd.cols, cmd.rows);
+            } catch (_) {
+              // dartssh2 throws on non-positive dims; the next real resize fixes it.
+            }
           }
         }
       case SshRequestSnapshotCommand():
@@ -592,6 +612,7 @@ class SessionHost {
     hosted.stateSub = null;
     await hosted.shellSub?.cancel();
     hosted.shellSub = null;
+    hosted.tmuxChannel = null; // #909: drop the control-mode adapter on teardown.
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -636,6 +657,9 @@ class SessionHost {
     if (sub != null) {
       unawaited(sub.cancel());
     }
+    // #909: drop the control-mode adapter with the shell so a reconnect rebuilds
+    // a fresh parser/active-window view (no-op when null on the scrape path).
+    hosted.tmuxChannel = null;
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -685,6 +709,24 @@ class SessionHost {
       hosted.da2Responder.reset();
       // Fresh attach => fresh attention-signal dedup state (#840).
       hosted.attentionScanner.reset();
+      // #909 control mode (flag ON): the freshly-opened login shell is plain;
+      // we ENTER tmux control mode by writing `tmux -CC …` into its stdin, then
+      // route ALL subsequent output through the per-session TmuxControlChannel.
+      // A fresh channel per (re)open mirrors the da2/attention reset above. When
+      // the flag is OFF, `tmuxChannel` stays null and the listener below takes
+      // the unchanged scrape path — so the shipped path is provably untouched.
+      if (tmuxControlMode) {
+        final tmux = TmuxControlChannel();
+        hosted.tmuxChannel = tmux;
+        try {
+          transport.send(TmuxControlChannel.entryCommand);
+        } catch (_) {
+          // If the entry write fails the channel is dead; the controller's close
+          // path drives reconnect, which re-opens + re-enters control mode.
+        }
+      } else {
+        hosted.tmuxChannel = null;
+      }
       // Wire the output listener BEFORE announcing shell-ready (#619). The UI's
       // run-on-connect command fires on shell-ready, writes to stdin, and the
       // shell echoes + runs it immediately. If we announced ready first (the
@@ -701,6 +743,37 @@ class SessionHost {
           // producing output — the nudge check watches this counter advance.
           hosted.remoteByteEvents += 1;
           hosted.lastRemoteByteAtMs = _nowMs();
+          // #909 control mode (flag ON): the raw stream is the `-CC` PROTOCOL,
+          // not terminal bytes. Parse + demux per-pane, render only the ACTIVE
+          // window's %output, and on an authoritative window switch force a
+          // `refresh-client -C` redraw so the grid repaints to the new window.
+          // DA2/attention scanning runs on the DEMUXED render bytes (the real
+          // terminal content), not the protocol framing.
+          final tmux = hosted.tmuxChannel;
+          if (tmux != null) {
+            final result = tmux.ingest(bytes);
+            if (result.activeWindowChanged) {
+              // Force a redraw at the last-known size so the new window paints.
+              final cols = hosted.metrics.lastCols ?? 80;
+              final rows = hosted.metrics.lastRows ?? 24;
+              try {
+                hosted.shell?.send(
+                  TmuxControlChannel.resizeCommand(cols, rows),
+                );
+              } catch (_) {
+                /* channel closed; reconnect re-syncs */
+              }
+            }
+            final render = result.renderBytes;
+            if (render.isNotEmpty) {
+              _scanAttention(sessionId, hosted, render);
+              hosted.appendScrollback(render);
+              _gateway.send(
+                SshOutputEvent(sessionId: sessionId, bytes: render).toJson(),
+              );
+            }
+            return;
+          }
           // Intercept tmux's DA2 query and answer as `tmux` so tmux forwards
           // OSC-8 hyperlinks to us (the query is swallowed; our reply goes back
           // over stdin). On non-tmux hosts no query arrives and `forward` is the
@@ -1524,6 +1597,14 @@ class _HostedSession {
   SshShellTransport? shell;
   StreamSubscription<Uint8List>? shellSub;
   bool shellOpening = false;
+
+  /// #909: the tmux control-mode (`-CC`) render+resize adapter for this session,
+  /// non-null ONLY while [tmuxControlMode] is ON. Created per shell (re)open in
+  /// [SessionHost._ensureShell] and cleared with the shell in [SessionHost._dropShell]
+  /// so a reconnect re-enters control mode with a fresh parser. Null on the
+  /// shipped scrape path (flag OFF), where the output listener and resize handler
+  /// take their unchanged branches.
+  TmuxControlChannel? tmuxChannel;
 
   /// Intercepts tmux's DA2 (Secondary Device Attributes) query in the remote
   /// byte stream and answers as a `tmux`-class terminal so tmux advertises the
