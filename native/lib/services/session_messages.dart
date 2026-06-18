@@ -66,6 +66,37 @@ enum SshTaskCommandKind {
   /// carried inline; the task opens the resolved path write|create|truncate and
   /// writes them, then replies with a terminal [SftpUploadDoneEvent].
   sftpUpload,
+
+  // --- tmux control mode (#911, Part C) ---
+
+  /// UI → task: a FULL tmux `-CC` control-command LINE, delivered ATOMICALLY
+  /// (#911). The host writes it as ONE framed `transport.send` with a single
+  /// trailing newline (`TmuxControlChannel.controlCommand`) so a multi-token
+  /// command (`select-window -t @1`) can't fragment across the gateway and hit
+  /// the pane shell. Only acts when the control-mode flag is ON (the host has a
+  /// `tmuxChannel`); a no-op otherwise. NEVER used by the scrape (flag-OFF) path.
+  controlCommand,
+
+  /// UI → task: a high-level tmux WINDOW gesture (#911) — `nextWindow`,
+  /// `previousWindow`, or a status-bar TAP at a column. The host resolves it
+  /// against the channel's authoritative ordered window list and issues the
+  /// matching `next-window` / `previous-window` / `select-window -t @<id>` via the
+  /// atomic control-command path. Keeping the index lookup TASK-SIDE means the UI
+  /// never needs the window list and a status tap maps with no pixel guessing.
+  tmuxGesture,
+}
+
+/// The kind of tmux window gesture an [SshTmuxGestureCommand] carries (#911).
+enum TmuxWindowGesture {
+  /// Horizontal swipe RIGHT → `next-window`.
+  nextWindow,
+
+  /// Horizontal swipe LEFT → `previous-window`.
+  previousWindow,
+
+  /// Tap a status-bar window name → `select-window -t @<id>` for the window whose
+  /// status segment the tap column fell in.
+  tapStatusCol,
 }
 
 /// Envelope kind discriminator for task → UI events.
@@ -198,6 +229,7 @@ sealed class SshTaskCommand {
           username: json['username'] as String,
           authJson: Map<String, dynamic>.from(json['auth'] as Map),
           title: json['title'] as String?,
+          controlMode: json['controlMode'] as bool? ?? false,
         );
       case SshTaskCommandKind.disconnect:
         return SshDisconnectCommand(sessionId: sessionId);
@@ -252,6 +284,23 @@ sealed class SshTaskCommand {
           requestId: json['requestId'] as String,
           path: json['path'] as String,
           bytes: Uint8List.fromList(base64Decode(json['bytes'] as String)),
+        );
+      case SshTaskCommandKind.controlCommand:
+        return SshControlCommand(
+          sessionId: sessionId,
+          command: json['command'] as String,
+        );
+      case SshTaskCommandKind.tmuxGesture:
+        final gestureRaw = json['gesture'] as String;
+        return SshTmuxGestureCommand(
+          sessionId: sessionId,
+          gesture: TmuxWindowGesture.values.firstWhere(
+            (g) => g.name == gestureRaw,
+            orElse: () => throw FormatException(
+                'SshTmuxGestureCommand: unknown gesture "$gestureRaw"'),
+          ),
+          statusCol: (json['statusCol'] as int?) ?? 0,
+          statusCols: (json['statusCols'] as int?) ?? 0,
         );
     }
   }
@@ -349,6 +398,7 @@ class SshConnectCommand extends SshTaskCommand {
     required this.username,
     required this.authJson,
     this.title,
+    this.controlMode = false,
   }) : super(sessionId);
 
   final String host;
@@ -360,6 +410,15 @@ class SshConnectCommand extends SshTaskCommand {
   /// auth shape without breaking the wire contract.
   final Map<String, dynamic> authJson;
   final String? title;
+
+  /// Whether the session should enter tmux control mode (`tmux -CC`) on shell
+  /// open (#911). The `tmuxControlMode` flag is a per-ISOLATE global; the host
+  /// runs in the foreground-task isolate, so a flag flipped in the UI isolate
+  /// (settings toggle, or the emulator parity tests) never reaches it. This
+  /// carries the UI-isolate's desired state across the gateway so the host
+  /// isolate enters control mode for THIS session. Defaults false so the
+  /// shipped scrape path is unchanged unless the UI explicitly opts in.
+  final bool controlMode;
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.connect;
@@ -373,6 +432,7 @@ class SshConnectCommand extends SshTaskCommand {
     'username': username,
     'auth': authJson,
     if (title != null) 'title': title,
+    if (controlMode) 'controlMode': true,
   };
 }
 
@@ -572,6 +632,66 @@ class SshSetActiveCommand extends SshTaskCommand {
     if (activeSessionId != null) 'activeSessionId': activeSessionId,
     if (activeHost != null) 'activeHost': activeHost,
   };
+}
+
+/// UI → task: a FULL tmux `-CC` control-command line, delivered ATOMICALLY
+/// (#911, Part C Step 1). The host writes [command] as ONE framed
+/// `transport.send` terminated with a single newline, so a multi-token command
+/// survives the UI→isolate gateway intact (Part B found a fragmented command's
+/// tail hit the pane shell). [command] carries NO trailing newline — the host's
+/// `TmuxControlChannel.controlCommand` adds exactly one. Per-session.
+class SshControlCommand extends SshTaskCommand {
+  const SshControlCommand({required String sessionId, required this.command})
+      : super(sessionId);
+
+  /// The complete `-CC` command line (no trailing newline), e.g.
+  /// `select-window -t @1` or `next-window`.
+  final String command;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.controlCommand;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'command': command,
+      };
+}
+
+/// UI → task: a high-level tmux WINDOW gesture (#911, Part C Step 2). The host
+/// resolves it against the channel's authoritative ordered window list and
+/// issues the right control command atomically. [statusCol]/[statusCols] carry
+/// the 1-based tap column + the status-line width for [TmuxWindowGesture.
+/// tapStatusCol] (ignored for next/previous). Per-session.
+class SshTmuxGestureCommand extends SshTaskCommand {
+  const SshTmuxGestureCommand({
+    required String sessionId,
+    required this.gesture,
+    this.statusCol = 0,
+    this.statusCols = 0,
+  }) : super(sessionId);
+
+  final TmuxWindowGesture gesture;
+
+  /// 1-based tap column over the status line (only for [TmuxWindowGesture.
+  /// tapStatusCol]).
+  final int statusCol;
+
+  /// The status-line width in columns at tap time (only for tapStatusCol).
+  final int statusCols;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.tmuxGesture;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'gesture': gesture.name,
+        'statusCol': statusCol,
+        'statusCols': statusCols,
+      };
 }
 
 // ---------------------------------------------------------------------------

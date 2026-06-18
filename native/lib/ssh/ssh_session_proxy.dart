@@ -15,6 +15,7 @@ import 'dart:typed_data';
 import '../services/session_host.dart';
 import '../services/session_messages.dart';
 import '../services/task_ssh_gateway.dart';
+import '../terminal/tmux_control_mode_flag.dart';
 import 'ssh_connect_params.dart';
 import 'ssh_session.dart';
 
@@ -198,6 +199,10 @@ class SshSessionProxy {
         username: params.username,
         authJson: SessionHost.encodeAuth(params.auth),
         title: title,
+        // #911: carry the UI-isolate control-mode flag across the gateway so the
+        // (separate) foreground-task isolate that opens the shell enters `tmux
+        // -CC`. A per-isolate global set in the UI never reaches the task host.
+        controlMode: tmuxControlMode,
       ).toJson(),
     );
   }
@@ -249,6 +254,38 @@ class SshSessionProxy {
   /// Send keystroke / paste bytes to the remote PTY through the gateway.
   void sendInput(Uint8List bytes) {
     gateway.send(SshInputCommand(sessionId: sessionId, bytes: bytes).toJson());
+  }
+
+  /// Send a FULL tmux `-CC` control-command LINE for ATOMIC delivery (#911 Part
+  /// C). Unlike [sendInput] (keystroke bytes that can fragment across the gateway
+  /// and land in the pane shell), this travels as ONE command envelope and the
+  /// host writes it as a single framed line — so a multi-token command survives
+  /// intact. [command] carries NO trailing newline; the host adds exactly one.
+  /// A no-op on the task side unless control mode is ON for this session.
+  void sendControlCommand(String command) {
+    gateway.send(
+      SshControlCommand(sessionId: sessionId, command: command).toJson(),
+    );
+  }
+
+  /// Issue a high-level tmux WINDOW gesture (#911 Part C) — the host resolves it
+  /// against its authoritative ordered window list and delivers the matching
+  /// `next-window` / `previous-window` / `select-window -t @<id>` atomically. For
+  /// [TmuxWindowGesture.tapStatusCol] pass the 1-based [statusCol] and the
+  /// status-line width [statusCols]; ignored for next/previous.
+  void sendTmuxGesture(
+    TmuxWindowGesture gesture, {
+    int statusCol = 0,
+    int statusCols = 0,
+  }) {
+    gateway.send(
+      SshTmuxGestureCommand(
+        sessionId: sessionId,
+        gesture: gesture,
+        statusCol: statusCol,
+        statusCols: statusCols,
+      ).toJson(),
+    );
   }
 
   /// Request a directory listing over SFTP (#559). The matching
