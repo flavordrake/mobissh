@@ -61,6 +61,17 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // R8 runs on the shipped release build (proven by the #915
+            // Gson/TypeToken crash from flutter_local_notifications). Make
+            // minification explicit and attach the keep rules so they apply to
+            // that R8 pass — without them, R8 strips the generic Signature
+            // attribute Gson needs and notification cancel throws at runtime.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
