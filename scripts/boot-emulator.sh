@@ -28,6 +28,17 @@ if pgrep -f GradleDaemon >/dev/null 2>&1; then
   pkill -f GradleDaemon || true
 fi
 
+# Idempotency: a surviving emulator from a prior run + this fresh boot = TWO
+# emulators (~8G) → OOM on the 15G host, and `adb wait-for-device` errors with
+# "more than one device". Kill any existing emulator-* first so we always end up
+# with exactly one.
+ADB="$ANDROID_SDK_ROOT/platform-tools/adb"
+existing_emulators() { "$ADB" devices | grep -oE '^emulator-[0-9]+' || true; }
+for dev in $(existing_emulators); do
+  echo "> killing pre-existing $dev (avoid a second emulator → OOM)"
+  "$ADB" -s "$dev" emu kill || true
+done
+
 echo "> booting AVD $AVD_NAME headless (sdk=$ANDROID_SDK_ROOT)"
 exec "$EMULATOR_BIN" -avd "$AVD_NAME" \
   -no-window -no-audio -no-boot-anim -no-snapshot \
