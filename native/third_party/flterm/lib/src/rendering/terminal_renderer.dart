@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:libghostty/libghostty.dart';
@@ -176,6 +178,33 @@ class TerminalRenderBox extends RenderBox {
   var _lastScrollbackRows = 0;
   var _preeditText = '';
 
+  // #918 force-repaint robustness layer (the "tap Debug fixes it" mitigation).
+  //
+  // INPUT-DRIVEN: [forceRepaint] re-reads the FULL visible grid (markAllRowsDirty
+  // + frame-dirty) — the SAME full repaint a route-push / Debug-overlay triggers —
+  // coalesced to AT MOST ONCE per frame: a force sets `_forceCoalesced`, and the
+  // next paint's `_syncFrameState` clears it, so N forces within one frame collapse
+  // to one re-snapshot. This is a SAFETY NET on top of the #900 damage-consume fix.
+  //
+  // OUTPUT SETTLE TICK ("backend clock"): a PTY-output burst arms a one-shot timer
+  // ([_outputSettleTimer]) that fires ONCE ~60ms after the burst and forces a frame,
+  // covering non-user-initiated output the normal damage/frame path dropped. It MUST
+  // NOT free-run when idle (no input, no output) — that regresses the #805 battery
+  // perf guard — so it arms ONLY on a content-change notify and disarms after one fire.
+  var _forceCoalesced = false;
+  var _debugForceRepaintCount = 0;
+  Timer? _outputSettleTimer;
+
+  /// The settle window between the LAST output byte and the forced frame. Long
+  /// enough to coalesce a streaming burst into one tick, short enough to self-heal
+  /// promptly. Bounded; the alternate/visible grid re-read is cheap.
+  static const Duration kOutputSettle = Duration(milliseconds: 80);
+
+  /// Injectable settle-timer factory (test seam). Production schedules a real
+  /// [Timer]; headless tests inject a fake so the tick fires deterministically and
+  /// the #805 idle-no-fire perf guard is assertable.
+  Timer Function(Duration, void Function()) _scheduleSettleTimer = Timer.new;
+
   final TerminalPaintState _paintState;
   late final TerminalRenderPipeline _pipeline;
 
@@ -235,6 +264,45 @@ class TerminalRenderBox extends RenderBox {
   /// in-place alt-screen redraw (tmux window switch) must re-read the visible
   /// grid on EVERY switch, not every other one.
   int get debugRowsRebuiltLastSync => _pipeline.debugRowsRebuiltLastSync;
+
+  /// #918 (test seam): how many times [forceRepaint] actually triggered a forced
+  /// re-snapshot. Coalescing means N forces within one frame increment this once.
+  int get debugForceRepaintCount => _debugForceRepaintCount;
+
+  /// #918 (test seam): whether the output settle tick is currently armed (a timer
+  /// is pending). The #805 perf guard asserts this is FALSE when idle.
+  bool get debugOutputTickArmed => _outputSettleTimer != null;
+
+  /// #918 (test seam): inject the settle-timer factory so headless tests fire the
+  /// output tick deterministically and assert the idle-no-fire perf guard.
+  void debugSetOutputSettleTickFactory(
+    Timer Function(Duration, void Function()) factory,
+  ) {
+    _scheduleSettleTimer = factory;
+  }
+
+  /// #918 INPUT-DRIVEN force-repaint — re-read the FULL visible grid and repaint,
+  /// the SAME full repaint a route-push / Debug-overlay triggers.
+  ///
+  /// Called by the widget layer after dispatching ANY user input to the PTY (key,
+  /// tap, gesture, paste, keybar) so the UI self-heals on every interaction even if
+  /// the normal libghostty damage/frame-sync path dropped the redraw (#900 is the
+  /// correctness fix; this is the brute-force net on top). `markAllRowsDirty` makes
+  /// the next sync's frame build re-read every visible row from the CURRENT snapshot
+  /// even when libghostty reports clean (a prior frame consumed the per-row damage);
+  /// `_markFrameDirty` sets `_needsFrameSync` + `markNeedsPaint`.
+  ///
+  /// COALESCED to once per frame: multiple inputs landing within a single frame set
+  /// the flag once, and the next paint clears it — so we never force more than one
+  /// bounded grid re-read per frame.
+  void forceRepaint() {
+    if (_paintState.rows == 0) return;
+    if (_forceCoalesced) return;
+    _forceCoalesced = true;
+    _debugForceRepaintCount += 1;
+    _pipeline.markAllRowsDirty();
+    _markFrameDirty();
+  }
 
   /// Current terminal input caret rect in this render box's local coordinates.
   Rect get textInputCaretRect {
@@ -367,6 +435,10 @@ class TerminalRenderBox extends RenderBox {
 
   @override
   void detach() {
+    // #918: a detached box must not keep a pending settle tick alive (no free-run
+    // off-screen).
+    _outputSettleTimer?.cancel();
+    _outputSettleTimer = null;
     _offset.removeListener(_onScroll);
     _renderObserver.removeListener(_onRenderObserverChanged);
     _terminal.removeListener(_onTerminalChanged);
@@ -375,6 +447,8 @@ class TerminalRenderBox extends RenderBox {
 
   @override
   void dispose() {
+    _outputSettleTimer?.cancel();
+    _outputSettleTimer = null;
     _paintState.rows = 0;
     _paintState.cols = 0;
     _pipeline.dispose();
@@ -500,6 +574,23 @@ class TerminalRenderBox extends RenderBox {
     markNeedsPaint();
   }
 
+  /// #918: arm the one-shot output settle tick. Cancels any pending timer and
+  /// reschedules, so a streaming burst of notifies coalesces into a SINGLE forced
+  /// frame fired once the output quiets for [kOutputSettle]. Disarms on fire. Called
+  /// ONLY from `_onTerminalChanged`, so an idle terminal never arms it (#805 guard).
+  void _armOutputSettleTick() {
+    _outputSettleTimer?.cancel();
+    _outputSettleTimer = _scheduleSettleTimer(kOutputSettle, _onOutputSettled);
+  }
+
+  /// #918: the output settle tick fired — force ONE full frame and disarm. The
+  /// `markAllRowsDirty` re-reads the visible grid so the latest snapshot reaches the
+  /// screen even when libghostty's damage was consumed by a prior frame.
+  void _onOutputSettled() {
+    _outputSettleTimer = null;
+    forceRepaint();
+  }
+
   void _onRenderObserverChanged() {
     final previousSelection = _paintState.selection;
     final newSelection = _renderObserver.selection;
@@ -616,6 +707,15 @@ class TerminalRenderBox extends RenderBox {
     // scrollback growth) is untouched.
     if (_terminal.activeScreen == .alternate) _pipeline.markAllRowsDirty();
 
+    // #918 OUTPUT SETTLE TICK: a content-change notify is driven by PTY output (or
+    // a local edit). Arm a one-shot timer that forces ONE full frame ~80ms after the
+    // burst quiets, guaranteeing the snapshot reaches the screen even if the normal
+    // damage/frame path dropped it. Re-arming on each notify coalesces a streaming
+    // burst into a single trailing tick. It fires ONCE then disarms (see `_fire`),
+    // and is armed ONLY from this notify — so when idle (no output, no input) it
+    // never schedules or fires: zero repaints (the #805 battery perf guard).
+    _armOutputSettleTick();
+
     // `markNeedsLayout()` is the ONLY part that is illegal during layout (it
     // throws "called during layout"), and it is redundant then anyway — we are
     // already in a layout pass that will recompute scroll extents. So request a
@@ -668,6 +768,9 @@ class TerminalRenderBox extends RenderBox {
 
     final terminalDirty = _needsFrameSync;
     _needsFrameSync = false;
+    // #918: this frame consumed any coalesced force-repaint; a fresh input after
+    // this paint may force again (once per frame).
+    _forceCoalesced = false;
     _pipeline.sync(
       _terminal,
       terminalDirty: terminalDirty,
