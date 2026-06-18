@@ -1971,6 +1971,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// painter use — without re-reading the per-session font providers off-build.
   Size _lastCellSize = Size.zero;
 
+  /// #918: a key on the flterm [TerminalView] so [_forceTerminalRepaint] can locate
+  /// the internal [TerminalRenderBox] via the render tree and force a full repaint
+  /// after dispatching user input (the input-driven half of the robustness layer).
+  final GlobalKey _terminalViewKey = GlobalKey();
+
   /// #755/#767: the session theme's selection colour, captured in [build] from
   /// the live palette. #767 Slice B: it colours the URL BUBBLE decorator (a
   /// rounded outline, not a fill), recomputed each build so cycling the session
@@ -2134,6 +2139,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // so this is the seam that reveals "swipe → wheel events → tmux scrolled".
         _byteRecorder.recordSentSgr(sent);
         proxy.sendInput(sent);
+        // #918: force a full re-snapshot + repaint after dispatching this input
+        // (soft-keyboard key, IME commit, paste, keybar key — all flow through
+        // controller.onOutput). The UI self-heals on every keystroke even if the
+        // damage/frame path dropped the redraw. Coalesced to once per frame.
+        _forceTerminalRepaint();
       };
       // Grid resize -> PTY resize. flterm reports (cols, rows); the proxy's
       // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
@@ -2583,6 +2593,43 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     //    focus is currently held; never raises the keyboard (the keyboard is down
     //    on resume, so `_onFocusChanged` re-attaches the input but does NOT show).
     _forceRepaintOnResume();
+  }
+
+  /// #918: force the flterm render box to re-snapshot + repaint the FULL visible
+  /// grid — the SAME full repaint a route-push / Debug-overlay triggers — after
+  /// dispatching ANY user input to the PTY (key / tap / gesture / paste / keybar).
+  ///
+  /// The UI then self-heals on every interaction: if the normal libghostty
+  /// damage/frame-sync path dropped a redraw (the "tap Debug fixes it" symptom), the
+  /// next input forces it. This is a brute-force SAFETY NET on top of the #900
+  /// damage-consume correctness fix — it does NOT replace it.
+  ///
+  /// The host widget owns only the [TerminalController]; the [TerminalRenderBox] is
+  /// an internal leaf of flterm's [TerminalView]. We locate it via the keyed
+  /// TerminalView's render object and call [TerminalRenderBox.forceRepaint], which
+  /// COALESCES to at most one bounded grid re-read per frame, so dispatching several
+  /// inputs in one frame forces only once.
+  void _forceTerminalRepaint() {
+    final box = _findTerminalRenderBox();
+    box?.forceRepaint();
+  }
+
+  /// #918: walk the render subtree under the keyed [TerminalView] to the
+  /// [TerminalRenderBox] leaf. Returns null before the first layout (no render
+  /// object yet) or if the box can't be found — the caller no-ops.
+  TerminalRenderBox? _findTerminalRenderBox() {
+    final renderObject = _terminalViewKey.currentContext?.findRenderObject();
+    if (renderObject == null) return null;
+    return _searchRenderBox(renderObject);
+  }
+
+  TerminalRenderBox? _searchRenderBox(RenderObject node) {
+    if (node is TerminalRenderBox) return node;
+    TerminalRenderBox? found;
+    node.visitChildren((child) {
+      found ??= _searchRenderBox(child);
+    });
+    return found;
   }
 
   /// #720: force flterm to repaint on resume even when focus was RETAINED.
@@ -3125,6 +3172,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       children: [
         Positioned.fill(
           child: TerminalView(
+            // #918: keyed so _forceTerminalRepaint can locate the render box.
+            key: _terminalViewKey,
             controller: controller,
             autofocus: false,
             theme: theme,
@@ -3231,6 +3280,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                 controller.hideKeyboard();
                 controller.showKeyboard();
               });
+              // #918: a tap is user input — force the full repaint so the view
+              // self-heals on tap (the same gesture the Debug overlay used to need).
+              _forceTerminalRepaint();
             },
             // Long-press-start focuses without raising the keyboard (selection).
             onFocus: controller.requestFocus,
@@ -3244,6 +3296,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
               // SGR-mouse bytes — never keystrokes).
               _byteRecorder.recordSentSgr(bytes);
               proxy.sendInput(bytes);
+              // #918: a synthesised mouse report (tap-click / wheel / selection
+              // drag) is user input — force the full repaint.
+              _forceTerminalRepaint();
             },
             // #911 Part C: under the control-mode flag, window switching uses REAL
             // tmux commands over the -CC channel (no synthesised SGR at a guessed
@@ -3258,6 +3313,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                     ? TmuxWindowGesture.nextWindow
                     : TmuxWindowGesture.previousWindow,
               );
+              // #918: a window-switch swipe is user input — force the full repaint
+              // so the switched window's grid re-reads on EVERY swipe (the historic
+              // "works/fails/works" alternation the Debug tap masked).
+              _forceTerminalRepaint();
             },
             onStatusTap: ({required int col, required int totalCols}) {
               final proxy = _resolveProxy();
@@ -3268,6 +3327,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                 statusCol: col,
                 statusCols: totalCols,
               );
+              // #918: a status-row tap (tmux window select) is user input.
+              _forceTerminalRepaint();
             },
             // #705: long-press-drag drives flterm's LOCAL selection (persists
             // after release → Copy reads it), not a tmux SGR drag.
