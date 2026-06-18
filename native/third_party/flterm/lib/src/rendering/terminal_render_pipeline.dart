@@ -60,6 +60,10 @@ final class TerminalRenderPipeline {
 
   void markAllRowsDirty() => _frameBuilder.markAllRowsDirty();
 
+  /// Rows the LAST [sync] re-emitted (0 if it skipped the build). Test-only
+  /// signal for the #900 repaint-on-every-redraw contract.
+  int get debugRowsRebuiltLastSync => _frameBuilder.debugRowsRebuiltLastSync;
+
   void markSelectionRowsDirty(
     TerminalSelection? selection, {
     required int viewportOffset,
