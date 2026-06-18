@@ -184,7 +184,10 @@ void main() {
       final shell = ctx.opened.first;
       shell.sent.clear(); // drop the entry command
       ctx.proxy.sendResize(100, 30);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // #916: the host now also debounces refresh-client TASK-SIDE (the
+      // trailing-edge settle that kills the multi-client storm), so await past
+      // the settle window before asserting the single write landed.
+      await Future<void>.delayed(const Duration(milliseconds: 320));
       expect(_s(shell.sent.toBytes()), contains('refresh-client -C 100,30'));
       expect(shell.resizes, isEmpty,
           reason: 'control mode must not winsize-resize the -CC PTY');
@@ -196,8 +199,84 @@ void main() {
       shell.sent.clear();
       // The UI coalescer emits only the FINAL settled size; the host must send it.
       ctx.proxy.sendResize(88, 27);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 320));
       expect(_s(shell.sent.toBytes()), contains('refresh-client -C 88,27'));
+    });
+
+    // ---- #916: refresh-client -C storm + reconnect-loop fixes ----
+
+    test('a BURST of resizes coalesces to ONE refresh-client at final size',
+        () async {
+      final ctx = await setUpConnectedShell('cc:22:u:storm1');
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      // The owner's `58,57 ↔ 58,34` alternation: a keyboard-toggle / multi-client
+      // burst. The host must collapse it to ONE refresh-client at the final size.
+      ctx.proxy.sendResize(58, 57);
+      ctx.proxy.sendResize(58, 50);
+      ctx.proxy.sendResize(58, 44);
+      ctx.proxy.sendResize(58, 34);
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      final written = _s(shell.sent.toBytes());
+      final count = 'refresh-client -C'.allMatches(written).length;
+      expect(count, 1, reason: 'BOUNDED — one settled write, not a storm');
+      expect(written, contains('refresh-client -C 58,34'));
+    });
+
+    test('an active-window switch repaints PROMPTLY (not swallowed by the '
+        'resize coalescer dedup) — #916 regression fix', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:storm2');
+      final shell = ctx.opened.first;
+      // Establish a size first so the redraw has dims to repaint at — and so the
+      // resize coalescer has ALREADY emitted that size (its last-emitted dims).
+      ctx.proxy.sendResize(58, 34);
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      shell.sent.clear();
+      // A SINGLE authoritative window switch. The switch re-emits refresh-client
+      // at the SAME 58,34 dims to force a repaint of the new window. The REGRESSION
+      // routed this through the resize coalescer, whose same-size DEDUP (and 250ms
+      // settle) swallowed it → the new window never rendered (blank grid). The fix
+      // writes the switch redraw DIRECTLY, decoupled from the coalescer, so it must
+      // appear PROMPTLY and at the same dims (no dedup drop).
+      shell.emit(_b('%session-window-changed \$0 @1\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final written = _s(shell.sent.toBytes());
+      expect(written, contains('refresh-client -C 58,34'),
+          reason: 'the switch redraw must NOT be dedup-swallowed by the resize '
+              'coalescer — it must repaint the new window promptly + directly');
+    });
+
+    test('a switch redraw does NOT go through the resize coalescer settle '
+        '(direct write, no 250ms delay) — #916', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:storm3');
+      final shell = ctx.opened.first;
+      ctx.proxy.sendResize(58, 34);
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      shell.sent.clear();
+      // The switch repaint is a DIRECT write, so it lands well before any
+      // trailing-edge settle window — a tight delay is enough to observe it.
+      shell.emit(_b('%session-window-changed \$0 @2\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), contains('refresh-client -C'),
+          reason: 'switch redraw must be written immediately, not deferred to '
+              'the resize coalescer settle');
+    });
+
+    test('%exit surfaces ONE clean shell close (no silent re-ingest loop)',
+        () async {
+      final ctx = await setUpConnectedShell('cc:22:u:exit');
+      final shell = ctx.opened.first;
+      final doneFired = shell.done.then((_) => true);
+      // tmux detaches / server dies → %exit. The host must CLOSE the shell so the
+      // controller drives a SINGLE reconnect, not silently ignore it (the #916
+      // half-dead-channel loop). The transport's done must fire.
+      shell.emit(_b('%exit\n'));
+      final didClose = await doneFired.timeout(
+        const Duration(milliseconds: 200),
+        onTimeout: () => false,
+      );
+      expect(didClose, isTrue,
+          reason: '%exit must close the shell transport exactly once');
     });
 
     // ---- #911 Part C: atomic control-command delivery + real gestures ----
