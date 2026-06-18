@@ -123,6 +123,32 @@ void main() {
       expect(restored.activeHost, isNull);
     });
 
+    test('SshControlCommand round-trips a multi-token line intact (#911)', () {
+      const cmd =
+          SshControlCommand(sessionId: 'sid', command: 'select-window -t @1');
+      final restored =
+          SshTaskCommand.fromJson(cmd.toJson()) as SshControlCommand;
+      expect(restored.kind, SshTaskCommandKind.controlCommand);
+      expect(restored.command, 'select-window -t @1');
+    });
+
+    test('SshTmuxGestureCommand round-trips each gesture (#911)', () {
+      for (final g in TmuxWindowGesture.values) {
+        final cmd = SshTmuxGestureCommand(
+          sessionId: 'sid',
+          gesture: g,
+          statusCol: 45,
+          statusCols: 90,
+        );
+        final restored =
+            SshTaskCommand.fromJson(cmd.toJson()) as SshTmuxGestureCommand;
+        expect(restored.kind, SshTaskCommandKind.tmuxGesture);
+        expect(restored.gesture, g);
+        expect(restored.statusCol, 45);
+        expect(restored.statusCols, 90);
+      }
+    });
+
     test('unknown kind throws FormatException', () {
       expect(
         () => SshTaskCommand.fromJson({'kind': 'bogus', 'sessionId': 'sid'}),

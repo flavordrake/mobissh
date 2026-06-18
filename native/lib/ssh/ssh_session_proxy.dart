@@ -251,6 +251,38 @@ class SshSessionProxy {
     gateway.send(SshInputCommand(sessionId: sessionId, bytes: bytes).toJson());
   }
 
+  /// Send a FULL tmux `-CC` control-command LINE for ATOMIC delivery (#911 Part
+  /// C). Unlike [sendInput] (keystroke bytes that can fragment across the gateway
+  /// and land in the pane shell), this travels as ONE command envelope and the
+  /// host writes it as a single framed line — so a multi-token command survives
+  /// intact. [command] carries NO trailing newline; the host adds exactly one.
+  /// A no-op on the task side unless control mode is ON for this session.
+  void sendControlCommand(String command) {
+    gateway.send(
+      SshControlCommand(sessionId: sessionId, command: command).toJson(),
+    );
+  }
+
+  /// Issue a high-level tmux WINDOW gesture (#911 Part C) — the host resolves it
+  /// against its authoritative ordered window list and delivers the matching
+  /// `next-window` / `previous-window` / `select-window -t @<id>` atomically. For
+  /// [TmuxWindowGesture.tapStatusCol] pass the 1-based [statusCol] and the
+  /// status-line width [statusCols]; ignored for next/previous.
+  void sendTmuxGesture(
+    TmuxWindowGesture gesture, {
+    int statusCol = 0,
+    int statusCols = 0,
+  }) {
+    gateway.send(
+      SshTmuxGestureCommand(
+        sessionId: sessionId,
+        gesture: gesture,
+        statusCol: statusCol,
+        statusCols: statusCols,
+      ).toJson(),
+    );
+  }
+
   /// Request a directory listing over SFTP (#559). The matching
   /// [SftpListingEvent] (or [SftpErrorEvent]) arrives on [sftpEvents] with the
   /// same [requestId].

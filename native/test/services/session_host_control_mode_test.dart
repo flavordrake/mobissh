@@ -19,6 +19,7 @@ import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/session_host.dart';
+import 'package:mobissh/services/session_messages.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/ssh/ssh_session.dart';
 import 'package:mobissh/ssh/ssh_session_proxy.dart';
@@ -198,6 +199,74 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(_s(shell.sent.toBytes()), contains('refresh-client -C 88,27'));
     });
+
+    // ---- #911 Part C: atomic control-command delivery + real gestures ----
+
+    test('a multi-token control command is delivered as ONE atomic line', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:5');
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      ctx.proxy.sendControlCommand('select-window -t @1');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final written = _s(shell.sent.toBytes());
+      // The WHOLE multi-token line survives intact with exactly one trailing
+      // newline (the Part B fragmentation bug would have split it).
+      expect(written, 'select-window -t @1\n');
+      expect('\n'.allMatches(written).length, 1);
+    });
+
+    test('swipe RIGHT gesture issues next-window over the channel', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:6');
+      final shell = ctx.opened.first;
+      // Populate the channel's window list.
+      shell.emit(_b('%window-add @0\n'));
+      shell.emit(_b('%window-add @1\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      shell.sent.clear();
+      ctx.proxy.sendTmuxGesture(TmuxWindowGesture.nextWindow);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), 'next-window\n');
+    });
+
+    test('swipe LEFT gesture issues previous-window over the channel', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:7');
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      ctx.proxy.sendTmuxGesture(TmuxWindowGesture.previousWindow);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), 'previous-window\n');
+    });
+
+    test('status-bar tap maps the column to select-window for that window', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:8');
+      final shell = ctx.opened.first;
+      shell.emit(_b('%window-add @0\n'));
+      shell.emit(_b('%window-add @1\n'));
+      shell.emit(_b('%window-add @2\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      shell.sent.clear();
+      // Tap in the middle segment (window index 1) of a 90-col status line.
+      ctx.proxy.sendTmuxGesture(
+        TmuxWindowGesture.tapStatusCol,
+        statusCol: 45,
+        statusCols: 90,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), 'select-window -t @1\n');
+    });
+
+    test('status-bar tap with no known windows is a no-op (no write)', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:9');
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      ctx.proxy.sendTmuxGesture(
+        TmuxWindowGesture.tapStatusCol,
+        statusCol: 10,
+        statusCols: 80,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(shell.sent.length, 0);
+    });
   });
 
   group('flag OFF — scrape path unchanged (shipped default)', () {
@@ -218,6 +287,24 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(shell.resizes, contains((120, 40)));
       expect(_s(shell.sent.toBytes()).contains('refresh-client'), isFalse);
+    });
+
+    test('control commands + window gestures are IGNORED (no -CC channel)', () async {
+      // #911: with the flag OFF there is no tmuxChannel, so a control command or
+      // a window gesture command must be a pure no-op — the scrape path never
+      // issues control commands. Nothing is written to the shell.
+      final ctx = await setUpConnectedShell('plain:22:u:3');
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      ctx.proxy.sendControlCommand('select-window -t @1');
+      ctx.proxy.sendTmuxGesture(TmuxWindowGesture.nextWindow);
+      ctx.proxy.sendTmuxGesture(
+        TmuxWindowGesture.tapStatusCol,
+        statusCol: 5,
+        statusCols: 80,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(shell.sent.length, 0);
     });
   });
 }

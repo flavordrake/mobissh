@@ -117,4 +117,132 @@ void main() {
       expect(text(r.renderBytes), 'partial');
     });
   });
+
+  group('atomic control-command framing (#911 Step 1)', () {
+    test('a multi-token command survives intact, terminated by ONE newline', () {
+      // The Part B failure: a multi-token command (`select-window -t @1`) split
+      // across the gateway and its tail hit the pane shell. The framing must keep
+      // the WHOLE line together with exactly one trailing newline.
+      final framed = text(TmuxControlChannel.controlCommand('select-window -t @1'));
+      expect(framed, 'select-window -t @1\n');
+      // No mid-line newline that would submit a partial line to tmux.
+      expect('\n'.allMatches(framed).length, 1);
+    });
+
+    test('strips caller trailing newlines/whitespace to exactly one newline', () {
+      expect(
+        text(TmuxControlChannel.controlCommand('next-window\n')),
+        'next-window\n',
+      );
+      expect(
+        text(TmuxControlChannel.controlCommand('next-window\r\n\n')),
+        'next-window\n',
+      );
+    });
+
+    test('preserves interior spaces + quotes (no token splitting)', () {
+      final framed =
+          text(TmuxControlChannel.controlCommand('rename-window "my work"'));
+      expect(framed, 'rename-window "my work"\n');
+    });
+
+    test('next/previous window command lines', () {
+      expect(TmuxControlChannel.nextWindowCommand, 'next-window');
+      expect(TmuxControlChannel.previousWindowCommand, 'previous-window');
+    });
+  });
+
+  group('window-list tracking from notifications (#911 Step 2)', () {
+    test('tracks windows in tmux index/status order from %window-add', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%window-add @0\n'));
+      ch.ingest(bytes('%window-add @1\n'));
+      ch.ingest(bytes('%window-add @2\n'));
+      expect(ch.windows.map((w) => w.id).toList(), [0, 1, 2]);
+    });
+
+    test('tracks a window first seen via %layout-change (fail-open)', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%layout-change @5 abcd,80x24,0,0,0\n'));
+      expect(ch.windows.map((w) => w.id).toList(), [5]);
+    });
+
+    test('records window names from %window-renamed', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%window-add @0\n'));
+      ch.ingest(bytes('%window-renamed @0 editor\n'));
+      expect(ch.windows.single.name, 'editor');
+    });
+
+    test('%window-close drops the window from the order', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%window-add @0\n'));
+      ch.ingest(bytes('%window-add @1\n'));
+      ch.ingest(bytes('%window-close @0\n'));
+      expect(ch.windows.map((w) => w.id).toList(), [1]);
+    });
+
+    test('does not duplicate a window seen via multiple notifications', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%window-add @3\n'));
+      ch.ingest(bytes('%layout-change @3 abcd,80x24,0,0,0\n'));
+      ch.ingest(bytes('%session-window-changed \$0 @3\n'));
+      expect(ch.windows.map((w) => w.id).toList(), [3]);
+    });
+
+    test('active window updates from %session-window-changed', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%window-add @0\n'));
+      ch.ingest(bytes('%window-add @1\n'));
+      final r = ch.ingest(bytes('%session-window-changed \$0 @1\n'));
+      expect(r.activeWindowChanged, isTrue);
+      expect(ch.activeWindowId, 1);
+    });
+  });
+
+  group('status-col → window mapping (#911 Step 2)', () {
+    TmuxControlChannel threeWindows() {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%window-add @0\n'));
+      ch.ingest(bytes('%window-add @1\n'));
+      ch.ingest(bytes('%window-add @2\n'));
+      return ch;
+    }
+
+    test('partitions the status width across windows in order', () {
+      final ch = threeWindows();
+      // 3 windows over 90 cols → segments [1..30]=0, [31..60]=1, [61..90]=2.
+      expect(ch.windowIndexForStatusCol(1, 90), 0);
+      expect(ch.windowIndexForStatusCol(30, 90), 0);
+      expect(ch.windowIndexForStatusCol(45, 90), 1);
+      expect(ch.windowIndexForStatusCol(90, 90), 2);
+    });
+
+    test('select-window command targets the STABLE window id of the tapped seg', () {
+      final ch = threeWindows();
+      expect(ch.selectWindowCommandForStatusCol(5, 90), 'select-window -t @0');
+      expect(ch.selectWindowCommandForStatusCol(45, 90), 'select-window -t @1');
+      expect(ch.selectWindowCommandForStatusCol(85, 90), 'select-window -t @2');
+    });
+
+    test('clamps out-of-range columns into the valid window set', () {
+      final ch = threeWindows();
+      expect(ch.windowIndexForStatusCol(0, 90), 0);
+      expect(ch.windowIndexForStatusCol(999, 90), 2);
+    });
+
+    test('null when no windows are known yet', () {
+      final ch = TmuxControlChannel();
+      expect(ch.windowIndexForStatusCol(5, 90), isNull);
+      expect(ch.selectWindowCommandForStatusCol(5, 90), isNull);
+    });
+
+    test('select-window uses the stable id after a lower-index window closes', () {
+      final ch = threeWindows();
+      ch.ingest(bytes('%window-close @0\n')); // now order is [@1, @2]
+      // First segment now maps to @1 (the leftmost remaining), not the gone @0.
+      expect(ch.selectWindowCommandForStatusCol(5, 90), 'select-window -t @1');
+      expect(ch.selectWindowCommandForStatusCol(85, 90), 'select-window -t @2');
+    });
+  });
 }

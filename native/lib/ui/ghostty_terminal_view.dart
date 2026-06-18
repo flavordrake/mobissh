@@ -174,8 +174,10 @@ import 'package:xterm/xterm.dart' as xterm;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
+import '../services/session_messages.dart' show TmuxWindowGesture;
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
+import '../terminal/tmux_control_mode_flag.dart';
 import '../state/ctrl_modifier_provider.dart';
 import '../state/detection_providers.dart';
 import '../state/lifecycle_providers.dart';
@@ -1355,7 +1357,31 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
     required this.urlAtCell,
     required this.onUrlTap,
     required this.onUrlLongPress,
+    this.controlModeGestures = false,
+    this.onWindowSwitch,
+    this.onStatusTap,
   });
+
+  /// #911 Part C: when true (the `tmuxControlMode` flag is ON), window switching
+  /// is driven by REAL tmux control commands ([onWindowSwitch]/[onStatusTap])
+  /// instead of synthesised SGR wheel/click reports at a GUESSED status row — the
+  /// fix for the "swipe did nothing / tap hit the wrong row" bugs. The
+  /// authoritative active window is read back from `%session-window-changed`, so
+  /// the gesture never has to guess geometry. When false (the shipped default) the
+  /// existing scrape + synthesised-SGR path runs UNCHANGED.
+  final bool controlModeGestures;
+
+  /// #911: a horizontal swipe → next/previous window via a real control command.
+  /// Called (instead of [onMouseReport]) only when [controlModeGestures] is true.
+  /// [next] = swipe RIGHT (next-window); false = swipe LEFT (previous-window).
+  final void Function({required bool next})? onWindowSwitch;
+
+  /// #911: a tap on the status-bar ROW → `select-window` for the tapped window
+  /// via a real control command. Carries the 1-based tap [col] and the status
+  /// line width [totalCols] so the host can map col → window with no pixel guess.
+  /// Called (instead of the SGR click) only when [controlModeGestures] is true
+  /// AND the tap landed on the status row.
+  final void Function({required int col, required int totalCols})? onStatusTap;
 
   /// Whether to intercept touch (the remote has mouse tracking on).
   final bool active;
@@ -1552,6 +1578,17 @@ class _GhosttyPointerGestureRouterState
       _trace('swipe-h', totalDx, 0, null, null, null);
       return;
     }
+    // #911 Part C (flag ON): switch windows with a REAL control command
+    // (`next-window`/`previous-window`) over the -CC channel instead of a
+    // synthesised SGR wheel at a GUESSED status row. tmux steps its own active
+    // window and pushes `%session-window-changed` (authoritative → repaint), so
+    // there is no row to guess and the wrong-row bug cannot recur.
+    if (widget.controlModeGestures && widget.onWindowSwitch != null) {
+      final next = decision == GhosttyWindowSwitch.next;
+      _trace('swipe-h', totalDx, 0, null, null, next ? 'next-window' : 'previous-window');
+      widget.onWindowSwitch!(next: next);
+      return;
+    }
     // #719/#723: target the status row of the rows tmux ACTUALLY HAS — flterm's
     // ACTUAL (last-sent) grid via [_gridRows], NOT the live local grid
     // (widget.rows). On a keyboard toggle / resize the live grid can change (e.g.
@@ -1742,6 +1779,20 @@ class _GhosttyPointerGestureRouterState
       return;
     }
     final (col, row) = _cellAt(local);
+    // #911 Part C (flag ON): a tap on the STATUS ROW switches windows via a REAL
+    // `select-window` control command — the host maps the tap COLUMN to a window
+    // from the authoritative ordered window list (no pixel/row guessing). Off the
+    // status row we just focus + raise the keyboard (control mode does not use a
+    // synthesised SGR click). On the status row, swallow the SGR click path.
+    if (widget.controlModeGestures && widget.onStatusTap != null) {
+      if (row >= _gridRows) {
+        _trace('tap', local.dx, local.dy, col, row, 'select-window');
+        widget.onStatusTap!(col: col, totalCols: _gridCols);
+      } else {
+        _trace('tap', local.dx, local.dy, col, row, null);
+      }
+      return;
+    }
     final report = ghosttySgrMousePress(col: col, row: row);
     _trace('tap', local.dx, local.dy, col, row, report);
     GhosttySelectionDriver(
@@ -3193,6 +3244,30 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
               // SGR-mouse bytes — never keystrokes).
               _byteRecorder.recordSentSgr(bytes);
               proxy.sendInput(bytes);
+            },
+            // #911 Part C: under the control-mode flag, window switching uses REAL
+            // tmux commands over the -CC channel (no synthesised SGR at a guessed
+            // status row). Flag OFF leaves the SGR path above unchanged.
+            controlModeGestures: tmuxControlMode,
+            onWindowSwitch: ({required bool next}) {
+              final proxy = _resolveProxy();
+              if (proxy == null) return;
+              if (proxy.data.state != SshSessionState.connected) return;
+              proxy.sendTmuxGesture(
+                next
+                    ? TmuxWindowGesture.nextWindow
+                    : TmuxWindowGesture.previousWindow,
+              );
+            },
+            onStatusTap: ({required int col, required int totalCols}) {
+              final proxy = _resolveProxy();
+              if (proxy == null) return;
+              if (proxy.data.state != SshSessionState.connected) return;
+              proxy.sendTmuxGesture(
+                TmuxWindowGesture.tapStatusCol,
+                statusCol: col,
+                statusCols: totalCols,
+              );
             },
             // #705: long-press-drag drives flterm's LOCAL selection (persists
             // after release → Copy reads it), not a tmux SGR drag.

@@ -326,6 +326,59 @@ class SessionHost {
         _handleSftpDownload(cmd);
       case SftpUploadCommand():
         _handleSftpUpload(cmd);
+      case SshControlCommand():
+        _handleControlCommand(cmd);
+      case SshTmuxGestureCommand():
+        _handleTmuxGesture(cmd);
+    }
+  }
+
+  /// #911 Part C Step 1: write a FULL `-CC` control-command line ATOMICALLY.
+  ///
+  /// The whole line is framed by [TmuxControlChannel.controlCommand] (exactly one
+  /// trailing newline) and written in a SINGLE `transport.send`, so a multi-token
+  /// command (`select-window -t @1`) can't fragment across the gateway and have
+  /// its tail land in the pane shell (the Part B failure). A no-op unless control
+  /// mode is ON for this session (`tmuxChannel != null`) — the scrape path never
+  /// issues control commands, so the flag-OFF default is provably untouched.
+  void _handleControlCommand(SshControlCommand cmd) {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) return;
+    if (hosted.tmuxChannel == null) return; // flag OFF — ignore.
+    try {
+      hosted.shell?.send(TmuxControlChannel.controlCommand(cmd.command));
+    } catch (_) {
+      // Channel closed mid-command; the next connect re-syncs.
+    }
+  }
+
+  /// #911 Part C Step 2: resolve a high-level window gesture to a real tmux
+  /// control command using the channel's AUTHORITATIVE ordered window list, then
+  /// deliver it atomically. Keeping the index lookup here (task-side) means the UI
+  /// never holds the window list and a status-bar tap maps with NO pixel guessing
+  /// — the wrong-row bug this part dissolves. A no-op unless control mode is ON.
+  void _handleTmuxGesture(SshTmuxGestureCommand cmd) {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) return;
+    final tmux = hosted.tmuxChannel;
+    if (tmux == null) return; // flag OFF — ignore.
+    final String? line;
+    switch (cmd.gesture) {
+      case TmuxWindowGesture.nextWindow:
+        line = TmuxControlChannel.nextWindowCommand;
+      case TmuxWindowGesture.previousWindow:
+        line = TmuxControlChannel.previousWindowCommand;
+      case TmuxWindowGesture.tapStatusCol:
+        line = tmux.selectWindowCommandForStatusCol(
+          cmd.statusCol,
+          cmd.statusCols,
+        );
+    }
+    if (line == null) return; // no window known yet — nothing to target.
+    try {
+      hosted.shell?.send(TmuxControlChannel.controlCommand(line));
+    } catch (_) {
+      // Channel closed; reconnect re-syncs.
     }
   }
 

@@ -77,6 +77,27 @@ class TmuxIngestResult {
   final bool exited;
 }
 
+/// An ordered tmux window the control channel knows about (Part C, #911). Built
+/// from the `%window-add` / `%layout-change` / `%window-renamed` notifications so
+/// a status-bar tap can be mapped to a real window WITHOUT pixel guessing. [id]
+/// is the STABLE tmux window id (`@N`); [name] is the latest name from
+/// `%window-renamed` (null until renamed — diagnostic only).
+class TmuxWindow {
+  const TmuxWindow({required this.id, this.name});
+  final int id;
+  final String? name;
+
+  @override
+  bool operator ==(Object other) =>
+      other is TmuxWindow && other.id == id && other.name == name;
+
+  @override
+  int get hashCode => Object.hash(id, name);
+
+  @override
+  String toString() => 'TmuxWindow(@$id${name == null ? '' : ' "$name"'})';
+}
+
 /// Per-session control-mode render + resize adapter. Pure Dart; one instance per
 /// hosted session, created when the flag is ON.
 class TmuxControlChannel {
@@ -89,6 +110,19 @@ class TmuxControlChannel {
   /// an UNKNOWN window and is rendered fail-open (see file header).
   final Map<int, int> _paneWindow = <int, int>{};
 
+  /// Ordered window ids the channel knows about (Part C, #911). Insertion order
+  /// matches tmux's window index/status order: tmux assigns indices 0..N in
+  /// creation order and renders the status bar left→right in the same order, so
+  /// the Nth entry here is the window at status position N. Built from
+  /// `%window-add` and (fail-open) the first `%layout-change` for an as-yet-unseen
+  /// window; pruned on `%window-close`. This is what lets a status-bar tap map to
+  /// a REAL window with no pixel guessing — the wrong-row bug this part dissolves.
+  final List<int> _windowOrder = <int>[];
+
+  /// Latest name per window id, from `%window-renamed`. Diagnostic only — the
+  /// status-col mapping uses ORDER, not names.
+  final Map<int, String> _windowNames = <int, String>{};
+
   /// The active window id, authoritative from `%session-window-changed`. Null
   /// until the first signal; while null every window's output renders (fail-open
   /// so the first frames before the first active-window notification are shown).
@@ -97,6 +131,17 @@ class TmuxControlChannel {
   /// The active window the channel is currently tracking. Exposed for tests +
   /// the host's redraw-on-switch wiring.
   int? get activeWindowId => _activeWindowId;
+
+  /// The ordered windows the channel knows about (Part C, #911), in tmux
+  /// index/status order. A snapshot — mutating it does not affect the channel.
+  List<TmuxWindow> get windows => List<TmuxWindow>.unmodifiable(
+        _windowOrder.map((id) => TmuxWindow(id: id, name: _windowNames[id])),
+      );
+
+  /// Record window [id] in creation/status order if not already known. Idempotent.
+  void _trackWindow(int id) {
+    if (!_windowOrder.contains(id)) _windowOrder.add(id);
+  }
 
   /// The bytes to write into the shell stdin once it opens, to ENTER control
   /// mode. `new-session -A -s mobissh` attaches to an existing `mobissh` session
@@ -116,6 +161,60 @@ class TmuxControlChannel {
     final c = cols < 1 ? 1 : cols;
     final r = rows < 1 ? 1 : rows;
     return Uint8List.fromList(utf8.encode('refresh-client -C $c,$r\n'));
+  }
+
+  /// Frame an arbitrary `-CC` command LINE for ATOMIC delivery (Part C Step 1,
+  /// #911). The whole line — however many tokens / spaces — is encoded as ONE
+  /// byte buffer terminated with EXACTLY ONE `\n`, so the host writes it in a
+  /// single `transport.send` and tmux's control-command parser sees one complete
+  /// line. Part B (#909) found that delivering a command through the UI→isolate
+  /// `sendInput` keystroke path can FRAGMENT it across the gateway, so a
+  /// multi-token command (`select-window -t @1`) split mid-line and the tail hit
+  /// the pane shell (`-bash: send-keys: command not found`). Routing every control
+  /// command through THIS single-write primitive is the fix. Any trailing
+  /// newlines/whitespace the caller passed are trimmed first so exactly one
+  /// newline terminates the line (a bare `\n` mid-buffer would submit a partial).
+  static Uint8List controlCommand(String line) {
+    final trimmed = line.replaceAll(RegExp(r'[\r\n]+$'), '');
+    return Uint8List.fromList(utf8.encode('$trimmed\n'));
+  }
+
+  /// The `next-window` control-command line (Part C, #911) — a horizontal swipe
+  /// RIGHT advances to the next window. No window-list lookup needed; tmux steps
+  /// the session's active window itself and pushes `%session-window-changed`.
+  static String get nextWindowCommand => 'next-window';
+
+  /// The `previous-window` control-command line (Part C, #911) — a horizontal
+  /// swipe LEFT goes to the previous window.
+  static String get previousWindowCommand => 'previous-window';
+
+  /// Map a TAP at status-bar column [col] (1-based) over a status line [totalCols]
+  /// wide to a `select-window -t @<id>` command for the tapped window, or null if
+  /// no window is known yet (Part C, #911). We do NOT guess pixels: tmux renders
+  /// the windows left→right in [windows] order, so we partition the status width
+  /// into equal segments and pick the window whose segment the tap falls in. The
+  /// RESULT is only a best-effort target — the AUTHORITATIVE active window is read
+  /// back from `%session-window-changed`, so an off-by-one tap self-corrects on
+  /// the next notification (no wrong-row dead-end). Targets the STABLE window id
+  /// (`@N`), which `select-window -t` accepts, so it is immune to index renumber.
+  String? selectWindowCommandForStatusCol(int col, int totalCols) {
+    final idx = windowIndexForStatusCol(col, totalCols);
+    if (idx == null) return null;
+    return 'select-window -t @${_windowOrder[idx]}';
+  }
+
+  /// The 0-based index into [windows] a tap at 1-based [col] over a [totalCols]-
+  /// wide status line falls in, or null if no windows are known (Part C, #911).
+  /// Equal-width partition of the status line across the ordered windows. Pure +
+  /// exposed for unit tests of the mapping in isolation.
+  int? windowIndexForStatusCol(int col, int totalCols) {
+    final n = _windowOrder.length;
+    if (n == 0) return null;
+    if (totalCols <= 0) return 0;
+    final c = col < 1 ? 1 : (col > totalCols ? totalCols : col);
+    // 1-based col → 0-based segment; clamp into range.
+    final seg = ((c - 1) * n) ~/ totalCols;
+    return seg < 0 ? 0 : (seg >= n ? n - 1 : seg);
   }
 
   /// Feed a raw shell-output chunk (the `-CC` protocol stream). Returns the
@@ -140,9 +239,22 @@ class TmuxControlChannel {
             final id = p.paneId;
             if (id != null) _paneWindow[id] = ev.windowId;
           }
+          // #911: fail-open window tracking — a layout for an as-yet-unseen window
+          // (e.g. we missed/lagged its %window-add) still registers it so a tap
+          // can target it. Insertion order tracks tmux's index/status order.
+          _trackWindow(ev.windowId);
+        case WindowAdd():
+          // #911: a new window enters the status bar (next index/position).
+          _trackWindow(ev.windowId);
+        case WindowRenamed():
+          // #911: track + record the latest name (diagnostic; mapping uses order).
+          _trackWindow(ev.windowId);
+          _windowNames[ev.windowId] = ev.name;
         case SessionWindowChanged():
           // AUTHORITATIVE active window. A real change flips the rendered window
-          // and signals the host to force a redraw so the grid repaints.
+          // and signals the host to force a redraw so the grid repaints. Also
+          // track it (#911) — the active window is necessarily a real window.
+          _trackWindow(ev.windowId);
           if (ev.windowId != _activeWindowId) {
             _activeWindowId = ev.windowId;
             activeChanged = true;
@@ -151,13 +263,16 @@ class TmuxControlChannel {
           if (_shouldRender(ev.paneId)) render.add(ev.data);
         case WindowClose():
           _paneWindow.removeWhere((_, w) => w == ev.windowId);
+          // #911: drop the closed window from the order + names so a tap can't
+          // target a gone window and the status mapping stays correct.
+          _windowOrder.remove(ev.windowId);
+          _windowNames.remove(ev.windowId);
         case ControlModeExit():
           exited = true;
         default:
-          // CommandBegin/End, WindowAdd, renames, session/client notifications,
-          // UnhandledNotification, UnknownLine, ControlModeEntered: no render
-          // effect here (Part C consumes the window/pane notifications). The
-          // parser already updated its own active-window/layout view.
+          // CommandBegin/End, session/client notifications, UnhandledNotification,
+          // UnknownLine, ControlModeEntered: no render or window-tracking effect
+          // here. The parser already updated its own active-window/layout view.
           break;
       }
     }
