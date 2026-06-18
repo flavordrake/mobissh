@@ -187,6 +187,12 @@ class TerminalFrameBuilder {
   late final _TerminalRowBuilder _rowBuilder;
   late final _CursorFrameBuilder _cursorBuilder;
 
+  /// Number of rows the LAST [sync] re-emitted (0 if it skipped the build).
+  /// Test-only signal for the #900 repaint-on-every-redraw contract: an
+  /// in-place alt-screen redraw must re-read rows on EVERY switch, not every
+  /// other one.
+  var debugRowsRebuiltLastSync = 0;
+
   TerminalFrameBuilder(this._atlas, this._sprites, this._state)
     : _content = CellContentResolver(_atlas),
       _renderState = RenderState(),
@@ -235,6 +241,7 @@ class TerminalFrameBuilder {
     required bool terminalDirty,
     String preeditText = '',
   }) {
+    debugRowsRebuiltLastSync = 0;
     var dirty = DirtyState.clean;
 
     if (terminalDirty) {
@@ -286,14 +293,17 @@ class TerminalFrameBuilder {
     _rows.reset(_renderState);
 
     var row = 0;
+    var rebuilt = 0;
     while (_rows.next()) {
       if (row >= _state.rows) break;
       if (rebuildAll || _rows.dirty || _dirtyRows.isDirty(row)) {
         _rowBuilder.rebuildRow(row, _rows, _cells);
         _rows.dirty = false;
+        rebuilt++;
       }
       row++;
     }
+    debugRowsRebuiltLastSync = rebuilt;
 
     _dirtyRows._clear();
     _atlas.ensureImage();

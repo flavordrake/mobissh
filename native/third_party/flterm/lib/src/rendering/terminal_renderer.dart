@@ -230,6 +230,12 @@ class TerminalRenderBox extends RenderBox {
   @override
   bool get isRepaintBoundary => true;
 
+  /// Rows the LAST paint's frame-sync re-emitted (0 if it skipped the build).
+  /// Test-only signal for the #900 repaint-on-every-redraw contract: an
+  /// in-place alt-screen redraw (tmux window switch) must re-read the visible
+  /// grid on EVERY switch, not every other one.
+  int get debugRowsRebuiltLastSync => _pipeline.debugRowsRebuiltLastSync;
+
   /// Current terminal input caret rect in this render box's local coordinates.
   Rect get textInputCaretRect {
     final metrics = _paintState.metrics;
@@ -578,6 +584,37 @@ class TerminalRenderBox extends RenderBox {
     // (libghostty fires this listener synchronously from `performLayout` via
     // `Terminal.resize` / `_syncScrollLayout`'s viewport scroll.) Always do it.
     _markFrameDirty();
+
+    // #900 (STRUCTURAL, supersedes the #887/#898 per-trigger patches): on the
+    // ALTERNATE screen, force a FULL re-read of the visible grid on every
+    // content-change notify, instead of trusting libghostty's single-consumption
+    // per-row damage.
+    //
+    // ROOT of the "every OTHER switch repaints" alternation: the partial-build
+    // path (`TerminalFrameBuilder.sync` → `_build(.partial)`) re-reads only the
+    // rows libghostty's `RenderState.update` reports DAMAGED, and `update`
+    // CONSUMES (clears) that damage as it reads it. The render box fires multiple
+    // paints per tmux window switch (cursor blink, scroll/offset correction, the
+    // atlas `onImageReady` repaint, the #803 painted-offset post-frame notify).
+    // When an EARLIER paint's `update` consumes the switch's row damage before
+    // the build that actually reaches the screen — or when a second `update`
+    // straddles the in-place redraw — the next switch's `update` can read as
+    // CLEAN (no NEW damage since the consumed one), so its build re-reads NO
+    // rows and the grid stays on the previous window. The damage is repopulated
+    // only every other cycle, which is the strict A/B/A/B alternation. This is
+    // single-consumption damage feeding a partial build that has no flterm-side
+    // guarantee the consuming `update` is the one that paints.
+    //
+    // The fix DECOUPLES alt-screen redraw correctness from that damage entirely:
+    // `markAllRowsDirty()` makes `_dirtyRows.anyDirty` true, so the build runs and
+    // re-reads the FULL visible grid from the CURRENT `RenderState` snapshot even
+    // when `update` returns `.clean` because a prior frame already consumed the
+    // per-row damage. The alternate screen has NO scrollback, so a full re-read is
+    // bounded to the visible rows — what a native terminal does for a full-screen
+    // app redraw. This is scoped to the alternate screen, so #805's primary-screen
+    // streaming-output perf path (which relies on partial per-row rebuilds during
+    // scrollback growth) is untouched.
+    if (_terminal.activeScreen == .alternate) _pipeline.markAllRowsDirty();
 
     // `markNeedsLayout()` is the ONLY part that is illegal during layout (it
     // throws "called during layout"), and it is redundant then anyway — we are
