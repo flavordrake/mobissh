@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+64 (2026-06-18) — experimental: tmux control mode (authoritative window switching)
+- **New Settings toggle: "tmux control mode (experimental)" (off by default).** When on, MobiSSH drives tmux via its control protocol (`tmux -CC`) instead of reading the screen — so window switches, sizing, and the active window come straight from tmux. This makes window-switch gestures land on the right window every time and keeps the terminal size in lockstep with tmux (no more stale repaint / wrong-row taps). Requires tmux on the host; reconnect the session after toggling. Leave it off to keep the current behavior. (#906)
+
 ## v0.1.10+63 (2026-06-18) — fixes the terminal not repainting during keyboard/window-switch churn (root cause)
 - **The terminal repaints reliably while switching tmux windows and toggling the keyboard.** Root cause of the whole repaint saga: the app fired a PTY resize on every keyboard-animation frame (and a spurious one around each window switch), constantly re-gridding the terminal and racing the redraw. Resizes are now coalesced to the final settled size, so a window switch shows the right window. (#903)
 
