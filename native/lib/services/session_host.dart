@@ -854,13 +854,25 @@ class SessionHost {
               return;
             }
             if (result.activeWindowChanged) {
-              // #916: a window switch must REPAINT the new window — but route it
-              // through the coalescer (requestRedraw forces one settled write even
-              // at the same size) so a burst of switches collapses to ONE
-              // refresh-client instead of storming tmux per notification.
+              // #916 fix: a window switch must REPAINT the new window PROMPTLY and
+              // reliably. The switch-repaint MUST NOT go through the resize
+              // coalescer: that path has a 250ms trailing-edge settle AND a
+              // same-size dedup, but a window switch re-emits `refresh-client -C`
+              // at the SAME dims to force a repaint — so the dedup swallows it (or
+              // a burst of switches + the 250ms delay collapses it) and the new
+              // window never renders (blank grid — the cc_gestures regression).
+              // Write the redraw DIRECTLY here, decoupled from the resize
+              // coalescer. The coalescer stays dedicated to RESIZE (a burst of
+              // DIFFERING dims → one settled write; same-size dedup is correct
+              // there, and is the actual storm fix validated by cc_churn_bounded).
+              // We do NOT touch the coalescer here, so any pending resize survives.
               final cols = hosted.metrics.lastCols ?? 80;
               final rows = hosted.metrics.lastRows ?? 24;
-              hosted.refreshCoalescer?.requestRedraw(cols, rows);
+              try {
+                hosted.shell?.send(TmuxControlChannel.resizeCommand(cols, rows));
+              } catch (_) {
+                // Channel closed mid-switch; the next connect re-syncs.
+              }
             }
             final render = result.renderBytes;
             if (render.isNotEmpty) {

@@ -223,23 +223,43 @@ void main() {
       expect(written, contains('refresh-client -C 58,34'));
     });
 
-    test('an active-window switch redraw is COALESCED, not stormed', () async {
+    test('an active-window switch repaints PROMPTLY (not swallowed by the '
+        'resize coalescer dedup) — #916 regression fix', () async {
       final ctx = await setUpConnectedShell('cc:22:u:storm2');
       final shell = ctx.opened.first;
-      // Establish a size first so the redraw has dims to repaint at.
+      // Establish a size first so the redraw has dims to repaint at — and so the
+      // resize coalescer has ALREADY emitted that size (its last-emitted dims).
       ctx.proxy.sendResize(58, 34);
       await Future<void>.delayed(const Duration(milliseconds: 320));
       shell.sent.clear();
-      // A storm of %session-window-changed (the multi-client-clamp feedback):
-      // each would, pre-#916, fire its own immediate refresh-client.
-      for (var i = 0; i < 6; i++) {
-        shell.emit(_b('%session-window-changed \$0 @${i % 2}\n'));
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 320));
+      // A SINGLE authoritative window switch. The switch re-emits refresh-client
+      // at the SAME 58,34 dims to force a repaint of the new window. The REGRESSION
+      // routed this through the resize coalescer, whose same-size DEDUP (and 250ms
+      // settle) swallowed it → the new window never rendered (blank grid). The fix
+      // writes the switch redraw DIRECTLY, decoupled from the coalescer, so it must
+      // appear PROMPTLY and at the same dims (no dedup drop).
+      shell.emit(_b('%session-window-changed \$0 @1\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       final written = _s(shell.sent.toBytes());
-      final count = 'refresh-client -C'.allMatches(written).length;
-      expect(count, 1,
-          reason: 'a burst of switches collapses to ONE coalesced redraw');
+      expect(written, contains('refresh-client -C 58,34'),
+          reason: 'the switch redraw must NOT be dedup-swallowed by the resize '
+              'coalescer — it must repaint the new window promptly + directly');
+    });
+
+    test('a switch redraw does NOT go through the resize coalescer settle '
+        '(direct write, no 250ms delay) — #916', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:storm3');
+      final shell = ctx.opened.first;
+      ctx.proxy.sendResize(58, 34);
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      shell.sent.clear();
+      // The switch repaint is a DIRECT write, so it lands well before any
+      // trailing-edge settle window — a tight delay is enough to observe it.
+      shell.emit(_b('%session-window-changed \$0 @2\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), contains('refresh-client -C'),
+          reason: 'switch redraw must be written immediately, not deferred to '
+              'the resize coalescer settle');
     });
 
     test('%exit surfaces ONE clean shell close (no silent re-ingest loop)',

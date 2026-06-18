@@ -299,16 +299,22 @@ class TmuxControlChannel {
 }
 
 /// The trailing-edge settle window that coalesces a BURST of control-mode
-/// `refresh-client -C` writes into ONE final-size write (#916). The control
-/// channel writes `refresh-client -C` from TWO sources — the UI resize handler
-/// AND the redraw-on-active-window-switch — and on a real multi-client host both
-/// can fire many times in quick succession (the multi-client size clamp makes
-/// tmux re-lay-out + push `%layout-change`/`%session-window-changed`, which
-/// re-fires our redraw → a feedback STORM, the `58,57 ↔ 58,34` alternation the
-/// owner saw). This settle outlasts that churn so the burst collapses to one
-/// write at the size things settled at. Matches `kGhosttyResizeSettle` (the PTY
-/// path's keyboard-settle, #903) so control mode is tamed the SAME way the
-/// scrape path was — the very thing #903/#905 fixed, now applied to refresh-client.
+/// RESIZE `refresh-client -C` writes into ONE final-size write (#916). On a real
+/// multi-client host a resize can fire many times in quick succession (the
+/// multi-client size clamp makes tmux re-lay-out + push `%layout-change`, which
+/// re-fires our resize → a feedback STORM, the `58,57 ↔ 58,34` alternation the
+/// owner saw). This settle outlasts that churn so a burst of differing sizes
+/// collapses to one write at the size things settled at. Matches
+/// `kGhosttyResizeSettle` (the PTY path's keyboard-settle, #903) so control mode
+/// is tamed the SAME way the scrape path was — the very thing #903/#905 fixed,
+/// now applied to refresh-client.
+///
+/// NOTE (#916 regression fix): the active-window-SWITCH repaint does NOT go
+/// through this coalescer. A switch must repaint PROMPTLY and re-emits
+/// `refresh-client -C` at the SAME dims, which this coalescer's same-size dedup
+/// (and 250ms settle) would swallow — blanking the new window. The host writes
+/// the switch redraw DIRECTLY (see `session_host.dart`'s `activeWindowChanged`
+/// branch). This coalescer is therefore dedicated to RESIZE only.
 const Duration kRefreshClientSettle = Duration(milliseconds: 250);
 
 /// Per-session coalescer for control-mode `refresh-client -C` writes (#916).
@@ -318,11 +324,14 @@ const Duration kRefreshClientSettle = Duration(milliseconds: 250);
 /// [submit] each desired (cols, rows); once the size has been STABLE for [settle]
 /// the coalescer invokes [onSettled] ONCE with the FINAL size (never dropped —
 /// the #903/#905 lesson). Intermediate sizes in a burst never reach [onSettled].
-/// A size equal to the last EMITTED one is dropped (dedup) — an active-window
-/// switch that needs a repaint at the SAME size uses [requestRedraw] instead,
-/// which forces exactly one settled write through even when the dims are
-/// unchanged. [cancel] drops a pending write on shell drop / reconnect so a
-/// dead channel never storms.
+/// A size equal to the last EMITTED one is dropped (dedup) — correct for resize.
+/// [cancel] drops a pending write on shell drop / reconnect so a dead channel
+/// never storms.
+///
+/// This coalescer is RESIZE-ONLY (#916 regression fix): the active-window-switch
+/// repaint is written DIRECTLY by the host (it re-emits at the SAME dims, which
+/// the dedup here would swallow). [requestRedraw] — a same-size forced emit —
+/// remains as a tested capability but is NOT on the switch path anymore.
 class RefreshClientCoalescer {
   RefreshClientCoalescer({
     required this.onSettled,
