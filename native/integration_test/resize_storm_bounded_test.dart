@@ -34,6 +34,14 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+// The rendered-grid read below resolves cells through libghostty's GridRef the
+// SAME way the flterm fork's `_ScreenCellReader` does. flterm re-exports the
+// widget types (TerminalController) but NOT the low-level grid API, so this
+// reads from libghostty directly — a transitive dep pulled in via flterm and
+// present in pubspec.lock.
+// ignore: depend_on_referenced_packages
+import 'package:libghostty/libghostty.dart'
+    show CellWidth, GridRef, PointTag, RenderState, Terminal;
 
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/sessions.dart';
@@ -51,7 +59,10 @@ void main() {
 
       // #727 made ghostty the DEFAULT backend; do NOT override it — this is a
       // ghostty-path bug (flterm's per-frame onResize), so run on flterm.
-      await tester.pumpWidget(const MobisshApp());
+      // MobisshApp is a Riverpod ConsumerWidget — it MUST be wrapped in a
+      // ProviderScope or it throws "No ProviderScope found" at boot (the
+      // canonical pattern, cf. connect_smoke_test.dart).
+      await tester.pumpWidget(const ProviderScope(child: MobisshApp()));
       await tester.pump(const Duration(seconds: 1));
 
       await adhocPasswordConnect(
@@ -176,9 +187,17 @@ void main() {
       // The grid must still track the active window: switch to window 1 and
       // confirm its marker renders (the coalescer must not have starved the
       // terminal of the resizes it legitimately needs).
-      entry.proxy.sendInput(
-        Uint8List.fromList('tmux select-window -t t:1\n'.codeUnits),
-      );
+      //
+      // Switch via tmux's PREFIX KEY (C-b then '1'), NOT by typing
+      // `tmux select-window …` at the shell: with tmux mouse mode on, the swipe
+      // interaction above left DA/CPR query RESPONSES interleaving the PTY input
+      // stream, which corrupted a typed shell command (observed:
+      // `-bash: 62ctmux: command not found`). The prefix key is a single control
+      // byte consumed by the tmux CLIENT directly — it switches the window
+      // regardless of what the foreground shell line contains.
+      entry.proxy.sendInput(Uint8List.fromList(<int>[0x02])); // C-b (prefix)
+      await tester.pump(const Duration(milliseconds: 300));
+      entry.proxy.sendInput(Uint8List.fromList('1'.codeUnits)); // window 1
       for (var i = 0; i < 20; i++) {
         await tester.pump(const Duration(milliseconds: 300));
       }
@@ -206,21 +225,46 @@ SessionEntry activeSession(WidgetTester tester) {
 }
 
 /// Read the flterm controller's visible viewport as plain text so the test can
-/// assert which tmux window is rendered. The controller's grid-read surface
-/// differs from xterm's, so this is defensive: on any shape mismatch it falls
-/// back to `toString` and still yields a diagnostic.
+/// assert which tmux window is rendered.
+///
+/// The controller is flterm's `TerminalControllerImpl`, NOT xterm — it has no
+/// `buffer.lines` / `viewHeight`. Its rendered cells live in the underlying
+/// libghostty [Terminal], read via [GridRef] exactly the way the fork's
+/// `_ScreenCellReader` (terminal_controller_impl.dart) reads them. We read the
+/// VISIBLE viewport ([PointTag.viewport]: row 0 = top visible row), one cell at
+/// a time, disposing each short-lived [GridRef] immediately (a ref is only valid
+/// until the next terminal op). [RenderState] supplies the live cols/rows. A
+/// wide-character spacer tail carries no glyph of its own (the head cell holds
+/// it), so it reads as blank to keep columns aligned — mirroring the reader.
 String _visibleGridText(Object controller) {
+  // `terminal` is the impl's public field; reach it via dynamic since the
+  // flterm `TerminalController` interface doesn't surface it.
+  final Terminal term = (controller as dynamic).terminal as Terminal;
+  final rs = RenderState()..update(term);
   try {
-    final dynamic c = controller;
-    final term = c.terminal;
-    final buffer = term.buffer;
+    final rows = rs.rows;
+    final cols = rs.cols;
+    if (rows <= 0 || cols <= 0) return '<empty grid: ${rows}x$cols>';
     final sb = StringBuffer();
-    final int height = term.viewHeight as int;
-    for (var y = 0; y < height; y++) {
-      sb.writeln(buffer.lines[buffer.height - height + y].toString());
+    for (var row = 0; row < rows; row++) {
+      for (var col = 0; col < cols; col++) {
+        final ref = GridRef.at(
+          term,
+          col: col,
+          row: row,
+          pointTag: PointTag.viewport,
+        );
+        try {
+          if (ref.wide == CellWidth.spacerTail) continue;
+          sb.write(ref.content);
+        } finally {
+          ref.dispose();
+        }
+      }
+      sb.writeln();
     }
     return sb.toString();
-  } catch (_) {
-    return controller.toString();
+  } finally {
+    rs.dispose();
   }
 }
