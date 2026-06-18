@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+63 (2026-06-18) — fixes the terminal not repainting during keyboard/window-switch churn (root cause)
+- **The terminal repaints reliably while switching tmux windows and toggling the keyboard.** Root cause of the whole repaint saga: the app fired a PTY resize on every keyboard-animation frame (and a spurious one around each window switch), constantly re-gridding the terminal and racing the redraw. Resizes are now coalesced to the final settled size, so a window switch shows the right window. (#903)
+
 ## v0.1.10+62 (2026-06-18) — fixes tmux window-switch repainting only every other time
 - **Switching tmux windows reliably repaints now.** +61 still updated the screen only on alternate switches (swipe once works, next doesn't); the renderer was depending on one-shot row "damage" that an earlier paint had already consumed. On an alternate-screen redraw it now re-reads the full visible grid, so every window switch shows the right window. (#900)
 
