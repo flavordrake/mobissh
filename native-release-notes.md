@@ -7,6 +7,13 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+66 (2026-06-22) — fixes the terminal freezing when URL/path detection is on
+- **Detect-URLs no longer stalls the screen.** With link/path highlighting on, the terminal could stop updating (output and window switches didn't repaint) — the actual root of the long repaint saga, independent of tmux. Detection added an extra redraw notify that consumed the screen's damage before it painted; the primary screen now re-reads the full visible grid whenever detection is active, so it stays current. Highlighting on costs nothing extra when off. (#921)
+
+## v0.1.10+65 (2026-06-18) — terminal self-heals its repaint on every tap/keypress
+- **The display refreshes itself whenever you interact.** The "screen looks stale until I tap Diagnostics" problem: now every keypress, tap, swipe, paste, and window switch forces the same full repaint that tapping Diagnostics did — so the terminal stays current as you use it, and streaming output settles to a clean frame on its own. Idle screens still cost nothing. This is on by default (no toggle needed). (#918)
+- **Control-mode window switching repaints reliably.** With the experimental tmux control mode on, switching windows now redraws every time (a +64 issue where same-size switches could show a blank/stale grid). Still off by default. (#916)
+
 ## v0.1.10+64 (2026-06-18) — experimental: tmux control mode (authoritative window switching)
 - **New Settings toggle: "tmux control mode (experimental)" (off by default).** When on, MobiSSH drives tmux via its control protocol (`tmux -CC`) instead of reading the screen — so window switches, sizing, and the active window come straight from tmux. This makes window-switch gestures land on the right window every time and keeps the terminal size in lockstep with tmux (no more stale repaint / wrong-row taps). Requires tmux on the host; reconnect the session after toggling. Leave it off to keep the current behavior. (#906)
 
