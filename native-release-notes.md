@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+68 (2026-06-22) — diagnostics for stray attention notifications
+- **Instrumented the attention-notification gate.** Chasing the "I get attention alerts while MobiSSH is the active app" report: each post/suppress now records its decision inputs (foreground, active session/host, signalling host) and the active-session hand-off is logged on both the UI and background sides, so a Feedback capture at a stray alert pinpoints the cause. No behavior change yet — the fix follows once a capture confirms it. (attention telemetry)
+
 ## v0.1.10+67 (2026-06-22) — copies the WHOLE wrapped URL, not just the first line
 - **Tapping a wrapped URL now copies the entire link.** A long URL printed as output (e.g. inside the Claude TUI) wraps across several indented lines; tap-to-copy was grabbing only the first visible row, so you got a truncated link (and an empty Android copy-preview). The wrap-merge is now indent-aware and stitches the indented continuation rows back into one URL, so copy/open get the full link. (#925)
 
