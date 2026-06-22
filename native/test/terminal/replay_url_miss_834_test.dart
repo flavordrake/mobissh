@@ -26,13 +26,16 @@ library;
 // means "shell host on the alt-screen" → run detection. The #824 vim fixture has
 // NO mouse-mode sequences, so its suppression stays intact.
 //
-// SCOPE NOTE: the remote (Claude CLI inside tmux) HARD-wrapped this URL at the
-// content width — row 21 is NOT marked soft-wrapped to row 22 (`viewportRowWraps`
-// is all-false in this capture), so the detector correctly bubbles the on-screen
-// portion `…/comms-dige` without gluing the unflagged `st-2026-06-08` line below
-// (joining non-wrap-flagged lines is the over-join hazard #767 guards against).
-// #834 is "URL not detected/highlighted at all"; that is what these assertions
-// pin. The hard-wrap truncation is a separate concern.
+// SCOPE NOTE (updated #925): the remote (Claude CLI inside tmux) HARD-wrapped
+// this URL at the content width — row 21 is NOT marked soft-wrapped to row 22
+// (`viewportRowWraps` is all-false in this capture). When #834 first shipped, the
+// detector bubbled only the on-screen first row `…/comms-dige` and the hard-wrap
+// truncation was filed as "a separate concern". #925 RESOLVED that concern: the
+// wrap-join is now INDENT-AWARE and recovers the FULL URL across the two indented
+// continuation rows (`…/comms-digest-2026-06-08`), so the anchor now carries the
+// complete, copyable link. #834's CORE assertion is unchanged — a URL IS detected
+// (non-empty, hit-testable) on the alt-screen + mouse-mode tmux session, which
+// #824 must not suppress.
 
 import 'package:flterm/flterm.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,10 +47,12 @@ void main() {
 
   const fixture =
       'test/fixtures/replay/url_miss_scrollback_58x34.byte-trace.json';
-  // The URL as the remote HARD-wrapped it: row 21 carries `…/comms-dige` (the
-  // `st-2026-06-08` tail is on an unflagged continuation line, see SCOPE NOTE).
+  // The FULL URL the indent-aware wrap-join (#925) now recovers across the two
+  // hard-wrapped, indented continuation rows (row 21 `…/comms-dige` + row 22
+  // `st-2026-06-08`). Before #925 only the first-row truncation `…/comms-dige`
+  // was detected (see SCOPE NOTE).
   const detectedUrl =
-      'http://nv-dev.tailbe5094.ts.net:22240/p/daily/comms-dige';
+      'http://nv-dev.tailbe5094.ts.net:22240/p/daily/comms-digest-2026-06-08';
 
   Future<TerminalController> replay() async {
     final trace = loadByteTrace(fixture);

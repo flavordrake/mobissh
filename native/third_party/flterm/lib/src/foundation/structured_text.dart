@@ -689,6 +689,15 @@ class StructuredTextScanner {
     var r = 0;
     while (r < rows) {
       final glyphs = <_Glyph>[];
+      // The logical block's LEFT INDENT — the content-start column of its FIRST
+      // row (#925). An app (Claude TUI) emitting INDENTED output wraps its
+      // continuation rows at the SAME indent; that leading indent is layout
+      // padding, NOT part of the wrapped token. Continuation rows START their
+      // cell walk at this indent so the indent is SKIPPED (not injected as
+      // spaces between a URL's two halves, which would break `[^\s]+`). The
+      // first row keeps its own leading indent dropped too (a leading blank run
+      // never carries a match), but its glyphs already begin at content.
+      final blockIndent = _contentStart(reader, r, cols);
       // Accumulate this row and every row it soft-wraps into.
       while (true) {
         final absRow = base + r;
@@ -699,11 +708,25 @@ class StructuredTextScanner {
         // "        " + "x.io"). Internal blanks (before content end) are kept (as
         // spaces) so column positions stay aligned and a gap isn't swallowed.
         final end = _contentEnd(reader, r, cols);
-        for (var c = 0; c < end; c++) {
+        // #925: skip the block's LEFT INDENT, but NEVER past this row's own
+        // content start — so real content is never dropped. On the FIRST row and
+        // an indented same-margin CONTINUATION row, the row's content begins at
+        // the block indent, so this drops the repeated left margin (which would
+        // otherwise be injected as spaces between a wrapped token's halves and
+        // break `[^\s]+`). On a SOFT-WRAP continuation that resumes at col 0
+        // (rowWrap=true, shallower than an indented first row), the row's content
+        // start is 0, so `skip` is 0 and the leading cells are preserved. Cells
+        // at/after the skip — content or internal blanks — are kept so alignment
+        // and genuine gaps survive.
+        final rowStart = _contentStart(reader, r, cols);
+        var skip = blockIndent < rowStart ? blockIndent : rowStart;
+        if (skip > end) skip = end;
+        for (var c = skip; c < end; c++) {
           final content = reader.cellContent(r, c);
           glyphs.add(_Glyph(content.isEmpty ? ' ' : content, absRow, c));
         }
-        if (r < rows - 1 && _continuesOnto(reader, r, cols, wrapCol)) {
+        if (r < rows - 1 &&
+            _continuesOnto(reader, r, cols, wrapCol, blockIndent)) {
           r++;
           continue;
         }
@@ -726,15 +749,43 @@ class StructuredTextScanner {
   /// a fresh URL scheme — so a genuinely wrapped URL joins, while a COMPLETE URL
   /// that merely ends a line is NOT merged into the next line's separate content
   /// (#764 over-capture stays fixed).
-  bool _continuesOnto(CellReader reader, int r, int cols, int wrapCol) {
+  ///
+  /// #925: emitted (Claude-TUI) output carries a CONSISTENT LEFT INDENT, so a
+  /// wrapped continuation row's col 0 is BLANK (the repeated margin) — testing
+  /// col 0 literally rejected the join. Test instead at the block's
+  /// [blockIndent]: the next row must START at the SAME indent (its content
+  /// begins at the block margin, not deeper/shallower — a different margin is a
+  /// separate block) AND the first non-blank glyph there is a bare continuation.
+  bool _continuesOnto(
+    CellReader reader,
+    int r,
+    int cols,
+    int wrapCol,
+    int blockIndent,
+  ) {
     if (reader.rowWrap(r)) return true;
     if (wrapCol <= 0) return false;
     // Row r's content must REACH the wrap column (it filled up and wrapped),
     // within 1 col of slack for a trailing wide-char/pad.
     if (_contentEnd(reader, r, cols) < wrapCol - 1) return false;
     final next = r + 1;
-    if (reader.cellContent(next, 0).isEmpty) return false; // blank/ws start
-    return !_startsNewBlock(reader, next, cols);
+    // #925: the continuation row must begin at the SAME left margin as the
+    // block. A row whose content starts at a DIFFERENT indent is a separate
+    // paragraph/block, not a wrap of this one — keeps #764 two-match behavior
+    // for a complete URL followed by a differently-indented line.
+    final nextStart = _contentStart(reader, next, cols);
+    if (nextStart >= cols) return false; // blank row
+    if (nextStart != blockIndent) return false;
+    return !_startsNewBlock(reader, next, cols, blockIndent);
+  }
+
+  /// The column of the first non-blank cell on local [row], or [CellReader.cols]
+  /// when the row is entirely blank. I.e. the row's LEFT INDENT / content start.
+  int _contentStart(CellReader reader, int row, int cols) {
+    for (var c = 0; c < cols; c++) {
+      if (reader.cellContent(row, c).isNotEmpty) return c;
+    }
+    return cols;
   }
 
   /// The column AFTER the last non-blank cell on local [row] (0 if the row is
@@ -752,6 +803,7 @@ class StructuredTextScanner {
   /// so that column dominates; the MODE (ties → higher) is robust against a stray
   /// full-terminal-width row that MAX would wrongly latch onto. Returns 0 when
   /// there are no wrap candidates (nothing to join by width).
+  ///
   int _inferWrapCol(CellReader reader, int rows, int cols) {
     final counts = <int, int>{};
     final threshold = cols ~/ 2;
@@ -775,27 +827,30 @@ class StructuredTextScanner {
   /// Whether row [row] STARTS a new block rather than continuing the prior row:
   /// a leading bullet marker (a bullet glyph followed by a space — NOT a URL
   /// hyphen like the '-' in 'mobissh-native', which is followed by a non-space)
-  /// or a fresh URL scheme ('http://', 'https://', 'www.'). Leading whitespace
-  /// is already excluded by the col-0 blank check in [_continuesOnto].
-  bool _startsNewBlock(CellReader reader, int row, int cols) {
+  /// or a fresh URL scheme ('http://', 'https://', 'www.'). The test starts at
+  /// the block's [indent] (#925) so an INDENTED bullet/scheme is detected — the
+  /// repeated left margin is skipped, matching how the continuation row's content
+  /// begins at the same indent.
+  bool _startsNewBlock(CellReader reader, int row, int cols, int indent) {
     const bullets = {'-', '*', '+', '•', '·', '▪', '◦', '‣'};
-    final c0 = reader.cellContent(row, 0);
+    final c0 = reader.cellContent(row, indent);
     if (bullets.contains(c0) &&
-        cols > 1 &&
-        reader.cellContent(row, 1).isEmpty) {
+        indent + 1 < cols &&
+        reader.cellContent(row, indent + 1).isEmpty) {
       return true;
     }
-    final head = _rowHead(reader, row, cols, 8).toLowerCase();
+    final head = _rowHead(reader, row, cols, indent, 8).toLowerCase();
     return head.startsWith('http://') ||
         head.startsWith('https://') ||
         head.startsWith('www.');
   }
 
-  /// The first [n] characters of row [row] (blank cells as spaces).
-  String _rowHead(CellReader reader, int row, int cols, int n) {
-    final lim = n < cols ? n : cols;
+  /// The first [n] characters of row [row] STARTING at [from] (blank cells as
+  /// spaces). Used to inspect a continuation row's head at the block indent.
+  String _rowHead(CellReader reader, int row, int cols, int from, int n) {
+    final lim = (from + n) < cols ? (from + n) : cols;
     final sb = StringBuffer();
-    for (var c = 0; c < lim; c++) {
+    for (var c = from; c < lim; c++) {
       final ch = reader.cellContent(row, c);
       sb.write(ch.isEmpty ? ' ' : ch);
     }
