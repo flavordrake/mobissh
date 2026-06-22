@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+67 (2026-06-22) — copies the WHOLE wrapped URL, not just the first line
+- **Tapping a wrapped URL now copies the entire link.** A long URL printed as output (e.g. inside the Claude TUI) wraps across several indented lines; tap-to-copy was grabbing only the first visible row, so you got a truncated link (and an empty Android copy-preview). The wrap-merge is now indent-aware and stitches the indented continuation rows back into one URL, so copy/open get the full link. (#925)
+
 ## v0.1.10+66 (2026-06-22) — fixes the terminal freezing when URL/path detection is on
 - **Detect-URLs no longer stalls the screen.** With link/path highlighting on, the terminal could stop updating (output and window switches didn't repaint) — the actual root of the long repaint saga, independent of tmux. Detection added an extra redraw notify that consumed the screen's damage before it painted; the primary screen now re-reads the full visible grid whenever detection is active, so it stays current. Highlighting on costs nothing extra when off. (#921)
 
