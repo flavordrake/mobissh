@@ -12,6 +12,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../diagnostics/connect_trace.dart';
 import '../services/session_host.dart';
 import '../services/session_messages.dart';
 import '../services/task_ssh_gateway.dart';
@@ -173,6 +174,15 @@ class SshSessionProxy {
   /// attention is the host/Claude, not the individual session).
   void setActive(bool active, {String? activeSessionId, String? activeHost}) {
     if (_disposed) return;
+    // #840 telemetry: log the UI-side SEND of every setActive (paired with the
+    // task-isolate APPLY log in session_host). A device capture can then show
+    // whether the UI sent foreground=true + the right activeHost, and whether
+    // the task received it — pinning any per-isolate propagation gap.
+    clifecycle(
+      'ui.attention',
+      'setActive send active=$active activeSessionId=$activeSessionId '
+          'host=$activeHost',
+    );
     gateway.send(
       SshSetActiveCommand(
         active: active,
