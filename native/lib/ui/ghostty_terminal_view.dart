@@ -2325,6 +2325,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // URL.
       controller.registerTextPattern(TextPattern.path(id: _kPathPatternId));
     }
+    // #921: tell the render box whether detection is now active. Active means the
+    // controller's detection RenderState handle competes to consume the shared
+    // terminal damage, so the PRIMARY screen must force a full re-read on content
+    // change to keep repainting. Deferred to a post-frame callback so the keyed
+    // render box exists (this runs from initState-time registration before first
+    // layout, where the box lookup would no-op).
+    final detectionActive = detection.detectUrls || detection.detectPaths;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _applyDetectionActive(detectionActive);
+    });
   }
 
   /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
@@ -2612,6 +2622,22 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   void _forceTerminalRepaint() {
     final box = _findTerminalRenderBox();
     box?.forceRepaint();
+  }
+
+  /// #921: mirror whether structured-text DETECTION is active onto the flterm
+  /// render box. When detection is active a SECOND libghostty `RenderState`
+  /// handle (the controller's, registered BEFORE the render box) consumes the
+  /// shared terminal's per-row damage on the same synchronous notify, starving
+  /// the render box's partial build so the PRIMARY screen stops repainting (the
+  /// detection-ON paint freeze). Setting [TerminalRenderBox.detectionActive]
+  /// makes the primary screen force a full visible-grid re-read on each content
+  /// change (the same decoupling the #900 fix uses for the alternate screen), so
+  /// the paint is immune to that consume. Reached via the same #918 keyed
+  /// render-box lookup; no-ops before first layout (the next registration after
+  /// layout re-applies it).
+  void _applyDetectionActive(bool active) {
+    final box = _findTerminalRenderBox();
+    box?.detectionActive = active;
   }
 
   /// #918: walk the render subtree under the keyed [TerminalView] to the

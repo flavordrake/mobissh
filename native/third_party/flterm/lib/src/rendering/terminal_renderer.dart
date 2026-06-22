@@ -178,6 +178,19 @@ class TerminalRenderBox extends RenderBox {
   var _lastScrollbackRows = 0;
   var _preeditText = '';
 
+  // #921: whether structured-text DETECTION (URL/path patterns) is registered on
+  // the controller. When true, a SECOND libghostty `RenderState` handle (the
+  // controller's detection handle) competes to consume the shared terminal's
+  // per-row damage — and registers its listener BEFORE this render box, so on a
+  // synchronous content notify it consumes the damage before this box's
+  // `_onTerminalChanged` runs, leaving the partial build with nothing to re-read.
+  // When this is set, the PRIMARY screen forces a full visible-grid re-read on
+  // each content change (the same decoupling the #900 fix uses for the alternate
+  // screen) so the paint is immune to that single-consumption race. Default false
+  // keeps the detection-OFF streaming-output path (#805) on the partial-rebuild
+  // path with no extra work.
+  var _detectionActive = false;
+
   // #918 force-repaint robustness layer (the "tap Debug fixes it" mitigation).
   //
   // INPUT-DRIVEN: [forceRepaint] re-reads the FULL visible grid (markAllRowsDirty
@@ -239,6 +252,29 @@ class TerminalRenderBox extends RenderBox {
 
     _applyTerminalThemeColors();
   }
+
+  /// #921: whether structured-text detection is currently active. The widget
+  /// layer sets this when at least one detect pattern (URL/path) is registered
+  /// on the controller and clears it when patterns are cleared. When active, the
+  /// primary screen forces a full visible-grid re-read on content change (see
+  /// [_detectionActive]).
+  bool get detectionActive => _detectionActive;
+
+  set detectionActive(bool value) {
+    if (_detectionActive == value) return;
+    _detectionActive = value;
+    // Turning detection ON: a fresh full re-read self-heals any frame that the
+    // detection-driven extra sync's damage-consume already starved before this
+    // flag was set (the live toggle / first-registration case). Bounded to
+    // visible rows.
+    if (value) {
+      _pipeline.markAllRowsDirty();
+      _markFrameDirty();
+    }
+  }
+
+  /// #921 (test seam): the current detection-active flag.
+  bool get debugDetectionActive => _detectionActive;
 
   bool get blinkVisible => _paintState.blinkVisible;
 
@@ -705,7 +741,19 @@ class TerminalRenderBox extends RenderBox {
     // app redraw. This is scoped to the alternate screen, so #805's primary-screen
     // streaming-output perf path (which relies on partial per-row rebuilds during
     // scrollback growth) is untouched.
-    if (_terminal.activeScreen == .alternate) _pipeline.markAllRowsDirty();
+    //
+    // #921: the SAME single-consumption damage race also breaks the PRIMARY
+    // screen — but ONLY when structured-text DETECTION is active. Detection adds
+    // a SECOND `RenderState` handle (the controller's), registered BEFORE this
+    // render box, that consumes the shared terminal's per-row damage on the same
+    // synchronous notify. With detection OFF nothing competes, so the partial
+    // path works and the #805 streaming perf path is untouched. So widen the
+    // full-re-read gate to the primary screen ONLY while detection is active: a
+    // full VISIBLE-grid re-read (bounded — no scrollback walk), fired only on a
+    // content notify, makes the paint immune to the detection handle's consume.
+    if (_terminal.activeScreen == .alternate || _detectionActive) {
+      _pipeline.markAllRowsDirty();
+    }
 
     // #918 OUTPUT SETTLE TICK: a content-change notify is driven by PTY output (or
     // a local edit). Arm a one-shot timer that forces ONE full frame ~80ms after the
