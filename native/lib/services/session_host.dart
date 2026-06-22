@@ -1343,6 +1343,15 @@ class SessionHost {
     String? activeHost,
   ]) {
     if (_disposed) return;
+    // #840 telemetry: log every setActive the task isolate APPLIES so a device
+    // capture can confirm the UI→task foreground/activeHost propagation actually
+    // landed (paired with the UI-side SEND log in main.dart). Pins a stale/null
+    // activeHost — the prime suspect for a bell firing while foregrounded.
+    clifecycle(
+      'attention',
+      'setActive active=$active activeSessionId=$activeSessionId '
+          'host=$activeHost',
+    );
     // Always track the reported active session id (#840 Slice 2) + host (#847) —
     // even when [active] is unchanged the front-most TAB may have switched, and
     // that must update suppression. A null id/host (older UI / none) leaves it
@@ -1481,7 +1490,8 @@ class SessionHost {
     if (!post) {
       clifecycle(
         'attention',
-        'suppressed (foreground same-host) session $sessionId',
+        'suppressed (foreground same-host) session $sessionId '
+            '[${_attentionDecisionInputs(signalHost)}]',
       );
       return;
     }
@@ -1505,11 +1515,32 @@ class SessionHost {
           clifecycle('attention', 'post-error: $e (session $sessionId)');
         }),
       );
-      clifecycle('attention', 'posted notification session $sessionId');
+      // #840: log the FULL decision inputs on a POST so a device capture shows
+      // WHY the gate passed — whether the task isolate saw the app as foreground
+      // and what activeHost it believed at the moment the bell fired. The
+      // suppression branches already log their inputs; this closes the gap for
+      // the one path that previously logged only the outcome. No auth material:
+      // host LABELS are already in the notification body.
+      clifecycle(
+        'attention',
+        'posted notification session $sessionId '
+            '[${_attentionDecisionInputs(signalHost)} reason=not-suppressed]',
+      );
     } catch (e) {
       clifecycle('attention', 'build-error: $e (session $sessionId)');
     }
   }
+
+  /// Render the attention-gate decision inputs for a lifecycle log line (#840
+  /// telemetry). Shows what the TASK ISOLATE believed at decision time:
+  /// `foreground` (the propagated UI foreground flag), the front-most
+  /// `activeSessionId`/`activeHost` it last received, and the `signalHost` of the
+  /// bell. Host LABELS only — no auth material (they already appear in
+  /// notification bodies). `null` is rendered explicitly so a capture can tell a
+  /// NEVER-PROPAGATED null apart from a real value.
+  String _attentionDecisionInputs(String? signalHost) =>
+      'foreground=$_active activeSessionId=$_activeSessionId '
+      'activeHost=$_activeHost signalHost=$signalHost';
 
   void _pushSnapshots() {
     if (_disposed) return;
