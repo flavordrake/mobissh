@@ -227,7 +227,14 @@ Future<Uint8List> _defaultScreenshotCapturer(
   }
 }
 
-Future<String> _defaultVersionResolver() async {
+/// Resolves the baked build version as the `[<build> <hash>]` string the
+/// bug-report carries (`appVersion = ${version}+${buildNumber}`,
+/// `hash = buildSignature` — the git hash baked at build time). This is the
+/// SINGLE source of truth for the human-readable build identifier: the feedback
+/// overlay stamps it into every report AND the Settings version row (#897-adj)
+/// displays the exact same string so the owner can verify/copy his running
+/// build without a bug-report upload.
+Future<String> resolveBuildVersion() async {
   try {
     final pkg = await PackageInfo.fromPlatform();
     final appVersion = '${pkg.version}+${pkg.buildNumber}';
@@ -253,7 +260,7 @@ class FeedbackOverlay extends StatefulWidget {
     required this.navigatorKey,
     required this.messengerKey,
     this.submitter = const HttpFeedbackSubmitter(),
-    this.versionResolver = _defaultVersionResolver,
+    this.versionResolver = resolveBuildVersion,
     this.screenshotCapturer = _defaultScreenshotCapturer,
   });
 

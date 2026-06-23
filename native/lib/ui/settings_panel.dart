@@ -8,15 +8,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/battery_optimization.dart';
+import '../services/clipboard.dart';
 import '../state/detection_providers.dart';
 import '../state/keepalive_providers.dart';
 import '../state/sessions.dart';
 import '../state/terminal_backend.dart';
 import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
+import 'feedback_overlay.dart' show VersionResolver, resolveBuildVersion;
+import 'top_toast.dart';
 
 class SettingsPanel extends ConsumerWidget {
-  const SettingsPanel({super.key});
+  /// Injectable so widget tests can supply a fixed build string without a
+  /// PackageInfo platform channel. Defaults to [resolveBuildVersion] — the SAME
+  /// source of truth the bug-report `version` field uses, so the row shows the
+  /// owner the exact build string he'd otherwise only see in an upload.
+  const SettingsPanel({super.key, this.versionResolver = resolveBuildVersion});
+
+  final VersionResolver versionResolver;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -35,6 +44,29 @@ class SettingsPanel extends ConsumerWidget {
             : 'Keep alive in background: OFF',
       ),
       children: [
+        // App-version row. Shows the SAME build string the bug-report carries
+        // (`[<version>+<build> <gitHash>]`) so the owner can read/screenshot the
+        // running build on-device instead of pulling it from a feedback upload.
+        // Tap copies the full string to the clipboard. (relates to #897.)
+        FutureBuilder<String>(
+          future: versionResolver(),
+          builder: (context, snap) {
+            final version = snap.data ?? '…';
+            return ListTile(
+              key: const ValueKey('app-version-tile'),
+              leading: const Icon(Icons.info_outline),
+              title: const Text('App version'),
+              subtitle: Text(
+                version,
+                key: const ValueKey('app-version-value'),
+              ),
+              trailing: const Icon(Icons.copy),
+              onTap: snap.hasData
+                  ? () => _copyVersion(context, version)
+                  : null,
+            );
+          },
+        ),
         SwitchListTile(
           key: const ValueKey('keepalive-toggle'),
           title: const Text('Keep alive in background'),
@@ -194,6 +226,14 @@ class SettingsPanel extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _copyVersion(BuildContext context, String version) async {
+    final ok = await copyToClipboard(version);
+    if (!context.mounted) return;
+    if (ok) {
+      showTopToast(context, 'Copied version');
+    }
   }
 
   Future<void> _requestBatteryOptExemption(
