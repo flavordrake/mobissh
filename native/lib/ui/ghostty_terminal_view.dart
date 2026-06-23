@@ -2590,6 +2590,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     //    auto-pop on resume (the #693/#706/#717 focus-vs-IME separation).
     _focusedThisConnect = false;
     _focusTerminalOnConnect('resume');
+    // #931 GAP 2: re-assert detection-active on the render box after resume. A
+    // background→resume can re-create / re-lay-out the keyed render box, and the
+    // init-time one-shot `_applyDetectionActive` does not re-fire — leaving the
+    // box `_detectionActive=false` would re-freeze the primary-screen typing half
+    // of #931. Re-apply on a post-frame (after the resize-resync re-lays out the
+    // grid) reflecting the CURRENT detection settings.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final detection = ref.read(detectionSettingsProvider);
+      _applyDetectionActive(detection.detectUrls || detection.detectPaths);
+    });
     // 4. FORCE REPAINT WHEN FOCUS WAS RETAINED (#720): the #718 re-focus above
     //    only repaints when focus was LOST while backgrounded — the focus CHANGE
     //    fires flterm's `_onFocusChanged` → `notifyListeners()` → the render
@@ -2692,6 +2703,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       );
       return;
     }
+    // #931 GAP 1: the focus cycle alone fires `_onRenderObserverChanged` →
+    // `markNeedsPaint()` ONLY — it does NOT set `_needsFrameSync` or
+    // `markAllRowsDirty()`. On a PRIMARY-screen in-place cursor-addressed redraw
+    // with detection ON (the default), a prior detection-driven sync has already
+    // CONSUMED libghostty's per-row damage, so the resume `_syncFrameState` runs
+    // with NOTHING dirty → the partial build is SKIPPED → the stale buffer
+    // repaints (the "switch to apps and back is frozen" half of #931). Pair the
+    // focus cycle with a REAL frame-sync (`forceRepaint()` → markAllRowsDirty +
+    // frame-dirty, the #918 seam) so resume re-reads the FULL visible grid even
+    // when the damage was consumed. Bounded to the visible rows; coalesced to
+    // once per frame. The structural cure (a non-consuming detection read) is
+    // #922 — this reuses the existing #918 seam.
+    _forceTerminalRepaint();
     // Drop focus now; re-request it next frame so the FocusNode actually
     // transitions (focused → unfocused → focused) and flterm repaints. A
     // same-frame toggle would coalesce to no net change and not notify.
@@ -2702,7 +2726,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (c == null) return;
       // Focus ONLY — never showKeyboard(); the keyboard must stay down on resume.
       c.requestFocus();
-      gtrace('ghostty-resume-repaint: focus-cycled (no keyboard)');
+      // #931: also re-force a full re-read on the NEXT frame so the post-focus-
+      // change frame (which a late detection consume could otherwise starve)
+      // re-reads the latest grid too. Coalesces with the focus-driven repaint.
+      _forceTerminalRepaint();
+      gtrace('ghostty-resume-repaint: focus-cycled + forced (no keyboard)');
     });
   }
 
@@ -2735,6 +2763,22 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (!mounted) return;
     final controller = _controller;
     if (controller == null) return;
+    // #931 GAP 2: re-assert `_detectionActive` on the render box when THIS view
+    // becomes the active session. `_applyDetectionActive` is otherwise applied
+    // ONCE on a post-frame at init (`_registerUrlPattern`); a view that was
+    // OFFSTAGE at init (its keyed render box not yet laid out, so the lookup
+    // no-oped) could be left `_detectionActive=false` when it later becomes
+    // visible — which drops the primary-screen full re-read and re-freezes the
+    // typing/streaming half of #931. Re-apply on the post-frame after this child
+    // goes onstage (so the keyed render box exists), reflecting the CURRENT
+    // detection settings.
+    if (next == widget.sessionId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final detection = ref.read(detectionSettingsProvider);
+        _applyDetectionActive(detection.detectUrls || detection.detectPaths);
+      });
+    }
     if (ghosttyShouldCaptureKeyboardOnSessionSwitch(
       sessionId: widget.sessionId,
       prevActiveId: prev,
