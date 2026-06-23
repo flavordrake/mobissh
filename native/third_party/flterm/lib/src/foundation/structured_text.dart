@@ -779,20 +779,40 @@ class StructuredTextScanner {
     return !_startsNewBlock(reader, next, cols, blockIndent);
   }
 
+  /// Whether the cell at local ([row], [col]) carries NO visible content — an
+  /// empty cell (cleared / wide-char spacer tail) OR a whitespace-only glyph.
+  ///
+  /// #928: a TUI paints an indented continuation row's LEFT MARGIN either as
+  /// truly-blank (cleared) cells OR as literal SPACE glyphs (cursor-forward or
+  /// emitted spaces). [CellReader.cellContent] returns `''` for the former but
+  /// `' '` for the latter, so testing `.isNotEmpty` alone made an indented
+  /// margin's content-start depend on HOW it was painted. The wrap-join's
+  /// indent comparison (`nextStart == blockIndent`, #925) then INTERMITTENTLY
+  /// failed when a URL's two rows painted their identical margins differently —
+  /// the join was rejected and the link truncated to its first row (the device
+  /// "wrote 56 chars" copy). Treating a whitespace cell as blank makes the
+  /// indent/content boundary depend on VISIBLE content, not paint method.
+  bool _isBlankCell(CellReader reader, int row, int col) {
+    final ch = reader.cellContent(row, col);
+    return ch.isEmpty || ch.trim().isEmpty;
+  }
+
   /// The column of the first non-blank cell on local [row], or [CellReader.cols]
   /// when the row is entirely blank. I.e. the row's LEFT INDENT / content start.
   int _contentStart(CellReader reader, int row, int cols) {
     for (var c = 0; c < cols; c++) {
-      if (reader.cellContent(row, c).isNotEmpty) return c;
+      if (!_isBlankCell(reader, row, c)) return c;
     }
     return cols;
   }
 
   /// The column AFTER the last non-blank cell on local [row] (0 if the row is
-  /// blank). I.e. where the row's visible content ends.
+  /// blank). I.e. where the row's visible content ends. A whitespace-only cell
+  /// is blank (#928): trailing painted spaces are layout padding, not content,
+  /// so the wrap-reach gate and [_inferWrapCol] key off VISIBLE content.
   int _contentEnd(CellReader reader, int row, int cols) {
     for (var c = cols - 1; c >= 0; c--) {
-      if (reader.cellContent(row, c).isNotEmpty) return c + 1;
+      if (!_isBlankCell(reader, row, c)) return c + 1;
     }
     return 0;
   }
