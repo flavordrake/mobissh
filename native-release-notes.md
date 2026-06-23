@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+69 (2026-06-23) — wrapped URL copy stops truncating intermittently
+- **Tapping a wrapped URL reliably copies the whole link.** A long URL that wrapped in the conversation/output sometimes copied only its first line (the same link would copy fully on one tap, truncated on another). Cause: a wrapped line's left indent is painted as either cleared cells or literal spaces depending on the repaint, and the wrap-merge only joined the cleared-cell case. It now treats a blank-looking indent the same either way, so the full URL always stitches together. (#928) (Note: a separate, transient "highlight sits a couple rows off the URL while scrolling" is tracked in #930.)
+
 ## v0.1.10+68 (2026-06-22) — diagnostics for stray attention notifications
 - **Instrumented the attention-notification gate.** Chasing the "I get attention alerts while MobiSSH is the active app" report: each post/suppress now records its decision inputs (foreground, active session/host, signalling host) and the active-session hand-off is logged on both the UI and background sides, so a Feedback capture at a stray alert pinpoints the cause. No behavior change yet — the fix follows once a capture confirms it. (attention telemetry)
 
