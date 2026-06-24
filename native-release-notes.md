@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+71 (2026-06-24) — tmux window switch repaints (structural end of the repaint saga)
+- **Switching tmux windows shows the new window now**, with URL/path detection on. The whole repaint saga's root: detection drives an extra screen-refresh per change, so the renderer's damage got consumed by that refresh before the painting pass read it — leaving the old window's content on screen. The frame builder now carries damage forward until a pass that actually paints re-reads the full screen, so an extra refresh can no longer strand the display. Replaces the per-case guards (#900/#921/#931) with one structural fix. (#922) — please verify: switch tmux windows a few times with detection on.
+
 ## v0.1.10+70 (2026-06-23) — repaint on resume/typing fixed, copy reaches other apps, version shown in Settings
 - **The terminal repaints again when you switch back to the app and as you type.** With URL/path detection on, returning from another app or typing could leave the screen frozen on stale content while new output was actually arriving. Resume now forces a full re-read (not just a repaint nudge), and detection stays armed across resume/tab-switch so it can't silently stop refreshing. (#931)
 - **Copied URLs/paths actually reach other apps now.** A copy could report success and show a correct preview yet not be pasteable elsewhere. Removed a post-copy clipboard self-read that disturbed Android's clipboard handoff, and marked the clip non-sensitive so the system surfaces it normally. (#924) — please verify by pasting into another app.
