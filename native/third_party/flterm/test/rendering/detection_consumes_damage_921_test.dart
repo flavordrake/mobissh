@@ -146,8 +146,10 @@ void main() {
   );
 
   test(
-    'PRIMARY screen WITHOUT the fix: a redraw whose damage a prior sync consumed '
-    're-reads NO rows (documents the detection-ON freeze root)',
+    'PRIMARY screen #922 STRUCTURAL: a redraw whose damage a prior (detection-'
+    'driven) sync consumed re-reads the FULL grid on the next CLEAN sync WITHOUT '
+    'any manual markAllRowsDirty — the carry-forward makes the paint handle '
+    'authoritative (the new invariant; was 0 = stale before #922)',
     () {
       expect(terminal.activeScreen, TerminalScreen.primary);
 
@@ -158,17 +160,17 @@ void main() {
       // First (consuming) sync: detection's extra notify reads + clears the
       // per-row damage.
       pipeline.sync(terminal, terminalDirty: true);
-      // Second sync WITHOUT markAllRowsDirty: libghostty has no new damage, so
-      // the partial build re-reads nothing. This is the stale grid the user sees
-      // with detection ON — the #921 root.
+      // Second (painting) sync reads CLEAN — but the #922 `_damageUnsettled`
+      // carry-forward forces a full re-read so the live cells reach the screen.
+      // No markAllRowsDirty, no detectionActive gate.
       pipeline.sync(terminal, terminalDirty: true);
 
       expect(
         pipeline.debugRowsRebuiltLastSync,
-        equals(0),
-        reason: 'WITHOUT the fix, a redraw whose damage a prior detection-driven '
-            'sync consumed re-reads zero rows — the rendered grid stays stale '
-            '(the #921 detection-ON paint freeze)',
+        equals(4),
+        reason: 'after #922, a redraw whose damage a prior detection-driven sync '
+            'consumed STILL re-reads the full visible grid on the next clean '
+            'sync — a second consume can no longer starve the paint handle',
       );
     },
   );
