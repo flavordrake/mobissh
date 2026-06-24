@@ -111,8 +111,9 @@ void main() {
     });
 
     test(
-      'RESUME via markNeedsPaint-only (focus cycle) re-reads NOTHING after a '
-      'prior detection sync consumed the damage — the GAP 1 freeze',
+      '#922 STRUCTURAL: RESUME via a plain terminalDirty sync (no forceRepaint) '
+      'after a prior detection sync consumed the damage STILL re-reads the full '
+      'grid — the carry-forward self-heals the GAP 1 freeze (was 0 before #922)',
       () {
         expect(terminal.activeScreen, TerminalScreen.primary);
 
@@ -125,16 +126,18 @@ void main() {
         inPlaceRedraw(terminal, 'B');
         pipeline.sync(terminal, terminalDirty: true);
 
-        // RESUME via focus cycle = markNeedsPaint() only: NO markAllRowsDirty,
-        // and the terminal reports clean (damage already consumed). The build is
-        // skipped → ZERO rows re-read → the stale buffer repaints.
+        // RESUME drives a terminalDirty sync that reads CLEAN (damage already
+        // consumed). Before #922 the build was skipped → ZERO rows → stale. The
+        // #922 `_damageUnsettled` carry-forward now forces a full re-read so the
+        // resume paints the live grid even without the #931 forceRepaint pairing.
         pipeline.sync(terminal, terminalDirty: true);
 
         expect(
           pipeline.debugRowsRebuiltLastSync,
-          equals(0),
-          reason: 'a focus-cycle resume (markNeedsPaint only) re-reads nothing '
-              'after a detection sync consumed the damage — the #931 GAP 1 freeze',
+          equals(rows),
+          reason: 'after #922 a resume sync that reads clean STILL re-reads the '
+              'full visible grid — the consumed-damage freeze is structurally '
+              'gone (the #931 forceRepaint is now belt-and-suspenders)',
         );
       },
     );

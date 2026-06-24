@@ -141,8 +141,9 @@ void main() {
   );
 
   test(
-    'without the fix, a redraw whose damage was already consumed re-reads NO '
-    'rows (documents the alternation root)',
+    '#922 STRUCTURAL: a redraw whose damage was already consumed STILL re-reads '
+    'the full grid on the next CLEAN sync WITHOUT any manual markAllRowsDirty — '
+    'the carry-forward eliminates the alternation root (was 0 = stale before #922)',
     () {
       writeUtf8(terminal, '\x1b[?1049h\x1b[2J\x1b[H');
       inPlaceRedraw('A');
@@ -151,17 +152,18 @@ void main() {
       inPlaceRedraw('B');
       // First (consuming) sync: reads + clears the per-row damage.
       pipeline.sync(terminal, terminalDirty: true);
-      // Second sync WITHOUT markAllRowsDirty: libghostty has no new damage, so
-      // the partial-build re-reads nothing. This is the stale-grid half of the
-      // strict A/B/A/B alternation the fix eliminates.
+      // Second (painting) sync reads CLEAN. Before #922 the partial build
+      // re-read nothing (the stale half of the A/B/A/B alternation). The #922
+      // `_damageUnsettled` carry-forward now forces a full re-read on this clean
+      // sync, with NO markAllRowsDirty — the paint handle is authoritative.
       pipeline.sync(terminal, terminalDirty: true);
 
       expect(
         pipeline.debugRowsRebuiltLastSync,
-        equals(0),
-        reason: 'WITHOUT the fix, a redraw whose damage a prior frame consumed '
-            're-reads zero rows — the rendered grid stays stale every other '
-            'switch (the #900 root)',
+        equals(4),
+        reason: 'after #922, a redraw whose damage a prior frame consumed STILL '
+            're-reads the full visible grid on the next clean sync — the '
+            'alternation root is structurally gone',
       );
     },
   );
