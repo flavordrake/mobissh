@@ -64,6 +64,19 @@ final class TerminalRenderPipeline {
   /// signal for the #900 repaint-on-every-redraw contract.
   int get debugRowsRebuiltLastSync => _frameBuilder.debugRowsRebuiltLastSync;
 
+  /// #922 telemetry: the `DirtyState` name libghostty's `update` reported on the
+  /// LAST sync (`clean` is the stale-switch tell when nothing rebuilt).
+  String get debugLastSyncDirtyName => _frameBuilder.debugLastSyncDirtyName;
+
+  /// #922 telemetry: whether flterm-side dirt (markAllRowsDirty/selection/
+  /// highlight) was carried into the LAST sync.
+  bool get debugLastSyncHadDirtyRows => _frameBuilder.debugLastSyncHadDirtyRows;
+
+  /// #922 telemetry: the #922 damage-unsettled carry-forward flag AT the LAST
+  /// sync's entry.
+  bool get debugLastSyncDamageUnsettled =>
+      _frameBuilder.debugLastSyncDamageUnsettled;
+
   void markSelectionRowsDirty(
     TerminalSelection? selection, {
     required int viewportOffset,

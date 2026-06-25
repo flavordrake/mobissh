@@ -171,6 +171,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // the other (#716).
 import 'package:xterm/xterm.dart' as xterm;
 
+import '../diagnostics/connect_trace.dart' show clifecycle;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
@@ -625,6 +626,16 @@ bool ghosttyShouldCycleFocusForRepaint({
 }) {
   return active && connected && hasFocus;
 }
+
+/// #922 telemetry sink bound to the flterm render box's `onFrameDebug` (wired in
+/// [_findTerminalRenderBox] on every lookup). Routes each compact render/sync line
+/// into the durable lifecycle ring via `clifecycle('repaint', …)`, so a device
+/// capture of a stale tmux window switch shows WHY a switch didn't repaint —
+/// screen transitions, zero-rebuild content syncs (`dirty`/`rebuilt=0`/`markedAll`
+/// /`damageUnsettled`/`detActive`), and the #918 settle-tick arm/fire. Top-level +
+/// pure (no widget/FFI) so the wiring contract is unit-testable without rendering
+/// flterm headless (the native .so can't render in a headless test).
+void logRepaintTelemetry(String line) => clifecycle('repaint', line);
 
 /// #741: whether THIS session's view is the one LEAVING active on a session-bar
 /// swipe-switch and so must CAPTURE its current keyboard-up state.
@@ -2657,7 +2668,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   TerminalRenderBox? _findTerminalRenderBox() {
     final renderObject = _terminalViewKey.currentContext?.findRenderObject();
     if (renderObject == null) return null;
-    return _searchRenderBox(renderObject);
+    final box = _searchRenderBox(renderObject);
+    // #922 telemetry: keep the render/sync telemetry seam wired to this session's
+    // diagnostic ring on EVERY lookup (the box is re-created when the TerminalView
+    // is rebuilt with a new key on theme cycle, so re-asserting here is the same
+    // robustness the #931 detectionActive re-assert uses). The render box leaves
+    // `onFrameDebug` null in production flterm; binding it to `clifecycle('repaint',
+    // …)` lands screen transitions, zero-rebuild content syncs, and settle
+    // arm/fire in the captured lifecycle ring the feedback bundle uploads. Idempotent.
+    box?.onFrameDebug = logRepaintTelemetry;
+    return box;
   }
 
   TerminalRenderBox? _searchRenderBox(RenderObject node) {
