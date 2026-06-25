@@ -185,10 +185,16 @@ class _RootRouterState extends ConsumerState<RootRouter> {
       final sessions = ref.read(sessionsProvider);
       final entries = sessions.entries;
       if (entries.isEmpty) return;
+      // #936: derive id + HOST from the FRONT-MOST tab entry, not
+      // `sessions.active`/`activeId`. A disconnected/transitioning front-most
+      // session leaves `active` null, which previously propagated
+      // activeSessionId=null/activeHost=null and let a same-host bell escape
+      // suppression while the user was still on that very tab. The front-most
+      // entry's host is always derivable regardless of connection state.
       entries.first.proxy.setActive(
         true,
-        activeSessionId: sessions.activeId,
-        activeHost: sessions.active?.host,
+        activeSessionId: sessions.frontActiveId,
+        activeHost: sessions.frontActiveHost,
       );
     });
 
@@ -214,12 +220,14 @@ class _RootRouterState extends ConsumerState<RootRouter> {
           final sessions = ref.read(sessionsProvider);
           entries.first.proxy.setActive(
             false,
-            activeSessionId: sessions.activeId,
+            // #936: front-most tab id/host, not `active`/`activeId` (null while
+            // disconnected/transitioning).
+            activeSessionId: sessions.frontActiveId,
             // #847: carry the active session's HOST so the task suppresses by
             // host (the unit of attention is the Claude/host). On background
             // `active:false` means nothing is suppressed anyway, but we send it
             // so the host's last-known activeHost stays accurate.
-            activeHost: sessions.active?.host,
+            activeHost: sessions.frontActiveHost,
           );
         }
         for (final e in entries) {
@@ -242,10 +250,12 @@ class _RootRouterState extends ConsumerState<RootRouter> {
           final sessions = ref.read(sessionsProvider);
           entries.first.proxy.setActive(
             true,
-            activeSessionId: sessions.activeId,
+            // #936: front-most tab id/host, not `active`/`activeId` (null while
+            // disconnected/transitioning).
+            activeSessionId: sessions.frontActiveId,
             // #847: carry the active session's HOST so the task host-suppresses
             // a bell from any (possibly different) session to the same host.
-            activeHost: sessions.active?.host,
+            activeHost: sessions.frontActiveHost,
           );
         }
         for (final e in entries) {
