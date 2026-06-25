@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+72 (2026-06-25) — attention no longer buzzes while you're on the session; repaint diagnostics
+- **No more attention buzz for the session you're already viewing.** When a session disconnected, the app lost track of which host you were on (it went null), so a bell from that same host wasn't suppressed and notified you anyway. The active host is now always known from the session even while disconnected, so a bell for the session you're looking at stays silent. (#936)
+- **Repaint diagnostics for the tmux window-switch issue.** The "switching tmux windows leaves the old window on screen" case (detect-URLs ON) doesn't reproduce in the test harness — it's a real-device timing thing. This build instruments the repaint path so a Feedback capture taken right after a stale switch pinpoints the cause. No behavior change; the fix follows the capture. (Workaround until then: detect-URLs OFF.) (#922)
+
 ## v0.1.10+71 (2026-06-24) — tmux window switch repaints (structural end of the repaint saga)
 - **Switching tmux windows shows the new window now**, with URL/path detection on. The whole repaint saga's root: detection drives an extra screen-refresh per change, so the renderer's damage got consumed by that refresh before the painting pass read it — leaving the old window's content on screen. The frame builder now carries damage forward until a pass that actually paints re-reads the full screen, so an extra refresh can no longer strand the display. Replaces the per-case guards (#900/#921/#931) with one structural fix. (#922) — please verify: switch tmux windows a few times with detection on.
 
