@@ -1357,8 +1357,25 @@ class SessionHost {
     // that must update suppression. A null id/host (older UI / none) leaves it
     // unknown (degrades to "never host-suppress").
     final prevActiveHost = _activeHost;
-    _activeSessionId = activeSessionId;
-    _activeHost = activeHost;
+    // #936: a TRANSIENT disconnect blip can push a setActive with BOTH a null
+    // id AND a null host while the app is still FOREGROUNDED on that very tab —
+    // the UI's front-most session momentarily fails to resolve. With nothing to
+    // derive a host from, clobbering the last-known id/host to null opens the
+    // suppression gate (`shouldPostAttention` returns true when frontHost is
+    // null), so a same-host bell during the blip fires while the user is
+    // looking at it. Retain the last-known id/host in that no-info case rather
+    // than erasing it. Any usable signal — a non-null id (host derivable via
+    // `hostOfSessionId`) or a non-null host — replaces it normally, as does a
+    // genuine background (`active:false`).
+    final hasUsableActive = (activeHost != null && activeHost.isNotEmpty) ||
+        (activeSessionId != null && activeSessionId.isNotEmpty);
+    if (active && !hasUsableActive) {
+      // Foregrounded with no resolvable front-most session — keep
+      // _activeSessionId/_activeHost at their previous values.
+    } else {
+      _activeSessionId = activeSessionId;
+      _activeHost = activeHost;
+    }
     // #856: when the active HOST actually CHANGES, arm the just-switched grace
     // for the newly-active host so its switch catch-up burst doesn't post a
     // redundant attention notification. Only on a real change (new != previous)

@@ -104,6 +104,28 @@ class SessionsState {
     return null;
   }
 
+  /// The front-most session ENTRY — the one the user is looking at. Resolves
+  /// [active] first; falls back to the first entry when [activeId] is null or
+  /// references an entry that no longer exists. Unlike [active] this returns a
+  /// tab whenever ANY exists, regardless of connection state, so callers can
+  /// always recover the front-most session's id + HOST during a disconnect /
+  /// transition (#936). Null only when the collection is empty.
+  SessionEntry? get frontEntry {
+    final a = active;
+    if (a != null) return a;
+    return entries.isEmpty ? null : entries.first;
+  }
+
+  /// Front-most session id (null only when the collection is empty). Used to
+  /// propagate active-session state to the task isolate even while the
+  /// front-most session is disconnected/transitioning (#936).
+  String? get frontActiveId => frontEntry?.id;
+
+  /// Front-most session HOST (null only when the collection is empty). Always
+  /// derivable from the front-most entry regardless of connection state — a
+  /// disconnect never clears [SessionEntry.host] (#936).
+  String? get frontActiveHost => frontEntry?.host;
+
   bool get isEmpty => entries.isEmpty;
   int get length => entries.length;
 
