@@ -193,6 +193,20 @@ class TerminalFrameBuilder {
   /// other one.
   var debugRowsRebuiltLastSync = 0;
 
+  /// #922 TELEMETRY (capture only — no behaviour change): the smoking-gun facts
+  /// the LAST [sync] observed, for the render box's `onFrameDebug` seam to emit.
+  /// [debugLastSyncDirtyName] is the `DirtyState` libghostty's `update` reported
+  /// (`clean` when terminalDirty was false or the damage was already consumed by
+  /// a prior handle — the stale-switch tell); [debugLastSyncHadDirtyRows] is the
+  /// flterm-side `markAllRowsDirty`/selection/highlight dirt that was carried in;
+  /// [debugLastSyncDamageUnsettled] is the #922 carry-forward flag AT ENTRY (true
+  /// means a prior `update` reported damage that no painting build has settled
+  /// yet). Read together with [debugRowsRebuiltLastSync] they show whether a
+  /// content sync re-read the grid or skipped it.
+  String debugLastSyncDirtyName = DirtyState.clean.name;
+  var debugLastSyncHadDirtyRows = false;
+  var debugLastSyncDamageUnsettled = false;
+
   /// #922: STRUCTURAL cure for the single-consumption damage saga
   /// (#887/#898/#900/#918/#921/#931). libghostty's [RenderState.update] CONSUMES
   /// (clears) the terminal's per-row damage as it reads it (render_state.dart:165).
@@ -265,6 +279,9 @@ class TerminalFrameBuilder {
     String preeditText = '',
   }) {
     debugRowsRebuiltLastSync = 0;
+    // #922 telemetry: snapshot the carry-forward flag AT ENTRY (before this sync
+    // mutates it) so the emitted line reflects what THIS sync saw.
+    debugLastSyncDamageUnsettled = _damageUnsettled;
     var dirty = DirtyState.clean;
 
     if (terminalDirty) {
@@ -299,6 +316,10 @@ class TerminalFrameBuilder {
     _state.preeditActive = _rowBuilder.hasPreedit;
 
     final hasDirtyRows = _dirtyRows.anyDirty;
+    // #922 telemetry: record what update reported + the flterm-side dirt carried
+    // into this sync, so the render box's onFrameDebug can show the stale moment.
+    debugLastSyncDirtyName = dirty.name;
+    debugLastSyncHadDirtyRows = hasDirtyRows;
     if (terminalDirty) {
       // #922: an `update` that reports damage marks the content UNSETTLED until a
       // build that reaches paint clears it. A redundant detection-driven sync
