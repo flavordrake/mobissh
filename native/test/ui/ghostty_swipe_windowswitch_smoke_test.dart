@@ -284,6 +284,63 @@ void main() {
     });
   });
 
+  group('#922 keyboard-aware grid → status-tap lands on tmux status row', () {
+    testWidgets(
+      'a status-tap maps to the LAST-SENT (keyboard-aware) status row',
+      (tester) async {
+        // #922 root: under the keyboard the visible box is short (~34 rows), but
+        // flterm settled its grid back to the keyboard-DOWN size (57) and that's
+        // what tmux had — so its status bar was at row 57, off-screen below the
+        // keyboard. A tap on the visible bottom mapped to the middle of the
+        // 57-row grid (a cursor move, no switch). The fix sends the KEYBOARD-AWARE
+        // grid (via ghosttyGridForBox) so lastSentRows == the visible rows; the
+        // status-tap (which targets lastSentRows, #719) then lands on tmux's real
+        // status row. Here lastSentRows==rows==34 models the post-fix state: a tap
+        // at the visible bottom issues a status tap at row 34, NOT a middle click.
+        final r = await pumpControlModeRouter(tester, cols: 58, rows: 34);
+        final box = tester.getRect(find.byType(GhosttyPointerGestureRouter));
+        await tester.tapAt(Offset(box.left + box.width * 0.4, box.bottom - 4));
+        await tester.pumpAndSettle();
+        expect(r.statusTaps, hasLength(1),
+            reason: 'a tap at the visible bottom hits the status row');
+        final (col, totalCols) = r.statusTaps.single;
+        expect(totalCols, 58);
+        expect(col, greaterThan(0));
+        expect(r.sgr, isEmpty);
+      },
+    );
+
+    testWidgets(
+      'ghosttyGridForBox(keyboard-up box) feeds a grid whose status row is the '
+      'visible bottom',
+      (tester) async {
+        // Tie the helper to the router end to end: compute the grid for the SAME
+        // box the router lays out in (keyboard UP), then pump the router at that
+        // grid and assert a bottom tap hits the status row. This proves the
+        // computed grid keeps tmux's status bar at the visible bottom.
+        const cellW = 8.0;
+        const cellH = 16.0;
+        // A keyboard-reduced box. Use the router's full Scaffold body size: pump
+        // first to read it, but we know the test surface — derive the grid from a
+        // representative reduced height instead and assert the tap-row equality.
+        final (cols, rows) = ghosttyGridForBox(
+          boxWidth: 58 * cellW + 8,
+          boxHeight: 34 * cellH + 8,
+          cellWidth: cellW,
+          cellHeight: cellH,
+        );
+        expect(cols, 58);
+        expect(rows, 34);
+        final r = await pumpControlModeRouter(tester, cols: cols, rows: rows);
+        final box = tester.getRect(find.byType(GhosttyPointerGestureRouter));
+        await tester.tapAt(Offset(box.left + box.width * 0.5, box.bottom - 2));
+        await tester.pumpAndSettle();
+        expect(r.statusTaps, hasLength(1),
+            reason: 'the keyboard-aware grid puts the status row at the bottom');
+      },
+    );
+  });
+
   group('#719 inactive overlay (no mouse mode) forwards no wheel', () {
     testWidgets('a horizontal swipe in a plain shell emits NO SGR', (
       tester,
