@@ -479,6 +479,13 @@ class GhosttyResizeCoalescer {
   int? get pendingCols => _pendingCols;
   int? get pendingRows => _pendingRows;
 
+  /// #922 (test/telemetry): the last dims actually EMITTED to the PTY (== the
+  /// #719 `_lastSentRows` the status-tap targets). Lets the on-emulator keyboard
+  /// sizing test assert the SENT grid tracks the keyboard-reduced viewport. Null
+  /// until the first emit.
+  int? get lastEmittedCols => _lastEmittedCols;
+  int? get lastEmittedRows => _lastEmittedRows;
+
   /// Record a new live grid. Resets the settle timer; the resize is sent only
   /// once the size stops changing for [settle].
   void submit(int cols, int rows) {
@@ -752,6 +759,47 @@ Size ghosttyMeasureCellSize({
   double ceilToDevicePixel(double value) => (value * dpr).ceilToDouble() / dpr;
 
   return Size(ceilToDevicePixel(faceWidth), ceilToDevicePixel(faceHeight));
+}
+
+/// #922: compute the KEYBOARD-AWARE grid (cols, rows) that tmux must be told to
+/// use, from the terminal box's laid-out size and the REAL flterm cell size.
+///
+/// Root cause (#922, device capture 2026-06-25T18-09-02): the PTY resize was
+/// driven SOLELY by flterm's `controller.onResize`, which flterm fires from its
+/// own layout. Under the soft-keyboard show/hide animation that callback races —
+/// the grid transiently shrinks to the keyboard-reduced size, then SETTLES BACK
+/// to the pre-keyboard (tall) size. The gesture log proved it: at tap time the
+/// box was 597px (keyboard UP, ~34 visible rows) but flterm reported `grid=58x57`
+/// AND `sent=58x57`. tmux therefore believed it had 57 rows and drew its status
+/// bar at row ~56 — BELOW the keyboard, off-screen. A tap on the visible bottom
+/// (row 34) landed in the MIDDLE of tmux's grid: cursor moved, no window switch.
+///
+/// The fix makes the host compute the authoritative grid ITSELF from the box the
+/// Scaffold has ALREADY shrunk for the keyboard (`resizeToAvoidBottomInset:true`
+/// in terminal_screen.dart resizes the body, so [boxHeight] from a LayoutBuilder
+/// is the keyboard-reduced visible height). We mirror flterm's own grid math:
+/// subtract the [TerminalView] padding from both axes, then floor by the REAL
+/// cell size. This value is submitted to the resize coalescer so the FINAL
+/// settled size tracks the VISIBLE viewport, keeping tmux's status bar at the
+/// visible bottom and the #719 status-tap (which targets the last-SENT rows)
+/// landing on it.
+///
+/// Defensive: a zero/degenerate box or cell size yields a 1×1 grid (the same
+/// floor used by [ghosttyCellForPosition]) so a pre-layout frame never sends a
+/// nonsense resize. Pure (no FFI / no widget) → unit-testable headless.
+(int cols, int rows) ghosttyGridForBox({
+  required double boxWidth,
+  required double boxHeight,
+  required double cellWidth,
+  required double cellHeight,
+  double padding = kGhosttyTerminalPadding,
+}) {
+  if (cellWidth <= 0 || cellHeight <= 0) return (1, 1);
+  final innerW = boxWidth - 2 * padding;
+  final innerH = boxHeight - 2 * padding;
+  final cols = (innerW / cellWidth).floor();
+  final rows = (innerH / cellHeight).floor();
+  return (cols < 1 ? 1 : cols, rows < 1 ? 1 : rows);
 }
 
 
@@ -1976,6 +2024,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   int _lastSentCols = 0;
   int _lastSentRows = 0;
 
+  /// #922: the last keyboard-aware grid the LayoutBuilder submitted (computed
+  /// from the box the Scaffold shrank for the keyboard). De-dupes the submit so
+  /// an unrelated rebuild (theme cycle, output frame) doesn't re-arm the resize
+  /// debounce; -1 (never) until the first layout so the first real grid submits.
+  int _lastSubmittedGridCols = -1;
+  int _lastSubmittedGridRows = -1;
+
   /// #734: the REAL flterm cell size last measured in [build] (via
   /// [ghosttyMeasureCellSize]), captured so [_showUrlMenu] can build the URL's
   /// on-screen highlight rects with the SAME geometry the router + highlight
@@ -2160,27 +2215,25 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
       // mirror (cols, rows) so the #692 gesture router can map touch -> cell.
       controller.onResize = (cols, rows) {
-        // Mirror the live grid SYNCHRONOUSLY (the touch->cell map + gesture
-        // router read `_cols`/`_rows` every gesture, so they must track flterm's
-        // real grid the instant it changes — only the PTY SEND is debounced).
+        // Mirror the live grid SYNCHRONOUSLY (the touch->cell map reads
+        // `_cols`/`_rows` for selection/URL geometry, so they must track
+        // flterm's real render grid the instant it changes).
         _cols = cols;
         _rows = rows;
         // #790: record the live viewport grid so the replay harness can lay out
         // the captured byte stream at the SAME cols×rows the bug occurred at.
         _byteRecorder.recordGrid(cols, rows);
-        // #903: COALESCE the PTY resize. flterm fires `onResize` for EVERY
-        // layout change — a soft-keyboard show/hide animates the inset over many
-        // frames (per-frame regrid → the `44→43→…→34` storm) and a window switch
-        // reflows ~2 rows transiently (`34→36→34`). Sending each straight to the
-        // PTY made tmux regrid mid-interaction and race every redraw (the repaint
-        // fail #887/#898/#900 were chasing). The coalescer debounces to the FINAL
-        // settled size: intermediate frames never reach tmux, and a transient
-        // that returns to the start emits nothing. The #719 last-sent grid is
-        // still recorded by `_sendResize` (the coalescer's send seam).
-        _resizeCoalescer.submit(cols, rows);
-        // #767: a resize changes the cell ranges, but the URL re-detect now lives
-        // INSIDE the terminal — the controller re-scans on its own notify cycle,
-        // so the host no longer schedules detection here.
+        // #922: the PTY resize is NO LONGER driven from flterm's onResize. flterm
+        // fires onResize from its OWN layout, which under the soft-keyboard
+        // show/hide animation RACES — the device capture (2026-06-25T18-09-02)
+        // showed it settling BACK to the pre-keyboard tall size (grid=58x57) even
+        // though the visible box was keyboard-reduced (597px ≈ 34 rows), so tmux
+        // kept a 57-row grid and drew its status bar off-screen below the
+        // keyboard; the status-tap then missed. The authoritative size is now
+        // computed from the laid-out (keyboard-reduced) box in the LayoutBuilder
+        // ([_submitKeyboardAwareGrid] → the SAME #903 coalescer). flterm's grid
+        // here is only the gesture-geometry mirror. The #767 in-terminal URL
+        // re-detect still runs on the controller's own notify cycle.
       };
       // PTY output bytes -> terminal. The subscription lives on this state so
       // dispose() cancels it.
@@ -2442,22 +2495,30 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
 
   /// #702: FORCE-re-send the current grid to the PTY (even if unchanged) so tmux
   /// re-sizes to the post-shellReady layout. Guarded by [ghosttyShouldResyncResize]
-  /// (connected + valid `_cols`/`_rows`); a tick with no valid grid is a no-op.
+  /// (connected + valid grid); a tick with no valid grid is a no-op.
   /// Every forced re-sync is recorded in the gesture/connect trace so a device
   /// repro CONFIRMS a real resize landed after shellReady (`ghostty-resync`).
+  ///
+  /// #922: re-push the KEYBOARD-AWARE grid ([_lastSubmittedGridCols]/[Rows], the
+  /// size the LayoutBuilder computed from the keyboard-reduced box) when it's been
+  /// laid out, so the resync delivers the SAME authoritative size the steady-state
+  /// path does — never flterm's possibly-stale `_cols`/`_rows`. Falls back to the
+  /// live grid only before the first layout (when the keyboard-aware grid is -1).
   void _forceResizeResync(String trigger) {
     if (!mounted) return;
     final proxy = _proxy;
     if (proxy == null) return;
     final connected = proxy.data.state == SshSessionState.connected;
+    final cols = _lastSubmittedGridCols > 0 ? _lastSubmittedGridCols : _cols;
+    final rows = _lastSubmittedGridRows > 0 ? _lastSubmittedGridRows : _rows;
     if (!ghosttyShouldResyncResize(
       connected: connected,
-      cols: _cols,
-      rows: _rows,
+      cols: cols,
+      rows: rows,
     )) {
       gtrace(
         'ghostty-resync $trigger: skip '
-        '(connected=$connected cols=$_cols rows=$_rows)',
+        '(connected=$connected cols=$cols rows=$rows)',
       );
       return;
     }
@@ -2465,8 +2526,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // size the instant the shell exists (#666/#702), so flush immediately and
     // cancel any pending coalesce. The proxy still owns the #666 one-shot
     // force-bypass of its no-op guard.
-    _resizeCoalescer.flushNow(_cols, _rows);
-    gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
+    _resizeCoalescer.flushNow(cols, rows);
+    gtrace('ghostty-resync $trigger: cols=$cols rows=$rows');
   }
 
   /// #719: the SINGLE path for every PTY resize. Sends the grid to the proxy AND
@@ -3257,6 +3318,72 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (highlightColor != _lastHighlightColor) {
       _lastHighlightColor = highlightColor;
     }
+    // #922: wrap in a LayoutBuilder so we read the terminal box's ACTUAL
+    // constraints — the height the Scaffold has ALREADY shrunk for the soft
+    // keyboard (terminal_screen.dart keeps `resizeToAvoidBottomInset:true`, so
+    // the body — and this box — is the keyboard-reduced VISIBLE height). We then
+    // compute the keyboard-aware grid ourselves and submit it to the resize
+    // coalescer, so the FINAL settled size tracks the visible viewport rather
+    // than flterm's onResize (which the device capture proved settles back to the
+    // pre-keyboard tall size under the keyboard animation race). Submitted on a
+    // post-frame (the box size is known post-layout; submitting during layout is
+    // illegal), and the coalescer's #903 debounce + no-op guard keep it bounded.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _submitKeyboardAwareGrid(constraints.biggest, cellSize);
+        return _buildTerminalStack(
+          controller: controller,
+          theme: theme,
+          cellSize: cellSize,
+          highlightColor: highlightColor,
+        );
+      },
+    );
+  }
+
+  /// #922: compute the keyboard-aware grid from the laid-out [box] (already
+  /// keyboard-reduced by the Scaffold) + the REAL [cellSize], and submit it to
+  /// the resize coalescer. This is the AUTHORITATIVE size driver — it keeps
+  /// tmux's grid (and the #719 last-sent rows the status-tap targets) matched to
+  /// the VISIBLE viewport, immune to the keyboard-animation race that left
+  /// flterm's onResize settling back on the tall pre-keyboard size.
+  ///
+  /// Runs on a post-frame (reading the box during layout is fine, but submitting
+  /// — which may schedule a Timer + later setState via the coalescer's send seam
+  /// — is deferred so it never re-enters build). Skips a degenerate box (a
+  /// pre-layout 0×0 frame) and a no-change grid (the coalescer would no-op
+  /// anyway, but this avoids re-arming the debounce on every unrelated rebuild).
+  void _submitKeyboardAwareGrid(Size box, Size cellSize) {
+    if (box.width <= 0 || box.height <= 0) return;
+    final (cols, rows) = ghosttyGridForBox(
+      boxWidth: box.width,
+      boxHeight: box.height,
+      cellWidth: cellSize.width,
+      cellHeight: cellSize.height,
+    );
+    if (cols == _lastSubmittedGridCols && rows == _lastSubmittedGridRows) {
+      return;
+    }
+    _lastSubmittedGridCols = cols;
+    _lastSubmittedGridRows = rows;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Mirror the live grid synchronously (the gesture map reads _cols/_rows),
+      // then coalesce the PTY send exactly as flterm's onResize did (#903).
+      _cols = cols;
+      _rows = rows;
+      _byteRecorder.recordGrid(cols, rows);
+      _resizeCoalescer.submit(cols, rows);
+      gtrace('ghostty-kbgrid: cols=$cols rows=$rows box=${box.height.round()}');
+    });
+  }
+
+  Widget _buildTerminalStack({
+    required TerminalController controller,
+    required TerminalTheme theme,
+    required Size cellSize,
+    required Color highlightColor,
+  }) {
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
