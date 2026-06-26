@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+73 (2026-06-26) — tapping the tmux status bar switches windows again (keyboard-aware sizing)
+- **Switching tmux windows works with the keyboard up.** The real cause of "tap the tmux tabs, nothing switches, only the cursor moves": when the soft keyboard was up, the terminal still told tmux it had the full (taller) height, so tmux drew its status bar OFF-SCREEN below the keyboard — your tap on the visible bottom landed in the middle of the pane (a cursor move, not a window switch). The grid now tracks the keyboard-reduced visible height, so the status bar stays at the visible bottom and the tap switches windows. This was a sizing bug, not a repaint bug (the earlier paint fixes were chasing the wrong thing). (#922) — verify: raise the keyboard, tap a tmux window in the status bar, it switches.
+
 ## v0.1.10+72 (2026-06-25) — attention no longer buzzes while you're on the session; repaint diagnostics
 - **No more attention buzz for the session you're already viewing.** When a session disconnected, the app lost track of which host you were on (it went null), so a bell from that same host wasn't suppressed and notified you anyway. The active host is now always known from the session even while disconnected, so a bell for the session you're looking at stays silent. (#936)
 - **Repaint diagnostics for the tmux window-switch issue.** The "switching tmux windows leaves the old window on screen" case (detect-URLs ON) doesn't reproduce in the test harness — it's a real-device timing thing. This build instruments the repaint path so a Feedback capture taken right after a stale switch pinpoints the cause. No behavior change; the fix follows the capture. (Workaround until then: detect-URLs OFF.) (#922)
