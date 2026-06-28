@@ -76,7 +76,14 @@ class MermaidDiagramView extends StatelessWidget {
   final String source;
 
   void _openFill(BuildContext context) {
-    showFillMediaViewer(context, child: mermaidFillBuilder(source));
+    // selfZooming: the fullscreen mermaid is a WebView — it owns its (crisp)
+    // built-in pinch/pan; wrapping it in an InteractiveViewer made pan sluggish
+    // and left it un-centred (#949). The host page centres the diagram.
+    showFillMediaViewer(
+      context,
+      child: mermaidFillBuilder(source),
+      selfZooming: true,
+    );
   }
 
   @override

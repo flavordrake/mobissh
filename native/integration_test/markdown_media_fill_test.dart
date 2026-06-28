@@ -237,5 +237,18 @@ void main() {
       isTrue,
       reason: 'tapping the mermaid diagram did not open the fill viewer',
     );
+    // #949: the mermaid fill is SELF-ZOOMING — presented full-bleed so the
+    // WebView's own (crisp) pinch/pan handles zoom. It must NOT be wrapped in
+    // the InteractiveViewer (that fought the PlatformView → sluggish pan).
+    expect(
+      find.byKey(const Key('fill-media-self-zooming')),
+      findsOneWidget,
+      reason: 'mermaid fill should defer zoom to the WebView (self-zooming)',
+    );
+    expect(
+      find.byKey(const Key('fill-media-interactive-viewer')),
+      findsNothing,
+      reason: 'mermaid fill must not wrap the WebView in an InteractiveViewer',
+    );
   });
 }

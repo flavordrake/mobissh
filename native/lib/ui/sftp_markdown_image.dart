@@ -109,14 +109,24 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
   }
 
   void _openFill() {
+    // BoxFit.contain so the image opens fit + centred in the viewer (not
+    // top-left/overflowing); FilterQuality.medium keeps it crisp when zoomed
+    // via the InteractiveViewer (#949).
     final Widget full;
     if (_isNetwork && _networkUrl != null) {
       full = Image.network(
         _networkUrl!,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
         errorBuilder: (_, _, _) => _fillBroken(),
       );
     } else if (_bytes != null) {
-      full = Image.memory(_bytes!, errorBuilder: (_, _, _) => _fillBroken());
+      full = Image.memory(
+        _bytes!,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, _, _) => _fillBroken(),
+      );
     } else {
       return;
     }

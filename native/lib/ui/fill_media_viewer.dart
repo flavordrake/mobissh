@@ -2,18 +2,19 @@
 //
 // EVERY embedded media item in the markdown viewer — inline images (`![](...)`)
 // AND mermaid diagrams — renders inline at a sensible size and is TAP-TO-FILL:
-// tapping pushes this route, where pinch-zoom + pan are FORCE-enabled.
+// tapping pushes this route, where pinch-zoom + pan work.
 //
-// Why a dedicated route instead of in-place pinch/pan: a PlatformView (the
-// mermaid WebView) nested inside the scrolling markdown wins the gesture arena,
-// so an in-place InteractiveViewer never receives the scale/pan pointers (the
-// +75 mermaid built-in zoom didn't work on device for exactly this reason). A
-// fullscreen route removes the scroll-vs-zoom contention:
-//   - a plain image child zooms via this [InteractiveViewer] (panEnabled +
-//     scaleEnabled, min/max scale, double-tap to fit/reset);
-//   - a fullscreen WebView child (mermaid) zooms via its own built-in zoom,
-//     which works once it is no longer nested in a scroll view. The
-//     InteractiveViewer still wraps it for a consistent close/scrim chrome.
+// Two presentation modes (decided after the +76 device reports #949):
+//   - IMAGE (default): a plain image child zooms via a Flutter [InteractiveViewer]
+//     (panEnabled + scaleEnabled, min/max scale, double-tap to fit/reset). The
+//     image is centred + contained and drawn at high [FilterQuality] so it stays
+//     crisp when zoomed.
+//   - SELF-ZOOMING (`selfZooming: true`): the child handles its OWN zoom + pan —
+//     a platform WebView (mermaid). A Flutter InteractiveViewer can NOT drive a
+//     PlatformView (it consumes the pointers), so wrapping it only made pan feel
+//     sluggish and left the diagram top-aligned / un-centred (#949). We present
+//     the child FULL-BLEED and defer every gesture to it; the WebView's built-in
+//     zoom is crisp and the host page centres the diagram.
 //
 // Monochrome Material glyph for the close affordance (no emoji). Dark scrim.
 
@@ -21,30 +22,44 @@ import 'package:flutter/material.dart';
 
 /// Pushes the shared [FillMediaViewer] route with [child] as the zoomable
 /// surface. Returns when the user closes the viewer.
+///
+/// [selfZooming] = the child handles its OWN zoom + pan (a platform WebView,
+/// whose built-in zoom is crisp and which a Flutter [InteractiveViewer] can't
+/// drive anyway). For those we present the child full-bleed and defer all
+/// gestures to it. Plain images (the default) get the [InteractiveViewer].
 Future<void> showFillMediaViewer(
   BuildContext context, {
   required Widget child,
   String? label,
+  bool selfZooming = false,
 }) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
       fullscreenDialog: true,
-      builder: (_) => FillMediaViewer(label: label, child: child),
+      builder: (_) =>
+          FillMediaViewer(label: label, selfZooming: selfZooming, child: child),
     ),
   );
 }
 
-/// Fullscreen, dark-scrim media viewer. The single [child] is presented inside
-/// an [InteractiveViewer] with pinch-zoom + pan FORCED on. Double-tap toggles
-/// between fit (identity) and a 2.5× zoom centred on the tap point.
+/// Fullscreen, dark-scrim media viewer. See the file header for the two modes.
 class FillMediaViewer extends StatefulWidget {
-  const FillMediaViewer({super.key, required this.child, this.label});
+  const FillMediaViewer({
+    super.key,
+    required this.child,
+    this.label,
+    this.selfZooming = false,
+  });
 
-  /// The media surface — an image widget, or a fullscreen diagram surface.
+  /// The media surface — an image widget, or a self-zooming diagram surface.
   final Widget child;
 
   /// Optional accessible label / app-bar-less title shown to the user.
   final String? label;
+
+  /// When true the child owns its zoom/pan (WebView) — presented full-bleed
+  /// without the [InteractiveViewer]. See the file header (#949).
+  final bool selfZooming;
 
   @override
   State<FillMediaViewer> createState() => _FillMediaViewerState();
@@ -86,6 +101,35 @@ class _FillMediaViewerState extends State<FillMediaViewer> {
       ..scaleByDouble(_doubleTapScale, _doubleTapScale, _doubleTapScale, 1);
   }
 
+  /// The media surface. Self-zooming children (WebView) are full-bleed and own
+  /// their gestures; images get the centred, crisp InteractiveViewer.
+  Widget _buildSurface() {
+    if (widget.selfZooming) {
+      return Positioned.fill(
+        key: const Key('fill-media-self-zooming'),
+        child: widget.child,
+      );
+    }
+    return Positioned.fill(
+      child: GestureDetector(
+        onDoubleTapDown: _onDoubleTapDown,
+        onDoubleTap: _onDoubleTap,
+        child: InteractiveViewer(
+          key: const Key('fill-media-interactive-viewer'),
+          transformationController: _controller,
+          panEnabled: true,
+          scaleEnabled: true,
+          minScale: _minScale,
+          maxScale: _maxScale,
+          // Unbounded margin so the user can pan a zoomed image fully past the
+          // viewport edges.
+          boundaryMargin: const EdgeInsets.all(double.infinity),
+          child: Center(child: widget.child),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -94,24 +138,7 @@ class _FillMediaViewerState extends State<FillMediaViewer> {
       body: SafeArea(
         child: Stack(
           children: [
-            Positioned.fill(
-              child: GestureDetector(
-                onDoubleTapDown: _onDoubleTapDown,
-                onDoubleTap: _onDoubleTap,
-                child: InteractiveViewer(
-                  key: const Key('fill-media-interactive-viewer'),
-                  transformationController: _controller,
-                  panEnabled: true,
-                  scaleEnabled: true,
-                  minScale: _minScale,
-                  maxScale: _maxScale,
-                  // Unbounded margin so the user can pan a zoomed image fully
-                  // past the viewport edges.
-                  boundaryMargin: const EdgeInsets.all(double.infinity),
-                  child: Center(child: widget.child),
-                ),
-              ),
-            ),
+            _buildSurface(),
             Positioned(
               top: 8,
               right: 8,

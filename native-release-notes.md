@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+77 (2026-06-28) — full-screen diagrams now center + zoom crisply
+- **Tapped mermaid diagrams open centered and zoom sharply.** The full-screen diagram now centers in the view (no more pinned to the top with empty space below) and pinch-zoom/pan is handled by the diagram itself, so it stays crisp and pans smoothly instead of feeling sluggish. (#949)
+- **Tapped images open centered and fit the screen**, and stay sharp when you zoom in. (#949)
+
 ## v0.1.10+76 (2026-06-28) — tap any markdown image or diagram to fill the screen + zoom
 - **Tap an image or diagram in a markdown preview to open it full-screen, then pinch-zoom and pan.** Inline images and mermaid diagrams now show inline at a readable size with a small expand badge; tap to blow them up full-screen where pinch/pan/zoom work, tap the ✕ to return. The flowed text still scrolls and selects as before. (#946)
 - **One-tap "build ready" notification.** When a new build is published you get an ntfy push titled with the version and a Download button — tap it to grab the APK. (ntfy)

@@ -26,11 +26,23 @@
         background: transparent;
         overflow: hidden;
       }
+      /* Centre the diagram BOTH ways. Inline, the WebView is sized to the
+         diagram height so min-height:100vh == that height (no change). In the
+         fullscreen fill viewer (#949) the WebView fills the screen, so this
+         vertically centres the diagram instead of pinning it to the top with a
+         void below. */
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
       #diagram {
         padding: 8px;
         box-sizing: border-box;
         display: flex;
         justify-content: center;
+        width: 100%;
       }
       #diagram svg {
         max-width: 100%;

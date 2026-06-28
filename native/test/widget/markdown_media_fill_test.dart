@@ -231,9 +231,12 @@ void main() {
 
     expect(find.byType(FillMediaViewer), findsOneWidget);
     expect(find.byKey(const Key('mm-fill-stub')), findsOneWidget);
+    // #949: the mermaid fill is SELF-ZOOMING (full-bleed; the WebView owns its
+    // crisp built-in pinch/pan) — it must NOT be wrapped in the InteractiveViewer.
+    expect(find.byKey(const Key('fill-media-self-zooming')), findsOneWidget);
     expect(
       find.byKey(const Key('fill-media-interactive-viewer')),
-      findsOneWidget,
+      findsNothing,
     );
 
     host.disposeSyncForTest();
