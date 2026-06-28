@@ -111,6 +111,18 @@ dependencies:
   package_info_plus: ^8.1.2
   share_plus: ^10.1.2
 
+  # Offline media renderer for the markdown viewer (#942, #944). Renders
+  # ```mermaid fenced blocks as diagrams by loading mermaid.js + a host page
+  # (both bundled Flutter assets under assets/mermaid/ — NO network at runtime)
+  # into a WebView. The Android WebView's built-in pinch-zoom + pan satisfy the
+  # #944 invariant. Reusable harness for other WebView-renderable media types.
+  webview_flutter: ^4.14.0
+
+  # Direct dep so the markdown viewer's MermaidElementBuilder can reference
+  # `md.Element` (the parsed fenced-code node). Already transitive via
+  # flutter_markdown_plus; declared directly for depend_on_referenced_packages.
+  markdown: ^7.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -210,6 +222,14 @@ flutter:
         - asset: assets/fonts/Cousine-Regular.ttf
         - asset: assets/fonts/Cousine-Bold.ttf
           weight: 700
+
+  # Offline mermaid render bundle (#942, #944) — the markdown viewer loads the
+  # host page into a WebView via loadFlutterAsset; mermaid.min.js is its sibling
+  # asset (relative <script src> resolves under the asset base URL). Vendored by
+  # scripts/vendor-mermaid.sh — NO network is touched at build or runtime.
+  assets:
+    - assets/mermaid/mermaid_host.html
+    - assets/mermaid/mermaid.min.js
 
   # To add assets to your application, add an assets section, like this:
   # assets:
