@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-native-pwa-parity-045532/` — native Flutter PWA-parity arc (reconnect, profiles/keys/default-cmd, SFTP file explorer, session-menu parity, fonts, themes, settings, feedback upload). Breadth-first slices.
+> **Active TRACE**: `.traces/trace-native-media-ntfy-arc-223711/` — native media tap-to-fill (#946), ntfy build-ready push, and the port-2222 emulator unblock. Continues the PWA-parity arc (SFTP file explorer, markdown/media viewers, favorites).
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.

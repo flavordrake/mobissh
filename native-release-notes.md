@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+76 (2026-06-28) — tap any markdown image or diagram to fill the screen + zoom
+- **Tap an image or diagram in a markdown preview to open it full-screen, then pinch-zoom and pan.** Inline images and mermaid diagrams now show inline at a readable size with a small expand badge; tap to blow them up full-screen where pinch/pan/zoom work, tap the ✕ to return. The flowed text still scrolls and selects as before. (#946)
+- **One-tap "build ready" notification.** When a new build is published you get an ntfy push titled with the version and a Download button — tap it to grab the APK. (ntfy)
+
 ## v0.1.10+75 (2026-06-28) — file favorites + markdown mermaid diagrams
 - **Favorite paths in the file browser.** Tap the star to favorite the current directory (per profile, saved across restarts). Long-press the star — or any file/folder — for the favorites menu: tap a favorite to jump there, long-press one to remove, or clear all. (#632)
 - **Markdown previews now render mermaid diagrams.** A ` ```mermaid ` block in a .md file shows as the actual flowchart/diagram (rendered offline), not raw code — pinch-zoom and pan the diagram; the raw/source toggle still shows the text. (#942)
