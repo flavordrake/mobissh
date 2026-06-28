@@ -23,9 +23,13 @@ URL="${MOBISSH_NTFY_URL:-${NTFY_URL:-}}"
 TOPIC="${MOBISSH_NTFY_TOPIC:-${NTFY_TOPIC:-}}"
 TOKEN="${MOBISSH_NTFY_TOKEN:-${NTFY_TOKEN:-}}"
 
+# Lead with the version (TITLE). Keep BODY informative, not obvious — the Download
+# action button + Click already convey "tap to get the APK", so don't restate it.
 TITLE="${1:-MobiSSH build ready}"
 CLICK="${2:-}"
-BODY="${3:-Tap to download.}"
+BODY="${3:-}"
+# ntfy needs a non-empty message body; fall back to the title if none was given.
+if [ -z "$BODY" ]; then BODY="$TITLE"; fi
 
 if [ -z "$URL" ] || [ -z "$TOPIC" ]; then
   log "not configured (need URL + TOPIC; see ~/.mobissh/ntfy.env) — skipping"

@@ -81,6 +81,7 @@ echo "  ${SERVE_HOST}/native.html"
 echo "+ stable apk:  ${SERVE_HOST}/${STABLE}"
 echo "+ this build:  ${SERVE_HOST}/${STAMPED}"
 
-# ntfy push (best-effort; no-op until ~/.config/mobissh/ntfy.env is set) — one-tap download.
+# ntfy push (best-effort; no-op until ~/.mobissh/ntfy.env is set) — one-tap download.
+# Lead with the version; body is the timestamped artifact (informative, not obvious).
 NTFY_VERSION="$(grep -E '^version:' "${NATIVE_DIR}/pubspec.yaml" | awk '{print $2}' || true)"
-"${REPO_ROOT}/scripts/notify-ntfy.sh" "MobiSSH ${NTFY_VERSION} ready" "${SERVE_HOST}/${STAMPED}" "MobiSSH ${NTFY_VERSION} — tap to download the APK."
+"${REPO_ROOT}/scripts/notify-ntfy.sh" "MobiSSH ${NTFY_VERSION}" "${SERVE_HOST}/${STAMPED}" "${STAMPED}"
