@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+75 (2026-06-28) — file favorites + markdown mermaid diagrams
+- **Favorite paths in the file browser.** Tap the star to favorite the current directory (per profile, saved across restarts). Long-press the star — or any file/folder — for the favorites menu: tap a favorite to jump there, long-press one to remove, or clear all. (#632)
+- **Markdown previews now render mermaid diagrams.** A ` ```mermaid ` block in a .md file shows as the actual flowchart/diagram (rendered offline), not raw code — pinch-zoom and pan the diagram; the raw/source toggle still shows the text. (#942)
+
 ## v0.1.10+73 (2026-06-26) — tapping the tmux status bar switches windows again (keyboard-aware sizing)
 - **Switching tmux windows works with the keyboard up.** The real cause of "tap the tmux tabs, nothing switches, only the cursor moves": when the soft keyboard was up, the terminal still told tmux it had the full (taller) height, so tmux drew its status bar OFF-SCREEN below the keyboard — your tap on the visible bottom landed in the middle of the pane (a cursor move, not a window switch). The grid now tracks the keyboard-reduced visible height, so the status bar stays at the visible bottom and the tap switches windows. This was a sizing bug, not a repaint bug (the earlier paint fixes were chasing the wrong thing). (#922) — verify: raise the keyboard, tap a tmux window in the status bar, it switches.
 
