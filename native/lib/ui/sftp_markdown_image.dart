@@ -17,6 +17,7 @@
 
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -60,6 +61,9 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
   bool _isNetwork = false;
   String? _networkUrl;
   bool _started = false;
+
+  /// Pointer-down position for the raw-pointer tap detection below.
+  Offset? _tapDownPos;
 
   @override
   void didChangeDependencies() {
@@ -166,11 +170,27 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
         errorBuilder: (_, _, _) => _Placeholder(alt: widget.alt),
       );
     }
+    // A raw [Listener] — NOT a GestureDetector — drives tap-to-fill. The viewer
+    // renders the markdown with `selectable: true`, so this inline image is a
+    // WidgetSpan child inside a SelectableText.rich. A child tap GestureDetector
+    // loses the gesture arena to the selection layer there (a known Flutter
+    // limitation), so the onTap never fired on-device even though widget tests —
+    // which tap the detector in isolation — passed. Listener receives pointer
+    // events directly from hit-testing, bypassing the arena: we recognise a tap
+    // as down→up within touch slop and open the fill viewer.
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: GestureDetector(
+      child: Listener(
         key: const Key('markdown-inline-image'),
-        onTap: _openFill,
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (e) => _tapDownPos = e.position,
+        onPointerUp: (e) {
+          final down = _tapDownPos;
+          _tapDownPos = null;
+          if (down != null && (e.position - down).distance <= kTouchSlop) {
+            _openFill();
+          }
+        },
         child: Stack(
           alignment: Alignment.bottomRight,
           children: [
