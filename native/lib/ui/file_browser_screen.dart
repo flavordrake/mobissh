@@ -20,9 +20,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_download.dart';
 import '../ssh/ssh_session_proxy.dart';
+import '../state/favorites_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import '../storage/favorites_store.dart';
 import 'file_viewer_registry.dart';
 import 'pdf_viewer_screen.dart';
 import 'top_toast.dart';
@@ -172,6 +174,15 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   bool _loading = true;
   String? _error;
 
+  /// Profile identity (`host:port:username`) this browser's session belongs to.
+  /// Favorites are keyed by this (#632) — a profile's sessions share one set.
+  /// Null only when the session has gone away.
+  String? _profileKey;
+
+  /// Normalized paths currently favorited for [_profileKey]. Drives the app-bar
+  /// star's filled/outline state; refreshed after every favorites mutation.
+  Set<String> _favoritePaths = const {};
+
   /// Monotonic counter → request id, so a late listing for a directory we've
   /// already navigated away from is dropped.
   int _seq = 0;
@@ -212,9 +223,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     for (final e in entries) {
       if (e.id == widget.sessionId) {
         proxy = e.proxy;
+        _profileKey = e.profileKey;
         break;
       }
     }
+    // Load this profile's favorites so the star renders correctly on first
+    // build (#632). Fire-and-forget: setState lands when it resolves.
+    unawaited(_refreshFavorites());
     if (proxy == null) {
       // No setState here — didChangeDependencies runs before build, so just
       // set the fields and let the imminent build render the error.
@@ -435,6 +450,127 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     dismissFileBrowserStack(context);
   }
 
+  // --- Favorites (#632) -----------------------------------------------------
+
+  FavoritesStore get _favStore => ref.read(favoritesStoreProvider);
+
+  /// Re-read the profile's favorites into [_favoritePaths] so the star + menu
+  /// reflect the persisted set. No-op without a profile identity.
+  Future<void> _refreshFavorites() async {
+    final key = _profileKey;
+    if (key == null) return;
+    final favs = await _favStore.favoritesFor(key);
+    if (!mounted) return;
+    setState(() {
+      _favoritePaths = favs.map((f) => f.path).toSet();
+    });
+  }
+
+  bool get _currentFavorited => _favoritePaths.contains(normalizePath(_path));
+
+  /// Star TAP: toggle whether the CURRENT directory is favorited for this
+  /// profile. Filled star = favorited; outline = not (#632 bullet 1).
+  Future<void> _toggleStar() async {
+    final key = _profileKey;
+    if (key == null) return;
+    final pathAtTap = _path;
+    final nowFavorited = await _favStore.toggle(key, pathAtTap);
+    await _refreshFavorites();
+    if (!mounted) return;
+    _snack(
+      nowFavorited
+          ? 'Favorited $pathAtTap'
+          : 'Removed favorite $pathAtTap',
+    );
+  }
+
+  /// Navigate the files view to a favorited [path] — drives the SAME `_list`
+  /// sink that `widget.initialPath` feeds on open (the deepLink seam #570/#572
+  /// use). The favorites menu is dismissed by the caller before this runs.
+  void _navigateToFavorite(String path) => _list(path);
+
+  /// Unified favorites menu (#632 bullets 2–5): surfaced from BOTH a long-press
+  /// on the app-bar star AND a long-press on any file/folder entry. Tapping a
+  /// favorite instantly navigates there; long-pressing a favorite removes it;
+  /// "Clear all" empties the profile's set.
+  Future<void> _openFavoritesMenu() async {
+    final key = _profileKey;
+    if (key == null) return;
+    var favs = await _favStore.favoritesFor(key);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.star),
+                    title: const Text('Favorites'),
+                    trailing: TextButton(
+                      key: const Key('favorites-clear-all'),
+                      onPressed: favs.isEmpty
+                          ? null
+                          : () async {
+                              await _favStore.clear(key);
+                              await _refreshFavorites();
+                              favs = const [];
+                              setSheetState(() {});
+                            },
+                      child: const Text('Clear all'),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  if (favs.isEmpty)
+                    const Padding(
+                      key: Key('favorites-empty'),
+                      padding: EdgeInsets.all(24),
+                      child: Text('No favorites yet'),
+                    )
+                  else
+                    Flexible(
+                      child: ListView(
+                        key: const Key('favorites-list'),
+                        shrinkWrap: true,
+                        children: [
+                          for (final f in favs)
+                            ListTile(
+                              key: Key('favorite-item-${f.path}'),
+                              leading: const Icon(Icons.folder_outlined),
+                              title: Text(
+                                f.display,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: (f.label != null && f.label!.isNotEmpty)
+                                  ? Text(f.path, overflow: TextOverflow.ellipsis)
+                                  : null,
+                              onTap: () {
+                                Navigator.of(sheetContext).pop();
+                                _navigateToFavorite(f.path);
+                              },
+                              // Long-press a favorite = REMOVE it (#632 bullet 4).
+                              onLongPress: () async {
+                                await _favStore.remove(key, f.path);
+                                await _refreshFavorites();
+                                favs = await _favStore.favoritesFor(key);
+                                setSheetState(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final downloading = _downloadRequestId != null;
@@ -483,6 +619,30 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
           ],
         ),
         actions: [
+          // Favorites star (#632): TAP toggles favoriting the current path for
+          // this profile; LONG-PRESS opens the unified favorites menu. Built on
+          // a single InkResponse so both gestures are owned by ONE recognizer
+          // set — an IconButton's `tooltip` wraps it in a Tooltip that would eat
+          // the long-press, so we don't use IconButton here. Accessibility is
+          // preserved via the Semantics label.
+          Semantics(
+            button: true,
+            label: _currentFavorited
+                ? 'Unfavorite this folder'
+                : 'Favorite this folder',
+            child: InkResponse(
+              key: const Key('file-browser-star'),
+              radius: 24,
+              onTap: _toggleStar,
+              onLongPress: _openFavoritesMenu,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  _currentFavorited ? Icons.star : Icons.star_border,
+                ),
+              ),
+            ),
+          ),
           IconButton(
             key: const Key('file-browser-close-to-terminal'),
             tooltip: 'Close — back to terminal',
@@ -541,7 +701,14 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       itemCount: _entries.length,
       itemBuilder: (context, i) {
         final e = _entries[i];
-        return _EntryTile(entry: e, onTap: () => _onEntryTap(e));
+        return _EntryTile(
+          entry: e,
+          onTap: () => _onEntryTap(e),
+          // Long-press a file/folder entry opens the SAME unified favorites
+          // menu as long-pressing the star (#632 bullet 3). ListTile routes
+          // long-press separately from onTap, so it never also navigates.
+          onLongPress: _openFavoritesMenu,
+        );
       },
     );
   }
@@ -586,10 +753,15 @@ class _PathBar extends StatelessWidget {
 }
 
 class _EntryTile extends StatelessWidget {
-  const _EntryTile({required this.entry, required this.onTap});
+  const _EntryTile({
+    required this.entry,
+    required this.onTap,
+    this.onLongPress,
+  });
 
   final SftpEntry entry;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -603,6 +775,7 @@ class _EntryTile extends StatelessWidget {
       subtitle: entry.isDirectory ? null : Text(_formatSize(entry.size)),
       trailing: entry.isDirectory ? const Icon(Icons.chevron_right) : null,
       onTap: onTap,
+      onLongPress: onLongPress,
     );
   }
 
