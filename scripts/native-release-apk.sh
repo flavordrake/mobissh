@@ -80,3 +80,7 @@ echo "+ install page (bookmark this, refresh for latest):"
 echo "  ${SERVE_HOST}/native.html"
 echo "+ stable apk:  ${SERVE_HOST}/${STABLE}"
 echo "+ this build:  ${SERVE_HOST}/${STAMPED}"
+
+# ntfy push (best-effort; no-op until ~/.config/mobissh/ntfy.env is set) — one-tap download.
+NTFY_VERSION="$(grep -E '^version:' "${NATIVE_DIR}/pubspec.yaml" | awk '{print $2}' || true)"
+"${REPO_ROOT}/scripts/notify-ntfy.sh" "MobiSSH ${NTFY_VERSION} ready" "${SERVE_HOST}/${STAMPED}" "MobiSSH ${NTFY_VERSION} — tap to download the APK."
