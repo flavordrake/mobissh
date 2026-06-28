@@ -26,6 +26,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'fill_media_viewer.dart';
+
 /// Builds the live render surface for a mermaid [source]. Swapped out in widget
 /// tests (which have no platform WebView) via [mermaidWebViewBuilder] — the
 /// public [MermaidDiagramView] type stays stable so routing assertions hold.
@@ -43,20 +45,83 @@ MermaidWebViewBuilder mermaidWebViewBuilder = _defaultMermaidWebView;
 MermaidWebViewBuilder get defaultMermaidWebViewBuilderForTest =>
     _defaultMermaidWebView;
 
+/// Builds the FULLSCREEN mermaid surface shown inside the tap-to-fill viewer
+/// (#946). Separate seam from the inline surface so tests can stub it without a
+/// platform channel. On device this is a WebView that FILLS the route, where its
+/// built-in pinch-zoom works (it is no longer nested in a scroll view).
+typedef MermaidFillBuilder = Widget Function(String source);
+
+Widget _defaultMermaidFill(String source) =>
+    _MermaidWebView(source: source, fill: true);
+
+/// Seam: production builds a fullscreen WebView; tests override this to a stub.
+MermaidFillBuilder mermaidFillBuilder = _defaultMermaidFill;
+
+/// Test-only handle to the production fill builder.
+@visibleForTesting
+MermaidFillBuilder get defaultMermaidFillBuilderForTest => _defaultMermaidFill;
+
 /// Inline-rendered mermaid diagram. Returned by the markdown viewer's
 /// `MermaidElementBuilder` in place of a ```mermaid code block.
+///
+/// #946: the inline diagram is a PREVIEW — it no longer relies on the WebView's
+/// in-place built-in zoom (unreliable nested in a scroll view, gesture arena).
+/// A transparent tap overlay ABOVE the platform WebView captures the tap and
+/// pushes the shared [FillMediaViewer] with a fullscreen diagram where
+/// pinch/pan/zoom work.
 class MermaidDiagramView extends StatelessWidget {
   const MermaidDiagramView({super.key, required this.source});
 
   /// The raw mermaid source from inside the fenced block (without the fence).
   final String source;
 
+  void _openFill(BuildContext context) {
+    showFillMediaViewer(context, child: mermaidFillBuilder(source));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       key: const Key('mermaid-diagram-view'),
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: mermaidWebViewBuilder(source),
+      child: Stack(
+        alignment: Alignment.bottomRight,
+        children: [
+          mermaidWebViewBuilder(source),
+          // Transparent layer above the WebView so the tap reaches Flutter
+          // (the platform view otherwise consumes pointers).
+          Positioned.fill(
+            child: GestureDetector(
+              key: const Key('mermaid-tap-to-fill'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _openFill(context),
+            ),
+          ),
+          const IgnorePointer(
+            child: Padding(
+              padding: EdgeInsets.all(4),
+              child: _MermaidZoomBadge(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small monochrome "expand" badge hinting tap-to-fill (no emoji).
+class _MermaidZoomBadge extends StatelessWidget {
+  const _MermaidZoomBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: const BoxDecoration(
+        color: Colors.black54,
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(Icons.zoom_out_map, size: 16, color: Colors.white),
     );
   }
 }
@@ -65,9 +130,13 @@ class MermaidDiagramView extends StatelessWidget {
 /// the source after page load, and sizes itself to the diagram's measured
 /// height (posted back over the [_channelName] JS channel).
 class _MermaidWebView extends StatefulWidget {
-  const _MermaidWebView({required this.source});
+  const _MermaidWebView({required this.source, this.fill = false});
 
   final String source;
+
+  /// When true the surface FILLS its parent (the fullscreen fill viewer) instead
+  /// of sizing to the measured diagram height — built-in zoom is the zoom path.
+  final bool fill;
 
   @override
   State<_MermaidWebView> createState() => _MermaidWebViewState();
@@ -125,6 +194,14 @@ class _MermaidWebViewState extends State<_MermaidWebView> {
   Widget build(BuildContext context) {
     if (_error != null) {
       return _MermaidFallback(source: widget.source, error: _error);
+    }
+    if (widget.fill) {
+      // Fullscreen fill viewer: occupy the whole route so the WebView's built-in
+      // pinch-zoom is the zoom path (no scroll-vs-zoom contention).
+      return SizedBox.expand(
+        key: const Key('mermaid-webview-surface-fill'),
+        child: WebViewWidget(controller: _controller),
+      );
     }
     return SizedBox(
       key: const Key('mermaid-webview-surface'),
