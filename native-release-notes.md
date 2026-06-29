@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+79 (2026-06-29) — upload files over SFTP (large files, resumable)
+- **Upload a file to the server.** The file browser has an upload button (top bar) — pick a local file and it uploads into the folder you're viewing, with a progress bar. (#960)
+- **Built for big files.** The upload streams in chunks (it never loads the whole file into memory) and writes to a temporary `.part` first, then swaps it into place when complete — so an interrupted upload never leaves a corrupt file.
+- **Resumes interrupted uploads.** If an upload is cut off (e.g. the connection drops), uploading the same file again continues from where it left off instead of starting over.
+
 ## v0.1.10+78 (2026-06-29) — favorites star on each session in the menu
 - **Open a session's favorites straight from the session menu.** Any session whose profile has marked favorites now shows a ★ on its row in the session menu; tap it to see that profile's favorites and jump straight to one (it opens the file browser there). Sessions without favorites don't show the star. (#950)
 

@@ -14,6 +14,7 @@
 
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -34,6 +35,23 @@ import 'top_toast.dart';
 /// avoid touching the real filesystem; production uses the app Downloads dir.
 final downloadSinkFactoryProvider = Provider<DownloadSinkFactory>(
   (ref) => defaultDownloadSinkFactory,
+);
+
+/// Picks a single LOCAL file to upload (#960). Returns its on-device path +
+/// display name, or null when the user cancels. The task isolate reads the path
+/// and streams it chunk-by-chunk, so we ask for the path only (withData:false) —
+/// large files never load into memory. Injected via [fileUploadPickerProvider]
+/// so widget tests stub the choice without the platform file-picker channel.
+typedef FileUploadPicker = Future<({String path, String name})?> Function();
+
+Future<({String path, String name})?> _defaultFileUploadPicker() async {
+  final file = await openFile();
+  if (file == null) return null;
+  return (path: file.path, name: file.name);
+}
+
+final fileUploadPickerProvider = Provider<FileUploadPicker>(
+  (ref) => _defaultFileUploadPicker,
 );
 
 /// `.pdf` tap interceptor (#557). When non-null, tapping a PDF file invokes
@@ -196,6 +214,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   FileDownloadSink? _downloadSink;
   String? _downloadName;
 
+  /// In-flight chunked upload (#960), null when idle. One at a time. The bytes
+  /// are streamed task-side; the UI only tracks progress by request id.
+  String? _uploadRequestId;
+  String? _uploadName;
+  int _uploadSent = 0;
+  int _uploadTotal = 0;
+
   /// Serializes sink writes so a `done` event flushes only after every chunk
   /// write has completed. Chunks can arrive reordered over the gateway (#591);
   /// the sink writes each at its byte offset so order doesn't affect the bytes,
@@ -288,11 +313,37 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       case SftpDownloadDoneEvent():
         if (event.requestId != _downloadRequestId) return;
         unawaited(_onDownloadDone(event));
+      case SftpUploadProgressEvent():
+        if (event.requestId != _uploadRequestId) return;
+        if (!mounted) return;
+        setState(() {
+          _uploadSent = event.sent;
+          _uploadTotal = event.totalBytes;
+        });
+      case SftpUploadDoneEvent():
+        // Our upload (matched by id); the editor writer's uploads use other ids.
+        if (event.requestId != _uploadRequestId) return;
+        _onUploadDone();
       case SftpErrorEvent():
         _onSftpError(event);
       default:
         break;
     }
+  }
+
+  void _onUploadDone() {
+    final name = _uploadName ?? 'file';
+    if (mounted) {
+      setState(() {
+        _uploadRequestId = null;
+        _uploadName = null;
+        _uploadSent = 0;
+        _uploadTotal = 0;
+      });
+    }
+    _snack('Uploaded $name');
+    // Refresh the current listing so the freshly-uploaded file appears.
+    _list(_path);
   }
 
   void _onChunk(SftpDownloadChunkEvent event) {
@@ -368,7 +419,49 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         _downloadName = null;
       });
       _snack('Download failed: ${event.message}');
+      return;
     }
+    if (event.requestId == _uploadRequestId) {
+      // The remote `.part` is left in place so a retry RESUMES (#960) rather
+      // than restarting from zero.
+      if (!mounted) return;
+      setState(() {
+        _uploadRequestId = null;
+        _uploadName = null;
+        _uploadSent = 0;
+        _uploadTotal = 0;
+      });
+      _snack('Upload failed: ${event.message}');
+    }
+  }
+
+  /// Pick a local file and upload it INTO the current directory (#960). Streams
+  /// task-side (large-file safe) to `<name>.part` then atomic-renames; a retry
+  /// after an interruption resumes from the `.part`.
+  Future<void> _pickAndUpload() async {
+    if (_uploadRequestId != null) {
+      _snack('An upload is already in progress');
+      return;
+    }
+    final proxy = _proxy;
+    if (proxy == null) return;
+    final picked = await ref.read(fileUploadPickerProvider)();
+    if (picked == null || !mounted) return;
+    final dir = _path;
+    final remotePath =
+        dir.endsWith('/') ? '$dir${picked.name}' : '$dir/${picked.name}';
+    final reqId = _nextRequestId();
+    setState(() {
+      _uploadRequestId = reqId;
+      _uploadName = picked.name;
+      _uploadSent = 0;
+      _uploadTotal = 0;
+    });
+    proxy.sftpUploadFile(
+      requestId: reqId,
+      localPath: picked.path,
+      remotePath: remotePath,
+    );
   }
 
   void _snack(String message) {
@@ -560,6 +653,14 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
           ],
         ),
         actions: [
+          // Upload a local file INTO the current directory (#960). Disabled
+          // while an upload is in flight (one at a time). Monochrome glyph.
+          IconButton(
+            key: const Key('file-browser-upload'),
+            tooltip: 'Upload a file here',
+            icon: const Icon(Icons.upload_file),
+            onPressed: _uploadRequestId != null ? null : _pickAndUpload,
+          ),
           // Favorites star (#632): TAP toggles favoriting the current path for
           // this profile; LONG-PRESS opens the unified favorites menu. Built on
           // a single InkResponse so both gestures are owned by ONE recognizer
@@ -608,6 +709,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
               name: _downloadName ?? '',
               received: _downloadReceived,
               total: _downloadTotal,
+            ),
+          if (_uploadRequestId != null)
+            _UploadProgress(
+              key: const Key('file-browser-upload-progress'),
+              name: _uploadName ?? '',
+              sent: _uploadSent,
+              total: _uploadTotal,
             ),
           Expanded(child: _buildBody()),
         ],
@@ -754,6 +862,42 @@ class _DownloadProgress extends StatelessWidget {
         children: [
           Text(
             'Downloading $name…',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
+          LinearProgressIndicator(value: value),
+        ],
+      ),
+    );
+  }
+}
+
+/// Determinate upload progress (#960), mirroring [_DownloadProgress]. [total] is
+/// the local file size (0 before the first progress event → indeterminate bar);
+/// [sent] starts at the resume offset when resuming a `.part`.
+class _UploadProgress extends StatelessWidget {
+  const _UploadProgress({
+    super.key,
+    required this.name,
+    required this.sent,
+    required this.total,
+  });
+
+  final String name;
+  final int sent;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = total > 0 ? (sent / total).clamp(0.0, 1.0) : null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Uploading $name…',
+            key: const Key('file-browser-upload-label'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 4),

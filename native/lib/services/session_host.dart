@@ -326,6 +326,8 @@ class SessionHost {
         _handleSftpDownload(cmd);
       case SftpUploadCommand():
         _handleSftpUpload(cmd);
+      case SftpUploadFileCommand():
+        _handleSftpUploadFile(cmd);
       case SshControlCommand():
         _handleControlCommand(cmd);
       case SshTmuxGestureCommand():
@@ -1270,6 +1272,42 @@ class SessionHost {
       );
     } catch (e) {
       ctrace('task.host', 'sftp upload FAILED path=${cmd.path} — $e');
+      _emitSftpError(cmd.sessionId, cmd.requestId, 'Upload failed: $e');
+    }
+  }
+
+  Future<void> _handleSftpUploadFile(SftpUploadFileCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      final written = await sftp.uploadFile(
+        cmd.localPath,
+        cmd.remotePath,
+        onProgress: (sent, total) {
+          if (_disposed) return;
+          _gateway.send(
+            SftpUploadProgressEvent(
+              sessionId: cmd.sessionId,
+              requestId: cmd.requestId,
+              sent: sent,
+              totalBytes: total,
+            ).toJson(),
+          );
+        },
+      );
+      if (_disposed) return;
+      _gateway.send(
+        SftpUploadDoneEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          totalBytes: written,
+        ).toJson(),
+      );
+    } catch (e) {
+      ctrace('task.host', 'sftp uploadFile FAILED remote=${cmd.remotePath} — $e');
       _emitSftpError(cmd.sessionId, cmd.requestId, 'Upload failed: $e');
     }
   }

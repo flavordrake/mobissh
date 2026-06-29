@@ -123,6 +123,13 @@ dependencies:
   # flutter_markdown_plus; declared directly for depend_on_referenced_packages.
   markdown: ^7.3.1
 
+  # Pick a local file to UPLOAD over SFTP (#960). file_selector (official,
+  # flutter.dev) over file_picker: file_picker 8.x/11.x fought the toolchain
+  # (AAR compileSdk clash, then a Kotlin-plugin symbol the Java registrant
+  # couldn't resolve). openFile() returns an XFile PATH that the task isolate
+  # reads + streams chunk-by-chunk — large files never load into memory.
+  file_selector: ^1.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

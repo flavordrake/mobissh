@@ -342,6 +342,26 @@ class SshSessionProxy {
     );
   }
 
+  /// Request a chunked, RESUMABLE upload of the LOCAL file at [localPath] to
+  /// [remotePath] (#960). The task streams the file to a `.part` temp + atomic
+  /// rename, resuming from any existing `.part`. [SftpUploadProgressEvent]s and
+  /// the terminal [SftpUploadDoneEvent] (or [SftpErrorEvent]) arrive on
+  /// [sftpEvents] keyed by [requestId]. Large files never cross the IPC.
+  void sftpUploadFile({
+    required String requestId,
+    required String localPath,
+    required String remotePath,
+  }) {
+    gateway.send(
+      SftpUploadFileCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        localPath: localPath,
+        remotePath: remotePath,
+      ).toJson(),
+    );
+  }
+
   /// Send a PTY resize to the remote.
   ///
   /// #848 — NO-OP GUARD: a resize whose (cols, rows) are IDENTICAL to the last
@@ -474,9 +494,10 @@ class SshSessionProxy {
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():
       case SftpUploadDoneEvent():
+      case SftpUploadProgressEvent():
       case SftpErrorEvent():
-        // SFTP results (#559/#892) — forward to the file browser / writer seam,
-        // which match by request id. They never touch the SSH lifecycle state.
+        // SFTP results (#559/#892/#960) — forward to the file browser / writer
+        // seam, which match by request id. They never touch the SSH lifecycle.
         if (!_sftpCtrl.isClosed) _sftpCtrl.add(event);
     }
   }
