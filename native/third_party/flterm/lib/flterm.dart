@@ -53,6 +53,11 @@ export 'src/foundation/terminal_theme.dart'
         HyperlinkTheme,
         SelectionTheme,
         TerminalTheme;
+// #918: expose the render box so the host widget can force a full repaint
+// (`forceRepaint()`) after dispatching user input — the input-driven half of the
+// force-repaint robustness layer.
+export 'src/rendering/terminal_renderer.dart'
+    show TerminalRenderBox, TerminalRenderer;
 export 'src/widgets/terminal_controller.dart' show TerminalController;
 export 'src/widgets/terminal_scope.dart' show TerminalScope;
 export 'src/widgets/terminal_scroll_controller.dart'

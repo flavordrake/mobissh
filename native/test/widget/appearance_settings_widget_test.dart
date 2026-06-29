@@ -45,7 +45,6 @@ void main() {
       );
       await _pumpFrames(tester);
 
-      await tester.tap(find.byKey(const ValueKey('settings-section')));
       await _pumpFrames(tester, count: 12);
 
       final slider = find.byKey(const ValueKey('font-size-slider'));
@@ -70,7 +69,6 @@ void main() {
       );
       await _pumpFrames(tester);
 
-      await tester.tap(find.byKey(const ValueKey('settings-section')));
       await _pumpFrames(tester, count: 12);
 
       final widget = tester.widget<Slider>(
@@ -95,7 +93,6 @@ void main() {
       );
       await _pumpFrames(tester);
 
-      await tester.tap(find.byKey(const ValueKey('settings-section')));
       await _pumpFrames(tester, count: 12);
 
       // Drag the slider thumb to the far right (max).

@@ -193,6 +193,43 @@ class TerminalFrameBuilder {
   /// other one.
   var debugRowsRebuiltLastSync = 0;
 
+  /// #922 TELEMETRY (capture only — no behaviour change): the smoking-gun facts
+  /// the LAST [sync] observed, for the render box's `onFrameDebug` seam to emit.
+  /// [debugLastSyncDirtyName] is the `DirtyState` libghostty's `update` reported
+  /// (`clean` when terminalDirty was false or the damage was already consumed by
+  /// a prior handle — the stale-switch tell); [debugLastSyncHadDirtyRows] is the
+  /// flterm-side `markAllRowsDirty`/selection/highlight dirt that was carried in;
+  /// [debugLastSyncDamageUnsettled] is the #922 carry-forward flag AT ENTRY (true
+  /// means a prior `update` reported damage that no painting build has settled
+  /// yet). Read together with [debugRowsRebuiltLastSync] they show whether a
+  /// content sync re-read the grid or skipped it.
+  String debugLastSyncDirtyName = DirtyState.clean.name;
+  var debugLastSyncHadDirtyRows = false;
+  var debugLastSyncDamageUnsettled = false;
+
+  /// #922: STRUCTURAL cure for the single-consumption damage saga
+  /// (#887/#898/#900/#918/#921/#931). libghostty's [RenderState.update] CONSUMES
+  /// (clears) the terminal's per-row damage as it reads it (render_state.dart:165).
+  /// When DETECTION is active the controller drives an EXTRA content notify per
+  /// output change, so THIS builder's single handle gets `sync(terminalDirty:true)`
+  /// TWICE for one logical change. The FIRST `update` consumes the per-row damage;
+  /// the SECOND reads CLEAN and the partial build re-emits 0 rows — so the
+  /// painting sync (which may be that second, damage-clean one) leaves the grid
+  /// stale (the tmux window-switch "old content stays on screen").
+  ///
+  /// The cure makes the PAINT handle the AUTHORITATIVE consumer without editing
+  /// libghostty (it is not vendored — pub cache) and without a fragile UI-flag
+  /// gate: when an `update` reports damage, the builder remembers it
+  /// ([_damageUnsettled]) until a FOLLOWING sync that reads CLEAN re-reads the
+  /// full visible grid and settles it. So however many redundant damage-consuming
+  /// syncs detection injects, the next clean sync repaints the live cells — a
+  /// second `update` consumer can no longer starve the paint handle (the #922
+  /// acceptance). Bounded to the visible grid, and it adds NO extra work when
+  /// detection is OFF: a single sync per change consumes the damage in the sync
+  /// that builds it, and the next change's `update` is non-clean anyway, so the
+  /// flag never forces a full re-read on the #805 streaming-output path.
+  var _damageUnsettled = false;
+
   TerminalFrameBuilder(this._atlas, this._sprites, this._state)
     : _content = CellContentResolver(_atlas),
       _renderState = RenderState(),
@@ -242,6 +279,9 @@ class TerminalFrameBuilder {
     String preeditText = '',
   }) {
     debugRowsRebuiltLastSync = 0;
+    // #922 telemetry: snapshot the carry-forward flag AT ENTRY (before this sync
+    // mutates it) so the emitted line reflects what THIS sync saw.
+    debugLastSyncDamageUnsettled = _damageUnsettled;
     var dirty = DirtyState.clean;
 
     if (terminalDirty) {
@@ -276,10 +316,30 @@ class TerminalFrameBuilder {
     _state.preeditActive = _rowBuilder.hasPreedit;
 
     final hasDirtyRows = _dirtyRows.anyDirty;
+    // #922 telemetry: record what update reported + the flterm-side dirt carried
+    // into this sync, so the render box's onFrameDebug can show the stale moment.
+    debugLastSyncDirtyName = dirty.name;
+    debugLastSyncHadDirtyRows = hasDirtyRows;
     if (terminalDirty) {
-      if (dirty != .clean || hasDirtyRows) {
-        _build(dirty == .clean ? .partial : dirty);
+      // #922: an `update` that reports damage marks the content UNSETTLED until a
+      // build that reaches paint clears it. A redundant detection-driven sync
+      // consumes the per-row damage so a LATER painting sync reads CLEAN; without
+      // this carry-forward that sync's partial build re-emits 0 rows and the grid
+      // stays stale. When it reads CLEAN while damage is still unsettled, force a
+      // FULL visible-grid re-read so the painting sync re-reads the live cells —
+      // the paint handle is the authoritative consumer regardless of how many
+      // extra consuming syncs detection injects.
+      if (dirty != .clean) _damageUnsettled = true;
+      final cleanButUnsettled = dirty == .clean && _damageUnsettled;
+      if (dirty != .clean || hasDirtyRows || cleanButUnsettled) {
+        _build(cleanButUnsettled ? .full : (dirty == .clean ? .partial : dirty));
         _renderState.dirty = .clean;
+        // The full re-read off a clean-but-unsettled sync IS the authoritative
+        // repaint of the live cells — it settles the epoch. A partial build off
+        // freshly-consumed damage is NOT guaranteed to be the frame that paints
+        // (a redundant detection sync may have consumed it), so it must NOT
+        // settle: a following clean sync still owes the full re-read.
+        if (cleanButUnsettled) _damageUnsettled = false;
       }
     } else if (hasDirtyRows) {
       _build(.partial);

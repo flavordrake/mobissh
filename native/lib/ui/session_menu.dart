@@ -26,10 +26,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../main.dart' show openConnectHome;
 import '../ssh/ssh_session.dart';
+import '../state/favorites_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart' show ProfilesStore;
+import 'favorites_menu_sheet.dart';
 import 'file_browser_screen.dart';
 import 'session_state_dot.dart';
 
@@ -739,6 +741,53 @@ class _SessionRow extends ConsumerWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // #950: favorites star — shown ONLY when THIS session's profile has
+          // marked favorites. Tap opens the profile-scoped favorites sheet;
+          // tapping a favorite closes the menu and opens the file browser there.
+          if (ref
+                  .watch(profileFavoritesProvider(entry.profileKey))
+                  .valueOrNull
+                  ?.isNotEmpty ??
+              false)
+            IconButton(
+              key: Key('session-menu-favorites-${entry.id}'),
+              tooltip: 'Favorites',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.star),
+              onPressed: () {
+                final sessionId = entry.id;
+                final profileKey = entry.profileKey;
+                final navigator = Navigator.of(context);
+                final store = ref.read(favoritesStoreProvider);
+                // The container (not `ref`) survives the row unmounting when the
+                // menu closes below — onChanged fires while the sheet is open.
+                final container = ProviderScope.containerOf(
+                  context,
+                  listen: false,
+                );
+                // Close the session-menu overlay FIRST: it sits ABOVE routes, so
+                // a modal sheet opened under it can't be tapped (its barrier
+                // absorbs the pointers). Mirrors the Files button. Then show the
+                // sheet on the root navigator's (stable) context.
+                onClose();
+                showFavoritesMenu(
+                  navigator.context,
+                  store: store,
+                  profileKey: profileKey,
+                  onNavigate: (path) {
+                    unawaited(
+                      openFileBrowser(
+                        navigator.context,
+                        sessionId,
+                        initialPath: path,
+                      ),
+                    );
+                  },
+                  onChanged: () =>
+                      container.invalidate(profileFavoritesProvider(profileKey)),
+                );
+              },
+            ),
           IconButton(
             key: Key('session-menu-files-${entry.id}'),
             tooltip: 'Files',

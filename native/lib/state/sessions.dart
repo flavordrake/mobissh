@@ -104,6 +104,28 @@ class SessionsState {
     return null;
   }
 
+  /// The front-most session ENTRY — the one the user is looking at. Resolves
+  /// [active] first; falls back to the first entry when [activeId] is null or
+  /// references an entry that no longer exists. Unlike [active] this returns a
+  /// tab whenever ANY exists, regardless of connection state, so callers can
+  /// always recover the front-most session's id + HOST during a disconnect /
+  /// transition (#936). Null only when the collection is empty.
+  SessionEntry? get frontEntry {
+    final a = active;
+    if (a != null) return a;
+    return entries.isEmpty ? null : entries.first;
+  }
+
+  /// Front-most session id (null only when the collection is empty). Used to
+  /// propagate active-session state to the task isolate even while the
+  /// front-most session is disconnected/transitioning (#936).
+  String? get frontActiveId => frontEntry?.id;
+
+  /// Front-most session HOST (null only when the collection is empty). Always
+  /// derivable from the front-most entry regardless of connection state — a
+  /// disconnect never clears [SessionEntry.host] (#936).
+  String? get frontActiveHost => frontEntry?.host;
+
   bool get isEmpty => entries.isEmpty;
   int get length => entries.length;
 
@@ -291,6 +313,34 @@ class SessionsNotifier extends Notifier<SessionsState> {
     if (e == null) return;
     unawaited(ref.read(keepaliveServiceStarterProvider)());
     unawaited(_reviveFromProfile(e));
+  }
+
+  /// #916: reconnect every LIVE session so it re-enters with the current
+  /// `tmuxControlMode` bit. The control-mode flag is read ONCE at connect time
+  /// (carried across the gateway as `SshConnectCommand.controlMode`) — so
+  /// flipping the Settings toggle on an ACTIVE session does NOTHING until a
+  /// reconnect (the owner's "hadn't reconnected after control mode on": the live
+  /// scrape session stayed scrape while control-mode gestures fired into the
+  /// void). Calling this from the toggle gives a CLEAN reconnect so the mode
+  /// actually engages. Each reconnect reuses the full revive path
+  /// (`_reviveFromProfile`), which re-resolves creds + re-issues `connect` on the
+  /// same proxy — the task host tears down the old shell and re-opens it under
+  /// the new mode. Only sessions in a `connected` state are touched (a dropped
+  /// session will pick up the new mode on its own next reconnect); returns the
+  /// number of sessions reconnected so the caller can surface a hint. A no-op
+  /// (returns 0) when nothing is connected — the change just applies on next
+  /// connect, exactly as before.
+  int reconnectForControlModeChange() {
+    var count = 0;
+    // Snapshot the entries first: a reconnect mutates proxy state mid-iteration.
+    for (final e in List<SessionEntry>.of(state.entries)) {
+      if (e.proxy.data.state == SshSessionState.connected) {
+        unawaited(ref.read(keepaliveServiceStarterProvider)());
+        unawaited(_reviveFromProfile(e));
+        count += 1;
+      }
+    }
+    return count;
   }
 
   /// Re-resolve [entry]'s credentials from its saved profile and re-issue a full

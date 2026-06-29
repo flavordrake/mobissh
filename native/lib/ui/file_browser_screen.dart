@@ -14,15 +14,22 @@
 
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/clipboard.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_download.dart';
 import '../ssh/ssh_session_proxy.dart';
+import '../state/favorites_providers.dart';
+import '../state/files_sort_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import '../storage/favorites_store.dart';
+import '../util/relative_time.dart';
+import 'favorites_menu_sheet.dart';
 import 'file_viewer_registry.dart';
 import 'pdf_viewer_screen.dart';
 import 'top_toast.dart';
@@ -31,6 +38,23 @@ import 'top_toast.dart';
 /// avoid touching the real filesystem; production uses the app Downloads dir.
 final downloadSinkFactoryProvider = Provider<DownloadSinkFactory>(
   (ref) => defaultDownloadSinkFactory,
+);
+
+/// Picks a single LOCAL file to upload (#960). Returns its on-device path +
+/// display name, or null when the user cancels. The task isolate reads the path
+/// and streams it chunk-by-chunk, so we ask for the path only (withData:false) —
+/// large files never load into memory. Injected via [fileUploadPickerProvider]
+/// so widget tests stub the choice without the platform file-picker channel.
+typedef FileUploadPicker = Future<({String path, String name})?> Function();
+
+Future<({String path, String name})?> _defaultFileUploadPicker() async {
+  final file = await openFile();
+  if (file == null) return null;
+  return (path: file.path, name: file.name);
+}
+
+final fileUploadPickerProvider = Provider<FileUploadPicker>(
+  (ref) => _defaultFileUploadPicker,
 );
 
 /// `.pdf` tap interceptor (#557). When non-null, tapping a PDF file invokes
@@ -172,6 +196,15 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   bool _loading = true;
   String? _error;
 
+  /// Profile identity (`host:port:username`) this browser's session belongs to.
+  /// Favorites are keyed by this (#632) — a profile's sessions share one set.
+  /// Null only when the session has gone away.
+  String? _profileKey;
+
+  /// Normalized paths currently favorited for [_profileKey]. Drives the app-bar
+  /// star's filled/outline state; refreshed after every favorites mutation.
+  Set<String> _favoritePaths = const {};
+
   /// Monotonic counter → request id, so a late listing for a directory we've
   /// already navigated away from is dropped.
   int _seq = 0;
@@ -183,6 +216,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   int? _downloadTotal;
   FileDownloadSink? _downloadSink;
   String? _downloadName;
+
+  /// In-flight chunked upload (#960), null when idle. One at a time. The bytes
+  /// are streamed task-side; the UI only tracks progress by request id.
+  String? _uploadRequestId;
+  String? _uploadName;
+  int _uploadSent = 0;
+  int _uploadTotal = 0;
 
   /// Serializes sink writes so a `done` event flushes only after every chunk
   /// write has completed. Chunks can arrive reordered over the gateway (#591);
@@ -212,9 +252,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     for (final e in entries) {
       if (e.id == widget.sessionId) {
         proxy = e.proxy;
+        _profileKey = e.profileKey;
         break;
       }
     }
+    // Load this profile's favorites so the star renders correctly on first
+    // build (#632). Fire-and-forget: setState lands when it resolves.
+    unawaited(_refreshFavorites());
     if (proxy == null) {
       // No setState here — didChangeDependencies runs before build, so just
       // set the fields and let the imminent build render the error.
@@ -272,11 +316,37 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       case SftpDownloadDoneEvent():
         if (event.requestId != _downloadRequestId) return;
         unawaited(_onDownloadDone(event));
+      case SftpUploadProgressEvent():
+        if (event.requestId != _uploadRequestId) return;
+        if (!mounted) return;
+        setState(() {
+          _uploadSent = event.sent;
+          _uploadTotal = event.totalBytes;
+        });
+      case SftpUploadDoneEvent():
+        // Our upload (matched by id); the editor writer's uploads use other ids.
+        if (event.requestId != _uploadRequestId) return;
+        _onUploadDone();
       case SftpErrorEvent():
         _onSftpError(event);
       default:
         break;
     }
+  }
+
+  void _onUploadDone() {
+    final name = _uploadName ?? 'file';
+    if (mounted) {
+      setState(() {
+        _uploadRequestId = null;
+        _uploadName = null;
+        _uploadSent = 0;
+        _uploadTotal = 0;
+      });
+    }
+    _snack('Uploaded $name');
+    // Refresh the current listing so the freshly-uploaded file appears.
+    _list(_path);
   }
 
   void _onChunk(SftpDownloadChunkEvent event) {
@@ -352,7 +422,49 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         _downloadName = null;
       });
       _snack('Download failed: ${event.message}');
+      return;
     }
+    if (event.requestId == _uploadRequestId) {
+      // The remote `.part` is left in place so a retry RESUMES (#960) rather
+      // than restarting from zero.
+      if (!mounted) return;
+      setState(() {
+        _uploadRequestId = null;
+        _uploadName = null;
+        _uploadSent = 0;
+        _uploadTotal = 0;
+      });
+      _snack('Upload failed: ${event.message}');
+    }
+  }
+
+  /// Pick a local file and upload it INTO the current directory (#960). Streams
+  /// task-side (large-file safe) to `<name>.part` then atomic-renames; a retry
+  /// after an interruption resumes from the `.part`.
+  Future<void> _pickAndUpload() async {
+    if (_uploadRequestId != null) {
+      _snack('An upload is already in progress');
+      return;
+    }
+    final proxy = _proxy;
+    if (proxy == null) return;
+    final picked = await ref.read(fileUploadPickerProvider)();
+    if (picked == null || !mounted) return;
+    final dir = _path;
+    final remotePath =
+        dir.endsWith('/') ? '$dir${picked.name}' : '$dir/${picked.name}';
+    final reqId = _nextRequestId();
+    setState(() {
+      _uploadRequestId = reqId;
+      _uploadName = picked.name;
+      _uploadSent = 0;
+      _uploadTotal = 0;
+    });
+    proxy.sftpUploadFile(
+      requestId: reqId,
+      localPath: picked.path,
+      remotePath: remotePath,
+    );
   }
 
   void _snack(String message) {
@@ -435,9 +547,221 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     dismissFileBrowserStack(context);
   }
 
+  // --- Favorites (#632) -----------------------------------------------------
+
+  FavoritesStore get _favStore => ref.read(favoritesStoreProvider);
+
+  /// Re-read the profile's favorites into [_favoritePaths] so the star + menu
+  /// reflect the persisted set. No-op without a profile identity.
+  Future<void> _refreshFavorites() async {
+    final key = _profileKey;
+    if (key == null) return;
+    final favs = await _favStore.favoritesFor(key);
+    if (!mounted) return;
+    setState(() {
+      _favoritePaths = favs.map((f) => f.path).toSet();
+    });
+    // shared_preferences isn't reactive: nudge the session-menu favorites star
+    // (and any other watcher) so it reflects this add/remove/clear (#950).
+    ref.invalidate(profileFavoritesProvider(key));
+  }
+
+  bool get _currentFavorited => _favoritePaths.contains(normalizePath(_path));
+
+  /// Star TAP: toggle whether the CURRENT directory is favorited for this
+  /// profile. Filled star = favorited; outline = not (#632 bullet 1).
+  Future<void> _toggleStar() async {
+    final key = _profileKey;
+    if (key == null) return;
+    final pathAtTap = _path;
+    final nowFavorited = await _favStore.toggle(key, pathAtTap);
+    await _refreshFavorites();
+    if (!mounted) return;
+    _snack(
+      nowFavorited
+          ? 'Favorited $pathAtTap'
+          : 'Removed favorite $pathAtTap',
+    );
+  }
+
+  /// Navigate the files view to a favorited [path] — drives the SAME `_list`
+  /// sink that `widget.initialPath` feeds on open (the deepLink seam #570/#572
+  /// use). The favorites menu is dismissed by the caller before this runs.
+  void _navigateToFavorite(String path) => _list(path);
+
+  /// Unified favorites menu (#632 bullets 2–5): surfaced from BOTH a long-press
+  /// on the app-bar star AND a long-press on any file/folder entry. Tapping a
+  /// favorite instantly navigates there; long-pressing a favorite removes it;
+  /// "Clear all" empties the profile's set.
+  Future<void> _openFavoritesMenu() async {
+    final key = _profileKey;
+    if (key == null) return;
+    // #950: the menu is now the shared profile-scoped sheet. In the browser a
+    // tapped favorite navigates IN PLACE; onChanged keeps the app-bar star + the
+    // session-menu star provider in sync.
+    await showFavoritesMenu(
+      context,
+      store: _favStore,
+      profileKey: key,
+      onNavigate: _navigateToFavorite,
+      onChanged: _refreshFavorites,
+    );
+  }
+
+  // --- Per-entry context menu (#952) ----------------------------------------
+
+  /// Long-press a file/folder entry → a context menu (#952). REPLACES the old
+  /// long-press→favorites-menu (#632); favoriting this specific entry is now one
+  /// item here. The favorites MENU itself stays reachable via the app-bar star
+  /// (and the session star). Items: copy full path, copy name, show details,
+  /// download (files only), add to favorites.
+  Future<void> _openEntryContextMenu(SftpEntry entry) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              key: const Key('file-entry-context-menu'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: Icon(
+                    entry.isDirectory
+                        ? Icons.folder
+                        : (entry.isSymlink
+                              ? Icons.link
+                              : Icons.insert_drive_file_outlined),
+                  ),
+                  title: Text(entry.name, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(entry.path, overflow: TextOverflow.ellipsis),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const Key('file-context-copy-path'),
+                  leading: const Icon(Icons.content_copy),
+                  title: const Text('Copy full path'),
+                  onTap: () async {
+                    Navigator.of(sheetCtx).pop();
+                    final ok = await copyToClipboard(entry.path);
+                    if (ok) _snack('Copied path');
+                  },
+                ),
+                ListTile(
+                  key: const Key('file-context-copy-name'),
+                  leading: const Icon(Icons.drive_file_rename_outline),
+                  title: const Text('Copy name'),
+                  onTap: () async {
+                    Navigator.of(sheetCtx).pop();
+                    final ok = await copyToClipboard(entry.name);
+                    if (ok) _snack('Copied name');
+                  },
+                ),
+                ListTile(
+                  key: const Key('file-context-details'),
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text('Show details'),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    unawaited(_showEntryDetails(entry));
+                  },
+                ),
+                if (!entry.isDirectory)
+                  ListTile(
+                    key: const Key('file-context-download'),
+                    leading: const Icon(Icons.download),
+                    title: const Text('Download'),
+                    onTap: () {
+                      Navigator.of(sheetCtx).pop();
+                      unawaited(_startDownload(entry));
+                    },
+                  ),
+                ListTile(
+                  key: const Key('file-context-favorite'),
+                  leading: const Icon(Icons.star_border),
+                  title: const Text('Add to favorites'),
+                  onTap: () async {
+                    Navigator.of(sheetCtx).pop();
+                    await _addEntryFavorite(entry);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Favorite this specific entry's path for the profile (#952) — the per-entry
+  /// favorite that long-press used to reach via the favorites menu.
+  Future<void> _addEntryFavorite(SftpEntry entry) async {
+    final key = _profileKey;
+    if (key == null) return;
+    await _favStore.add(key, entry.path);
+    await _refreshFavorites();
+    if (!mounted) return;
+    _snack('Favorited ${entry.path}');
+  }
+
+  /// Details sheet (#952): name, full path, size, modification time (absolute +
+  /// relative), and type.
+  Future<void> _showEntryDetails(SftpEntry entry) async {
+    final rel = formatRelative(entry.modifyTime);
+    final mtime = entry.modifyTime;
+    final String modifiedText;
+    if (mtime == null || mtime <= 0) {
+      modifiedText = '—';
+    } else {
+      final abs = DateTime.fromMillisecondsSinceEpoch(mtime * 1000).toString();
+      modifiedText = rel.isEmpty ? abs : '$abs ($rel)';
+    }
+    final sizeText = entry.size == null ? '—' : formatSize(entry.size);
+    final typeText = entry.isDirectory
+        ? 'Directory'
+        : (entry.isSymlink ? 'Symlink' : 'File');
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              key: const Key('file-details-sheet'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: Icon(
+                    entry.isDirectory
+                        ? Icons.folder
+                        : (entry.isSymlink
+                              ? Icons.link
+                              : Icons.insert_drive_file_outlined),
+                  ),
+                  title: Text(entry.name, overflow: TextOverflow.ellipsis),
+                ),
+                const Divider(height: 1),
+                _DetailRow(label: 'Path', value: entry.path),
+                _DetailRow(label: 'Size', value: sizeText),
+                _DetailRow(label: 'Modified', value: modifiedText),
+                _DetailRow(label: 'Type', value: typeText),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final downloading = _downloadRequestId != null;
+    // #951: per-profile sort preference. Sorting is UI-side (see [sortEntries]
+    // below) so changing it re-renders without an SFTP refetch. An ad-hoc
+    // session with no profile identity falls back to the default (not persisted).
+    final profileKey = _profileKey;
+    final sortPref = profileKey != null
+        ? ref.watch(filesSortProvider(profileKey))
+        : filesSortDefault;
     // #740: resolve which server this browser is for so the header names it and
     // the swatch matches the session bar (#653). The browser already knows its
     // [widget.sessionId]; reuse the same label + color sources as terminal_screen.
@@ -483,6 +807,105 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
           ],
         ),
         actions: [
+          // Sort menu (#951): radio-style key (Name/Modified/Size/Type) + a
+          // direction toggle. Per-profile, persisted. Disabled (no profile) for
+          // an ad-hoc session. Monochrome glyph.
+          PopupMenuButton<String>(
+            key: const Key('file-browser-sort-button'),
+            icon: const Icon(Icons.sort),
+            tooltip: 'Sort',
+            enabled: profileKey != null,
+            onSelected: (value) {
+              if (profileKey == null) return;
+              final notifier = ref.read(filesSortProvider(profileKey).notifier);
+              switch (value) {
+                case 'name':
+                  notifier.setKey(FilesSortKey.name);
+                case 'modified':
+                  notifier.setKey(FilesSortKey.modified);
+                case 'size':
+                  notifier.setKey(FilesSortKey.size);
+                case 'type':
+                  notifier.setKey(FilesSortKey.type);
+                case 'dir':
+                  notifier.toggleDirection();
+              }
+            },
+            itemBuilder: (context) => [
+              CheckedPopupMenuItem<String>(
+                key: const Key('sort-key-name'),
+                value: 'name',
+                checked: sortPref.key == FilesSortKey.name,
+                child: const Text('Name'),
+              ),
+              CheckedPopupMenuItem<String>(
+                key: const Key('sort-key-modified'),
+                value: 'modified',
+                checked: sortPref.key == FilesSortKey.modified,
+                child: const Text('Modified'),
+              ),
+              CheckedPopupMenuItem<String>(
+                key: const Key('sort-key-size'),
+                value: 'size',
+                checked: sortPref.key == FilesSortKey.size,
+                child: const Text('Size'),
+              ),
+              CheckedPopupMenuItem<String>(
+                key: const Key('sort-key-type'),
+                value: 'type',
+                checked: sortPref.key == FilesSortKey.type,
+                child: const Text('Type'),
+              ),
+              const PopupMenuDivider(),
+              PopupMenuItem<String>(
+                key: const Key('sort-dir-toggle'),
+                value: 'dir',
+                child: Row(
+                  children: [
+                    Icon(
+                      sortPref.ascending
+                          ? Icons.arrow_upward
+                          : Icons.arrow_downward,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(sortPref.ascending ? 'Ascending' : 'Descending'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          // Upload a local file INTO the current directory (#960). Disabled
+          // while an upload is in flight (one at a time). Monochrome glyph.
+          IconButton(
+            key: const Key('file-browser-upload'),
+            tooltip: 'Upload a file here',
+            icon: const Icon(Icons.upload_file),
+            onPressed: _uploadRequestId != null ? null : _pickAndUpload,
+          ),
+          // Favorites star (#632): TAP toggles favoriting the current path for
+          // this profile; LONG-PRESS opens the unified favorites menu. Built on
+          // a single InkResponse so both gestures are owned by ONE recognizer
+          // set — an IconButton's `tooltip` wraps it in a Tooltip that would eat
+          // the long-press, so we don't use IconButton here. Accessibility is
+          // preserved via the Semantics label.
+          Semantics(
+            button: true,
+            label: _currentFavorited
+                ? 'Unfavorite this folder'
+                : 'Favorite this folder',
+            child: InkResponse(
+              key: const Key('file-browser-star'),
+              radius: 24,
+              onTap: _toggleStar,
+              onLongPress: _openFavoritesMenu,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  _currentFavorited ? Icons.star : Icons.star_border,
+                ),
+              ),
+            ),
+          ),
           IconButton(
             key: const Key('file-browser-close-to-terminal'),
             tooltip: 'Close — back to terminal',
@@ -508,13 +931,20 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
               received: _downloadReceived,
               total: _downloadTotal,
             ),
-          Expanded(child: _buildBody()),
+          if (_uploadRequestId != null)
+            _UploadProgress(
+              key: const Key('file-browser-upload-progress'),
+              name: _uploadName ?? '',
+              sent: _uploadSent,
+              total: _uploadTotal,
+            ),
+          Expanded(child: _buildBody(sortEntries(_entries, sortPref))),
         ],
       ),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(List<SftpEntry> entries) {
     if (_loading) {
       return const Center(
         key: Key('file-browser-loading'),
@@ -530,7 +960,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         ),
       );
     }
-    if (_entries.isEmpty) {
+    if (entries.isEmpty) {
       return const Center(
         key: Key('file-browser-empty'),
         child: Text('Empty directory'),
@@ -538,10 +968,19 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     }
     return ListView.builder(
       key: const Key('file-browser-list'),
-      itemCount: _entries.length,
+      itemCount: entries.length,
       itemBuilder: (context, i) {
-        final e = _entries[i];
-        return _EntryTile(entry: e, onTap: () => _onEntryTap(e));
+        final e = entries[i];
+        return _EntryTile(
+          entry: e,
+          onTap: () => _onEntryTap(e),
+          // Long-press a file/folder entry opens the per-entry context menu
+          // (#952) — copy path/name, details, download, add to favorites. This
+          // REPLACES the old long-press→favorites-menu (#632); the favorites
+          // menu itself stays reachable via the app-bar star. ListTile routes
+          // long-press separately from onTap, so it never also navigates.
+          onLongPress: () => _openEntryContextMenu(e),
+        );
       },
     );
   }
@@ -586,35 +1025,75 @@ class _PathBar extends StatelessWidget {
 }
 
 class _EntryTile extends StatelessWidget {
-  const _EntryTile({required this.entry, required this.onTap});
+  const _EntryTile({
+    required this.entry,
+    required this.onTap,
+    this.onLongPress,
+  });
 
   final SftpEntry entry;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     final icon = entry.isDirectory
         ? Icons.folder
         : (entry.isSymlink ? Icons.link : Icons.insert_drive_file_outlined);
+    final subtitle = _subtitle();
     return ListTile(
       key: Key('file-entry-${entry.name}'),
       leading: Icon(icon),
       title: Text(entry.name, overflow: TextOverflow.ellipsis),
-      subtitle: entry.isDirectory ? null : Text(_formatSize(entry.size)),
+      subtitle: subtitle == null ? null : Text(subtitle),
       trailing: entry.isDirectory ? const Icon(Icons.chevron_right) : null,
       onTap: onTap,
+      onLongPress: onLongPress,
     );
   }
 
-  static String _formatSize(int? bytes) {
-    if (bytes == null) return '';
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  /// Row subtitle (#951): files show `size · relativeTime`; directories show
+  /// `relativeTime`. When the mtime is missing/invalid the time segment is
+  /// dropped (files fall back to size-only, dirs to no subtitle) — never a 1969
+  /// date.
+  String? _subtitle() {
+    final rel = formatRelative(entry.modifyTime);
+    if (entry.isDirectory) {
+      return rel.isEmpty ? null : rel;
     }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    final size = formatSize(entry.size);
+    if (rel.isEmpty) return size;
+    return '$size · $rel';
   }
+}
+
+/// One label/value row in the details sheet (#952).
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      title: Text(label, style: Theme.of(context).textTheme.labelMedium),
+      subtitle: Text(value),
+    );
+  }
+}
+
+/// Human-readable byte size for a file (#559). Empty string for a null size
+/// (directories / when the server omits it).
+String formatSize(int? bytes) {
+  if (bytes == null) return '';
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
 }
 
 class _DownloadProgress extends StatelessWidget {
@@ -640,6 +1119,42 @@ class _DownloadProgress extends StatelessWidget {
         children: [
           Text(
             'Downloading $name…',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
+          LinearProgressIndicator(value: value),
+        ],
+      ),
+    );
+  }
+}
+
+/// Determinate upload progress (#960), mirroring [_DownloadProgress]. [total] is
+/// the local file size (0 before the first progress event → indeterminate bar);
+/// [sent] starts at the resume offset when resuming a `.part`.
+class _UploadProgress extends StatelessWidget {
+  const _UploadProgress({
+    super.key,
+    required this.name,
+    required this.sent,
+    required this.total,
+  });
+
+  final String name;
+  final int sent;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = total > 0 ? (sent / total).clamp(0.0, 1.0) : null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Uploading $name…',
+            key: const Key('file-browser-upload-label'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 4),

@@ -10,6 +10,7 @@
 // upload remain deliberately absent — add them here when those land.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -107,6 +108,20 @@ abstract class SftpSession {
   /// the same `~`/relative resolution as the read ops so `~/.ssh/config` works.
   /// Returns the number of bytes written. Chunked upload is a later slice.
   Future<int> upload(String path, Uint8List bytes);
+
+  /// CHUNKED, RESUMABLE upload of the local file at [localPath] to [remotePath]
+  /// (#960). Streams the local file (never the whole thing in memory) to
+  /// `[remotePath].part`, then atomically renames it into place. If a `.part`
+  /// already exists for an interrupted upload, RESUMES from its size; a `.part`
+  /// larger than the local file (stale) is discarded and the upload restarts.
+  /// [onProgress] reports (sent, total) — sent starts at the resume offset.
+  /// Returns the total bytes of the file. Reuses `~`/relative resolution.
+  Future<int> uploadFile(
+    String localPath,
+    String remotePath, {
+    required void Function(int sent, int total) onProgress,
+    int chunkSize,
+  });
 
   /// Release the underlying SFTP channel.
   Future<void> close();
@@ -206,6 +221,77 @@ class DartSshSftpSession implements SftpSession {
     } finally {
       await file.close();
     }
+  }
+
+  @override
+  Future<int> uploadFile(
+    String localPath,
+    String remotePath, {
+    required void Function(int sent, int total) onProgress,
+    int chunkSize = 64 * 1024,
+  }) async {
+    final resolved = await _resolve(remotePath);
+    final partPath = '$resolved.part';
+    final local = File(localPath);
+    final total = await local.length();
+
+    // Resume: if a `.part` from an interrupted upload exists, continue from its
+    // size. A `.part` LARGER than the local file is stale/corrupt → discard it
+    // and start over. `stat` throwing means no `.part` yet → fresh upload.
+    var resumeAt = 0;
+    try {
+      final partAttr = await _client.stat(partPath);
+      final partSize = partAttr.size ?? 0;
+      if (partSize > total) {
+        await _client.remove(partPath);
+      } else {
+        resumeAt = partSize;
+      }
+    } catch (_) {
+      resumeAt = 0;
+    }
+
+    if (resumeAt < total) {
+      // Fresh start truncates; a resume appends in place (no truncate) and seeks
+      // each chunk to its absolute offset via writeBytes(offset:).
+      final mode = resumeAt == 0
+          ? (SftpFileOpenMode.write |
+                SftpFileOpenMode.create |
+                SftpFileOpenMode.truncate)
+          : (SftpFileOpenMode.write | SftpFileOpenMode.create);
+      final file = await _client.open(partPath, mode: mode);
+      try {
+        var sent = resumeAt;
+        onProgress(sent, total);
+        // openRead(resumeAt) streams the local file from the resume offset only.
+        await for (final chunk in local.openRead(resumeAt)) {
+          final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+          await file.writeBytes(bytes, offset: sent);
+          sent += bytes.length;
+          onProgress(sent, total);
+        }
+      } finally {
+        await file.close();
+      }
+    } else {
+      // `.part` already holds the whole file (interrupted right before rename).
+      onProgress(total, total);
+    }
+
+    // Atomic publish: rename `.part` → final. If the destination already exists
+    // (re-upload / replace), remove it first then rename (SFTP rename won't
+    // clobber on most servers). The `.part` shielded the real file throughout.
+    try {
+      await _client.rename(partPath, resolved);
+    } catch (_) {
+      try {
+        await _client.remove(resolved);
+      } catch (_) {
+        // best-effort; the rename retry below surfaces any real failure
+      }
+      await _client.rename(partPath, resolved);
+    }
+    return total;
   }
 
   @override

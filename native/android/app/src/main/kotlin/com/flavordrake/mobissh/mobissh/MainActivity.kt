@@ -2,6 +2,7 @@ package com.flavordrake.mobissh.mobissh
 
 import android.app.Activity
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -79,6 +80,25 @@ class MainActivity : FlutterActivity() {
                     runOnUiThread {
                         try {
                             val clip = ClipData.newPlainText(label, text)
+                            // #924 — On Android 13+ (API 33) a clip with no
+                            // explicit sensitivity flag can be treated/surfaced
+                            // oddly (preview suppression, redacted history),
+                            // which matched "appears correct but won't paste".
+                            // A URL/path is not a secret, so mark it explicitly
+                            // NON-sensitive so the system propagates it for
+                            // normal cross-app paste.
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                clip.description.extras = android.os.PersistableBundle().apply {
+                                    putBoolean(
+                                        ClipDescription.EXTRA_IS_SENSITIVE,
+                                        false,
+                                    )
+                                }
+                            }
+                            // Resolve the ClipboardManager from the foreground
+                            // activity context (this Activity), not
+                            // applicationContext — the system surfaces the
+                            // primary clip for the focused activity's manager.
                             val manager = getSystemService(Context.CLIPBOARD_SERVICE)
                                 as ClipboardManager
                             manager.setPrimaryClip(clip)

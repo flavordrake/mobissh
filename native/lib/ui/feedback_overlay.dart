@@ -227,7 +227,14 @@ Future<Uint8List> _defaultScreenshotCapturer(
   }
 }
 
-Future<String> _defaultVersionResolver() async {
+/// Resolves the baked build version as the `[<build> <hash>]` string the
+/// bug-report carries (`appVersion = ${version}+${buildNumber}`,
+/// `hash = buildSignature` — the git hash baked at build time). This is the
+/// SINGLE source of truth for the human-readable build identifier: the feedback
+/// overlay stamps it into every report AND the Settings version row (#897-adj)
+/// displays the exact same string so the owner can verify/copy his running
+/// build without a bug-report upload.
+Future<String> resolveBuildVersion() async {
   try {
     final pkg = await PackageInfo.fromPlatform();
     final appVersion = '${pkg.version}+${pkg.buildNumber}';
@@ -253,7 +260,7 @@ class FeedbackOverlay extends StatefulWidget {
     required this.navigatorKey,
     required this.messengerKey,
     this.submitter = const HttpFeedbackSubmitter(),
-    this.versionResolver = _defaultVersionResolver,
+    this.versionResolver = resolveBuildVersion,
     this.screenshotCapturer = _defaultScreenshotCapturer,
   });
 
@@ -477,7 +484,11 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
         // captured AS-IS in its own screenshot (we no longer hide it for a
         // frame — that delay let the screen re-layout before capture, #666).
         Positioned(
-          top: MediaQuery.of(context).padding.top + 4,
+          // Slightly NEGATIVE relative to the safe-area top so the chip tucks up
+          // into the top surface — it reads as attached to the surface and
+          // occludes much less of the content below (the text view's own top is
+          // untouched). #897-adj.
+          top: MediaQuery.of(context).padding.top - 6,
           left: 0,
           right: 0,
           child: Center(
@@ -492,10 +503,12 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
                   onLongPress: _recording ? null : _recordRepro,
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 3,
-                    ),
+                    // Idle = a tight icon-only chip (the wide "Feedback" label
+                    // occluded the text view); recording keeps the wider pill
+                    // for the countdown text. #897-adj.
+                    padding: _recording
+                        ? const EdgeInsets.symmetric(horizontal: 10, vertical: 3)
+                        : const EdgeInsets.all(6),
                     decoration: BoxDecoration(
                       color: _recording
                           ? Colors.red.shade600
@@ -524,14 +537,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
                               ),
                             ],
                           )
-                        : Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(Icons.feedback_outlined, size: 14),
-                              SizedBox(width: 4),
-                              Text('Feedback', style: TextStyle(fontSize: 11)),
-                            ],
-                          ),
+                        : const Icon(Icons.feedback_outlined, size: 16),
                   ),
                 ),
               ),

@@ -12,6 +12,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../diagnostics/connect_trace.dart';
 import '../services/session_host.dart';
 import '../services/session_messages.dart';
 import '../services/task_ssh_gateway.dart';
@@ -173,6 +174,15 @@ class SshSessionProxy {
   /// attention is the host/Claude, not the individual session).
   void setActive(bool active, {String? activeSessionId, String? activeHost}) {
     if (_disposed) return;
+    // #840 telemetry: log the UI-side SEND of every setActive (paired with the
+    // task-isolate APPLY log in session_host). A device capture can then show
+    // whether the UI sent foreground=true + the right activeHost, and whether
+    // the task received it — pinning any per-isolate propagation gap.
+    clifecycle(
+      'ui.attention',
+      'setActive send active=$active activeSessionId=$activeSessionId '
+          'host=$activeHost',
+    );
     gateway.send(
       SshSetActiveCommand(
         active: active,
@@ -332,6 +342,26 @@ class SshSessionProxy {
     );
   }
 
+  /// Request a chunked, RESUMABLE upload of the LOCAL file at [localPath] to
+  /// [remotePath] (#960). The task streams the file to a `.part` temp + atomic
+  /// rename, resuming from any existing `.part`. [SftpUploadProgressEvent]s and
+  /// the terminal [SftpUploadDoneEvent] (or [SftpErrorEvent]) arrive on
+  /// [sftpEvents] keyed by [requestId]. Large files never cross the IPC.
+  void sftpUploadFile({
+    required String requestId,
+    required String localPath,
+    required String remotePath,
+  }) {
+    gateway.send(
+      SftpUploadFileCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        localPath: localPath,
+        remotePath: remotePath,
+      ).toJson(),
+    );
+  }
+
   /// Send a PTY resize to the remote.
   ///
   /// #848 — NO-OP GUARD: a resize whose (cols, rows) are IDENTICAL to the last
@@ -464,9 +494,10 @@ class SshSessionProxy {
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():
       case SftpUploadDoneEvent():
+      case SftpUploadProgressEvent():
       case SftpErrorEvent():
-        // SFTP results (#559/#892) — forward to the file browser / writer seam,
-        // which match by request id. They never touch the SSH lifecycle state.
+        // SFTP results (#559/#892/#960) — forward to the file browser / writer
+        // seam, which match by request id. They never touch the SSH lifecycle.
         if (!_sftpCtrl.isClosed) _sftpCtrl.add(event);
     }
   }

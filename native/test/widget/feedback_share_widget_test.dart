@@ -63,14 +63,16 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: DiagnosticsSection(onShareFeedback: (_) async {})),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: DiagnosticsSection(onShareFeedback: (_) async {}),
+          ),
+        ),
       ),
     );
     await pumpBounded(tester);
 
-    await tester.tap(find.byKey(const ValueKey('diagnostics-section')));
-    await pumpBounded(tester);
-
+    // #897: flat — the Share feedback button is visible with no expander tap.
     expect(find.byKey(const ValueKey('share-feedback-button')), findsOneWidget);
     // #673: relabeled to "Share feedback (offline backup)" — match by substring
     // so the label can carry the backup framing without breaking this assertion.
@@ -90,17 +92,16 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: DiagnosticsSection(
-              onShareFeedback: (bundle) async {
-                captured = bundle;
-              },
+            body: SingleChildScrollView(
+              child: DiagnosticsSection(
+                onShareFeedback: (bundle) async {
+                  captured = bundle;
+                },
+              ),
             ),
           ),
         ),
       );
-      await pumpBounded(tester);
-
-      await tester.tap(find.byKey(const ValueKey('diagnostics-section')));
       await pumpBounded(tester);
 
       // _shareFeedback awaits real filesystem I/O (latestCrashContent →

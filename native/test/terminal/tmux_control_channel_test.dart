@@ -2,6 +2,7 @@
 // PURE: no Flutter widget, no SSH, no I/O. Covers the render demux + the
 // refresh-client -C resize primitive + the trailing-edge final-size contract.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -261,4 +262,134 @@ void main() {
       expect(ch.selectWindowCommandForStatusCol(85, 90), 'select-window -t @2');
     });
   });
+
+  // ---- #916: refresh-client -C coalescer (kills the multi-client storm) ----
+  group('RefreshClientCoalescer (#916)', () {
+    // A synchronous fake scheduler: captures the pending callback (and honours
+    // cancellation, so a cancelled timer's callback never fires) so the test
+    // drives the "settle window elapsed" edge deterministically. Mirrors the
+    // GhosttyResizeCoalescer test idiom — each submit cancels the prior timer.
+    late List<_FakeTimer> armed;
+    Timer fakeSchedule(Duration d, void Function() cb) {
+      final t = _FakeTimer(cb);
+      armed.add(t);
+      return t;
+    }
+
+    void settle() {
+      // The coalescer keeps exactly one live timer at a time (each submit /
+      // requestRedraw cancels the prior). Fire the most-recently-armed timer
+      // that is still active; a cancel() makes it inactive so nothing fires.
+      for (final t in armed.reversed) {
+        if (t.active) {
+          t.active = false;
+          t.callback();
+          break;
+        }
+      }
+    }
+
+    setUp(() {
+      armed = <_FakeTimer>[];
+    });
+
+    test('a BURST of resizes collapses to ONE settled refresh-client', () {
+      final emitted = <(int, int)>[];
+      final c = RefreshClientCoalescer(
+        onSettled: (cols, rows) => emitted.add((cols, rows)),
+        scheduleTimer: fakeSchedule,
+      );
+      // 5 animation-frame sizes from a keyboard toggle (58,57 → … → 58,34).
+      c.submit(58, 57);
+      c.submit(58, 50);
+      c.submit(58, 44);
+      c.submit(58, 38);
+      c.submit(58, 34);
+      expect(emitted, isEmpty, reason: 'nothing emits before the settle window');
+      settle();
+      expect(emitted, [(58, 34)], reason: 'only the FINAL settled size is sent');
+      expect(c.sendCount, 1);
+    });
+
+    test('an unchanged settled size is DEDUPED (no spurious refresh-client)', () {
+      final emitted = <(int, int)>[];
+      final c = RefreshClientCoalescer(
+        onSettled: (cols, rows) => emitted.add((cols, rows)),
+        scheduleTimer: fakeSchedule,
+      );
+      c.submit(80, 24);
+      settle();
+      // A 24→26→24 excursion that returns to the last emitted size emits nothing.
+      c.submit(80, 26);
+      c.submit(80, 24);
+      settle();
+      expect(emitted, [(80, 24)], reason: 'the no-op return is deduped');
+      expect(c.sendCount, 1);
+    });
+
+    test('requestRedraw FORCES one settled emit even at the same size', () {
+      final emitted = <(int, int)>[];
+      final c = RefreshClientCoalescer(
+        onSettled: (cols, rows) => emitted.add((cols, rows)),
+        scheduleTimer: fakeSchedule,
+      );
+      c.submit(80, 24);
+      settle();
+      // A window switch needs a repaint at the SAME size — requestRedraw must
+      // override the dedup so the new window paints.
+      c.requestRedraw(80, 24);
+      settle();
+      expect(emitted, [(80, 24), (80, 24)]);
+      expect(c.sendCount, 2);
+    });
+
+    test('a STORM of window switches collapses to ONE redraw', () {
+      final emitted = <(int, int)>[];
+      final c = RefreshClientCoalescer(
+        onSettled: (cols, rows) => emitted.add((cols, rows)),
+        scheduleTimer: fakeSchedule,
+      );
+      c.submit(58, 34);
+      settle();
+      emitted.clear();
+      // The multi-client-clamp feedback: many %session-window-changed in a burst.
+      for (var i = 0; i < 10; i++) {
+        c.requestRedraw(58, 34);
+      }
+      expect(emitted, isEmpty, reason: 'debounced — nothing mid-burst');
+      settle();
+      expect(emitted, [(58, 34)], reason: 'one coalesced redraw, not ten');
+    });
+
+    test('cancel drops a pending write (dead/reconnected shell never storms)', () {
+      final emitted = <(int, int)>[];
+      final c = RefreshClientCoalescer(
+        onSettled: (cols, rows) => emitted.add((cols, rows)),
+        scheduleTimer: fakeSchedule,
+      );
+      c.submit(90, 30);
+      c.cancel();
+      settle();
+      expect(emitted, isEmpty);
+      expect(c.sendCount, 0);
+    });
+  });
+}
+
+/// A controllable fake [Timer] for the coalescer tests: it never auto-fires;
+/// the test drives the settle edge. `cancel()` marks it inactive so a cancelled
+/// timer's callback is never invoked — modelling `Timer.cancel()` faithfully.
+class _FakeTimer implements Timer {
+  _FakeTimer(this.callback);
+  final void Function() callback;
+  bool active = true;
+
+  @override
+  void cancel() => active = false;
+
+  @override
+  bool get isActive => active;
+
+  @override
+  int get tick => 0;
 }

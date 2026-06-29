@@ -2,8 +2,9 @@ services:
   test-sshd:
     build:
       context: ./docker/test-sshd
-    ports:
-      - "2222:22"
+    # No host port map: test-sshd is reached via Docker DNS (test-sshd:22) + the
+    # native-connect-test socat bridge. A host "2222:22" collided with the migrated
+    # fd-dev's own host-2222 (sshd) → test-sshd couldn't start (migration P2).
     networks:
       - mobissh
     healthcheck:

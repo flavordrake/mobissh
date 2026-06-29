@@ -25,11 +25,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
 import 'file_browser_screen.dart';
+import 'mermaid_diagram_view.dart';
+import 'sftp_markdown_image.dart';
 
 /// Opens a markdown link [href] in the system browser (externalApplication).
 /// Mirrors the terminal URL handler idiom. Injected as a typedef so widget
@@ -158,7 +161,12 @@ class _MarkdownFileViewerScreenState
         final text = _content ?? '';
         return _raw
             ? _RawContent(text: text)
-            : _RenderedContent(text: text, openLink: widget.openLink);
+            : _RenderedContent(
+                text: text,
+                openLink: widget.openLink,
+                sessionId: widget.sessionId,
+                mdPath: widget.entry.path,
+              );
     }
   }
 }
@@ -166,10 +174,20 @@ class _MarkdownFileViewerScreenState
 /// Rendered markdown. `flutter_markdown_plus` does its own scrolling +
 /// selection; links route through [openLink].
 class _RenderedContent extends StatelessWidget {
-  const _RenderedContent({required this.text, required this.openLink});
+  const _RenderedContent({
+    required this.text,
+    required this.openLink,
+    required this.sessionId,
+    required this.mdPath,
+  });
 
   final String text;
   final MarkdownLinkOpener openLink;
+
+  /// Session + .md path threaded to the [imageBuilder] so inline images fetch
+  /// over the SAME SFTP connection and resolve relative paths (#946).
+  final String sessionId;
+  final String mdPath;
 
   @override
   Widget build(BuildContext context) {
@@ -186,12 +204,49 @@ class _RenderedContent extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       // `Markdown` defaults extensionSet to gitHubFlavored — tables,
       // strikethrough, fenced code blocks, etc. (PWA-parity feature set).
+      // #942/#944: route ```mermaid fenced blocks to an offline-WebView diagram
+      // renderer; every other fenced block falls through to the normal code box.
+      builders: {'code': MermaidElementBuilder()},
+      // #946: inline images render at a bounded size over SFTP and are
+      // tap-to-fill (the shared zoomable viewer). Broken/network handled inside.
+      imageBuilder: (uri, title, alt) => SftpMarkdownImage(
+        sessionId: sessionId,
+        mdPath: mdPath,
+        uri: uri,
+        alt: alt,
+      ),
       onTapLink: (txt, href, title) {
         if (href != null && href.isNotEmpty) {
           unawaited(openLink(href));
         }
       },
     );
+  }
+}
+
+/// Routes ```mermaid fenced code blocks to the offline-WebView diagram renderer
+/// (#942, #944), leaving every other fenced block to render as a normal code
+/// box.
+///
+/// Keyed on `code` (not `pre`): a fenced block parses to `<pre><code
+/// class="language-…">…</code></pre>`, and a `code` builder leaves the `pre`
+/// block's own text path untouched, so non-mermaid code blocks (and inline
+/// code) still render their source verbatim. We return the diagram only when the
+/// `code` element carries the `language-mermaid` class; returning null otherwise
+/// falls through to the default code-block rendering.
+class MermaidElementBuilder extends MarkdownElementBuilder {
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final classes = (element.attributes['class'] ?? '').split(RegExp(r'\s+'));
+    if (!classes.contains('language-mermaid')) {
+      return null; // not a mermaid fence → default code rendering
+    }
+    return MermaidDiagramView(source: element.textContent);
   }
 }
 

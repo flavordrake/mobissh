@@ -1,10 +1,12 @@
-// Widget tests for the #611 Part A home reshape:
+// Widget tests for the #611 Part A home reshape, updated for the #897 settings
+// reorg:
 //   - The home view is JUST the profile chooser + New + Import. Settings and
 //     Diagnostics are NO LONGER inline disclosures on the profile list.
-//   - A bottom navigation bar exposes Settings + Diagnostics destinations.
-//   - Tapping Settings shows the moved Settings content (keepalive toggle).
-//   - Tapping Diagnostics shows the moved Diagnostics content (connect-log tile,
-//     the #543 connect-trace viewer).
+//   - A bottom navigation bar exposes Profiles + Settings (#897: the separate
+//     Diagnostics tab is GONE — diagnostics fold into the single Settings page).
+//   - Tapping Settings shows the FLAT Settings content (keepalive toggle visible
+//     with no expander tap) AND the folded-in Diagnostics section (connect-log
+//     block, the #543 connect-trace viewer).
 //
 // Sessions are proxy-backed; taskSshGatewayProvider is overridden with an
 // in-memory gateway pair so building the chooser doesn't bind to platform
@@ -84,7 +86,7 @@ void main() {
     expect(find.byKey(const ValueKey('diagnostics-section')), findsNothing);
   });
 
-  testWidgets('bottom nav exposes Settings + Diagnostics destinations', (
+  testWidgets('bottom nav exposes Profiles + Settings (no Diagnostics tab)', (
     tester,
   ) async {
     final store = ProfilesStore();
@@ -99,10 +101,11 @@ void main() {
     expect(find.byKey(const Key('home-bottom-nav')), findsOneWidget);
     expect(find.byKey(const Key('home-nav-profiles')), findsOneWidget);
     expect(find.byKey(const Key('home-nav-settings')), findsOneWidget);
-    expect(find.byKey(const Key('home-nav-diagnostics')), findsOneWidget);
+    // #897: the standalone Diagnostics destination is gone.
+    expect(find.byKey(const Key('home-nav-diagnostics')), findsNothing);
   });
 
-  testWidgets('tapping Settings shows the moved Settings content', (
+  testWidgets('tapping Settings shows the FLAT Settings content (no expander)', (
     tester,
   ) async {
     final store = ProfilesStore();
@@ -117,14 +120,13 @@ void main() {
     await tester.tap(find.byKey(const Key('home-nav-settings')));
     await tester.pumpAndSettle();
 
-    // The Settings section (with the keepalive toggle inside) is now shown.
+    // #897: the keepalive toggle is a TOP-LEVEL control — visible with NO
+    // expander tap (the old self-collapsing ExpansionTile is gone).
     expect(find.byKey(const ValueKey('settings-section')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('settings-section')));
-    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('keepalive-toggle')), findsOneWidget);
   });
 
-  testWidgets('tapping Diagnostics shows the moved connect-log viewer', (
+  testWidgets('Settings page folds in the Diagnostics section', (
     tester,
   ) async {
     final store = ProfilesStore();
@@ -136,14 +138,17 @@ void main() {
 
     await _pumpHome(tester, container);
 
-    await tester.tap(find.byKey(const Key('home-nav-diagnostics')));
+    await tester.tap(find.byKey(const Key('home-nav-settings')));
     await tester.pumpAndSettle();
 
-    // The Diagnostics section is shown; expanding it surfaces the #543
-    // connect-log viewer that moved here from the home form.
+    // #897: Diagnostics is folded into the single Settings page; its controls are
+    // present without any expander tap (may be below the fold — assert presence,
+    // not on-screen position). The raw connect-log block was removed (it's
+    // captured at Feedback-submit instead) — assert a durable diagnostics control.
     expect(find.byKey(const ValueKey('diagnostics-section')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('diagnostics-section')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('connect-log-tile')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('connection-audit-button')),
+      findsOneWidget,
+    );
   });
 }

@@ -25,7 +25,12 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "com.flavordrake.mobissh"
-    compileSdk = flutter.compileSdkVersion
+    // #960: the file-picker plugin set pulls a flutter_plugin_android_lifecycle
+    // AAR that requires consumers to compile against API 36+. Pin compileSdk to
+    // 36 (was the Flutter default 34). compileSdk only widens the APIs available
+    // at compile time — targetSdk/minSdk (runtime behavior / device floor) are
+    // unchanged below.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

@@ -58,6 +58,13 @@ class FakeSftpSession implements SftpSession {
   String? lastUploadedPath;
   Uint8List? lastUploadedBytes;
 
+  /// Records the chunked file-upload call (#960): the local + remote paths, and
+  /// the total reported via [uploadFileTotal]. The fake emits a 0→total
+  /// progress pair so the host's progress-forwarding can be asserted.
+  String? lastUploadLocalPath;
+  String? lastUploadRemotePath;
+  int uploadFileTotal = 0;
+
   @override
   Future<List<SftpEntry>> list(String path) async {
     lastListedPath = path;
@@ -95,6 +102,21 @@ class FakeSftpSession implements SftpSession {
     lastUploadedBytes = Uint8List.fromList(bytes);
     if (throwOnUpload) throw Exception('boom-upload');
     return bytes.length;
+  }
+
+  @override
+  Future<int> uploadFile(
+    String localPath,
+    String remotePath, {
+    required void Function(int sent, int total) onProgress,
+    int chunkSize = 64 * 1024,
+  }) async {
+    lastUploadLocalPath = localPath;
+    lastUploadRemotePath = remotePath;
+    if (throwOnUpload) throw Exception('boom-upload');
+    onProgress(0, uploadFileTotal);
+    onProgress(uploadFileTotal, uploadFileTotal);
+    return uploadFileTotal;
   }
 
   @override
@@ -214,6 +236,40 @@ void main() {
     expect(done, isNotNull);
     expect(done!.requestId, 'sid-up#write0');
     expect(done!.totalBytes, payload.length);
+
+    await sub.cancel();
+  });
+
+  test('sftpUploadFile forwards progress then a done event (#960)', () async {
+    final fake = FakeSftpSession()..uploadFileTotal = 4096;
+    final ctx = await setUpConnected('sid-upf', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    final progress = <SftpUploadProgressEvent>[];
+    SftpUploadDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpUploadProgressEvent) progress.add(e);
+      if (e is SftpUploadDoneEvent) done = e;
+    });
+
+    ctx.proxy.sftpUploadFile(
+      requestId: 'sid-upf#0',
+      localPath: '/data/local/bigfile.iso',
+      remotePath: '~/uploads/bigfile.iso',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(fake.lastUploadLocalPath, '/data/local/bigfile.iso');
+    expect(fake.lastUploadRemotePath, '~/uploads/bigfile.iso');
+    // The fake emits 0→total; the host forwards both, keyed by request id.
+    expect(progress.map((p) => p.sent), [0, 4096]);
+    expect(progress.every((p) => p.totalBytes == 4096), isTrue);
+    expect(progress.every((p) => p.requestId == 'sid-upf#0'), isTrue);
+    expect(done, isNotNull);
+    expect(done!.requestId, 'sid-upf#0');
+    expect(done!.totalBytes, 4096);
 
     await sub.cancel();
   });

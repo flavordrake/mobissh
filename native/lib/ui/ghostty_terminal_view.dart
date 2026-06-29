@@ -171,6 +171,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // the other (#716).
 import 'package:xterm/xterm.dart' as xterm;
 
+import '../diagnostics/connect_trace.dart' show clifecycle;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
@@ -478,6 +479,13 @@ class GhosttyResizeCoalescer {
   int? get pendingCols => _pendingCols;
   int? get pendingRows => _pendingRows;
 
+  /// #922 (test/telemetry): the last dims actually EMITTED to the PTY (== the
+  /// #719 `_lastSentRows` the status-tap targets). Lets the on-emulator keyboard
+  /// sizing test assert the SENT grid tracks the keyboard-reduced viewport. Null
+  /// until the first emit.
+  int? get lastEmittedCols => _lastEmittedCols;
+  int? get lastEmittedRows => _lastEmittedRows;
+
   /// Record a new live grid. Resets the settle timer; the resize is sent only
   /// once the size stops changing for [settle].
   void submit(int cols, int rows) {
@@ -626,6 +634,16 @@ bool ghosttyShouldCycleFocusForRepaint({
   return active && connected && hasFocus;
 }
 
+/// #922 telemetry sink bound to the flterm render box's `onFrameDebug` (wired in
+/// [_findTerminalRenderBox] on every lookup). Routes each compact render/sync line
+/// into the durable lifecycle ring via `clifecycle('repaint', …)`, so a device
+/// capture of a stale tmux window switch shows WHY a switch didn't repaint —
+/// screen transitions, zero-rebuild content syncs (`dirty`/`rebuilt=0`/`markedAll`
+/// /`damageUnsettled`/`detActive`), and the #918 settle-tick arm/fire. Top-level +
+/// pure (no widget/FFI) so the wiring contract is unit-testable without rendering
+/// flterm headless (the native .so can't render in a headless test).
+void logRepaintTelemetry(String line) => clifecycle('repaint', line);
+
 /// #741: whether THIS session's view is the one LEAVING active on a session-bar
 /// swipe-switch and so must CAPTURE its current keyboard-up state.
 ///
@@ -741,6 +759,47 @@ Size ghosttyMeasureCellSize({
   double ceilToDevicePixel(double value) => (value * dpr).ceilToDouble() / dpr;
 
   return Size(ceilToDevicePixel(faceWidth), ceilToDevicePixel(faceHeight));
+}
+
+/// #922: compute the KEYBOARD-AWARE grid (cols, rows) that tmux must be told to
+/// use, from the terminal box's laid-out size and the REAL flterm cell size.
+///
+/// Root cause (#922, device capture 2026-06-25T18-09-02): the PTY resize was
+/// driven SOLELY by flterm's `controller.onResize`, which flterm fires from its
+/// own layout. Under the soft-keyboard show/hide animation that callback races —
+/// the grid transiently shrinks to the keyboard-reduced size, then SETTLES BACK
+/// to the pre-keyboard (tall) size. The gesture log proved it: at tap time the
+/// box was 597px (keyboard UP, ~34 visible rows) but flterm reported `grid=58x57`
+/// AND `sent=58x57`. tmux therefore believed it had 57 rows and drew its status
+/// bar at row ~56 — BELOW the keyboard, off-screen. A tap on the visible bottom
+/// (row 34) landed in the MIDDLE of tmux's grid: cursor moved, no window switch.
+///
+/// The fix makes the host compute the authoritative grid ITSELF from the box the
+/// Scaffold has ALREADY shrunk for the keyboard (`resizeToAvoidBottomInset:true`
+/// in terminal_screen.dart resizes the body, so [boxHeight] from a LayoutBuilder
+/// is the keyboard-reduced visible height). We mirror flterm's own grid math:
+/// subtract the [TerminalView] padding from both axes, then floor by the REAL
+/// cell size. This value is submitted to the resize coalescer so the FINAL
+/// settled size tracks the VISIBLE viewport, keeping tmux's status bar at the
+/// visible bottom and the #719 status-tap (which targets the last-SENT rows)
+/// landing on it.
+///
+/// Defensive: a zero/degenerate box or cell size yields a 1×1 grid (the same
+/// floor used by [ghosttyCellForPosition]) so a pre-layout frame never sends a
+/// nonsense resize. Pure (no FFI / no widget) → unit-testable headless.
+(int cols, int rows) ghosttyGridForBox({
+  required double boxWidth,
+  required double boxHeight,
+  required double cellWidth,
+  required double cellHeight,
+  double padding = kGhosttyTerminalPadding,
+}) {
+  if (cellWidth <= 0 || cellHeight <= 0) return (1, 1);
+  final innerW = boxWidth - 2 * padding;
+  final innerH = boxHeight - 2 * padding;
+  final cols = (innerW / cellWidth).floor();
+  final rows = (innerH / cellHeight).floor();
+  return (cols < 1 ? 1 : cols, rows < 1 ? 1 : rows);
 }
 
 
@@ -1965,11 +2024,23 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   int _lastSentCols = 0;
   int _lastSentRows = 0;
 
+  /// #922: the last keyboard-aware grid the LayoutBuilder submitted (computed
+  /// from the box the Scaffold shrank for the keyboard). De-dupes the submit so
+  /// an unrelated rebuild (theme cycle, output frame) doesn't re-arm the resize
+  /// debounce; -1 (never) until the first layout so the first real grid submits.
+  int _lastSubmittedGridCols = -1;
+  int _lastSubmittedGridRows = -1;
+
   /// #734: the REAL flterm cell size last measured in [build] (via
   /// [ghosttyMeasureCellSize]), captured so [_showUrlMenu] can build the URL's
   /// on-screen highlight rects with the SAME geometry the router + highlight
   /// painter use — without re-reading the per-session font providers off-build.
   Size _lastCellSize = Size.zero;
+
+  /// #918: a key on the flterm [TerminalView] so [_forceTerminalRepaint] can locate
+  /// the internal [TerminalRenderBox] via the render tree and force a full repaint
+  /// after dispatching user input (the input-driven half of the robustness layer).
+  final GlobalKey _terminalViewKey = GlobalKey();
 
   /// #755/#767: the session theme's selection colour, captured in [build] from
   /// the live palette. #767 Slice B: it colours the URL BUBBLE decorator (a
@@ -2134,32 +2205,35 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // so this is the seam that reveals "swipe → wheel events → tmux scrolled".
         _byteRecorder.recordSentSgr(sent);
         proxy.sendInput(sent);
+        // #918: force a full re-snapshot + repaint after dispatching this input
+        // (soft-keyboard key, IME commit, paste, keybar key — all flow through
+        // controller.onOutput). The UI self-heals on every keystroke even if the
+        // damage/frame path dropped the redraw. Coalesced to once per frame.
+        _forceTerminalRepaint();
       };
       // Grid resize -> PTY resize. flterm reports (cols, rows); the proxy's
       // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
       // mirror (cols, rows) so the #692 gesture router can map touch -> cell.
       controller.onResize = (cols, rows) {
-        // Mirror the live grid SYNCHRONOUSLY (the touch->cell map + gesture
-        // router read `_cols`/`_rows` every gesture, so they must track flterm's
-        // real grid the instant it changes — only the PTY SEND is debounced).
+        // Mirror the live grid SYNCHRONOUSLY (the touch->cell map reads
+        // `_cols`/`_rows` for selection/URL geometry, so they must track
+        // flterm's real render grid the instant it changes).
         _cols = cols;
         _rows = rows;
         // #790: record the live viewport grid so the replay harness can lay out
         // the captured byte stream at the SAME cols×rows the bug occurred at.
         _byteRecorder.recordGrid(cols, rows);
-        // #903: COALESCE the PTY resize. flterm fires `onResize` for EVERY
-        // layout change — a soft-keyboard show/hide animates the inset over many
-        // frames (per-frame regrid → the `44→43→…→34` storm) and a window switch
-        // reflows ~2 rows transiently (`34→36→34`). Sending each straight to the
-        // PTY made tmux regrid mid-interaction and race every redraw (the repaint
-        // fail #887/#898/#900 were chasing). The coalescer debounces to the FINAL
-        // settled size: intermediate frames never reach tmux, and a transient
-        // that returns to the start emits nothing. The #719 last-sent grid is
-        // still recorded by `_sendResize` (the coalescer's send seam).
-        _resizeCoalescer.submit(cols, rows);
-        // #767: a resize changes the cell ranges, but the URL re-detect now lives
-        // INSIDE the terminal — the controller re-scans on its own notify cycle,
-        // so the host no longer schedules detection here.
+        // #922: the PTY resize is NO LONGER driven from flterm's onResize. flterm
+        // fires onResize from its OWN layout, which under the soft-keyboard
+        // show/hide animation RACES — the device capture (2026-06-25T18-09-02)
+        // showed it settling BACK to the pre-keyboard tall size (grid=58x57) even
+        // though the visible box was keyboard-reduced (597px ≈ 34 rows), so tmux
+        // kept a 57-row grid and drew its status bar off-screen below the
+        // keyboard; the status-tap then missed. The authoritative size is now
+        // computed from the laid-out (keyboard-reduced) box in the LayoutBuilder
+        // ([_submitKeyboardAwareGrid] → the SAME #903 coalescer). flterm's grid
+        // here is only the gesture-geometry mirror. The #767 in-terminal URL
+        // re-detect still runs on the controller's own notify cycle.
       };
       // PTY output bytes -> terminal. The subscription lives on this state so
       // dispose() cancels it.
@@ -2315,6 +2389,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // URL.
       controller.registerTextPattern(TextPattern.path(id: _kPathPatternId));
     }
+    // #921: tell the render box whether detection is now active. Active means the
+    // controller's detection RenderState handle competes to consume the shared
+    // terminal damage, so the PRIMARY screen must force a full re-read on content
+    // change to keep repainting. Deferred to a post-frame callback so the keyed
+    // render box exists (this runs from initState-time registration before first
+    // layout, where the box lookup would no-op).
+    final detectionActive = detection.detectUrls || detection.detectPaths;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _applyDetectionActive(detectionActive);
+    });
   }
 
   /// #712: mirror whether a selection is active into [_hasSelection], rebuilding
@@ -2411,22 +2495,30 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
 
   /// #702: FORCE-re-send the current grid to the PTY (even if unchanged) so tmux
   /// re-sizes to the post-shellReady layout. Guarded by [ghosttyShouldResyncResize]
-  /// (connected + valid `_cols`/`_rows`); a tick with no valid grid is a no-op.
+  /// (connected + valid grid); a tick with no valid grid is a no-op.
   /// Every forced re-sync is recorded in the gesture/connect trace so a device
   /// repro CONFIRMS a real resize landed after shellReady (`ghostty-resync`).
+  ///
+  /// #922: re-push the KEYBOARD-AWARE grid ([_lastSubmittedGridCols]/[Rows], the
+  /// size the LayoutBuilder computed from the keyboard-reduced box) when it's been
+  /// laid out, so the resync delivers the SAME authoritative size the steady-state
+  /// path does — never flterm's possibly-stale `_cols`/`_rows`. Falls back to the
+  /// live grid only before the first layout (when the keyboard-aware grid is -1).
   void _forceResizeResync(String trigger) {
     if (!mounted) return;
     final proxy = _proxy;
     if (proxy == null) return;
     final connected = proxy.data.state == SshSessionState.connected;
+    final cols = _lastSubmittedGridCols > 0 ? _lastSubmittedGridCols : _cols;
+    final rows = _lastSubmittedGridRows > 0 ? _lastSubmittedGridRows : _rows;
     if (!ghosttyShouldResyncResize(
       connected: connected,
-      cols: _cols,
-      rows: _rows,
+      cols: cols,
+      rows: rows,
     )) {
       gtrace(
         'ghostty-resync $trigger: skip '
-        '(connected=$connected cols=$_cols rows=$_rows)',
+        '(connected=$connected cols=$cols rows=$rows)',
       );
       return;
     }
@@ -2434,8 +2526,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // size the instant the shell exists (#666/#702), so flush immediately and
     // cancel any pending coalesce. The proxy still owns the #666 one-shot
     // force-bypass of its no-op guard.
-    _resizeCoalescer.flushNow(_cols, _rows);
-    gtrace('ghostty-resync $trigger: cols=$_cols rows=$_rows');
+    _resizeCoalescer.flushNow(cols, rows);
+    gtrace('ghostty-resync $trigger: cols=$cols rows=$rows');
   }
 
   /// #719: the SINGLE path for every PTY resize. Sends the grid to the proxy AND
@@ -2570,6 +2662,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     //    auto-pop on resume (the #693/#706/#717 focus-vs-IME separation).
     _focusedThisConnect = false;
     _focusTerminalOnConnect('resume');
+    // #931 GAP 2: re-assert detection-active on the render box after resume. A
+    // background→resume can re-create / re-lay-out the keyed render box, and the
+    // init-time one-shot `_applyDetectionActive` does not re-fire — leaving the
+    // box `_detectionActive=false` would re-freeze the primary-screen typing half
+    // of #931. Re-apply on a post-frame (after the resize-resync re-lays out the
+    // grid) reflecting the CURRENT detection settings.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final detection = ref.read(detectionSettingsProvider);
+      _applyDetectionActive(detection.detectUrls || detection.detectPaths);
+    });
     // 4. FORCE REPAINT WHEN FOCUS WAS RETAINED (#720): the #718 re-focus above
     //    only repaints when focus was LOST while backgrounded — the focus CHANGE
     //    fires flterm's `_onFocusChanged` → `notifyListeners()` → the render
@@ -2583,6 +2686,68 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     //    focus is currently held; never raises the keyboard (the keyboard is down
     //    on resume, so `_onFocusChanged` re-attaches the input but does NOT show).
     _forceRepaintOnResume();
+  }
+
+  /// #918: force the flterm render box to re-snapshot + repaint the FULL visible
+  /// grid — the SAME full repaint a route-push / Debug-overlay triggers — after
+  /// dispatching ANY user input to the PTY (key / tap / gesture / paste / keybar).
+  ///
+  /// The UI then self-heals on every interaction: if the normal libghostty
+  /// damage/frame-sync path dropped a redraw (the "tap Debug fixes it" symptom), the
+  /// next input forces it. This is a brute-force SAFETY NET on top of the #900
+  /// damage-consume correctness fix — it does NOT replace it.
+  ///
+  /// The host widget owns only the [TerminalController]; the [TerminalRenderBox] is
+  /// an internal leaf of flterm's [TerminalView]. We locate it via the keyed
+  /// TerminalView's render object and call [TerminalRenderBox.forceRepaint], which
+  /// COALESCES to at most one bounded grid re-read per frame, so dispatching several
+  /// inputs in one frame forces only once.
+  void _forceTerminalRepaint() {
+    final box = _findTerminalRenderBox();
+    box?.forceRepaint();
+  }
+
+  /// #921: mirror whether structured-text DETECTION is active onto the flterm
+  /// render box. When detection is active a SECOND libghostty `RenderState`
+  /// handle (the controller's, registered BEFORE the render box) consumes the
+  /// shared terminal's per-row damage on the same synchronous notify, starving
+  /// the render box's partial build so the PRIMARY screen stops repainting (the
+  /// detection-ON paint freeze). Setting [TerminalRenderBox.detectionActive]
+  /// makes the primary screen force a full visible-grid re-read on each content
+  /// change (the same decoupling the #900 fix uses for the alternate screen), so
+  /// the paint is immune to that consume. Reached via the same #918 keyed
+  /// render-box lookup; no-ops before first layout (the next registration after
+  /// layout re-applies it).
+  void _applyDetectionActive(bool active) {
+    final box = _findTerminalRenderBox();
+    box?.detectionActive = active;
+  }
+
+  /// #918: walk the render subtree under the keyed [TerminalView] to the
+  /// [TerminalRenderBox] leaf. Returns null before the first layout (no render
+  /// object yet) or if the box can't be found — the caller no-ops.
+  TerminalRenderBox? _findTerminalRenderBox() {
+    final renderObject = _terminalViewKey.currentContext?.findRenderObject();
+    if (renderObject == null) return null;
+    final box = _searchRenderBox(renderObject);
+    // #922 telemetry: keep the render/sync telemetry seam wired to this session's
+    // diagnostic ring on EVERY lookup (the box is re-created when the TerminalView
+    // is rebuilt with a new key on theme cycle, so re-asserting here is the same
+    // robustness the #931 detectionActive re-assert uses). The render box leaves
+    // `onFrameDebug` null in production flterm; binding it to `clifecycle('repaint',
+    // …)` lands screen transitions, zero-rebuild content syncs, and settle
+    // arm/fire in the captured lifecycle ring the feedback bundle uploads. Idempotent.
+    box?.onFrameDebug = logRepaintTelemetry;
+    return box;
+  }
+
+  TerminalRenderBox? _searchRenderBox(RenderObject node) {
+    if (node is TerminalRenderBox) return node;
+    TerminalRenderBox? found;
+    node.visitChildren((child) {
+      found ??= _searchRenderBox(child);
+    });
+    return found;
   }
 
   /// #720: force flterm to repaint on resume even when focus was RETAINED.
@@ -2619,6 +2784,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       );
       return;
     }
+    // #931 GAP 1: the focus cycle alone fires `_onRenderObserverChanged` →
+    // `markNeedsPaint()` ONLY — it does NOT set `_needsFrameSync` or
+    // `markAllRowsDirty()`. On a PRIMARY-screen in-place cursor-addressed redraw
+    // with detection ON (the default), a prior detection-driven sync has already
+    // CONSUMED libghostty's per-row damage, so the resume `_syncFrameState` runs
+    // with NOTHING dirty → the partial build is SKIPPED → the stale buffer
+    // repaints (the "switch to apps and back is frozen" half of #931). Pair the
+    // focus cycle with a REAL frame-sync (`forceRepaint()` → markAllRowsDirty +
+    // frame-dirty, the #918 seam) so resume re-reads the FULL visible grid even
+    // when the damage was consumed. Bounded to the visible rows; coalesced to
+    // once per frame. The structural cure (a non-consuming detection read) is
+    // #922 — this reuses the existing #918 seam.
+    _forceTerminalRepaint();
     // Drop focus now; re-request it next frame so the FocusNode actually
     // transitions (focused → unfocused → focused) and flterm repaints. A
     // same-frame toggle would coalesce to no net change and not notify.
@@ -2629,7 +2807,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (c == null) return;
       // Focus ONLY — never showKeyboard(); the keyboard must stay down on resume.
       c.requestFocus();
-      gtrace('ghostty-resume-repaint: focus-cycled (no keyboard)');
+      // #931: also re-force a full re-read on the NEXT frame so the post-focus-
+      // change frame (which a late detection consume could otherwise starve)
+      // re-reads the latest grid too. Coalesces with the focus-driven repaint.
+      _forceTerminalRepaint();
+      gtrace('ghostty-resume-repaint: focus-cycled + forced (no keyboard)');
     });
   }
 
@@ -2662,6 +2844,22 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (!mounted) return;
     final controller = _controller;
     if (controller == null) return;
+    // #931 GAP 2: re-assert `_detectionActive` on the render box when THIS view
+    // becomes the active session. `_applyDetectionActive` is otherwise applied
+    // ONCE on a post-frame at init (`_registerUrlPattern`); a view that was
+    // OFFSTAGE at init (its keyed render box not yet laid out, so the lookup
+    // no-oped) could be left `_detectionActive=false` when it later becomes
+    // visible — which drops the primary-screen full re-read and re-freezes the
+    // typing/streaming half of #931. Re-apply on the post-frame after this child
+    // goes onstage (so the keyed render box exists), reflecting the CURRENT
+    // detection settings.
+    if (next == widget.sessionId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final detection = ref.read(detectionSettingsProvider);
+        _applyDetectionActive(detection.detectUrls || detection.detectPaths);
+      });
+    }
     if (ghosttyShouldCaptureKeyboardOnSessionSwitch(
       sessionId: widget.sessionId,
       prevActiveId: prev,
@@ -3120,11 +3318,79 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (highlightColor != _lastHighlightColor) {
       _lastHighlightColor = highlightColor;
     }
+    // #922: wrap in a LayoutBuilder so we read the terminal box's ACTUAL
+    // constraints — the height the Scaffold has ALREADY shrunk for the soft
+    // keyboard (terminal_screen.dart keeps `resizeToAvoidBottomInset:true`, so
+    // the body — and this box — is the keyboard-reduced VISIBLE height). We then
+    // compute the keyboard-aware grid ourselves and submit it to the resize
+    // coalescer, so the FINAL settled size tracks the visible viewport rather
+    // than flterm's onResize (which the device capture proved settles back to the
+    // pre-keyboard tall size under the keyboard animation race). Submitted on a
+    // post-frame (the box size is known post-layout; submitting during layout is
+    // illegal), and the coalescer's #903 debounce + no-op guard keep it bounded.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _submitKeyboardAwareGrid(constraints.biggest, cellSize);
+        return _buildTerminalStack(
+          controller: controller,
+          theme: theme,
+          cellSize: cellSize,
+          highlightColor: highlightColor,
+        );
+      },
+    );
+  }
+
+  /// #922: compute the keyboard-aware grid from the laid-out [box] (already
+  /// keyboard-reduced by the Scaffold) + the REAL [cellSize], and submit it to
+  /// the resize coalescer. This is the AUTHORITATIVE size driver — it keeps
+  /// tmux's grid (and the #719 last-sent rows the status-tap targets) matched to
+  /// the VISIBLE viewport, immune to the keyboard-animation race that left
+  /// flterm's onResize settling back on the tall pre-keyboard size.
+  ///
+  /// Runs on a post-frame (reading the box during layout is fine, but submitting
+  /// — which may schedule a Timer + later setState via the coalescer's send seam
+  /// — is deferred so it never re-enters build). Skips a degenerate box (a
+  /// pre-layout 0×0 frame) and a no-change grid (the coalescer would no-op
+  /// anyway, but this avoids re-arming the debounce on every unrelated rebuild).
+  void _submitKeyboardAwareGrid(Size box, Size cellSize) {
+    if (box.width <= 0 || box.height <= 0) return;
+    final (cols, rows) = ghosttyGridForBox(
+      boxWidth: box.width,
+      boxHeight: box.height,
+      cellWidth: cellSize.width,
+      cellHeight: cellSize.height,
+    );
+    if (cols == _lastSubmittedGridCols && rows == _lastSubmittedGridRows) {
+      return;
+    }
+    _lastSubmittedGridCols = cols;
+    _lastSubmittedGridRows = rows;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Mirror the live grid synchronously (the gesture map reads _cols/_rows),
+      // then coalesce the PTY send exactly as flterm's onResize did (#903).
+      _cols = cols;
+      _rows = rows;
+      _byteRecorder.recordGrid(cols, rows);
+      _resizeCoalescer.submit(cols, rows);
+      gtrace('ghostty-kbgrid: cols=$cols rows=$rows box=${box.height.round()}');
+    });
+  }
+
+  Widget _buildTerminalStack({
+    required TerminalController controller,
+    required TerminalTheme theme,
+    required Size cellSize,
+    required Color highlightColor,
+  }) {
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
         Positioned.fill(
           child: TerminalView(
+            // #918: keyed so _forceTerminalRepaint can locate the render box.
+            key: _terminalViewKey,
             controller: controller,
             autofocus: false,
             theme: theme,
@@ -3231,6 +3497,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                 controller.hideKeyboard();
                 controller.showKeyboard();
               });
+              // #918: a tap is user input — force the full repaint so the view
+              // self-heals on tap (the same gesture the Debug overlay used to need).
+              _forceTerminalRepaint();
             },
             // Long-press-start focuses without raising the keyboard (selection).
             onFocus: controller.requestFocus,
@@ -3244,6 +3513,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
               // SGR-mouse bytes — never keystrokes).
               _byteRecorder.recordSentSgr(bytes);
               proxy.sendInput(bytes);
+              // #918: a synthesised mouse report (tap-click / wheel / selection
+              // drag) is user input — force the full repaint.
+              _forceTerminalRepaint();
             },
             // #911 Part C: under the control-mode flag, window switching uses REAL
             // tmux commands over the -CC channel (no synthesised SGR at a guessed
@@ -3258,6 +3530,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                     ? TmuxWindowGesture.nextWindow
                     : TmuxWindowGesture.previousWindow,
               );
+              // #918: a window-switch swipe is user input — force the full repaint
+              // so the switched window's grid re-reads on EVERY swipe (the historic
+              // "works/fails/works" alternation the Debug tap masked).
+              _forceTerminalRepaint();
             },
             onStatusTap: ({required int col, required int totalCols}) {
               final proxy = _resolveProxy();
@@ -3268,6 +3544,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                 statusCol: col,
                 statusCols: totalCols,
               );
+              // #918: a status-row tap (tmux window select) is user input.
+              _forceTerminalRepaint();
             },
             // #705: long-press-drag drives flterm's LOCAL selection (persists
             // after release → Copy reads it), not a tmux SGR drag.

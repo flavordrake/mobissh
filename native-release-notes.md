@@ -7,6 +7,71 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+83 (2026-06-29) — much smaller, faster-downloading APK
+- **The app download is ~3× smaller** (arm64-only build, ~30 MB vs ~91 MB) — faster to download and install. The build notification now opens the download in your browser, and the server reports the file size so you get a real progress bar + resumable downloads. (No app behavior change.)
+
+## v0.1.10+82 (2026-06-29) — Diagnostics declutter (connect-log block removed)
+- **Removed the raw connect-log viewer from Diagnostics.** That granular trace is still captured automatically with every Feedback submission, so nothing's lost — it just removes the debug noise from the settings page. (#897-adj)
+
+## v0.1.10+81 (2026-06-29) — settings reorg + file-explorer sort/details
+- **Settings is one clean page now.** Every setting is a top-level control (no more single big expander), grouped under light headings, with Diagnostics folded in as a section at the bottom and a new **Reset settings** action. (#897)
+- **File explorer shows modification time** alongside size in each row, and a **sort menu** (⇅ in the top bar): sort by name, modified, size, or type, ascending or descending (per-profile, folders stay first). (#951)
+- **Long-press a file or folder** for a menu: copy full path, copy name, show details, download, add to favorites. (#952)
+
+## v0.1.10+80 (2026-06-29) — smaller, less-intrusive Feedback affordance
+- **The Feedback control is now a small icon** tucked up against the top edge instead of a wider pill — it occludes much less of the terminal/text below. Tap it to send feedback, long-press to record a repro (unchanged). (#897-adj)
+
+## v0.1.10+79 (2026-06-29) — upload files over SFTP (large files, resumable)
+- **Upload a file to the server.** The file browser has an upload button (top bar) — pick a local file and it uploads into the folder you're viewing, with a progress bar. (#960)
+- **Built for big files.** The upload streams in chunks (it never loads the whole file into memory) and writes to a temporary `.part` first, then swaps it into place when complete — so an interrupted upload never leaves a corrupt file.
+- **Resumes interrupted uploads.** If an upload is cut off (e.g. the connection drops), uploading the same file again continues from where it left off instead of starting over.
+
+## v0.1.10+78 (2026-06-29) — favorites star on each session in the menu
+- **Open a session's favorites straight from the session menu.** Any session whose profile has marked favorites now shows a ★ on its row in the session menu; tap it to see that profile's favorites and jump straight to one (it opens the file browser there). Sessions without favorites don't show the star. (#950)
+
+## v0.1.10+77 (2026-06-28) — full-screen diagrams now center + zoom crisply
+- **Tapped mermaid diagrams open centered and zoom sharply.** The full-screen diagram now centers in the view (no more pinned to the top with empty space below) and pinch-zoom/pan is handled by the diagram itself, so it stays crisp and pans smoothly instead of feeling sluggish. (#949)
+- **Tapped images open centered and fit the screen**, and stay sharp when you zoom in. (#949)
+
+## v0.1.10+76 (2026-06-28) — tap any markdown image or diagram to fill the screen + zoom
+- **Tap an image or diagram in a markdown preview to open it full-screen, then pinch-zoom and pan.** Inline images and mermaid diagrams now show inline at a readable size with a small expand badge; tap to blow them up full-screen where pinch/pan/zoom work, tap the ✕ to return. The flowed text still scrolls and selects as before. (#946)
+- **One-tap "build ready" notification.** When a new build is published you get an ntfy push titled with the version and a Download button — tap it to grab the APK. (ntfy)
+
+## v0.1.10+75 (2026-06-28) — file favorites + markdown mermaid diagrams
+- **Favorite paths in the file browser.** Tap the star to favorite the current directory (per profile, saved across restarts). Long-press the star — or any file/folder — for the favorites menu: tap a favorite to jump there, long-press one to remove, or clear all. (#632)
+- **Markdown previews now render mermaid diagrams.** A ` ```mermaid ` block in a .md file shows as the actual flowchart/diagram (rendered offline), not raw code — pinch-zoom and pan the diagram; the raw/source toggle still shows the text. (#942)
+
+## v0.1.10+73 (2026-06-26) — tapping the tmux status bar switches windows again (keyboard-aware sizing)
+- **Switching tmux windows works with the keyboard up.** The real cause of "tap the tmux tabs, nothing switches, only the cursor moves": when the soft keyboard was up, the terminal still told tmux it had the full (taller) height, so tmux drew its status bar OFF-SCREEN below the keyboard — your tap on the visible bottom landed in the middle of the pane (a cursor move, not a window switch). The grid now tracks the keyboard-reduced visible height, so the status bar stays at the visible bottom and the tap switches windows. This was a sizing bug, not a repaint bug (the earlier paint fixes were chasing the wrong thing). (#922) — verify: raise the keyboard, tap a tmux window in the status bar, it switches.
+
+## v0.1.10+72 (2026-06-25) — attention no longer buzzes while you're on the session; repaint diagnostics
+- **No more attention buzz for the session you're already viewing.** When a session disconnected, the app lost track of which host you were on (it went null), so a bell from that same host wasn't suppressed and notified you anyway. The active host is now always known from the session even while disconnected, so a bell for the session you're looking at stays silent. (#936)
+- **Repaint diagnostics for the tmux window-switch issue.** The "switching tmux windows leaves the old window on screen" case (detect-URLs ON) doesn't reproduce in the test harness — it's a real-device timing thing. This build instruments the repaint path so a Feedback capture taken right after a stale switch pinpoints the cause. No behavior change; the fix follows the capture. (Workaround until then: detect-URLs OFF.) (#922)
+
+## v0.1.10+71 (2026-06-24) — tmux window switch repaints (structural end of the repaint saga)
+- **Switching tmux windows shows the new window now**, with URL/path detection on. The whole repaint saga's root: detection drives an extra screen-refresh per change, so the renderer's damage got consumed by that refresh before the painting pass read it — leaving the old window's content on screen. The frame builder now carries damage forward until a pass that actually paints re-reads the full screen, so an extra refresh can no longer strand the display. Replaces the per-case guards (#900/#921/#931) with one structural fix. (#922) — please verify: switch tmux windows a few times with detection on.
+
+## v0.1.10+70 (2026-06-23) — repaint on resume/typing fixed, copy reaches other apps, version shown in Settings
+- **The terminal repaints again when you switch back to the app and as you type.** With URL/path detection on, returning from another app or typing could leave the screen frozen on stale content while new output was actually arriving. Resume now forces a full re-read (not just a repaint nudge), and detection stays armed across resume/tab-switch so it can't silently stop refreshing. (#931)
+- **Copied URLs/paths actually reach other apps now.** A copy could report success and show a correct preview yet not be pasteable elsewhere. Removed a post-copy clipboard self-read that disturbed Android's clipboard handoff, and marked the clip non-sensitive so the system surfaces it normally. (#924) — please verify by pasting into another app.
+- **Settings now shows your running build.** A tappable version line (e.g. `[0.1.10+70 …]`, tap to copy) so you can confirm exactly which build is installed without uploading a report.
+
+## v0.1.10+69 (2026-06-23) — wrapped URL copy stops truncating intermittently
+- **Tapping a wrapped URL reliably copies the whole link.** A long URL that wrapped in the conversation/output sometimes copied only its first line (the same link would copy fully on one tap, truncated on another). Cause: a wrapped line's left indent is painted as either cleared cells or literal spaces depending on the repaint, and the wrap-merge only joined the cleared-cell case. It now treats a blank-looking indent the same either way, so the full URL always stitches together. (#928) (Note: a separate, transient "highlight sits a couple rows off the URL while scrolling" is tracked in #930.)
+
+## v0.1.10+68 (2026-06-22) — diagnostics for stray attention notifications
+- **Instrumented the attention-notification gate.** Chasing the "I get attention alerts while MobiSSH is the active app" report: each post/suppress now records its decision inputs (foreground, active session/host, signalling host) and the active-session hand-off is logged on both the UI and background sides, so a Feedback capture at a stray alert pinpoints the cause. No behavior change yet — the fix follows once a capture confirms it. (attention telemetry)
+
+## v0.1.10+67 (2026-06-22) — copies the WHOLE wrapped URL, not just the first line
+- **Tapping a wrapped URL now copies the entire link.** A long URL printed as output (e.g. inside the Claude TUI) wraps across several indented lines; tap-to-copy was grabbing only the first visible row, so you got a truncated link (and an empty Android copy-preview). The wrap-merge is now indent-aware and stitches the indented continuation rows back into one URL, so copy/open get the full link. (#925)
+
+## v0.1.10+66 (2026-06-22) — fixes the terminal freezing when URL/path detection is on
+- **Detect-URLs no longer stalls the screen.** With link/path highlighting on, the terminal could stop updating (output and window switches didn't repaint) — the actual root of the long repaint saga, independent of tmux. Detection added an extra redraw notify that consumed the screen's damage before it painted; the primary screen now re-reads the full visible grid whenever detection is active, so it stays current. Highlighting on costs nothing extra when off. (#921)
+
+## v0.1.10+65 (2026-06-18) — terminal self-heals its repaint on every tap/keypress
+- **The display refreshes itself whenever you interact.** The "screen looks stale until I tap Diagnostics" problem: now every keypress, tap, swipe, paste, and window switch forces the same full repaint that tapping Diagnostics did — so the terminal stays current as you use it, and streaming output settles to a clean frame on its own. Idle screens still cost nothing. This is on by default (no toggle needed). (#918)
+- **Control-mode window switching repaints reliably.** With the experimental tmux control mode on, switching windows now redraws every time (a +64 issue where same-size switches could show a blank/stale grid). Still off by default. (#916)
+
 ## v0.1.10+64 (2026-06-18) — experimental: tmux control mode (authoritative window switching)
 - **New Settings toggle: "tmux control mode (experimental)" (off by default).** When on, MobiSSH drives tmux via its control protocol (`tmux -CC`) instead of reading the screen — so window switches, sizing, and the active window come straight from tmux. This makes window-switch gestures land on the right window every time and keeps the terminal size in lockstep with tmux (no more stale repaint / wrong-row taps). Requires tmux on the host; reconnect the session after toggling. Leave it off to keep the current behavior. (#906)
 

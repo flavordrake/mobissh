@@ -301,7 +301,7 @@ void main() {
     );
   });
 
-  testWidgets('#611-A bottom nav still exposes Settings + Diagnostics', (
+  testWidgets('#611-A/#897 bottom nav exposes Settings (Diagnostics folded in)', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1000, 2400);
@@ -326,7 +326,8 @@ void main() {
 
     expect(find.byKey(const Key('home-bottom-nav')), findsOneWidget);
     expect(find.byKey(const Key('home-nav-settings')), findsOneWidget);
-    expect(find.byKey(const Key('home-nav-diagnostics')), findsOneWidget);
+    // #897: the standalone Diagnostics tab is gone (folded into Settings).
+    expect(find.byKey(const Key('home-nav-diagnostics')), findsNothing);
 
     // Settings destination opens its own view.
     await tester.tap(find.byKey(const Key('home-nav-settings')));

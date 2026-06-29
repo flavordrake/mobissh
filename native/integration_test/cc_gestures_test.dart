@@ -25,6 +25,7 @@
 // Run: scripts/native-connect-test.sh integration_test/cc_gestures_test.dart
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -95,9 +96,19 @@ void main() {
       addTearDown(sub.cancel);
       String rendered() => utf8.decode(out, allowMalformed: true);
 
-      // A control command delivered ATOMICALLY (Part C Step 1): one envelope, one
-      // framed line — a multi-token command survives the gateway intact.
-      void ctl(String command) => entry.proxy.sendControlCommand(command);
+      // Test scaffolding (build windows + echo per-window markers) goes over the
+      // RAW stdin path — the same proven-reliable delivery cc_render_test uses. In
+      // -CC, a newline-terminated stdin line IS a tmux command. We deliberately do
+      // NOT route the scaffolding through `sendControlCommand`: the quoted
+      // multi-token `send-keys -t :W "echo X" Enter` marker fragments across the
+      // UI→isolate gateway and lands verbatim in the pane shell (the documented
+      // Part-C limitation noted in cc_render_test, lines 156-170), which would
+      // starve every assertion of its marker. The SWITCH — the actual thing under
+      // test — is still issued via `sendTmuxGesture` (a single-token next/previous/
+      // select-window command that delivers intact), so this test still proves the
+      // gesture switches the active window AND the grid repaints to it.
+      void send(String s) =>
+          entry.proxy.sendInput(Uint8List.fromList(utf8.encode(s)));
 
       Future<bool> waitFor(String marker, {int ticks = 40}) async {
         for (var i = 0; i < ticks; i++) {
@@ -123,8 +134,8 @@ void main() {
       // tmux makes the newly-created window active, so after this the active
       // window is window 2 (the last created). Settle so the channel processes
       // both %window-add + %session-window-changed before the first gesture.
-      ctl('new-window -t :1 -n cc_w1');
-      ctl('new-window -t :2 -n cc_w2');
+      send('new-window -t :1 -n cc_w1\n');
+      send('new-window -t :2 -n cc_w2\n');
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 500));
       }
@@ -146,7 +157,7 @@ void main() {
       out.clear();
       entry.proxy.sendTmuxGesture(TmuxWindowGesture.previousWindow);
       await settle();
-      ctl('send-keys -t :1 "echo CC_GEST_W1_AAA" Enter');
+      send('send-keys -t :1 "echo CC_GEST_W1_AAA" Enter\n');
       expect(await waitFor('CC_GEST_W1_AAA'), isTrue,
           reason: 'previous-window (swipe) did not repaint to window 1. '
               'Saw: ${rendered()}');
@@ -155,7 +166,7 @@ void main() {
       out.clear();
       entry.proxy.sendTmuxGesture(TmuxWindowGesture.nextWindow);
       await settle();
-      ctl('send-keys -t :2 "echo CC_GEST_W2_BBB" Enter');
+      send('send-keys -t :2 "echo CC_GEST_W2_BBB" Enter\n');
       expect(await waitFor('CC_GEST_W2_BBB'), isTrue,
           reason: 'next-window (swipe) did not repaint to window 2. '
               'Saw: ${rendered()}');
@@ -170,7 +181,7 @@ void main() {
         statusCols: 90,
       );
       await settle();
-      ctl('send-keys -t :0 "echo CC_GEST_W0_CCC" Enter');
+      send('send-keys -t :0 "echo CC_GEST_W0_CCC" Enter\n');
       expect(await waitFor('CC_GEST_W0_CCC'), isTrue,
           reason: 'status-tap select-window did not repaint to window 0. '
               'Saw: ${rendered()}');
@@ -190,7 +201,7 @@ void main() {
           );
           await settle();
           final marker = 'CC_GEST_CYCLE_${cycle}_W$w';
-          ctl('send-keys -t :$w "echo $marker" Enter');
+          send('send-keys -t :$w "echo $marker" Enter\n');
           expect(await waitFor(marker), isTrue,
               reason: 'cycle $cycle: switch to window $w did not repaint '
                   '(intermittent failure — must be deterministic). '

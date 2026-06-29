@@ -69,6 +69,17 @@ class _RecordingSftpSession implements SftpSession {
   }
 
   @override
+  Future<int> uploadFile(
+    String localPath,
+    String remotePath, {
+    required void Function(int sent, int total) onProgress,
+    int chunkSize = 64 * 1024,
+  }) async {
+    onProgress(0, 0);
+    return 0;
+  }
+
+  @override
   Future<void> close() async {}
 }
 

@@ -271,16 +271,16 @@ class SessionHost {
             // #909 control mode: `refresh-client -C cols,rows` is the SINGLE
             // resize primitive — tmux owns the layout math so the app grid and
             // tmux size cannot diverge. The UI's trailing-edge settle coalescer
-            // (GhosttyResizeCoalescer) already guarantees this carries the FINAL
-            // settled size (never dropped — the #903/#905 lesson). We do NOT also
-            // resize the PTY winsize: in -CC the channel runs `tmux -CC`, whose
-            // own terminal size is irrelevant; the inner client size is what
-            // refresh-client -C sets.
-            try {
-              s.shell?.send(TmuxControlChannel.resizeCommand(cmd.cols, cmd.rows));
-            } catch (_) {
-              // Channel closed mid-resize; the next connect re-syncs.
-            }
+            // (GhosttyResizeCoalescer) already debounces flterm's per-frame
+            // onResize, but #916 found a SECOND uncoalesced source (the
+            // redraw-on-switch) plus the multi-client-clamp feedback storm, so we
+            // also debounce TASK-SIDE through the per-session [refreshCoalescer]:
+            // a burst of resizes / switches collapses to ONE refresh-client at
+            // the settled size (the FINAL size is never dropped — #903/#905). We
+            // do NOT also resize the PTY winsize: in -CC the channel runs
+            // `tmux -CC`, whose own terminal size is irrelevant; the inner client
+            // size is what refresh-client -C sets.
+            s.refreshCoalescer?.submit(cmd.cols, cmd.rows);
           } else {
             // Scrape path (default): resize the live PTY so the remote shell
             // wraps to the viewport.
@@ -326,6 +326,8 @@ class SessionHost {
         _handleSftpDownload(cmd);
       case SftpUploadCommand():
         _handleSftpUpload(cmd);
+      case SftpUploadFileCommand():
+        _handleSftpUploadFile(cmd);
       case SshControlCommand():
         _handleControlCommand(cmd);
       case SshTmuxGestureCommand():
@@ -676,6 +678,8 @@ class SessionHost {
     await hosted.shellSub?.cancel();
     hosted.shellSub = null;
     hosted.tmuxChannel = null; // #909: drop the control-mode adapter on teardown.
+    hosted.refreshCoalescer?.cancel(); // #916: drop the refresh-client coalescer.
+    hosted.refreshCoalescer = null;
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -723,6 +727,10 @@ class SessionHost {
     // #909: drop the control-mode adapter with the shell so a reconnect rebuilds
     // a fresh parser/active-window view (no-op when null on the scrape path).
     hosted.tmuxChannel = null;
+    // #916: cancel + drop the refresh-client coalescer so no pending write
+    // storms a dead/reconnected shell.
+    hosted.refreshCoalescer?.cancel();
+    hosted.refreshCoalescer = null;
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -781,6 +789,21 @@ class SessionHost {
       if (tmuxControlMode) {
         final tmux = TmuxControlChannel();
         hosted.tmuxChannel = tmux;
+        // #916: the per-session refresh-client coalescer. Its settled emit is the
+        // ONLY place a `refresh-client -C` is written to the shell — both the
+        // resize handler and the switch-redraw enqueue here, so a burst collapses
+        // to one write at the settled size (kills the multi-client-clamp storm).
+        // Captured by `transport` so a stale open's coalescer can't write to a
+        // reconnected shell (the shellGeneration guard already discarded it).
+        hosted.refreshCoalescer = RefreshClientCoalescer(
+          onSettled: (cols, rows) {
+            try {
+              transport.send(TmuxControlChannel.resizeCommand(cols, rows));
+            } catch (_) {
+              // Channel closed; the next connect re-syncs.
+            }
+          },
+        );
         try {
           transport.send(TmuxControlChannel.entryCommand);
         } catch (_) {
@@ -789,6 +812,7 @@ class SessionHost {
         }
       } else {
         hosted.tmuxChannel = null;
+        hosted.refreshCoalescer = null;
       }
       // Wire the output listener BEFORE announcing shell-ready (#619). The UI's
       // run-on-connect command fires on shell-ready, writes to stdin, and the
@@ -815,16 +839,41 @@ class SessionHost {
           final tmux = hosted.tmuxChannel;
           if (tmux != null) {
             final result = tmux.ingest(bytes);
+            // #909/#916: control mode ENDED (tmux detached / server died). Surface
+            // it as ONE clean shell close so the controller drives a SINGLE
+            // reconnect through its normal close path — instead of silently
+            // ignoring `%exit` (the prior behaviour) and leaving a half-dead
+            // channel that the multi-client-clamp storm could re-trigger into a
+            // connect→disconnect→reconnect LOOP (#916 root cause #2). Closing the
+            // transport fires `transport.done` → `_dropShell` → the next
+            // `connected` re-opens + re-enters control mode exactly once.
+            if (result.exited) {
+              try {
+                hosted.shell?.close();
+              } catch (_) {
+                /* already closing */
+              }
+              return;
+            }
             if (result.activeWindowChanged) {
-              // Force a redraw at the last-known size so the new window paints.
+              // #916 fix: a window switch must REPAINT the new window PROMPTLY and
+              // reliably. The switch-repaint MUST NOT go through the resize
+              // coalescer: that path has a 250ms trailing-edge settle AND a
+              // same-size dedup, but a window switch re-emits `refresh-client -C`
+              // at the SAME dims to force a repaint — so the dedup swallows it (or
+              // a burst of switches + the 250ms delay collapses it) and the new
+              // window never renders (blank grid — the cc_gestures regression).
+              // Write the redraw DIRECTLY here, decoupled from the resize
+              // coalescer. The coalescer stays dedicated to RESIZE (a burst of
+              // DIFFERING dims → one settled write; same-size dedup is correct
+              // there, and is the actual storm fix validated by cc_churn_bounded).
+              // We do NOT touch the coalescer here, so any pending resize survives.
               final cols = hosted.metrics.lastCols ?? 80;
               final rows = hosted.metrics.lastRows ?? 24;
               try {
-                hosted.shell?.send(
-                  TmuxControlChannel.resizeCommand(cols, rows),
-                );
+                hosted.shell?.send(TmuxControlChannel.resizeCommand(cols, rows));
               } catch (_) {
-                /* channel closed; reconnect re-syncs */
+                // Channel closed mid-switch; the next connect re-syncs.
               }
             }
             final render = result.renderBytes;
@@ -1227,6 +1276,42 @@ class SessionHost {
     }
   }
 
+  Future<void> _handleSftpUploadFile(SftpUploadFileCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      final written = await sftp.uploadFile(
+        cmd.localPath,
+        cmd.remotePath,
+        onProgress: (sent, total) {
+          if (_disposed) return;
+          _gateway.send(
+            SftpUploadProgressEvent(
+              sessionId: cmd.sessionId,
+              requestId: cmd.requestId,
+              sent: sent,
+              totalBytes: total,
+            ).toJson(),
+          );
+        },
+      );
+      if (_disposed) return;
+      _gateway.send(
+        SftpUploadDoneEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          totalBytes: written,
+        ).toJson(),
+      );
+    } catch (e) {
+      ctrace('task.host', 'sftp uploadFile FAILED remote=${cmd.remotePath} — $e');
+      _emitSftpError(cmd.sessionId, cmd.requestId, 'Upload failed: $e');
+    }
+  }
+
   void _emitSftpError(String sessionId, String requestId, String message) {
     if (_disposed) return;
     _gateway.send(
@@ -1296,13 +1381,39 @@ class SessionHost {
     String? activeHost,
   ]) {
     if (_disposed) return;
+    // #840 telemetry: log every setActive the task isolate APPLIES so a device
+    // capture can confirm the UI→task foreground/activeHost propagation actually
+    // landed (paired with the UI-side SEND log in main.dart). Pins a stale/null
+    // activeHost — the prime suspect for a bell firing while foregrounded.
+    clifecycle(
+      'attention',
+      'setActive active=$active activeSessionId=$activeSessionId '
+          'host=$activeHost',
+    );
     // Always track the reported active session id (#840 Slice 2) + host (#847) —
     // even when [active] is unchanged the front-most TAB may have switched, and
     // that must update suppression. A null id/host (older UI / none) leaves it
     // unknown (degrades to "never host-suppress").
     final prevActiveHost = _activeHost;
-    _activeSessionId = activeSessionId;
-    _activeHost = activeHost;
+    // #936: a TRANSIENT disconnect blip can push a setActive with BOTH a null
+    // id AND a null host while the app is still FOREGROUNDED on that very tab —
+    // the UI's front-most session momentarily fails to resolve. With nothing to
+    // derive a host from, clobbering the last-known id/host to null opens the
+    // suppression gate (`shouldPostAttention` returns true when frontHost is
+    // null), so a same-host bell during the blip fires while the user is
+    // looking at it. Retain the last-known id/host in that no-info case rather
+    // than erasing it. Any usable signal — a non-null id (host derivable via
+    // `hostOfSessionId`) or a non-null host — replaces it normally, as does a
+    // genuine background (`active:false`).
+    final hasUsableActive = (activeHost != null && activeHost.isNotEmpty) ||
+        (activeSessionId != null && activeSessionId.isNotEmpty);
+    if (active && !hasUsableActive) {
+      // Foregrounded with no resolvable front-most session — keep
+      // _activeSessionId/_activeHost at their previous values.
+    } else {
+      _activeSessionId = activeSessionId;
+      _activeHost = activeHost;
+    }
     // #856: when the active HOST actually CHANGES, arm the just-switched grace
     // for the newly-active host so its switch catch-up burst doesn't post a
     // redundant attention notification. Only on a real change (new != previous)
@@ -1434,7 +1545,8 @@ class SessionHost {
     if (!post) {
       clifecycle(
         'attention',
-        'suppressed (foreground same-host) session $sessionId',
+        'suppressed (foreground same-host) session $sessionId '
+            '[${_attentionDecisionInputs(signalHost)}]',
       );
       return;
     }
@@ -1458,11 +1570,32 @@ class SessionHost {
           clifecycle('attention', 'post-error: $e (session $sessionId)');
         }),
       );
-      clifecycle('attention', 'posted notification session $sessionId');
+      // #840: log the FULL decision inputs on a POST so a device capture shows
+      // WHY the gate passed — whether the task isolate saw the app as foreground
+      // and what activeHost it believed at the moment the bell fired. The
+      // suppression branches already log their inputs; this closes the gap for
+      // the one path that previously logged only the outcome. No auth material:
+      // host LABELS are already in the notification body.
+      clifecycle(
+        'attention',
+        'posted notification session $sessionId '
+            '[${_attentionDecisionInputs(signalHost)} reason=not-suppressed]',
+      );
     } catch (e) {
       clifecycle('attention', 'build-error: $e (session $sessionId)');
     }
   }
+
+  /// Render the attention-gate decision inputs for a lifecycle log line (#840
+  /// telemetry). Shows what the TASK ISOLATE believed at decision time:
+  /// `foreground` (the propagated UI foreground flag), the front-most
+  /// `activeSessionId`/`activeHost` it last received, and the `signalHost` of the
+  /// bell. Host LABELS only — no auth material (they already appear in
+  /// notification bodies). `null` is rendered explicitly so a capture can tell a
+  /// NEVER-PROPAGATED null apart from a real value.
+  String _attentionDecisionInputs(String? signalHost) =>
+      'foreground=$_active activeSessionId=$_activeSessionId '
+      'activeHost=$_activeHost signalHost=$signalHost';
 
   void _pushSnapshots() {
     if (_disposed) return;
@@ -1668,6 +1801,15 @@ class _HostedSession {
   /// shipped scrape path (flag OFF), where the output listener and resize handler
   /// take their unchanged branches.
   TmuxControlChannel? tmuxChannel;
+
+  /// #916: trailing-edge-settle coalescer for this session's control-mode
+  /// `refresh-client -C` writes. Both the UI resize handler AND the
+  /// redraw-on-active-window-switch enqueue here, so a burst (or the multi-client
+  /// clamp feedback storm) collapses to ONE write at the settled size — the SAME
+  /// taming the PTY path got in #903/#905. Created with the channel in
+  /// [SessionHost._ensureShell] (flag ON), cancelled + cleared with the shell in
+  /// [SessionHost._dropShell]. Null on the scrape path (flag OFF).
+  RefreshClientCoalescer? refreshCoalescer;
 
   /// Intercepts tmux's DA2 (Secondary Device Attributes) query in the remote
   /// byte stream and answers as a `tmux`-class terminal so tmux advertises the

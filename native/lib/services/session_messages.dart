@@ -67,6 +67,14 @@ enum SshTaskCommandKind {
   /// writes them, then replies with a terminal [SftpUploadDoneEvent].
   sftpUpload,
 
+  /// Chunked, RESUMABLE upload of a LOCAL file path to a remote path (#960).
+  /// Unlike [sftpUpload] (whole-file bytes inline, for the in-memory editors),
+  /// the task READS the local file itself and streams it to a `.part` temp file
+  /// then atomically renames it into place, resuming from any existing `.part`.
+  /// Keeps large files out of memory + off the IPC. Emits
+  /// [SftpUploadProgressEvent]s + a terminal [SftpUploadDoneEvent].
+  sftpUploadFile,
+
   // --- tmux control mode (#911, Part C) ---
 
   /// UI → task: a FULL tmux `-CC` control-command LINE, delivered ATOMICALLY
@@ -133,6 +141,11 @@ enum SshTaskEventKind {
   /// A whole-file upload finished — total bytes written + the request id
   /// (#892). The writer seam completes its future on this.
   sftpUploadDone,
+
+  /// Progress for a chunked file upload (#960): bytes sent so far + total. The
+  /// browser renders a determinate bar; resume reports its starting offset via
+  /// the first event.
+  sftpUploadProgress,
 
   /// An SFTP operation failed (list, download, or upload). Carries the request
   /// id so the UI can match it to the in-flight op without tearing down the
@@ -285,6 +298,13 @@ sealed class SshTaskCommand {
           path: json['path'] as String,
           bytes: Uint8List.fromList(base64Decode(json['bytes'] as String)),
         );
+      case SshTaskCommandKind.sftpUploadFile:
+        return SftpUploadFileCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          localPath: json['localPath'] as String,
+          remotePath: json['remotePath'] as String,
+        );
       case SshTaskCommandKind.controlCommand:
         return SshControlCommand(
           sessionId: sessionId,
@@ -387,6 +407,38 @@ class SftpUploadCommand extends SshTaskCommand {
     'requestId': requestId,
     'path': path,
     'bytes': base64Encode(bytes),
+  };
+}
+
+/// UI → task: chunked, RESUMABLE upload of the LOCAL file at [localPath] to
+/// [remotePath] (#960). The task reads the local file itself (it shares the app
+/// process's filesystem), streams it to `[remotePath].part`, then atomically
+/// renames it into place — resuming from any existing `.part`. Progress arrives
+/// as [SftpUploadProgressEvent]s, completion as [SftpUploadDoneEvent], failure
+/// as [SftpErrorEvent], all keyed by [requestId]. The whole file never crosses
+/// the isolate IPC (unlike [SftpUploadCommand], which inlines bytes for editors).
+class SftpUploadFileCommand extends SshTaskCommand {
+  const SftpUploadFileCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.localPath,
+    required this.remotePath,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String localPath;
+  final String remotePath;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpUploadFile;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'localPath': localPath,
+    'remotePath': remotePath,
   };
 }
 
@@ -794,6 +846,13 @@ sealed class SshTaskEvent {
           requestId: json['requestId'] as String,
           totalBytes: json['totalBytes'] as int,
         );
+      case SshTaskEventKind.sftpUploadProgress:
+        return SftpUploadProgressEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          sent: json['sent'] as int,
+          totalBytes: json['totalBytes'] as int,
+        );
       case SshTaskEventKind.sftpError:
         return SftpErrorEvent(
           sessionId: sessionId,
@@ -1134,6 +1193,34 @@ class SftpUploadDoneEvent extends SshTaskEvent {
     'kind': kind.name,
     'sessionId': sessionId,
     'requestId': requestId,
+    'totalBytes': totalBytes,
+  };
+}
+
+/// Task → UI: progress for a chunked file upload (#960). [sent] is the bytes
+/// written so far (starts at the resume offset, not 0, when resuming a `.part`);
+/// [totalBytes] is the local file size. Mirrors the download's progress.
+class SftpUploadProgressEvent extends SshTaskEvent {
+  const SftpUploadProgressEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.sent,
+    required this.totalBytes,
+  }) : super(sessionId);
+
+  final String requestId;
+  final int sent;
+  final int totalBytes;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpUploadProgress;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'sent': sent,
     'totalBytes': totalBytes,
   };
 }
