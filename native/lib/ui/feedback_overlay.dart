@@ -484,7 +484,11 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
         // captured AS-IS in its own screenshot (we no longer hide it for a
         // frame — that delay let the screen re-layout before capture, #666).
         Positioned(
-          top: MediaQuery.of(context).padding.top + 4,
+          // Slightly NEGATIVE relative to the safe-area top so the chip tucks up
+          // into the top surface — it reads as attached to the surface and
+          // occludes much less of the content below (the text view's own top is
+          // untouched). #897-adj.
+          top: MediaQuery.of(context).padding.top - 6,
           left: 0,
           right: 0,
           child: Center(
@@ -499,10 +503,12 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
                   onLongPress: _recording ? null : _recordRepro,
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 3,
-                    ),
+                    // Idle = a tight icon-only chip (the wide "Feedback" label
+                    // occluded the text view); recording keeps the wider pill
+                    // for the countdown text. #897-adj.
+                    padding: _recording
+                        ? const EdgeInsets.symmetric(horizontal: 10, vertical: 3)
+                        : const EdgeInsets.all(6),
                     decoration: BoxDecoration(
                       color: _recording
                           ? Colors.red.shade600
@@ -531,14 +537,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
                               ),
                             ],
                           )
-                        : Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(Icons.feedback_outlined, size: 14),
-                              SizedBox(width: 4),
-                              Text('Feedback', style: TextStyle(fontSize: 11)),
-                            ],
-                          ),
+                        : const Icon(Icons.feedback_outlined, size: 16),
                   ),
                 ),
               ),

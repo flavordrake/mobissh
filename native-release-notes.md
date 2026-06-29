@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+80 (2026-06-29) — smaller, less-intrusive Feedback affordance
+- **The Feedback control is now a small icon** tucked up against the top edge instead of a wider pill — it occludes much less of the terminal/text below. Tap it to send feedback, long-press to record a repro (unchanged). (#897-adj)
+
 ## v0.1.10+79 (2026-06-29) — upload files over SFTP (large files, resumable)
 - **Upload a file to the server.** The file browser has an upload button (top bar) — pick a local file and it uploads into the folder you're viewing, with a progress bar. (#960)
 - **Built for big files.** The upload streams in chunks (it never loads the whole file into memory) and writes to a temporary `.part` first, then swaps it into place when complete — so an interrupted upload never leaves a corrupt file.
