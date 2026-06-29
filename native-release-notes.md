@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+83 (2026-06-29) — much smaller, faster-downloading APK
+- **The app download is ~3× smaller** (arm64-only build, ~30 MB vs ~91 MB) — faster to download and install. The build notification now opens the download in your browser, and the server reports the file size so you get a real progress bar + resumable downloads. (No app behavior change.)
+
 ## v0.1.10+82 (2026-06-29) — Diagnostics declutter (connect-log block removed)
 - **Removed the raw connect-log viewer from Diagnostics.** That granular trace is still captured automatically with every Feedback submission, so nothing's lost — it just removes the debug noise from the settings page. (#897-adj)
 
