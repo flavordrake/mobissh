@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+85 (2026-06-29) — reorder profiles + detected URLs/paths in a side gutter
+- **Reorder your saved profiles.** Each profile card has a drag handle (top-right) — hold to drag it into order, or tap it for "Move to top / Move to bottom." Order is remembered. (#481)
+- **URLs and file paths now show as marks in a right-side gutter** instead of inline highlights. A small mark appears next to any line with a detected link or path (a multi-line URL gets one mark); tap it to copy/open — or, if a line has several, pick from a list. This replaces the old inline highlighting that drifted/lagged during scroll. (#955)
+
 ## v0.1.10+84 (2026-06-29) — fix the crash on disconnect (release builds)
 - **Disconnecting a session no longer crashes the app.** A release-build optimization was stripping data the notification system needs, so cancelling the keep-alive notification on disconnect threw. Added the proper keep-rules. (#915)
 

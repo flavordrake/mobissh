@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-native-media-ntfy-arc-223711/` — native media tap-to-fill (#946), ntfy build-ready push, and the port-2222 emulator unblock. Continues the PWA-parity arc (SFTP file explorer, markdown/media viewers, favorites).
+> **Active TRACE**: `.traces/trace-native-explorer-dx-detection-arc-201358/` — native file-explorer (upload/sort/mtime/context-menu/favorites), settings reorg, DX (arm64 split, Content-Length, ntfy), and the GUTTER pivot that escapes the URL/path detection repaint saga. Durable learnings in memory.
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
