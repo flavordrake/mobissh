@@ -139,12 +139,13 @@ void main() {
       await _pumpFrames(tester);
 
       // The menu is gone and the FULL ConnectHomePage is pushed on top: it has
-      // the Settings/Diagnostics bottom-nav (the unified view, NOT a reduced
-      // connect form) AND a back-to-session affordance.
+      // the Profiles/Settings bottom-nav (the unified view, NOT a reduced
+      // connect form) AND a back-to-session affordance. (#897: Diagnostics is
+      // folded into the Settings page, so there's no separate Diagnostics tab.)
       expect(find.byKey(const Key('session-menu')), findsNothing);
       expect(find.byKey(const Key('home-bottom-nav')), findsOneWidget);
       expect(find.byKey(const Key('home-nav-settings')), findsOneWidget);
-      expect(find.byKey(const Key('home-nav-diagnostics')), findsOneWidget);
+      expect(find.byKey(const Key('home-nav-diagnostics')), findsNothing);
       expect(find.byKey(const Key('home-back-to-session')), findsOneWidget);
 
       // CRITICAL (#721): the existing session was NOT torn down by opening the

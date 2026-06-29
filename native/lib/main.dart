@@ -20,7 +20,6 @@ import 'state/lifecycle_providers.dart';
 import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
-import 'ui/diagnostics_screen.dart';
 import 'ui/feedback_overlay.dart';
 import 'ui/settings_screen.dart';
 import 'ui/terminal_screen.dart';
@@ -360,9 +359,9 @@ Future<void> openConnectHome(BuildContext context) {
 /// #611: the home is JUST the profile CHOOSER — tap = connect, pencil = edit,
 /// plus "New connection" + Import. Settings and Diagnostics no longer clutter
 /// the profile list as inline disclosures; they're separate destinations on a
-/// [BottomNavigationBar] that open their own dedicated views ([SettingsScreen],
-/// [DiagnosticsScreen]). The screens host the EXISTING settings/diagnostics
-/// widgets unchanged so they can grow later (#611 follow-ups).
+/// [BottomNavigationBar] that open their own dedicated views. #897 folds
+/// Diagnostics into the single flat [SettingsScreen] (one page, no Diagnostics
+/// tab), so the bottom nav is now Profiles + Settings.
 ///
 /// #721: the SAME page is also reachable on demand OVER a live session (pushed
 /// by [openConnectHome] from the session menu / session bar) so profiles +
@@ -391,10 +390,10 @@ class ConnectHomePage extends StatefulWidget {
 }
 
 class _ConnectHomePageState extends State<ConnectHomePage> {
-  // 0 = Profiles (chooser), 1 = Settings, 2 = Diagnostics.
+  // 0 = Profiles (chooser), 1 = Settings (Diagnostics folded in, #897).
   int _index = 0;
 
-  static const _titles = <String>['MobiSSH', 'Settings', 'Diagnostics'];
+  static const _titles = <String>['MobiSSH', 'Settings'];
 
   @override
   Widget build(BuildContext context) {
@@ -425,7 +424,6 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
             // gives ConnectForm a bounded height (its Expanded needs that).
             ConnectForm(),
             SettingsScreen(),
-            DiagnosticsScreen(),
           ],
         ),
       ),
@@ -445,12 +443,6 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
             label: 'Settings',
-          ),
-          NavigationDestination(
-            key: Key('home-nav-diagnostics'),
-            icon: Icon(Icons.bug_report_outlined),
-            selectedIcon: Icon(Icons.bug_report),
-            label: 'Diagnostics',
           ),
         ],
       ),

@@ -56,16 +56,23 @@ void main() {
   });
 
   Future<void> pumpBounded(WidgetTester tester) async {
+    // #897: the section is flat now — the connect-log block + Copy/Clear sit at
+    // the bottom of a scroll view. Use a tall viewport so every control fits
+    // on-screen and is hit-testable without a scroll.
+    tester.view.physicalSize = const Size(1000, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pump();
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
   }
 
-  Future<void> expandAll(WidgetTester tester) async {
-    await tester.tap(find.byKey(const ValueKey('diagnostics-section')));
-    await pumpBounded(tester);
-    await tester.tap(find.byKey(const ValueKey('connect-log-tile')));
+  // #897: the diagnostics section + connect-log block are flat now — the output
+  // and Copy/Clear are visible with no expander taps. A bounded settle is still
+  // needed for the FutureBuilder snapshot.
+  Future<void> settleAll(WidgetTester tester) async {
     await pumpBounded(tester);
   }
 
@@ -75,10 +82,14 @@ void main() {
     ctrace('ui.gw', 'flush');
 
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: DiagnosticsSection())),
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: DiagnosticsSection()),
+        ),
+      ),
     );
     await pumpBounded(tester);
-    await expandAll(tester);
+    await settleAll(tester);
 
     final output = tester.widget<Text>(
       find.descendant(
@@ -101,10 +112,14 @@ void main() {
     ctrace('ui.gw', 'flush');
 
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: DiagnosticsSection())),
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: DiagnosticsSection()),
+        ),
+      ),
     );
     await pumpBounded(tester);
-    await expandAll(tester);
+    await settleAll(tester);
 
     await tester.tap(find.byKey(const ValueKey('connect-log-copy-button')));
     await pumpBounded(tester);
@@ -118,10 +133,14 @@ void main() {
     ctrace('ui.form', 'submit');
 
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: DiagnosticsSection())),
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: DiagnosticsSection()),
+        ),
+      ),
     );
     await pumpBounded(tester);
-    await expandAll(tester);
+    await settleAll(tester);
 
     expect(connectLog.value, isNotEmpty);
 

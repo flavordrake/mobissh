@@ -74,7 +74,12 @@ void main() {
     CrashReporter.configure(env: env);
     seedCrashes(count);
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: DiagnosticsSection())),
+      // #897: the section is flat now (a full Column) — mount it in a scroll
+      // view like production (settings_screen.dart) so a bounded test body
+      // doesn't overflow.
+      const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: DiagnosticsSection())),
+      ),
     );
     await pumpBounded(tester);
   }
@@ -82,9 +87,7 @@ void main() {
   testWidgets('share button hidden when no crashes exist', (tester) async {
     await pumpWithCrashes(tester, 0);
 
-    await tester.tap(find.byKey(const ValueKey('diagnostics-section')));
-    await pumpBounded(tester);
-
+    // #897: flat — the "no crash on disk" state is visible with no expander tap.
     expect(find.byKey(const ValueKey('share-last-crash-button')), findsNothing);
     expect(find.text('No crash report on disk.'), findsOneWidget);
   });
@@ -209,14 +212,16 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: DiagnosticsSection(onShareFeedback: (_) async {})),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: DiagnosticsSection(onShareFeedback: (_) async {}),
+          ),
+        ),
       ),
     );
     await pumpBounded(tester);
-    await tester.tap(find.byKey(const ValueKey('diagnostics-section')));
-    await pumpBounded(tester);
 
-    // New backup label on the button itself.
+    // #897: flat — the backup label is visible with no expander tap.
     expect(
       find.text('Share feedback (offline backup)'),
       findsOneWidget,
