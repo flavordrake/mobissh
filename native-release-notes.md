@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+84 (2026-06-29) — fix the crash on disconnect (release builds)
+- **Disconnecting a session no longer crashes the app.** A release-build optimization was stripping data the notification system needs, so cancelling the keep-alive notification on disconnect threw. Added the proper keep-rules. (#915)
+
 ## v0.1.10+83 (2026-06-29) — much smaller, faster-downloading APK
 - **The app download is ~3× smaller** (arm64-only build, ~30 MB vs ~91 MB) — faster to download and install. The build notification now opens the download in your browser, and the server reports the file size so you get a real progress bar + resumable downloads. (No app behavior change.)
 
