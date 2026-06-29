@@ -126,7 +126,7 @@ void main() {
     expect(find.byKey(const ValueKey('keepalive-toggle')), findsOneWidget);
   });
 
-  testWidgets('Settings page folds in the Diagnostics connect-log viewer', (
+  testWidgets('Settings page folds in the Diagnostics section', (
     tester,
   ) async {
     final store = ProfilesStore();
@@ -141,10 +141,14 @@ void main() {
     await tester.tap(find.byKey(const Key('home-nav-settings')));
     await tester.pumpAndSettle();
 
-    // #897: Diagnostics is folded into the single Settings page. The section +
-    // its #543 connect-log block are present without any expander tap (the
-    // block may be below the fold — assert presence, not on-screen position).
+    // #897: Diagnostics is folded into the single Settings page; its controls are
+    // present without any expander tap (may be below the fold — assert presence,
+    // not on-screen position). The raw connect-log block was removed (it's
+    // captured at Feedback-submit instead) — assert a durable diagnostics control.
     expect(find.byKey(const ValueKey('diagnostics-section')), findsOneWidget);
-    expect(find.byKey(const ValueKey('connect-log-tile')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('connection-audit-button')),
+      findsOneWidget,
+    );
   });
 }

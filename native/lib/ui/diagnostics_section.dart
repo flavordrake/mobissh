@@ -13,7 +13,6 @@ import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
 import '../diagnostics/gesture_trace.dart';
-import '../services/clipboard.dart';
 import 'connection_audit.dart';
 import 'settings_subheader.dart';
 import 'top_toast.dart';
@@ -223,109 +222,12 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
                     icon: const Icon(Icons.show_chart),
                     label: const Text('Connection Audit'),
                   ),
-                  const SizedBox(height: 8),
-                  const _ConnectLogTile(),
                 ],
               ),
             ),
           ],
         );
       },
-    );
-  }
-}
-
-/// Plain labeled block that surfaces the in-memory connect-trace ring buffer
-/// (#543) so connect issues can be diagnosed on-device without Termux/adb.
-///
-/// #897: hoisted out of its former self-collapsing ExpansionTile — the log
-/// output + Copy/Clear are always visible now (no tap to expand). The
-/// 'connect-log-tile' key is retained on the root so existing tests /
-/// screenshots still address the block.
-class _ConnectLogTile extends StatelessWidget {
-  const _ConnectLogTile();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const ValueKey('connect-log-tile'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.terminal),
-          title: Text('Connect log'),
-        ),
-        ValueListenableBuilder<List<String>>(
-          valueListenable: connectLog,
-          builder: (context, lines, _) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  key: const ValueKey('connect-log-output'),
-                  constraints: const BoxConstraints(maxHeight: 200),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: lines.isEmpty
-                      ? const Text(
-                          'No connect trace yet. Start a connection.',
-                          style: TextStyle(fontStyle: FontStyle.italic),
-                        )
-                      : SingleChildScrollView(
-                          reverse: true,
-                          child: Text(
-                            lines.join('\n'),
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        key: const ValueKey('connect-log-copy-button'),
-                        onPressed: lines.isEmpty
-                            ? null
-                            : () async {
-                                final ok = await copyToClipboard(
-                                  lines.join('\n'),
-                                );
-                                if (!context.mounted) return;
-                                if (ok) {
-                                  showTopToast(context, 'Connect log copied.');
-                                }
-                              },
-                        icon: const Icon(Icons.copy),
-                        label: const Text('Copy'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        key: const ValueKey('connect-log-clear-button'),
-                        onPressed: lines.isEmpty ? null : clearConnectLog,
-                        icon: const Icon(Icons.clear_all),
-                        label: const Text('Clear'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            );
-          },
-        ),
-      ],
     );
   }
 }

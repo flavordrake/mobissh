@@ -100,7 +100,6 @@ void main() {
     for (final key in const [
       'diagnostics-section',
       'connection-audit-button',
-      'connect-log-tile',
       'force-upload-button',
       'share-feedback-button',
     ]) {
