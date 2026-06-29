@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../ssh/ssh_session.dart';
+import '../state/profile_order_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/recent_sessions.dart';
 import '../state/sessions.dart';
@@ -110,42 +111,14 @@ class ProfileList extends ConsumerWidget {
             ),
           );
         } else {
-          profilesSection = Expanded(
-            key: const Key('profile-list-populated'),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 4),
-                  child: Text(
-                    'Saved Profiles',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ),
-                // #643: the list FILLS the available height instead of a fixed
-                // 220px cap that left ~60% of the screen blank below. `Expanded`
-                // takes whatever vertical room the parent gives (the chooser
-                // places ProfileList in its own Expanded), and the ListView
-                // scrolls within that full height when there are more profiles
-                // than fit. No `shrinkWrap` — the list gets a bounded height
-                // from the Expanded.
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: profiles.length,
-                    itemBuilder: (context, i) {
-                      final p = profiles[i];
-                      return _ProfileTile(
-                        profile: p,
-                        onTap: () => onConnect(p),
-                        onEdit: () => onEdit(p),
-                        onRetry: () => onConnect(p),
-                      );
-                    },
-                  ),
-                ),
-                const Divider(height: 1),
-              ],
-            ),
+          // #481: the saved-profile list is user-reorderable (drag the
+          // upper-right handle, or its tap-menu's Move to top / bottom). The
+          // persisted order is applied here before rendering; the section
+          // self-heals the stored order against add/delete/import.
+          profilesSection = _SavedProfilesSection(
+            profiles: profiles,
+            onConnect: onConnect,
+            onEdit: onEdit,
           );
         }
 
@@ -481,15 +454,93 @@ class _RecentTile extends StatelessWidget {
   }
 }
 
+/// The reorderable "Saved Profiles" section (#481). Applies the persisted
+/// [profileOrderProvider] order to [profiles] before rendering, and renders a
+/// [ReorderableListView] whose ONLY drag affordance is each tile's upper-right
+/// handle (`buildDefaultDragHandles: false`). The card body keeps its
+/// tap-to-connect (#579) and the edit pencil keeps editing.
+///
+/// The stored order self-heals against add/delete/import inside the provider
+/// (it `sync`s off [savedProfilesProvider]) — no plumbing needed here. The
+/// Recent / Active sessions groups above are separate and untouched.
+class _SavedProfilesSection extends ConsumerWidget {
+  const _SavedProfilesSection({
+    required this.profiles,
+    required this.onConnect,
+    required this.onEdit,
+  });
+
+  final List<SavedProfile> profiles;
+  final ProfileSelectCallback onConnect;
+  final ProfileSelectCallback onEdit;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final order = ref.watch(profileOrderProvider);
+    final ordered = applyOrder(profiles, order);
+
+    return Expanded(
+      key: const Key('profile-list-populated'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 4),
+            child: Text(
+              'Saved Profiles',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
+          // #643: the list FILLS the available height (Expanded), scrolling
+          // within it. #481: ReorderableListView gives lift/part + auto-scroll
+          // near the edges during a drag. Default drag handles are OFF — only
+          // each tile's upper-right handle starts a drag.
+          Expanded(
+            child: ReorderableListView.builder(
+              buildDefaultDragHandles: false,
+              itemCount: ordered.length,
+              // onReorderItem (not the deprecated onReorder): newIndex is the
+              // destination AFTER removal, which the notifier consumes directly.
+              onReorderItem: (oldIndex, newIndex) {
+                ref
+                    .read(profileOrderProvider.notifier)
+                    .reorder(oldIndex, newIndex);
+              },
+              itemBuilder: (context, i) {
+                final p = ordered[i];
+                return _ProfileTile(
+                  key: ValueKey('profile-reorder-${p.identityKey}'),
+                  index: i,
+                  profile: p,
+                  onTap: () => onConnect(p),
+                  onEdit: () => onEdit(p),
+                  onRetry: () => onConnect(p),
+                );
+              },
+            ),
+          ),
+          const Divider(height: 1),
+        ],
+      ),
+    );
+  }
+}
+
 /// One profile row. A [ConsumerWidget] so it can watch the session collection
 /// and reflect the matching session's live connect state inline (#660).
 class _ProfileTile extends ConsumerWidget {
   const _ProfileTile({
+    super.key,
+    required this.index,
     required this.profile,
     required this.onTap,
     required this.onEdit,
     required this.onRetry,
   });
+
+  /// This tile's position in the rendered (ordered) list — the drag index for
+  /// the upper-right [ReorderableDelayedDragStartListener] handle (#481).
+  final int index;
 
   final SavedProfile profile;
 
@@ -519,32 +570,113 @@ class _ProfileTile extends ConsumerWidget {
     final color = _parseColor(profile.color);
     final entry = _matchingSession(ref);
 
-    return ListTile(
-      key: Key('profile-tile-${profile.identityKey}'),
-      dense: true,
-      leading: CircleAvatar(
-        backgroundColor: color ?? Theme.of(context).colorScheme.primary,
-        radius: 8,
+    // The body is the existing ListTile (tap-to-connect + edit pencil). The
+    // reorder handle is overlaid in the UPPER-RIGHT corner (#481) so ONLY the
+    // glyph drags / opens the menu — the card body stays tap-to-connect.
+    return Stack(
+      children: [
+        ListTile(
+          key: Key('profile-tile-${profile.identityKey}'),
+          dense: true,
+          leading: CircleAvatar(
+            backgroundColor: color ?? Theme.of(context).colorScheme.primary,
+            radius: 8,
+          ),
+          title: Text(profile.title, overflow: TextOverflow.ellipsis),
+          // The subtitle carries the host line PLUS — when a matching session
+          // is mid-connect or failed — an inline connect affordance (#660). It
+          // stays reactive by streaming the matching session's proxy state.
+          subtitle: _ProfileSubtitle(
+            profile: profile,
+            entry: entry,
+            onRetry: onRetry,
+          ),
+          // Reserve right room for the overlaid handle + pencil so long titles
+          // don't run under them.
+          contentPadding: const EdgeInsets.only(left: 16, right: 88),
+          onTap: onTap,
+        ),
+        // Upper-right control cluster: edit pencil + reorder/menu handle.
+        Positioned(
+          top: 0,
+          right: 0,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Edit pencil opens the editor; the body tap connects. Distinct
+              // targets so a body tap never accidentally edits (PWA parity).
+              IconButton(
+                key: Key('profile-edit-${profile.identityKey}'),
+                icon: const Icon(Icons.edit_outlined, size: 20),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Edit profile',
+                onPressed: onEdit,
+              ),
+              _ReorderHandle(index: index, profile: profile),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The upper-right drag-grip / menu glyph for a profile card (#481).
+///
+/// Touch-and-HOLD then drag → reorder (via [ReorderableDelayedDragStartListener]
+/// so a brief tap doesn't start a drag). TAP → a popup menu with at least
+/// "Move to top" / "Move to bottom". Only this glyph initiates drag/menu; the
+/// card body keeps tap-to-connect (rules/platform/mobile-touch.md — dedicated
+/// control, not an overloaded body gesture). `Icons.drag_indicator` is a
+/// monochrome Material glyph (no emoji), ~18px in a ≥32px tap target.
+class _ReorderHandle extends ConsumerWidget {
+  const _ReorderHandle({required this.index, required this.profile});
+
+  final int index;
+  final SavedProfile profile;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final id = profile.identityKey;
+    return ReorderableDelayedDragStartListener(
+      index: index,
+      child: PopupMenuButton<String>(
+        key: Key('profile-reorder-handle-$id'),
+        tooltip: 'Reorder profile',
+        icon: const Icon(Icons.drag_indicator, size: 18),
+        onSelected: (value) {
+          final notifier = ref.read(profileOrderProvider.notifier);
+          if (value == 'top') {
+            notifier.moveToTop(id);
+          } else if (value == 'bottom') {
+            notifier.moveToBottom(id);
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem<String>(
+            key: Key('profile-move-top-$id'),
+            value: 'top',
+            child: const Row(
+              children: [
+                Icon(Icons.vertical_align_top, size: 18),
+                SizedBox(width: 12),
+                Text('Move to top'),
+              ],
+            ),
+          ),
+          PopupMenuItem<String>(
+            key: Key('profile-move-bottom-$id'),
+            value: 'bottom',
+            child: const Row(
+              children: [
+                Icon(Icons.vertical_align_bottom, size: 18),
+                SizedBox(width: 12),
+                Text('Move to bottom'),
+              ],
+            ),
+          ),
+        ],
       ),
-      title: Text(profile.title, overflow: TextOverflow.ellipsis),
-      // The subtitle carries the host line PLUS — when a matching session is
-      // mid-connect or failed — an inline connect affordance (#660). It stays
-      // reactive by streaming the matching session's proxy state.
-      subtitle: _ProfileSubtitle(
-        profile: profile,
-        entry: entry,
-        onRetry: onRetry,
-      ),
-      // Edit pencil opens the editor; the row tap (onTap) connects. Keeping
-      // the pencil as a distinct trailing target means a row tap never
-      // accidentally edits — it always connects (PWA parity).
-      trailing: IconButton(
-        key: Key('profile-edit-${profile.identityKey}'),
-        icon: const Icon(Icons.edit_outlined),
-        tooltip: 'Edit profile',
-        onPressed: onEdit,
-      ),
-      onTap: onTap,
     );
   }
 }
