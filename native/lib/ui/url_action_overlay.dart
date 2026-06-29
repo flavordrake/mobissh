@@ -38,6 +38,14 @@ Future<bool> _defaultOpen(String url) async {
 @visibleForTesting
 UrlOpener? debugUrlOpenerOverride;
 
+/// Open [url] in the external browser, honouring [debugUrlOpenerOverride] (#955).
+///
+/// The shared open path for BOTH the long-press action overlay and the gutter
+/// list-sheet's URL "Open" item, so test injection covers both. Returns true on
+/// success.
+Future<bool> openDetectedUrl(String url) =>
+    (debugUrlOpenerOverride ?? _defaultOpen)(url);
+
 /// The single live overlay entry, so a new long-press replaces the old one.
 OverlayEntry? _activeEntry;
 Timer? _activeTimer;

@@ -32,16 +32,17 @@ library;
 //
 // This tier is the #791 deferred WIDGET/PIXEL stretch: it mounts the REAL flterm
 // `TerminalView` (so the render box paints and reports the painted offset) ALONG
-// with the real `GhosttyTerminalDecoratorLayer`, replays the captured chunks
-// frame-by-frame, and asserts the decorator resolves anchors against the PAINTED
-// offset — failing before the fix (it tracked the live offset), passing after.
+// with the real `GhosttyGutterLayer` (#955; the decoration consumer driven by the
+// same notifications), replays the captured chunks frame-by-frame, and asserts the
+// controller resolves anchor geometry against the PAINTED offset — failing before
+// the fix (it tracked the live offset), passing after.
 
 import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/material.dart';
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
+import 'package:mobissh/ui/ghostty_gutter_layer.dart';
 
 import 'replay_trace_harness.dart';
 
@@ -52,9 +53,11 @@ const _fixture =
 /// danced. It is detected by the `url` pattern and anchored over its cells.
 const _kTraceUrlFragment = 'github.com/flavordrake/mobissh';
 
-/// Mount the REAL flterm [TerminalView] + the real [GhosttyTerminalDecoratorLayer]
-/// over one [controller], so the render box paints (and reports the painted
-/// offset) and the decorator resolves anchors exactly as on device.
+/// Mount the REAL flterm [TerminalView] + the real [GhosttyGutterLayer] over one
+/// [controller], so the render box paints (and reports the painted offset) and
+/// the gutter consumes anchors exactly as on device. The #803 invariants are
+/// asserted on the controller directly (`anchorRects`/`paintedViewportOffset`);
+/// the gutter is the real decoration CONSUMER driven by the same notifications.
 Future<void> _pumpRealTerminal(
   WidgetTester tester,
   TerminalController controller,
@@ -73,10 +76,13 @@ Future<void> _pumpRealTerminal(
               ),
             ),
             Positioned.fill(
-              child: GhosttyTerminalDecoratorLayer(
+              child: GhosttyGutterLayer(
                 controller: controller,
-                registry: GhosttyDecoratorRegistry.defaults(),
+                registry: GutterPatternRegistry.standard(
+                  openPath: (_) async => true,
+                ),
                 color: const Color(0xFF5B9BD5),
+                cellHeight: 18,
               ),
             ),
           ],
