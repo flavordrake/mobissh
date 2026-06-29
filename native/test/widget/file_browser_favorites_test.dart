@@ -8,8 +8,13 @@
 //   - tapping a favorite navigates the files view there (the deepLink seam)
 //   - LONG-PRESS a favorite removes it
 //   - "Clear all" empties the set
-//   - LONG-PRESS a file/folder entry opens the SAME menu (and does NOT navigate)
 //   - favorites are PER-PROFILE and persist (a fresh store reads them back)
+//
+// NOTE (#952): long-pressing a file/folder entry now opens the per-entry CONTEXT
+// menu (copy path/name, details, download, add to favorites) — NOT the favorites
+// menu. That behavior is covered in file_browser_context_menu_test.dart; the one
+// test below verifies long-press no longer opens the favorites menu and does not
+// navigate.
 //
 // The host's timers are cancelled inline at the END of each test body via
 // `host.disposeSyncForTest()` — addTearDown runs after the framework's
@@ -264,22 +269,26 @@ void main() {
     h.dispose();
   });
 
-  testWidgets('long-press a file entry opens the menu (does NOT navigate)', (
-    tester,
-  ) async {
-    await FavoritesStore().add(_profileKey, '/docs');
+  testWidgets(
+    'long-press a file entry opens the CONTEXT menu (#952), not favorites, '
+    'and does NOT navigate',
+    (tester) async {
+      await FavoritesStore().add(_profileKey, '/docs');
 
-    final h = await _mount(tester);
+      final h = await _mount(tester);
 
-    // Long-press the `docs` directory entry → favorites menu, NOT navigation.
-    await tester.longPress(find.byKey(const Key('file-entry-docs')));
-    await _pump(tester);
-    expect(find.byKey(const Key('favorites-list')), findsOneWidget);
-    // Still at root: inner.bin (which only exists inside /docs) is NOT shown.
-    expect(find.byKey(const Key('file-entry-inner.bin')), findsNothing);
+      // Long-press the `docs` directory entry → per-entry context menu, NOT the
+      // favorites menu, NOT navigation.
+      await tester.longPress(find.byKey(const Key('file-entry-docs')));
+      await _pump(tester);
+      expect(find.byKey(const Key('file-entry-context-menu')), findsOneWidget);
+      expect(find.byKey(const Key('favorites-list')), findsNothing);
+      // Still at root: inner.bin (which only exists inside /docs) is NOT shown.
+      expect(find.byKey(const Key('file-entry-inner.bin')), findsNothing);
 
-    h.dispose();
-  });
+      h.dispose();
+    },
+  );
 
   testWidgets('favorites are per-profile (profile B does not see A)', (
     tester,
