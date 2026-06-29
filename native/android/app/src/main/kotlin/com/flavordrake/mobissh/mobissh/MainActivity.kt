@@ -4,15 +4,21 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
+import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -55,11 +61,133 @@ class MainActivity : FlutterActivity() {
     // copy surfaces in history immediately (not "empty-until-tapped").
     private val clipboardChannel = "mobissh/clipboard"
 
+    // ── Public Downloads publisher (#559). SFTP downloads stream to an
+    // app-private staging file (offset-honoring reassembly); this channel
+    // copies the finished file into the user-visible shared Downloads
+    // collection so it lands where the system file manager / "Downloads"
+    // shows it. API 29+ uses MediaStore (scoped storage, no permission);
+    // older devices fall back to the public Downloads dir behind the legacy
+    // WRITE_EXTERNAL_STORAGE perm (declared maxSdkVersion=28 in the manifest).
+    private val downloadsChannel = "mobissh/downloads"
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         installNativeCrashHandler()
         installStoragePickerChannel(flutterEngine)
         installClipboardChannel(flutterEngine)
+        installDownloadsChannel(flutterEngine)
+    }
+
+    private fun installDownloadsChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            downloadsChannel,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "publishToDownloads" -> {
+                    val srcPath = call.argument<String>("srcPath")
+                    val fileName = call.argument<String>("fileName")
+                    val mimeArg = call.argument<String>("mimeType")
+                    if (srcPath.isNullOrEmpty() || fileName.isNullOrEmpty()) {
+                        result.error("BAD_ARGS", "srcPath and fileName required", null)
+                        return@setMethodCallHandler
+                    }
+                    // Copy off the UI thread — files can be large. Complete the
+                    // MethodChannel result back on the UI thread.
+                    Thread {
+                        try {
+                            val location = publishToDownloads(srcPath, fileName, mimeArg)
+                            runOnUiThread { result.success(location) }
+                        } catch (err: Throwable) {
+                            Log.w(tag, "publishToDownloads failed", err)
+                            runOnUiThread {
+                                result.error("PUBLISH_FAILED", err.message, null)
+                            }
+                        }
+                    }.start()
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** Copy [srcPath] into the user-visible Downloads collection under
+     *  [fileName]. Returns a human-readable location ("Downloads/<name>").
+     *  Throws on failure so the caller can fall back to the staging path. */
+    private fun publishToDownloads(srcPath: String, fileName: String, mimeType: String?): String {
+        val src = File(srcPath)
+        if (!src.exists()) throw IllegalStateException("staging file missing: $srcPath")
+        val mime = mimeType ?: guessMimeType(fileName)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            publishViaMediaStore(src, fileName, mime)
+        } else {
+            publishViaLegacyDir(src, fileName)
+        }
+    }
+
+    private fun publishViaMediaStore(src: File, fileName: String, mime: String): String {
+        val resolver = contentResolver
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, mime)
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(collection, values)
+            ?: throw IllegalStateException("MediaStore insert returned null")
+        try {
+            resolver.openOutputStream(uri)?.use { out ->
+                FileInputStream(src).use { input -> input.copyTo(out) }
+            } ?: throw IllegalStateException("openOutputStream returned null")
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        } catch (err: Throwable) {
+            // Roll back the half-written pending entry so it doesn't linger.
+            try {
+                resolver.delete(uri, null, null)
+            } catch (_: Throwable) {
+            }
+            throw err
+        }
+        // MediaStore resolves DISPLAY_NAME collisions itself ("name (1).ext").
+        val saved = displayNameFor(uri) ?: fileName
+        return "Downloads/$saved"
+    }
+
+    private fun publishViaLegacyDir(src: File, fileName: String): String {
+        @Suppress("DEPRECATION")
+        val dir = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_DOWNLOADS,
+        )
+        if (!dir.exists()) dir.mkdirs()
+        var dest = File(dir, fileName)
+        // Avoid clobbering an existing file: append " (n)" before the extension.
+        if (dest.exists()) {
+            val dot = fileName.lastIndexOf('.')
+            val stem = if (dot > 0) fileName.substring(0, dot) else fileName
+            val ext = if (dot > 0) fileName.substring(dot) else ""
+            var n = 1
+            while (dest.exists()) {
+                dest = File(dir, "$stem ($n)$ext")
+                n++
+            }
+        }
+        FileInputStream(src).use { input ->
+            FileOutputStream(dest).use { out -> input.copyTo(out) }
+        }
+        return "Downloads/${dest.name}"
+    }
+
+    private fun guessMimeType(fileName: String): String {
+        val ext = MimeTypeMap.getFileExtensionFromUrl(fileName)?.lowercase(java.util.Locale.US)
+        val fromMap = if (!ext.isNullOrEmpty()) {
+            MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+        } else {
+            null
+        }
+        return fromMap ?: "application/octet-stream"
     }
 
     private fun installClipboardChannel(flutterEngine: FlutterEngine) {

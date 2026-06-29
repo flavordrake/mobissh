@@ -18,6 +18,13 @@
          (driven by services/battery_optimization.dart) needs this permission to
          show the OS exemption dialog. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- #559: copy finished SFTP downloads into the user-visible public Downloads
+         folder. On API 29+ this goes through MediaStore (scoped storage, no
+         permission). API 28 and below write the public Downloads dir directly,
+         which requires this legacy permission — capped at maxSdkVersion=28 so it
+         is never requested on modern devices. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
     <application
         android:label="mobissh"
         android:name="${applicationName}"

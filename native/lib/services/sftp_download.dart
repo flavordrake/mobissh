@@ -5,12 +5,13 @@
 // abstraction so the chunk-assembly logic is reusable and the storage backend
 // is swappable:
 //
-//   - MVP / this slice: [AppDownloadsSink] writes into the app's external
-//     "Downloads" directory via path_provider — no MANAGE_EXTERNAL_STORAGE,
-//     no SAF prompt. Good enough to validate the round-trip end-to-end.
-//   - Follow-up (owner-validated on device): a SAF/MediaStore-backed sink that
-//     drops files into the shared Downloads collection the user sees in their
-//     file manager. Slot it in by implementing [FileDownloadSink].
+//   - [AppDownloadsSink] streams chunks into an app-private *staging* file,
+//     then on [finish] publishes the completed file into the user-visible
+//     shared Downloads collection via the native `mobissh/downloads` channel
+//     (MediaStore on API 29+, the public Downloads dir on older devices —
+//     see downloads_publisher.dart / MainActivity.kt). The file lands where
+//     the system file manager's "Downloads" shows it. If publishing fails the
+//     staging file is kept and its path returned, so a download is never lost.
 //
 // Keeping the assembly here (not in the widget) means Slice 2's folder
 // download can reuse it per-file.
@@ -27,6 +28,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
+
+import 'downloads_publisher.dart';
 
 /// A destination for a single downloaded file. Chunks arrive from the task
 /// isolate keyed by their byte [offset] (NOT guaranteed in order); [addChunk]
@@ -127,45 +130,64 @@ class OffsetFileSink implements FileDownloadSink {
   }
 }
 
-/// Writes into the app's external Downloads directory (Android) or the app
-/// documents directory (fallback). Scoped storage — no broad-storage perms.
-/// Delegates offset-honoring assembly + length verification to [OffsetFileSink].
+/// Streams chunks into an app-private staging file, then on [finish] publishes
+/// the completed file into the user-visible public Downloads collection via the
+/// native `mobissh/downloads` channel ([platformPublishToDownloads]). Offset-
+/// honoring assembly + length verification are delegated to [OffsetFileSink];
+/// publishing is injectable so tests substitute a fake.
+///
+/// If publishing throws (non-Android host, MediaStore failure), the staging
+/// file is kept and its path returned — a completed download is never lost,
+/// it just stays in app-private storage.
 class AppDownloadsSink implements FileDownloadSink {
-  AppDownloadsSink._(this._inner);
+  AppDownloadsSink._(this._inner, this._fileName, this._publish);
 
   final OffsetFileSink _inner;
+  final String _fileName;
+  final DownloadsPublisher _publish;
 
-  /// The destination file path (for tests / callers that need it).
+  /// The staging file path (for tests / callers that need it).
   String get path => _inner.file.path;
 
-  static Future<AppDownloadsSink> create(String fileName) async {
-    final dir = await _resolveDownloadsDir();
-    final safeName = _sanitize(fileName);
-    final file = File('${dir.path}/$safeName');
-    final inner = await OffsetFileSink.create(file);
-    return AppDownloadsSink._(inner);
+  static Future<AppDownloadsSink> create(
+    String fileName, {
+    DownloadsPublisher? publisher,
+  }) async {
+    final dir = await _resolveStagingDir();
+    return createInDir(dir, fileName, publisher: publisher);
   }
 
-  static Future<Directory> _resolveDownloadsDir() async {
-    // getDownloadsDirectory() is null on Android; fall back to the app's
-    // external storage dir's Download subfolder, then app documents.
-    Directory? dir;
+  /// Test seam: stage into an explicit [dir] (a real temp dir in tests) so the
+  /// publish/cleanup/fallback contract is verifiable without path_provider.
+  static Future<AppDownloadsSink> createInDir(
+    Directory dir,
+    String fileName, {
+    DownloadsPublisher? publisher,
+  }) async {
+    final safeName = _sanitize(fileName);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    final file = File('${dir.path}/$safeName');
+    final inner = await OffsetFileSink.create(file);
+    return AppDownloadsSink._(
+      inner,
+      safeName,
+      publisher ?? platformPublishToDownloads,
+    );
+  }
+
+  /// App-private staging directory for in-flight downloads. Not user-visible;
+  /// the file is moved into public Downloads on [finish].
+  static Future<Directory> _resolveStagingDir() async {
+    Directory base;
     try {
-      dir = await getDownloadsDirectory();
+      base =
+          await getApplicationSupportDirectory();
     } catch (_) {
-      dir = null;
+      base = await getApplicationDocumentsDirectory();
     }
-    if (dir == null) {
-      try {
-        final ext = await getExternalStorageDirectory();
-        if (ext != null) {
-          dir = Directory('${ext.path}/Download');
-        }
-      } catch (_) {
-        dir = null;
-      }
-    }
-    dir ??= await getApplicationDocumentsDirectory();
+    final dir = Directory('${base.path}/mobissh_downloads');
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
@@ -183,8 +205,25 @@ class AppDownloadsSink implements FileDownloadSink {
       _inner.addChunk(bytes, offset);
 
   @override
-  Future<String> finish({int? expectedTotal}) =>
-      _inner.finish(expectedTotal: expectedTotal);
+  Future<String> finish({int? expectedTotal}) async {
+    // Verify length first; this throws (and deletes) on a truncated transfer.
+    final stagingPath = await _inner.finish(expectedTotal: expectedTotal);
+    try {
+      final location = await _publish(stagingPath, _fileName, null);
+      // Published into public Downloads — drop the staging copy.
+      try {
+        final staged = File(stagingPath);
+        if (await staged.exists()) await staged.delete();
+      } catch (_) {
+        /* best-effort cleanup */
+      }
+      return location;
+    } catch (_) {
+      // Publishing unavailable/failed: keep the completed staging file so the
+      // download isn't lost, and report its path.
+      return stagingPath;
+    }
+  }
 
   @override
   Future<void> abort() => _inner.abort();
