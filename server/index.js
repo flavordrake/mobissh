@@ -1244,9 +1244,15 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
         }
       } catch (_) {}
     }
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store',
+      // Advertise byte size + range support (#dx): without Content-Length Node
+      // falls back to chunked transfer, so downloaders (ntfy / browser) can't
+      // show total/progress/completion and can't resume or parallelize. `data`
+      // already holds the full file, so this is free; Range lets a big download
+      // (the APK) resume/parallelize.
+      'Accept-Ranges': 'bytes',
       'Content-Security-Policy': [
         "default-src 'self'",
         "script-src 'self'",
@@ -1261,7 +1267,37 @@ log('\\nDone. Redirecting...');setTimeout(()=>location.href='./',1500)})();
         "worker-src 'self'",
         "frame-ancestors 'none'",
       ].join('; '),
-    });
+    };
+    // Honor a single byte-range (bytes=start-end | start- | -suffix) so a large
+    // download can resume / parallelize. Sliced from the in-memory buffer.
+    const total = data.length;
+    const rangeMatch = /^bytes=(\d*)-(\d*)$/.exec((req.headers.range || '').trim());
+    if (rangeMatch) {
+      let start = rangeMatch[1] === '' ? null : parseInt(rangeMatch[1], 10);
+      let end = rangeMatch[2] === '' ? null : parseInt(rangeMatch[2], 10);
+      if (start === null) {
+        // suffix range: last N bytes
+        start = end === null ? 0 : Math.max(0, total - end);
+        end = total - 1;
+      } else if (end === null || end >= total) {
+        end = total - 1;
+      }
+      if (start > end || start >= total) {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${total}`,
+          'Accept-Ranges': 'bytes',
+        });
+        res.end();
+        return;
+      }
+      headers['Content-Length'] = end - start + 1;
+      headers['Content-Range'] = `bytes ${start}-${end}/${total}`;
+      res.writeHead(206, headers);
+      res.end(data.subarray(start, end + 1));
+      return;
+    }
+    headers['Content-Length'] = total;
+    res.writeHead(200, headers);
     res.end(data);
   });
 });

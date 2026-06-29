@@ -36,10 +36,13 @@ if [ -z "$URL" ] || [ -z "$TOPIC" ]; then
   exit 0
 fi
 
-# Headers: Title, package tag, tap-to-download Click, and a Download action button.
+# Headers: Title, package tag, and Click = open the URL in the SYSTEM BROWSER on
+# tap. #dx: we deliberately DROP the in-app "Download" action button — ntfy's
+# own downloader was ~half the speed of a browser fetch; Click hands the URL to
+# the default browser (the fast path), which downloads the APK.
 hdrs=(-H "Title: ${TITLE}" -H "Tags: package")
 if [ -n "$TOKEN" ]; then hdrs+=(-H "Authorization: Bearer ${TOKEN}"); fi
-if [ -n "$CLICK" ]; then hdrs+=(-H "Click: ${CLICK}" -H "Actions: view, Download, ${CLICK}"); fi
+if [ -n "$CLICK" ]; then hdrs+=(-H "Click: ${CLICK}"); fi
 
 if curl -fsS -m 15 "${hdrs[@]}" -d "${BODY}" "${URL%/}/${TOPIC}" >/dev/null; then
   log "sent '${TITLE}' → ${URL%/}/${TOPIC} (click=${CLICK:-none})"
