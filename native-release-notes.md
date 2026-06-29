@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+81 (2026-06-29) — settings reorg + file-explorer sort/details
+- **Settings is one clean page now.** Every setting is a top-level control (no more single big expander), grouped under light headings, with Diagnostics folded in as a section at the bottom and a new **Reset settings** action. (#897)
+- **File explorer shows modification time** alongside size in each row, and a **sort menu** (⇅ in the top bar): sort by name, modified, size, or type, ascending or descending (per-profile, folders stay first). (#951)
+- **Long-press a file or folder** for a menu: copy full path, copy name, show details, download, add to favorites. (#952)
+
 ## v0.1.10+80 (2026-06-29) — smaller, less-intrusive Feedback affordance
 - **The Feedback control is now a small icon** tucked up against the top edge instead of a wider pill — it occludes much less of the terminal/text below. Tap it to send feedback, long-press to record a repro (unchanged). (#897-adj)
 
