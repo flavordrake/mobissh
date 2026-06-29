@@ -223,11 +223,14 @@ abstract class TerminalController extends ChangeNotifier
   Listenable get decorationListenable;
 
   /// The VIEWPORT row index a gutter decorator for [range] should mark, or null
-  /// when the range is fully off-screen (#767 Slice B).
+  /// when the range is fully off-screen (#767 Slice B, #955).
   ///
   /// The top visible row the range occupies (its first row still inside the
-  /// viewport). Exposed for a FUTURE gutter decorator (a margin glyph beside a
-  /// matched line); the URL bubble decorator does not use it.
+  /// viewport), resolved against the PAINTED viewport offset so the gutter mark
+  /// stays in lockstep with the painted rows (#955; the same frame snapshot
+  /// [anchorRects]/[matchAt] use, never a frame ahead during a tmux-redraw
+  /// scroll). The `GhosttyGutterLayer` reads this to place a right-edge margin
+  /// mark beside each matched line.
   int? anchorGutterRow(HighlightRange range);
 
   /// The AUTHORITATIVE per-visible-row soft-wrap flags for the active screen.

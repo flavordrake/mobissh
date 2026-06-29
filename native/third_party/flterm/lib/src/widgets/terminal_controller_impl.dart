@@ -459,9 +459,14 @@ class TerminalControllerImpl extends TerminalController
   @override
   int? anchorGutterRow(HighlightRange range) {
     _renderState.update(terminal);
+    // #955: resolve against the PAINTED viewport offset — the SAME frame snapshot
+    // [anchorRects]/[matchAt] use (`viewRow = absRow - _paintedViewportOffset`),
+    // NOT the live `scrollbar.offset` (which can run a frame AHEAD of the painted
+    // glyphs during a tmux-redraw scroll, the #803/#863 divergence). The gutter
+    // mark then moves in lockstep with the painted rows, never a frame ahead.
     return AnchorGeometry.gutterRowFor(
       range,
-      viewportOffset: scrollbar.offset,
+      viewportOffset: _paintedViewportOffset,
       viewportRows: _renderState.rows,
     );
   }

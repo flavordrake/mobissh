@@ -185,6 +185,7 @@ import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import 'file_browser_screen.dart';
+import 'ghostty_gutter_layer.dart';
 import 'ghostty_terminal_decorators.dart';
 import 'keybar.dart';
 import 'path_action_overlay.dart';
@@ -2049,13 +2050,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// build sets it.
   Color _lastHighlightColor = const Color(0x335B9BD5);
 
-  /// #767 Slice B: the per-pattern decorator registry. Maps a detected anchor's
-  /// pattern id to its visual decorator (the URL bubble today; file-path /
-  /// commit-sha chips in future). The [GhosttyTerminalDecoratorLayer] in [build]
-  /// resolves the controller's live anchors to viewport rects and dispatches them
-  /// here.
-  final GhosttyDecoratorRegistry _decorators =
-      GhosttyDecoratorRegistry.defaults();
+  /// #955: the per-pattern GUTTER registry. Maps a detected anchor's pattern id
+  /// to its right-edge mark + tap dispatch (URL/OSC-8 → the URL action overlay;
+  /// path → the path overlay / SFTP explorer via [_openPath]). The
+  /// [GhosttyGutterLayer] in [build] groups the controller's live anchors by
+  /// viewport row and renders one mark per matched row. `late` so it can capture
+  /// the instance [_openPath]. A future pattern (slice 4 custom regex) is a
+  /// trivial registry entry — no paint code.
+  late final GutterPatternRegistry _gutterRegistry =
+      GutterPatternRegistry.standard(openPath: _openPath);
 
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
   /// long-press-start, held while the finger drags so each extend rebuilds the
@@ -2348,14 +2351,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// maintains the ANCHORS across scroll / wrap / resize / eviction — no app-side
   /// detect or push. Re-registering with the same id replaces the pattern.
   ///
-  /// #767 Slice B: the pattern carries NO highlight background. The URL's visual
-  /// is now the widget-layer BUBBLE ([GhosttyTerminalDecoratorLayer] →
-  /// [UrlBubbleDecorator]), a rounded OUTLINE hugging the cells — NOT an opaque
-  /// fill painted over the glyphs (which hid the URL text). The fork's
-  /// [HighlightPainter] only fills when a range opts in with a background, so a
-  /// no-background URL anchor leaves the glyphs untouched; the bubble decorator
-  /// draws the affordance instead. The bubble colour comes from the decorator
-  /// layer ([_lastHighlightColor]); this registration is theme-independent.
+  /// #767 Slice B / #955: the pattern carries NO highlight background. The URL's
+  /// visual is now the right-edge GUTTER mark ([GhosttyGutterLayer]) — NOT an
+  /// inline fill/bubble painted over the glyphs (retired #955; it drifted off its
+  /// text during scroll). The fork's [HighlightPainter] only fills when a range
+  /// opts in with a background, so a no-background URL anchor leaves the glyphs
+  /// untouched; the gutter mark draws the affordance instead. The mark colour
+  /// comes from the gutter layer ([_lastHighlightColor]); this registration is
+  /// theme-independent.
   void _registerUrlPattern(TerminalController controller) {
     // #888 Part A: detection is gated on the GLOBAL detection settings. Read
     // them HERE so registration reflects the current toggles; a live change
@@ -3307,13 +3310,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #734: remember the live cell size so a long-press URL menu can build its
     // highlight rects with the same geometry the router maps touches with.
     _lastCellSize = cellSize;
-    // #755/#767: URLs are DETECTED + ANCHORED inside the terminal (the `url`
-    // structured-text pattern over its own cells). #767 Slice B: the VISUAL is a
-    // widget-layer BUBBLE decorator ([GhosttyTerminalDecoratorLayer]) coloured
-    // with the live session selection colour — no fill, no host re-detect. The
+    // #755/#767/#955: URLs + paths are DETECTED + ANCHORED inside the terminal
+    // (the `url`/`path` structured-text patterns over its own cells). The VISUAL
+    // is the right-edge GUTTER mark ([GhosttyGutterLayer]) coloured with the live
+    // session selection colour — no inline fill, no host re-detect. The
     // colourless pattern registration never needs re-registering on a theme
-    // change; we just track the colour the bubble paints in, so cycling the
-    // session theme recolours the bubble on the next build.
+    // change; we just track the colour the mark paints in, so cycling the session
+    // theme recolours the mark on the next build.
     final highlightColor = palette.theme.selection;
     if (highlightColor != _lastHighlightColor) {
       _lastHighlightColor = highlightColor;
@@ -3407,28 +3410,6 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // the flterm root cause (touch long-press, not `drag`, was the
             // swipe-select culprit).
             gestureSettings: kGhosttyScrollSettings,
-          ),
-        ),
-        // #767 Slice B: the per-pattern DECORATOR layer. The terminal OWNS URL
-        // detection + persistent cell-sequence ANCHORING (the `url` TextPattern
-        // scans its own cells; matches re-anchor across scroll/wrap/resize/
-        // eviction by re-scanning — the #748/#750/#751/#764 drift root cause is
-        // gone). This layer reads the controller's live `anchors` + resolves each
-        // to CURRENT viewport rects via `controller.anchorRects`, then draws the
-        // registered decorator — the URL BUBBLE: a rounded OUTLINE hugging the
-        // cells (joined across wrap rows) in the theme accent, NEVER an opaque
-        // fill over the glyphs (which hid the URL text). It listens to the
-        // controller so it repaints as the viewport scrolls, with NO re-detection.
-        // Paint-only (IgnorePointer) — taps/long-presses fall through to the
-        // gesture router below, which owns hit-test (matchAt) + copy/open. The
-        // fork's HighlightPainter still exists as an OPTIONAL fill decorator
-        // (used only when a pattern opts into a background), but URLs use the
-        // bubble, so the colourless `url` pattern paints no fill.
-        Positioned.fill(
-          child: GhosttyTerminalDecoratorLayer(
-            controller: controller,
-            registry: _decorators,
-            color: highlightColor,
           ),
         ),
         // #690/#692/#693: routes touch so the remote (tmux) behaves. When mouse
@@ -3572,6 +3553,25 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // parent builds the on-screen highlight rects + anchor from the match
             // and hands them to the overlay.
             onUrlLongPress: _showUrlMenu,
+          ),
+        ),
+        // #955: the right-edge GUTTER layer (replaces the inline decorator). The
+        // terminal OWNS URL/path detection + persistent cell-sequence ANCHORING;
+        // this layer reads `controller.anchors`, resolves each to a VIEWPORT row
+        // via `controller.anchorGutterRow` (painted-offset, in lockstep with the
+        // painted rows — #955), GROUPS them by row, and renders ONE small
+        // monochrome mark per matched row at the right edge. No glyph-cell
+        // geometry → no scroll drift (the #930/#803/#812/#863/#864 inline-bubble
+        // saga). Hides mid-scroll (`isScrolling`), re-shows on settle. Mounted
+        // ABOVE the gesture router so a tap on a mark is consumed by the mark
+        // (everywhere else is transparent and falls through to the router below).
+        Positioned.fill(
+          child: GhosttyGutterLayer(
+            controller: controller,
+            registry: _gutterRegistry,
+            color: highlightColor,
+            cellHeight: cellSize.height,
+            padding: kGhosttyTerminalPadding,
           ),
         ),
         // Selection affordances (bottom-right). #712: shown ONLY while a
