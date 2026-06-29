@@ -26,6 +26,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../main.dart' show openConnectHome;
 import '../ssh/ssh_session.dart';
+import '../state/detection_providers.dart';
 import '../state/favorites_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
@@ -421,6 +422,12 @@ class _SessionControlsRow extends ConsumerWidget {
     final fontIndex = terminalFontFamilies.indexWhere(
       (f) => f.id == fontFamily,
     );
+    // #955/#888: in-terminal link/path DETECTION (the right-edge gutter marks)
+    // is a GLOBAL viewer pref. Surface it here as a one-tap toggle so the owner
+    // can flip it without digging into Settings. Toggling off→on also fires the
+    // terminal view's live re-register + re-scan of the current cells, so it
+    // doubles as a "make the gutter re-evaluate now" control.
+    final detectionOn = ref.watch(detectionSettingsProvider).enabled;
 
     return Padding(
       key: const Key('session-menu-controls'),
@@ -526,6 +533,21 @@ class _SessionControlsRow extends ConsumerWidget {
           ),
           // Files moved to a PER-ROW affordance (#649): each session row now
           // carries its own `session-menu-files-${id}` icon next to its X.
+          // 3b. Link/path DETECTION toggle (#955/#888) — GLOBAL. Filled link
+          // glyph = on (gutter marks active), broken-link = off. Lets the owner
+          // turn the gutter on/off from the menu and (off→on) force a re-scan.
+          _StepButton(
+            itemKey: const Key('session-menu-detection-toggle'),
+            tooltip: detectionOn
+                ? 'Link/path detection: on'
+                : 'Link/path detection: off',
+            icon: detectionOn ? Icons.link : Icons.link_off,
+            selected: detectionOn,
+            enabled: true,
+            onTap: () => ref
+                .read(detectionSettingsProvider.notifier)
+                .setEnabled(!detectionOn),
+          ),
           // 4. Keybar visibility toggle. Filled icon = visible, outlined =
           // hidden, so the glyph itself communicates the toggle state.
           // PER-SESSION (#573): flips THIS (active) session's flag only.

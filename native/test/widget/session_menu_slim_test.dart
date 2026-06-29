@@ -22,6 +22,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
+import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
@@ -172,6 +173,30 @@ void main() {
       // Label still shows; the verbose subtitle line is gone.
       expect(find.text('Prod box'), findsOneWidget);
       expect(find.text('u@host-a:22'), findsNothing);
+    });
+
+    testWidgets('detection toggle is present and flips the global setting', (
+      tester,
+    ) async {
+      final container = _makeContainer();
+      _add(container, 'host-a');
+
+      await tester.pumpWidget(_host(container: container));
+      await tester.tap(find.byKey(const Key('open-menu')));
+      await _pumpFrames(tester);
+
+      // The toggle is present in the slim controls row.
+      expect(
+        find.byKey(const Key('session-menu-detection-toggle')),
+        findsOneWidget,
+      );
+      // Detection defaults ON (no regression); tapping flips it OFF globally.
+      expect(container.read(detectionSettingsProvider).enabled, isTrue);
+      await tester.tap(
+        find.byKey(const Key('session-menu-detection-toggle')),
+      );
+      await _pumpFrames(tester);
+      expect(container.read(detectionSettingsProvider).enabled, isFalse);
     });
 
     testWidgets('font +/- still mutates only the active session', (

@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+88 (2026-06-29) — link/path detection toggle in the session menu
+- **Turn the link/path gutter on or off from the session menu.** A new link toggle sits in the session menu's control row — tap it to switch the right-edge detection marks on/off (it's a quick way to verify the feature and force a fresh scan of the screen). Detection stays on by default. (#955)
+
+## v0.1.10+87 (2026-06-29) — profile drag-reorder works on device
+- **Dragging a profile's handle now reorders it.** Press the drag handle (top-right of a saved-profile card) and drag — no long hold needed. Tapping the same handle still opens the "Move to top / Move to bottom" menu. (#481)
+
 ## v0.1.10+86 (2026-06-29) — downloads now go to your Downloads folder
 - **Downloaded files land in your real Downloads folder** — the one your file manager and browser show — instead of an app-private spot you couldn't find. The "Downloaded …" confirmation now shows the actual location (→ Downloads/<name>). (#559)
 
