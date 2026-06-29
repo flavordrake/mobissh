@@ -25,6 +25,7 @@ import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/favorites_store.dart';
+import 'favorites_menu_sheet.dart';
 import 'file_viewer_registry.dart';
 import 'pdf_viewer_screen.dart';
 import 'top_toast.dart';
@@ -464,6 +465,9 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     setState(() {
       _favoritePaths = favs.map((f) => f.path).toSet();
     });
+    // shared_preferences isn't reactive: nudge the session-menu favorites star
+    // (and any other watcher) so it reflects this add/remove/clear (#950).
+    ref.invalidate(profileFavoritesProvider(key));
   }
 
   bool get _currentFavorited => _favoritePaths.contains(normalizePath(_path));
@@ -496,78 +500,15 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   Future<void> _openFavoritesMenu() async {
     final key = _profileKey;
     if (key == null) return;
-    var favs = await _favStore.favoritesFor(key);
-    if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            return SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.star),
-                    title: const Text('Favorites'),
-                    trailing: TextButton(
-                      key: const Key('favorites-clear-all'),
-                      onPressed: favs.isEmpty
-                          ? null
-                          : () async {
-                              await _favStore.clear(key);
-                              await _refreshFavorites();
-                              favs = const [];
-                              setSheetState(() {});
-                            },
-                      child: const Text('Clear all'),
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  if (favs.isEmpty)
-                    const Padding(
-                      key: Key('favorites-empty'),
-                      padding: EdgeInsets.all(24),
-                      child: Text('No favorites yet'),
-                    )
-                  else
-                    Flexible(
-                      child: ListView(
-                        key: const Key('favorites-list'),
-                        shrinkWrap: true,
-                        children: [
-                          for (final f in favs)
-                            ListTile(
-                              key: Key('favorite-item-${f.path}'),
-                              leading: const Icon(Icons.folder_outlined),
-                              title: Text(
-                                f.display,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: (f.label != null && f.label!.isNotEmpty)
-                                  ? Text(f.path, overflow: TextOverflow.ellipsis)
-                                  : null,
-                              onTap: () {
-                                Navigator.of(sheetContext).pop();
-                                _navigateToFavorite(f.path);
-                              },
-                              // Long-press a favorite = REMOVE it (#632 bullet 4).
-                              onLongPress: () async {
-                                await _favStore.remove(key, f.path);
-                                await _refreshFavorites();
-                                favs = await _favStore.favoritesFor(key);
-                                setSheetState(() {});
-                              },
-                            ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+    // #950: the menu is now the shared profile-scoped sheet. In the browser a
+    // tapped favorite navigates IN PLACE; onChanged keeps the app-bar star + the
+    // session-menu star provider in sync.
+    await showFavoritesMenu(
+      context,
+      store: _favStore,
+      profileKey: key,
+      onNavigate: _navigateToFavorite,
+      onChanged: _refreshFavorites,
     );
   }
 

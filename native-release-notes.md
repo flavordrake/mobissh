@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+78 (2026-06-29) — favorites star on each session in the menu
+- **Open a session's favorites straight from the session menu.** Any session whose profile has marked favorites now shows a ★ on its row in the session menu; tap it to see that profile's favorites and jump straight to one (it opens the file browser there). Sessions without favorites don't show the star. (#950)
+
 ## v0.1.10+77 (2026-06-28) — full-screen diagrams now center + zoom crisply
 - **Tapped mermaid diagrams open centered and zoom sharply.** The full-screen diagram now centers in the view (no more pinned to the top with empty space below) and pinch-zoom/pan is handled by the diagram itself, so it stays crisp and pans smoothly instead of feeling sluggish. (#949)
 - **Tapped images open centered and fit the screen**, and stay sharp when you zoom in. (#949)
