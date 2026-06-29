@@ -15,6 +15,7 @@ import '../diagnostics/feedback_bundle.dart';
 import '../diagnostics/gesture_trace.dart';
 import '../services/clipboard.dart';
 import 'connection_audit.dart';
+import 'settings_subheader.dart';
 import 'top_toast.dart';
 
 class DiagnosticsSection extends StatefulWidget {
@@ -146,16 +147,26 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
         final data = snap.data;
         final pending = data?.pendingCount ?? 0;
         final latest = data?.latest;
-        return ExpansionTile(
+        // #897: flattened — no longer a self-collapsing ExpansionTile. The
+        // section is composed directly into the Settings page under a
+        // 'Diagnostics' subheader; the pending-crash count moves from the old
+        // tile subtitle to a live status line. The 'diagnostics-section' key is
+        // retained on the root so existing tests / screenshots still address it.
+        return Column(
           key: const ValueKey('diagnostics-section'),
-          leading: const Icon(Icons.bug_report_outlined),
-          title: const Text('Diagnostics'),
-          subtitle: Text(
-            pending == 0
-                ? 'No crashes pending upload.'
-                : '$pending crash report${pending == 1 ? '' : 's'} pending upload.',
-          ),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
           children: [
+            const SettingsSubheader('Diagnostics'),
+            ListTile(
+              key: const ValueKey('diagnostics-pending-status'),
+              leading: const Icon(Icons.bug_report_outlined),
+              title: Text(
+                pending == 0
+                    ? 'No crashes pending upload.'
+                    : '$pending crash report${pending == 1 ? '' : 's'} pending upload.',
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Column(
@@ -224,19 +235,28 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
   }
 }
 
-/// Expandable tile that surfaces the in-memory connect-trace ring buffer
+/// Plain labeled block that surfaces the in-memory connect-trace ring buffer
 /// (#543) so connect issues can be diagnosed on-device without Termux/adb.
+///
+/// #897: hoisted out of its former self-collapsing ExpansionTile — the log
+/// output + Copy/Clear are always visible now (no tap to expand). The
+/// 'connect-log-tile' key is retained on the root so existing tests /
+/// screenshots still address the block.
 class _ConnectLogTile extends StatelessWidget {
   const _ConnectLogTile();
 
   @override
   Widget build(BuildContext context) {
-    return ExpansionTile(
+    return Column(
       key: const ValueKey('connect-log-tile'),
-      leading: const Icon(Icons.terminal),
-      title: const Text('Connect log'),
-      childrenPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
+        const ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.terminal),
+          title: Text('Connect log'),
+        ),
         ValueListenableBuilder<List<String>>(
           valueListenable: connectLog,
           builder: (context, lines, _) {

@@ -1,13 +1,15 @@
-// Settings view — dedicated full screen reached from the home bottom-nav (#611).
+// Settings view — the single, flat Settings page reached from the home
+// bottom-nav (#611, #897).
 //
-// #611 Part A reshape: Settings used to be an inline ExpansionTile disclosure on
-// the profile chooser. It now lives in its own bottom-nav destination. This
-// screen HOSTS the existing [SettingsPanel] widget unchanged — the panel owns
-// the keep-alive toggle (#512) + font-size slider (#552). The screen is a thin
-// container so it can grow (more settings) without touching the panel.
+// #897 reshape: Settings and Diagnostics are now ONE page. The Diagnostics
+// bottom-nav tab is gone; this screen renders the flattened [SettingsPanel]
+// (all controls top-level, grouped by light subheaders) followed by the
+// flattened [DiagnosticsSection] under a divider. Both widgets stay reusable —
+// they're just composed here instead of each owning a tab.
 
 import 'package:flutter/material.dart';
 
+import 'diagnostics_section.dart';
 import 'settings_panel.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -18,7 +20,15 @@ class SettingsScreen extends StatelessWidget {
     return const SafeArea(
       child: SingleChildScrollView(
         padding: EdgeInsets.all(16),
-        child: SettingsPanel(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SettingsPanel(),
+            SizedBox(height: 8),
+            Divider(),
+            DiagnosticsSection(),
+          ],
+        ),
       ),
     );
   }
