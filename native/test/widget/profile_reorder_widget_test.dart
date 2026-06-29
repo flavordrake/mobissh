@@ -140,6 +140,49 @@ void main() {
       expect(cTop2 < aTop2, isTrue);
     });
 
+    testWidgets('dragging the handle reorders and persists (no hold needed)', (
+      tester,
+    ) async {
+      // Device regression (#481 follow-up): the drag handle was dead because a
+      // tooltip long-press recognizer beat the *delayed* drag listener. The fix
+      // is an IMMEDIATE drag listener — press-and-move reorders with no hold.
+      // This gesture deliberately moves almost immediately (100ms pump, not the
+      // 500ms a delayed listener needs): it reorders with the immediate listener
+      // and would NO-OP against the old delayed one.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final prefs = SharedPreferences.getInstance();
+      final store = ProfilesStore();
+      await store.save(<SavedProfile>[
+        SavedProfile(title: 'A', host: 'a.example', port: 22, username: 'me'),
+        SavedProfile(title: 'B', host: 'b.example', port: 22, username: 'me'),
+        SavedProfile(title: 'C', host: 'c.example', port: 22, username: 'me'),
+      ]);
+
+      await _pumpList(tester, store: store, onConnect: (_) {});
+
+      final handleA = find.byKey(
+        const Key('profile-reorder-handle-a.example:22:me'),
+      );
+      final gesture = await tester.startGesture(tester.getCenter(handleA));
+      await tester.pump(const Duration(milliseconds: 100));
+      // Drag A down past B and C.
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(0, 40));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // A is no longer first — the immediate drag registered a reorder.
+      final p = await prefs;
+      final order = decodeProfileOrder(p.getString(profileOrderPrefKey));
+      expect(
+        order.first,
+        isNot('a.example:22:me'),
+        reason: 'an immediate (no-hold) drag must move A off the top',
+      );
+    });
+
     testWidgets('card body taps-to-connect; handle does not connect', (
       tester,
     ) async {

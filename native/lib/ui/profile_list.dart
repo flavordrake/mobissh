@@ -623,12 +623,24 @@ class _ProfileTile extends ConsumerWidget {
 
 /// The upper-right drag-grip / menu glyph for a profile card (#481).
 ///
-/// Touch-and-HOLD then drag → reorder (via [ReorderableDelayedDragStartListener]
-/// so a brief tap doesn't start a drag). TAP → a popup menu with at least
-/// "Move to top" / "Move to bottom". Only this glyph initiates drag/menu; the
-/// card body keeps tap-to-connect (rules/platform/mobile-touch.md — dedicated
-/// control, not an overloaded body gesture). `Icons.drag_indicator` is a
-/// monochrome Material glyph (no emoji), ~18px in a ≥32px tap target.
+/// Press-and-DRAG → reorder (via [ReorderableDragStartListener] — IMMEDIATE, no
+/// hold). TAP → a popup menu with at least "Move to top" / "Move to bottom".
+/// Only this glyph initiates drag/menu; the card body keeps tap-to-connect
+/// (rules/platform/mobile-touch.md — dedicated control, not an overloaded body
+/// gesture). `Icons.drag_indicator` is a monochrome Material glyph (no emoji),
+/// ~18px in a ≥32px tap target.
+///
+/// DEVICE FIX (#481 follow-up): the drag was DEAD on device — the previous
+/// [PopupMenuButton] installs a `tooltip`, and a tooltip wires a
+/// [LongPressGestureRecognizer]; combined with a *delayed* drag listener BOTH
+/// fired at the 500ms timeout and the long-press won the gesture arena,
+/// swallowing every drag (the exact "tooltip long-press recognizer eats the
+/// gesture → bare InkResponse" trap from project memory). So: NO PopupMenuButton
+/// / IconButton / tooltip here. A bare [InkResponse] owns the tap (opens the
+/// menu via [showMenu]); an IMMEDIATE [ReorderableDragStartListener] owns the
+/// drag (press-and-move reorders, no hold required). The two recognizers are
+/// arena-disjoint — a tap (no movement) opens the menu, any movement starts the
+/// drag.
 class _ReorderHandle extends ConsumerWidget {
   const _ReorderHandle({required this.index, required this.profile});
 
@@ -638,46 +650,70 @@ class _ReorderHandle extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final id = profile.identityKey;
-    return ReorderableDelayedDragStartListener(
+    return ReorderableDragStartListener(
       index: index,
-      child: PopupMenuButton<String>(
+      child: InkResponse(
         key: Key('profile-reorder-handle-$id'),
-        tooltip: 'Reorder profile',
-        icon: const Icon(Icons.drag_indicator, size: 18),
-        onSelected: (value) {
-          final notifier = ref.read(profileOrderProvider.notifier);
-          if (value == 'top') {
-            notifier.moveToTop(id);
-          } else if (value == 'bottom') {
-            notifier.moveToBottom(id);
-          }
-        },
-        itemBuilder: (context) => [
-          PopupMenuItem<String>(
-            key: Key('profile-move-top-$id'),
-            value: 'top',
-            child: const Row(
-              children: [
-                Icon(Icons.vertical_align_top, size: 18),
-                SizedBox(width: 12),
-                Text('Move to top'),
-              ],
-            ),
-          ),
-          PopupMenuItem<String>(
-            key: Key('profile-move-bottom-$id'),
-            value: 'bottom',
-            child: const Row(
-              children: [
-                Icon(Icons.vertical_align_bottom, size: 18),
-                SizedBox(width: 12),
-                Text('Move to bottom'),
-              ],
-            ),
-          ),
-        ],
+        radius: 22,
+        onTap: () => _openMenu(context, ref, id),
+        child: const Padding(
+          padding: EdgeInsets.all(8),
+          child: Icon(Icons.drag_indicator, size: 18),
+        ),
       ),
     );
+  }
+
+  /// Open the Move menu anchored at the handle. Uses [showMenu] directly (NOT
+  /// PopupMenuButton) so no tooltip long-press recognizer competes with the
+  /// drag. Items keep their stable keys so the widget tests still resolve them.
+  Future<void> _openMenu(BuildContext context, WidgetRef ref, String id) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final handle = context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        handle.localToGlobal(Offset.zero, ancestor: overlay),
+        handle.localToGlobal(
+          handle.size.bottomRight(Offset.zero),
+          ancestor: overlay,
+        ),
+      ),
+      Offset.zero & overlay.size,
+    );
+    final value = await showMenu<String>(
+      context: context,
+      position: position,
+      items: [
+        PopupMenuItem<String>(
+          key: Key('profile-move-top-$id'),
+          value: 'top',
+          child: const Row(
+            children: [
+              Icon(Icons.vertical_align_top, size: 18),
+              SizedBox(width: 12),
+              Text('Move to top'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          key: Key('profile-move-bottom-$id'),
+          value: 'bottom',
+          child: const Row(
+            children: [
+              Icon(Icons.vertical_align_bottom, size: 18),
+              SizedBox(width: 12),
+              Text('Move to bottom'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (value == 'top') {
+      ref.read(profileOrderProvider.notifier).moveToTop(id);
+    } else if (value == 'bottom') {
+      ref.read(profileOrderProvider.notifier).moveToBottom(id);
+    }
   }
 }
 
