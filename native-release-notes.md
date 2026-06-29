@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+86 (2026-06-29) — downloads now go to your Downloads folder
+- **Downloaded files land in your real Downloads folder** — the one your file manager and browser show — instead of an app-private spot you couldn't find. The "Downloaded …" confirmation now shows the actual location (→ Downloads/<name>). (#559)
+
 ## v0.1.10+85 (2026-06-29) — reorder profiles + detected URLs/paths in a side gutter
 - **Reorder your saved profiles.** Each profile card has a drag handle (top-right) — hold to drag it into order, or tap it for "Move to top / Move to bottom." Order is remembered. (#481)
 - **URLs and file paths now show as marks in a right-side gutter** instead of inline highlights. A small mark appears next to any line with a detected link or path (a multi-line URL gets one mark); tap it to copy/open — or, if a line has several, pick from a list. This replaces the old inline highlighting that drifted/lagged during scroll. (#955)
