@@ -40,10 +40,10 @@ Future<void> pumpSettings(WidgetTester tester) async {
   }
 }
 
-Future<void> expandSettings(WidgetTester tester) async {
-  await tester.tap(find.byKey(const ValueKey('settings-section')));
-  // Settle the ExpansionTile expand animation so inner tiles are hit-testable.
-  for (var i = 0; i < 30; i++) {
+// #897: the panel is flat — every control is top-level, no expander tap needed.
+// A few bounded pumps let the version FutureBuilder resolve.
+Future<void> settleSettings(WidgetTester tester) async {
+  for (var i = 0; i < 10; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
 }
@@ -95,7 +95,7 @@ void main() {
   testWidgets('renders the build version string from the resolver',
       (tester) async {
     await pumpSettings(tester);
-    await expandSettings(tester);
+    await settleSettings(tester);
 
     final tile = find.byKey(const ValueKey('app-version-tile'));
     expect(tile, findsOneWidget);
@@ -109,7 +109,7 @@ void main() {
   testWidgets('tapping the version row copies the full string to the clipboard',
       (tester) async {
     await pumpSettings(tester);
-    await expandSettings(tester);
+    await settleSettings(tester);
 
     await tester.tap(find.byKey(const ValueKey('app-version-tile')));
     // Settle the async copyToClipboard + read-back + toast.

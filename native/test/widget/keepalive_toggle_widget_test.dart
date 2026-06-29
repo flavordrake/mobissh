@@ -37,10 +37,7 @@ void main() {
       (tester) async {
     await pumpSettings(tester);
 
-    // Open the ExpansionTile so the SwitchListTile is in the tree.
-    await tester.tap(find.byKey(const ValueKey('settings-section')));
-    await tester.pump(const Duration(milliseconds: 300));
-
+    // #897: the toggle is a top-level control — visible with no expander tap.
     final toggle = find.byKey(const ValueKey('keepalive-toggle'));
     expect(toggle, findsOneWidget);
     final widget = tester.widget<SwitchListTile>(toggle);
@@ -54,9 +51,6 @@ void main() {
 
     await pumpSettings(tester);
 
-    await tester.tap(find.byKey(const ValueKey('settings-section')));
-    await tester.pump(const Duration(milliseconds: 300));
-
     final toggle = find.byKey(const ValueKey('keepalive-toggle'));
     final widget = tester.widget<SwitchListTile>(toggle);
     expect(widget.value, isFalse);
@@ -64,13 +58,6 @@ void main() {
 
   testWidgets('tapping toggle persists the new value', (tester) async {
     await pumpSettings(tester);
-
-    // Open the ExpansionTile and wait for its expand animation to settle so
-    // the inner SwitchListTile is hit-testable.
-    await tester.tap(find.byKey(const ValueKey('settings-section')));
-    for (var i = 0; i < 30; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
 
     await tester.tap(find.byKey(const ValueKey('keepalive-toggle')));
     // Settle the StateNotifier emission and SharedPreferences write.
