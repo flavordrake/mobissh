@@ -701,12 +701,15 @@ void main() {
       // false-negatives with "No selection". The fix snapshots the selected
       // text at finalize time; Copy falls back to it so the VISIBLE selection
       // is honored.
-      test('live selection text WINS when present (normal copy path)', () {
-        // When the live flterm selection still extracts text, that is the
-        // source of truth — the snapshot is only a fallback.
+      test('snapshot WINS when present (P0 #962 — live extraction drifts)', () {
+        // P0 (#962, build +88): in a live streaming session the live
+        // selectedText() re-extracts against a shifted buffer after the user
+        // finalised a scrolled-back selection, drifting to the live TAIL. The
+        // drag-time snapshot is the faithful record of what was highlighted, so
+        // it is the source of truth; the live value is only a fallback.
         expect(
-          ghosttyEffectiveCopyText('live text', 'stale snapshot'),
-          'live text',
+          ghosttyEffectiveCopyText('drifted live tail', 'what was selected'),
+          'what was selected',
         );
       });
 
@@ -726,8 +729,10 @@ void main() {
         expect(ghosttyEffectiveCopyText('', ''), '');
       });
 
-      test('a non-empty live selection is preferred over an empty snapshot', () {
-        // Fresh selection, no prior snapshot captured yet → live wins.
+      test('live is used only when no snapshot was captured', () {
+        // An flterm-native double/triple-tap selection doesn't route through our
+        // drag handlers, so no snapshot exists → the live extraction is the
+        // fallback source of truth.
         expect(ghosttyEffectiveCopyText('fresh', ''), 'fresh');
       });
     },

@@ -1004,13 +1004,21 @@ bool ghosttyShouldShowAffordances({required bool hasSelection}) => hasSelection;
 /// false-negatives with "No selection" despite a visibly-selected region.
 ///
 /// The reconciliation: snapshot the selected text at finalise time (the exact
-/// text the user saw highlighted) and prefer the LIVE extraction when it still
-/// has text (the normal path — and the only one that tracks fresh content),
-/// falling back to the SNAPSHOT when the live selection was cleared by a redraw.
+/// text the user saw highlighted) and PREFER that snapshot — it is the faithful
+/// record of what the user dragged across. The LIVE extraction is only a
+/// fallback for when no snapshot was captured (e.g. an flterm-native
+/// double/triple-tap selection that doesn't route through our drag handlers).
 /// Both empty means there genuinely is nothing to copy (then Copy may toast).
+///
+/// P0 (#962, build +88): preferring the LIVE extraction copied the WRONG region.
+/// In an active streaming session, after the user finalises a SCROLLED-BACK
+/// selection, fresh output keeps arriving; the live `selectedText()` re-extracts
+/// against a shifted buffer and drifts to the live TAIL (the owner selected one
+/// block but the clipboard got later output — "the wrong tmux view"). The
+/// drag-time snapshot is immune to that drift, so it is the source of truth.
 /// Pure, so the decision is unit-testable headless.
 String ghosttyEffectiveCopyText(String live, String snapshot) =>
-    live.isNotEmpty ? live : snapshot;
+    snapshot.isNotEmpty ? snapshot : live;
 
 /// #828: whether there is a copyable selection to reflect in the UI, given the
 /// LIVE selection presence and the finalised-text [snapshot]. A live selection
