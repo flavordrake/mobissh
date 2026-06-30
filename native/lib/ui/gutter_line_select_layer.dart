@@ -30,6 +30,7 @@ class GutterLineSelectLayer extends StatefulWidget {
     required this.cellHeight,
     required this.rows,
     required this.color,
+    required this.onSelectRows,
     required this.onCommitRows,
     this.padding = 4.0,
     this.stripWidth = kGutterSelectStripWidth,
@@ -50,6 +51,11 @@ class GutterLineSelectLayer extends StatefulWidget {
 
   /// Width of the right-edge drag strip.
   final double stripWidth;
+
+  /// Live during the drag (start + each row change): the current inclusive
+  /// VIEWPORT row range, so the parent paints the on-screen selection highlight
+  /// as the finger moves (the owner needs to SEE what's selected).
+  final void Function(int topViewRow, int bottomViewRow) onSelectRows;
 
   /// On release: the final inclusive VIEWPORT row range (top ≤ bottom).
   final void Function(int topViewRow, int bottomViewRow) onCommitRows;
@@ -74,12 +80,15 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
       _startRow = r;
       _curRow = r;
     });
+    widget.onSelectRows(r, r);
   }
 
   void _onUpdate(DragUpdateDetails d) {
     final r = _rowFromY(d.localPosition.dy);
     if (r == _curRow) return;
     setState(() => _curRow = r);
+    final s = _startRow ?? r;
+    widget.onSelectRows(s < r ? s : r, s < r ? r : s);
   }
 
   void _onEnd(DragEndDetails d) {

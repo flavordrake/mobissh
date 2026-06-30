@@ -171,7 +171,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // the other (#716).
 import 'package:xterm/xterm.dart' as xterm;
 
-import '../diagnostics/connect_trace.dart' show clifecycle;
+import '../diagnostics/connect_trace.dart' show clifecycle, ctrace;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
@@ -3060,50 +3060,44 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (invalidate) _clearSelection(clearSnapshot: false);
   }
 
-  /// #962 (paint-free + instrumented): copy the WHOLE lines the user dragged in
-  /// the gutter. NO `controller.selection` is set → the terminal text is never
-  /// repainted for selection (the owner: "why are we even doing screen repaint?").
-  ///
-  /// Three offsets could map a VIEWPORT row to an ABSOLUTE buffer row, and the
-  /// previous single-offset attempts all copied the WRONG region — so this is a
-  /// DIAGNOSTIC build: it logs (gtrace → connect-log in the next Feedback report)
-  /// what EACH candidate offset would copy, copies via the painted-frame offset
-  /// (what's on screen by definition), and the toast shows the first copied
-  /// chars so a wrong copy is obvious on device. The next report's log tells us
-  /// which offset matches the visible screen — then this collapses to that one.
+  // #962: drive flterm's NATIVE selection for the dragged gutter rows so the
+  // highlight paints ACROSS THE SCREEN (the owner needs to SEE what's selected,
+  // not guess from the gutter). Full-width span over the viewport rows via the
+  // proven ghosttySelectionForCells (1-based; +1 the rows) + the live scroll
+  // offset the painter itself uses, so the highlight lands on the dragged rows.
+  void _onGutterSelectRows(int topViewRow, int bottomViewRow) {
+    final controller = _controller;
+    if (controller == null) return;
+    controller.selection = ghosttySelectionForCells(
+      startViewCol: 1,
+      startViewRow: topViewRow + 1,
+      endViewCol: _cols,
+      endViewRow: bottomViewRow + 1,
+      scrollOffset: controller.scrollbar.offset,
+    );
+  }
+
+  // #962: on release, copy the highlighted selection via the SAME selectedText()
+  // the long-press Copy uses — so the copy is exactly what's highlighted. Logs
+  // the offsets via ctrace (which feeds the on-device connect-log the Feedback
+  // bundle captures; gtrace only reaches logcat), so a still-wrong scrolled-back
+  // copy is diagnosable from one report.
   Future<void> _onGutterCommitRows(int topViewRow, int bottomViewRow) async {
     final controller = _controller;
     if (controller == null) return;
-    final oScroll = controller.scrollbar.offset;
-    final oPaint = controller.paintedViewportOffset;
-    final cellH = _lastCellSize.height;
-    final sc = _scrollController;
-    final scPx = sc.hasClients ? sc.offset : -1.0;
-    final oScrollCtrl = (cellH > 0 && scPx >= 0) ? (scPx / cellH).round() : -1;
-
-    String firstLineAt(int off) {
-      if (off < 0) return '<n/a>';
-      final t = controller.textForRows(topViewRow + off, bottomViewRow + off);
-      final line = t.split('\n').first;
-      return line.length > 48 ? line.substring(0, 48) : line;
-    }
-
-    gtrace(
-      'gutter-copy #962: view=[$topViewRow..$bottomViewRow] '
-      'oScroll=$oScroll oPaint=$oPaint oScrollCtrl=$oScrollCtrl '
-      'total=${controller.totalRows} cellH=${cellH.toStringAsFixed(1)} '
-      'sb(total=${controller.scrollbar.total},vis=${controller.scrollbar.visible})',
+    _onGutterSelectRows(topViewRow, bottomViewRow);
+    final text = controller.selectedText();
+    _lastSelectionText = text;
+    _syncHasSelection();
+    final firstLine = text.split('\n').firstWhere(
+      (l) => l.trim().isNotEmpty,
+      orElse: () => '',
     );
-    gtrace(
-      'gutter-copy candidates: scroll="${firstLineAt(oScroll)}" '
-      '| paint="${firstLineAt(oPaint)}" | sc="${firstLineAt(oScrollCtrl)}"',
-    );
-
-    // Best current guess: the painted-frame offset = what's on screen now.
-    final off = oPaint;
-    final text = controller.textForRows(
-      topViewRow + off,
-      bottomViewRow + off,
+    ctrace(
+      'gutter-copy',
+      'view=[$topViewRow..$bottomViewRow] sbOff=${controller.scrollbar.offset} '
+      'paintOff=${controller.paintedViewportOffset} total=${controller.totalRows} '
+      'first="${firstLine.length > 40 ? firstLine.substring(0, 40) : firstLine}"',
     );
     if (text.trim().isEmpty) {
       if (mounted) showTopToast(context, 'Nothing to copy on those lines');
@@ -3114,9 +3108,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (!mounted) return;
     showTopToast(
       context,
-      ok
-          ? 'Copied $rowCount line${rowCount == 1 ? '' : 's'}: ${firstLineAt(off)}'
-          : 'Copy failed',
+      ok ? 'Copied $rowCount line${rowCount == 1 ? '' : 's'}' : 'Copy failed',
     );
   }
 
@@ -3639,6 +3631,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             rows: _rows,
             color: highlightColor,
             padding: kGhosttyTerminalPadding,
+            onSelectRows: _onGutterSelectRows,
             onCommitRows: _onGutterCommitRows,
           ),
         ),

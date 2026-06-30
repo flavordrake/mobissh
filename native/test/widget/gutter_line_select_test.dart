@@ -26,6 +26,7 @@ Future<Widget> _host({
     rows: rows,
     padding: 0,
     color: const Color(0xFF8888FF),
+    onSelectRows: (_, _) {},
     onCommitRows: onCommitRows,
   );
   return MaterialApp(

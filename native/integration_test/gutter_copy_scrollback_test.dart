@@ -202,7 +202,6 @@ void main() {
         }
       }
       expect(tailSeen, isTrue, reason: 'the alt-screen marker lines never echoed');
-      // Let the final frame settle (we are now at the BOTTOM, L300_zz visible).
       for (var i = 0; i < 12; i++) {
         await tester.pump(const Duration(milliseconds: 250));
       }
@@ -211,49 +210,41 @@ void main() {
       expect(termFinder, findsOneWidget, reason: 'no ghostty terminal view');
       final rect = tester.getRect(termFinder);
 
-      // SWIPE-scroll up to near the TOP. A finger swipe DOWN in the body reveals
-      // older lines (scrollback). Stay LEFT of the right 28px gutter strip so it
-      // routes as a scroll, not a gutter-select. Quick drags (no long hold) =
-      // swipe-scroll (not a long-press selection).
+      String topAt(int off) {
+        final t = controller.textForRows(0 + off, 2 + off);
+        final line = t.split('\n').firstWhere(
+              (l) => l.trim().isNotEmpty,
+              orElse: () => '',
+            );
+        return line.length > 40 ? line.substring(0, 40) : line;
+      }
+
+      // SWIPE-scroll up a FEW pages (land MID-buffer, not pinned at the top), so
+      // the painted offset is non-zero and any post-scroll LAG is visible.
       final bodyX = rect.left + rect.width * 0.35;
-      for (var s = 0; s < 24; s++) {
+      for (var s = 0; s < 8; s++) {
         final g = await tester.startGesture(
-          Offset(bodyX, rect.top + rect.height * 0.25),
+          Offset(bodyX, rect.top + rect.height * 0.30),
         );
         for (var i = 1; i <= 6; i++) {
           await g.moveTo(
-            Offset(bodyX, rect.top + rect.height * (0.25 + 0.10 * i)),
+            Offset(bodyX, rect.top + rect.height * (0.30 + 0.09 * i)),
           );
           await tester.pump(const Duration(milliseconds: 12));
         }
         await g.up();
-        await tester.pump(const Duration(milliseconds: 60));
-      }
-      for (var i = 0; i < 12; i++) {
-        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pump(const Duration(milliseconds: 30));
       }
 
-      // DIAGNOSIS: which offset maps viewport row 0 to the VISIBLE (low) line?
-      final oScroll = controller.scrollbar.offset;
-      final oPaint = controller.paintedViewportOffset;
-      String topAt(int off) {
-        final t = controller.textForRows(0 + off, 2 + off);
-        final line = t.split('\n').firstWhere((l) => l.trim().isNotEmpty,
-            orElse: () => '');
-        return line.length > 40 ? line.substring(0, 40) : line;
-      }
-
+      // IMMEDIATE (one frame) — the "just scrolled" window the owner copies in.
+      await tester.pump(const Duration(milliseconds: 16));
+      final oPaintNow = controller.paintedViewportOffset;
       debugPrint(
-        'GUTTER962 after-scroll: scrollbar.offset=$oScroll '
-        'paintedViewportOffset=$oPaint total=${controller.totalRows} '
-        'sb(total=${controller.scrollbar.total},vis=${controller.scrollbar.visible})',
-      );
-      debugPrint(
-        'GUTTER962 top-row via scroll="${topAt(oScroll)}" '
-        'via paint="${topAt(oPaint)}"',
+        'GUTTER962 IMMEDIATE: oPaint=$oPaintNow oScroll=${controller.scrollbar.offset} '
+        'isScrolling=${controller.isScrolling} top="${topAt(oPaintNow)}"',
       );
 
-      // Gutter-drag the right strip to select a few VISIBLE rows (vertical middle).
+      // Gutter-drag + copy RIGHT NOW (minimal settle) — reproduce the timing.
       final gx = rect.right - 14;
       final gy = rect.top + rect.height * 0.4;
       final gg = await tester.startGesture(Offset(gx, gy));
@@ -263,8 +254,21 @@ void main() {
         await tester.pump(const Duration(milliseconds: 16));
       }
       await gg.up();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 120));
+      final copiedImmediate = copied;
+      debugPrint('GUTTER962 copied(immediate)="$copiedImmediate"');
 
+      // Now SETTLE fully and read the ground-truth offset/top. If the immediate
+      // paint offset LAGGED, oPaint changes here and the immediate copy was off.
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+      final oPaintSettled = controller.paintedViewportOffset;
+      debugPrint(
+        'GUTTER962 SETTLED: oPaint=$oPaintSettled top="${topAt(oPaintSettled)}" '
+        '(immediate oPaint was $oPaintNow)',
+      );
+      copied = copiedImmediate;
       debugPrint('GUTTER962 copied="$copied"');
 
       expect(
