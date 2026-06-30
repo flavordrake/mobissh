@@ -3060,21 +3060,41 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (invalidate) _clearSelection(clearSnapshot: false);
   }
 
-  /// #962: copy the WHOLE lines the user dragged across in the right-edge gutter
-  /// (auto-copy on release). [topViewRow]..[bottomViewRow] are inclusive VIEWPORT
-  /// rows; convert to ABSOLUTE buffer rows with the PAINTED offset (the offset
-  /// the text was drawn with — same geometry source as the URL rects #863) so
-  /// the copied lines match the band the user saw, then pull full-width text via
-  /// the fork's `textForRows`. Extraction is synchronous on release, so it can't
-  /// drift like the live re-extraction that copied "the wrong tmux view" (#962).
-  Future<void> _copyGutterLines(int topViewRow, int bottomViewRow) async {
+  /// #962: drive the WHOLE-WIDTH line selection as the user drags the right-edge
+  /// gutter, so flterm paints its native selection highlight ACROSS THE SCREEN
+  /// (the owner wants to SEE what's selected as the finger moves), not just a
+  /// gutter band. [topViewRow]..[bottomViewRow] are inclusive 0-based VIEWPORT
+  /// rows; build a full-width span (col 0 → last col) over them via the SAME
+  /// proven builder + live scroll offset the long-press selection uses
+  /// ([ghosttySelectionForCells] is 1-based, so +1 the rows / start at col 1).
+  /// This reuses flterm's selection model end-to-end — no parallel offset math.
+  void _onGutterSelectRows(int topViewRow, int bottomViewRow) {
     final controller = _controller;
     if (controller == null) return;
-    final offset = controller.paintedViewportOffset;
-    final text = controller.textForRows(
-      topViewRow + offset,
-      bottomViewRow + offset,
+    controller.selection = ghosttySelectionForCells(
+      startViewCol: 1,
+      startViewRow: topViewRow + 1,
+      // endCol is exclusive → `_cols` selects the full row width.
+      endViewCol: _cols,
+      endViewRow: bottomViewRow + 1,
+      scrollOffset: controller.scrollbar.offset,
     );
+  }
+
+  /// #962: on gutter-drag release, copy the selected lines (auto-copy). The
+  /// selection was already set on the last [_onGutterSelectRows]; extract it via
+  /// the SAME `selectedText()` the long-press Copy uses — SYNCHRONOUSLY here, so
+  /// it can't drift to the live tail the way a later re-extraction did (#962).
+  /// The highlight is left on screen as confirmation (a tap dismisses it, #706);
+  /// the text is snapshotted so the Copy button still works after a redraw.
+  Future<void> _onGutterCommitRows(int topViewRow, int bottomViewRow) async {
+    final controller = _controller;
+    if (controller == null) return;
+    // Re-assert the final span (covers a release with no preceding update).
+    _onGutterSelectRows(topViewRow, bottomViewRow);
+    final text = controller.selectedText();
+    _lastSelectionText = text;
+    _syncHasSelection();
     if (text.trim().isEmpty) {
       if (mounted) showTopToast(context, 'Nothing to copy on those lines');
       return;
@@ -3605,9 +3625,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           child: GutterLineSelectLayer(
             cellHeight: cellSize.height,
             rows: _rows,
-            color: highlightColor,
             padding: kGhosttyTerminalPadding,
-            onCopyLines: _copyGutterLines,
+            onSelectRows: _onGutterSelectRows,
+            onCommitRows: _onGutterCommitRows,
           ),
         ),
         // #955: the right-edge GUTTER layer (replaces the inline decorator). The

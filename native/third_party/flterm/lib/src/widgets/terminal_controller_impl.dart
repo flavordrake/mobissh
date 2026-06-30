@@ -1249,48 +1249,6 @@ class TerminalControllerImpl extends TerminalController
   }
 
   @override
-  String textForRows(
-    int topRowAbs,
-    int bottomRowAbs, {
-    FormatterFormat format = .plain,
-  }) {
-    _renderState.update(terminal);
-    final cols = _renderState.cols;
-    final total = terminal.totalRows;
-    if (cols <= 0 || total <= 0) return '';
-    var top = topRowAbs;
-    var bottom = bottomRowAbs;
-    if (top > bottom) {
-      final swap = top;
-      top = bottom;
-      bottom = swap;
-    }
-    top = top.clamp(0, total - 1);
-    bottom = bottom.clamp(0, total - 1);
-
-    final formatter = Formatter(
-      terminal: terminal,
-      format: format,
-      // Join soft-wrapped runs (line granularity, never block).
-      unwrap: true,
-      selection: Selection(
-        startCol: 0,
-        startRow: top,
-        endCol: (cols - 1).clamp(0, cols - 1),
-        endRow: bottom,
-        rectangle: false,
-        pointTag: .screen,
-      ),
-    );
-
-    try {
-      return formatter.format();
-    } finally {
-      formatter.dispose();
-    }
-  }
-
-  @override
   void selectLine(int row, LineSelectMode lineSelectMode) {
     final (:startRow, :endRow, :endCol) = terminal.lineBoundaryAt(row);
     final int effectiveEndCol;

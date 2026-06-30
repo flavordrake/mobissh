@@ -343,20 +343,6 @@ abstract class TerminalController extends ChangeNotifier
   /// separate regardless of wrapping.
   String selectedText({FormatterFormat format = .plain});
 
-  /// Extracts the plain text of whole buffer rows [topRowAbs]..[bottomRowAbs]
-  /// (inclusive, ABSOLUTE top-anchored row indices), independently of the live
-  /// [selection]. Each row is taken at FULL width (col 0 → last column) and
-  /// soft-wrapped runs are joined, so this is LINE-granularity extraction with
-  /// no sub-cell precision — used by the gutter line-select (the drag picks
-  /// whole lines, and the text is pulled at release time so it can't drift like
-  /// a re-extracted live selection). Out-of-range rows are clamped; an inverted
-  /// range is normalised. Returns '' when the buffer is empty.
-  String textForRows(
-    int topRowAbs,
-    int bottomRowAbs, {
-    FormatterFormat format = .plain,
-  });
-
   /// Encodes a key press and sends it via [onOutput].
   ///
   /// [mods] are merged with [virtualMods]. Virtual modifiers are cleared

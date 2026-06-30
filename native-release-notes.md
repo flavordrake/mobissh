@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+91 (2026-06-30) — gutter selection highlights the whole line + copies the right text
+- **Dragging the gutter now highlights the whole line across the screen** as your finger moves, so you can see exactly what you're selecting (not just a mark in the gutter). (#962)
+- **It copies what you selected.** Copy now extracts the highlighted lines directly (the same proven path as the old selection), fixing the bug where it grabbed unrelated text from elsewhere. (#962)
+
 ## v0.1.10+90 (2026-06-30) — drag the gutter to select & copy whole lines
 - **Select and copy whole lines by dragging the right edge.** Drag down (or up) the right-edge gutter to highlight whole lines; lift your finger and they're copied — a "Copied N lines" toast confirms. Line-granularity, so there's no fiddly per-character precision to fight, and copy can't grab the wrong region. (#962)
 - **Detection marks still sit on top** — tap a link/path mark to open or copy it; drag elsewhere in the gutter to select lines. (The old long-press text selection still works for now.) (#955)
