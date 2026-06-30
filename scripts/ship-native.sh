@@ -11,9 +11,10 @@
 #     --message-file FILE | -F FILE   commit message file (create it with the
 #                                     Write tool; end it with the Co-Authored-By
 #                                     trailer). REQUIRED.
-#     [path ...]                      files to stage. If omitted, stages all
-#                                     MODIFIED TRACKED files (git add -u) — never
-#                                     untracked junk.
+#     [path ...]                      files to stage. If omitted, stages
+#                                     modified tracked files (git add -u) PLUS
+#                                     new files under native/ (git add native/),
+#                                     so new source ships AND lands in git.
 #
 # Gate FIRST (scripts/native-fast-gate.sh) — this script does NOT gate.
 # Prints the timestamped install URL on success (via native-release-apk.sh).
@@ -77,8 +78,15 @@ if [ "${#PATHS[@]}" -gt 0 ]; then
   echo "> staging ${#PATHS[@]} path(s): ${PATHS[*]}"
   git add -- "${PATHS[@]}" "$PUBSPEC"
 else
-  echo "> staging all modified tracked files (git add -u)"
+  # `git add -u` catches modified TRACKED files anywhere (e.g. the root-level
+  # native-release-notes.md); `git add native/` additionally stages NEW
+  # untracked source/test files under native/ (gitignored build output is still
+  # excluded). Without the second add, new files shipped in the APK (built from
+  # the working tree) but were never committed — leaving dangling imports on
+  # main (#962/#559 fallout).
+  echo "> staging modified tracked files (git add -u) + new native/ files"
   git add -u
+  git add native/
 fi
 
 if git diff --cached --quiet; then
