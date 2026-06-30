@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+95 (2026-06-30) — gutter selection no longer fights the terminal's own selection
+- **Long-pressing the gutter selects ONLY the gutter lines** — the terminal's native text selection stays out of its way (no more two overlapping selections) — and dragging up/down adjusts the range. Copy still reads those visible lines verbatim. (#962)
+
 ## v0.1.10+94 (2026-06-30) — copy reads the visible screen verbatim; scrolling no longer breaks
 - **Selecting is now LONG-PRESS-then-drag in the right gutter** — a normal swipe always scrolls (no more eaten scroll-backs), and a hold-then-drag selects whole lines with a full-width highlight. (#962)
 - **Copy now reads the visible screen verbatim** — exactly the lines you dragged over, straight off what's on screen, with none of the scroll-offset guessing that grabbed the wrong text. (#962)

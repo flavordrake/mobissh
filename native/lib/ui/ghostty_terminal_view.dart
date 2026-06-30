@@ -2076,6 +2076,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   int? _selAnchorCol;
   int? _selAnchorRow;
 
+  /// #962: true when the current long-press gesture began in the right-edge
+  /// gutter strip — the native text selection is suppressed for it (the gutter
+  /// owns line-select there) so the two selections don't both render.
+  bool _selStartedInGutter = false;
+
   /// #706 (issue 1): the scrollback length (`scrollbar.total - .visible`)
   /// captured when the active selection was made, so [_reanchorSelectionOnGrowth]
   /// can detect later EVICTION (a DROP in this length) and shift the selection's
@@ -2914,6 +2919,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
   }
 
+  /// #962: whether [col] (1-based viewport col) falls in the right-edge gutter
+  /// strip (~[kGutterSelectStripWidth] px wide), using the live cell width — so
+  /// a long-press there can be left to the gutter line-select, not the terminal.
+  bool _isGutterCol(int col) {
+    final cw = _lastCellSize.width;
+    if (cw <= 0 || _cols <= 0) return false;
+    final gutterCols = (kGutterSelectStripWidth / cw).ceil();
+    return col > _cols - gutterCols;
+  }
+
   /// #705: begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT
   /// cell. Anchor it (held for the drag) and SET `controller.selection` to a
   /// collapsed span at that cell — mapped to absolute buffer rows by adding the
@@ -2923,6 +2938,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   void _onSelectionStart(int col, int row) {
     final controller = _controller;
     if (controller == null) return;
+    // #962: the right-edge GUTTER owns its own long-press line-select. Suppress
+    // the terminal's NATIVE text selection when the gesture starts in the gutter
+    // strip, so the two don't both fire (the "two simultaneous selections" bug).
+    // A body press (left of the strip) keeps the native selection unchanged.
+    if (_isGutterCol(col)) {
+      _selStartedInGutter = true;
+      return;
+    }
+    _selStartedInGutter = false;
     _selAnchorCol = col;
     _selAnchorRow = row;
     // #828: a fresh selection invalidates the previous finalised-text snapshot.
@@ -2946,6 +2970,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   void _onSelectionExtend(int col, int row) {
     final controller = _controller;
     if (controller == null) return;
+    // #962: this gesture began in the gutter strip — leave native selection off.
+    if (_selStartedInGutter) return;
     final anchorCol = _selAnchorCol;
     final anchorRow = _selAnchorRow;
     if (anchorCol == null || anchorRow == null) return;
