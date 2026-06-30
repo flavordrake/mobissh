@@ -187,6 +187,7 @@ import '../state/ui_prefs_providers.dart';
 import 'file_browser_screen.dart';
 import 'ghostty_gutter_layer.dart';
 import 'ghostty_terminal_decorators.dart';
+import 'gutter_line_select_layer.dart';
 import 'keybar.dart';
 import 'path_action_overlay.dart';
 import 'top_toast.dart';
@@ -3059,6 +3060,34 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (invalidate) _clearSelection(clearSnapshot: false);
   }
 
+  /// #962: copy the WHOLE lines the user dragged across in the right-edge gutter
+  /// (auto-copy on release). [topViewRow]..[bottomViewRow] are inclusive VIEWPORT
+  /// rows; convert to ABSOLUTE buffer rows with the PAINTED offset (the offset
+  /// the text was drawn with — same geometry source as the URL rects #863) so
+  /// the copied lines match the band the user saw, then pull full-width text via
+  /// the fork's `textForRows`. Extraction is synchronous on release, so it can't
+  /// drift like the live re-extraction that copied "the wrong tmux view" (#962).
+  Future<void> _copyGutterLines(int topViewRow, int bottomViewRow) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final offset = controller.paintedViewportOffset;
+    final text = controller.textForRows(
+      topViewRow + offset,
+      bottomViewRow + offset,
+    );
+    if (text.trim().isEmpty) {
+      if (mounted) showTopToast(context, 'Nothing to copy on those lines');
+      return;
+    }
+    final rowCount = bottomViewRow - topViewRow + 1;
+    final ok = await copyToClipboard(text);
+    if (!mounted) return;
+    showTopToast(
+      context,
+      ok ? 'Copied $rowCount line${rowCount == 1 ? '' : 's'}' : 'Copy failed',
+    );
+  }
+
   /// Handle a single-TAP that landed on a detected structured match (the tap is
   /// swallowed by the router). #726: a `url`/`osc8` match COPIES the URL + shows
   /// a top-toast. #778: a `path` match OPENS the SFTP explorer at that path
@@ -3561,6 +3590,24 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // parent builds the on-screen highlight rects + anchor from the match
             // and hands them to the overlay.
             onUrlLongPress: _showUrlMenu,
+          ),
+        ),
+        // #962: right-edge LINE-SELECT layer. Drag the gutter to select WHOLE
+        // viewport rows; on release the rows' text is copied (auto-copy). This
+        // replaces per-character touch selection as the primary copy path — line
+        // granularity removes the sub-cell precision that drove the selection
+        // drift saga (#705/#706/#760/#828/#930/#962). Mounted ABOVE the router
+        // (claims vertical drags in the right strip) but BELOW the detection
+        // marks (so a tap on a mark still fires its action). Converts the
+        // reported VIEWPORT rows to absolute rows with the PAINTED offset — the
+        // same source the painted text used — so what you drag is what you copy.
+        Positioned.fill(
+          child: GutterLineSelectLayer(
+            cellHeight: cellSize.height,
+            rows: _rows,
+            color: highlightColor,
+            padding: kGhosttyTerminalPadding,
+            onCopyLines: _copyGutterLines,
           ),
         ),
         // #955: the right-edge GUTTER layer (replaces the inline decorator). The

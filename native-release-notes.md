@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+90 (2026-06-30) — drag the gutter to select & copy whole lines
+- **Select and copy whole lines by dragging the right edge.** Drag down (or up) the right-edge gutter to highlight whole lines; lift your finger and they're copied — a "Copied N lines" toast confirms. Line-granularity, so there's no fiddly per-character precision to fight, and copy can't grab the wrong region. (#962)
+- **Detection marks still sit on top** — tap a link/path mark to open or copy it; drag elsewhere in the gutter to select lines. (The old long-press text selection still works for now.) (#955)
+
 ## v0.1.10+89 (2026-06-30) — Copy now copies what you selected
 - **Copy puts the text you highlighted on the clipboard** — not a different region. In an active session, after selecting something while scrolled up, Copy was grabbing later output ("the wrong view"); it now honors exactly what you selected. (Interim fix; a line-select gutter is coming next.) (#962)
 
