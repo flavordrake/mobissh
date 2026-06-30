@@ -343,6 +343,17 @@ abstract class TerminalController extends ChangeNotifier
   /// separate regardless of wrapping.
   String selectedText({FormatterFormat format = .plain});
 
+  /// Extracts full-width plain text of ABSOLUTE (top-anchored, row 0 = oldest)
+  /// buffer rows [topRowAbs]..[bottomRowAbs] inclusive, independently of the
+  /// live [selection] — so it paints nothing. Soft-wrapped runs are joined
+  /// (line granularity). Out-of-range rows clamp; an inverted range normalises.
+  /// Used by the paint-free gutter line-copy (#962) + its offset telemetry.
+  String textForRows(
+    int topRowAbs,
+    int bottomRowAbs, {
+    FormatterFormat format = .plain,
+  });
+
   /// Encodes a key press and sends it via [onOutput].
   ///
   /// [mods] are merged with [virtualMods]. Virtual modifiers are cleared

@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+92 (2026-06-30) — gutter copy no longer repaints the screen (+ copy diagnostics)
+- **Selecting in the gutter no longer repaints the terminal text** — the only feedback is a band in the gutter strip, so the screen-repaint glitches during selection are gone. (#962)
+- **Copy is being diagnosed.** The copy-grabs-wrong-text bug comes down to which scroll position the copy reads from; this build records all the candidates when you copy. If a copy still grabs the wrong text, tap Feedback right after — the report now captures exactly what happened so the next build fixes it for good. (#962)
+
 ## v0.1.10+91 (2026-06-30) — gutter selection highlights the whole line + copies the right text
 - **Dragging the gutter now highlights the whole line across the screen** as your finger moves, so you can see exactly what you're selecting (not just a mark in the gutter). (#962)
 - **It copies what you selected.** Copy now extracts the highlighted lines directly (the same proven path as the old selection), fixing the bug where it grabbed unrelated text from elsewhere. (#962)
