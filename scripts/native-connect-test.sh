@@ -76,10 +76,17 @@ cleanup() {
 GRANT_WATCHER_PID=""
 trap cleanup EXIT
 
-# 1. Resolve device.
+# 1. Ensure the always-on, CPU-ISOLATED emulator is up. emulator-ctl.sh boots it
+#    iff needed and REUSES a live one (no reboot/contention), pinned to its own
+#    cores (EMU_CORES) so the build below — pinned to the OTHER cores — never
+#    starves it (the swiftshader crash was CPU contention with Gradle).
+if ! "${REPO_ROOT}/scripts/emulator-ctl.sh" ensure; then
+  err "emulator-ctl ensure failed — see /tmp/mobissh/logs/emulator-detached.log"
+  exit 2
+fi
 DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
 if [[ -z "$DEVICE" ]]; then
-  err "no online adb device — boot an emulator first"
+  err "no online adb device after emulator-ctl ensure"
   exit 2
 fi
 log "device: $DEVICE"
@@ -136,8 +143,13 @@ GRANT_WATCHER_PID=$!
 #    APK carrying the integration driver and runs connect_smoke_test.dart,
 #    which fills the form (127.0.0.1:2222 / testuser / testpass), taps Connect,
 #    accepts the host key, and asserts the terminal screen mounts.
-log "running integration test on device ($TEST_FILE) (this builds + installs)..."
-if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" test \
+# Pin the build/test to the BUILD cores (off the emulator's EMU_CORES) so Gradle
+# can't starve the emulator's render thread (the swiftshader crash root).
+BUILD_CORES="${BUILD_CORES:-3-11}"
+TASKSET=()
+if command -v taskset >/dev/null 2>&1; then TASKSET=(taskset -c "$BUILD_CORES"); fi
+log "running integration test on device ($TEST_FILE) on cores $BUILD_CORES (builds + installs)..."
+if "${TASKSET[@]}" "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" test \
     "$TEST_FILE" -d "$DEVICE"; then
   echo "+ TEST PASSED — $TEST_FILE"
   exit 0
