@@ -3060,43 +3060,22 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (invalidate) _clearSelection(clearSnapshot: false);
   }
 
-  // #962: drive flterm's NATIVE selection for the dragged gutter rows so the
-  // highlight paints ACROSS THE SCREEN (the owner needs to SEE what's selected,
-  // not guess from the gutter). Full-width span over the viewport rows via the
-  // proven ghosttySelectionForCells (1-based; +1 the rows) + the live scroll
-  // offset the painter itself uses, so the highlight lands on the dragged rows.
-  void _onGutterSelectRows(int topViewRow, int bottomViewRow) {
-    final controller = _controller;
-    if (controller == null) return;
-    controller.selection = ghosttySelectionForCells(
-      startViewCol: 1,
-      startViewRow: topViewRow + 1,
-      endViewCol: _cols,
-      endViewRow: bottomViewRow + 1,
-      scrollOffset: controller.scrollbar.offset,
-    );
-  }
-
-  // #962: on release, copy the highlighted selection via the SAME selectedText()
-  // the long-press Copy uses — so the copy is exactly what's highlighted. Logs
-  // the offsets via ctrace (which feeds the on-device connect-log the Feedback
-  // bundle captures; gtrace only reaches logcat), so a still-wrong scrolled-back
-  // copy is diagnosable from one report.
+  // #962: on long-press-drag release, copy the VISIBLE viewport rows the user
+  // dragged over — read VERBATIM via PointTag.viewport (controller.visibleRowsText),
+  // i.e. exactly what's on screen at those rows. NO selection / scrollback offset
+  // / paint-timing machinery (the entire copy-saga debt the owner asked to set
+  // aside). Row 0 = top visible row, so the dragged viewport rows map 1:1.
   Future<void> _onGutterCommitRows(int topViewRow, int bottomViewRow) async {
     final controller = _controller;
     if (controller == null) return;
-    _onGutterSelectRows(topViewRow, bottomViewRow);
-    final text = controller.selectedText();
-    _lastSelectionText = text;
-    _syncHasSelection();
+    final text = controller.visibleRowsText(topViewRow, bottomViewRow);
     final firstLine = text.split('\n').firstWhere(
       (l) => l.trim().isNotEmpty,
       orElse: () => '',
     );
     ctrace(
       'gutter-copy',
-      'view=[$topViewRow..$bottomViewRow] sbOff=${controller.scrollbar.offset} '
-      'paintOff=${controller.paintedViewportOffset} total=${controller.totalRows} '
+      'view=[$topViewRow..$bottomViewRow] rows=${controller.scrollbar.visible} '
       'first="${firstLine.length > 40 ? firstLine.substring(0, 40) : firstLine}"',
     );
     if (text.trim().isEmpty) {
@@ -3631,7 +3610,6 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             rows: _rows,
             color: highlightColor,
             padding: kGhosttyTerminalPadding,
-            onSelectRows: _onGutterSelectRows,
             onCommitRows: _onGutterCommitRows,
           ),
         ),

@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+94 (2026-06-30) — copy reads the visible screen verbatim; scrolling no longer breaks
+- **Selecting is now LONG-PRESS-then-drag in the right gutter** — a normal swipe always scrolls (no more eaten scroll-backs), and a hold-then-drag selects whole lines with a full-width highlight. (#962)
+- **Copy now reads the visible screen verbatim** — exactly the lines you dragged over, straight off what's on screen, with none of the scroll-offset guessing that grabbed the wrong text. (#962)
+
 ## v0.1.10+93 (2026-06-30) — gutter selection is visible again, and copy matches it
 - **Dragging the gutter highlights the selected lines across the whole screen again** (no more guessing from the gutter), and **Copy now copies exactly what's highlighted** — drag until the right lines light up, lift to copy them. (#962)
 

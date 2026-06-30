@@ -1,63 +1,44 @@
-// gutter_line_select_layer.dart — drag-to-select-WHOLE-LINES in the right gutter
-// (#962).
+// gutter_line_select_layer.dart — long-press-drag the right gutter to select &
+// copy the VISIBLE lines verbatim (#962).
 //
-// PAINT-FREE by design (owner: "why are we even doing screen repaint at this
-// point?"). The terminal text is NEVER repainted for selection — the ONLY
-// feedback is a translucent band drawn in THIS overlay's own right-edge strip
-// (it repaints itself, not the terminal). On release the parent copies the
-// dragged WHOLE LINES directly from the buffer (no `controller.selection`, no
-// flterm selection repaint). Line granularity removes the sub-cell precision
-// that drove the selection/repaint saga (#705/#706/#760/#828/#930/#962).
+// SCROLL-SAFE: selection starts on a LONG-PRESS (hold) in the right strip, then
+// drag. A plain SWIPE — anywhere, including the strip — is NOT claimed, so it
+// falls through to the gesture router and SCROLLS normally (the gutter must never
+// eat scroll). Quick tap also falls through (raise keyboard).
 //
-// Gesture model: claims VERTICAL drags in the right strip only. A TAP (no
-// movement) is NOT claimed (HitTestBehavior.translucent) so it falls through to
-// the gesture router below (raise keyboard). Detection marks render ABOVE this
-// layer, so a tap on a mark fires its action while a drag here selects lines.
+// VISIBLE-VERBATIM: the drag maps a touch Y to VIEWPORT rows (row 0 = top
+// visible). The parent copies those exact viewport rows via PointTag.viewport —
+// "copy the visible lines I dragged over", with NO scrollback/offset/selection
+// machinery (the source of the copy saga). A translucent FULL-WIDTH band over the
+// dragged rows is the on-screen highlight (the parent's terminal is untouched).
 
 import 'package:flutter/material.dart';
 
-/// Default width (logical px) of the right-edge drag strip — a comfortable drag
-/// target. The band is shown only DURING a drag, so it costs no permanent
-/// terminal real estate.
+/// Default width (logical px) of the right-edge long-press strip.
 const double kGutterSelectStripWidth = 28.0;
 
-/// Right-edge gutter line-select surface (#962). Reports the inclusive VIEWPORT
-/// row range on release via [onCommitRows] (top ≤ bottom, 0-based from the top of
-/// the viewport). Draws its own band while dragging (no terminal repaint).
+/// Right-edge gutter long-press-to-select surface (#962). On long-press-drag it
+/// paints a full-width band over the dragged VIEWPORT rows and, on release,
+/// reports the inclusive row range (top ≤ bottom, 0-based from the top of the
+/// visible viewport) via [onCommitRows]. A plain swipe is ignored (scrolls).
 class GutterLineSelectLayer extends StatefulWidget {
   const GutterLineSelectLayer({
     super.key,
     required this.cellHeight,
     required this.rows,
     required this.color,
-    required this.onSelectRows,
     required this.onCommitRows,
     this.padding = 4.0,
     this.stripWidth = kGutterSelectStripWidth,
   });
 
-  /// The REAL flterm cell height — maps a touch Y to a viewport row exactly as
-  /// the painter laid the grid out.
   final double cellHeight;
-
-  /// Number of visible viewport rows, for clamping the dragged row.
   final int rows;
-
-  /// Band colour (the session selection colour).
   final Color color;
-
-  /// The terminal-view padding the grid is offset by.
   final double padding;
-
-  /// Width of the right-edge drag strip.
   final double stripWidth;
 
-  /// Live during the drag (start + each row change): the current inclusive
-  /// VIEWPORT row range, so the parent paints the on-screen selection highlight
-  /// as the finger moves (the owner needs to SEE what's selected).
-  final void Function(int topViewRow, int bottomViewRow) onSelectRows;
-
-  /// On release: the final inclusive VIEWPORT row range (top ≤ bottom).
+  /// On long-press-drag release: inclusive VIEWPORT row range (top ≤ bottom).
   final void Function(int topViewRow, int bottomViewRow) onCommitRows;
 
   @override
@@ -74,24 +55,21 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
     return r.clamp(0, widget.rows - 1);
   }
 
-  void _onStart(DragStartDetails d) {
+  void _onStart(LongPressStartDetails d) {
     final r = _rowFromY(d.localPosition.dy);
     setState(() {
       _startRow = r;
       _curRow = r;
     });
-    widget.onSelectRows(r, r);
   }
 
-  void _onUpdate(DragUpdateDetails d) {
+  void _onMove(LongPressMoveUpdateDetails d) {
     final r = _rowFromY(d.localPosition.dy);
     if (r == _curRow) return;
     setState(() => _curRow = r);
-    final s = _startRow ?? r;
-    widget.onSelectRows(s < r ? s : r, s < r ? r : s);
   }
 
-  void _onEnd(DragEndDetails d) {
+  void _onEnd(LongPressEndDetails d) {
     final s = _startRow;
     final c = _curRow;
     setState(() {
@@ -117,6 +95,10 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
     final dragging = s != null && c != null;
     return Stack(
       children: [
+        // Full-width highlight band over the dragged viewport rows (visual only).
+        if (dragging) _band(s, c),
+        // Long-press capture strip on the right edge. translucent + only
+        // long-press handlers → a plain swipe/tap is NOT claimed and scrolls.
         Positioned(
           top: 0,
           bottom: 0,
@@ -125,11 +107,11 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
           child: GestureDetector(
             key: const Key('gutter-line-select'),
             behavior: HitTestBehavior.translucent,
-            onVerticalDragStart: _onStart,
-            onVerticalDragUpdate: _onUpdate,
-            onVerticalDragEnd: _onEnd,
-            onVerticalDragCancel: _onCancel,
-            child: dragging ? _band(s, c) : const SizedBox.expand(),
+            onLongPressStart: _onStart,
+            onLongPressMoveUpdate: _onMove,
+            onLongPressEnd: _onEnd,
+            onLongPressCancel: _onCancel,
+            child: const SizedBox.expand(),
           ),
         ),
       ],
@@ -141,19 +123,14 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
     final bottomView = startView < curView ? curView : startView;
     final top = widget.padding + topView * widget.cellHeight;
     final height = (bottomView - topView + 1) * widget.cellHeight;
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: ColoredBox(color: widget.color.withValues(alpha: 0.06)),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: top,
-          height: height,
-          child: ColoredBox(color: widget.color.withValues(alpha: 0.34)),
-        ),
-      ],
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: top,
+      height: height,
+      child: IgnorePointer(
+        child: ColoredBox(color: widget.color.withValues(alpha: 0.30)),
+      ),
     );
   }
 }

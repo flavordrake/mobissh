@@ -1288,6 +1288,48 @@ class TerminalControllerImpl extends TerminalController
   }
 
   @override
+  String visibleRowsText(int topViewRow, int bottomViewRow) {
+    _renderState.update(terminal);
+    final cols = _renderState.cols;
+    if (cols <= 0) return '';
+    var top = topViewRow;
+    var bottom = bottomViewRow;
+    if (top > bottom) {
+      final swap = top;
+      top = bottom;
+      bottom = swap;
+    }
+    if (top < 0) top = 0;
+    if (bottom < 0) return '';
+
+    final out = StringBuffer();
+    for (var r = top; r <= bottom; r++) {
+      final line = StringBuffer();
+      for (var c = 0; c < cols; c++) {
+        GridRef? ref;
+        try {
+          // PointTag.viewport: row r is the r-th VISIBLE row (what's painted
+          // now) — no scrollback/offset math.
+          ref = GridRef.at(terminal, col: c, row: r, pointTag: .viewport);
+          // A wide-char spacer tail carries no text of its own.
+          if (ref.wide == CellWidth.spacerTail) continue;
+          line.write(ref.content);
+        } catch (_) {
+          // Out-of-range (past the last visible row/col) → treat as blank.
+        } finally {
+          ref?.dispose();
+        }
+      }
+      // Trim trailing blanks so a line isn't padded to the full width.
+      var s = line.toString();
+      final end = s.replaceFirst(RegExp(r'[ \t]+$'), '');
+      out.write(end);
+      if (r < bottom) out.write('\n');
+    }
+    return out.toString();
+  }
+
+  @override
   void selectLine(int row, LineSelectMode lineSelectMode) {
     final (:startRow, :endRow, :endCol) = terminal.lineBoundaryAt(row);
     final int effectiveEndCol;

@@ -354,6 +354,14 @@ abstract class TerminalController extends ChangeNotifier
     FormatterFormat format = .plain,
   });
 
+  /// Reads the VISIBLE viewport rows [topViewRow]..[bottomViewRow] inclusive
+  /// VERBATIM (row 0 = the top visible row), independently of selection,
+  /// scrollback offset, or paint timing — via `PointTag.viewport`, which is
+  /// what's on screen RIGHT NOW. Trailing blanks per row are trimmed; rows are
+  /// joined with '\n'. This is the "copy exactly the visible lines I dragged
+  /// over" path (#962) — no absolute-row / offset machinery.
+  String visibleRowsText(int topViewRow, int bottomViewRow);
+
   /// Encodes a key press and sends it via [onOutput].
   ///
   /// [mods] are merged with [virtualMods]. Virtual modifiers are cleared
