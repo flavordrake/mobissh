@@ -15,6 +15,7 @@
 // no scrollback/offset machinery. A full-width band highlights the range.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// Default width (logical px) of the right-edge long-press anchor strip.
 const double kGutterSelectStripWidth = 28.0;
@@ -62,6 +63,9 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
   // so dy is the viewport Y.
   void _onLongPressStart(LongPressStartDetails d) {
     final r = _rowFromY(d.localPosition.dy);
+    // Haptic: SELECT BEGINS. A crisp tick confirms the gutter grabbed the
+    // gesture (vs a scroll swipe) the instant the anchor lands.
+    HapticFeedback.selectionClick();
     setState(() {
       _anchorRow = r;
       _curRow = r;
@@ -89,6 +93,9 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
       _curRow = null;
     });
     if (a == null || c == null) return;
+    // Haptic: SELECT ENDS (committed → copied). A heavier tick than the begin
+    // click marks "captured", distinct from the engage tick.
+    HapticFeedback.mediumImpact();
     widget.onCommitRows(a < c ? a : c, a < c ? c : a);
   }
 
@@ -142,7 +149,16 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
       top: top,
       height: height,
       child: IgnorePointer(
-        child: ColoredBox(color: widget.color.withValues(alpha: 0.30)),
+        // Higher-contrast feedback over the terminal: a stronger fill PLUS a
+        // crisp full-opacity border box around the selected rows, so the range
+        // reads clearly over arbitrary terminal content (text still shows
+        // through the translucent fill).
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: widget.color.withValues(alpha: 0.42),
+            border: Border.all(color: widget.color, width: 2),
+          ),
+        ),
       ),
     );
   }
