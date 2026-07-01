@@ -176,6 +176,36 @@ void main() {
     expect(getDataCalls, 0);
   });
 
+  test('a diagnostics-map result (native readback #962) still returns true',
+      () async {
+    // #962: the native setText now returns a diagnostics MAP (sdk/model/focus/
+    // readback) instead of a bare bool. copyToClipboard must accept it, log it,
+    // and still report success — the write is authoritative regardless.
+    messenger.setMockMethodCallHandler(clipboardChannel, (call) async {
+      if (call.method == 'setText') {
+        lastSetText = call.arguments as Map<dynamic, dynamic>;
+        final text = lastSetText!['text'] as String;
+        return <String, dynamic>{
+          'ok': true,
+          'sdk': 34,
+          'release': '15',
+          'model': 'Pixel 9',
+          'wroteLen': text.length,
+          'hasPrimaryClip': true,
+          'readbackLen': text.length,
+          'matches': true,
+          'sensitiveReadback': false,
+          'windowFocus': true,
+        };
+      }
+      return null;
+    });
+
+    final ok = await copyToClipboard('map-result');
+    expect(ok, isTrue);
+    expect(lastSetText!['text'], 'map-result');
+  });
+
   test('native channel error falls back to Clipboard.setData → true', () async {
     nativeThrows = true;
     final ok = await copyToClipboard('fallback-text');

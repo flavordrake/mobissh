@@ -67,14 +67,29 @@ Future<bool> copyToClipboard(String text) async {
   }
 
   try {
-    await clipboardChannel.invokeMethod<bool>('setText', <String, dynamic>{
-      'label': _clipboardLabel,
-      'text': text,
-    });
-    clifecycle(
-      'clipboard',
-      'wrote ${text.length} chars (native, labeled "$_clipboardLabel")',
+    final res = await clipboardChannel.invokeMethod<dynamic>(
+      'setText',
+      <String, dynamic>{'label': _clipboardLabel, 'text': text},
     );
+    if (res is Map) {
+      // #962 device diagnostics from the native immediate readback — logged into
+      // the connect-trace so a bug report shows EXACTLY what the system held
+      // right after setPrimaryClip: model/OS, whether a primary clip exists, if
+      // its text matches, the sensitivity flag, and whether the activity had
+      // window focus (Android gates cross-app propagation on foreground focus).
+      clifecycle(
+        'clipboard',
+        'native setText model=${res['model']} sdk=${res['sdk']}/${res['release']} '
+            'wrote=${res['wroteLen']} hasClip=${res['hasPrimaryClip']} '
+            'readback=${res['readbackLen']} matches=${res['matches']} '
+            'sensitive=${res['sensitiveReadback']} focus=${res['windowFocus']}',
+      );
+    } else {
+      clifecycle(
+        'clipboard',
+        'wrote ${text.length} chars (native, labeled "$_clipboardLabel")',
+      );
+    }
     // Diagnostics-only, deferred so the readback can never race the system
     // clip propagation that #924 was about. NOT awaited — fire and forget.
     _scheduleDeferredReadback(text);

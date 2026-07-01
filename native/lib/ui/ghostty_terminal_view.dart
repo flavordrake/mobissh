@@ -193,6 +193,15 @@ import 'path_action_overlay.dart';
 import 'top_toast.dart';
 import 'url_action_overlay.dart';
 
+/// #962 (Pixel-9 clipboard isolation): while we fix cross-app clipboard
+/// propagation, the RIGHT-EDGE GUTTER drag is the SOLE copy path. Body text
+/// selection — long-press-drag + the bottom-right Copy/Select-all buttons — is
+/// disabled so it can't fire a SECOND, competing clipboard write that clobbers
+/// the gutter's clip (the "preview chip empty first" symptom the owner saw on a
+/// stock Pixel 9). Flip back to true to restore body selection once the
+/// clipboard write is verified end-to-end.
+const bool kBodyTextSelectionEnabled = false;
+
 /// Apply the shared armed keybar Ctrl modifier (#728) to a SOFT-KEYBOARD
 /// keystroke flowing through flterm's `controller.onOutput`.
 ///
@@ -2936,6 +2945,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// (`.scroll(scrollbar.offset)`). Unlike the #692 SGR-tmux path, this PERSISTS
   /// after release so Copy (`selectedText()`) can read it.
   void _onSelectionStart(int col, int row) {
+    // #962: body text selection disabled — gutter edge is the sole copy path
+    // while clipboard propagation is being fixed. Long-press-drag no longer
+    // starts a body selection (swipe still scrolls, tap still focuses).
+    if (!kBodyTextSelectionEnabled) return;
     final controller = _controller;
     if (controller == null) return;
     // #962: the right-edge GUTTER owns its own long-press line-select. Suppress
@@ -2968,6 +2981,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// VIEWPORT cell, keeping the held anchor as the start, so the highlight grows
   /// under the finger. No-op if no anchor is set (no selection in progress).
   void _onSelectionExtend(int col, int row) {
+    if (!kBodyTextSelectionEnabled) return;
     final controller = _controller;
     if (controller == null) return;
     // #962: this gesture began in the gutter strip — leave native selection off.
@@ -3667,7 +3681,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // swaps the order: COPY on top, SELECT-ALL below. A future smart-select
         // button would select a word/path/URL unit at the tap (PWA selection.ts
         // _selectableUnitAt) — see file header.
-        if (ghosttyShouldShowAffordances(hasSelection: _hasSelection))
+        if (kBodyTextSelectionEnabled &&
+            ghosttyShouldShowAffordances(hasSelection: _hasSelection))
           Positioned(
             right: 4,
             bottom: 4,

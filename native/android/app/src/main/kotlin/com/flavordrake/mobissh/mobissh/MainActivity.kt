@@ -230,7 +230,42 @@ class MainActivity : FlutterActivity() {
                             val manager = getSystemService(Context.CLIPBOARD_SERVICE)
                                 as ClipboardManager
                             manager.setPrimaryClip(clip)
-                            result.success(true)
+                            // #962 instrumentation: read back from the SAME
+                            // manager immediately so a device repro shows exactly
+                            // what the system holds — does a primary clip exist,
+                            // does its text match, is it flagged sensitive, and
+                            // did the activity have WINDOW FOCUS at write time
+                            // (Android gates cross-app clip propagation on the
+                            // writer being the focused foreground app).
+                            val back = manager.primaryClip?.let { pc ->
+                                if (pc.itemCount > 0) {
+                                    pc.getItemAt(0)
+                                        .coerceToText(this@MainActivity)?.toString()
+                                } else {
+                                    null
+                                }
+                            }
+                            val sensitiveBack =
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    manager.primaryClipDescription?.extras
+                                        ?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE)
+                                } else {
+                                    null
+                                }
+                            result.success(
+                                mapOf(
+                                    "ok" to true,
+                                    "sdk" to Build.VERSION.SDK_INT,
+                                    "release" to Build.VERSION.RELEASE,
+                                    "model" to Build.MODEL,
+                                    "wroteLen" to text.length,
+                                    "hasPrimaryClip" to manager.hasPrimaryClip(),
+                                    "readbackLen" to (back?.length ?: -1),
+                                    "matches" to (back == text),
+                                    "sensitiveReadback" to sensitiveBack,
+                                    "windowFocus" to hasWindowFocus(),
+                                ),
+                            )
                         } catch (err: Throwable) {
                             result.error("CLIPBOARD_FAILED", err.message, null)
                         }
