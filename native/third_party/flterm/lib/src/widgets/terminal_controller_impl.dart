@@ -1313,7 +1313,13 @@ class TerminalControllerImpl extends TerminalController
           ref = GridRef.at(terminal, col: c, row: r, pointTag: .viewport);
           // A wide-char spacer tail carries no text of its own.
           if (ref.wide == CellWidth.spacerTail) continue;
-          line.write(ref.content);
+          // A BLANK cell (`content` == '') is a visual space of width 1 — emit
+          // ' ' so INTERIOR + leading spaces survive. Ghostty stores blanks
+          // (incl. the gaps a TUI leaves between tokens via cursor positioning)
+          // as empty graphemes; writing '' collapsed them, so `curl -fsSL https`
+          // copied as `curl-fsSLhttps`. Trailing padding is trimmed below.
+          final ch = ref.content;
+          line.write(ch.isEmpty ? ' ' : ch);
         } catch (_) {
           // Out-of-range (past the last visible row/col) → treat as blank.
         } finally {
