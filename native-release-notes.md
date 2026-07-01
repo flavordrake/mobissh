@@ -32,6 +32,9 @@ gen-apk-install-page.sh staleness check).
 ## v0.1.10+89 (2026-06-30) — Copy now copies what you selected
 - **Copy puts the text you highlighted on the clipboard** — not a different region. In an active session, after selecting something while scrolled up, Copy was grabbing later output ("the wrong view"); it now honors exactly what you selected. (Interim fix; a line-select gutter is coming next.) (#962)
 
+## v0.1.10+96 (2026-07-01) — copy: gutter is the only copy path (isolating the clipboard bug)
+- **To copy, drag the right-edge gutter** to select whole lines, then release. Long-press text-selection and the floating Copy/Select-all buttons are **temporarily disabled** so only one thing writes the clipboard while we chase why copies weren't reaching Gboard on Pixel. If you copy and paste elsewhere and it still doesn't appear, **send a bug report** — this build records exactly what the system clipboard held (device/OS, focus, read-back) so we can pin it down. (#962)
+
 ## v0.1.10+88 (2026-06-29) — link/path detection toggle in the session menu
 - **Turn the link/path gutter on or off from the session menu.** A new link toggle sits in the session menu's control row — tap it to switch the right-edge detection marks on/off (it's a quick way to verify the feature and force a fresh scan of the screen). Detection stays on by default. (#955)
 
