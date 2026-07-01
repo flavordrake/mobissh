@@ -22,5 +22,11 @@ RUN printf 'set -g mouse on\nset -g history-limit 5000\n' \
  > /home/testuser/.tmux.conf \
  && chown testuser:testuser /home/testuser/.tmux.conf
 
+# Deterministic Claude-Code-like TUI painter for the golden-flow emulator test
+# (box-drawing, forced margins, wrapped URL, streaming lines with interior
+# spaces). See fake-tui.sh header.
+COPY fake-tui.sh /usr/local/bin/fake-tui
+RUN chmod 755 /usr/local/bin/fake-tui
+
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]

@@ -244,11 +244,15 @@ void main() {
         'isScrolling=${controller.isScrolling} top="${topAt(oPaintNow)}"',
       );
 
-      // Gutter-drag + copy RIGHT NOW (minimal settle) — reproduce the timing.
+      // Gutter LONG-PRESS-drag + copy RIGHT NOW (minimal settle) — reproduce the
+      // timing. Since +94 the gutter anchors on a LONG-PRESS (so plain swipes
+      // still scroll): hold stationary past kLongPressTimeout (500ms) BEFORE
+      // moving, or no selection ever starts. (This test shipped before that
+      // pivot and silently rotted — 16ms press-then-move never armed it.)
       final gx = rect.right - 14;
       final gy = rect.top + rect.height * 0.4;
       final gg = await tester.startGesture(Offset(gx, gy));
-      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 700));
       for (var i = 1; i <= 6; i++) {
         await gg.moveTo(Offset(gx, gy + 8.0 * i));
         await tester.pump(const Duration(milliseconds: 16));

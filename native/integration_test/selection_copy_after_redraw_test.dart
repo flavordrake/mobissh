@@ -339,5 +339,11 @@ void main() {
             'honor the snapshot of the visible selection (#828). copied="$copied"',
       );
     },
+    // +96 (#962): body long-press selection (and its Copy button) is DISABLED —
+    // the gutter is the sole copy path while clipboard propagation was chased.
+    // Flag-gated skip: if kBodyTextSelectionEnabled is ever flipped back on,
+    // this test re-arms itself automatically. If #963's cleanup slice DELETES
+    // the body-selection machinery instead, delete this test with it.
+    skip: !kBodyTextSelectionEnabled,
   );
 }

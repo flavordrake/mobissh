@@ -291,7 +291,8 @@ class TerminalControllerImpl extends TerminalController
     // tapped row to a DIFFERENT absolute row than the one drawn → the tap lands
     // off the highlight. Resolving both against [_paintedViewportOffset] keeps
     // paint and hit-test on ONE geometry source so they cannot diverge.
-    final absRow = row + _paintedViewportOffset;
+    // #958: on the ALT screen that offset is the screen-space viewport top.
+    final absRow = row + _screenViewportTop;
     HighlightRange? match;
     for (final range in _highlights) {
       if (range.contains(absRow, col)) match = range;
@@ -333,7 +334,8 @@ class TerminalControllerImpl extends TerminalController
     // consume the EXACT offset the bubble was painted with, so a tap anywhere on
     // the painted URL (incl. a :port URL or a wrapped multi-row URL) resolves to
     // its match. They share ONE geometry source and cannot diverge.
-    final absRow = row + _paintedViewportOffset;
+    // #958: on the ALT screen that offset is the screen-space viewport top.
+    final absRow = row + _screenViewportTop;
     final snappedCol = terminal.snapColToWideBoundary(
       row,
       col,
@@ -446,15 +448,33 @@ class TerminalControllerImpl extends TerminalController
     // it hugs. The render box reports this offset each frame and the controller
     // notifies post-frame, so a decorator built over these rects still tracks
     // scroll (#784) and re-detection (#788) — just frame-synced, not ahead.
+    // #958: on the ALT screen the offset is the screen-space viewport top.
     return AnchorGeometry.rectsFor(
       range,
       metrics: metrics,
-      viewportOffset: _paintedViewportOffset,
+      viewportOffset: _screenViewportTop,
       cols: _renderState.cols,
       viewportRows: _renderState.rows,
       origin: Offset(_lastPadding.left, _lastPadding.top),
     );
   }
+
+  /// #958: the top visible row expressed in the SCREEN coordinate space the
+  /// scanner anchors in (`PointTag.screen`, row 0 = the oldest PRIMARY-screen
+  /// scrollback line; the ALTERNATE screen's rows sit AFTER that history).
+  ///
+  /// On the PRIMARY screen the painted viewport offset already IS that value
+  /// (frame-synced scrollback offset, #803/#863). On the ALTERNATE screen the
+  /// scrollbar/painted offset are ALT-LOCAL (always 0 — the alt screen has no
+  /// scrollback), while anchors carry `scrollbackRows + altRow`. Subtracting the
+  /// alt-local 0 put every anchor "below" the viewport → `anchorGutterRow`
+  /// returned null for ALL anchors → NO gutter marks in tmux, ever (the #958
+  /// device symptom; reproduced by golden_flow_tui_test: anchors at rows 46/56
+  /// vs viewportRows=44, offset=0). The alt viewport's top in screen space is
+  /// the history length itself.
+  int get _screenViewportTop => _activeScreen == .alternate
+      ? terminal.scrollbackRows
+      : _paintedViewportOffset;
 
   @override
   int? anchorGutterRow(HighlightRange range) {
@@ -464,9 +484,11 @@ class TerminalControllerImpl extends TerminalController
     // NOT the live `scrollbar.offset` (which can run a frame AHEAD of the painted
     // glyphs during a tmux-redraw scroll, the #803/#863 divergence). The gutter
     // mark then moves in lockstep with the painted rows, never a frame ahead.
+    // #958: on the ALT screen that offset must be the screen-space viewport top
+    // (see [_screenViewportTop]), not the alt-local 0.
     return AnchorGeometry.gutterRowFor(
       range,
-      viewportOffset: _paintedViewportOffset,
+      viewportOffset: _screenViewportTop,
       viewportRows: _renderState.rows,
     );
   }
@@ -766,7 +788,15 @@ class TerminalControllerImpl extends TerminalController
         // window.) The margin also gives the wrap-join enough context rows above
         // the first visible row to assemble a URL that wraps across the boundary.
         final scrollback = terminal.scrollbackRows;
-        final viewportTop = scrollbar.offset;
+        // #958: the viewport top in SCREEN space. On the ALT screen
+        // `scrollbar.offset` is alt-local (always 0) while the alt viewport
+        // actually sits AFTER the primary history in `PointTag.screen` space —
+        // using the raw offset made the scan window cover primary HISTORY rows
+        // instead of the visible alt rows, so with history longer than the
+        // margin nothing on a tmux screen was ever detected (the other half of
+        // #958). See [_screenViewportTop].
+        final viewportTop =
+            _activeScreen == .alternate ? scrollback : scrollbar.offset;
         final startAbs = viewportTop - _detectionScrollbackWindow < 0
             ? 0
             : viewportTop - _detectionScrollbackWindow;

@@ -32,6 +32,10 @@ gen-apk-install-page.sh staleness check).
 ## v0.1.10+89 (2026-06-30) — Copy now copies what you selected
 - **Copy puts the text you highlighted on the clipboard** — not a different region. In an active session, after selecting something while scrolled up, Copy was grabbing later output ("the wrong view"); it now honors exactly what you selected. (Interim fix; a line-select gutter is coming next.) (#962)
 
+## v0.1.10+100 (2026-07-01) — link/path marks now appear inside tmux (#958 fixed)
+- **The right-edge link/path marks finally show up in tmux sessions.** A coordinate mix-up meant detection worked but the marks (and taps on them) resolved off-screen whenever the session had any history — i.e. always, on a real device. Now a URL or file path on a tmux screen gets its gutter mark; tap it to copy/open. (#958)
+- Behind the scenes: a new always-on end-to-end emulator test drives the full connect → tmux → TUI → scroll → copy chain on every terminal change, so this flow can't silently break again.
+
 ## v0.1.10+96 (2026-07-01) — copy: gutter is the only copy path (isolating the clipboard bug)
 - **To copy, drag the right-edge gutter** to select whole lines, then release. Long-press text-selection and the floating Copy/Select-all buttons are **temporarily disabled** so only one thing writes the clipboard while we chase why copies weren't reaching Gboard on Pixel. If you copy and paste elsewhere and it still doesn't appear, **send a bug report** — this build records exactly what the system clipboard held (device/OS, focus, read-back) so we can pin it down. (#962)
 

@@ -59,6 +59,17 @@ The native app has its OWN gate, separate from the PWA Playwright gates above.
   integration suite before merge. The fast gate passing is NOT enough — that is
   exactly how #539/#546/#547 and the #590 stale-shell hang shipped "green" and
   broke on device. An excluded test suite reads as coverage while gating nothing.
+- **Terminal-flow gate (middle tier, owner directive 2026-07-01):**
+  `scripts/terminal-flow-gate.sh` runs the two saga-critical end-to-end flows
+  (`golden_flow_tui_test` — connect → tmux → TUI screen → detection RENDERS →
+  scroll → verbatim gutter copy; and `gutter_copy_scrollback_test`) in ~10-15
+  min. It is REQUIRED before shipping ANY change touching the terminal view,
+  gesture routing, selection/gutter, the copy path, detection/anchors/marks, or
+  the flterm fork (`native/third_party/flterm/`). The full suite is too slow
+  per-ship and the fast gate excludes integration — that gap is how the +94
+  long-press pivot silently broke the flagship copy test (found broken
+  2026-07-01, `copied=null`, never re-run after the pivot). Gesture-model
+  changes MUST update these tests in the same commit.
 - **Prefer headless transition tests where possible.** If a state-transition can be
   reproduced via `InMemoryGatewayPair` (no real device), put it in `native/test/`
   so it runs in the fast gate on EVERY commit — e.g. `reconnect_shell_revive_test.dart`
