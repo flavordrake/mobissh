@@ -3123,6 +3123,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       return;
     }
     final rowCount = bottomViewRow - topViewRow + 1;
+    // #962 CORPUS CAPTURE: record the FULL rendered gross-select verbatim into
+    // the trace so every bug report carries ground-truth fixtures for the
+    // smart-copy massager. The rendered layout — TUI forced-whitespace margins,
+    // bullets, box-drawing, alignment padding — CANNOT be recovered from the raw
+    // byte-trace (pre-render bytes + escapes), so this is the only faithful
+    // source. Newlines/backslashes escaped to keep it one trace line; the
+    // feedback bundle scrubs secrets before anything leaves the device. The
+    // connect-log ring IS the "recent stack" of the last selections.
+    final escaped = text.replaceAll(r'\', r'\\').replaceAll('\n', r'\n');
+    ctrace('grossselect', 'rows=$rowCount cols=$_cols text="$escaped"');
     final ok = await copyToClipboard(text);
     if (!mounted) return;
     showTopToast(
