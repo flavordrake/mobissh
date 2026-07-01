@@ -162,23 +162,30 @@ void main() {
 
         final trace = loadByteTrace(fixture);
         final cols = trace.cols;
-        final liveOffset = controller.scrollbar.offset;
+        // #958: the on-screen frame base. This capture is a tmux (ALT screen)
+        // grid: the alt viewport starts AFTER the primary history in
+        // PointTag.screen space, while `scrollbar.offset` is alt-local (0).
+        // Filtering "on screen" with the raw offset selected the HISTORY copies
+        // of the URL (tmux full-screen redraw leaves duplicates in scrollback)
+        // — self-consistent with the OLD broken hit-test base, but those rows
+        // are NOT what's painted; that frame is exactly why device long-presses
+        // missed (#868) and gutter marks never rendered (#958).
+        final base = controller.screenViewportTop;
 
-        // The URL rows that are actually ON SCREEN at the live viewport.
+        // The URL rows that are actually ON SCREEN at the painted viewport.
         final glyphRows = glyphAbsRowsOf(controller, urlNeedle, cols);
         final onScreen = glyphRows
-            .where(
-                (abs) => abs - liveOffset >= 0 && abs - liveOffset < trace.rows)
+            .where((abs) => abs - base >= 0 && abs - base < trace.rows)
             .toList();
         expect(
           onScreen,
           isNotEmpty,
-          reason: 'at least one copy of the URL is on screen at the live tail '
-              '(offset $liveOffset)',
+          reason: 'at least one copy of the URL is on screen at the painted '
+              'viewport (screenViewportTop $base)',
         );
 
         for (final absRow in onScreen) {
-          final viewRow = absRow - liveOffset;
+          final viewRow = absRow - base;
           final fullRow = absRowText(controller, absRow, cols);
           final startCol = fullRow.indexOf('http://');
           expect(startCol, greaterThanOrEqualTo(0),
@@ -191,10 +198,10 @@ void main() {
             url,
             reason: 'long-press at the URL\'s REAL viewport row '
                 '($viewRow,$hitCol) must resolve the URL. If it does not, '
-                'matchAt maps via paintedViewportOffset '
-                '(${controller.paintedViewportOffset}), which has diverged from '
-                'the live offset ($liveOffset) — the #868 "doesn\'t respond to '
-                'long press".',
+                'matchAt maps via a base '
+                '(screenViewportTop=${controller.screenViewportTop}) that has '
+                'diverged from the painted rows — the #868 "doesn\'t respond '
+                'to long press" / #958 no-marks class.',
           );
         }
       },

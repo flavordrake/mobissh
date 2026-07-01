@@ -91,6 +91,25 @@ Future<void> _pump(WidgetTester tester, {int count = 12}) async {
   }
 }
 
+/// Pump-and-drain until [ready] returns true or [timeout] (real wall clock)
+/// elapses. A FIXED drain count flaked under host CPU load — with the always-on
+/// emulator holding its reserved cores, the fetcher's REAL temp-file IO can
+/// outlive 12 zero-delay drains, so `pdf-viewer-ready` wasn't mounted yet when
+/// the assertions ran (2026-07-01 gate flakes; green in isolation). Polling to
+/// a generous real deadline is load-independent; the happy path still exits in
+/// a few iterations.
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() ready, {
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!ready() && DateTime.now().isBefore(deadline)) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump(const Duration(milliseconds: 30));
+  }
+}
+
 /// Placeholder render builder so the headless harness never invokes pdfium.
 /// Reports a fixed page count and exposes a button to simulate a render error.
 Widget _fakeRender(
@@ -199,6 +218,19 @@ void main() {
     expect(find.byKey(const Key('file-entry-doc.pdf')), findsOneWidget);
     await tester.tap(find.byKey(const Key('file-entry-doc.pdf')));
     await _pump(tester);
+    // Load-independent: wait for the viewer's READY state (fetch → temp file →
+    // render) rather than a fixed drain count. The page-count chip mounts one
+    // async hop AFTER ready (the render reports its count → setState), so the
+    // predicate requires BOTH — asserting right at ready still flaked.
+    await _pumpUntil(
+      tester,
+      () =>
+          find.byKey(const Key('pdf-viewer-ready')).evaluate().isNotEmpty &&
+          find
+              .byKey(const Key('pdf-viewer-page-count'))
+              .evaluate()
+              .isNotEmpty,
+    );
 
     // Routed to the viewer, not the download path.
     expect(find.byType(PdfViewerScreen), findsOneWidget);
@@ -254,6 +286,11 @@ void main() {
 
     await tester.tap(find.byKey(const Key('open-pdf')));
     await _pump(tester);
+    // Load-independent ready wait (see _pumpUntil).
+    await _pumpUntil(
+      tester,
+      () => find.byKey(const Key('pdf-viewer-ready')).evaluate().isNotEmpty,
+    );
 
     expect(find.byKey(const Key('pdf-viewer-ready')), findsOneWidget);
     final file = fetcher.lastFile!;

@@ -292,7 +292,7 @@ class TerminalControllerImpl extends TerminalController
     // off the highlight. Resolving both against [_paintedViewportOffset] keeps
     // paint and hit-test on ONE geometry source so they cannot diverge.
     // #958: on the ALT screen that offset is the screen-space viewport top.
-    final absRow = row + _screenViewportTop;
+    final absRow = row + screenViewportTop;
     HighlightRange? match;
     for (final range in _highlights) {
       if (range.contains(absRow, col)) match = range;
@@ -335,7 +335,7 @@ class TerminalControllerImpl extends TerminalController
     // the painted URL (incl. a :port URL or a wrapped multi-row URL) resolves to
     // its match. They share ONE geometry source and cannot diverge.
     // #958: on the ALT screen that offset is the screen-space viewport top.
-    final absRow = row + _screenViewportTop;
+    final absRow = row + screenViewportTop;
     final snappedCol = terminal.snapColToWideBoundary(
       row,
       col,
@@ -452,7 +452,7 @@ class TerminalControllerImpl extends TerminalController
     return AnchorGeometry.rectsFor(
       range,
       metrics: metrics,
-      viewportOffset: _screenViewportTop,
+      viewportOffset: screenViewportTop,
       cols: _renderState.cols,
       viewportRows: _renderState.rows,
       origin: Offset(_lastPadding.left, _lastPadding.top),
@@ -472,7 +472,8 @@ class TerminalControllerImpl extends TerminalController
   /// device symptom; reproduced by golden_flow_tui_test: anchors at rows 46/56
   /// vs viewportRows=44, offset=0). The alt viewport's top in screen space is
   /// the history length itself.
-  int get _screenViewportTop => _activeScreen == .alternate
+  @override
+  int get screenViewportTop => _activeScreen == .alternate
       ? terminal.scrollbackRows
       : _paintedViewportOffset;
 
@@ -485,10 +486,10 @@ class TerminalControllerImpl extends TerminalController
     // glyphs during a tmux-redraw scroll, the #803/#863 divergence). The gutter
     // mark then moves in lockstep with the painted rows, never a frame ahead.
     // #958: on the ALT screen that offset must be the screen-space viewport top
-    // (see [_screenViewportTop]), not the alt-local 0.
+    // (see [screenViewportTop]), not the alt-local 0.
     return AnchorGeometry.gutterRowFor(
       range,
-      viewportOffset: _screenViewportTop,
+      viewportOffset: screenViewportTop,
       viewportRows: _renderState.rows,
     );
   }
@@ -794,7 +795,7 @@ class TerminalControllerImpl extends TerminalController
         // using the raw offset made the scan window cover primary HISTORY rows
         // instead of the visible alt rows, so with history longer than the
         // margin nothing on a tmux screen was ever detected (the other half of
-        // #958). See [_screenViewportTop].
+        // #958). See [screenViewportTop].
         final viewportTop =
             _activeScreen == .alternate ? scrollback : scrollbar.offset;
         final startAbs = viewportTop - _detectionScrollbackWindow < 0
@@ -1356,11 +1357,32 @@ class TerminalControllerImpl extends TerminalController
           ref?.dispose();
         }
       }
-      // Trim trailing blanks so a line isn't padded to the full width.
-      var s = line.toString();
-      final end = s.replaceFirst(RegExp(r'[ \t]+$'), '');
-      out.write(end);
-      if (r < bottom) out.write('\n');
+      // SOFT-WRAP JOIN: ghostty marks a row whose content overflowed onto the
+      // next row with `rowWrap` — its own bookkeeping, not a heuristic. When
+      // set, this visual row and the next are ONE logical line (a long command
+      // typed at a prompt, a long URL), so we join them: no trailing trim (a
+      // wrapped row is full-width; a space at the wrap boundary is real
+      // content) and no '\n'. TUI-layout "wraps" (hard newlines + margins —
+      // tmux/Claude-Code repaints) legitimately carry rowWrap=false and keep
+      // their line breaks; joining those is the copy massager's job, not ours.
+      var wrapped = false;
+      GridRef? wrapRef;
+      try {
+        wrapRef = GridRef.at(terminal, col: 0, row: r, pointTag: .viewport);
+        wrapped = wrapRef.rowWrap;
+      } catch (_) {
+        // Out-of-range → treat as unwrapped.
+      } finally {
+        wrapRef?.dispose();
+      }
+      final s = line.toString();
+      if (wrapped && r < bottom) {
+        out.write(s);
+      } else {
+        // Trim trailing blanks so a line isn't padded to the full width.
+        out.write(s.replaceFirst(RegExp(r'[ \t]+$'), ''));
+        if (r < bottom) out.write('\n');
+      }
     }
     return out.toString();
   }

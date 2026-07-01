@@ -233,6 +233,20 @@ abstract class TerminalController extends ChangeNotifier
   /// mark beside each matched line.
   int? anchorGutterRow(HighlightRange range);
 
+  /// #958: the top visible row expressed in the SCREEN coordinate space that
+  /// detection anchors / selections use (`PointTag.screen`, row 0 = the oldest
+  /// PRIMARY-screen scrollback line; the ALTERNATE screen's rows sit AFTER that
+  /// history).
+  ///
+  /// On the primary screen this is the painted viewport offset (frame-synced
+  /// scrollback offset). On the alternate screen the scrollbar/painted offsets
+  /// are ALT-LOCAL (always 0 — no scrollback), while the alt viewport actually
+  /// starts at `scrollbackRows` in screen space — so this is the history length
+  /// there. Convert `viewportRow = screenRow - screenViewportTop` (and back)
+  /// with THIS, never with `scrollbar.offset`, or every anchor resolves
+  /// off-screen on a tmux screen (the #958 no-marks / dead-long-press class).
+  int get screenViewportTop;
+
   /// The AUTHORITATIVE per-visible-row soft-wrap flags for the active screen.
   ///
   /// Element `[r]` is `true` iff visible row `r` is soft-wrapped onto row
