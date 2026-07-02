@@ -32,6 +32,9 @@ gen-apk-install-page.sh staleness check).
 ## v0.1.10+89 (2026-06-30) — Copy now copies what you selected
 - **Copy puts the text you highlighted on the clipboard** — not a different region. In an active session, after selecting something while scrolled up, Copy was grabbing later output ("the wrong view"); it now honors exactly what you selected. (Interim fix; a line-select gutter is coming next.) (#962)
 
+## v0.1.10+104 (2026-07-02) — Copied URLs & commands join across wraps
+- **Wrapped lines copy as one line.** When you gutter-copy a URL or command that wrapped at the edge — including in tmux and TUIs like Claude Code, where there's no wrap marker — it now pastes back as a single line instead of breaking at the margin. Box-drawing art stays as separate lines, and normal short lines keep their breaks.
+
 ## v0.1.10+103 (2026-07-02) — Review before you send a bug report
 - **You now confirm what a bug report contains before it uploads.** Tapping Feedback opens a **Review & Send** sheet: preview the screenshot (or scrub through every frame of a recording), and toggle off the **screen images** and/or the **diagnostic traces** if they show something private. Nothing is sent until you tap **Send**; Cancel discards it. "View diagnostic text" shows the exact (secret-scrubbed) logs. This makes the privacy policy's "you review what's sent" literally true.
 
