@@ -343,6 +343,60 @@ void main() {
     );
 
     testWidgets(
+      'the ACTIVE session row is visually distinct (standout wrapper)',
+      (tester) async {
+        final w = make();
+        final a = _add(w.container, 'host-a');
+        final b = _add(w.container, 'host-b'); // addOrActivate → b is active
+
+        await tester.pumpWidget(_host(container: w.container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
+
+        _drive(w.pair, a, SshSessionState.connected);
+        _drive(w.pair, b, SshSessionState.connected);
+        await _pumpFrames(tester);
+
+        expect(w.container.read(sessionsProvider).activeId, b.id);
+
+        // Exactly the active row carries the standout; the other does not.
+        expect(find.byKey(Key('session-menu-active-${b.id}')), findsOneWidget);
+        expect(find.byKey(Key('session-menu-active-${a.id}')), findsNothing);
+
+        // The standout = a primary-tinted fill (the tile's selectedTileColor)
+        // + a 4px left accent stripe (the wrapper's border).
+        final scheme = Theme.of(
+          tester.element(find.byKey(Key('session-menu-row-${b.id}'))),
+        ).colorScheme;
+        final activeTile = tester.widget<ListTile>(
+          find.byKey(Key('session-menu-row-${b.id}')),
+        );
+        expect(activeTile.selected, isTrue);
+        expect(
+          activeTile.selectedTileColor,
+          scheme.primary.withValues(alpha: 0.10),
+        );
+        final deco =
+            tester
+                    .widget<DecoratedBox>(
+                      find.byKey(Key('session-menu-active-${b.id}')),
+                    )
+                    .decoration
+                as BoxDecoration;
+        expect(deco.color, isNull); // border-only — no bg (hides ListTile ink)
+        final border = deco.border! as Border;
+        expect(border.left.color, scheme.primary);
+        expect(border.left.width, 4);
+
+        // Switching active moves the standout: activate a → a is distinct now.
+        w.container.read(sessionsProvider.notifier).setActive(a.id);
+        await _pumpFrames(tester);
+        expect(find.byKey(Key('session-menu-active-${a.id}')), findsOneWidget);
+        expect(find.byKey(Key('session-menu-active-${b.id}')), findsNothing);
+      },
+    );
+
+    testWidgets(
       'Reconnect all appears when any session is dropped, reconnects each',
       (tester) async {
         final w = make();

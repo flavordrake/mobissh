@@ -715,8 +715,15 @@ class _SessionRow extends ConsumerWidget {
   ) {
     final theme = Theme.of(context);
     final subtitle = _subtitleFor(theme, state, error);
-    return ListTile(
+    final tile = ListTile(
       key: Key('session-menu-row-${entry.id}'),
+      // ACTIVE session standout (owner ask): a primary-tinted fill via the
+      // tile's own selectedTileColor (ListTile must paint its own bg/ink on its
+      // Material ancestor — wrapping it in a colored box is disallowed), plus a
+      // left accent stripe added by the border-only wrapper below. `selected`
+      // also announces it to a11y and tints the label/glyph primary.
+      selected: isActive,
+      selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.10),
       // [status dot][terminal] — the dot's COLOR + animation reflect the
       // session state (#817): solid profile/accent when connected, pulsing
       // while connecting, amber while reconnecting, red on failure, grey when
@@ -858,6 +865,22 @@ class _SessionRow extends ConsumerWidget {
         ref.read(sessionsProvider.notifier).setActive(entry.id);
         onClose();
       },
+    );
+    // Non-active rows render plain. The ACTIVE session's fill comes from the
+    // tile's selectedTileColor above; here we add a left accent stripe (border
+    // ONLY — no background color, which would hide the ListTile's ink). Together
+    // with the bold label + tinted terminal glyph, "which session am I looking
+    // at" reads at a glance. Monochrome/theme-driven — no emoji
+    // (feedback_monochrome_icons_no_emoji).
+    if (!isActive) return tile;
+    return DecoratedBox(
+      key: Key('session-menu-active-${entry.id}'),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: theme.colorScheme.primary, width: 4),
+        ),
+      ),
+      child: tile,
     );
   }
 
