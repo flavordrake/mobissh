@@ -48,6 +48,13 @@ if command -v taskset >/dev/null 2>&1; then TASKSET=(taskset -c "$BUILD_CORES");
 
 # #966: point the PUBLIC build at the Cloudflare bug-report Worker (+ shared key)
 # when provided — the personal build omits these and keeps the tailnet endpoint.
+# FEEDBACK_KEY defaults from ~/.mobissh/feedback.env (written by the worker
+# deploy), so a store build only needs FEEDBACK_ENDPOINT passed in.
+FEEDBACK_ENV="${HOME}/.mobissh/feedback.env"
+if [ -z "${FEEDBACK_KEY:-}" ] && [ -f "$FEEDBACK_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$FEEDBACK_ENV"
+fi
 DEFINES=()
 if [ -n "${FEEDBACK_ENDPOINT:-}" ]; then
   DEFINES+=("--dart-define=MOBISSH_FEEDBACK_ENDPOINT=${FEEDBACK_ENDPOINT}")

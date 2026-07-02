@@ -13,24 +13,29 @@ data processor, which expands the Play data-safety declaration and dilutes the
 keeps the existing JSON payload, and stays on Cloudflare's free tier for this
 volume (Workers 100k req/day, R2 10 GB).
 
-## One-time deploy
-Prereqs: a Cloudflare account, `npm i -g wrangler`, `wrangler login`.
+## One-time deploy (REST — account-token friendly)
 
+We deploy via the Cloudflare REST API, NOT `wrangler`: this project uses an
+**account-owned** API token (recommended — not tied to a person), and wrangler
+makes a user-scoped `/memberships` call that account tokens can't answer
+(`code 9106`). The REST path takes the explicit account scope and works cleanly.
+
+Prereqs — credentials in the home dir (never the repo):
 ```
-# 1. create the bucket
-wrangler r2 bucket create mobissh-bug-reports
-
-# 2. set the shared key (any long random string) — the app must send the same
-wrangler secret put FEEDBACK_KEY          # paste the value when prompted
-
-# 3. (optional) auth token if you set NTFY_URL to an authed topic
-# wrangler secret put NTFY_TOKEN
-
-# 4. deploy (from this dir)
-wrangler deploy
+# account-owned API token with: Workers Scripts:Edit + Workers R2 Storage:Edit
+#   ~/.mobissh/cloudflare.env  →  CLOUDFLARE_API_TOKEN=...  and  CLOUDFLARE_ACCOUNT_ID=...
 ```
-
-`wrangler deploy` prints the URL, e.g. `https://mobissh-bug-report.<you>.workers.dev`.
+Then:
+```
+scripts/cf-api.sh POST /r2/buckets --data '{"name":"mobissh-bug-reports"}'   # create bucket
+scripts/deploy-worker-rest.sh                                                 # upload + bindings + subdomain
+scripts/verify-worker.sh                                                      # authed 200 / unauthed 403 smoke test
+```
+`deploy-worker-rest.sh` generates + persists the shared `FEEDBACK_KEY` to
+`~/.mobissh/feedback.env`, uploads the module with the R2 + secret bindings
+inline, enables the workers.dev route, and prints the URL — e.g.
+`https://mobissh-bug-report.flavordrake.workers.dev`. (If the account has no
+workers.dev subdomain yet: `scripts/cf-api.sh PUT /workers/subdomain --data '{"subdomain":"NAME"}'`.)
 
 ## Point the app at it
 Build the public AAB with the endpoint + key baked in:
