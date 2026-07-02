@@ -47,5 +47,35 @@ void main() {
         );
       },
     );
+
+    test(
+      '#968: consecutive identical frame lines are COLLAPSED (×N), not flooded',
+      () {
+        // A frozen screen emits the same sync line every frame; without the
+        // collapse, 500+ copies evict the detection + freeze-onset lines. A
+        // sentinel keeps this independent of the shared ring/global state.
+        const frozen = 'sync screen=alternate rebuilt=32 SENTINEL968';
+        const changed = 'sync screen=alternate rebuilt=31 SENTINEL968';
+        logRepaintTelemetry(frozen); // emits once
+        logRepaintTelemetry(frozen); // collapsed
+        logRepaintTelemetry(frozen); // collapsed
+        logRepaintTelemetry(changed); // flushes "frozen ×3", emits changed
+
+        final ring = lifecycleLog.value;
+        final rawFrozen =
+            ring.where((l) => l.contains(frozen) && !l.contains('×')).length;
+        expect(
+          rawFrozen,
+          1,
+          reason: 'the frozen line is emitted ONCE, not per collapsed frame',
+        );
+        expect(
+          ring.any((l) => l.contains(frozen) && l.contains('×3')),
+          isTrue,
+          reason: 'the collapsed run carries a ×N repeat count',
+        );
+        expect(ring.any((l) => l.contains(changed)), isTrue);
+      },
+    );
   });
 }

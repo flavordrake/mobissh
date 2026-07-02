@@ -653,7 +653,29 @@ bool ghosttyShouldCycleFocusForRepaint({
 /// /`damageUnsettled`/`detActive`), and the #918 settle-tick arm/fire. Top-level +
 /// pure (no widget/FFI) so the wiring contract is unit-testable without rendering
 /// flterm headless (the native .so can't render in a headless test).
-void logRepaintTelemetry(String line) => clifecycle('repaint', line);
+String? _lastRepaintLine;
+int _repaintRepeat = 0;
+
+/// Collapse CONSECUTIVE identical frame lines before they hit the ring (#968).
+/// A frozen screen (the device "not repainting" repros) emits the same
+/// `sync … rebuilt=N` every frame — 500+ identical lines flooded the 600-event
+/// lifecycle ring and EVICTED the detection-register + freeze-onset lines that
+/// actually diagnose it. Emit a line only when it CHANGES, carrying a `×N`
+/// repeat count for the run just ended (feedback_suppress_identical_logs).
+void logRepaintTelemetry(String line) {
+  if (line == _lastRepaintLine) {
+    _repaintRepeat++;
+    return;
+  }
+  final prev = _lastRepaintLine;
+  final repeat = _repaintRepeat;
+  _lastRepaintLine = line;
+  _repaintRepeat = 0;
+  if (prev != null && repeat > 0) {
+    clifecycle('repaint', '$prev ×${repeat + 1}');
+  }
+  clifecycle('repaint', line);
+}
 
 /// #741: whether THIS session's view is the one LEAVING active on a session-bar
 /// swipe-switch and so must CAPTURE its current keyboard-up state.
@@ -3378,6 +3400,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       if (c == null) return;
       c.clearTextPatterns();
       _registerUrlPattern(c);
+      // #968: enabling detection on a LIVE screen (esp. a heavy-repainting tmux/
+      // Claude-Code alt screen) can leave the render box starved — the detection
+      // RenderState handle consumes the shared per-row damage on the same notify,
+      // and the toggle-ON path (unlike init / #931 resume) never re-armed a fresh
+      // grid read, so the screen froze on-device ("can't scroll / not repainting
+      // / didn't detect but failed to paint"). Force ONE coalesced full re-read
+      // after re-registration. Post-frame so the keyed render box exists +
+      // `_applyDetectionActive` (scheduled in _registerUrlPattern) has landed.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _forceTerminalRepaint();
+      });
     });
     final controller = _controller;
     if (controller == null) {

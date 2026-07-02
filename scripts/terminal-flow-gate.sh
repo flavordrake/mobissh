@@ -43,6 +43,7 @@ FLOWS=(
   integration_test/gutter_copy_scrollback_test.dart
   integration_test/wrap_join_copy_test.dart
   integration_test/tui_wrap_join_copy_test.dart
+  integration_test/detect_paint_freeze_test.dart
 )
 
 PASS=()
