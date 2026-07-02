@@ -32,6 +32,9 @@ gen-apk-install-page.sh staleness check).
 ## v0.1.10+89 (2026-06-30) — Copy now copies what you selected
 - **Copy puts the text you highlighted on the clipboard** — not a different region. In an active session, after selecting something while scrolled up, Copy was grabbing later output ("the wrong view"); it now honors exactly what you selected. (Interim fix; a line-select gutter is coming next.) (#962)
 
+## v0.1.10+102 (2026-07-02) — Settings cleanup (Play Store prep)
+- **Settings reads cleaner.** The terminal-engine picker is gone — Ghostty is the engine (it's what powers link/path marks, gutter copy, and everything else; the old xterm option quietly disabled all of that). Developer diagnostics (crash share / upload / connection audit) moved into a collapsed **Advanced** section. Everyday settings — keep-alive, battery, font size, link/path detection, tmux control mode — stay front and center.
+
 ## v0.1.10+101 (2026-07-01) — copied wrapped lines come out as ONE line
 - **A long command or URL that the terminal wrapped across rows now copies as a single line.** The terminal itself knows which rows are soft-wrapped (vs real line breaks), so the gutter copy joins them back — no heuristics, no lost characters. TUI layout breaks (bullets, margins) keep their line breaks. (#962)
 
