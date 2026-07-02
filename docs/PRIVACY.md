@@ -1,8 +1,8 @@
 # MobiSSH — Privacy Policy
 
-**Effective date:** {{EFFECTIVE_DATE}}
+**Effective date:** 2026-07-02
 **App:** MobiSSH (`com.flavordrake.mobissh`)
-**Contact:** {{CONTACT_EMAIL}}
+**Contact:** flavordrake@gmail.com
 
 ## The short version
 
@@ -63,8 +63,8 @@ password-, token-, and key-looking strings from the text logs — but this is
 - **Recipients:** the developer. Not shared with, sold to, or used by any third
   party or advertiser.
 - **Retention:** bug-report bundles are kept only as long as needed to resolve
-  the issue and no longer than **{{RETENTION_DAYS}} days**, then deleted.
-- **Deletion on request:** email {{CONTACT_EMAIL}} to have any report you sent
+  the issue and no longer than **30 days**, then deleted.
+- **Deletion on request:** email flavordrake@gmail.com to have any report you sent
   deleted.
 
 ## 4. Permissions and why the app asks
@@ -99,4 +99,4 @@ effective date.
 
 ## 8. Contact
 
-Questions or data-deletion requests: **{{CONTACT_EMAIL}}**
+Questions or data-deletion requests: **flavordrake@gmail.com**

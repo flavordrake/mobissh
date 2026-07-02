@@ -50,6 +50,14 @@ Or, simpler: `FEEDBACK_ENDPOINT=… FEEDBACK_KEY=… scripts/build-release-aab.s
 — the script passes both through as `--dart-define`s. The personal/tailnet build
 omits both and keeps posting to the tailnet endpoint with no key header.
 
+## Viewer + privacy page (same Worker, no domain needed)
+- `GET /`          → HTML list of reports; `GET /r/<key>` → one report (screenshot,
+  frame strip, comment, traces). **Basic auth**: any username, password = `VIEW_KEY`
+  (in `~/.mobissh/feedback.env`; browser-only, never in the app). All rendered
+  fields are HTML-escaped (ingest is public).
+- `GET /privacy`   → public HTML privacy policy — usable directly as the Play
+  Store privacy-policy URL (`https://mobissh-bug-report.<sub>.workers.dev/privacy`).
+
 ## Reading reports
 ```
 wrangler r2 object get mobissh-bug-reports --prefix reports/   # list/browse

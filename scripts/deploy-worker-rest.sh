@@ -17,18 +17,20 @@ exec > >(tee -a "$LOGFILE") 2>&1
 . "${HOME}/.mobissh/cloudflare.env"
 : "${CLOUDFLARE_API_TOKEN:?}"; : "${CLOUDFLARE_ACCOUNT_ID:?}"
 
-# Shared app<->worker key: reuse ~/.mobissh/feedback.env, else generate + persist.
+# Keys in ~/.mobissh/feedback.env (never the repo):
+#   FEEDBACK_KEY — shared app<->worker write key (baked into the app).
+#   VIEW_KEY     — viewer Basic-auth password (browser only; NOT in the app).
+# Reuse if present, else generate + persist both.
 FEEDBACK_ENV="${HOME}/.mobissh/feedback.env"
 if [ -f "$FEEDBACK_ENV" ]; then
   # shellcheck disable=SC1090
   . "$FEEDBACK_ENV"
 fi
-if [ -z "${FEEDBACK_KEY:-}" ]; then
-  FEEDBACK_KEY="$(openssl rand -hex 32)"
-  printf 'FEEDBACK_KEY=%s\n' "$FEEDBACK_KEY" > "$FEEDBACK_ENV"
-  chmod 600 "$FEEDBACK_ENV"
-  echo "> generated FEEDBACK_KEY → $FEEDBACK_ENV"
-fi
+[ -n "${FEEDBACK_KEY:-}" ] || FEEDBACK_KEY="$(openssl rand -hex 32)"
+[ -n "${VIEW_KEY:-}" ] || VIEW_KEY="$(openssl rand -hex 24)"
+{ printf 'FEEDBACK_KEY=%s\n' "$FEEDBACK_KEY"; printf 'VIEW_KEY=%s\n' "$VIEW_KEY"; } > "$FEEDBACK_ENV"
+chmod 600 "$FEEDBACK_ENV"
+echo "> keys ready in $FEEDBACK_ENV (FEEDBACK_KEY + VIEW_KEY)"
 
 SCRIPT_NAME="mobissh-bug-report"
 API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
@@ -36,7 +38,7 @@ AUTH="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
 
 # 1. Upload the worker (module + metadata with r2 + inline secret bindings).
 META="${MOBISSH_TMPDIR}/worker-metadata.json"
-printf '{"main_module":"worker.js","compatibility_date":"2026-01-01","bindings":[{"type":"r2_bucket","name":"REPORTS","bucket_name":"mobissh-bug-reports"},{"type":"secret_text","name":"FEEDBACK_KEY","text":"%s"}]}' "$FEEDBACK_KEY" > "$META"
+printf '{"main_module":"worker.js","compatibility_date":"2026-01-01","bindings":[{"type":"r2_bucket","name":"REPORTS","bucket_name":"mobissh-bug-reports"},{"type":"secret_text","name":"FEEDBACK_KEY","text":"%s"},{"type":"secret_text","name":"VIEW_KEY","text":"%s"}]}' "$FEEDBACK_KEY" "$VIEW_KEY" > "$META"
 echo "> uploading worker script"
 curl -sS -m 60 -X PUT "${API}/workers/scripts/${SCRIPT_NAME}" \
   -H "$AUTH" \
@@ -65,6 +67,8 @@ curl -sS -m 30 -X POST "${API}/workers/scripts/${SCRIPT_NAME}/subdomain" \
 echo
 
 URL="https://${SCRIPT_NAME}.${SUBDOMAIN}.workers.dev"
-echo "+ DEPLOYED: ${URL}"
+echo "+ DEPLOYED"
+echo "  ingest (app POST): ${URL}"
+echo "  viewer (browser):  ${URL}/           (Basic auth — any user, password = VIEW_KEY)"
+echo "  privacy policy:    ${URL}/privacy    (public)"
 echo "$URL" > "${MOBISSH_TMPDIR}/worker-url.txt"
-echo "  (URL saved to ${MOBISSH_TMPDIR}/worker-url.txt)"
