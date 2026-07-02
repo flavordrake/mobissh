@@ -9,14 +9,22 @@
 # no contention). Pair with native-connect-test.sh (runs the build on the OTHER
 # cores) so the emulator and the build never share a CPU.
 #
-# Usage: scripts/emulator-ctl.sh {ensure|status|stop|restart} [avd-name]
+# Usage: scripts/emulator-ctl.sh {ensure|status|stop|restart|wipe} [avd-name]
 #   ensure   boot iff not already booted; reuse otherwise. Waits for readiness.
 #   status   print device + boot state (exit 0 booted, 1 not).
 #   stop     kill the emulator.
-#   restart  stop + ensure.
+#   restart  stop + ensure (does NOT reset /data — see wipe).
+#   wipe     stop + cold boot with -wipe-data → HEAVY RESET of the guest /data
+#            partition. The AVD's userdata (config disk.dataPartition) accumulates
+#            installs/caches that are baked into the persistent userdata qcow2 and
+#            RELOAD on every -read-only boot, so a plain restart does NOT free
+#            space — only -wipe-data does. Used by emulator-maintain.sh when
+#            /data crosses the low-space threshold. CPU-pinned exactly like a
+#            normal boot (no swiftshader/contention regression).
 #
 # Env: EMU_CORES (default 0-2), EMU_MEMORY_MB (default 4096), AVD (default
-#      MobiSSH_Pixel7).
+#      MobiSSH_Pixel7), EMU_WIPE (default 0; 1 → boot with -wipe-data and drop
+#      -read-only so the reset persists to the userdata qcow2).
 set -euo pipefail
 
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
@@ -26,6 +34,7 @@ EMU="$ANDROID_SDK_ROOT/emulator/emulator"
 AVD="${2:-${AVD:-MobiSSH_Pixel7}}"
 EMU_CORES="${EMU_CORES:-0-2}"
 EMU_MEMORY_MB="${EMU_MEMORY_MB:-4096}"
+EMU_WIPE="${EMU_WIPE:-0}"
 LOGDIR="/tmp/mobissh/logs"
 mkdir -p "$LOGDIR"
 LOG="$LOGDIR/emulator-detached.log"
@@ -83,11 +92,20 @@ boot() {
     "$ADB" -s "$d" emu kill 2>/dev/null || true
   done
   clear_stale
+  # Base flags shared by every boot. -read-only lets multiple instances share the
+  # AVD and keeps writes in a throwaway overlay; a WIPE boot drops it so the fresh
+  # (empty) userdata is written back to the persistent qcow2 — otherwise the next
+  # -read-only boot would just reload the old, full baseline.
+  local flags=(-no-window -no-audio -no-boot-anim -no-snapshot \
+    -memory "$EMU_MEMORY_MB" -gpu swiftshader_indirect -accel auto)
+  if [[ "$EMU_WIPE" == "1" ]]; then
+    log "WIPE boot: -wipe-data (resets guest /data), dropping -read-only so it persists"
+    flags+=(-wipe-data)
+  else
+    flags+=(-read-only)
+  fi
   log "booting $AVD detached, pinned to cores $EMU_CORES, ${EMU_MEMORY_MB}MB"
-  setsid nohup "${PIN[@]}" "$EMU" -avd "$AVD" \
-    -no-window -no-audio -no-boot-anim -no-snapshot -read-only \
-    -memory "$EMU_MEMORY_MB" \
-    -gpu swiftshader_indirect -accel auto >"$LOG" 2>&1 &
+  setsid nohup "${PIN[@]}" "$EMU" -avd "$AVD" "${flags[@]}" >"$LOG" 2>&1 &
   log "launched (pid $!), log: $LOG"
 }
 
@@ -117,7 +135,14 @@ case "$cmd" in
     "$0" stop "$AVD" || true
     "$0" ensure "$AVD"
     ;;
+  wipe)
+    log "WIPE requested — stop + cold boot with -wipe-data (heavy /data reset)"
+    "$0" stop "$AVD" || true
+    clear_stale
+    EMU_WIPE=1 boot
+    wait_booted
+    ;;
   *)
-    err "usage: emulator-ctl.sh {ensure|status|stop|restart} [avd-name]"; exit 2
+    err "usage: emulator-ctl.sh {ensure|status|stop|restart|wipe} [avd-name]"; exit 2
     ;;
 esac

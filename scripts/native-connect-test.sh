@@ -91,6 +91,24 @@ if [[ -z "$DEVICE" ]]; then
 fi
 log "device: $DEVICE"
 
+# 1b. Keep the guest /data partition healthy BEFORE the build installs the app +
+#     its instrumentation APK. Installs accumulate across the long-lived reused
+#     emulator and eventually fail with INSTALL_FAILED_INSUFFICIENT_STORAGE (and
+#     even uninstall starts returning DELETE_FAILED_INTERNAL_ERROR). This does a
+#     cheap clean (uninstall + trim) every run and only escalates to a -wipe-data
+#     rotation when free space is below EMU_MIN_FREE_MB. Idempotent + CPU-pinned.
+#     Non-fatal: if maintenance can't run we still try the install.
+if ! "${REPO_ROOT}/scripts/emulator-maintain.sh" ensure-healthy; then
+  err "emulator-maintain reported low storage it could not recover — install may fail"
+fi
+# The device id can change across a rotation (wipe re-boots the emulator).
+DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
+if [[ -z "$DEVICE" ]]; then
+  err "no online adb device after emulator-maintain"
+  exit 2
+fi
+log "device after maintenance: $DEVICE"
+
 # 2. Verify test-sshd reachable from this container.
 if ! getent hosts "$SSHD_HOST" >/dev/null 2>&1; then
   err "$SSHD_HOST not resolvable — is the mobissh docker network joined + test-sshd up?"
