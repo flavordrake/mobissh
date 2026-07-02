@@ -28,3 +28,8 @@ test-history/
 
 # lsmcp cache
 .lsmcp/cache
+
+# process coredumps (can contain in-memory secrets — never commit)
+core
+core.*
+*.core
