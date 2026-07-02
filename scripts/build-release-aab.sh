@@ -60,15 +60,22 @@ if [ ! -f "$SRC" ]; then
 fi
 
 STAMP="$(date +%Y%m%dT%H%M%S%z)"
-OUTDIR="${REPO_ROOT}/native-dist/aab"
-mkdir -p "$OUTDIR"
-DEST="${OUTDIR}/mobissh-${VERSION}-${STAMP}.aab"
-cp "$SRC" "$DEST"
+# Publish into the PERSISTENT bind-mounted native-dist (#700) so the running
+# prod container serves it (server allowlists mobissh-*.aab, #966): a versioned
+# copy for the record + a stable `mobissh-release.aab` alias for a clean URL.
+NATIVE_DIST="${NATIVE_DIST_HOST:-${REPO_ROOT}/native-dist}"
+SERVE_HOST="${SERVE_HOST:-https://mobissh.tailbe5094.ts.net}"
+mkdir -p "$NATIVE_DIST"
+VERSIONED="${NATIVE_DIST}/mobissh-${VERSION}-${STAMP}.aab"
+STABLE="${NATIVE_DIST}/mobissh-release.aab"
+cp "$SRC" "$VERSIONED"
+cp "$SRC" "$STABLE"
 
-echo "+ AAB BUILT (signed with the release keystore)"
-echo "  file: $DEST"
-echo "  size: $(du -h "$DEST" | cut -f1)"
-echo "  version: $VERSION"
+echo "+ AAB BUILT (signed with the release keystore) + PUBLISHED"
+echo "  versioned: $VERSIONED"
+echo "  size: $(du -h "$STABLE" | cut -f1)  version: $VERSION"
+echo "  stable download (bookmark): ${SERVE_HOST}/mobissh-release.aab"
+echo "  this build:                 ${SERVE_HOST}/mobissh-${VERSION}-${STAMP}.aab"
 echo
-echo "  Next: upload to Play Console → Internal testing. Play requires a"
-echo "  monotonic versionCode — bump pubspec (+N) before the next AAB."
+echo "  Upload to Play Console → Internal testing. Play requires a MONOTONIC"
+echo "  versionCode — bump pubspec (+N) before the next AAB."

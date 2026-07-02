@@ -87,7 +87,12 @@ function isNativeDistArtifact(baseName) {
     baseName === 'native.html' ||
     baseName === 'native-time.js' ||
     baseName === 'native-feedback.js' ||
-    /^mobissh-native(-[\w.+-]+)?\.apk$/.test(baseName)
+    /^mobissh-native(-[\w.+-]+)?\.apk$/.test(baseName) ||
+    // #966: signed Play Store App Bundle(s) — the stable `mobissh-release.aab`
+    // alias + the versioned `mobissh-<version>-<stamp>.aab` (build-release-aab.sh).
+    // Served so the owner can pull the bundle for a Play upload; the AAB carries
+    // only the public signing cert, never the keystore private key.
+    /^mobissh-[\w.+-]+\.aab$/.test(baseName)
   );
 }
 
@@ -214,6 +219,7 @@ const MIME = {
   '.png':  'image/png',
   '.ico':  'image/x-icon',
   '.apk':  'application/vnd.android.package-archive',
+  '.aab':  'application/octet-stream',
 };
 
 // ─── SFTP message handler (exported for unit tests) ──────────────────────────
