@@ -1,24 +1,22 @@
-// wrap_join_copy_test.dart — gutter copy resolves SOFT WRAP into one logical
-// line (owner ask 2026-07-01: "any hope of detecting a wrapped command line and
-// resolving soft wrap to remove new line?").
+// tui_wrap_join_copy_test.dart — a URL that wraps at a FORCED margin (tmux /
+// TUI, ghostty rowWrap=FALSE) gutter-copies as ONE joined URL, not two lines
+// with a '\n' inside (owner ask 2026-07-02: "all copied text that contains soft
+// wraps should default to being joined ... URLs still often get broken as does
+// command lines").
 //
-// Ghostty records soft wrap per row (`rowWrap` = "this row is soft-wrapped to
-// the next row" — its own bookkeeping, not a heuristic). `visibleRowsText` now
-// consults it: a wrapped row joins the next row with NO '\n' and NO trailing
-// trim (a wrapped row is full-width; a boundary space is real content). So a
-// long command/URL that the terminal wrapped across rows copies as ONE line.
+// This is the case wrap_join_copy_test.dart does NOT cover: that test uses a
+// plain shell where ghostty sets rowWrap=true. Here fake-tui (in tmux) paints a
+// long Docs URL that reaches the right edge and continues on the next row
+// WITHOUT rowWrap — the daily-driver shape. `visibleRowsText` now infers the
+// wrap from the row being full-width (endFilled) and joins, so the URL pastes
+// back intact.
 //
-// This runs in a PLAIN shell (no tmux) — the rowWrap=true path. The
-// FORCED-MARGIN case (tmux / TUI wraps that reach the edge with rowWrap=false)
-// is covered by tui_wrap_join_copy_test.dart: visibleRowsText now ALSO infers a
-// wrap when a row is full-width (endFilled), so those join too (owner ask
-// 2026-07-02).
-//
-// Run: scripts/native-connect-test.sh integration_test/wrap_join_copy_test.dart
+// Run: scripts/native-connect-test.sh integration_test/tui_wrap_join_copy_test.dart
 
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -31,18 +29,16 @@ import 'package:mobissh/state/sessions.dart';
 
 import 'support/connect_helpers.dart';
 
-/// Deterministic marker LONGER than any realistic emulator column count, so the
-/// shell soft-wraps it across at least two rows. Interior structure lets the
-/// assertion detect a stray '\n' anywhere inside.
-const String _marker =
-    'WRAPJOIN_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA_MID_'
-    'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB_END';
+// The exact URL fake-tui paints (docker/test-sshd/fake-tui.sh line 42). Longer
+// than any phone-emulator column count → it wraps across ≥2 rows at the margin.
+const String _url =
+    'https://docs.example.com/agent-hub/enrollment/getting-started#writer-jwt-mint';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'a soft-wrapped output line gutter-copies as ONE logical line (no \\n)',
+    'a margin-wrapped URL (rowWrap=false) gutter-copies as one joined URL',
     (tester) async {
       FlutterForegroundTask.initCommunicationPort();
 
@@ -103,61 +99,69 @@ void main() {
       final out = <int>[];
       final sub = entry.proxy.output.listen(out.addAll);
       addTearDown(sub.cancel);
+      String seen() => utf8.decode(out, allowMalformed: true);
       for (var i = 0; i < 40 && out.isEmpty; i++) {
         await tester.pump(const Duration(milliseconds: 500));
       }
       expect(out.isNotEmpty, isTrue, reason: 'dead PTY — no shell output');
 
-      // Echo the marker via a VARIABLE so the typed command line itself never
-      // contains the assembled marker — only the soft-wrapped OUTPUT line does.
-      // The clear puts it near the top, safely inside the gutter band below.
-      entry.proxy.sendInput(
-        Uint8List.fromList(
-          utf8.encode(
-            'clear; M_A=WRAPJOIN_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA; '
-            'M_B=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB_END; '
-            'echo "\${M_A}_MID_\${M_B}"\n',
-          ),
-        ),
-      );
-      var markerSeen = false;
-      for (var i = 0; i < 40; i++) {
+      void send(String cmd) =>
+          entry.proxy.sendInput(Uint8List.fromList(utf8.encode(cmd)));
+
+      // tmux (mouse on, status off) — the forced-margin environment.
+      send('tmux kill-server 2>/dev/null; tmux set -g mouse on \\; new -s w\n');
+      for (var i = 0; i < 24; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      send('tmux set -g status off\n');
+      for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 250));
-        if (utf8.decode(out, allowMalformed: true).contains('_MID_')) {
-          markerSeen = true;
+      }
+
+      // Short TUI that exits to the prompt (hold=0) — the header + wrapped Docs
+      // URL stay near the top of the visible screen.
+      send('fake-tui 3 0.1 0\n');
+      var tuiDone = false;
+      for (var i = 0; i < 80; i++) {
+        await tester.pump(const Duration(milliseconds: 250));
+        if (seen().contains('TUI_DONE')) {
+          tuiDone = true;
           break;
         }
       }
-      expect(markerSeen, isTrue, reason: 'marker line never echoed');
-      for (var i = 0; i < 8; i++) {
-        await tester.pump(const Duration(milliseconds: 250));
+      expect(tuiDone, isTrue, reason: 'fake-tui never completed');
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 300));
       }
 
       final termFinder = find.byKey(Key('ghostty-terminal-$sessionId'));
       expect(termFinder, findsOneWidget);
       final rect = tester.getRect(termFinder);
 
-      // Gutter LONG-PRESS (≥500ms) then drag a tall band from near the top —
-      // covers the wrapped marker rows wherever exactly they landed.
+      // Gutter LONG-PRESS then drag a TALL band from near the top to near the
+      // bottom — the wrapped Docs URL spans two rows and BOTH must be inside the
+      // band for the join to be observable (a short band that stops on the URL's
+      // first row copies only the prefix and never exercises the join).
       final gx = rect.right - 14;
-      final gy = rect.top + rect.height * 0.05;
+      final gy = rect.top + rect.height * 0.02;
       final gg = await tester.startGesture(Offset(gx, gy));
       await tester.pump(const Duration(milliseconds: 700));
-      for (var i = 1; i <= 10; i++) {
+      for (var i = 1; i <= 18; i++) {
         await gg.moveTo(Offset(gx, gy + rect.height * 0.05 * i));
         await tester.pump(const Duration(milliseconds: 16));
       }
       await gg.up();
       await tester.pump(const Duration(milliseconds: 200));
 
-      debugPrint('WRAPJOIN copied="$copied"');
+      debugPrint('TUIWRAP copied="$copied"');
       expect(copied, isNotNull, reason: 'gutter copy wrote nothing');
+      // The whole URL is contiguous — no '\n' (or dropped char) at the wrap.
       expect(
-        copied!.contains(_marker),
+        copied!.contains(_url),
         isTrue,
         reason:
-            'the soft-wrapped line was not joined into one logical line — a '
-            "'\\n' (or truncation) sits inside the marker. copied=\"$copied\"",
+            'the margin-wrapped URL was not joined — a newline sits inside it. '
+            'copied="$copied"',
       );
     },
   );

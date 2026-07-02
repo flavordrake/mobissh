@@ -1336,20 +1336,37 @@ class TerminalControllerImpl extends TerminalController
     final out = StringBuffer();
     for (var r = top; r <= bottom; r++) {
       final line = StringBuffer();
+      // Whether the LAST column (cols-1) holds real content — a row that fills
+      // the full width and continued onto the next row (see the wrap join
+      // below). Reset per row.
+      var endFilled = false;
       for (var c = 0; c < cols; c++) {
         GridRef? ref;
         try {
           // PointTag.viewport: row r is the r-th VISIBLE row (what's painted
           // now) — no scrollback/offset math.
           ref = GridRef.at(terminal, col: c, row: r, pointTag: .viewport);
-          // A wide-char spacer tail carries no text of its own.
-          if (ref.wide == CellWidth.spacerTail) continue;
+          final atEnd = c == cols - 1;
+          // A wide-char spacer tail carries no text of its own — but if it sits
+          // in the last column, a wide glyph fills the width to the margin.
+          if (ref.wide == CellWidth.spacerTail) {
+            if (atEnd) endFilled = true;
+            continue;
+          }
           // A BLANK cell (`content` == '') is a visual space of width 1 — emit
           // ' ' so INTERIOR + leading spaces survive. Ghostty stores blanks
           // (incl. the gaps a TUI leaves between tokens via cursor positioning)
           // as empty graphemes; writing '' collapsed them, so `curl -fsSL https`
           // copied as `curl-fsSLhttps`. Trailing padding is trimmed below.
           final ch = ref.content;
+          if (atEnd && ch.isNotEmpty) {
+            // A row that reaches the margin with content overflowed — EXCEPT a
+            // box-drawing / block-element edge (│ ─ ╮ █ …, U+2500–U+259F), which
+            // is a border, not a wrapped line. Excluding it keeps TUI box art as
+            // separate lines while still joining wrapped URLs / command lines.
+            final r0 = ch.runes.first;
+            if (r0 < 0x2500 || r0 > 0x259F) endFilled = true;
+          }
           line.write(ch.isEmpty ? ' ' : ch);
         } catch (_) {
           // Out-of-range (past the last visible row/col) → treat as blank.
@@ -1357,24 +1374,29 @@ class TerminalControllerImpl extends TerminalController
           ref?.dispose();
         }
       }
-      // SOFT-WRAP JOIN: ghostty marks a row whose content overflowed onto the
-      // next row with `rowWrap` — its own bookkeeping, not a heuristic. When
-      // set, this visual row and the next are ONE logical line (a long command
-      // typed at a prompt, a long URL), so we join them: no trailing trim (a
-      // wrapped row is full-width; a space at the wrap boundary is real
-      // content) and no '\n'. TUI-layout "wraps" (hard newlines + margins —
-      // tmux/Claude-Code repaints) legitimately carry rowWrap=false and keep
-      // their line breaks; joining those is the copy massager's job, not ours.
-      var wrapped = false;
+      // WRAP JOIN (default). Two signals mean this visual row and the next are
+      // ONE logical line — join them (write the row, no trailing trim, no '\n')
+      // so long URLs and command lines paste back intact instead of breaking at
+      // the margin:
+      //   1. `rowWrap` — ghostty's own soft-wrap bookkeeping (a long line typed
+      //      at a prompt / emitted by a program).
+      //   2. `endFilled` — the row reached the right edge with content. Many
+      //      wraps (tmux panes, forced-margin TUIs like Claude Code) fill the
+      //      width and continue WITHOUT setting rowWrap; without this a wrapped
+      //      URL keeps its newline and breaks. A row that ends before the margin
+      //      (trailing blanks → endFilled false) is a real line end and keeps
+      //      its '\n'.
+      var rowWrapFlag = false;
       GridRef? wrapRef;
       try {
         wrapRef = GridRef.at(terminal, col: 0, row: r, pointTag: .viewport);
-        wrapped = wrapRef.rowWrap;
+        rowWrapFlag = wrapRef.rowWrap;
       } catch (_) {
         // Out-of-range → treat as unwrapped.
       } finally {
         wrapRef?.dispose();
       }
+      final wrapped = rowWrapFlag || endFilled;
       final s = line.toString();
       if (wrapped && r < bottom) {
         out.write(s);
