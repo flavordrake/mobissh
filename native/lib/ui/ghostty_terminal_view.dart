@@ -2422,6 +2422,29 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // render box exists (this runs from initState-time registration before first
     // layout, where the box lookup would no-op).
     final detectionActive = detection.detectUrls || detection.detectPaths;
+    // Detection-saga telemetry (#966-era "URLs not detected" report): record what
+    // this registration + the SYNCHRONOUS rescan produced so the next bug report
+    // is one-shot diagnosable instead of a blind build loop. Cheap; runs on init
+    // AND on every settings toggle (the ref.listen re-invokes this).
+    //   anchors=0                     → nothing matched (alt-screen heuristic
+    //                                   suppression w/o mouse, or the scan window
+    //                                   missed the content)
+    //   anchors>0, gutterResolved=0   → the #958 class (anchor→viewport-row
+    //                                   resolution / mark mount broken)
+    //   anchors>0, gutterResolved>0   → marks SHOULD paint (visibility/paint)
+    final anchors = controller.anchors;
+    var gutterResolved = 0;
+    for (final a in anchors) {
+      if (a.ranges.any((r) => controller.anchorGutterRow(r) != null)) {
+        gutterResolved++;
+      }
+    }
+    ctrace(
+      'detect',
+      'register url=${detection.detectUrls} path=${detection.detectPaths} '
+      'screen=${controller.activeScreen} mouse=${controller.mouseTracking} '
+      'anchors=${anchors.length} gutterResolved=$gutterResolved',
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _applyDetectionActive(detectionActive);
     });
