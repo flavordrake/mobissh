@@ -119,6 +119,9 @@ void main() {
     );
     await tester.pump();
 
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-submit-button')),
+    );
     await tester.tap(find.byKey(const Key('feedback-submit-button')));
     await tester.pumpAndSettle();
 
@@ -157,7 +160,10 @@ void main() {
         'first connect layout broken',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const Key('feedback-submit-button')));
+      await tester.ensureVisible(
+      find.byKey(const Key('feedback-submit-button')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-submit-button')));
       await tester.pumpAndSettle();
 
       final log = (submitter.lastPayload!['connectLog'] as List).cast<String>();
@@ -204,7 +210,10 @@ void main() {
         'here is the wrapped-URL repro',
       );
       await tester.pump();
-      await tester.tap(find.byKey(const Key('feedback-submit-button')));
+      await tester.ensureVisible(
+      find.byKey(const Key('feedback-submit-button')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-submit-button')));
       await tester.pumpAndSettle();
 
       // The payload carries the frame burst as data URLs (capped at 50).
@@ -233,10 +242,137 @@ void main() {
       'single shot',
     );
     await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-submit-button')),
+    );
     await tester.tap(find.byKey(const Key('feedback-submit-button')));
     await tester.pumpAndSettle();
 
     expect(submitter.lastPayload!.containsKey('frames'), isFalse);
     expect(submitter.lastPayload!.containsKey('screenshot'), isTrue);
+  });
+
+  // ── #967: pre-send Review & Send consent gate ──────────────────────────────
+
+  testWidgets('Cancel sends nothing (the egress is never called)', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter();
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('feedback-affordance')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('feedback-comment-field')),
+      'changed my mind',
+    );
+    await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-cancel-button')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-cancel-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      submitter.lastPayload,
+      isNull,
+      reason: 'Cancel must not submit anything',
+    );
+  });
+
+  testWidgets('excluding screen images omits the screenshot from the payload', (
+    tester,
+  ) async {
+    final submitter = _RecordingSubmitter();
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('feedback-affordance')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('feedback-comment-field')),
+      'no screenshot please',
+    );
+    await tester.pump();
+    // Toggle OFF the "include screen images" switch, then Send.
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-include-images')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-include-images')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-submit-button')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(submitter.lastPayload, isNotNull);
+    expect(
+      submitter.lastPayload!.containsKey('screenshot'),
+      isFalse,
+      reason: 'excluded image must be absent from the assembled payload',
+    );
+    // The note still goes.
+    expect(submitter.lastPayload!['comment'], 'no screenshot please');
+  });
+
+  testWidgets('excluding traces omits the connect log from the payload', (
+    tester,
+  ) async {
+    clearConnectLog();
+    ctrace('ui.fit659', 'diagnostic line that would ship by default');
+
+    final submitter = _RecordingSubmitter();
+    await tester.pumpWidget(_harness(submitter: submitter));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('feedback-affordance')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('feedback-comment-field')),
+      'no traces please',
+    );
+    await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-include-traces')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-include-traces')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('feedback-submit-button')),
+    );
+    await tester.tap(find.byKey(const Key('feedback-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      submitter.lastPayload!.containsKey('connectLog'),
+      isFalse,
+      reason: 'excluded traces must be absent from the assembled payload',
+    );
+    clearConnectLog();
+  });
+
+  testWidgets('a burst shows a scrubbable frame preview in the review sheet', (
+    tester,
+  ) async {
+    Future<Uint8List> capturer(GlobalKey key, double dpr) async =>
+        Uint8List.fromList([0x89, 0x50, 0x4e, 0x47]);
+
+    final submitter = _RecordingSubmitter();
+    await tester.pumpWidget(_harness(submitter: submitter, capturer: capturer));
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byKey(const Key('feedback-affordance')));
+    await tester.pump();
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    await tester.pumpAndSettle();
+
+    // The review sheet shows the motion-frame scrubber + counter + preview.
+    expect(find.byKey(const Key('feedback-frame-scrubber')), findsOneWidget);
+    expect(find.byKey(const Key('feedback-frame-counter')), findsOneWidget);
+    expect(find.byKey(const Key('feedback-preview-image')), findsOneWidget);
   });
 }

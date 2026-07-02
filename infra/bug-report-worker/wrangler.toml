@@ -1,0 +1,18 @@
+name = "mobissh-bug-report"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# R2 bucket that stores the report JSON blobs. Create it first:
+#   wrangler r2 bucket create mobissh-bug-reports
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "mobissh-bug-reports"
+
+# Optional: ping a topic when a report lands. Uncomment + set NTFY_URL, and set
+# NTFY_TOKEN via `wrangler secret put NTFY_TOKEN` if the topic requires auth.
+# [vars]
+# NTFY_URL = "https://ntfy.sh/your-private-topic"
+
+# FEEDBACK_KEY is a SECRET, never in this file — set it with:
+#   wrangler secret put FEEDBACK_KEY
+# and build the app with --dart-define=MOBISSH_FEEDBACK_KEY=<same value>.

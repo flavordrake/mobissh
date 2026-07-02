@@ -226,6 +226,69 @@ void main() {
     );
   });
 
+  group('buildFeedbackPayload — #967 include/exclude gating', () {
+    Map<String, Object?> full({bool images = true, bool traces = true}) =>
+        buildFeedbackPayload(
+          comment: 'note',
+          version: '[v]',
+          screenshotDataUrl: 'data:image/png;base64,AAAA',
+          frameDataUrls: const ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'],
+          connectLog: const ['ui.fit659 something'],
+          gestureLog: const ['gesture line'],
+          lifecycleLog: const ['lifecycle line'],
+          byteTrace: const [{'tMs': 1, 'b64': 'zz'}],
+          scrollTrace: const [{'tMs': 1, 'offset': 3}],
+          sentSgrTrace: const [{'tMs': 1, 'b64': 'yy'}],
+          grid: const {'cols': 80, 'rows': 24},
+          includeImages: images,
+          includeTraces: traces,
+        );
+
+    test('defaults include everything (report quality preserved)', () {
+      final p = full();
+      for (final k in const [
+        'screenshot', 'frames', 'connectLog', 'gestureLog', 'lifecycleLog',
+        'byteTrace', 'scrollTrace', 'sentSgrTrace', 'grid',
+      ]) {
+        expect(p.containsKey(k), isTrue, reason: '$k present by default');
+      }
+    });
+
+    test('excludeImages OMITS screenshot + frames, keeps traces + comment', () {
+      final p = full(images: false);
+      expect(p.containsKey('screenshot'), isFalse);
+      expect(p.containsKey('frames'), isFalse);
+      // Traces + the note remain.
+      expect(p.containsKey('byteTrace'), isTrue);
+      expect(p.containsKey('connectLog'), isTrue);
+      expect(p['comment'], 'note');
+    });
+
+    test('excludeTraces OMITS all logs/traces/grid, keeps images + comment', () {
+      final p = full(traces: false);
+      for (final k in const [
+        'connectLog', 'gestureLog', 'lifecycleLog',
+        'byteTrace', 'scrollTrace', 'sentSgrTrace', 'grid',
+      ]) {
+        expect(p.containsKey(k), isFalse, reason: '$k must be omitted');
+      }
+      // Images + the note remain.
+      expect(p.containsKey('screenshot'), isTrue);
+      expect(p.containsKey('frames'), isTrue);
+      expect(p['comment'], 'note');
+    });
+
+    test('excluding both leaves only comment/version/title/logs/source', () {
+      final p = full(images: false, traces: false);
+      expect(p.containsKey('screenshot'), isFalse);
+      expect(p.containsKey('frames'), isFalse);
+      expect(p.containsKey('byteTrace'), isFalse);
+      expect(p.containsKey('connectLog'), isFalse);
+      expect(p['comment'], 'note');
+      expect(p['version'], '[v]');
+    });
+  });
+
   group('pngBytesToDataUrl', () {
     test('produces a data URL for non-empty bytes', () {
       final url = pngBytesToDataUrl(Uint8List.fromList([1, 2, 3]));

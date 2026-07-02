@@ -50,10 +50,14 @@ app never uploads anything in the background.
 - your **device model, OS version, and the app version**.
 
 **Because those traces and the screenshot capture what was on your screen, they
-may include content from your session.** Before upload, the app runs an
-automated pass that **redacts** password-, token-, and key-looking strings from
-the logs. You should still glance at what you're sending — for the **Share
-feedback** path you control the destination entirely.
+may include content from your session.** So before anything is sent, the app
+shows you a **Review & Send** screen: you see the screenshot (or step through
+every frame of a screen recording), you can **exclude the screen images** and/or
+**the diagnostic traces** with a toggle, and you can view the exact diagnostic
+text that would be uploaded. Nothing leaves your device until you tap **Send**;
+**Cancel** discards it. As defense-in-depth, an automated pass also redacts
+password-, token-, and key-looking strings from the text logs — but this is
+**best-effort, not a guarantee**, which is why *you* review the images yourself.
 
 - **Purpose:** solely to diagnose and fix the reported bug.
 - **Recipients:** the developer. Not shared with, sold to, or used by any third

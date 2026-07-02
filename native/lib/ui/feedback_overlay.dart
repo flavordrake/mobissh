@@ -17,6 +17,7 @@
 // new routes over the terminal). An overlay entry mounted once at the app shell
 // floats above every route.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -32,10 +33,21 @@ import 'package:mobissh/diagnostics/gesture_trace.dart';
 import 'package:mobissh/diagnostics/session_byte_recorder.dart';
 import 'package:mobissh/ui/top_toast.dart';
 
-/// Prod endpoint that ingests bug reports (same one the web form posts to).
-/// The orchestrator's watcher polls the files this endpoint writes.
-const String feedbackEndpoint =
-    'https://mobissh.tailbe5094.ts.net/api/bug-report';
+/// Endpoint that ingests bug reports. Compile-time overridable (#966): the
+/// personal build keeps the tailnet default; the PUBLIC Play build points at the
+/// Cloudflare Worker via `--dart-define=MOBISSH_FEEDBACK_ENDPOINT=…`
+/// (see infra/bug-report-worker/). The orchestrator's watcher polls the files
+/// the tailnet endpoint writes.
+const String feedbackEndpoint = String.fromEnvironment(
+  'MOBISSH_FEEDBACK_ENDPOINT',
+  defaultValue: 'https://mobissh.tailbe5094.ts.net/api/bug-report',
+);
+
+/// Optional shared key sent as `X-MobiSSH-Key` so the public Worker endpoint is
+/// not a fully-open drop box. Empty (default) → no header (the tailnet endpoint
+/// needs none). Set for the public build via
+/// `--dart-define=MOBISSH_FEEDBACK_KEY=…`.
+const String feedbackKey = String.fromEnvironment('MOBISSH_FEEDBACK_KEY');
 
 /// Formats the baked build identifiers into the `[<build> <hash>]` shape the
 /// existing reports use (see public/native-feedback.js `data-version`). The
@@ -77,6 +89,13 @@ Map<String, Object?> buildFeedbackPayload({
   List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
   List<Map<String, Object?>> sentSgrTrace = const <Map<String, Object?>>[],
   Map<String, Object?>? grid,
+  // #967: the pre-send Review & Send sheet lets the user EXCLUDE categories.
+  // These gate ASSEMBLY (not just display) so an excluded artifact is provably
+  // absent from the uploaded body. Default true → report quality preserved; the
+  // user opts OUT. `includeImages` covers the screenshot + motion frames;
+  // `includeTraces` covers all logs + terminal traces + grid.
+  bool includeImages = true,
+  bool includeTraces = true,
 }) {
   final fullComment = comment;
   // First non-empty line → title summary. Never truncate the comment itself.
@@ -128,15 +147,17 @@ Map<String, Object?> buildFeedbackPayload({
     'logs': fullComment,
     'version': version,
     'source': 'native-in-app',
-    if (screenshotDataUrl != null && screenshotDataUrl.isNotEmpty)
+    if (includeImages && screenshotDataUrl != null && screenshotDataUrl.isNotEmpty)
       'screenshot': screenshotDataUrl,
     // #repro: a burst of frames recorded over ~10s so the owner can show a
     // MOVING repro (tmux/layout/wrap/scroll). The server saves each as a
     // numbered PNG; the orchestrator assembles them into a video with ffmpeg.
-    if (frameDataUrls.isNotEmpty) 'frames': frameDataUrls,
-    if (scrubbedLog.isNotEmpty) 'connectLog': scrubbedLog,
-    if (scrubbedGestureLog.isNotEmpty) 'gestureLog': scrubbedGestureLog,
-    if (scrubbedLifecycleLog.isNotEmpty) 'lifecycleLog': scrubbedLifecycleLog,
+    if (includeImages && frameDataUrls.isNotEmpty) 'frames': frameDataUrls,
+    if (includeTraces && scrubbedLog.isNotEmpty) 'connectLog': scrubbedLog,
+    if (includeTraces && scrubbedGestureLog.isNotEmpty)
+      'gestureLog': scrubbedGestureLog,
+    if (includeTraces && scrubbedLifecycleLog.isNotEmpty)
+      'lifecycleLog': scrubbedLifecycleLog,
     // #790: the replay-harness trace. byteTrace = raw bytes that reached the
     // Terminal ({tMs,b64}); scrollTrace = scroll-offset events ({tMs,offset});
     // grid = the active session's viewport {cols,rows}. The server (#790)
@@ -145,16 +166,16 @@ Map<String, Object?> buildFeedbackPayload({
     // stream is ALREADY scrubbed by SessionByteRecorder.snapshotByteTrace() at
     // snapshot time (rules/security.md). Omitted entirely when no session is
     // active (no empty-array / null noise).
-    if (byteTrace.isNotEmpty) 'byteTrace': byteTrace,
-    if (scrollTrace.isNotEmpty) 'scrollTrace': scrollTrace,
+    if (includeTraces && byteTrace.isNotEmpty) 'byteTrace': byteTrace,
+    if (includeTraces && scrollTrace.isNotEmpty) 'scrollTrace': scrollTrace,
     // #793: the synthesized mouse/wheel SGR reports the app SENT
     // (sentSgrTrace: [{tMs,b64}]). In tmux mouse mode the scroll is wheel-SGR
     // sent TO tmux (local scroll never moves), so this reveals
     // "swipe → wheel events emitted → tmux scrolled" — the missing half of #789.
     // Filtered at the send seam to SGR-mouse reports ONLY, so a typed password
     // is NEVER recorded. Omitted entirely when no session is active.
-    if (sentSgrTrace.isNotEmpty) 'sentSgrTrace': sentSgrTrace,
-    'grid': ?grid,
+    if (includeTraces && sentSgrTrace.isNotEmpty) 'sentSgrTrace': sentSgrTrace,
+    if (includeTraces && grid != null) 'grid': grid,
   };
 }
 
@@ -185,7 +206,10 @@ class HttpFeedbackSubmitter implements FeedbackSubmitter {
     try {
       final res = await c.post(
         Uri.parse(endpoint),
-        headers: const {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          if (feedbackKey.isNotEmpty) 'X-MobiSSH-Key': feedbackKey,
+        },
         body: jsonEncode(payload),
       );
       return res.statusCode >= 200 && res.statusCode < 300;
@@ -440,16 +464,30 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final sheetContext = widget.navigatorKey.currentState?.overlay?.context;
     if (sheetContext == null) return;
 
-    // The sheet returns the typed comment on Submit (null if dismissed).
-    final comment = await showModalBottomSheet<String>(
+    // #967: the Review & Send sheet returns the note PLUS the user's
+    // include/exclude choices (null if cancelled — nothing is sent). The user
+    // previews the screenshot / motion frames and can drop the images and/or
+    // the diagnostic traces before anything leaves the device.
+    final review = await showModalBottomSheet<_FeedbackReview>(
       context: sheetContext,
       isScrollControlled: true,
-      builder: (sheetCtx) => _FeedbackCommentSheet(version: version),
+      builder: (sheetCtx) => _FeedbackReviewSheet(
+        version: version,
+        screenshotDataUrl: dataUrl,
+        frameDataUrls: frameDataUrls,
+        connectLog: connectLog,
+        gestureLog: gestureLog,
+        lifecycleLog: lifecycleLog,
+        byteTrace: byteTrace,
+        scrollTrace: scrollTrace,
+        sentSgrTrace: sentSgrTrace,
+        grid: grid,
+      ),
     );
-    if (comment == null) return; // dismissed without submitting
+    if (review == null) return; // cancelled / dismissed — nothing sent
 
     final payload = buildFeedbackPayload(
-      comment: comment,
+      comment: review.comment,
       version: version,
       screenshotDataUrl: dataUrl,
       frameDataUrls: frameDataUrls,
@@ -460,6 +498,8 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       scrollTrace: scrollTrace,
       sentSgrTrace: sentSgrTrace,
       grid: grid,
+      includeImages: review.includeImages,
+      includeTraces: review.includeTraces,
     );
     final ok = await widget.submitter.submit(payload);
     // Confirmation as a TOP toast (#667) so it doesn't occlude the bottom
@@ -549,30 +589,118 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
   }
 }
 
-/// The comment-capture sheet. Owns its [TextEditingController] and disposes it
-/// in [State.dispose] — so it can never be used-after-dispose during the sheet's
-/// own dismissal animation. Returns the typed comment to the caller via
-/// `Navigator.pop` on Submit.
-class _FeedbackCommentSheet extends StatefulWidget {
-  const _FeedbackCommentSheet({required this.version});
+/// The result of the Review & Send sheet (#967): the note plus the user's
+/// include/exclude choices. Returned via `Navigator.pop` on Send; the caller
+/// gets null on Cancel/dismiss and sends nothing.
+class _FeedbackReview {
+  const _FeedbackReview({
+    required this.comment,
+    required this.includeImages,
+    required this.includeTraces,
+  });
 
-  final String version;
-
-  @override
-  State<_FeedbackCommentSheet> createState() => _FeedbackCommentSheetState();
+  final String comment;
+  final bool includeImages;
+  final bool includeTraces;
 }
 
-class _FeedbackCommentSheetState extends State<_FeedbackCommentSheet> {
+/// #967: Review & Send sheet — the pre-upload consent gate. Shows the note
+/// field, a PREVIEW of the captured screen image (single shot) OR a scrubbable
+/// motion-frame burst, and toggles to EXCLUDE the screen images and/or the
+/// diagnostic traces. Nothing is sent until Send; Cancel discards. Makes the
+/// privacy policy's "you review and confirm what's sent" literally true, since
+/// screenshots/frames cannot be auto-redacted.
+///
+/// Owns its [TextEditingController] + the frame-play [Timer] and disposes both.
+class _FeedbackReviewSheet extends StatefulWidget {
+  const _FeedbackReviewSheet({
+    required this.version,
+    required this.screenshotDataUrl,
+    required this.frameDataUrls,
+    required this.connectLog,
+    required this.gestureLog,
+    required this.lifecycleLog,
+    required this.byteTrace,
+    required this.scrollTrace,
+    required this.sentSgrTrace,
+    required this.grid,
+  });
+
+  final String version;
+  final String? screenshotDataUrl;
+  final List<String> frameDataUrls;
+  final List<String> connectLog;
+  final List<String> gestureLog;
+  final List<String> lifecycleLog;
+  final List<Map<String, Object?>> byteTrace;
+  final List<Map<String, Object?>> scrollTrace;
+  final List<Map<String, Object?>> sentSgrTrace;
+  final Map<String, Object?>? grid;
+
+  @override
+  State<_FeedbackReviewSheet> createState() => _FeedbackReviewSheetState();
+}
+
+class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
   final TextEditingController _controller = TextEditingController();
+  bool _includeImages = true;
+  bool _includeTraces = true;
+  int _frame = 0;
+  Timer? _playTimer;
+
+  /// The images the user can review: the motion-frame burst if present, else the
+  /// single screenshot as a one-element list. Empty when nothing was captured.
+  List<String> get _images => widget.frameDataUrls.isNotEmpty
+      ? widget.frameDataUrls
+      : (widget.screenshotDataUrl != null &&
+                widget.screenshotDataUrl!.isNotEmpty
+            ? <String>[widget.screenshotDataUrl!]
+            : const <String>[]);
+
+  bool get _hasImages => _images.isNotEmpty;
+  bool get _isBurst => _images.length > 1;
 
   @override
   void dispose() {
+    _playTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
+  void _togglePlay() {
+    if (_playTimer != null) {
+      _playTimer!.cancel();
+      setState(() => _playTimer = null);
+      return;
+    }
+    setState(() {
+      _playTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+        if (!mounted) return;
+        setState(() => _frame = (_frame + 1) % _images.length);
+      });
+    });
+  }
+
+  /// Decode a `data:image/png;base64,...` URL to bytes for [Image.memory].
+  /// Returns empty on a malformed URL (preview shows the error placeholder).
+  Uint8List _bytesOf(String dataUrl) {
+    final comma = dataUrl.indexOf(',');
+    if (comma < 0) return Uint8List(0);
+    try {
+      return base64Decode(dataUrl.substring(comma + 1));
+    } catch (_) {
+      return Uint8List(0);
+    }
+  }
+
+  int get _traceLineCount =>
+      widget.connectLog.length +
+      widget.gestureLog.length +
+      widget.lifecycleLog.length;
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -580,33 +708,190 @@ class _FeedbackCommentSheetState extends State<_FeedbackCommentSheet> {
         top: 16,
         bottom: MediaQuery.of(context).viewInsets.bottom + 16,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Feedback', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text(widget.version, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 12),
-          TextField(
-            key: const Key('feedback-comment-field'),
-            controller: _controller,
-            autofocus: true,
-            // Multi-line, NO maxLength — the full note must be captured
-            // (#661 kills the web form's first-line truncation).
-            maxLines: 6,
-            minLines: 3,
-            keyboardType: TextInputType.multiline,
-            decoration: const InputDecoration(
-              hintText: 'What happened? (full note — nothing is truncated)',
-              border: OutlineInputBorder(),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Review & send', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(widget.version, style: theme.textTheme.bodySmall),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('feedback-comment-field'),
+              controller: _controller,
+              autofocus: true,
+              maxLines: 6,
+              minLines: 3,
+              keyboardType: TextInputType.multiline,
+              decoration: const InputDecoration(
+                hintText: 'What happened? (full note — nothing is truncated)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_hasImages) ...[
+              const SizedBox(height: 8),
+              SwitchListTile(
+                key: const Key('feedback-include-images'),
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(Icons.image_outlined),
+                title: Text(
+                  _isBurst
+                      ? 'Include screen recording (${_images.length} frames)'
+                      : 'Include screenshot',
+                ),
+                subtitle: const Text('Shows whatever was on your screen.'),
+                value: _includeImages,
+                onChanged: (v) => setState(() => _includeImages = v),
+              ),
+              if (_includeImages) _buildImagePreview(theme),
+            ],
+            const SizedBox(height: 4),
+            SwitchListTile(
+              key: const Key('feedback-include-traces'),
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.data_object_outlined),
+              title: const Text('Include diagnostic traces'),
+              subtitle: Text(
+                'Terminal I/O + logs ($_traceLineCount log lines'
+                '${widget.byteTrace.isNotEmpty ? ", terminal bytes" : ""}), '
+                'device & app version.',
+              ),
+              value: _includeTraces,
+              onChanged: (v) => setState(() => _includeTraces = v),
+            ),
+            if (_includeTraces) _buildTraceDisclosure(theme),
+            const SizedBox(height: 8),
+            Text(
+              'Screenshots and frames show whatever was on your screen — review '
+              'them before sending. Secret-looking text in logs is auto-redacted '
+              '(best-effort, not guaranteed).',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontStyle: FontStyle.italic,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('feedback-cancel-button'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const Key('feedback-submit-button'),
+                    onPressed: () => Navigator.of(context).pop(
+                      _FeedbackReview(
+                        comment: _controller.text,
+                        includeImages: _includeImages,
+                        includeTraces: _includeTraces,
+                      ),
+                    ),
+                    icon: const Icon(Icons.send),
+                    label: const Text('Send'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImagePreview(ThemeData theme) {
+    final bytes = _bytesOf(_images[_frame.clamp(0, _images.length - 1)]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 320),
+            child: Container(
+              color: Colors.black,
+              alignment: Alignment.center,
+              child: Image.memory(
+                key: const Key('feedback-preview-image'),
+                bytes,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Icon(Icons.broken_image_outlined, color: Colors.white54),
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          FilledButton(
-            key: const Key('feedback-submit-button'),
-            onPressed: () => Navigator.of(context).pop(_controller.text),
-            child: const Text('Submit'),
+        ),
+        if (_isBurst) ...[
+          Row(
+            children: [
+              IconButton(
+                key: const Key('feedback-frame-play'),
+                onPressed: _togglePlay,
+                icon: Icon(
+                  _playTimer != null ? Icons.pause : Icons.play_arrow,
+                ),
+              ),
+              Expanded(
+                child: Slider(
+                  key: const Key('feedback-frame-scrubber'),
+                  min: 0,
+                  max: (_images.length - 1).toDouble(),
+                  divisions: _images.length - 1,
+                  value: _frame.clamp(0, _images.length - 1).toDouble(),
+                  onChanged: (v) => setState(() {
+                    _playTimer?.cancel();
+                    _playTimer = null;
+                    _frame = v.round();
+                  }),
+                ),
+              ),
+              Text(
+                'frame ${_frame + 1}/${_images.length}',
+                key: const Key('feedback-frame-counter'),
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildTraceDisclosure(ThemeData theme) {
+    // "View diagnostic text" — the exact SCRUBBED log lines that would upload,
+    // so what the user sees is what's sent (honesty, not a claim).
+    final scrubbed = <String>[
+      ...widget.connectLog,
+      ...widget.gestureLog,
+      ...widget.lifecycleLog,
+    ].map(scrubSecrets).toList(growable: false);
+    if (scrubbed.isEmpty) return const SizedBox.shrink();
+    return Theme(
+      data: theme.copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        key: const Key('feedback-view-traces'),
+        tilePadding: EdgeInsets.zero,
+        title: Text('View diagnostic text', style: theme.textTheme.bodySmall),
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 160),
+            child: SingleChildScrollView(
+              child: Text(
+                scrubbed.join('\n'),
+                key: const Key('feedback-trace-text'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
           ),
         ],
       ),

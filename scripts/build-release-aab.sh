@@ -46,9 +46,21 @@ BUILD_CORES="${BUILD_CORES:-3-11}"
 TASKSET=()
 if command -v taskset >/dev/null 2>&1; then TASKSET=(taskset -c "$BUILD_CORES"); fi
 
+# #966: point the PUBLIC build at the Cloudflare bug-report Worker (+ shared key)
+# when provided — the personal build omits these and keeps the tailnet endpoint.
+DEFINES=()
+if [ -n "${FEEDBACK_ENDPOINT:-}" ]; then
+  DEFINES+=("--dart-define=MOBISSH_FEEDBACK_ENDPOINT=${FEEDBACK_ENDPOINT}")
+  echo "> feedback endpoint: ${FEEDBACK_ENDPOINT}"
+fi
+if [ -n "${FEEDBACK_KEY:-}" ]; then
+  DEFINES+=("--dart-define=MOBISSH_FEEDBACK_KEY=${FEEDBACK_KEY}")
+  echo "> feedback key: set (${#FEEDBACK_KEY} chars)"
+fi
+
 # Full multi-ABI bundle (Play splits per device). R8/minify runs (release type).
 if ! "${TASKSET[@]}" "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" \
-    build appbundle --release; then
+    build appbundle --release "${DEFINES[@]+"${DEFINES[@]}"}"; then
   echo "! AAB build FAILED — see $LOGFILE"
   exit 1
 fi
