@@ -32,6 +32,9 @@ gen-apk-install-page.sh staleness check).
 ## v0.1.10+89 (2026-06-30) — Copy now copies what you selected
 - **Copy puts the text you highlighted on the clipboard** — not a different region. In an active session, after selecting something while scrolled up, Copy was grabbing later output ("the wrong view"); it now honors exactly what you selected. (Interim fix; a line-select gutter is coming next.) (#962)
 
+## v0.1.10+105 (2026-07-02) — The active session stands out in the switch menu
+- **You can see which session you're in at a glance.** In the session switch menu, the current session now has a tinted highlight and a left accent stripe (on top of the bold name + highlighted terminal icon), instead of only a subtle bold. The highlight follows the active session as you switch.
+
 ## v0.1.10+104 (2026-07-02) — Copied URLs & commands join across wraps
 - **Wrapped lines copy as one line.** When you gutter-copy a URL or command that wrapped at the edge — including in tmux and TUIs like Claude Code, where there's no wrap marker — it now pastes back as a single line instead of breaking at the margin. Box-drawing art stays as separate lines, and normal short lines keep their breaks.
 
