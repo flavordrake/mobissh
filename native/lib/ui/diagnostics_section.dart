@@ -1,8 +1,8 @@
 // Diagnostics section: visible "share crash report" + manual upload button.
 //
-// Lives at the bottom of the Connect form. Defensive contract: every
-// interaction with [CrashReporter] is wrapped in try/catch so a UI tap can
-// never crash the form.
+// Lives under Settings → Advanced (a collapsed expander, #897/#966). Defensive
+// contract: every interaction with [CrashReporter] is wrapped in try/catch so a
+// UI tap can never crash the page.
 
 import 'dart:io';
 

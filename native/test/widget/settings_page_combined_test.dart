@@ -1,11 +1,11 @@
-// Widget tests for the #897 settings reorg: ONE flat Settings page that folds
-// the Diagnostics section in at the bottom.
+// Widget tests for the Settings page (#897 reorg + #966 Play-Store cleanup).
 //
 // Asserts:
-//   - Every setting is a TOP-LEVEL control — present with NO expander tap.
-//   - The terminal-engine subtitle says Ghostty is the default (was wrongly
-//     "xterm is the default").
-//   - The folded-in Diagnostics section's controls are present.
+//   - Every user SETTING is a TOP-LEVEL control — present with NO expander tap.
+//   - The terminal-engine SELECTOR is gone (#966 — Ghostty-only release; xterm
+//     is an internal fallback, not user-facing).
+//   - Diagnostics moved into a COLLAPSED "Advanced" expander: hidden until the
+//     expander is tapped, then present.
 //   - The destructive "Reset settings" action confirms, then returns a sample
 //     pref (font size) to its default.
 
@@ -61,7 +61,6 @@ void main() {
       'keepalive-toggle',
       'battery-opt-tile',
       'font-size-slider',
-      'terminal-backend-selector',
       'tmux-control-mode-toggle',
       'detection-master-toggle',
       'detection-url-toggle',
@@ -76,7 +75,7 @@ void main() {
     }
   });
 
-  testWidgets('terminal-engine subtitle says Ghostty is the default', (
+  testWidgets('the terminal-engine selector is retired (#966 Ghostty-only)', (
     tester,
   ) async {
     final container = ProviderContainer();
@@ -84,18 +83,29 @@ void main() {
 
     await _pumpPage(tester, container);
 
-    // #897 fix: the stale "xterm is the default" copy is gone.
-    expect(find.textContaining('Ghostty (flterm) is the default'), findsOneWidget);
-    expect(find.textContaining('xterm is the default'), findsNothing);
+    // The user-facing selector is gone; xterm is an internal fallback only.
+    expect(find.byKey(const ValueKey('terminal-backend-selector')), findsNothing);
+    expect(find.byKey(const ValueKey('terminal-backend-tile')), findsNothing);
+    expect(find.textContaining('xterm'), findsNothing);
+    // Detection is no longer engine-qualified.
+    expect(find.text('Detection'), findsOneWidget);
   });
 
-  testWidgets('Diagnostics section is folded into the Settings page', (
+  testWidgets('Diagnostics is tucked behind a collapsed Advanced expander', (
     tester,
   ) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
     await _pumpPage(tester, container);
+
+    // Collapsed by default: the diagnostics controls are NOT on the page yet.
+    expect(find.byKey(const ValueKey('diagnostics-section')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-advanced-tile')), findsOneWidget);
+
+    // Expand Advanced → the folded-in diagnostics controls appear.
+    await tester.tap(find.byKey(const ValueKey('settings-advanced-tile')));
+    await _pumpFrames(tester);
 
     for (final key in const [
       'diagnostics-section',
@@ -106,7 +116,7 @@ void main() {
       expect(
         find.byKey(ValueKey(key)),
         findsOneWidget,
-        reason: '$key must be present in the folded-in diagnostics section',
+        reason: '$key must appear once Advanced is expanded',
       );
     }
   });

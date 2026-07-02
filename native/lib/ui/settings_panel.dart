@@ -40,7 +40,6 @@ class SettingsPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final keepalive = ref.watch(keepaliveEnabledProvider);
     final fontSize = ref.watch(fontSizeProvider);
-    final backend = ref.watch(terminalBackendProvider);
     final controlMode = ref.watch(tmuxControlModeProvider);
     final detection = ref.watch(detectionSettingsProvider);
     // Flat layout (#897): a Column of top-level controls grouped by light,
@@ -127,40 +126,12 @@ class SettingsPanel extends ConsumerWidget {
             onChanged: (v) => ref.read(fontSizeProvider.notifier).set(v),
           ),
         ),
-        // #684/#725: terminal rendering backend. Ghostty (flterm) is the DEFAULT
-        // — its native touch drag-select + copy is the headline terminal UX.
-        // xterm.dart is the selectable, production-proven fallback. Read at
-        // terminal build time -> restart-to-apply.
-        ListTile(
-          key: const ValueKey('terminal-backend-tile'),
-          title: const Text('Terminal engine'),
-          subtitle: const Text(
-            'Ghostty (flterm) is the default — native drag-select and copy. '
-            'xterm is the production-proven fallback. Switching applies to new '
-            'sessions / after a restart.',
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: SegmentedButton<TerminalBackend>(
-            key: const ValueKey('terminal-backend-selector'),
-            segments: const [
-              ButtonSegment(
-                value: TerminalBackend.xterm,
-                label: Text('xterm'),
-                icon: Icon(Icons.terminal_outlined),
-              ),
-              ButtonSegment(
-                value: TerminalBackend.ghostty,
-                label: Text('Ghostty'),
-                icon: Icon(Icons.flash_on_outlined),
-              ),
-            ],
-            selected: {backend},
-            onSelectionChanged: (sel) =>
-                ref.read(terminalBackendProvider.notifier).set(sel.first),
-          ),
-        ),
+        // #966: the terminal-engine SELECTOR is retired from the release build.
+        // Ghostty (flterm) is the whole product — gutter copy, detection, marks,
+        // soft-wrap join are all Ghostty-only; a user flipping to the xterm
+        // fallback silently lost every headline feature. The xterm backend +
+        // render switch stay in code as an internal fallback (terminalBackendProvider
+        // defaults to Ghostty; Reset restores it), just no longer user-facing.
         // #913 Part D: tmux control-mode (`tmux -CC`) opt-in. Default OFF — the
         // proven screen-scrape path stays the default; enabling this drives
         // `SshConnectCommand.controlMode` so NEW sessions enter control mode for
@@ -200,19 +171,18 @@ class SettingsPanel extends ConsumerWidget {
             }
           },
         ),
-        const SettingsSubheader('Detection (Ghostty)'),
+        const SettingsSubheader('Detection'),
         // #888 Part A: in-terminal structured-text DETECTION. Master switch +
         // per-type toggles (URLs, file paths). When a type is off, the flterm
         // controller never registers that pattern (no scan, no decoration);
-        // changes re-apply LIVE. Detection is a Ghostty-engine affordance —
-        // xterm has no structured detection. Monochrome outlined icons only.
+        // changes re-apply LIVE. Monochrome outlined icons only.
         SwitchListTile(
           key: const ValueKey('detection-master-toggle'),
           secondary: const Icon(Icons.search_outlined),
           title: const Text('Detect links & paths in terminal'),
           subtitle: const Text(
             'Find URLs and file paths in terminal output and make them '
-            'tappable. Applies to the Ghostty engine.',
+            'tappable.',
           ),
           value: detection.enabled,
           onChanged: (v) =>

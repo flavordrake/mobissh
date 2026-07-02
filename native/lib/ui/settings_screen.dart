@@ -1,11 +1,11 @@
-// Settings view — the single, flat Settings page reached from the home
-// bottom-nav (#611, #897).
+// Settings view — the single Settings page reached from the home bottom-nav
+// (#611, #897, #966).
 //
-// #897 reshape: Settings and Diagnostics are now ONE page. The Diagnostics
-// bottom-nav tab is gone; this screen renders the flattened [SettingsPanel]
-// (all controls top-level, grouped by light subheaders) followed by the
-// flattened [DiagnosticsSection] under a divider. Both widgets stay reusable —
-// they're just composed here instead of each owning a tab.
+// #897 folded Settings + Diagnostics into ONE page. #966 (Play-Store prep):
+// the user-facing settings ([SettingsPanel]) stay top-level and clean for the
+// store's first-glance; the developer-facing [DiagnosticsSection] (crash share
+// / force-upload / connection audit) moves into a COLLAPSED "Advanced"
+// expander so it's present-but-subordinate. Both widgets stay reusable.
 
 import 'package:flutter/material.dart';
 
@@ -17,16 +17,25 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SafeArea(
+    return SafeArea(
       child: SingleChildScrollView(
-        padding: EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SettingsPanel(),
-            SizedBox(height: 8),
-            Divider(),
-            DiagnosticsSection(),
+            const SettingsPanel(),
+            const SizedBox(height: 8),
+            // #966: Advanced — collapsed by default. Keeps the developer/power
+            // diagnostics one tap away without cluttering the main page (or the
+            // store screenshots). The in-app Feedback button is the primary
+            // report path and is unaffected.
+            ExpansionTile(
+              key: const ValueKey('settings-advanced-tile'),
+              leading: const Icon(Icons.tune_outlined),
+              title: const Text('Advanced'),
+              childrenPadding: EdgeInsets.zero,
+              children: const [DiagnosticsSection()],
+            ),
           ],
         ),
       ),

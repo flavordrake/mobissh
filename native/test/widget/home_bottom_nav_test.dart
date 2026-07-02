@@ -126,7 +126,7 @@ void main() {
     expect(find.byKey(const ValueKey('keepalive-toggle')), findsOneWidget);
   });
 
-  testWidgets('Settings page folds in the Diagnostics section', (
+  testWidgets('Settings page carries Diagnostics under Advanced', (
     tester,
   ) async {
     final store = ProfilesStore();
@@ -141,10 +141,12 @@ void main() {
     await tester.tap(find.byKey(const Key('home-nav-settings')));
     await tester.pumpAndSettle();
 
-    // #897: Diagnostics is folded into the single Settings page; its controls are
-    // present without any expander tap (may be below the fold — assert presence,
-    // not on-screen position). The raw connect-log block was removed (it's
-    // captured at Feedback-submit instead) — assert a durable diagnostics control.
+    // #966: Diagnostics is tucked into a COLLAPSED "Advanced" expander (clean
+    // main page for the store). The expander is present; expanding it reveals
+    // the diagnostics controls.
+    expect(find.byKey(const ValueKey('settings-advanced-tile')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('settings-advanced-tile')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('diagnostics-section')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('connection-audit-button')),
