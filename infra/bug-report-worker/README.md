@@ -41,9 +41,9 @@ scripts/flutter-cmd.sh --in native build appbundle --release \
   --dart-define=MOBISSH_FEEDBACK_KEY=<the FEEDBACK_KEY value>
 ```
 
-(build-release-aab.sh can pass these through — set `FEEDBACK_ENDPOINT` /
-`FEEDBACK_KEY` env vars; a follow-up wires them in.) The personal/tailnet build
-omits both defines and keeps posting to the tailnet endpoint with no key header.
+Or, simpler: `FEEDBACK_ENDPOINT=… FEEDBACK_KEY=… scripts/build-release-aab.sh`
+— the script passes both through as `--dart-define`s. The personal/tailnet build
+omits both and keeps posting to the tailnet endpoint with no key header.
 
 ## Reading reports
 ```
