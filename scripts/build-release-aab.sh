@@ -42,7 +42,7 @@ echo "> building SIGNED release App Bundle for $VERSION"
 
 # Pin to the BUILD cores (off the emulator's reserved cores) so a live emulator
 # isn't starved (same rationale as ship-native / native-connect-test).
-BUILD_CORES="${BUILD_CORES:-3-11}"
+BUILD_CORES="${BUILD_CORES:-4-11}"  # #971: off the emulator's EMU_CORES=0-3
 TASKSET=()
 if command -v taskset >/dev/null 2>&1; then TASKSET=(taskset -c "$BUILD_CORES"); fi
 

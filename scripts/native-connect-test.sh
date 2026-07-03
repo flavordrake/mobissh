@@ -161,11 +161,15 @@ GRANT_WATCHER_PID=$!
 #    APK carrying the integration driver and runs connect_smoke_test.dart,
 #    which fills the form (127.0.0.1:2222 / testuser / testpass), taps Connect,
 #    accepts the host key, and asserts the terminal screen mounts.
-# Pin the build/test to the BUILD cores (off the emulator's EMU_CORES) so Gradle
-# can't starve the emulator's render thread (the swiftshader crash root).
-BUILD_CORES="${BUILD_CORES:-3-11}"
+# Pin the build/test to the BUILD cores (off the emulator's EMU_CORES=0-3) so
+# Gradle can't starve the emulator's swiftshader render threads (the crash root).
+# #971: ALSO nice + ionice it so, even during a spike, the emulator wins the CPU
+# + IO scheduler — belt-and-suspenders over the core pin.
+BUILD_CORES="${BUILD_CORES:-4-11}"
 TASKSET=()
-if command -v taskset >/dev/null 2>&1; then TASKSET=(taskset -c "$BUILD_CORES"); fi
+if command -v ionice >/dev/null 2>&1; then TASKSET+=(ionice -c 3); fi
+TASKSET+=(nice -n 15)
+if command -v taskset >/dev/null 2>&1; then TASKSET+=(taskset -c "$BUILD_CORES"); fi
 log "running integration test on device ($TEST_FILE) on cores $BUILD_CORES (builds + installs)..."
 if "${TASKSET[@]}" "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" test \
     "$TEST_FILE" -d "$DEVICE"; then

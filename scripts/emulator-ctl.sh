@@ -32,8 +32,12 @@ export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
 ADB="$ANDROID_SDK_ROOT/platform-tools/adb"
 EMU="$ANDROID_SDK_ROOT/emulator/emulator"
 AVD="${2:-${AVD:-MobiSSH_Pixel7}}"
-EMU_CORES="${EMU_CORES:-0-2}"
-EMU_MEMORY_MB="${EMU_MEMORY_MB:-4096}"
+# #971: give swiftshader more headroom. The device-not-found crashes are the
+# software GPU's render threads starved under CPU contention (memory/KVM are
+# fine: ~22G free, hardware accel active). 4 cores (was 3) + 6G (was 4G) leaves
+# margin; the build now runs on cores 4-11 (was 3-11) + nice/ionice so it yields.
+EMU_CORES="${EMU_CORES:-0-3}"
+EMU_MEMORY_MB="${EMU_MEMORY_MB:-6144}"
 EMU_WIPE="${EMU_WIPE:-0}"
 LOGDIR="/tmp/mobissh/logs"
 mkdir -p "$LOGDIR"
