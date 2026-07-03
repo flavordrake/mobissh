@@ -2180,6 +2180,23 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// cells. A `path` match routes a tap to the SFTP explorer (not clipboard).
   static const String _kPathPatternId = kGhosttyPathPatternId;
 
+  /// #971: short per-session tag for repaint telemetry so multi-session captures
+  /// are ATTRIBUTABLE (which view is stuck vs busy). `host#tail` from the session
+  /// id — compact so it doesn't bloat the ring.
+  late final String _repaintTag = () {
+    final sid = widget.sessionId;
+    final host = sid.split(':').first;
+    final tail = sid.length > 4 ? sid.substring(sid.length - 4) : sid;
+    return '$host#$tail';
+  }();
+
+  /// #971: whether THIS view is the active (visible) one. Only the active view's
+  /// repaint frames are logged (see the onFrameDebug binding) — a busy background
+  /// session on the alt screen otherwise drowns the stuck visible session's
+  /// telemetry (the exact conflation that blocked #971's diagnosis). Updated in
+  /// [build].
+  bool _isActiveView = false;
+
   /// #702: the session proxy, resolved once in [initState] so the shellReady
   /// subscription + forced resize re-sync don't re-walk the sessions list.
   SshSessionProxy? _proxy;
@@ -2845,6 +2862,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   void _applyDetectionActive(bool active) {
     final box = _findTerminalRenderBox();
     box?.detectionActive = active;
+    // #971: record what THIS session's render box was told. detection-off is a
+    // confirmed workaround for the no-repaint bug, so a repro must show whether
+    // detectionActive was actually set on the STUCK (active) view + that its
+    // force-repaint-on-content-change (the #921 remedy) then kept it painting.
+    clifecycle(
+      'repaint',
+      '$_repaintTag detActive=$active box=${box != null}'
+      '${_isActiveView ? ' [active]' : ''}',
+    );
   }
 
   /// #918: walk the render subtree under the keyed [TerminalView] to the
@@ -2861,7 +2887,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // `onFrameDebug` null in production flterm; binding it to `clifecycle('repaint',
     // …)` lands screen transitions, zero-rebuild content syncs, and settle
     // arm/fire in the captured lifecycle ring the feedback bundle uploads. Idempotent.
-    box?.onFrameDebug = logRepaintTelemetry;
+    // #971: tag with the session + log ONLY the ACTIVE (visible) view's frames.
+    // A busy BACKGROUND session on the alt screen (rebuilt=53 every frame) was
+    // drowning the STUCK visible session's telemetry in the shared ring — the
+    // conflation that blocked diagnosis. Active-only + tagged makes the visible
+    // view's repaint state (incl. the flterm `detActive`/`rebuilt`) legible.
+    box?.onFrameDebug = (line) {
+      if (!_isActiveView) return;
+      logRepaintTelemetry('$_repaintTag $line');
+    };
     return box;
   }
 
@@ -3440,8 +3474,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // session changing: the OUTGOING view captures its keyboard-up state; the
     // INCOMING view re-attaches focus and re-shows the keyboard iff it was up.
     ref.listen<String?>(activeSessionIdProvider, (prev, next) {
+      _isActiveView = next == widget.sessionId; // #971 telemetry gate
       _onActiveSessionChanged(prev, next);
     });
+    // #971: current active/visible state for the repaint-telemetry gate. Set on
+    // every build (a session switch rebuilds the IndexedStack children).
+    _isActiveView = ref.read(activeSessionIdProvider) == widget.sessionId;
     // #888 Part A: LIVE re-apply of the detection toggles. When the global
     // detection settings change, clear the registered patterns (drops anchors +
     // highlights cleanly) and re-run registration against the new settings — so
