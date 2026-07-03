@@ -415,6 +415,23 @@ bool ghosttyShouldResyncResize({
 /// no-op (no stray resize).
 const List<int> kGhosttyResyncBurstMs = [120, 350, 700, 1200];
 
+/// #970: after the resync burst has settled the grid, send a one-shot PTY-size
+/// NUDGE (rows-1 → rows) at this delay. Windows ConPTY (and some picky remotes)
+/// only emit their prompt/output on a size CHANGE, not a same-size resync — so a
+/// fresh connect stays BLANK until the user manually resizes. The nudge forces
+/// that window-change. Fires after the 350ms burst tick so the grid is valid.
+const int kGhosttyConPtyNudgeMs = 480;
+
+/// #970: the ConPTY-nudge size sequence for a settled grid [cols]x[rows] — a
+/// DIFFERENT size (rows-1) to force the remote window-change ConPTY needs, then
+/// the real size restored a beat later. Null when the grid is invalid / too
+/// small to nudge (`cols <= 0 || rows <= 1`). Pure so the nudge contract is
+/// testable without rendering flterm (the native .so can't render headless).
+List<({int cols, int rows})>? ghosttyConPtyNudgeSizes(int cols, int rows) {
+  if (cols <= 0 || rows <= 1) return null;
+  return [(cols: cols, rows: rows - 1), (cols: cols, rows: rows)];
+}
+
 /// #903 — the settle window that coalesces a keyboard-animation / layout-reflow
 /// burst of `controller.onResize` events into a SINGLE PTY resize at the FINAL
 /// stable size.
@@ -2562,6 +2579,42 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         Timer(Duration(milliseconds: ms), () => _forceResizeResync('+${ms}ms')),
       );
     }
+    // #970: one-shot ConPTY nudge once the grid has settled (see const).
+    _resyncTimers.add(
+      Timer(
+        const Duration(milliseconds: kGhosttyConPtyNudgeMs),
+        _nudgeRemotePtySize,
+      ),
+    );
+  }
+
+  /// #970: force a WINDOW-CHANGE the remote acts on, ONCE per connect. Windows
+  /// ConPTY holds its prompt/output until it sees a DIFFERENT size — the #702
+  /// same-size resync burst doesn't flush it, so a fresh connect to a Windows
+  /// host stays BLANK until the user manually resizes (owner-diagnosed: single-
+  /// session, "resize makes it appear"). Send the settled grid at rows-1, then
+  /// restore the real rows a beat later. Routed through [_sendResize] with
+  /// DIFFERENT sizes so neither push is deduped. Sends only to the REMOTE PTY
+  /// (not the local flterm grid), so there's no local resize/flicker; harmless on
+  /// Unix hosts (a transient remote re-fit before any TUI is running).
+  void _nudgeRemotePtySize() {
+    if (!mounted) return;
+    final proxy = _proxy;
+    if (proxy == null || proxy.data.state != SshSessionState.connected) return;
+    final cols = _lastSubmittedGridCols > 0 ? _lastSubmittedGridCols : _cols;
+    final rows = _lastSubmittedGridRows > 0 ? _lastSubmittedGridRows : _rows;
+    final seq = ghosttyConPtyNudgeSizes(cols, rows);
+    if (seq == null) return;
+    _sendResize(seq[0].cols, seq[0].rows);
+    gtrace('conpty-nudge ${seq[0].cols}x${seq[0].rows} -> ${seq[1].rows} (#970)');
+    _resyncTimers.add(
+      Timer(const Duration(milliseconds: 80), () {
+        if (!mounted) return;
+        final p = _proxy;
+        if (p == null || p.data.state != SshSessionState.connected) return;
+        _sendResize(seq[1].cols, seq[1].rows);
+      }),
+    );
   }
 
   /// #702: FORCE-re-send the current grid to the PTY (even if unchanged) so tmux

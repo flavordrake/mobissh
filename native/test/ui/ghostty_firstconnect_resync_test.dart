@@ -70,6 +70,25 @@ void main() {
     });
   });
 
+  group('ghosttyConPtyNudgeSizes — first-connect ConPTY window-change nudge (#970)', () {
+    test('nudges to a DIFFERENT size (rows-1) then restores the real size', () {
+      // Windows ConPTY only emits on a size CHANGE; a same-size resync leaves a
+      // fresh connect BLANK. The nudge must send rows-1 (a real change) then the
+      // true rows — owner-diagnosed: single-session, Windows, "resize fixes it".
+      expect(ghosttyConPtyNudgeSizes(80, 53),
+          [(cols: 80, rows: 52), (cols: 80, rows: 53)]);
+      expect(ghosttyConPtyNudgeSizes(120, 40),
+          [(cols: 120, rows: 39), (cols: 120, rows: 40)]);
+    });
+
+    test('does NOT nudge an invalid / too-small grid (no 0x0 or rows<=1)', () {
+      expect(ghosttyConPtyNudgeSizes(0, 24), isNull);
+      expect(ghosttyConPtyNudgeSizes(80, 1), isNull);
+      expect(ghosttyConPtyNudgeSizes(80, 0), isNull);
+      expect(ghosttyConPtyNudgeSizes(-1, 24), isNull);
+    });
+  });
+
   group('kGhosttyResyncBurstMs — first-connect re-sync burst (#702)', () {
     test('mirrors the xterm #659/#666 burst delays (120/350/700/1200ms)', () {
       // At least one tick must land after flterm's grid settles (the device race
