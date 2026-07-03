@@ -43,6 +43,20 @@ const int detectionSettingsSchemaVersion = 1;
 /// [enabled] is the master switch. [url] gates BOTH the OSC-8 hyperlink source
 /// and the regex URL pattern (they are one user-facing type). [path] gates the
 /// absolute-file-path pattern. All default TRUE = no regression.
+/// #971 KILL SWITCH — force-disable in-terminal URL/path detection.
+///
+/// Detection triggers a paint-freeze on the tmux alternate screen: with it on, a
+/// tmux window switch leaves the render box painting STALE cells (a gap in the
+/// #922 clean-but-unsettled carry-forward that we haven't isolated yet). Owner
+/// call (2026-07-03): remove the feature until the repaint is cured, and bisect
+/// the hot path with it noop'd. This gates the [DetectionSettings.detectUrls] /
+/// [detectUrls] getters to false so NO pattern is ever registered (the
+/// controller no-ops on an empty pattern set → zero rescan → zero paint
+/// competition). The user's stored enabled/url/path prefs are PRESERVED, just
+/// overridden — flip this back to `false` once the #971 root is fixed and the
+/// feature returns exactly as the user left it.
+const bool kDetectionDisabled971 = true;
+
 class DetectionSettings {
   const DetectionSettings({
     this.schemaVersion = detectionSettingsSchemaVersion,
@@ -63,11 +77,13 @@ class DetectionSettings {
   /// Detect absolute file paths.
   final bool path;
 
-  /// Whether the URL patterns should be registered (master AND url).
-  bool get detectUrls => enabled && url;
+  /// Whether the URL patterns should be registered (master AND url), UNLESS the
+  /// #971 kill switch has force-disabled detection (see [kDetectionDisabled971]).
+  bool get detectUrls => !kDetectionDisabled971 && enabled && url;
 
-  /// Whether the path pattern should be registered (master AND path).
-  bool get detectPaths => enabled && path;
+  /// Whether the path pattern should be registered (master AND path), UNLESS the
+  /// #971 kill switch has force-disabled detection.
+  bool get detectPaths => !kDetectionDisabled971 && enabled && path;
 
   DetectionSettings copyWith({bool? enabled, bool? url, bool? path}) {
     return DetectionSettings(

@@ -30,8 +30,21 @@ void main() {
       expect(s.url, isTrue);
       expect(s.path, isTrue);
       expect(s.schemaVersion, detectionSettingsSchemaVersion);
-      expect(s.detectUrls, isTrue);
-      expect(s.detectPaths, isTrue);
+      // The stored prefs still default all-true; the effective getters follow
+      // the #971 kill switch (force-disabled while it's set).
+      expect(s.detectUrls, !kDetectionDisabled971);
+      expect(s.detectPaths, !kDetectionDisabled971);
+    });
+
+    test('#971 kill switch force-disables the getters regardless of prefs', () {
+      const on = DetectionSettings(enabled: true, url: true, path: true);
+      // While kDetectionDisabled971 is set, no prefs can turn detection on.
+      expect(on.detectUrls, !kDetectionDisabled971);
+      expect(on.detectPaths, !kDetectionDisabled971);
+      // The raw prefs are PRESERVED (they return when the switch flips back).
+      expect(on.enabled, isTrue);
+      expect(on.url, isTrue);
+      expect(on.path, isTrue);
     });
 
     test('master off gates both url and path registration', () {
@@ -43,9 +56,9 @@ void main() {
     test('per-type off gates only that type', () {
       const noUrl = DetectionSettings(url: false);
       expect(noUrl.detectUrls, isFalse);
-      expect(noUrl.detectPaths, isTrue);
+      expect(noUrl.detectPaths, !kDetectionDisabled971);
       const noPath = DetectionSettings(path: false);
-      expect(noPath.detectUrls, isTrue);
+      expect(noPath.detectUrls, !kDetectionDisabled971);
       expect(noPath.detectPaths, isFalse);
     });
 
@@ -117,8 +130,8 @@ void main() {
       final n = DetectionSettingsNotifier(prefs: SharedPreferences.getInstance());
       await _settle();
       expect(n.state, const DetectionSettings());
-      expect(n.state.detectUrls, isTrue);
-      expect(n.state.detectPaths, isTrue);
+      expect(n.state.detectUrls, !kDetectionDisabled971);
+      expect(n.state.detectPaths, !kDetectionDisabled971);
     });
 
     test('hydrates a stored versioned value', () async {

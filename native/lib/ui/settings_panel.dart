@@ -180,9 +180,12 @@ class SettingsPanel extends ConsumerWidget {
           key: const ValueKey('detection-master-toggle'),
           secondary: const Icon(Icons.search_outlined),
           title: const Text('Detect links & paths in terminal'),
-          subtitle: const Text(
-            'Find URLs and file paths in terminal output and make them '
-            'tappable.',
+          subtitle: Text(
+            kDetectionDisabled971
+                ? 'Temporarily turned off while we fix a repaint issue (#971). '
+                  'Your setting is remembered and comes back when it\'s fixed.'
+                : 'Find URLs and file paths in terminal output and make them '
+                  'tappable.',
           ),
           value: detection.enabled,
           onChanged: (v) =>
