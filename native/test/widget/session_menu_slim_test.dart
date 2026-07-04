@@ -175,7 +175,7 @@ void main() {
       expect(find.text('u@host-a:22'), findsNothing);
     });
 
-    testWidgets('detection toggle is present and flips the global setting', (
+    testWidgets('detection toggle is present; flips the setting unless killed', (
       tester,
     ) async {
       final container = _makeContainer();
@@ -185,18 +185,31 @@ void main() {
       await tester.tap(find.byKey(const Key('open-menu')));
       await _pumpFrames(tester);
 
-      // The toggle is present in the slim controls row.
+      // The toggle is present in the slim controls row (both states).
       expect(
         find.byKey(const Key('session-menu-detection-toggle')),
         findsOneWidget,
       );
-      // Detection defaults ON (no regression); tapping flips it OFF globally.
-      expect(container.read(detectionSettingsProvider).enabled, isTrue);
-      await tester.tap(
-        find.byKey(const Key('session-menu-detection-toggle')),
-      );
-      await _pumpFrames(tester);
-      expect(container.read(detectionSettingsProvider).enabled, isFalse);
+      if (kDetectionDisabled971) {
+        // #971 kill switch: the toggle is DISABLED and INERT — tapping it must
+        // NOT flip the stored setting (detection is force-off until fixed).
+        final before = container.read(detectionSettingsProvider).enabled;
+        await tester.tap(
+          find.byKey(const Key('session-menu-detection-toggle')),
+          warnIfMissed: false,
+        );
+        await _pumpFrames(tester);
+        expect(container.read(detectionSettingsProvider).enabled, before,
+            reason: 'kill switch: the detection toggle must be inert');
+      } else {
+        // Detection defaults ON (no regression); tapping flips it OFF globally.
+        expect(container.read(detectionSettingsProvider).enabled, isTrue);
+        await tester.tap(
+          find.byKey(const Key('session-menu-detection-toggle')),
+        );
+        await _pumpFrames(tester);
+        expect(container.read(detectionSettingsProvider).enabled, isFalse);
+      }
     });
 
     testWidgets('font +/- still mutates only the active session', (

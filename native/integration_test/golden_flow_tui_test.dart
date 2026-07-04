@@ -35,6 +35,7 @@ import 'package:integration_test/integration_test.dart';
 
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/services/clipboard.dart' show clipboardChannel;
+import 'package:mobissh/state/detection_providers.dart' show kDetectionDisabled971;
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
@@ -159,56 +160,70 @@ void main() {
       }
 
       // ── 4. DETECTION: anchors (data) AND the gutter mark (render) ────────
-      var urlAnchored = false;
-      for (var i = 0; i < 30; i++) {
-        urlAnchored = controller.anchors.any(
-          (a) => '${a.payload}'.contains('docs.example.com'),
-        );
-        if (urlAnchored) break;
-        await tester.pump(const Duration(milliseconds: 300));
-      }
-      for (final a in controller.anchors) {
-        debugPrint('GOLDEN anchor: "${a.payload}"');
-        for (final r in a.ranges) {
-          debugPrint(
-            'GOLDEN   range rows=${r.topRow}..${r.bottomRow} '
-            '→ gutterRow=${controller.anchorGutterRow(r)}',
-          );
-        }
-      }
-      debugPrint(
-        'GOLDEN layer inputs: isScrolling=${controller.isScrolling} '
-        'scrollbar(offset=${controller.scrollbar.offset} '
-        'visible=${controller.scrollbar.visible} '
-        'total=${controller.scrollbar.total}) '
-        'painted=${controller.paintedViewportOffset}',
-      );
-      expect(
-        urlAnchored,
-        isTrue,
-        reason: 'the on-screen Docs URL was never detected (no anchor)',
-      );
-      // The #958 assertion: the RIGHT-EDGE MARK actually renders. Anchors
-      // existing while no mark mounts is exactly the device bug class.
-      final markFinder = find.byWidgetPredicate((w) {
+      final gutterMark = find.byWidgetPredicate((w) {
         final k = w.key;
         return k is ValueKey<String> && k.value.startsWith('gutter-mark-');
       });
-      var markVisible = false;
-      for (var i = 0; i < 20; i++) {
-        await tester.pump(const Duration(milliseconds: 300));
-        if (markFinder.evaluate().isNotEmpty) {
-          markVisible = true;
-          break;
+      if (kDetectionDisabled971) {
+        // #971: detection is force-disabled by the kill switch — no pattern is
+        // registered, so there are NO anchors and NO gutter mark. Assert it
+        // stays OFF (the detect-renders asserts below can't pass while killed).
+        // When the const flips back to false the full assertions return.
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 200));
         }
+        expect(controller.anchors, isEmpty,
+            reason: '#971 kill switch: detection must register nothing');
+        expect(gutterMark, findsNothing,
+            reason: '#971 kill switch: no gutter mark should mount');
+      } else {
+        var urlAnchored = false;
+        for (var i = 0; i < 30; i++) {
+          urlAnchored = controller.anchors.any(
+            (a) => '${a.payload}'.contains('docs.example.com'),
+          );
+          if (urlAnchored) break;
+          await tester.pump(const Duration(milliseconds: 300));
+        }
+        for (final a in controller.anchors) {
+          debugPrint('GOLDEN anchor: "${a.payload}"');
+          for (final r in a.ranges) {
+            debugPrint(
+              'GOLDEN   range rows=${r.topRow}..${r.bottomRow} '
+              '→ gutterRow=${controller.anchorGutterRow(r)}',
+            );
+          }
+        }
+        debugPrint(
+          'GOLDEN layer inputs: isScrolling=${controller.isScrolling} '
+          'scrollbar(offset=${controller.scrollbar.offset} '
+          'visible=${controller.scrollbar.visible} '
+          'total=${controller.scrollbar.total}) '
+          'painted=${controller.paintedViewportOffset}',
+        );
+        expect(
+          urlAnchored,
+          isTrue,
+          reason: 'the on-screen Docs URL was never detected (no anchor)',
+        );
+        // The #958 assertion: the RIGHT-EDGE MARK actually renders. Anchors
+        // existing while no mark mounts is exactly the device bug class.
+        var markVisible = false;
+        for (var i = 0; i < 20; i++) {
+          await tester.pump(const Duration(milliseconds: 300));
+          if (gutterMark.evaluate().isNotEmpty) {
+            markVisible = true;
+            break;
+          }
+        }
+        expect(
+          markVisible,
+          isTrue,
+          reason:
+              'URL anchor exists but NO gutter-mark widget rendered — the #958 '
+              'class (anchor→viewport-row resolution or mark mounting broken)',
+        );
       }
-      expect(
-        markVisible,
-        isTrue,
-        reason:
-            'URL anchor exists but NO gutter-mark widget rendered — the #958 '
-            'class (anchor→viewport-row resolution or mark mounting broken)',
-      );
 
       // ── 5. BULK OUTPUT → SCROLL UP → VERBATIM GUTTER COPY ────────────────
       // 200 distinct lines WITH INTERIOR SPACES (the +98 class needs them).

@@ -427,7 +427,12 @@ class _SessionControlsRow extends ConsumerWidget {
     // can flip it without digging into Settings. Toggling off→on also fires the
     // terminal view's live re-register + re-scan of the current cells, so it
     // doubles as a "make the gutter re-evaluate now" control.
-    final detectionOn = ref.watch(detectionSettingsProvider).enabled;
+    // EFFECTIVE state: the #971 kill switch force-disables detection until the
+    // repaint gap is fixed, so the toggle reflects OFF (and is disabled) while
+    // it's set — the stored pref is preserved and returns when it flips back.
+    final detectionKilled = kDetectionDisabled971;
+    final detectionOn =
+        !detectionKilled && ref.watch(detectionSettingsProvider).enabled;
 
     return Padding(
       key: const Key('session-menu-controls'),
@@ -533,17 +538,26 @@ class _SessionControlsRow extends ConsumerWidget {
           ),
           // Files moved to a PER-ROW affordance (#649): each session row now
           // carries its own `session-menu-files-${id}` icon next to its X.
-          // 3b. Link/path DETECTION toggle (#955/#888) — GLOBAL. Filled link
-          // glyph = on (gutter marks active), broken-link = off. Lets the owner
-          // turn the gutter on/off from the menu and (off→on) force a re-scan.
+          // 3b. Link/path DETECTION toggle (#955/#888) — GLOBAL. Its glyph is a
+          // link inside a BUBBLE (#971), echoing the right-edge gutter mark and
+          // DISTINCT from the disconnect button's broken-chain (they used to
+          // share Icons.link_off). Filled bubble = on, outline = off, muted +
+          // disabled while the #971 kill switch has detection force-off.
           _StepButton(
             itemKey: const Key('session-menu-detection-toggle'),
-            tooltip: detectionOn
-                ? 'Link/path detection: on'
-                : 'Link/path detection: off',
-            icon: detectionOn ? Icons.link : Icons.link_off,
+            tooltip: detectionKilled
+                ? 'Link detection is off while we fix a repaint issue'
+                : (detectionOn ? 'Link detection: on' : 'Link detection: off'),
+            iconWidget: _DetectionGlyph(
+              active: detectionOn,
+              color: detectionKilled
+                  ? theme.colorScheme.onSurface.withValues(alpha: 0.38)
+                  : (detectionOn
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurfaceVariant),
+            ),
             selected: detectionOn,
-            enabled: true,
+            enabled: !detectionKilled,
             onTap: () => ref
                 .read(detectionSettingsProvider.notifier)
                 .setEnabled(!detectionOn),
@@ -642,15 +656,22 @@ class _StepButton extends StatelessWidget {
   const _StepButton({
     required this.itemKey,
     required this.tooltip,
-    required this.icon,
     required this.enabled,
     required this.onTap,
+    this.icon,
+    this.iconWidget,
     this.selected = false,
-  });
+  }) : assert(icon != null || iconWidget != null,
+            'provide an icon or an iconWidget');
 
   final Key itemKey;
   final String tooltip;
-  final IconData icon;
+  final IconData? icon;
+
+  /// A custom glyph (e.g. the #971 detection bubble) rendered instead of
+  /// [Icon]([icon]) when provided — for controls whose state a single Material
+  /// glyph can't convey.
+  final Widget? iconWidget;
   final bool enabled;
   final bool selected;
   final VoidCallback onTap;
@@ -667,8 +688,36 @@ class _StepButton extends StatelessWidget {
       padding: EdgeInsets.zero,
       visualDensity: VisualDensity.compact,
       color: color,
-      icon: Icon(icon),
+      icon: iconWidget ?? Icon(icon),
       onPressed: enabled ? onTap : null,
+    );
+  }
+}
+
+/// #971 detection glyph: a link inside a rounded BUBBLE — echoes the right-edge
+/// URL gutter mark and is visually DISTINCT from the disconnect button's
+/// broken-chain (`Icons.link_off`), which it used to share. [active] fills the
+/// bubble; otherwise it's an outline. [color] carries the on/off/disabled tint.
+class _DetectionGlyph extends StatelessWidget {
+  const _DetectionGlyph({required this.active, required this.color});
+
+  final bool active;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 26,
+        height: 16,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: active ? color.withValues(alpha: 0.20) : Colors.transparent,
+          border: Border.all(color: color, width: 1.6),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(Icons.link, size: 12, color: color),
+      ),
     );
   }
 }
