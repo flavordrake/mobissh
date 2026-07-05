@@ -55,7 +55,7 @@ const int detectionSettingsSchemaVersion = 1;
 /// competition). The user's stored enabled/url/path prefs are PRESERVED, just
 /// overridden — flip this back to `false` once the #971 root is fixed and the
 /// feature returns exactly as the user left it.
-const bool kDetectionDisabled971 = true;
+const bool kDetectionDisabled971 = false;
 
 class DetectionSettings {
   const DetectionSettings({

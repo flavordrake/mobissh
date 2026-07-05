@@ -1188,6 +1188,24 @@ List<String> ghosttyTapClickReports({required int col, required int row}) => [
 /// land as literal text). Pure, so the gating decision is unit-testable.
 bool ghosttyTapShouldForwardClick({required bool active}) => active;
 
+/// Whether a PRESS at 1-based [row] lands on the tmux STATUS ROW — the last grid
+/// row ([gridRows]) — where it must CLICK (switch window / select pane) rather
+/// than start a text selection (#971).
+///
+/// Root cause of "tmux window switch does nothing": under mouse mode a firm
+/// status-bar tap (a tap aimed at the small bottom-of-screen status line dwells
+/// past the long-press deadline) resolved as a `longpress-select`, so
+/// `onMouseReport` never ran and no SGR click reached tmux — device telemetry
+/// showed 120 `longpress-select` events and `sentSgrTraceEventCount: 0`. A one-
+/// line status bar has nothing to text-select, and the tap path ALREADY treats
+/// `row >= gridRows` as the status row (control-mode `select-window`), so the
+/// long-press router applies the SAME rule: a press that STARTS on the status
+/// row clicks through. Selection is unchanged everywhere else — a press starting
+/// on a content row still selects, and a body drag that crosses onto the status
+/// row still extends (the decision is made from the START cell). Pure.
+bool ghosttyPressIsStatusRowClick({required int row, required int gridRows}) =>
+    gridRows > 0 && row >= gridRows;
+
 /// Whether a LONG-PRESS should show the URL Copy/Open action menu instead of
 /// starting a selection (#734).
 ///
@@ -1626,6 +1644,14 @@ class _GhosttyPointerGestureRouterState
   /// normally.
   bool _longPressOnUrl = false;
 
+  /// #971: true while the IN-PROGRESS long-press STARTED on the tmux status row
+  /// and so was routed as a window-switch CLICK (via [_forwardClickAt]) instead
+  /// of a text selection. Like [_longPressOnUrl], while it is true the move/end
+  /// handlers do NOT extend/finish a selection (the click already fired on
+  /// start). Reset on every long-press-start so a later content-row press
+  /// selects normally.
+  bool _longPressAsStatusClick = false;
+
   void _onPanStart(DragStartDetails details) {
     _panDx = 0;
     _panDy = 0;
@@ -1824,11 +1850,27 @@ class _GhosttyPointerGestureRouterState
     final url = widget.urlAtCell(col - 1, row - 1);
     if (ghosttyLongPressShowsUrlMenu(url)) {
       _longPressOnUrl = true;
+      _longPressAsStatusClick = false;
       _trace('longpress-url', local.dx, local.dy, col, row, 'menu');
       widget.onUrlLongPress(url!, details.globalPosition);
       return;
     }
     _longPressOnUrl = false;
+    // #971: a long-press that STARTS on the tmux STATUS ROW is a window-switch
+    // CLICK, not a text selection. A firm status-bar tap dwells past the long-
+    // press deadline (device telemetry: `longpress-select`, sentSgr=0, no
+    // switch); a one-line status bar has nothing to select. Only under active
+    // mouse mode (the overlay routes clicks) — off the status row selection is
+    // unchanged, and a body drag onto the status row still extends (the decision
+    // is made from this START cell). Suppresses the move/end selection handlers
+    // for the rest of this gesture.
+    if (widget.active &&
+        ghosttyPressIsStatusRowClick(row: row, gridRows: _gridRows)) {
+      _longPressAsStatusClick = true;
+      _forwardClickAt(col, row, local.dx, local.dy, 'longpress-status-click');
+      return;
+    }
+    _longPressAsStatusClick = false;
     // #705: drive flterm's LOCAL selection (NOT a tmux SGR drag, which tmux's
     // default copy-and-cancel would clear on release). Anchor a collapsed
     // selection at the pressed cell; the parent adds the scroll offset.
@@ -1838,8 +1880,9 @@ class _GhosttyPointerGestureRouterState
 
   void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
     // #734: while the URL menu owns this long-press, a drag must NOT extend a
-    // selection (the gesture belongs to the menu).
-    if (_longPressOnUrl) return;
+    // selection (the gesture belongs to the menu). #971: same when the press was
+    // routed as a status-row window-switch click.
+    if (_longPressOnUrl || _longPressAsStatusClick) return;
     final local = details.localPosition;
     final (col, row) = _cellAt(local);
     // #705: extend the LOCAL selection's END to the dragged cell so the
@@ -1849,9 +1892,11 @@ class _GhosttyPointerGestureRouterState
   }
 
   void _onLongPressEnd(LongPressEndDetails details) {
-    // #734: a URL-menu long-press has no selection to finalise.
-    if (_longPressOnUrl) {
+    // #734: a URL-menu long-press has no selection to finalise. #971: neither
+    // does a status-row window-switch click (the SGR fired on start).
+    if (_longPressOnUrl || _longPressAsStatusClick) {
       _longPressOnUrl = false;
+      _longPressAsStatusClick = false;
       return;
     }
     final local = details.localPosition;
@@ -1896,22 +1941,32 @@ class _GhosttyPointerGestureRouterState
       return;
     }
     final (col, row) = _cellAt(local);
-    // #911 Part C (flag ON): a tap on the STATUS ROW switches windows via a REAL
-    // `select-window` control command — the host maps the tap COLUMN to a window
-    // from the authoritative ordered window list (no pixel/row guessing). Off the
-    // status row we just focus + raise the keyboard (control mode does not use a
-    // synthesised SGR click). On the status row, swallow the SGR click path.
+    _forwardClickAt(col, row, local.dx, local.dy, 'tap');
+  }
+
+  /// Forward a CLICK at the (already-computed) 1-based ([col], [row]) cell — the
+  /// #693 tap-click path, extracted so a status-row long-press (#971) reuses the
+  /// EXACT same routing. Under the #911 control-mode flag a status-row cell
+  /// drives the REAL `select-window` command (the host maps the column to a
+  /// window from the authoritative ordered list — no pixel/row guessing) and an
+  /// off-status-row cell just focuses; otherwise it synthesises an SGR button-1
+  /// click (`CSI<0;col;rowM` then `…m`) so tmux selects the clicked window/pane.
+  /// [dx]/[dy] and [traceType] label the gesture-log line.
+  void _forwardClickAt(int col, int row, double dx, double dy, String traceType) {
+    // #911 Part C (flag ON): a click on the STATUS ROW switches windows via a
+    // REAL `select-window` control command. Off the status row control mode does
+    // not use a synthesised SGR click.
     if (widget.controlModeGestures && widget.onStatusTap != null) {
       if (row >= _gridRows) {
-        _trace('tap', local.dx, local.dy, col, row, 'select-window');
+        _trace(traceType, dx, dy, col, row, 'select-window');
         widget.onStatusTap!(col: col, totalCols: _gridCols);
       } else {
-        _trace('tap', local.dx, local.dy, col, row, null);
+        _trace(traceType, dx, dy, col, row, null);
       }
       return;
     }
     final report = ghosttySgrMousePress(col: col, row: row);
-    _trace('tap', local.dx, local.dy, col, row, report);
+    _trace(traceType, dx, dy, col, row, report);
     GhosttySelectionDriver(
       onReport: widget.onMouseReport,
     ).click(col: col, row: row);
@@ -2040,6 +2095,28 @@ class GhosttyTerminalView extends ConsumerStatefulWidget {
   @visibleForTesting
   static final Map<String, GhosttyResizeCoalescer> debugResizeCoalescers =
       <String, GhosttyResizeCoalescer>{};
+
+  /// #971 gesture-tap-sgr: the live per-session [SessionByteRecorder], exposed so
+  /// the on-emulator gesture test can assert whether a status-bar TAP under tmux
+  /// mouse mode actually SENT an SGR mouse report (`snapshotSentSgrTrace()`
+  /// non-empty). The device telemetry for the "tmux switch does nothing" bug
+  /// showed `sentSgrTraceEventCount: 0` while every gesture logged as a
+  /// `longpress-select` — i.e. the tap resolved as a selection and no SGR click
+  /// reached tmux. This mirrors [debugControllers] / [debugResizeCoalescers]: set
+  /// in initState, cleared on dispose. Test-only — no production code reads it.
+  /// (The same recorder is also reachable via `byteRecorderFor(sessionId)`; this
+  /// keyed handle mirrors the other seams for symmetry.)
+  @visibleForTesting
+  static final Map<String, SessionByteRecorder> debugByteRecorders =
+      <String, SessionByteRecorder>{};
+
+  /// #971 gesture-tap-sgr: the REAL measured flterm cell size per sessionId
+  /// (logical px), exposed so the gesture test can map a status-bar window label
+  /// column to the exact tap pixel (`padding + (col+0.5)*cellWidth`,
+  /// `padding + (row+0.5)*cellHeight`). Set every build where the cell size is
+  /// measured, cleared on dispose. Test-only — no production code reads it.
+  @visibleForTesting
+  static final Map<String, Size> debugCellSizes = <String, Size>{};
 
   @override
   ConsumerState<GhosttyTerminalView> createState() =>
@@ -2344,6 +2421,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // #767 (test-only): expose this controller so the on-emulator integration
       // test can assert the in-terminal URL detection tracks scroll/eviction.
       GhosttyTerminalView.debugControllers[widget.sessionId] = controller;
+      // #971 (test-only): expose the sent-SGR recorder so the gesture test can
+      // assert a status-bar tap actually forwarded an SGR mouse click to tmux.
+      GhosttyTerminalView.debugByteRecorders[widget.sessionId] = _byteRecorder;
       // #767: register the built-in URL pattern so the terminal detects URLs
       // over its OWN cells and maintains the anchors across scroll / wrap /
       // resize / eviction. #767 Slice B: the pattern carries no fill — the URL's
@@ -3440,6 +3520,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (GhosttyTerminalView.debugControllers[widget.sessionId] == _controller) {
       GhosttyTerminalView.debugControllers.remove(widget.sessionId);
     }
+    // #971 (test-only): drop the debug byte-recorder + cell-size handles.
+    GhosttyTerminalView.debugByteRecorders.remove(widget.sessionId);
+    GhosttyTerminalView.debugCellSizes.remove(widget.sessionId);
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
     _controller?.onResize = null;
@@ -3547,6 +3630,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #734: remember the live cell size so a long-press URL menu can build its
     // highlight rects with the same geometry the router maps touches with.
     _lastCellSize = cellSize;
+    // #971 (test-only): publish the measured cell size so the gesture test can
+    // convert a status-bar label column to the exact tap pixel.
+    GhosttyTerminalView.debugCellSizes[widget.sessionId] = cellSize;
     // #755/#767/#955: URLs + paths are DETECTED + ANCHORED inside the terminal
     // (the `url`/`path` structured-text patterns over its own cells). The VISUAL
     // is the right-edge GUTTER mark ([GhosttyGutterLayer]) coloured with the live
