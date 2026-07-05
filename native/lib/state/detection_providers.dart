@@ -43,18 +43,20 @@ const int detectionSettingsSchemaVersion = 1;
 /// [enabled] is the master switch. [url] gates BOTH the OSC-8 hyperlink source
 /// and the regex URL pattern (they are one user-facing type). [path] gates the
 /// absolute-file-path pattern. All default TRUE = no regression.
-/// #971 KILL SWITCH — force-disable in-terminal URL/path detection.
+/// #971 kill switch for in-terminal URL/path detection — NOW OFF (detection
+/// re-enabled).
 ///
-/// Detection triggers a paint-freeze on the tmux alternate screen: with it on, a
-/// tmux window switch leaves the render box painting STALE cells (a gap in the
-/// #922 clean-but-unsettled carry-forward that we haven't isolated yet). Owner
-/// call (2026-07-03): remove the feature until the repaint is cured, and bisect
-/// the hot path with it noop'd. This gates the [DetectionSettings.detectUrls] /
-/// [detectUrls] getters to false so NO pattern is ever registered (the
-/// controller no-ops on an empty pattern set → zero rescan → zero paint
-/// competition). The user's stored enabled/url/path prefs are PRESERVED, just
-/// overridden — flip this back to `false` once the #971 root is fixed and the
-/// feature returns exactly as the user left it.
+/// History: detection was blamed for a tmux-window-switch "no repaint" and
+/// force-disabled (2026-07-03) while we chased a paint root. The real root
+/// turned out NOT to be paint: under mouse mode a firm status-bar tap dwelt past
+/// the long-press deadline and resolved as a text SELECTION, so no SGR mouse
+/// click reached tmux (device telemetry: `sentSgrTraceEventCount: 0`, paint
+/// `rebuilt=32`) — the window never switched. Fixed in #974 (a status-row
+/// long-press now clicks through). With that fixed, detection is back on.
+///
+/// The flag is kept as an emergency kill switch: set `true` to force
+/// [DetectionSettings.detectUrls]/[detectPaths] to false (no pattern registered
+/// → zero scan/decoration), preserving the user's stored prefs.
 const bool kDetectionDisabled971 = false;
 
 class DetectionSettings {
