@@ -1,0 +1,63 @@
+# docker-compose.emulator.yml — dedicated Android-emulator sibling container.
+#
+# Isolates the emulator (and its swiftshader crashes / zombie processes) from
+# fd-dev. Recovery is `docker restart mobissh-emulator` — no coding-session loss.
+# Reached by other siblings over the shared `mobissh` network via Docker DNS
+# (name `mobissh-emulator`); there is no docker-proxy in this env so host port
+# mapping (-p) does NOT work — do not add it.
+services:
+  mobissh-emulator:
+    build:
+      context: ./docker/emulator
+    image: mobissh-emulator:${TAG:-latest}
+    container_name: mobissh-emulator
+    restart: unless-stopped
+    networks:
+      - mobissh
+    # KVM gives the x86_64 system image hardware acceleration (present on the
+    # Docker host). Without it the emulator falls back to slow full emulation.
+    devices:
+      - /dev/kvm
+      # iGPU passthrough — LIVE as of 2026-07-05 (PVE dev-passthrough → LXC 105:
+      # /dev/dri/card1 [video 226,1] + renderD128 [render 226,128]). Gives the
+      # emulator hardware GL (`EMU_GPU=host`) instead of swiftshader, which fixes
+      # the software-GPU crash class. If /dev/dri ever disappears, comment this
+      # out AND set EMU_GPU=swiftshader_indirect to fall back to software.
+      - /dev/dri:/dev/dri
+    # The render nodes are group-owned (render=104, video=44). Add the container
+    # process to both so it can open card1 + renderD128 (they are mode 0660).
+    group_add:
+      - "104"
+      - "44"
+    environment:
+      # Guest RAM. Host is 30G/12c so 6G is comfortable.
+      EMU_MEMORY_MB: "${EMU_MEMORY_MB:-6144}"
+      # host = hardware GL on the passed-through Intel iGPU (default now that
+      # /dev/dri is live). Override to `swiftshader_indirect` for software GL.
+      EMU_GPU: "${EMU_GPU:-host}"
+      # Optional taskset core pin for the emulator (e.g. "0-3"). Empty = no pin;
+      # crash isolation no longer needs it since the build lives in fd-dev.
+      EMU_CORES: "${EMU_CORES:-}"
+    # adb server (5037), network-exposed guest adbd (5556 → guest 5555), console
+    # (5554) and the test-sshd bridge (2222) are all reached by Docker DNS on the
+    # mobissh network. `adb connect mobissh-emulator:5556` uses the exposed adbd.
+    expose:
+      - "5037"
+      - "5554"
+      - "5555"
+      - "5556"
+      - "2222"
+    # Emulator boot can take a few minutes on first cold start under swiftshader.
+    healthcheck:
+      test: ["CMD", "sh", "-c", "adb shell getprop sys.boot_completed | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 60s
+
+networks:
+  mobissh:
+    # Shared with docker-compose.prod.yml / .test.yml — one network for all
+    # MobiSSH siblings. `external: true` so whichever compose starts first owns it.
+    name: mobissh
+    external: true
