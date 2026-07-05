@@ -6,12 +6,36 @@
 # that headless widget tests can't reach. This is the gate that catches the
 # class of bug in #539 (connect deadlocks at State:idle).
 #
-# Network bridge:
+# EMULATOR LOCATION (P0 infra move):
+#   The emulator now runs in its OWN sibling container (mobissh-emulator) instead
+#   of as a process inside fd-dev, so swiftshader crashes / zombie processes are
+#   isolated (recovery = `docker restart mobissh-emulator`, no session loss).
+#   This script defaults to that containerized emulator (EMU_CONTAINER=1).
+#
+#   ADB_MODE selects how fd-dev reaches the container's emulator:
+#     connect (default) — fd-dev runs its OWN adb server and
+#         `adb connect mobissh-emulator:5555`. This keeps `adb forward` LOCAL to
+#         fd-dev, which flutter integration tests REQUIRE (flutter forwards the
+#         Dart VM-service port then connects to 127.0.0.1:<port> on THIS host —
+#         a remote adb server would bind that port in the emulator container,
+#         unreachable from fd-dev). The test-sshd bridge + adb-reverse therefore
+#         live on fd-dev (below), same as the legacy path.
+#     remote — ANDROID_ADB_SERVER_SOCKET=tcp:mobissh-emulator:5037. flutter/adb
+#         transparently use the container's adb server; the test-sshd bridge is
+#         the socat INSIDE the container and `adb reverse` lands there. Good for
+#         `adb devices` / install / `flutter devices`, but flutter integration
+#         VM-service forwarding is NOT reachable from fd-dev (see above) — so the
+#         end-to-end integration test uses `connect` mode.
+#
+#   EMU_CONTAINER=0 → legacy path: emulator as a process inside fd-dev via
+#   emulator-ctl.sh (CPU-pinned). Kept for environments without the container.
+#
+# Network bridge (connect mode / legacy):
 #   emulator 127.0.0.1:2222 --(adb reverse)--> fd-dev 127.0.0.1:2222
 #                           --(socat)--------> test-sshd:22
 #
-# Requires: a booted emulator, the `mobissh` docker network with test-sshd up,
-# socat, the Flutter SDK. Run from the repo root.
+# Requires: the `mobissh` docker network with test-sshd up, socat, adb, the
+# Flutter SDK. Run from the repo root.
 #
 # Exit 0 = connect reached `connected`. Exit 1 = deadlock / failure. Exit 2 = setup error.
 
@@ -35,12 +59,15 @@ PROXY2_PID_FILE="${MOBISSH_TMPDIR}/connect-test-socat2.pid"
 SSHD_HOST="test-sshd"
 SSHD_PORT="22"
 BRIDGE_PORT="2222"
-# Optional second bridge port → same test-sshd. When set, the emulator can
-# reach a SECOND distinct host:port:username tuple (127.0.0.1:$BRIDGE_PORT2),
-# which the multi-session lifecycle test needs to create two real sessions
-# without a second sshd container. Off by default so the connect smoke is
-# unaffected.
 BRIDGE_PORT2="${BRIDGE_PORT2:-}"
+
+# Emulator location + adb transport (see header).
+EMU_CONTAINER="${EMU_CONTAINER:-1}"
+ADB_MODE="${ADB_MODE:-connect}"
+# The container exposes the guest adbd on 5556 (5555 is the emulator's own
+# loopback bind and cannot be re-listened without colliding with it).
+EMU_CONTAINER_NAME="${EMU_CONTAINER_NAME:-mobissh-emulator}"
+EMU_ADBD_ENDPOINT="${EMU_ADBD_ENDPOINT:-${EMU_CONTAINER_NAME}:5556}"
 
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
@@ -76,38 +103,62 @@ cleanup() {
 GRANT_WATCHER_PID=""
 trap cleanup EXIT
 
-# 1. Ensure the always-on, CPU-ISOLATED emulator is up. emulator-ctl.sh boots it
-#    iff needed and REUSES a live one (no reboot/contention), pinned to its own
-#    cores (EMU_CORES) so the build below — pinned to the OTHER cores — never
-#    starves it (the swiftshader crash was CPU contention with Gradle).
-if ! "${REPO_ROOT}/scripts/emulator-ctl.sh" ensure; then
-  err "emulator-ctl ensure failed — see /tmp/mobissh/logs/emulator-detached.log"
-  exit 2
-fi
-DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
-if [[ -z "$DEVICE" ]]; then
-  err "no online adb device after emulator-ctl ensure"
-  exit 2
+# 1. Bring up the emulator (container or legacy) and resolve its adb device id.
+if [[ "$EMU_CONTAINER" == "1" ]]; then
+  log "using DEDICATED emulator container ($EMU_CONTAINER_NAME), ADB_MODE=$ADB_MODE"
+  if ! "${REPO_ROOT}/scripts/emu-container-ctl.sh" ensure; then
+    err "emu-container-ctl ensure failed — see: scripts/emu-container-ctl.sh logs"
+    exit 2
+  fi
+  if [[ "$ADB_MODE" == "remote" ]]; then
+    # flutter/adb talk to the container's adb server; the test-sshd bridge is the
+    # socat INSIDE the container, so no fd-dev socat is started below.
+    export ANDROID_ADB_SERVER_SOCKET="tcp:${EMU_CONTAINER_NAME}:5037"
+    log "ANDROID_ADB_SERVER_SOCKET=$ANDROID_ADB_SERVER_SOCKET"
+    adb wait-for-device 2>/dev/null || true
+    DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
+  else
+    # connect mode: fd-dev's own adb server connects to the exposed guest adbd.
+    log "adb connect ${EMU_ADBD_ENDPOINT}"
+    secs=0
+    DEVICE=""
+    while (( secs < 60 )); do
+      adb connect "$EMU_ADBD_ENDPOINT" 2>/dev/null || true
+      if adb -s "$EMU_ADBD_ENDPOINT" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | grep -q 1; then
+        DEVICE="$EMU_ADBD_ENDPOINT"
+        break
+      fi
+      sleep 2; secs=$((secs + 2))
+    done
+  fi
+  if [[ -z "${DEVICE:-}" ]]; then
+    err "no online device from emulator container (mode=$ADB_MODE)"
+    err "diagnostics: scripts/emu-container-ctl.sh status ; scripts/emu-container-ctl.sh logs"
+    exit 2
+  fi
+else
+  # Legacy: emulator as a process inside fd-dev, CPU-pinned. emulator-ctl.sh
+  # boots iff needed and reuses a live one; emulator-maintain keeps /data healthy.
+  log "using LEGACY in-fd-dev emulator (EMU_CONTAINER=0)"
+  if ! "${REPO_ROOT}/scripts/emulator-ctl.sh" ensure; then
+    err "emulator-ctl ensure failed — see /tmp/mobissh/logs/emulator-detached.log"
+    exit 2
+  fi
+  DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
+  if [[ -z "$DEVICE" ]]; then
+    err "no online adb device after emulator-ctl ensure"
+    exit 2
+  fi
+  if ! "${REPO_ROOT}/scripts/emulator-maintain.sh" ensure-healthy; then
+    err "emulator-maintain reported low storage it could not recover — install may fail"
+  fi
+  DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
+  if [[ -z "$DEVICE" ]]; then
+    err "no online adb device after emulator-maintain"
+    exit 2
+  fi
 fi
 log "device: $DEVICE"
-
-# 1b. Keep the guest /data partition healthy BEFORE the build installs the app +
-#     its instrumentation APK. Installs accumulate across the long-lived reused
-#     emulator and eventually fail with INSTALL_FAILED_INSUFFICIENT_STORAGE (and
-#     even uninstall starts returning DELETE_FAILED_INTERNAL_ERROR). This does a
-#     cheap clean (uninstall + trim) every run and only escalates to a -wipe-data
-#     rotation when free space is below EMU_MIN_FREE_MB. Idempotent + CPU-pinned.
-#     Non-fatal: if maintenance can't run we still try the install.
-if ! "${REPO_ROOT}/scripts/emulator-maintain.sh" ensure-healthy; then
-  err "emulator-maintain reported low storage it could not recover — install may fail"
-fi
-# The device id can change across a rotation (wipe re-boots the emulator).
-DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
-if [[ -z "$DEVICE" ]]; then
-  err "no online adb device after emulator-maintain"
-  exit 2
-fi
-log "device after maintenance: $DEVICE"
 
 # 2. Verify test-sshd reachable from this container.
 if ! getent hosts "$SSHD_HOST" >/dev/null 2>&1; then
@@ -117,28 +168,34 @@ if ! getent hosts "$SSHD_HOST" >/dev/null 2>&1; then
 fi
 log "$SSHD_HOST resolves OK"
 
-# 3. socat proxy: fd-dev 127.0.0.1:$BRIDGE_PORT → test-sshd:22.
-#    (adb reverse can only target the adb-server host's loopback, and
-#    test-sshd is a sibling container not on loopback — so we bounce through
-#    socat.)
-log "starting socat 127.0.0.1:${BRIDGE_PORT} → ${SSHD_HOST}:${SSHD_PORT}"
-socat "TCP-LISTEN:${BRIDGE_PORT},fork,reuseaddr,bind=127.0.0.1" "TCP:${SSHD_HOST}:${SSHD_PORT}" &
-echo $! > "$PROXY_PID_FILE"
-sleep 1
-
-# 4. adb reverse: emulator 127.0.0.1:$BRIDGE_PORT → fd-dev 127.0.0.1:$BRIDGE_PORT.
-log "adb reverse tcp:${BRIDGE_PORT}"
-adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT}" "tcp:${BRIDGE_PORT}"
-
-# 3b/4b. Optional second bridge (same test-sshd, different loopback port) so a
-#        second distinct host:port:username session is reachable on-device.
-if [[ -n "$BRIDGE_PORT2" ]]; then
-  log "starting socat 127.0.0.1:${BRIDGE_PORT2} → ${SSHD_HOST}:${SSHD_PORT}"
-  socat "TCP-LISTEN:${BRIDGE_PORT2},fork,reuseaddr,bind=127.0.0.1" "TCP:${SSHD_HOST}:${SSHD_PORT}" &
-  echo $! > "$PROXY2_PID_FILE"
+# 3./4. Bridge + reverse. In `remote` mode the container's own socat already
+#       bridges 2222→test-sshd and `adb reverse` lands there, so we skip the
+#       fd-dev socat. In connect/legacy mode the reverse binds on fd-dev, so we
+#       start the fd-dev socat and reverse here.
+if [[ "$EMU_CONTAINER" == "1" && "$ADB_MODE" == "remote" ]]; then
+  log "remote adb mode: test-sshd bridge is the container's socat; adb reverse tcp:${BRIDGE_PORT}"
+  adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT}" "tcp:${BRIDGE_PORT}"
+  if [[ -n "$BRIDGE_PORT2" ]]; then
+    adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT2}" "tcp:${BRIDGE_PORT}"
+  fi
+else
+  log "starting socat 127.0.0.1:${BRIDGE_PORT} → ${SSHD_HOST}:${SSHD_PORT}"
+  socat "TCP-LISTEN:${BRIDGE_PORT},fork,reuseaddr,bind=127.0.0.1" "TCP:${SSHD_HOST}:${SSHD_PORT}" &
+  echo $! > "$PROXY_PID_FILE"
   sleep 1
-  log "adb reverse tcp:${BRIDGE_PORT2}"
-  adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT2}" "tcp:${BRIDGE_PORT2}"
+  log "adb reverse tcp:${BRIDGE_PORT}"
+  adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT}" "tcp:${BRIDGE_PORT}"
+
+  # Optional second bridge (same test-sshd, different loopback port) so a second
+  # distinct host:port:username session is reachable on-device.
+  if [[ -n "$BRIDGE_PORT2" ]]; then
+    log "starting socat 127.0.0.1:${BRIDGE_PORT2} → ${SSHD_HOST}:${SSHD_PORT}"
+    socat "TCP-LISTEN:${BRIDGE_PORT2},fork,reuseaddr,bind=127.0.0.1" "TCP:${SSHD_HOST}:${SSHD_PORT}" &
+    echo $! > "$PROXY2_PID_FILE"
+    sleep 1
+    log "adb reverse tcp:${BRIDGE_PORT2}"
+    adb -s "$DEVICE" reverse "tcp:${BRIDGE_PORT2}" "tcp:${BRIDGE_PORT2}"
+  fi
 fi
 
 # 4b. POST_NOTIFICATIONS grant-watcher. The app requests this at first
@@ -158,13 +215,12 @@ log "starting POST_NOTIFICATIONS grant-watcher"
 GRANT_WATCHER_PID=$!
 
 # 5. Run the integration test on the device. This builds + installs a debug
-#    APK carrying the integration driver and runs connect_smoke_test.dart,
-#    which fills the form (127.0.0.1:2222 / testuser / testpass), taps Connect,
-#    accepts the host key, and asserts the terminal screen mounts.
-# Pin the build/test to the BUILD cores (off the emulator's EMU_CORES=0-3) so
-# Gradle can't starve the emulator's swiftshader render threads (the crash root).
-# #971: ALSO nice + ionice it so, even during a spike, the emulator wins the CPU
-# + IO scheduler — belt-and-suspenders over the core pin.
+#    APK carrying the integration driver and runs the test, which fills the form
+#    (127.0.0.1:2222 / testuser / testpass), taps Connect, accepts the host key,
+#    and asserts the terminal screen mounts.
+# The BUILD runs in fd-dev. Pin it to the BUILD cores + nice/ionice so, even
+# though the emulator now lives in its own container, a build spike still yields
+# CPU/IO (belt-and-suspenders; the container's KVM guest is already isolated).
 BUILD_CORES="${BUILD_CORES:-4-11}"
 TASKSET=()
 if command -v ionice >/dev/null 2>&1; then TASKSET+=(ionice -c 3); fi
