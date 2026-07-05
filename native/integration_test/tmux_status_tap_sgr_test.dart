@@ -31,7 +31,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'package:mobissh/diagnostics/gesture_trace.dart';
-import 'package:mobissh/diagnostics/session_byte_recorder.dart';
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/sessions.dart';
