@@ -2041,6 +2041,28 @@ class GhosttyTerminalView extends ConsumerStatefulWidget {
   static final Map<String, GhosttyResizeCoalescer> debugResizeCoalescers =
       <String, GhosttyResizeCoalescer>{};
 
+  /// #971 gesture-tap-sgr: the live per-session [SessionByteRecorder], exposed so
+  /// the on-emulator gesture test can assert whether a status-bar TAP under tmux
+  /// mouse mode actually SENT an SGR mouse report (`snapshotSentSgrTrace()`
+  /// non-empty). The device telemetry for the "tmux switch does nothing" bug
+  /// showed `sentSgrTraceEventCount: 0` while every gesture logged as a
+  /// `longpress-select` — i.e. the tap resolved as a selection and no SGR click
+  /// reached tmux. This mirrors [debugControllers] / [debugResizeCoalescers]: set
+  /// in initState, cleared on dispose. Test-only — no production code reads it.
+  /// (The same recorder is also reachable via `byteRecorderFor(sessionId)`; this
+  /// keyed handle mirrors the other seams for symmetry.)
+  @visibleForTesting
+  static final Map<String, SessionByteRecorder> debugByteRecorders =
+      <String, SessionByteRecorder>{};
+
+  /// #971 gesture-tap-sgr: the REAL measured flterm cell size per sessionId
+  /// (logical px), exposed so the gesture test can map a status-bar window label
+  /// column to the exact tap pixel (`padding + (col+0.5)*cellWidth`,
+  /// `padding + (row+0.5)*cellHeight`). Set every build where the cell size is
+  /// measured, cleared on dispose. Test-only — no production code reads it.
+  @visibleForTesting
+  static final Map<String, Size> debugCellSizes = <String, Size>{};
+
   @override
   ConsumerState<GhosttyTerminalView> createState() =>
       _GhosttyTerminalViewState();
@@ -2344,6 +2366,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // #767 (test-only): expose this controller so the on-emulator integration
       // test can assert the in-terminal URL detection tracks scroll/eviction.
       GhosttyTerminalView.debugControllers[widget.sessionId] = controller;
+      // #971 (test-only): expose the sent-SGR recorder so the gesture test can
+      // assert a status-bar tap actually forwarded an SGR mouse click to tmux.
+      GhosttyTerminalView.debugByteRecorders[widget.sessionId] = _byteRecorder;
       // #767: register the built-in URL pattern so the terminal detects URLs
       // over its OWN cells and maintains the anchors across scroll / wrap /
       // resize / eviction. #767 Slice B: the pattern carries no fill — the URL's
@@ -3440,6 +3465,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (GhosttyTerminalView.debugControllers[widget.sessionId] == _controller) {
       GhosttyTerminalView.debugControllers.remove(widget.sessionId);
     }
+    // #971 (test-only): drop the debug byte-recorder + cell-size handles.
+    GhosttyTerminalView.debugByteRecorders.remove(widget.sessionId);
+    GhosttyTerminalView.debugCellSizes.remove(widget.sessionId);
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
     _controller?.onResize = null;
@@ -3547,6 +3575,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #734: remember the live cell size so a long-press URL menu can build its
     // highlight rects with the same geometry the router maps touches with.
     _lastCellSize = cellSize;
+    // #971 (test-only): publish the measured cell size so the gesture test can
+    // convert a status-bar label column to the exact tap pixel.
+    GhosttyTerminalView.debugCellSizes[widget.sessionId] = cellSize;
     // #755/#767/#955: URLs + paths are DETECTED + ANCHORED inside the terminal
     // (the `url`/`path` structured-text patterns over its own cells). The VISUAL
     // is the right-edge GUTTER mark ([GhosttyGutterLayer]) coloured with the live
