@@ -2118,6 +2118,16 @@ class GhosttyTerminalView extends ConsumerStatefulWidget {
   @visibleForTesting
   static final Map<String, Size> debugCellSizes = <String, Size>{};
 
+  /// #975 grid-race: the grid the gesture router sees THIS frame, as
+  /// `[cols, rows, lastSentCols, lastSentRows]`. `rows` is the live keyboard-
+  /// aware mirror; `lastSentRows` is what the status-tap SGR actually targets
+  /// (`_gridRows`). Exposed so the keyboard-race repro can log, at tap time, the
+  /// grid the SGR lands in versus the visible (keyboard-reduced) viewport — the
+  /// divergence IS the bug (SGR row misses tmux's real status row). Set every
+  /// build, cleared on dispose. Test-only — no production code reads it.
+  @visibleForTesting
+  static final Map<String, List<int>> debugGrids = <String, List<int>>{};
+
   @override
   ConsumerState<GhosttyTerminalView> createState() =>
       _GhosttyTerminalViewState();
@@ -2370,29 +2380,28 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // damage/frame path dropped the redraw. Coalesced to once per frame.
         _forceTerminalRepaint();
       };
-      // Grid resize -> PTY resize. flterm reports (cols, rows); the proxy's
-      // pixel sizes default to 0 (the task isolate only needs cols/rows). Also
-      // mirror (cols, rows) so the #692 gesture router can map touch -> cell.
+      // Grid resize. flterm reports (cols, rows) from its OWN layout; we RECORD
+      // it for the replay harness but do NOT let it write _cols/_rows or the PTY.
       controller.onResize = (cols, rows) {
-        // Mirror the live grid SYNCHRONOUSLY (the touch->cell map reads
-        // `_cols`/`_rows` for selection/URL geometry, so they must track
-        // flterm's real render grid the instant it changes).
-        _cols = cols;
-        _rows = rows;
         // #790: record the live viewport grid so the replay harness can lay out
         // the captured byte stream at the SAME cols×rows the bug occurred at.
         _byteRecorder.recordGrid(cols, rows);
-        // #922: the PTY resize is NO LONGER driven from flterm's onResize. flterm
-        // fires onResize from its OWN layout, which under the soft-keyboard
-        // show/hide animation RACES — the device capture (2026-06-25T18-09-02)
-        // showed it settling BACK to the pre-keyboard tall size (grid=58x57) even
-        // though the visible box was keyboard-reduced (597px ≈ 34 rows), so tmux
-        // kept a 57-row grid and drew its status bar off-screen below the
-        // keyboard; the status-tap then missed. The authoritative size is now
-        // computed from the laid-out (keyboard-reduced) box in the LayoutBuilder
-        // ([_submitKeyboardAwareGrid] → the SAME #903 coalescer). flterm's grid
-        // here is only the gesture-geometry mirror. The #767 in-terminal URL
-        // re-detect still runs on the controller's own notify cycle.
+        // #975: flterm's onResize is NO LONGER a writer of _cols/_rows (nor the
+        // PTY). It USED to mirror (cols, rows) here synchronously, but flterm
+        // fires onResize from its own layout, which under the soft-keyboard
+        // show/hide animation RACES and can settle BACK to the pre-keyboard tall
+        // size (device capture 2026-06-25T18-09-02: grid=58x57 while the visible
+        // box was keyboard-reduced to ~34 rows). That stale write CLOBBERED the
+        // keyboard-aware mirror, and once [_submitKeyboardAwareGrid]'s
+        // `_lastSubmittedGridRows` guard had latched the correct size it could not
+        // re-correct — leaving `_rows` (the gutter-selection row clamp + gesture
+        // geometry) and the status-tap target stale vs the VISIBLE viewport (the
+        // "selection cut off at the keyboard line" + "status tap wrong row"
+        // symptoms). The SINGLE SOURCE OF TRUTH for _cols/_rows AND the PTY grid
+        // is now the keyboard-aware grid computed from the laid-out (keyboard-
+        // reduced) box in the LayoutBuilder ([_submitKeyboardAwareGrid] → the
+        // #903 coalescer). The #767 in-terminal URL re-detect still runs on the
+        // controller's own notify cycle.
       };
       // PTY output bytes -> terminal. The subscription lives on this state so
       // dispose() cancels it.
@@ -2762,8 +2771,23 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     final proxy = _proxy;
     if (proxy == null) return;
     proxy.sendResize(cols, rows);
+    final changed = cols != _lastSentCols || rows != _lastSentRows;
     _lastSentCols = cols;
     _lastSentRows = rows;
+    // #975: the gesture router + gutter-select layer read _lastSentCols/
+    // _lastSentRows (the grid the status-tap SGR targets) and _cols/_rows from
+    // THIS widget's build. _sendResize runs off the #903 coalescer's settle Timer
+    // (and the #702/#970 resync/nudge timers) — OUTSIDE the build/notify cycle,
+    // and plain terminal output does NOT rebuild this widget (_onControllerChanged
+    // only setState's on a mouse-mode / selection CHANGE). So after a keyboard-
+    // toggle resize SETTLES, the router kept a STALE last-sent grid and a status
+    // tap targeted the OLD status row (tmux had already reflowed) → no window
+    // switch (#975 "tap wrong row"). Rebuild when the sent grid changes so the
+    // tap/selection map to tmux's CURRENT grid. Cheap + can't loop (the
+    // LayoutBuilder's _submitKeyboardAwareGrid guard no-ops an unchanged grid, so
+    // this never re-triggers a send). Never called during build (Timer/stream
+    // callbacks only), so setState is safe here.
+    if (changed && mounted) setState(() {});
   }
 
   /// #717: focus the terminal ONCE per connect so flterm scroll/interaction is
@@ -3523,6 +3547,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #971 (test-only): drop the debug byte-recorder + cell-size handles.
     GhosttyTerminalView.debugByteRecorders.remove(widget.sessionId);
     GhosttyTerminalView.debugCellSizes.remove(widget.sessionId);
+    GhosttyTerminalView.debugGrids.remove(widget.sessionId);
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
     _controller?.onResize = null;
@@ -3692,12 +3717,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     _lastSubmittedGridCols = cols;
     _lastSubmittedGridRows = rows;
+    // #975: mirror the keyboard-aware grid into _cols/_rows NOW (synchronous
+    // plain-field writes during layout are legal — no setState). This is the
+    // SOLE writer of the mirror since flterm's onResize no longer clobbers it, so
+    // the gesture router / gutter-select layer read the visible-viewport grid on
+    // THIS frame instead of lagging a frame behind (they used to get flterm's
+    // synchronous onResize write). The coalesced PTY SEND stays deferred to a
+    // post-frame (it may schedule a Timer + later setState via the send seam).
+    _cols = cols;
+    _rows = rows;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // Mirror the live grid synchronously (the gesture map reads _cols/_rows),
-      // then coalesce the PTY send exactly as flterm's onResize did (#903).
-      _cols = cols;
-      _rows = rows;
       _byteRecorder.recordGrid(cols, rows);
       _resizeCoalescer.submit(cols, rows);
       gtrace('ghostty-kbgrid: cols=$cols rows=$rows box=${box.height.round()}');
@@ -3710,6 +3740,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     required Size cellSize,
     required Color highlightColor,
   }) {
+    // #975 (test-only): publish the grid the router will map gestures with this
+    // frame so the keyboard-race repro can see the SGR target vs the visible box.
+    GhosttyTerminalView.debugGrids[widget.sessionId] =
+        <int>[_cols, _rows, _lastSentCols, _lastSentRows];
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
