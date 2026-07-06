@@ -189,6 +189,26 @@ probe_gpu() {
   fi
 }
 
+# After boot, force the animation scales ON so the soft-keyboard (IME) inset
+# ANIMATES on show/hide instead of snapping. WHY (#971): this AVD ships with
+# `animator_duration_scale` UNSET, and on this system image an unset value
+# resolves to 0 (animations off) — so the IME inset jumps 0 → full in a single
+# frame. The InsetsController's IME show/hide animation is timed by the animator
+# duration scale (NOT window/transition scale), so an explicit 1.0 is what makes
+# `WindowInsets`/`viewInsets.bottom` transition over ~200-300ms (~14 rendered
+# frames at 60Hz), letting integration tests stage a keyboard-animation resize
+# race. Re-applied every boot because the container runs `-read-only`: global
+# settings live in the throwaway /data overlay and are lost on restart.
+enable_ime_animation() {
+  log "forcing animation scales ON (IME inset must animate, not snap — #971)"
+  "$ADB" shell settings put global window_animation_scale 1.0 || true
+  "$ADB" shell settings put global transition_animation_scale 1.0 || true
+  "$ADB" shell settings put global animator_duration_scale 1.0 || true
+  local a
+  a="$("$ADB" shell settings get global animator_duration_scale 2>/dev/null | tr -d '\r' || true)"
+  log "animator_duration_scale now = ${a:-unknown} (1.0 = IME slide animates)"
+}
+
 start_adb_server
 if [[ "$EMU_GPU" == "host" ]]; then
   start_xorg || err "Xorg startup failed — -gpu host will fail; surfacing emulator error"
@@ -200,6 +220,7 @@ if ! wait_booted; then
   "$ADB" devices || true
 else
   probe_gpu
+  enable_ime_animation
 fi
 
 log "emulator container ready — blocking on emulator process (pid $EMU_PID)"
