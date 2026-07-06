@@ -1,35 +1,34 @@
 // tmux_status_tap_keyboard_repro_test.dart — the +112 device repro, second
 // attempt. The prior A/B (tmux_status_tap_detection_ab_test.dart) switched fine
-// in BOTH detection states and could NOT reproduce. Its analysis:
-//   (a) the gutter did NOT shift the tap column (sentSgrCol == intendedCol+1),
-//   (b) detection never anchored the tmux STATUS row (anchors=0),
-//   (c) telemetry is self-consistent ONLY IF the click COLUMN/ROW lands on the
-//       wrong cell — a layout/sizing problem, not detection tap-routing.
-// The harness LACKED the two device factors this test ADDS:
-//   1. a RAISED soft keyboard (so the visible box shrinks and the grid row count
-//      can diverge from what tmux was last told — the #903/#922 sizing state),
-//   2. REAL URLs/paths in the terminal BODY (so detection actually anchors,
-//      `controller.anchors` > 0 — matching why the device user runs detection ON).
+// in BOTH detection states and could NOT reproduce (anchors=0, gutter did not
+// shift the column). This harness adds the two device factors it LACKED:
+//   1. REAL URLs/paths in the terminal BODY (so detection actually anchors —
+//      `controller.anchors` > 0, matching why the device user runs detection ON),
+//   2. a RAISED soft keyboard: on this emulator the IME inset is persistently up
+//      (viewInsets.bottom ~= 883 throughout), so every tap here is a keyboard-UP
+//      status-bar tap — the #903/#922 state (logged per tap so it is visible).
 //
-// It taps window 1's status-bar label at the VISIBLE BOTTOM of the (possibly
-// keyboard-shrunk) terminal box — exactly where the device user taps the status
-// bar — in FOUR phases: {detection OFF, ON} × {keyboard DOWN, UP}. For each it
-// logs the MECHANISM:
+// It repeatedly taps window 1's status-bar label at the VISIBLE BOTTOM of the
+// terminal box — exactly where the device user taps the status bar — ALTERNATING
+// detection OFF/ON, ALWAYS re-landing on window 0 first, and for each tap logs the
+// MECHANISM:
+//   - landed (did we re-land on w0), preMarker/postMarker (m0/m1 rendered
+//     before/after the tap) → a REAL switch is m0→m1,
 //   - intended window-1 label COLUMN vs the SENT SGR press COLUMN and ROW,
-//   - tmux's REAL status row = `_gridRows` (the coalescer's lastEmittedRows, the
-//     rows LAST SENT to the PTY) vs the LIVE rendered grid (scrollbar.visible),
-//   - viewInsets.bottom (did the emulator actually raise the keyboard),
-//   - `controller.anchors` count + whether an anchor overlaps the tapped cell,
-//   - whether the window actually switched (visibleRowsText → window-1 marker).
+//   - tmux's REAL status row = gridRows (the coalescer's lastEmittedRows) vs the
+//     LIVE rendered grid (scrollbar.visible),
+//   - sentSgrCount (0 == the tap forwarded NOTHING — swallowed),
+//   - the tap's gesture TRACE TYPE (tap / tap-url-copy / tap-dismiss-selection),
+//   - `urlAtCell` at the ACTUAL mapped cell + anchor count + selection state,
+//   - viewInsets.bottom (keyboard up).
 //
-// KEY QUESTION: with the keyboard raised, does the SENT SGR ROW miss tmux's real
-// status row (sizing desync → tap lands in the body → no switch), and/or does
-// detection swallow the tap (anchor under the tap → copy, sentSgrCount==0)? The
-// numbers are shown for every phase so the mechanism is visible even if GREEN.
+// First run's finding (build 399b885): a detection-ON tap on the status cell
+// forwarded ZERO SGR (count=0) while detection-OFF forwarded normally at the SAME
+// cell — the device-bug shape. This run isolates WHY (trace type + selection).
 //
-// RED (bug reproduced) = with keyboard UP + detection ON the tap does NOT switch
-// while keyboard UP + detection OFF switches. GREEN = negative result; the logged
-// numbers say which device factor is still missing.
+// RED (bug reproduced) = a detection-ON tap fails the m0→m1 switch while the
+// detection-OFF taps switch. GREEN = negative result; the per-tap numbers say
+// which factor is still missing.
 //
 // Run: scripts/native-connect-test.sh integration_test/tmux_status_tap_keyboard_repro_test.dart
 
@@ -38,7 +37,6 @@ import 'dart:convert';
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -87,8 +85,8 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'tmux status-tap-to-switch: detection OFF/ON × keyboard DOWN/UP — with body '
-    'anchors and a raised keyboard (the +112 device state)',
+    'tmux status-tap-to-switch, keyboard up + body anchors: detection OFF taps '
+    'switch; does any detection-ON tap forward nothing (the +112 shape)?',
     (tester) async {
       FlutterForegroundTask.initCommunicationPort();
 
@@ -183,8 +181,8 @@ void main() {
       // Two windows with device-like names. Each window BODY carries a real URL
       // and a real absolute path so detection ANCHORS on the content rows (the
       // #971 reason to run detection ON) — the prior harness had NOTHING to
-      // detect (anchors=0). automatic-rename off so the body content doesn't
-      // rewrite the window label.
+      // detect. automatic-rename off so the body content doesn't rewrite the
+      // window label.
       const w0Name = 'w0';
       const w1Name = 'w1';
       const m0 = 'AB_WIN_ZERO_ZZZ';
@@ -203,10 +201,13 @@ void main() {
       await settle();
 
       Future<bool> landOnWindow0() async {
-        send('tmux select-window -t 0\n');
-        for (var i = 0; i < 24; i++) {
-          await tester.pump(const Duration(milliseconds: 250));
-          if (rendered().contains(m0)) return true;
+        for (var attempt = 0; attempt < 3; attempt++) {
+          send('tmux select-window -t 0\n');
+          for (var i = 0; i < 24; i++) {
+            await tester.pump(const Duration(milliseconds: 250));
+            final r = rendered();
+            if (r.contains(m0) && !r.contains(m1)) return true;
+          }
         }
         return false;
       }
@@ -219,28 +220,25 @@ void main() {
       final coalescer = GhosttyTerminalView.debugResizeCoalescers[sessionId];
       expect(coalescer, isNotNull, reason: 'no resize coalescer for the session');
 
-      // Raise the soft keyboard: focus the gesture router (its onTap raises the
-      // IME) AND force TextInput.show for a headless emulator that ignores the
-      // focus-driven show. Pump past the coalescer settle window so the keyboard-
-      // aware grid is the LAST EMITTED size.
-      Future<void> raiseKeyboard() async {
-        final router = find.byType(GhosttyPointerGestureRouter);
-        if (router.evaluate().isNotEmpty) {
-          await tester.tap(router.first, warnIfMissed: false);
-        }
-        await SystemChannels.textInput.invokeMethod('TextInput.show');
-        for (var i = 0; i < 30; i++) {
-          await tester.pump(const Duration(milliseconds: 120));
-        }
+      String whichWindow() {
+        final r = rendered();
+        final has0 = r.contains(m0);
+        final has1 = r.contains(m1);
+        if (has0 && !has1) return 'w0';
+        if (has1 && !has0) return 'w1';
+        if (has0 && has1) return 'both';
+        return 'none';
       }
 
-      // One phase: land on window 0, tap window 1's status label at the VISIBLE
+      // One tap: land on window 0, tap window 1's status label at the VISIBLE
       // BOTTOM of the terminal box, and capture the mechanism.
-      Future<_Phase> runPhase(String label, bool detectionOn) async {
+      Future<_Tap> runTap(String label, bool detectionOn,
+          {String? labelToken, int tokenCharOffset = 0}) async {
         container.read(detectionSettingsProvider.notifier).setEnabled(detectionOn);
         await settle();
         final landed = await landOnWindow0();
         await settle();
+        final preMarker = whichWindow();
 
         final termRect = tester.getRect(
           find.byKey(Key('ghostty-terminal-$sessionId')),
@@ -249,82 +247,113 @@ void main() {
         final rows = visibleRows();
         final last = rows > 0 ? rows - 1 : 0;
         final statusText = controller.visibleRowsText(last, last);
-        // Window 1's clickable label column (prefer the "1:w1" token, fall back
-        // to the bare name).
-        final tokenCol = statusText.indexOf('1:$w1Name');
+        final token = labelToken ?? '1:$w1Name';
+        final tokenCol = statusText.indexOf(token);
         final nameCol = statusText.indexOf(w1Name);
-        final labelCol = tokenCol >= 0 ? tokenCol : nameCol;
+        final baseCol = tokenCol >= 0 ? tokenCol : nameCol;
+        final labelCol = baseCol >= 0 ? baseCol + tokenCharOffset : baseCol;
         expect(labelCol, greaterThanOrEqualTo(0),
-            reason: '[$label] window-1 label not in status row "$statusText"');
+            reason: '[$label] window-1 label ("$token") not in status row '
+                '"$statusText"');
 
         // Tap X: window 1's label cell. Tap Y: the VISIBLE BOTTOM of the terminal
-        // box (where the status bar renders on-device), NOT a computed grid row —
-        // this is the device gesture. If the keyboard shrank the box but tmux's
-        // grid did not shrink, this pixel maps to a BODY row (the #922 desync).
+        // box (where the status bar renders on-device).
         final tapX =
             termRect.left + kGhosttyTerminalPadding + (labelCol + 0.5) * cell.width;
         final tapY = termRect.bottom - cell.height * 0.5;
         final tapAt = Offset(tapX, tapY);
 
-        // Which grid row does this pixel map to (replicating the cell map's
-        // clamp to _gridRows = lastEmittedRows), and what does tmux think its
-        // status row is (= _gridRows, status at bottom).
+        // The grid row/col this pixel maps to (replicating the cell map's clamp to
+        // gridRows/gridCols = lastEmitted), and tmux's real status row (=gridRows).
         final gridRows = coalescer!.lastEmittedRows ?? 0;
+        final gridCols = coalescer.lastEmittedCols ?? 0;
         final rawRow =
             ((tapY - termRect.top - kGhosttyTerminalPadding) / cell.height)
                 .floor();
+        final rawCol =
+            ((tapX - termRect.left - kGhosttyTerminalPadding) / cell.width)
+                .floor();
         final mappedRow =
             gridRows > 0 ? (rawRow + 1).clamp(1, gridRows) : rawRow + 1;
+        final mappedCol =
+            gridCols > 0 ? (rawCol + 1).clamp(1, gridCols) : rawCol + 1;
 
-        // Detection presence AT the tapped cell + globally.
-        final matchAtTap = controller.matchAt(row: mappedRow - 1, col: labelCol);
+        // Detection presence AT the ACTUAL mapped cell (the exact cell _onTapUp
+        // hit-tests via urlAtCell) + at the intended label cell + globally.
+        final matchAtMapped =
+            controller.matchAt(row: mappedRow - 1, col: mappedCol - 1);
+        final matchAtLabel = controller.matchAt(row: mappedRow - 1, col: labelCol);
         final anchorCount = controller.anchors.length;
+        final selBefore = controller.selection != null;
 
         final mq = tester.platformDispatcher.views.first;
         final inset = mq.viewInsets.bottom;
 
         final sgrBefore = recorder!.snapshotSentSgrTrace();
-        final gLogBefore = gestureLogSnapshot().length;
+        final gLogBefore = gestureLogSnapshot();
 
         // The gesture under test: a discrete tap (the _onTapUp path).
         await tester.tapAt(tapAt);
         await settle();
 
         final sgrAfter = recorder.snapshotSentSgrTrace();
-        final newSgr = sgrAfter.length > sgrBefore.length
-            ? sgrAfter.sublist(sgrBefore.length)
-            : const <Map<String, Object?>>[];
+        // The SGR ring evicts by AGE and capacity (kSentSgrRecorderMaxEvents),
+        // so once saturated `sgrAfter.length == sgrBefore.length` even though new
+        // reports were added (old ones aged out) — a length-delta then yields
+        // nothing. Diff by CONTENT (b64) so the tap's real SGR is captured, and
+        // decode the last press from that content diff.
+        final beforeKeys = sgrBefore.map((e) => '${e['tMs']}:${e['b64']}').toSet();
+        final newSgr = sgrAfter
+            .where((e) => !beforeKeys.contains('${e['tMs']}:${e['b64']}'))
+            .toList(growable: false);
         final (sentCol, sentRow) = _lastSgrPress(newSgr);
-        final switched = rendered().contains(m1);
+        final postMarker = whichWindow();
+        final selAfter = controller.selection != null;
 
-        final gLog = gestureLogSnapshot();
-        final newG = gLog.length > gLogBefore
-            ? gLog.sublist(gLogBefore)
-            : const <String>[];
+        // The gesture ring can saturate (constant length), so diff by CONTENT,
+        // not length — find events present now but not before, and classify the
+        // tap's trace TYPE (the leading token: tap / tap-url-copy / etc).
+        final gLogAfter = gestureLogSnapshot();
+        final beforeSet = gLogBefore.toSet();
+        final newG =
+            gLogAfter.where((e) => !beforeSet.contains(e)).toList(growable: false);
+        String? traceType;
+        for (final e in newG) {
+          // Format: "<hh:mm:ss.mmm> <type> pos=(...) ...".
+          final parts = e.split(' ');
+          if (parts.length >= 2) traceType = parts[1];
+        }
 
-        final phase = _Phase(
+        final t = _Tap(
           label: label,
           detectionOn: detectionOn,
-          landedOnW0: landed,
+          landed: landed,
+          preMarker: preMarker,
+          postMarker: postMarker,
           statusText: statusText,
           intendedCol: labelCol,
+          mappedCol: mappedCol,
+          mappedRow: mappedRow,
           sentSgrCol: sentCol,
           sentSgrRow: sentRow,
           sentSgrCount: newSgr.length,
           gridRows: gridRows,
+          gridCols: gridCols,
           liveRows: controller.scrollbar.visible,
-          mappedRow: mappedRow,
           viewInsetBottom: inset,
-          switched: switched,
-          matchAtTapPattern: matchAtTap?.patternId,
           anchorCount: anchorCount,
+          matchAtMapped: matchAtMapped?.patternId,
+          matchAtLabel: matchAtLabel?.patternId,
+          selBefore: selBefore,
+          selAfter: selAfter,
+          traceType: traceType,
           cellW: cell.width,
           cellH: cell.height,
           boxW: termRect.width,
           boxH: termRect.height,
         );
 
-        debugPrint('KBREPRO[$label] ${phase.summary()}');
+        debugPrint('KBREPRO[$label] ${t.summary()}');
         debugPrint('KBREPRO[$label] statusRow="$statusText" tapAt=$tapAt');
         for (final s in _sgrStrings(newSgr)) {
           debugPrint('KBREPRO[$label] sentSGR: $s');
@@ -332,99 +361,124 @@ void main() {
         for (final g in newG) {
           debugPrint('KBREPRO[$label] gesture: $g');
         }
-        return phase;
+        return t;
       }
 
-      // Phase 1+2: keyboard DOWN (baseline — the prior harness state).
-      final offDown = await runPhase('OFF_KBDOWN', false);
-      final onDown = await runPhase('ON_KBDOWN', true);
-
-      // Raise the keyboard, then re-run OFF/ON with the shrunk viewport.
-      await raiseKeyboard();
-      final offUp = await runPhase('OFF_KBUP', false);
-      final onUp = await runPhase('ON_KBUP', true);
-
-      debugPrint('KBREPRO SUMMARY OFF_KBDOWN: ${offDown.summary()}');
-      debugPrint('KBREPRO SUMMARY ON_KBDOWN:  ${onDown.summary()}');
-      debugPrint('KBREPRO SUMMARY OFF_KBUP:   ${offUp.summary()}');
-      debugPrint('KBREPRO SUMMARY ON_KBUP:    ${onUp.summary()}');
-      debugPrint('KBREPRO DIFF sentSgrRow: offDown=${offDown.sentSgrRow} '
-          'onDown=${onDown.sentSgrRow} offUp=${offUp.sentSgrRow} '
-          'onUp=${onUp.sentSgrRow} | gridRows: offDown=${offDown.gridRows} '
-          'onDown=${onDown.gridRows} offUp=${offUp.gridRows} onUp=${onUp.gridRows} '
-          '| switched: offDown=${offDown.switched} onDown=${onDown.switched} '
-          'offUp=${offUp.switched} onUp=${onUp.switched} '
-          '| anchors: offDown=${offDown.anchorCount} onDown=${onDown.anchorCount} '
-          'offUp=${offUp.anchorCount} onUp=${onUp.anchorCount} '
-          '| inset onUp=${onUp.viewInsetBottom}');
-
-      // CONTROL: keyboard-DOWN, detection OFF must switch (else setup/timing).
-      expect(offDown.switched, isTrue,
-          reason: 'CONTROL (kb down, detection OFF): the status tap did not '
-              'switch to window 1 — setup/timing, not the bug. '
-              'OFF_KBDOWN=${offDown.summary()}');
-
-      // Whether the keyboard actually rose. If the emulator produced no inset,
-      // the keyboard-UP phases did not exercise the sizing state — that is the
-      // negative result to report, not a pass.
-      final keyboardRose =
-          onUp.viewInsetBottom > 0 || offUp.viewInsetBottom > 0;
-
-      if (!keyboardRose) {
-        debugPrint('KBREPRO NEGATIVE: emulator produced NO keyboard inset '
-            '(viewInsets.bottom==0 in both KBUP phases) — the raised-keyboard '
-            'sizing state was NOT exercised. Missing device factor: a real IME '
-            'inset that shrinks the viewport. The keyboard-DOWN A/B matched the '
-            'prior negative result (both switched).');
-        // Do not assert the repro on a state we never reached.
-        expect(offUp.switched || onDown.switched, isTrue,
-            reason: 'sanity: at least one non-control phase should have behaved');
-        return;
+      // Alternate OFF/ON taps, always re-landing on w0. If detection ON ever
+      // fails the m0→m1 switch while OFF taps switch, that is the +112 repro.
+      final taps = <_Tap>[];
+      final plan = <(String, bool)>[
+        ('OFF_1', false),
+        ('ON_1', true),
+        ('OFF_2', false),
+        ('ON_2', true),
+        ('ON_3', true),
+        ('OFF_3', false),
+      ];
+      for (final (lbl, det) in plan) {
+        taps.add(await runTap(lbl, det));
       }
 
-      // CONTROL for the keyboard-UP state: OFF must still switch with the
-      // keyboard raised (else the harness cannot tap the status bar at all in
-      // this state and the ON comparison is meaningless).
-      expect(offUp.switched, isTrue,
-          reason: 'kb UP, detection OFF: the status tap did not switch even with '
-              'detection OFF — the harness cannot hit the status bar in the '
-              'keyboard-up state (sizing missed for BOTH states), so the ON/OFF '
-              'comparison is inconclusive. OFF_KBUP=${offUp.summary()} '
-              'ON_KBUP=${onUp.summary()}');
+      // ATTEMPT #3 — the ONE detection-dependent branch in _onTapUp is the
+      // `urlAtCell` swallow: a tap on a cell carrying a detected match COPIES it
+      // and forwards NO SGR (no window switch). That can only bite a status tap
+      // if detection ANCHORS the tmux STATUS row. So make window 1's LABEL itself
+      // a detectable absolute path and re-tap it: if matchAtLabel becomes
+      // non-null AND the tap fails to switch, that IS the +112 repro. If
+      // matchAtLabel stays null, detection structurally never anchors the status
+      // row and the swallow cannot fire on a status tap — a decisive finding.
+      const w1Path = '/etc/hostname';
+      send("tmux set -g status-right ''\n");
+      await settle(4);
+      send("tmux set -g status-left ''\n");
+      await settle(4);
+      send('tmux set-window-option -t 1 automatic-rename off\n');
+      await settle(4);
+      send('tmux rename-window -t 1 $w1Path\n');
+      await settle();
+      // Tap a few cells INTO the path (past "1:") so the tapped cell is squarely
+      // inside the detectable token, not the "1:" index prefix.
+      final pathTap = await runTap('ON_PATHLABEL', true,
+          labelToken: '1:$w1Path', tokenCharOffset: 4);
+      taps.add(pathTap);
 
-      // REPRO: keyboard UP + detection ON must ALSO switch. RED here = the +112
-      // bug reproduced. The phase summaries show WHY: either sentSgrRow missed
-      // gridRows (sizing desync under detection) or sentSgrCount==0 with a
-      // non-null matchAtTap (detection swallowed the tap as a copy).
+      for (final t in taps) {
+        debugPrint('KBREPRO SUMMARY ${t.label}: ${t.summary()}');
+      }
+      debugPrint('KBREPRO PATHLABEL: statusText="${pathTap.statusText}" '
+          'matchAtLabel=${pathTap.matchAtLabel} '
+          'matchAtMapped=${pathTap.matchAtMapped} '
+          'anchors=${pathTap.anchorCount} '
+          'sentSgrRow=${pathTap.sentSgrRow} switched pre=${pathTap.preMarker} '
+          'post=${pathTap.postMarker}');
+
+      bool switched(_Tap t) =>
+          t.landed && t.preMarker == 'w0' && t.postMarker == 'w1';
+
+      final offTaps = taps.where((t) => !t.detectionOn).toList();
+      final onTaps = taps.where((t) => t.detectionOn).toList();
+      final offSwitched = offTaps.where(switched).length;
+      final onSwitched = onTaps.where(switched).length;
+      final onSwallowed =
+          onTaps.where((t) => t.sentSgrCount == 0).map((t) => t.label).toList();
+      debugPrint('KBREPRO RESULT: OFF switched $offSwitched/${offTaps.length}, '
+          'ON switched $onSwitched/${onTaps.length}, '
+          'ON forwarded-nothing(count=0): $onSwallowed');
+
+      // CONTROL: detection OFF taps must switch (else setup/timing — not the bug).
+      // Require the landing to have worked for the OFF taps we count.
+      final offLanded = offTaps.where((t) => t.landed && t.preMarker == 'w0');
+      expect(offLanded.isNotEmpty, isTrue,
+          reason: 'CONTROL: no detection-OFF tap even re-landed on window 0 — '
+              'setup/timing problem, cannot evaluate the bug');
+      expect(offLanded.every(switched), isTrue,
+          reason: 'CONTROL (detection OFF): a status tap that started on window 0 '
+              'did not switch to window 1 — setup/timing, not the bug. '
+              'OFF taps: ${offTaps.map((t) => t.summary()).join(" || ")}');
+
+      // REPRO: every detection-ON tap that re-landed on window 0 must ALSO switch.
+      // RED here = the +112 bug reproduced. The per-tap summaries show WHY:
+      // sentSgrCount==0 (tap forwarded nothing), the traceType (url-copy /
+      // dismiss-selection), or sentSgrRow != gridRows (sizing miss).
+      final onLanded = onTaps.where((t) => t.landed && t.preMarker == 'w0');
+      expect(onLanded.isNotEmpty, isTrue,
+          reason: 'no detection-ON tap re-landed on window 0 — inconclusive');
       expect(
-        onUp.switched,
+        onLanded.every(switched),
         isTrue,
-        reason: '+112 REPRO (keyboard UP, detection ON): the status-bar tap did '
-            'NOT switch to window 1 while keyboard-UP + detection-OFF switched '
-            'fine. MECHANISM — OFF_KBUP=${offUp.summary()} '
-            'ON_KBUP=${onUp.summary()}',
+        reason: '+112 REPRO (keyboard up, detection ON): a status-bar tap that '
+            'started on window 0 did NOT switch to window 1 while detection-OFF '
+            'taps switched fine. MECHANISM per ON tap: '
+            '${onTaps.map((t) => t.summary()).join(" || ")}',
       );
     },
   );
 }
 
-class _Phase {
-  _Phase({
+class _Tap {
+  _Tap({
     required this.label,
     required this.detectionOn,
-    required this.landedOnW0,
+    required this.landed,
+    required this.preMarker,
+    required this.postMarker,
     required this.statusText,
     required this.intendedCol,
+    required this.mappedCol,
+    required this.mappedRow,
     required this.sentSgrCol,
     required this.sentSgrRow,
     required this.sentSgrCount,
     required this.gridRows,
+    required this.gridCols,
     required this.liveRows,
-    required this.mappedRow,
     required this.viewInsetBottom,
-    required this.switched,
-    required this.matchAtTapPattern,
     required this.anchorCount,
+    required this.matchAtMapped,
+    required this.matchAtLabel,
+    required this.selBefore,
+    required this.selAfter,
+    required this.traceType,
     required this.cellW,
     required this.cellH,
     required this.boxW,
@@ -433,29 +487,39 @@ class _Phase {
 
   final String label;
   final bool detectionOn;
-  final bool landedOnW0;
+  final bool landed;
+  final String preMarker;
+  final String postMarker;
   final String statusText;
   final int intendedCol;
+  final int mappedCol;
+  final int mappedRow;
   final int? sentSgrCol;
   final int? sentSgrRow;
   final int sentSgrCount;
   final int gridRows;
+  final int gridCols;
   final int liveRows;
-  final int mappedRow;
   final double viewInsetBottom;
-  final bool switched;
-  final String? matchAtTapPattern;
   final int anchorCount;
+  final String? matchAtMapped;
+  final String? matchAtLabel;
+  final bool selBefore;
+  final bool selAfter;
+  final String? traceType;
   final double cellW;
   final double cellH;
   final double boxW;
   final double boxH;
 
   String summary() =>
-      'det=$detectionOn switched=$switched | intendedCol=$intendedCol '
+      'det=$detectionOn landed=$landed pre=$preMarker post=$postMarker '
+      '| intendedCol=$intendedCol mappedCol=$mappedCol mappedRow=$mappedRow '
       'sentSgrCol=$sentSgrCol sentSgrRow=$sentSgrRow (count=$sentSgrCount) '
-      '| gridRows=$gridRows liveRows=$liveRows mappedRow=$mappedRow '
-      '| anchors=$anchorCount matchAtTap=$matchAtTapPattern '
+      'trace=$traceType '
+      '| gridRows=$gridRows gridCols=$gridCols liveRows=$liveRows '
+      '| anchors=$anchorCount matchMapped=$matchAtMapped matchLabel=$matchAtLabel '
+      'sel=$selBefore→$selAfter '
       '| inset=${viewInsetBottom.toStringAsFixed(0)} '
       'cell=${cellW.toStringAsFixed(1)}x${cellH.toStringAsFixed(1)} '
       'box=${boxW.toStringAsFixed(0)}x${boxH.toStringAsFixed(0)}';
