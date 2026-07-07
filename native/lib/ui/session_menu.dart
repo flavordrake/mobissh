@@ -722,6 +722,15 @@ class _DetectionGlyph extends StatelessWidget {
   }
 }
 
+/// Session IDs the owner has EXCLUDED from "Reconnect all" (owner request:
+/// reconnect-heavy workflow). A per-session opt-out — the row's ⊗ toggle — so the
+/// mass reconnect SKIPS these while leaving each session in the list (it can
+/// still be reconnected individually via its own Reconnect button). Ephemeral:
+/// read by [_ReconnectAllRow], toggled by [_SessionRow]. A recovered session just
+/// leaves the reconnect group; a stale id here is harmless (the filter no-ops).
+final reconnectExcludedProvider =
+    StateProvider<Set<String>>((ref) => <String>{});
+
 class _SessionRow extends ConsumerWidget {
   const _SessionRow({
     required this.entry,
@@ -764,6 +773,8 @@ class _SessionRow extends ConsumerWidget {
   ) {
     final theme = Theme.of(context);
     final subtitle = _subtitleFor(theme, state, error);
+    // Whether THIS session is opted out of "Reconnect all" (owner request).
+    final excluded = ref.watch(reconnectExcludedProvider).contains(entry.id);
     final tile = ListTile(
       key: Key('session-menu-row-${entry.id}'),
       // ACTIVE session standout (owner ask): a primary-tinted fill via the
@@ -884,21 +895,49 @@ class _SessionRow extends ConsumerWidget {
               );
             },
           ),
-          if (sessionCanReconnect(state))
+          // Reconnect — for droppable states AND for a CONNECTED session (owner
+          // request: force-reconnect an active session, e.g. to pick up a
+          // control-mode toggle that only applies on reconnect). reconnect(id)
+          // routes through the notifier → _reviveFromProfile, which re-issues
+          // connect in ANY state (the same path the control-mode toggle uses);
+          // it (re)starts the foreground isolate first so a last-session drop
+          // that stopped the service still comes back.
+          if (sessionCanReconnect(state) ||
+              state == SshSessionState.connected)
             IconButton(
               key: Key('session-menu-reconnect-${entry.id}'),
-              tooltip: 'Reconnect',
+              tooltip: state == SshSessionState.connected
+                  ? 'Reconnect (force)'
+                  : 'Reconnect',
               visualDensity: VisualDensity.compact,
               // Monochrome replay glyph (mirrors the recents reconnect icon).
               icon: const Icon(Icons.replay),
-              // Re-enter the connect path for THIS entry from held params
-              // (#817). Routed through the notifier so the foreground task
-              // isolate is (re)started before the reconnect command is sent —
-              // disconnecting the last session stops the service, and a bare
-              // proxy.reconnect() would buffer against a dead isolate forever.
-              // The ✕ remains "forget"; this is "bring it back".
               onPressed: () =>
                   ref.read(sessionsProvider.notifier).reconnect(entry.id),
+            ),
+          // ⊗ Exclude this session from "Reconnect all" (owner request). Shown
+          // only while it's IN the reconnect group (a droppable state). Distinct
+          // from the ✕ below (which CLOSES/forgets the session) — this KEEPS the
+          // session, it just makes the mass reconnect skip it; toggle again (⊕)
+          // to re-include. It stays individually reconnectable via its own
+          // Reconnect button.
+          if (sessionCanReconnect(state))
+            IconButton(
+              key: Key('session-menu-exclude-reconnect-${entry.id}'),
+              tooltip: excluded
+                  ? 'Include in Reconnect all'
+                  : 'Exclude from Reconnect all',
+              visualDensity: VisualDensity.compact,
+              icon: Icon(
+                excluded ? Icons.add_circle_outline : Icons.highlight_off,
+              ),
+              onPressed: () => ref
+                  .read(reconnectExcludedProvider.notifier)
+                  .update((s) {
+                    final next = <String>{...s};
+                    if (!next.remove(entry.id)) next.add(entry.id);
+                    return next;
+                  }),
             ),
           IconButton(
             key: Key('session-menu-close-${entry.id}'),
@@ -1048,8 +1087,16 @@ class _ReconnectAllRowState extends ConsumerState<_ReconnectAllRow> {
 
   @override
   Widget build(BuildContext context) {
+    // Owner request: sessions the user ⊗-excluded are SKIPPED by "Reconnect
+    // all" (they stay in the list, reconnectable individually). Watching the set
+    // rebuilds this row as exclusions toggle so the count + visibility track it.
+    final excluded = ref.watch(reconnectExcludedProvider);
     final dropped = widget.entries
-        .where((e) => sessionCanReconnect(e.proxy.data.state))
+        .where(
+          (e) =>
+              sessionCanReconnect(e.proxy.data.state) &&
+              !excluded.contains(e.id),
+        )
         .toList();
     if (dropped.isEmpty) return const SizedBox.shrink();
     return Padding(

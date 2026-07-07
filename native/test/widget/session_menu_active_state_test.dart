@@ -223,7 +223,7 @@ void main() {
     );
 
     testWidgets(
-      'connected session → Files + ✕, no Reconnect, no status subtitle',
+      'connected session → Files + ✕ + Reconnect (force), no ⊗, no subtitle',
       (tester) async {
         final w = make();
         final a = _add(w.container, 'host-a');
@@ -237,8 +237,16 @@ void main() {
 
         expect(find.byKey(Key('session-menu-files-${a.id}')), findsOneWidget);
         expect(find.byKey(Key('session-menu-close-${a.id}')), findsOneWidget);
+        // Owner request: a CONNECTED session now offers Reconnect (force) — e.g.
+        // to pick up a control-mode toggle that only applies on reconnect.
         expect(
           find.byKey(Key('session-menu-reconnect-${a.id}')),
+          findsOneWidget,
+        );
+        // The ⊗ exclude-from-Reconnect-all toggle is ONLY for the reconnect
+        // group (droppable states); a connected session isn't in it.
+        expect(
+          find.byKey(Key('session-menu-exclude-reconnect-${a.id}')),
           findsNothing,
         );
         expect(
@@ -298,17 +306,24 @@ void main() {
         _drive(w.pair, b, SshSessionState.failed, error: 'just b');
         await _pumpFrames(tester);
 
-        // b shows Reconnect; a and c do NOT (no leakage).
+        // b (dropped) is in the reconnect group → it shows the ⊗ exclude toggle;
+        // a and c (still connected) are NOT in the group → no ⊗ (no leakage).
+        // Reconnect itself now shows on all three (force on the connected two),
+        // so the isolation is read via the group-only ⊗ toggle.
         expect(
           find.byKey(Key('session-menu-reconnect-${b.id}')),
           findsOneWidget,
         );
         expect(
-          find.byKey(Key('session-menu-reconnect-${a.id}')),
+          find.byKey(Key('session-menu-exclude-reconnect-${b.id}')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(Key('session-menu-exclude-reconnect-${a.id}')),
           findsNothing,
         );
         expect(
-          find.byKey(Key('session-menu-reconnect-${c.id}')),
+          find.byKey(Key('session-menu-exclude-reconnect-${c.id}')),
           findsNothing,
         );
         // a and c keep their Files affordance (still connected).
@@ -437,6 +452,51 @@ void main() {
             .map((c) => c['sessionId'] as String)
             .toSet();
         expect(reconnects, {a.id, b.id});
+      },
+    );
+
+    testWidgets(
+      '⊗ excludes a session from Reconnect all (skipped, kept, still reconnectable)',
+      (tester) async {
+        final w = make();
+        final a = _add(w.container, 'host-a');
+        final b = _add(w.container, 'host-b');
+
+        final commands = <Map<String, dynamic>>[];
+        final sub = w.pair.taskSide.incoming.listen(commands.add);
+        addTearDown(sub.cancel);
+
+        await tester.pumpWidget(_host(container: w.container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
+
+        // Drop both → both are in the reconnect group.
+        _drive(w.pair, a, SshSessionState.failed, error: 'x');
+        _drive(w.pair, b, SshSessionState.disconnected);
+        await _pumpFrames(tester);
+
+        // Exclude a via its ⊗ toggle.
+        await tester.tap(
+          find.byKey(Key('session-menu-exclude-reconnect-${a.id}')),
+        );
+        await _pumpFrames(tester);
+        // a is KEPT in the list (not closed).
+        expect(find.byKey(Key('session-menu-row-${a.id}')), findsOneWidget);
+
+        // Reconnect all now reconnects ONLY b.
+        await tester.tap(find.byKey(const Key('session-menu-reconnect-all')));
+        await _pumpFrames(tester);
+        final reconnects = commands
+            .where((c) => c['kind'] == SshTaskCommandKind.reconnect.name)
+            .map((c) => c['sessionId'] as String)
+            .toSet();
+        expect(reconnects, {b.id});
+
+        // a stays individually reconnectable via its own button.
+        expect(
+          find.byKey(Key('session-menu-reconnect-${a.id}')),
+          findsOneWidget,
+        );
       },
     );
   });
