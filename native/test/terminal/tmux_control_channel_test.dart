@@ -20,19 +20,23 @@ void main() {
       expect(cmd, endsWith('\n'));
     });
 
-    test('entryCommand is attach-OR-create (#913) — never a bare attach', () {
-      // `new-session -A -s mobissh` attaches to an existing `mobissh` session if
-      // present, else CREATES it. A bare `attach` fails with "no sessions" on a
-      // host with no running tmux (e.g. a fresh test-sshd), so the rollout entry
-      // MUST be attach-or-create. Lock the exact string.
+    test('entryCommand attaches the EXISTING session, create-fallback (#906)', () {
+      // Owner request: control mode must match the PERSISTENT session so it
+      // follows moves between mobile + laptop. `tmux -CC attach` grabs the
+      // most-recent session (the same one `tmux attach` gives on the laptop);
+      // the `|| new-session -A -s main` keeps it robust on a fresh host with no
+      // server (a bare `attach` would fail "no sessions"). Was
+      // `new-session -A -s mobissh`, which forced a SEPARATE empty session → the
+      // device "zero gestures" (nothing to switch, not the owner's windows).
       expect(
         text(TmuxControlChannel.entryCommand),
-        'tmux -CC new-session -A -s mobissh\n',
+        'tmux -CC attach 2>/dev/null || tmux -CC new-session -A -s main\n',
       );
+      // Still safe on a host with no running tmux — the fallback CREATES one.
       expect(
         text(TmuxControlChannel.entryCommand),
-        isNot(contains('attach')),
-        reason: 'a bare `attach` fails "no sessions" on a host without tmux',
+        contains('new-session -A'),
+        reason: 'must create-or-attach so a fresh host does not fail "no sessions"',
       );
     });
 

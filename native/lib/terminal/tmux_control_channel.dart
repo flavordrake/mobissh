@@ -145,11 +145,18 @@ class TmuxControlChannel {
   }
 
   /// The bytes to write into the shell stdin once it opens, to ENTER control
-  /// mode. `new-session -A -s mobissh` attaches to an existing `mobissh` session
-  /// if present (idempotent across reconnects) or creates it, all under `-CC`.
-  /// A trailing newline submits the line to the login shell.
-  static Uint8List get entryCommand =>
-      Uint8List.fromList(utf8.encode('tmux -CC new-session -A -s mobissh\n'));
+  /// mode. ATTACH the owner's EXISTING (most-recent) session — the SAME one they
+  /// attach on their laptop (`tmux attach`) — so a persistent session follows
+  /// them across mobile↔laptop moves and control mode operates on the windows
+  /// they actually have. Falls back to creating/attaching `main` ONLY when no
+  /// server/session exists yet (first ever connect); stderr is dropped so the
+  /// "no server running" message never reaches the `-CC` stdout parser. This
+  /// replaces the old `new-session -A -s mobissh`, which forced a SEPARATE empty
+  /// session → the device "zero gestures" (nothing to switch, not your windows).
+  /// A trailing newline submits the line to the login shell. (#906)
+  static Uint8List get entryCommand => Uint8List.fromList(
+    utf8.encode('tmux -CC attach 2>/dev/null || tmux -CC new-session -A -s main\n'),
+  );
 
   /// Build the `refresh-client -C cols,rows` command line — the SINGLE resize
   /// primitive in control mode (issue #909). The host writes these bytes to the
