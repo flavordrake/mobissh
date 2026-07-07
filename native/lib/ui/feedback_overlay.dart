@@ -258,10 +258,23 @@ Future<Uint8List> _defaultScreenshotCapturer(
 /// overlay stamps it into every report AND the Settings version row (#897-adj)
 /// displays the exact same string so the owner can verify/copy his running
 /// build without a bug-report upload.
+/// Recover the PUBSPEC build number from `package_info`'s buildNumber (which is
+/// the Android *versionCode*). Flutter's per-ABI split sets
+/// `versionCode = abiCode*1000 + build` (arm64 → 2000+build), so a build-114
+/// arm64 APK reported "0.1.10+2114" — confusing the owner into thinking a build
+/// was stale. The last 3 digits are the real build; strip the ABI thousands.
+/// A non-split (fat) APK or already-small value (< 1000) passes through, and a
+/// non-numeric value is returned as-is. Pure — unit-testable.
+String displayBuildNumber(String raw) {
+  final n = int.tryParse(raw.trim());
+  if (n == null) return raw;
+  return (n >= 1000 ? n % 1000 : n).toString();
+}
+
 Future<String> resolveBuildVersion() async {
   try {
     final pkg = await PackageInfo.fromPlatform();
-    final appVersion = '${pkg.version}+${pkg.buildNumber}';
+    final appVersion = '${pkg.version}+${displayBuildNumber(pkg.buildNumber)}';
     final sha = pkg.buildSignature;
     return formatFeedbackVersion(appVersion, sha);
   } catch (err) {

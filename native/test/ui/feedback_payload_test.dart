@@ -12,6 +12,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/ui/feedback_overlay.dart';
 
 void main() {
+  group('displayBuildNumber (strips the ABI-split versionCode offset)', () {
+    test('recovers the pubspec build from a per-ABI versionCode', () {
+      expect(displayBuildNumber('2114'), '114'); // arm64 (2000 + 114)
+      expect(displayBuildNumber('2113'), '113');
+      expect(displayBuildNumber('1114'), '114'); // armeabi-v7a
+      expect(displayBuildNumber('4114'), '114'); // x86_64
+    });
+    test('passes a non-split / small build through unchanged', () {
+      expect(displayBuildNumber('114'), '114');
+      expect(displayBuildNumber('64'), '64');
+    });
+    test('returns non-numeric input as-is', () {
+      expect(displayBuildNumber('abc'), 'abc');
+      expect(displayBuildNumber(''), '');
+    });
+  });
+
   group('formatFeedbackVersion', () {
     test('combines build + hash into [build hash]', () {
       expect(

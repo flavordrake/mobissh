@@ -67,7 +67,14 @@ class DefaultCrashEnvironment implements CrashEnvironment {
     String deviceModel = '';
     try {
       final pkg = await PackageInfo.fromPlatform();
-      appVersion = '${pkg.version}+${pkg.buildNumber}';
+      // Strip Flutter's per-ABI versionCode offset (arm64 → 2000+build) so the
+      // crash version matches the pubspec build — mirrors displayBuildNumber
+      // in feedback_overlay (kept inline to avoid a diagnostics→UI import).
+      final vc = int.tryParse(pkg.buildNumber.trim());
+      final build = vc == null
+          ? pkg.buildNumber
+          : (vc >= 1000 ? vc % 1000 : vc).toString();
+      appVersion = '${pkg.version}+$build';
       buildSha = pkg.buildSignature.isEmpty ? '' : pkg.buildSignature;
     } catch (err) {
       debugPrint('[CrashEnvironment] PackageInfo failed: $err');
