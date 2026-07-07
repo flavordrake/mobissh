@@ -298,6 +298,20 @@ class SshSessionProxy {
     );
   }
 
+  /// Scroll the tmux `-CC` scrollback view by [deltaLines] (#906 Stage 2) —
+  /// positive scrolls BACK into history (a downward swipe), negative toward live.
+  /// The host advances the channel's scroll offset and captures the matching
+  /// history window; the rendered response arrives on [output] as the scrollback
+  /// view. A no-op on the task side unless control mode is ON for this session.
+  void sendTmuxScroll(int deltaLines) {
+    gateway.send(
+      SshTmuxScrollCommand(
+        sessionId: sessionId,
+        deltaLines: deltaLines,
+      ).toJson(),
+    );
+  }
+
   /// Request a directory listing over SFTP (#559). The matching
   /// [SftpListingEvent] (or [SftpErrorEvent]) arrives on [sftpEvents] with the
   /// same [requestId].

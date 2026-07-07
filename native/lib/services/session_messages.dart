@@ -92,6 +92,14 @@ enum SshTaskCommandKind {
   /// atomic control-command path. Keeping the index lookup TASK-SIDE means the UI
   /// never needs the window list and a status tap maps with no pixel guessing.
   tmuxGesture,
+
+  /// UI → task: a tmux `-CC` SCROLLBACK gesture (#906 Stage 2). Carries a signed
+  /// line delta (>0 = back into history, <0 = toward live). The host advances the
+  /// channel's scroll offset and requests the matching `capture-pane` history
+  /// window, whose rendered response IS the scrollback view — control mode emits
+  /// no `%output` for copy-mode scroll, so the client must capture it. A no-op
+  /// unless control mode is ON. NEVER used by the scrape (flag-OFF) path.
+  tmuxScroll,
 }
 
 /// The kind of tmux window gesture an [SshTmuxGestureCommand] carries (#911).
@@ -321,6 +329,11 @@ sealed class SshTaskCommand {
           ),
           statusCol: (json['statusCol'] as int?) ?? 0,
           statusCols: (json['statusCols'] as int?) ?? 0,
+        );
+      case SshTaskCommandKind.tmuxScroll:
+        return SshTmuxScrollCommand(
+          sessionId: sessionId,
+          deltaLines: (json['deltaLines'] as int?) ?? 0,
         );
     }
   }
@@ -743,6 +756,31 @@ class SshTmuxGestureCommand extends SshTaskCommand {
         'gesture': gesture.name,
         'statusCol': statusCol,
         'statusCols': statusCols,
+      };
+}
+
+/// UI → task: a tmux `-CC` SCROLLBACK gesture (#906 Stage 2). [deltaLines] is a
+/// signed line delta — positive scrolls BACK into history (a downward swipe),
+/// negative scrolls toward live. The host advances the channel's scroll offset
+/// and requests the matching `capture-pane` history window; the rendered response
+/// is the scrollback view. Per-session; a no-op unless control mode is ON.
+class SshTmuxScrollCommand extends SshTaskCommand {
+  const SshTmuxScrollCommand({
+    required String sessionId,
+    required this.deltaLines,
+  }) : super(sessionId);
+
+  /// Signed line delta: >0 = older/back, <0 = toward live.
+  final int deltaLines;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.tmuxScroll;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'sessionId': sessionId,
+        'deltaLines': deltaLines,
       };
 }
 

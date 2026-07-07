@@ -168,6 +168,23 @@ class TmuxControlChannel {
   /// tests of the block-correlation FIFO.
   int get pendingCommandCount => _pending.length;
 
+  /// Lines the scrollback view is offset ABOVE the live bottom (#906 Stage 2).
+  /// 0 = live (following `%output`); >0 = showing captured history that many
+  /// lines back. Only [frameScroll] mutates it; a window switch resets it.
+  int _scrollOffset = 0;
+  int get scrollOffset => _scrollOffset;
+
+  /// Whether the grid is currently showing a scrolled-back HISTORY view (#906
+  /// Stage 2). While true, live `%output` is NOT rendered (it would clobber the
+  /// history window at the bottom, like copy-mode freezing the view); rendering
+  /// resumes — with a fresh live capture — when the user scrolls back to bottom.
+  bool get scrolledBack => _scrollOffset > 0;
+
+  /// Hard cap on how far back a swipe can scroll (#906 Stage 2). tmux clamps to
+  /// the real history itself (a too-old `-S` just returns the oldest lines), so
+  /// this only bounds the offset integer from running away on a long fling.
+  static const int _maxScrollOffset = 100000;
+
   /// The ordered windows the channel knows about (Part C, #911), in tmux
   /// index/status order. A snapshot — mutating it does not affect the channel.
   List<TmuxWindow> get windows => List<TmuxWindow>.unmodifiable(
@@ -271,6 +288,30 @@ class TmuxControlChannel {
     return controlCommand(line);
   }
 
+  /// Advance the scrollback view by [deltaLines] and frame the `capture-pane`
+  /// that renders it (#906 Stage 2). [deltaLines] > 0 scrolls BACK into history
+  /// (older; a downward swipe); < 0 scrolls toward live. [rows] is the current
+  /// viewport height so the captured window is exactly one screen tall.
+  ///
+  /// At offset 0 (scrolled back to the bottom) this captures the LIVE visible
+  /// screen (`capture-pane -p -e -J`) so the current state repaints and `%output`
+  /// rendering resumes; otherwise it captures the `rows`-tall history window
+  /// ending [scrollOffset] lines above the bottom (`-S -offset -E -offset+rows-1`,
+  /// tmux line numbers: 0 = top of the visible screen, negatives reach history).
+  /// Always registers a capture block so the correlated response renders.
+  Uint8List frameScroll(int deltaLines, int rows) {
+    final r = rows < 1 ? 1 : rows;
+    _scrollOffset = (_scrollOffset + deltaLines).clamp(0, _maxScrollOffset);
+    _pending.add(_PendingKind.capture);
+    if (_scrollOffset == 0) {
+      // Snapped to live — repaint the current visible screen; %output resumes.
+      return capturePaneCommand();
+    }
+    final start = -_scrollOffset;
+    final end = start + r - 1;
+    return capturePaneRangeCommand(start, end);
+  }
+
   /// The `next-window` control-command line (Part C, #911) — a horizontal swipe
   /// RIGHT advances to the next window. No window-list lookup needed; tmux steps
   /// the session's active window itself and pushes `%session-window-changed`.
@@ -371,9 +412,15 @@ class TmuxControlChannel {
             // capture its screen to repaint — the same request iTerm2 makes on a
             // window switch.
             captureRequested = true;
+            // #906 Stage 2: a switch lands at the new window's LIVE bottom.
+            _scrollOffset = 0;
           }
         case PaneOutput():
-          if (_shouldRender(ev.paneId)) render.add(ev.data);
+          // #906 Stage 2: while showing a scrolled-back history view, freeze the
+          // live view — dropping `%output` keeps the history window from being
+          // clobbered at the bottom (copy-mode semantics). Snapping to live
+          // re-captures + resumes.
+          if (!scrolledBack && _shouldRender(ev.paneId)) render.add(ev.data);
         case WindowClose():
           _paneWindow.removeWhere((_, w) => w == ev.windowId);
           // #911: drop the closed window from the order + names so a tap can't

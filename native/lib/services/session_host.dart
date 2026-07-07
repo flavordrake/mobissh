@@ -332,6 +332,8 @@ class SessionHost {
         _handleControlCommand(cmd);
       case SshTmuxGestureCommand():
         _handleTmuxGesture(cmd);
+      case SshTmuxScrollCommand():
+        _handleTmuxScroll(cmd);
     }
   }
 
@@ -382,6 +384,27 @@ class SessionHost {
     if (line == null) return; // no window known yet — nothing to target.
     try {
       hosted.shell?.send(tmux.frameControl(line));
+    } catch (_) {
+      // Channel closed; reconnect re-syncs.
+    }
+  }
+
+  /// #906 Stage 2: a vertical swipe under control mode. Advance the channel's
+  /// scroll offset by the signed line delta and send the matching `capture-pane`
+  /// history window (or a live re-capture when snapped back to bottom). The
+  /// rendered response — correlated through the capture FIFO — IS the scrollback
+  /// view (control mode emits no `%output` for copy-mode scroll). A no-op unless
+  /// control mode is ON. The viewport height comes from the last resize so the
+  /// captured window is exactly one screen tall.
+  void _handleTmuxScroll(SshTmuxScrollCommand cmd) {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) return;
+    final tmux = hosted.tmuxChannel;
+    if (tmux == null) return; // flag OFF — ignore.
+    if (cmd.deltaLines == 0) return;
+    final rows = hosted.metrics.lastRows ?? 24;
+    try {
+      hosted.shell?.send(tmux.frameScroll(cmd.deltaLines, rows));
     } catch (_) {
       // Channel closed; reconnect re-syncs.
     }
