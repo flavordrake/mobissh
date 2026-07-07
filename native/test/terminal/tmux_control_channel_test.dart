@@ -62,6 +62,156 @@ void main() {
     });
   });
 
+  group('capture-pane command builders (#906 Stage 1/2)', () {
+    test('capturePaneCommand is capture-pane -p -e -J, one trailing newline', () {
+      expect(
+        text(TmuxControlChannel.capturePaneCommand()),
+        'capture-pane -p -e -J\n',
+      );
+    });
+
+    test('capturePaneRangeCommand carries -S start -E end (scroll window)', () {
+      expect(
+        text(TmuxControlChannel.capturePaneRangeCommand(-40, -10)),
+        'capture-pane -p -e -S -40 -E -10\n',
+      );
+    });
+
+    test('frameCapture returns the capture line AND registers a pending block', () {
+      final ch = TmuxControlChannel();
+      expect(ch.pendingCommandCount, 0);
+      expect(text(ch.frameCapture()), 'capture-pane -p -e -J\n');
+      expect(ch.pendingCommandCount, 1);
+    });
+
+    test('frameResize/frameControl register a (non-capture) pending block', () {
+      final ch = TmuxControlChannel();
+      expect(text(ch.frameResize(80, 24)), 'refresh-client -C 80,24\n');
+      expect(text(ch.frameControl('next-window')), 'next-window\n');
+      expect(ch.pendingCommandCount, 2);
+    });
+  });
+
+  group('capture-pane response correlation → render (#906 Stage 1)', () {
+    test('ATTACH (%session-changed) requests a capture', () {
+      final ch = TmuxControlChannel();
+      final r = ch.ingest(bytes('%session-changed \$0 main\n'));
+      expect(r.captureRequested, isTrue);
+    });
+
+    test('the capture response block renders (clear + captured rows)', () {
+      final ch = TmuxControlChannel();
+      // Host framed a capture (registers the pending block); tmux answers with a
+      // %begin…%end command-output block carrying the pane rows.
+      ch.frameCapture();
+      final r = ch.ingest(bytes(
+        '%begin 1 7 1\nline one\nline two\n%end 1 7 1\n',
+      ));
+      final out = text(r.renderBytes);
+      expect(out, contains('line one\r\nline two'));
+      // A screen clear precedes the rows so no stale content bleeds through.
+      expect(out, contains('\x1b[2J'));
+    });
+
+    test('tmux STARTUP block (no client command outstanding) does NOT render', () {
+      final ch = TmuxControlChannel();
+      // On entering control mode tmux emits an initial block with an EMPTY queue.
+      final r = ch.ingest(bytes(
+        '\x1bP1000p%begin 1 0 1\n%end 1 0 1\n',
+      ));
+      expect(text(r.renderBytes), isEmpty);
+    });
+
+    test('a NON-capture ack block is discarded (does not render)', () {
+      final ch = TmuxControlChannel();
+      ch.frameResize(80, 24); // pending: other
+      final r = ch.ingest(bytes('%begin 1 3 1\nok\n%end 1 3 1\n'));
+      expect(text(r.renderBytes), isEmpty);
+      expect(ch.pendingCommandCount, 0);
+    });
+
+    test('FIFO order: resize ack then capture render, correlated by order', () {
+      final ch = TmuxControlChannel();
+      // Host sends a resize, then a capture (the switch-repaint ordering).
+      ch.frameResize(80, 24);
+      ch.frameCapture();
+      // First block correlates to the resize (discarded)…
+      final r1 = ch.ingest(bytes('%begin 1 1 1\n%end 1 1 1\n'));
+      expect(text(r1.renderBytes), isEmpty);
+      // …the second to the capture (rendered).
+      final r2 = ch.ingest(bytes('%begin 1 2 1\nCAPTURED\n%end 1 2 1\n'));
+      expect(text(r2.renderBytes), contains('CAPTURED'));
+      expect(ch.pendingCommandCount, 0);
+    });
+
+    test('a %error capture block does not render (failed capture)', () {
+      final ch = TmuxControlChannel();
+      ch.frameCapture();
+      final r = ch.ingest(bytes('%begin 1 4 1\nboom\n%error 1 4 1\n'));
+      expect(text(r.renderBytes), isEmpty);
+    });
+  });
+
+  group('scrollback via capture (#906 Stage 2)', () {
+    test('scroll BACK captures a history window one screen tall', () {
+      final ch = TmuxControlChannel();
+      // Swipe back 10 lines with a 24-row viewport: window is [-10, 13].
+      expect(text(ch.frameScroll(10, 24)), 'capture-pane -p -e -S -10 -E 13\n');
+      expect(ch.scrollOffset, 10);
+      expect(ch.scrolledBack, isTrue);
+    });
+
+    test('further scroll-back moves the window further up', () {
+      final ch = TmuxControlChannel();
+      ch.frameScroll(10, 24);
+      expect(text(ch.frameScroll(5, 24)), 'capture-pane -p -e -S -15 -E 8\n');
+      expect(ch.scrollOffset, 15);
+    });
+
+    test('scrolling to the bottom snaps to a LIVE capture (offset 0)', () {
+      final ch = TmuxControlChannel();
+      ch.frameScroll(10, 24);
+      // Scroll forward past the offset — clamps to 0 and re-captures live.
+      expect(text(ch.frameScroll(-40, 24)), 'capture-pane -p -e -J\n');
+      expect(ch.scrollOffset, 0);
+      expect(ch.scrolledBack, isFalse);
+    });
+
+    test('while scrolled back, live %output is FROZEN (not rendered)', () {
+      final ch = TmuxControlChannel();
+      ch.frameScroll(10, 24); // now scrolled back
+      final r = ch.ingest(bytes('%output %0 LIVE-TAIL\n'));
+      expect(text(r.renderBytes), isEmpty,
+          reason: 'history view must not be clobbered by live output');
+    });
+
+    test('after snapping to live, %output renders again', () {
+      final ch = TmuxControlChannel();
+      ch.frameScroll(10, 24);
+      ch.frameScroll(-10, 24); // back to live
+      final r = ch.ingest(bytes('%output %0 LIVE-AGAIN\n'));
+      expect(text(r.renderBytes), 'LIVE-AGAIN');
+    });
+
+    test('a window switch resets the scroll offset to live bottom', () {
+      final ch = TmuxControlChannel();
+      ch.frameScroll(20, 24);
+      expect(ch.scrolledBack, isTrue);
+      ch.ingest(bytes('%session-window-changed \$0 @1\n'));
+      expect(ch.scrollOffset, 0);
+      expect(ch.scrolledBack, isFalse);
+    });
+
+    test('the scroll capture response renders as the history view', () {
+      final ch = TmuxControlChannel();
+      ch.frameScroll(10, 24); // registers a capture block
+      final r = ch.ingest(bytes(
+        '%begin 1 9 1\nold line 1\nold line 2\n%end 1 9 1\n',
+      ));
+      expect(text(r.renderBytes), contains('old line 1\r\nold line 2'));
+    });
+  });
+
   group('%output → render demux', () {
     test('renders active window %output unescaped to the grid', () {
       final ch = TmuxControlChannel();

@@ -332,6 +332,8 @@ class SessionHost {
         _handleControlCommand(cmd);
       case SshTmuxGestureCommand():
         _handleTmuxGesture(cmd);
+      case SshTmuxScrollCommand():
+        _handleTmuxScroll(cmd);
     }
   }
 
@@ -346,9 +348,12 @@ class SessionHost {
   void _handleControlCommand(SshControlCommand cmd) {
     final hosted = _sessions[cmd.sessionId];
     if (hosted == null) return;
-    if (hosted.tmuxChannel == null) return; // flag OFF — ignore.
+    final tmux = hosted.tmuxChannel;
+    if (tmux == null) return; // flag OFF — ignore.
     try {
-      hosted.shell?.send(TmuxControlChannel.controlCommand(cmd.command));
+      // #906: frame through the channel so the command's `%begin…%end` ack is
+      // registered in the capture-correlation FIFO.
+      hosted.shell?.send(tmux.frameControl(cmd.command));
     } catch (_) {
       // Channel closed mid-command; the next connect re-syncs.
     }
@@ -378,7 +383,28 @@ class SessionHost {
     }
     if (line == null) return; // no window known yet — nothing to target.
     try {
-      hosted.shell?.send(TmuxControlChannel.controlCommand(line));
+      hosted.shell?.send(tmux.frameControl(line));
+    } catch (_) {
+      // Channel closed; reconnect re-syncs.
+    }
+  }
+
+  /// #906 Stage 2: a vertical swipe under control mode. Advance the channel's
+  /// scroll offset by the signed line delta and send the matching `capture-pane`
+  /// history window (or a live re-capture when snapped back to bottom). The
+  /// rendered response — correlated through the capture FIFO — IS the scrollback
+  /// view (control mode emits no `%output` for copy-mode scroll). A no-op unless
+  /// control mode is ON. The viewport height comes from the last resize so the
+  /// captured window is exactly one screen tall.
+  void _handleTmuxScroll(SshTmuxScrollCommand cmd) {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) return;
+    final tmux = hosted.tmuxChannel;
+    if (tmux == null) return; // flag OFF — ignore.
+    if (cmd.deltaLines == 0) return;
+    final rows = hosted.metrics.lastRows ?? 24;
+    try {
+      hosted.shell?.send(tmux.frameScroll(cmd.deltaLines, rows));
     } catch (_) {
       // Channel closed; reconnect re-syncs.
     }
@@ -798,7 +824,10 @@ class SessionHost {
         hosted.refreshCoalescer = RefreshClientCoalescer(
           onSettled: (cols, rows) {
             try {
-              transport.send(TmuxControlChannel.resizeCommand(cols, rows));
+              // #906: frame through the channel so the resize's `%begin…%end` ack
+              // is registered in the capture-correlation FIFO (and can't be
+              // mistaken for a capture response).
+              transport.send(tmux.frameResize(cols, rows));
             } catch (_) {
               // Channel closed; the next connect re-syncs.
             }
@@ -871,9 +900,24 @@ class SessionHost {
               final cols = hosted.metrics.lastCols ?? 80;
               final rows = hosted.metrics.lastRows ?? 24;
               try {
-                hosted.shell?.send(TmuxControlChannel.resizeCommand(cols, rows));
+                // #906: frame through the channel (FIFO ack) so the ordering with
+                // the following capture request is preserved.
+                hosted.shell?.send(tmux.frameResize(cols, rows));
               } catch (_) {
                 // Channel closed mid-switch; the next connect re-syncs.
+              }
+            }
+            // #906 Stage 1: ATTACH or SWITCH → request `capture-pane` so the
+            // active pane's CURRENT screen renders even with no `%output` (tmux
+            // pushes none on attach / an idle switched-to window). Sent AFTER the
+            // switch redraw so the capture ack follows the resize ack in the FIFO.
+            // The correlated response is rendered by a later `ingest` (clear +
+            // write), exactly as a real `-CC` client repaints.
+            if (result.captureRequested) {
+              try {
+                hosted.shell?.send(tmux.frameCapture());
+              } catch (_) {
+                // Channel closed; the next connect re-syncs.
               }
             }
             final render = result.renderBytes;

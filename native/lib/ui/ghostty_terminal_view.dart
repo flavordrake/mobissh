@@ -1495,6 +1495,7 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
     this.controlModeGestures = false,
     this.onWindowSwitch,
     this.onStatusTap,
+    this.onScroll,
   });
 
   /// #911 Part C: when true (the `tmuxControlMode` flag is ON), window switching
@@ -1517,6 +1518,14 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
   /// Called (instead of the SGR click) only when [controlModeGestures] is true
   /// AND the tap landed on the status row.
   final void Function({required int col, required int totalCols})? onStatusTap;
+
+  /// #906 Stage 2: a vertical swipe → scroll the tmux scrollback via a real
+  /// `capture-pane` history request. Called (INSTEAD of the local [_applyScroll])
+  /// only when [controlModeGestures] is true. [deltaLines] is a signed line delta
+  /// — positive scrolls BACK into history (a downward swipe), negative toward
+  /// live. Control mode gets no `%output` for copy-mode scroll, so the local
+  /// scrollback is near-empty; the host captures the history window instead.
+  final void Function(int deltaLines)? onScroll;
 
   /// Whether to intercept touch (the remote has mouse tracking on).
   final bool active;
@@ -1657,6 +1666,31 @@ class _GhosttyPointerGestureRouterState
     _panDy = 0;
     _axis = GhosttySwipeAxis.none;
     _windowSwitchDx = 0;
+    _scrollAccumPx = 0;
+  }
+
+  /// Whether a vertical swipe drives the tmux `-CC` scrollback (#906 Stage 2)
+  /// instead of the local flterm scroll: only under the control-mode flag with a
+  /// wired [onScroll]. The scrape path (flag OFF) keeps [_applyScroll] unchanged.
+  bool get _useControlScroll =>
+      widget.controlModeGestures && widget.onScroll != null;
+
+  /// Accumulated vertical finger travel (px) not yet converted to whole lines
+  /// (#906 Stage 2). Reset on every pan start.
+  double _scrollAccumPx = 0;
+
+  /// Convert a vertical finger delta to whole tmux line scrolls and emit them via
+  /// [onScroll] (#906 Stage 2). A downward swipe (dy > 0) scrolls BACK into
+  /// history (older); upward scrolls toward live. Sub-cell travel accumulates so
+  /// a slow drag still scrolls once it crosses a full cell height.
+  void _controlScroll(double fingerDy) {
+    final ch = widget.cellHeight;
+    if (ch <= 0) return;
+    _scrollAccumPx += fingerDy;
+    final lines = (_scrollAccumPx / ch).truncate();
+    if (lines == 0) return;
+    _scrollAccumPx -= lines * ch;
+    widget.onScroll!(lines);
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
@@ -1678,6 +1712,8 @@ class _GhosttyPointerGestureRouterState
       // far so the first committed update isn't lost.
       if (_axis == GhosttySwipeAxis.horizontal) {
         _windowSwitchDx = _panDx;
+      } else if (_useControlScroll) {
+        _controlScroll(_panDy); // #906 Stage 2: drive the tmux scrollback
       } else {
         _applyScroll(_panDy);
       }
@@ -1686,6 +1722,8 @@ class _GhosttyPointerGestureRouterState
     // Committed: run ONLY the locked axis; the off-axis component is ignored.
     if (_axis == GhosttySwipeAxis.horizontal) {
       _windowSwitchDx += dx; // accumulate for the on-lift window-switch
+    } else if (_useControlScroll) {
+      _controlScroll(dy); // #906 Stage 2: drive the tmux scrollback
     } else {
       _applyScroll(dy); // drive the local scrollback
     }
@@ -3883,6 +3921,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                 statusCols: totalCols,
               );
               // #918: a status-row tap (tmux window select) is user input.
+              _forceTerminalRepaint();
+            },
+            // #906 Stage 2: a vertical swipe scrolls the tmux scrollback via a
+            // real capture-pane history request (control mode emits no %output
+            // for copy-mode scroll, so the local scrollback can't show it).
+            onScroll: (deltaLines) {
+              final proxy = _resolveProxy();
+              if (proxy == null) return;
+              if (proxy.data.state != SshSessionState.connected) return;
+              proxy.sendTmuxScroll(deltaLines);
               _forceTerminalRepaint();
             },
             // #705: long-press-drag drives flterm's LOCAL selection (persists
