@@ -202,6 +202,15 @@ import 'url_action_overlay.dart';
 /// clipboard write is verified end-to-end.
 const bool kBodyTextSelectionEnabled = false;
 
+/// #906 Stage 2 gate: whether a control-mode vertical swipe drives the tmux
+/// `-CC` scrollback (capture-pane history) instead of the local flterm scroll.
+/// OFF until flterm can RENDER a captured history window — the capture
+/// request→response byte path is proven, but flterm's own scrollback +
+/// follow-to-bottom currently bury the captured rows under the live tail, so
+/// wiring the swipe would FREEZE the screen (worse than the local no-op). Flip
+/// to true once the flterm scrollback-view render lands.
+const bool kControlModeScrollRenders = false;
+
 /// Apply the shared armed keybar Ctrl modifier (#728) to a SOFT-KEYBOARD
 /// keystroke flowing through flterm's `controller.onOutput`.
 ///
@@ -3925,14 +3934,23 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             },
             // #906 Stage 2: a vertical swipe scrolls the tmux scrollback via a
             // real capture-pane history request (control mode emits no %output
-            // for copy-mode scroll, so the local scrollback can't show it).
-            onScroll: (deltaLines) {
-              final proxy = _resolveProxy();
-              if (proxy == null) return;
-              if (proxy.data.state != SshSessionState.connected) return;
-              proxy.sendTmuxScroll(deltaLines);
-              _forceTerminalRepaint();
-            },
+            // for copy-mode scroll, so the local scrollback can't show it). GATED
+            // OFF (kControlModeScrollRenders): the capture request→response byte
+            // path is proven, but flterm's grid does not yet DISPLAY a captured
+            // history WINDOW (its own scrollback + follow-to-bottom bury it — a
+            // flterm-internal render change is pending). Until then, wiring this
+            // would FREEZE the screen on a swipe (worse than the harmless local
+            // no-op), so a vertical swipe stays on the local [_applyScroll] path.
+            // Flip the flag to `true` once flterm renders the scrolled capture.
+            onScroll: kControlModeScrollRenders
+                ? (deltaLines) {
+                    final proxy = _resolveProxy();
+                    if (proxy == null) return;
+                    if (proxy.data.state != SshSessionState.connected) return;
+                    proxy.sendTmuxScroll(deltaLines);
+                    _forceTerminalRepaint();
+                  }
+                : null,
             // #705: long-press-drag drives flterm's LOCAL selection (persists
             // after release → Copy reads it), not a tmux SGR drag.
             onSelectionStart: _onSelectionStart,
