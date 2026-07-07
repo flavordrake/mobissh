@@ -1110,10 +1110,19 @@ class _ReconnectAllRowState extends ConsumerState<_ReconnectAllRow> {
         onPressed: () {
           // Route through the notifier so the foreground task isolate is
           // (re)started before each reconnect command — see
-          // SessionsNotifier.reconnect (#817).
+          // SessionsNotifier.reconnect (#817). Each reconnect is fire-and-forget
+          // (_reviveFromProfile), so one session that won't connect can't block
+          // the others.
           final notifier = ref.read(sessionsProvider.notifier);
           for (final e in dropped) {
             notifier.reconnect(e.id);
+          }
+          // Owner request: don't leave the user parked on a session that won't
+          // connect ("reconnect many hangs when one doesn't connect — should
+          // focus first session"). FOCUS the first session immediately so they
+          // land on a live view while the rest reconnect in the background.
+          if (widget.entries.isNotEmpty) {
+            notifier.setActive(widget.entries.first.id);
           }
         },
       ),

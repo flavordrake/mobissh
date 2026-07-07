@@ -408,6 +408,22 @@ void main() {
       expect(ch.selectWindowCommandForStatusCol(5, 90), isNull);
     });
 
+    test('%session-changed RESETS the window list so a tap maps to the NEW '
+        'session, not the stale old one (#4)', () {
+      final ch = threeWindows(); // session A: @0 @1 @2
+      expect(ch.selectWindowCommandForStatusCol(5, 90), 'select-window -t @0');
+      // The client moves to another session (a switch, or a session that started
+      // AFTER connect — the owner's "doesn't respond to gestures" report).
+      ch.ingest(bytes('%session-changed \$1 family\n'));
+      // The OUTGOING session's windows are gone — a tap can't target them.
+      expect(ch.selectWindowCommandForStatusCol(5, 90), isNull);
+      // The incoming session repopulates and maps FRESH to its own windows.
+      ch.ingest(bytes('%window-add @7\n'));
+      ch.ingest(bytes('%window-add @8\n'));
+      expect(ch.selectWindowCommandForStatusCol(20, 90), 'select-window -t @7');
+      expect(ch.selectWindowCommandForStatusCol(80, 90), 'select-window -t @8');
+    });
+
     test('select-window uses the stable id after a lower-index window closes', () {
       final ch = threeWindows();
       ch.ingest(bytes('%window-close @0\n')); // now order is [@1, @2]

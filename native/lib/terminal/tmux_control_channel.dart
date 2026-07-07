@@ -379,8 +379,23 @@ class TmuxControlChannel {
             }
           }
         case SessionChanged():
-          // #906 Stage 1: ATTACH. tmux pushes no screen on `-CC attach`, so ask
+          // #906 Stage 1: ATTACH or a session SWITCH. tmux pushes no screen on
+          // `-CC attach` (or when the client moves to another session), so ask
           // for one — the host sends `capture-pane` and the response renders.
+          // #4 (owner: "a tmux session that started after connect doesn't respond
+          // to gestures — when does control mode wire up?"): RESET the window/pane
+          // maps here. They belong to the OUTGOING session; the incoming session
+          // re-emits its own `%window-add`/`%layout-change`/`%session-window-
+          // changed`, which repopulate them, so a status-bar tap maps to the NEW
+          // session's windows instead of the stale old ones (a tap was silently
+          // targeting a window that no longer exists). Drop the active window +
+          // any scrollback view too so the new session starts clean at its live
+          // bottom.
+          _windowOrder.clear();
+          _paneWindow.clear();
+          _windowNames.clear();
+          _activeWindowId = null;
+          _scrollOffset = 0;
           captureRequested = true;
         case LayoutChange():
           // Record which window each leaf pane belongs to so %output can be

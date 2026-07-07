@@ -452,6 +452,13 @@ void main() {
             .map((c) => c['sessionId'] as String)
             .toSet();
         expect(reconnects, {a.id, b.id});
+        // Owner: reconnect-all FOCUSES the first session so the user lands on a
+        // live view instead of hanging on whichever session won't connect.
+        expect(
+          w.container.read(sessionsProvider).active?.id,
+          a.id,
+          reason: 'reconnect-all focuses the first session',
+        );
       },
     );
 
