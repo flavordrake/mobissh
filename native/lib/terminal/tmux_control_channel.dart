@@ -49,10 +49,21 @@
 // and the on-emulator `integration_test/cc_render_test.dart` parity test.
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'tmux_control_parser.dart';
+
+/// The kind of an outstanding `-CC` control command whose `%begin…%end` response
+/// block the channel is waiting on (#906 Stage 1). tmux emits exactly ONE
+/// command-output block per client command, IN ORDER, so the channel keeps a
+/// FIFO of the kinds it has sent and pops the front on each block: a
+/// [_PendingKind.capture] block carries pane content to RENDER; anything else
+/// ([_PendingKind.other] — resize, gesture, control) is a plain ack we discard.
+/// This is exactly how iTerm2 correlates responses (a queue popped per block),
+/// not a guess at tmux's opaque command number.
+enum _PendingKind { capture, other }
 
 /// The result of [TmuxControlChannel.ingest]: the bytes to render now, plus the
 /// authoritative active-window signal so the host can force a redraw on switch.
@@ -61,6 +72,7 @@ class TmuxIngestResult {
     required this.renderBytes,
     required this.activeWindowChanged,
     required this.exited,
+    this.captureRequested = false,
   });
 
   /// The octal-UNESCAPED bytes of the ACTIVE window's panes, demultiplexed and
@@ -76,6 +88,16 @@ class TmuxIngestResult {
   /// True when `%exit` was seen — control mode ended (tmux detached / server
   /// died). The host treats this like a shell close.
   final bool exited;
+
+  /// True when this chunk warrants a `capture-pane` request — an ATTACH
+  /// (`%session-changed`) or an active-window SWITCH (`%session-window-changed`)
+  /// (#906 Stage 1). Real `-CC` clients (iTerm2) render the pane by REQUESTING
+  /// `capture-pane` and drawing the response themselves; `tmux -CC attach` pushes
+  /// NO initial screen (only `%session-changed`) and a switched-to idle window
+  /// emits no `%output`, so without this the grid stays blank/stale. The host
+  /// responds by sending [TmuxControlChannel.frameCapture]; the correlated
+  /// `%begin…%end` response is rendered (clear + write) back through [ingest].
+  final bool captureRequested;
 }
 
 /// An ordered tmux window the control channel knows about (Part C, #911). Built
@@ -133,6 +155,19 @@ class TmuxControlChannel {
   /// the host's redraw-on-switch wiring.
   int? get activeWindowId => _activeWindowId;
 
+  /// FIFO of the outstanding client commands' kinds (#906 Stage 1). Every
+  /// command the host writes to the `-CC` channel is FIRST registered here (via
+  /// [frameCapture]/[frameCaptureRange]/[frameResize]/[frameControl], in send
+  /// order); each `%begin…%end` block pops the front and — iff it was a
+  /// [_PendingKind.capture] — renders the captured pane. A block that arrives
+  /// with an EMPTY queue is tmux's startup block (or a stray) → ignored. This is
+  /// the order-based correlation real `-CC` clients use.
+  final Queue<_PendingKind> _pending = Queue<_PendingKind>();
+
+  /// The number of outstanding (un-answered) command blocks. Exposed for unit
+  /// tests of the block-correlation FIFO.
+  int get pendingCommandCount => _pending.length;
+
   /// The ordered windows the channel knows about (Part C, #911), in tmux
   /// index/status order. A snapshot — mutating it does not affect the channel.
   List<TmuxWindow> get windows => List<TmuxWindow>.unmodifiable(
@@ -187,6 +222,55 @@ class TmuxControlChannel {
     return Uint8List.fromList(utf8.encode('$trimmed\n'));
   }
 
+  /// The `capture-pane -p -e -J` command line (#906 Stage 1) — dump the ACTIVE
+  /// pane's VISIBLE screen with escape sequences (`-e`, colours) and wrapped
+  /// lines joined (`-J`), to stdout (`-p`) as the command's `%begin…%end`
+  /// response. No `-t` target: `-CC`'s current pane IS the attached session's
+  /// active pane (and follows `select-window`), so this always captures what the
+  /// user is looking at. This is what real `-CC` clients request to paint the
+  /// screen tmux does NOT push on attach.
+  static Uint8List capturePaneCommand() =>
+      controlCommand('capture-pane -p -e -J');
+
+  /// The `capture-pane -p -e -S <start> -E <end>` command line (#906 Stage 2) —
+  /// a WINDOW into the active pane's history, from line [start] to [end]
+  /// (tmux line numbers: 0 is the top visible row, NEGATIVE indices reach into
+  /// scrollback, so a start of `-40` is 40 lines back). Renders the scrollback
+  /// view the local grid can't (control mode gets no `%output` for copy-mode
+  /// scroll).
+  static Uint8List capturePaneRangeCommand(int start, int end) =>
+      controlCommand('capture-pane -p -e -S $start -E $end');
+
+  /// Register + frame a `capture-pane` request (#906 Stage 1). Pushes a
+  /// [_PendingKind.capture] so the correlated response block renders, and returns
+  /// the bytes for the host to write. The host MUST send framed commands in the
+  /// order it frames them so the FIFO stays aligned with tmux's block order.
+  Uint8List frameCapture() {
+    _pending.add(_PendingKind.capture);
+    return capturePaneCommand();
+  }
+
+  /// Register + frame a scrollback `capture-pane -S -E` request (#906 Stage 2).
+  Uint8List frameCaptureRange(int start, int end) {
+    _pending.add(_PendingKind.capture);
+    return capturePaneRangeCommand(start, end);
+  }
+
+  /// Register + frame a `refresh-client -C` resize (#906 Stage 1). Its response
+  /// block is a plain ack ([_PendingKind.other]) — registered so it can't be
+  /// mistaken for a capture response and consume a real capture out of order.
+  Uint8List frameResize(int cols, int rows) {
+    _pending.add(_PendingKind.other);
+    return resizeCommand(cols, rows);
+  }
+
+  /// Register + frame an arbitrary control command line (gesture / select-window
+  /// / user command, #906 Stage 1). Its response block is a plain ack.
+  Uint8List frameControl(String line) {
+    _pending.add(_PendingKind.other);
+    return controlCommand(line);
+  }
+
   /// The `next-window` control-command line (Part C, #911) — a horizontal swipe
   /// RIGHT advances to the next window. No window-list lookup needed; tmux steps
   /// the session's active window itself and pushes `%session-window-changed`.
@@ -237,9 +321,26 @@ class TmuxControlChannel {
     final render = BytesBuilder(copy: false);
     var activeChanged = false;
     var exited = false;
+    var captureRequested = false;
 
     for (final ev in events) {
       switch (ev) {
+        case CommandEnd():
+          // #906 Stage 1: a command-output block completed. Correlate it to the
+          // client command that produced it by FIFO order (tmux emits exactly one
+          // block per command, in order). A capture block carries the pane content
+          // to RENDER (clear + write); any other ack is discarded. An EMPTY queue
+          // means this is tmux's startup block (or a stray) → ignore.
+          if (_pending.isNotEmpty) {
+            final kind = _pending.removeFirst();
+            if (kind == _PendingKind.capture && !ev.isError) {
+              render.add(_renderCapture(ev.response));
+            }
+          }
+        case SessionChanged():
+          // #906 Stage 1: ATTACH. tmux pushes no screen on `-CC attach`, so ask
+          // for one — the host sends `capture-pane` and the response renders.
+          captureRequested = true;
         case LayoutChange():
           // Record which window each leaf pane belongs to so %output can be
           // filtered to the active window.
@@ -266,6 +367,10 @@ class TmuxControlChannel {
           if (ev.windowId != _activeWindowId) {
             _activeWindowId = ev.windowId;
             activeChanged = true;
+            // #906 Stage 1: the switched-to window may be IDLE (no `%output`), so
+            // capture its screen to repaint — the same request iTerm2 makes on a
+            // window switch.
+            captureRequested = true;
           }
         case PaneOutput():
           if (_shouldRender(ev.paneId)) render.add(ev.data);
@@ -278,7 +383,7 @@ class TmuxControlChannel {
         case ControlModeExit():
           exited = true;
         default:
-          // CommandBegin/End, session/client notifications, UnhandledNotification,
+          // CommandBegin, client notifications, UnhandledNotification,
           // UnknownLine, ControlModeEntered: no render or window-tracking effect
           // here. The parser already updated its own active-window/layout view.
           break;
@@ -289,7 +394,26 @@ class TmuxControlChannel {
       renderBytes: render.toBytes(),
       activeWindowChanged: activeChanged,
       exited: exited,
+      captureRequested: captureRequested,
     );
+  }
+
+  /// Turn a `capture-pane` response (the visible pane rows, verbatim with SGR
+  /// from `-e`) into the bytes that repaint the grid (#906 Stage 1): reset
+  /// attributes, clear the whole screen + scrollback, home the cursor, then write
+  /// the rows joined by CRLF. `\x1b[3J` clears flterm's scrollback too so a
+  /// re-capture (window switch / Stage-2 scroll snap-back) can't leave stale rows
+  /// above. The response strings are LATIN-1 code units (the channel decodes the
+  /// stream 1:1), so each maps back to one byte.
+  static Uint8List _renderCapture(List<String> lines) {
+    final sb = StringBuffer('\x1b[m\x1b[3J\x1b[2J\x1b[H');
+    sb.write(lines.join('\r\n'));
+    final s = sb.toString();
+    final out = Uint8List(s.length);
+    for (var i = 0; i < s.length; i++) {
+      out[i] = s.codeUnitAt(i) & 0xff;
+    }
+    return out;
   }
 
   /// Whether a `%output %paneId` should render: yes when no active window is
