@@ -698,6 +698,13 @@ class StructuredTextScanner {
       // first row keeps its own leading indent dropped too (a leading blank run
       // never carries a match), but its glyphs already begin at content.
       final blockIndent = _contentStart(reader, r, cols);
+      // Whether the CURRENT row was entered via the width-heuristic (TUI
+      // hard-wrap) join rather than the authoritative soft-wrap flag. A width-
+      // joined continuation row's ENTIRE leading blank margin is layout indent
+      // by construction (#925 same-margin, #996 hanging indent) — there is no
+      // content before its contentStart — so it is skipped wholesale. False for
+      // the block's first row and for soft-wrap-flag continuations.
+      var viaWidthJoin = false;
       // Accumulate this row and every row it soft-wraps into.
       while (true) {
         final absRow = base + r;
@@ -718,8 +725,23 @@ class StructuredTextScanner {
         // start is 0, so `skip` is 0 and the leading cells are preserved. Cells
         // at/after the skip — content or internal blanks — are kept so alignment
         // and genuine gaps survive.
+        //
+        // #996: a WIDTH-JOINED row (TUI hard-wrap) skips its OWN full indent
+        // instead. A TUI wrapping with a HANGING indent (Claude Code's diff view:
+        // first row's content starts at the line-number gutter, continuations
+        // start deeper) puts the continuation's contentStart PAST blockIndent;
+        // min(blockIndent, rowStart) would keep the cols between them — blank
+        // margin injected as spaces between a wrapped URL's halves, breaking
+        // `[^\s]+`. For a width-join the margin left of contentStart is layout by
+        // definition (the join heuristic itself keyed off content columns), so
+        // skip = rowStart. Same-margin width joins are unaffected (rowStart ==
+        // blockIndent there). Soft-wrap-flag rows keep the min() rule: their
+        // leading blanks can be REAL logical-line content (e.g. aligned columns
+        // split by the terminal edge), so only the block margin is dropped.
         final rowStart = _contentStart(reader, r, cols);
-        var skip = blockIndent < rowStart ? blockIndent : rowStart;
+        var skip = viaWidthJoin
+            ? rowStart
+            : (blockIndent < rowStart ? blockIndent : rowStart);
         if (skip > end) skip = end;
         for (var c = skip; c < end; c++) {
           final content = reader.cellContent(r, c);
@@ -727,6 +749,7 @@ class StructuredTextScanner {
         }
         if (r < rows - 1 &&
             _continuesOnto(reader, r, cols, wrapCol, blockIndent)) {
+          viaWidthJoin = !reader.rowWrap(r);
           r++;
           continue;
         }
@@ -756,6 +779,50 @@ class StructuredTextScanner {
   /// [blockIndent]: the next row must START at the SAME indent (its content
   /// begins at the block margin, not deeper/shallower — a different margin is a
   /// separate block) AND the first non-blank glyph there is a bare continuation.
+  ///
+  /// #996: a HANGING indent — the continuation starting DEEPER than the block
+  /// margin — is a real TUI wrap shape too (Claude Code's diff view: the first
+  /// row's content starts at the line-number gutter, its wrapped tail resumes
+  /// under the code column: `      56      curl … https://agent-hub.t` /
+  /// `          ailbe5094.ts.net…`). Same-indent evidence is unavailable there
+  /// — and the GLOBAL [wrapCol] inference is too: that TUI grid mixes blocks of
+  /// DIFFERENT content widths (prose at ~50–55, the diff pane at 48), so the
+  /// buffer-wide mode lands on the prose width and the diff row never "reaches"
+  /// it. A deeper-indent join therefore demands two pieces of LOCAL evidence
+  /// instead:
+  ///   1. Row [r] ENDS WITH AN UNTERMINATED-LOOKING URL TOKEN
+  ///      ([_endsWithUrlToken]: its last whitespace-delimited token holds a
+  ///      scheme) — scoping the new join to exactly the reported class (a URL
+  ///      split by a TUI hard-wrap) and leaving every non-URL row pairing —
+  ///      prose, paths, diff bodies — byte-identical to the #925 behavior.
+  ///   2. COLUMN DISCIPLINE: the continuation row ends at the SAME column as
+  ///      row [r] (both hard-wrapped at the block-local content width), OR row
+  ///      [r] reaches the global [wrapCol] when that inference does apply.
+  ///   3. The continuation's HEAD TOKEN is a PLAUSIBLE URL TAIL
+  ///      ([_headLooksLikeUrlTail]: its first whitespace-delimited token holds
+  ///      URL structure — `.` `/` `:`). A URL long enough to hard-wrap always
+  ///      continues with host/port/path structure (`ailbe5094.ts.net:8444/…`);
+  ///      a deeper-indented PROSE line continues with a bare word (`indented
+  ///      prose`, `a separately indented paragraph`). This is the gate that
+  ///      keeps the pinned #764 guards green: a row ending in a COMPLETE URL
+  ///      followed by an indented paragraph shares gates 1–2 (the guards'
+  ///      prose rows are full-width too) but fails this one.
+  /// REJECTED alternatives: (a) joining ANY deeper-indent continuation —
+  /// reopens the #764 over-capture for a complete URL followed by an indented
+  /// sub-item (`…example.com/x` + `    which explains…` would glue `/xwhich`);
+  /// (b) keying only off the global wrapCol like the same-indent join — the
+  /// multi-width TUI grid above defeats it; (c) gates 1–2 without gate 3 —
+  /// fails the pinned #764 guards (full-width prose continuation glues);
+  /// (d) validating the join by re-running the URL regex on the joined text —
+  /// the glued prose ALSO matches (`…/aaindented`), so the result can't
+  /// discriminate. KNOWN limitation, kept deliberately: a hanging-indent URL
+  /// whose continuation row is SHORT (the URL ends there, nothing follows on
+  /// the line) fails gate 2 unless the global wrapCol agrees — extend only
+  /// with a real captured trace, not a synthetic one. Residual accepted risk:
+  /// a COMPLETE URL row followed, at the same content-end column, by a deeper
+  /// bare continuation whose first word carries `.`/`/`/`:` (e.g. a filename)
+  /// glues that word onto the payload. A URL spanning 3+ rows only recovers
+  /// its first two (the middle row's tail token carries no scheme).
   bool _continuesOnto(
     CellReader reader,
     int r,
@@ -764,19 +831,63 @@ class StructuredTextScanner {
     int blockIndent,
   ) {
     if (reader.rowWrap(r)) return true;
+    final end = _contentEnd(reader, r, cols);
+    final next = r + 1;
+    final nextStart = _contentStart(reader, next, cols);
+    if (nextStart >= cols) return false; // blank row
+    // #996: hanging indent — deeper continuation; URL-token + local column
+    // discipline evidence required (see the doc comment above).
+    if (nextStart > blockIndent &&
+        !_startsNewBlock(reader, next, cols, nextStart) &&
+        _endsWithUrlToken(reader, r, cols) &&
+        _headLooksLikeUrlTail(reader, next, cols, nextStart) &&
+        (_contentEnd(reader, next, cols) == end ||
+            (wrapCol > 0 && end >= wrapCol - 1))) {
+      return true;
+    }
     if (wrapCol <= 0) return false;
     // Row r's content must REACH the wrap column (it filled up and wrapped),
     // within 1 col of slack for a trailing wide-char/pad.
-    if (_contentEnd(reader, r, cols) < wrapCol - 1) return false;
-    final next = r + 1;
+    if (end < wrapCol - 1) return false;
     // #925: the continuation row must begin at the SAME left margin as the
     // block. A row whose content starts at a DIFFERENT indent is a separate
     // paragraph/block, not a wrap of this one — keeps #764 two-match behavior
     // for a complete URL followed by a differently-indented line.
-    final nextStart = _contentStart(reader, next, cols);
-    if (nextStart >= cols) return false; // blank row
     if (nextStart != blockIndent) return false;
     return !_startsNewBlock(reader, next, cols, blockIndent);
+  }
+
+  /// Whether local [row]'s LAST whitespace-delimited token looks like a split
+  /// URL: it contains a `://` scheme separator or starts with `www.` (#996).
+  /// A URL is a single unbroken token, so whichever column a TUI hard-wraps
+  /// its first row at, that row's tail token still holds the scheme. Used as
+  /// the extra-evidence gate for the deeper-indent (hanging) wrap-join.
+  bool _endsWithUrlToken(CellReader reader, int row, int cols) {
+    final end = _contentEnd(reader, row, cols);
+    var start = end;
+    while (start > 0 && !_isBlankCell(reader, row, start - 1)) {
+      start--;
+    }
+    if (start >= end) return false;
+    final token =
+        _rowHead(reader, row, cols, start, end - start).toLowerCase();
+    return token.contains('://') || token.startsWith('www.');
+  }
+
+  /// Whether local [row]'s FIRST whitespace-delimited token (starting at
+  /// [from], the row's content start) looks like the TAIL of a hard-wrapped
+  /// URL: it contains URL structure — a `.`, `/`, or `:` (#996, gate 3 of the
+  /// hanging-indent join). A URL long enough to wrap continues with host/
+  /// port/path structure; an indented prose continuation starts with a bare
+  /// word and must NOT be glued onto a preceding complete URL (#764 guards).
+  bool _headLooksLikeUrlTail(CellReader reader, int row, int cols, int from) {
+    var to = from;
+    while (to < cols && !_isBlankCell(reader, row, to)) {
+      to++;
+    }
+    if (to <= from) return false;
+    final token = _rowHead(reader, row, cols, from, to - from);
+    return token.contains('.') || token.contains('/') || token.contains(':');
   }
 
   /// Whether the cell at local ([row], [col]) carries NO visible content — an

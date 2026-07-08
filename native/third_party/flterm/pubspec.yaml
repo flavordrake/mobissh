@@ -30,7 +30,11 @@ dependencies:
   flutter:
     sdk: flutter
   image: ^4.8.0
-  libghostty: ^0.0.9
+  # Pinned EXACT: libghostty is beta and 0.0.10 broke the API surface the fork
+  # is written against (Cursor.col/row, GridRef.at signature). The app's
+  # workspace lockfile already holds 0.0.9; a standalone fork resolution
+  # (scripts/native-fork-test.sh) must not float onto 0.0.10.
+  libghostty: 0.0.9
   meta: ^1.18.0
 
 dev_dependencies:
