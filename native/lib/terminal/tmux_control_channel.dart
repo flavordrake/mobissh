@@ -228,9 +228,25 @@ class TmuxControlChannel {
   /// replaces the old `new-session -A -s mobissh`, which forced a SEPARATE empty
   /// session → the device "zero gestures" (nothing to switch, not your windows).
   /// A trailing newline submits the line to the login shell. (#906)
-  static Uint8List get entryCommand => Uint8List.fromList(
-    utf8.encode('tmux -CC attach 2>/dev/null || tmux -CC new-session -A -s main\n'),
-  );
+  ///
+  /// #982: this is the INTERACTIVE-shell form (typed into a shell's stdin). The
+  /// shipped control-mode path no longer types it — it runs [entryExecCommand]
+  /// as the SSH channel's exec command instead (no echo, bypasses the login's
+  /// tmux auto-attach). Kept as the canonical string source (and for the unit
+  /// test of the invocation), with the exec form derived from it below.
+  static Uint8List get entryCommand =>
+      Uint8List.fromList(utf8.encode('$entryExecCommand\n'));
+
+  /// The tmux `-CC` invocation run as the SSH channel's EXEC command (#982) —
+  /// the shipped control-mode entry path. ATTACH the owner's EXISTING
+  /// (most-recent) session; fall back to creating/attaching `main` ONLY when no
+  /// server/session exists yet. `2>/dev/null` drops the "no server" stderr so it
+  /// never reaches the `-CC` stdout parser. NO trailing newline — it is the exec
+  /// command line, not a shell keystroke. Run via a non-interactive exec, it
+  /// does NOT source login rc files, so a login that auto-attaches tmux is
+  /// bypassed → `-CC attach` is not nested and enters control mode cleanly.
+  static const String entryExecCommand =
+      'tmux -CC attach 2>/dev/null || tmux -CC new-session -A -s main';
 
   /// Build the `refresh-client -C cols,rows` command line — the SINGLE resize
   /// primitive in control mode (issue #909). The host writes these bytes to the

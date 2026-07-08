@@ -123,6 +123,33 @@ Future<SshShellTransport> openSshShellTransportSized(
   return _SshSessionTransport(session);
 }
 
+/// Open a PTY-backed EXEC channel running [command] and return an
+/// [SshShellTransport] wrapping the resulting `dartssh2.SSHSession` (#982).
+///
+/// This is the CONTROL-MODE entry path. Instead of opening an interactive
+/// `shell()` and TYPING `tmux -CC …` into its stdin, we run the tmux invocation
+/// AS the SSH channel's exec command (with a PTY, so tmux's control client has a
+/// terminal). Two things this fixes that the interactive-shell path could not:
+///   1. A non-interactive exec does NOT source `.bashrc`/`.bash_profile`, so a
+///      login that auto-attaches tmux (the owner's real env) is SKIPPED — the
+///      exec is NOT inside tmux, so `tmux -CC attach` attaches the persistent
+///      session cleanly instead of failing "sessions should be nested".
+///   2. Nothing is typed into an interactive shell → the entry line can NEVER
+///      echo into the attached pane as literal text (the #982 leak).
+/// The scrape path (control mode OFF) keeps using [openSshShellTransportSized].
+Future<SshShellTransport> openSshExecTransportSized(
+  ssh.SSHClient client,
+  String command, {
+  int width = 80,
+  int height = 24,
+}) async {
+  final session = await client.execute(
+    command,
+    pty: ssh.SSHPtyConfig(width: width, height: height),
+  );
+  return _SshSessionTransport(session);
+}
+
 /// Owns the bidirectional byte pipe between a [Terminal] model and an SSH
 /// PTY channel.
 ///

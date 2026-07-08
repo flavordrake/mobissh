@@ -52,6 +52,22 @@ Future<SshShellTransport?> _defaultShellOpener(
   int rows,
 ) => openSshShellTransportSized(client, width: cols, height: rows);
 
+/// Opens a PTY-backed EXEC transport running [command] — the control-mode entry
+/// path (#982). Production uses [openSshExecTransportSized]; tests inject a fake
+/// that records the exec command. Running `tmux -CC …` as a non-interactive exec
+/// (vs typing it into an interactive shell) bypasses the login's tmux
+/// auto-attach AND cannot echo the entry line into the pane — the #982 fix.
+typedef HostExecOpener =
+    Future<SshShellTransport?> Function(
+        SSHClient client, String command, int cols, int rows);
+
+Future<SshShellTransport?> _defaultExecOpener(
+  SSHClient client,
+  String command,
+  int cols,
+  int rows,
+) => openSshExecTransportSized(client, command, width: cols, height: rows);
+
 SshSessionController _defaultControllerFactory() => SshSessionController();
 
 /// #982: how long to wait for the `-CC` handshake (the `\x1bP1000p` DCS) after
@@ -70,6 +86,7 @@ class SessionHost {
     SshControllerFactory? controllerFactory,
     SftpSessionOpener? sftpOpener,
     HostShellOpener? shellOpener,
+    HostExecOpener? execOpener,
     this.snapshotInterval = const Duration(seconds: 2),
     this.resumeProbeTimeout = const Duration(seconds: 2),
     this.resumeStaleThreshold = const Duration(seconds: 20),
@@ -82,6 +99,7 @@ class SessionHost {
        _factory = controllerFactory ?? _defaultControllerFactory,
        _sftpOpener = sftpOpener,
        _shellOpener = shellOpener ?? _defaultShellOpener,
+       _execOpener = execOpener ?? _defaultExecOpener,
        _attentionNotifier = attentionNotifier,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch) {
     _commandSub = _gateway.incoming.listen(_dispatch);
@@ -114,8 +132,13 @@ class SessionHost {
   /// Tests inject a fake so the handlers run without a real socket.
   final SftpSessionOpener? _sftpOpener;
 
-  /// Opens the PTY shell once a session reaches `connected`.
+  /// Opens the PTY shell once a session reaches `connected` (scrape path).
   final HostShellOpener _shellOpener;
+
+  /// Opens a PTY-backed EXEC transport for the control-mode entry (#982). Only
+  /// used when [tmuxControlMode] is ON: the tmux `-CC` invocation runs as the
+  /// channel's exec command instead of being typed into an interactive shell.
+  final HostExecOpener _execOpener;
 
   /// How often a snapshot is pushed to the UI side. Tests use a short
   /// interval; production defaults to two seconds.
@@ -835,7 +858,16 @@ class SessionHost {
     try {
       final cols = hosted.metrics.lastCols ?? 80;
       final rows = hosted.metrics.lastRows ?? 24;
-      final transport = await _shellOpener(client, cols, rows);
+      // #982: control mode ON enters `-CC` by running the tmux invocation as the
+      // SSH channel's EXEC command (non-interactive, no rc sourcing) instead of
+      // opening an interactive shell and TYPING the entry line into it. This
+      // bypasses a login's tmux auto-attach (so `-CC attach` is not nested) AND
+      // cannot echo the entry line into the pane (the owner's leak). The scrape
+      // path (flag OFF) keeps the unchanged interactive `shell()` opener.
+      final transport = tmuxControlMode
+          ? await _execOpener(
+              client, TmuxControlChannel.entryExecCommand, cols, rows)
+          : await _shellOpener(client, cols, rows);
       if (transport == null) {
         _emitStatus(sessionId, '\r\n[mobissh] no shell channel available\r\n');
         return;
@@ -859,12 +891,13 @@ class SessionHost {
       hosted.da2Responder.reset();
       // Fresh attach => fresh attention-signal dedup state (#840).
       hosted.attentionScanner.reset();
-      // #909 control mode (flag ON): the freshly-opened login shell is plain;
-      // we ENTER tmux control mode by writing `tmux -CC …` into its stdin, then
-      // route ALL subsequent output through the per-session TmuxControlChannel.
-      // A fresh channel per (re)open mirrors the da2/attention reset above. When
-      // the flag is OFF, `tmuxChannel` stays null and the listener below takes
-      // the unchanged scrape path — so the shipped path is provably untouched.
+      // #909/#982 control mode (flag ON): the transport opened above is the
+      // `tmux -CC …` EXEC channel itself (not an interactive shell we type into),
+      // so control mode is already entered; we route ALL subsequent output
+      // through the per-session TmuxControlChannel. A fresh channel per (re)open
+      // mirrors the da2/attention reset above. When the flag is OFF, `tmuxChannel`
+      // stays null and the listener below takes the unchanged scrape path — so
+      // the shipped path is provably untouched.
       if (tmuxControlMode) {
         final tmux = TmuxControlChannel();
         hosted.tmuxChannel = tmux;
@@ -895,22 +928,19 @@ class SessionHost {
             }
           },
         );
-        try {
-          transport.send(TmuxControlChannel.entryCommand);
-          // #982: arm the fallback timer. If the `-CC` handshake (the P1000p DCS)
-          // is not confirmed before it fires, control mode FAILED (nested tmux,
-          // no tmux) — tear it down and fall back to scrape so the connection
-          // still WORKS instead of bricking on a swallowed/leaking channel.
-          hosted.tmuxHandshakeTimer?.cancel();
-          hosted.tmuxHandshakeTimer = Timer(kTmuxHandshakeTimeout, () {
-            if (!hosted.tmuxHandshakeConfirmed) {
-              _fallbackToScrape(sessionId, hosted);
-            }
-          });
-        } catch (_) {
-          // If the entry write fails the channel is dead; the controller's close
-          // path drives reconnect, which re-opens + re-enters control mode.
-        }
+        // #982: the entry command is the exec channel's command line — it is
+        // ALREADY running (opened above via `_execOpener`), so NOTHING is typed
+        // into the shell here. Arm the fallback timer: if the `-CC` handshake
+        // (the P1000p DCS) is not confirmed before it fires, control mode FAILED
+        // (exec still nested somehow, no tmux, or a login shell that ignores the
+        // exec command) — tear it down and fall back to scrape so the connection
+        // still WORKS instead of bricking on a swallowed/leaking channel.
+        hosted.tmuxHandshakeTimer?.cancel();
+        hosted.tmuxHandshakeTimer = Timer(kTmuxHandshakeTimeout, () {
+          if (!hosted.tmuxHandshakeConfirmed) {
+            _fallbackToScrape(sessionId, hosted);
+          }
+        });
       } else {
         hosted.tmuxChannel = null;
         hosted.refreshCoalescer = null;
