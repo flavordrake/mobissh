@@ -8,8 +8,12 @@
 // the #803/#812/#863/#864 saga. A GUTTER indicator needs only a ROW + a fixed
 // edge X, so that whole drift class is GONE: there is no text under the mark to
 // drift away from. It tracks scroll by row index alone (`anchorGutterRow`, now
-// resolved against the PAINTED offset #955), and hides mid-scroll like the old
-// decorator did (the controller's `isScrolling` gate).
+// resolved against the PAINTED offset #955). #993: it TRACKS mid-scroll too —
+// the decoration listenable fires post-frame on every painted-offset change, so
+// each notify re-resolves every mark's viewport row in lockstep with the
+// painted glyphs (the old `isScrolling` hide was the bubble's sub-pixel-drift
+// contract; a row-indexed chip has nothing to drift, and hiding left the chips
+// visibly pinned on scroll paths where `isScrolling` never engages).
 //
 // The layer reads the controller's live `anchors`, resolves each to a VIEWPORT
 // row via `anchorGutterRow` (dropping off-screen/null), GROUPS anchors by row,
@@ -311,12 +315,16 @@ Map<int, List<StructuredAnchor>> groupAnchorsByGutterRow(
 /// viewport row (#955). Replaces the inline `GhosttyTerminalDecoratorLayer`.
 ///
 /// Listens to the controller's NARROW [TerminalController.decorationListenable]
-/// (#805) and HIDES while [TerminalController.isScrolling] (#812) — the marks
-/// reappear, in lockstep with the painted rows, once the scroll settles. Reads
-/// `controller.anchors`, resolves each row via `controller.anchorGutterRow`, and
-/// places a mark at `padding + row * cellHeight` on the right edge. Sits ABOVE
-/// the gesture router so a tap on a mark is consumed by the mark (everywhere
-/// else is transparent and falls through).
+/// (#805), which fires post-frame on every painted-offset change while anchors
+/// exist — so during a scroll the marks TRACK their line (#993): every notify
+/// re-resolves each anchor's viewport row via `controller.anchorGutterRow`
+/// (painted-offset, frame-synced) and repositions the mark at
+/// `padding + row * cellHeight` on the right edge, in lockstep with the painted
+/// glyphs. No mid-scroll hide (that is the bubble's #812 sub-pixel contract);
+/// taps ARE ignored while [TerminalController.isScrolling], since a chip can
+/// change rows between tapDown and tapUp. Sits ABOVE the gesture router so a
+/// tap on a mark is consumed by the mark (everywhere else is transparent and
+/// falls through).
 class GhosttyGutterLayer extends StatelessWidget {
   const GhosttyGutterLayer({
     super.key,
@@ -384,9 +392,12 @@ class GhosttyGutterLayer extends StatelessWidget {
           ? controller.decorationListenable
           : Listenable.merge([controller.decorationListenable, verification]),
       builder: (context, _) {
-        // #812: don't draw mid-scroll — the marks reappear on settle. (Tap
-        // routing via the gesture router's matchAt is unaffected.)
-        if (controller.isScrolling) return const SizedBox.shrink();
+        // #993: no isScrolling hide here — each painted-offset notify lands
+        // post-frame and `anchorGutterRow` resolves against that same painted
+        // offset, so re-grouping below moves every chip to its line's new
+        // viewport row in lockstep with the painted glyphs. (The notify only
+        // fires when the offset actually changed, so a settled terminal never
+        // rebuilds this.) Taps are gated on isScrolling inside _GutterMark.
         if (cellHeight <= 0) return const SizedBox.shrink();
         final byRow = groupAnchorsByGutterRow(
           // #990 visibility gate: suppressed anchors never reach the grouping,
@@ -434,6 +445,7 @@ class GhosttyGutterLayer extends StatelessWidget {
                 height: boxHeight,
                 child: _GutterMark(
                   key: Key('gutter-mark-${entry.key}'),
+                  controller: controller,
                   anchors: entry.value,
                   registry: registry,
                   color: color,
@@ -461,12 +473,17 @@ class GhosttyGutterLayer extends StatelessWidget {
 class _GutterMark extends StatefulWidget {
   const _GutterMark({
     super.key,
+    required this.controller,
     required this.anchors,
     required this.registry,
     required this.color,
     required this.style,
     required this.stripWidth,
   });
+
+  /// #993: consulted at tap time — while the painted offset is still moving a
+  /// chip can change rows between tapDown and tapUp, so taps are ignored.
+  final TerminalController controller;
 
   final List<StructuredAnchor> anchors;
   final GutterPatternRegistry registry;
@@ -487,6 +504,11 @@ class _GutterMarkState extends State<_GutterMark> {
   }
 
   void _onTap(BuildContext context, Offset markGlobal) {
+    // #993: mid-scroll the chip under the finger is not a stable target — the
+    // row it marks may have changed since tapDown. Firing here could invoke a
+    // DIFFERENT line's action, so ignore the tap (pre-#993 this state was
+    // unreachable: the whole layer hid while scrolling).
+    if (widget.controller.isScrolling) return;
     final anchors = widget.anchors;
     if (anchors.length == 1) {
       final presentation = widget.registry.forPattern(anchors.first.patternId);

@@ -9,11 +9,14 @@ library;
 // it doesn't draw mid-scroll. Tap-to-copy (`controller.matchAt`) must keep
 // working THROUGHOUT.
 //
-// #955 retired the inline decorator layer; the right-edge GUTTER ([GhosttyGutterLayer])
-// inherits the SAME contract (it gates on `controller.isScrolling`). This replay
-// tier mounts the REAL flterm `TerminalView` (so the render box paints and reports
-// its painted offset, which drives `isScrolling`) ALONG with a gutter-equivalent
-// PROBE that consumes the exact controller surface the gutter reads
+// #955 retired the inline decorator layer. The hide-on-scroll contract now
+// belongs to the BUBBLE ([GhosttyBubbleLayer], #988 — sub-pixel rect precision
+// drifts mid-scroll); the GUTTER ([GhosttyGutterLayer]) TRACKS the scroll since
+// #993 (row-indexed chips re-resolve per painted-offset notify — see
+// test/ui/ghostty_gutter_layer_test.dart). This replay tier keeps exercising
+// the hide contract against the REAL flterm `TerminalView` (so the render box
+// paints and reports its painted offset, which drives `isScrolling`) via a
+// bubble-equivalent PROBE that consumes the same controller surface
 // (`decorationListenable` + `isScrolling` + `anchors` + `anchorGutterRow`), and
 // asserts:
 //   1. while the painted offset is changing the gutter renders NO mark;
@@ -36,10 +39,11 @@ class _PaintCounter {
   int paints = 0;
 }
 
-/// A gutter-equivalent probe: listens to the narrow decoration signal, GATES on
-/// `isScrolling` (renders nothing mid-scroll, exactly like [GhosttyGutterLayer]),
-/// and counts a "paint" on any settled build that resolves at least one on-screen
-/// gutter row. Mirrors the layer's consumption without depending on its widgets.
+/// A bubble-equivalent probe: listens to the narrow decoration signal, GATES on
+/// `isScrolling` (renders nothing mid-scroll, like [GhosttyBubbleLayer]; the
+/// gutter tracks instead since #993), and counts a "paint" on any settled build
+/// that resolves at least one on-screen gutter row. Mirrors the hide-contract
+/// consumption without depending on the layer widgets.
 class _GutterProbe extends StatelessWidget {
   const _GutterProbe({required this.controller, required this.counter});
 

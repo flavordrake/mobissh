@@ -4254,7 +4254,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // painted rows — #955), GROUPS them by row, and renders ONE small
         // monochrome mark per matched row at the right edge. No glyph-cell
         // geometry → no scroll drift (the #930/#803/#812/#863/#864 inline-bubble
-        // saga). Hides mid-scroll (`isScrolling`), re-shows on settle. Mounted
+        // saga). #993: TRACKS mid-scroll (rows re-resolve on every painted-
+        // offset notify; taps ignored while scrolling). Mounted
         // ABOVE the gesture router so a tap on a mark is consumed by the mark
         // (everywhere else is transparent and falls through to the router below).
         Positioned.fill(

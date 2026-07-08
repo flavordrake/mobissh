@@ -1,6 +1,8 @@
 // #955 — the right-edge GUTTER layer that replaced the inline URL bubble / path
 // underline. Covers (1) the PURE grouping of anchors → gutter rows, and (2) the
-// WIDGET behaviour: marks appear only on matched rows, hide while scrolling, a
+// WIDGET behaviour: marks appear only on matched rows, TRACK the scroll by
+// re-resolving their viewport row on every decoration notify (#993 — no
+// mid-scroll hide; that is the bubble's contract, not the gutter's), a
 // single-match mark taps straight to the action overlay, and a multi-match mark
 // opens the list sheet whose items dispatch to the right action (a path item
 // opens the SFTP browser at its path).
@@ -58,10 +60,13 @@ StructuredAnchor _wrappedUrl(String url, List<int> rows) => StructuredAnchor(
 
 /// Fake controller exposing scripted [anchors] + an [anchorGutterRow] that maps a
 /// range's top row to a viewport row (null when off [viewportRows]). The only
-/// surface [GhosttyGutterLayer] reads.
+/// surface [GhosttyGutterLayer] reads. #993: [setOffset] models a painted-offset
+/// change mid-scroll — the real controller's decorationListenable fires post-frame
+/// on every painted-offset change and anchorGutterRow re-resolves against it.
 class _FakeController extends ChangeNotifier implements TerminalController {
   List<StructuredAnchor> _anchors = const [];
   bool _scrolling = false;
+  int _offset = 0;
   int viewportRows = 24;
 
   void setAnchors(List<StructuredAnchor> value) {
@@ -72,6 +77,14 @@ class _FakeController extends ChangeNotifier implements TerminalController {
   void setScrolling(bool value) {
     if (_scrolling == value) return;
     _scrolling = value;
+    notifyListeners();
+  }
+
+  /// A painted-offset step: rows re-resolve as `topRow - offset`; the scroll
+  /// flag defaults ON (this is what happens DURING a scroll, #993).
+  void setOffset(int value, {bool scrolling = true}) {
+    _offset = value;
+    _scrolling = scrolling;
     notifyListeners();
   }
 
@@ -86,7 +99,7 @@ class _FakeController extends ChangeNotifier implements TerminalController {
 
   @override
   int? anchorGutterRow(HighlightRange range) {
-    final row = range.topRow;
+    final row = range.topRow - _offset;
     if (row < 0 || row >= viewportRows) return null;
     return row;
   }
@@ -196,23 +209,142 @@ void main() {
       expect(find.byKey(const Key('gutter-mark-2')), findsNothing);
     });
 
-    testWidgets('HIDES marks while scrolling, re-shows on settle', (tester) async {
-      final controller = await pumpLayer(tester);
-      controller.setAnchors([_urlAnchor('https://example.com', row: 4)]);
-      await tester.pump();
-      expect(find.byKey(const Key('gutter-mark-4')), findsOneWidget);
+    // #993 — the chips TRACK their line during a scroll instead of hiding
+    // (the owner saw them pinned to fixed viewport rows while the text moved).
+    // Every painted-offset notify re-resolves each anchor's viewport row via
+    // anchorGutterRow, so the mark moves in lockstep with the painted glyphs.
+    group('scroll tracking (#993)', () {
+      testWidgets('marks stay VISIBLE and move to the re-resolved row while '
+          'the painted offset changes mid-scroll', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([_urlAnchor('https://example.com', row: 10)]);
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark-10')), findsOneWidget);
 
-      controller.setScrolling(true);
-      await tester.pump();
-      expect(
-        find.byKey(const Key('gutter-mark-4')),
-        findsNothing,
-        reason: 'marks hide while the painted offset is changing (#812/#955)',
-      );
+        // The scroll starts: the offset moves 3 rows, isScrolling is true.
+        controller.setOffset(3);
+        await tester.pump();
+        expect(
+          find.byKey(const Key('gutter-mark-7')),
+          findsOneWidget,
+          reason: 'the mark must TRACK its line to the new viewport row (#993)',
+        );
+        expect(
+          find.byKey(const Key('gutter-mark-10')),
+          findsNothing,
+          reason: 'the mark must not stay pinned to the old viewport row',
+        );
 
-      controller.setScrolling(false);
-      await tester.pump();
-      expect(find.byKey(const Key('gutter-mark-4')), findsOneWidget);
+        // A further step mid-scroll keeps tracking.
+        controller.setOffset(6);
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark-4')), findsOneWidget);
+      });
+
+      testWidgets('a mark scrolled OFF-screen disappears and returns when '
+          'scrolled back on-screen', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([_urlAnchor('https://example.com', row: 2)]);
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark-2')), findsOneWidget);
+
+        controller.setOffset(5); // row 2 - 5 → above the viewport
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark--3')), findsNothing);
+        expect(find.byKey(const Key('gutter-mark-2')), findsNothing);
+
+        controller.setOffset(0);
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark-2')), findsOneWidget);
+      });
+
+      testWidgets('settle keeps the mark at the settled offset row',
+          (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([_urlAnchor('https://example.com', row: 9)]);
+        await tester.pump();
+
+        controller.setOffset(4); // scrolling
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark-5')), findsOneWidget);
+
+        controller.setScrolling(false); // trailing-edge settle notify
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark-5')), findsOneWidget);
+      });
+
+      testWidgets('taps are IGNORED while scrolling (a chip can change rows '
+          'between tapDown and tapUp)', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([_urlAnchor('https://example.com', row: 10)]);
+        controller.setOffset(3);
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('gutter-mark-7')));
+        await tester.pump();
+        expect(
+          find.byKey(const Key('url-action-menu')),
+          findsNothing,
+          reason: 'mid-scroll the chip under the finger is not a stable '
+              'target — no action may fire (#993)',
+        );
+
+        controller.setScrolling(false);
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('gutter-mark-7')));
+        await tester.pump();
+        expect(find.byKey(const Key('url-action-menu')), findsOneWidget);
+        debugDismissUrlActions();
+      });
+
+      testWidgets('#990 verified shade and visibility gating hold mid-scroll',
+          (tester) async {
+        final controller = _FakeController();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  Positioned.fill(
+                    child: GhosttyGutterLayer(
+                      controller: controller,
+                      registry: GutterPatternRegistry.standard(
+                        openPath: (_) async => true,
+                      ),
+                      color: const Color(0xFF5B9BD5),
+                      cellHeight: 20,
+                      isVerified: (a) => a.payload == '/etc/hosts',
+                      isVisible: (a) => '${a.payload}' != '/config',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        controller.setAnchors([
+          _pathAnchor('/etc/hosts', row: 8),
+          _pathAnchor('/config', row: 12),
+        ]);
+        controller.setOffset(2); // scrolling
+        await tester.pump();
+
+        // The verified path tracks to row 6 and keeps the bold ring.
+        final boxes = tester.widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byKey(const Key('gutter-mark-6')),
+            matching: find.byType(DecoratedBox),
+          ),
+        );
+        final deco = boxes
+            .map((b) => b.decoration)
+            .whereType<BoxDecoration>()
+            .firstWhere((d) => d.color != null);
+        expect(deco.border, isNotNull,
+            reason: 'the verified bold ring must survive scroll tracking');
+        // The suppressed anchor renders nothing at its tracked row either.
+        expect(find.byKey(const Key('gutter-mark-10')), findsNothing);
+      });
     });
 
     testWidgets('a multi-match row shows a count mark', (tester) async {
