@@ -139,6 +139,45 @@ List<GhosttyBubbleSegment> ghosttyBubbleSegments(List<Rect> rowRects) {
   ];
 }
 
+/// #990 visibility gate: whether a detected path payload is a LOW-CONFIDENCE
+/// match that must be VERIFIED (SFTP stat confirms existence) before ANY
+/// affordance shows. True for SINGLE-SEGMENT root-level matches (`/config`,
+/// `/rc` — no second slash): in terminal output those are overwhelmingly TUI
+/// slash-commands (the +121 owner report), not paths. Multi-segment paths
+/// (`/etc/hosts`) return false — they show immediately at the detected shade.
+/// Degenerate payloads (`/`, empty) are conservatively true (suppressed).
+bool ghosttyPathRequiresVerification(String payload) {
+  var p = payload;
+  while (p.endsWith('/')) {
+    p = p.substring(0, p.length - 1);
+  }
+  if (p.length < 2 || !p.startsWith('/')) return true; // degenerate
+  return !p.substring(1).contains('/');
+}
+
+/// Stroke width of the plain "detected" bubble outline, logical px.
+const double kGhosttyBubbleStrokeWidth = 1.5;
+
+/// Stroke width of the bolder VERIFIED bubble outline (#990) — a detected
+/// file path confirmed to exist on the connected host.
+const double kGhosttyBubbleVerifiedStrokeWidth = 2.5;
+
+/// Fill-wash alpha inside a VERIFIED bubble (#990). A faint tint (the text
+/// stays fully readable) that, with the thicker stroke, makes the verified
+/// shade legible at phone density.
+const double kGhosttyBubbleVerifiedFillAlpha = 0.15;
+
+/// One anchor's renderable bubble (#990): its per-row [segments] plus whether
+/// it renders in the bolder VERIFIED shade. Public (with the painter) so the
+/// widget test can assert shade selection without reaching into paint calls.
+@immutable
+class GhosttyBubbleSpec {
+  const GhosttyBubbleSpec({required this.segments, required this.verified});
+
+  final List<GhosttyBubbleSegment> segments;
+  final bool verified;
+}
+
 /// The restored inline bubble layer (#988) — a paint-only overlay drawing one
 /// wrap-aware outline bubble per detected URL / OSC-8 link / file path.
 ///
@@ -159,6 +198,9 @@ class GhosttyBubbleLayer extends StatelessWidget {
     super.key,
     required this.controller,
     required this.color,
+    this.isVerified,
+    this.isVisible,
+    this.verificationListenable,
   });
 
   /// The SAME controller handed to the flterm `TerminalView`. Its `anchors` /
@@ -168,6 +210,23 @@ class GhosttyBubbleLayer extends StatelessWidget {
   /// The theme accent the bubbles are stroked in (the session selection
   /// colour). Rebuilds when the parent re-creates the layer with a new colour.
   final Color color;
+
+  /// #990: OPAQUE verification predicate — true renders the anchor's bubble in
+  /// the bolder VERIFIED shade (thicker stroke + faint fill). Null → every
+  /// bubble stays the plain detected shade. The layer doesn't know WHY an
+  /// anchor is verified (today: exists-on-host via the session's SFTP stat),
+  /// so the predicate's meaning can change without paint rework.
+  final bool Function(StructuredAnchor anchor)? isVerified;
+
+  /// #990 visibility gate: OPAQUE suppression predicate — false means the
+  /// anchor paints NO bubble at all (a low-confidence single-segment match
+  /// awaiting verification, or confirmed missing). Null → everything paints.
+  final bool Function(StructuredAnchor anchor)? isVisible;
+
+  /// #990: fires when a verification result lands (no anchor change involved)
+  /// so the bubbles repaint. Merged with the controller's decoration
+  /// listenable.
+  final Listenable? verificationListenable;
 
   /// The pattern ids that render a bubble. URL, OSC-8 and path share the ONE
   /// mechanism (#988); a per-pattern shade difference is a separate issue.
@@ -179,26 +238,36 @@ class GhosttyBubbleLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final verification = verificationListenable;
     return ListenableBuilder(
-      listenable: controller.decorationListenable,
+      listenable: verification == null
+          ? controller.decorationListenable
+          : Listenable.merge([controller.decorationListenable, verification]),
       builder: (context, _) {
         if (controller.isScrolling) return const SizedBox.shrink();
-        final bubbles = <List<GhosttyBubbleSegment>>[];
+        final specs = <GhosttyBubbleSpec>[];
         for (final anchor in controller.anchors) {
           if (!_bubblePatternIds.contains(anchor.patternId)) continue;
+          // #990 visibility gate: suppressed anchors paint nothing.
+          if (!(isVisible?.call(anchor) ?? true)) continue;
           final rects = <Rect>[];
           for (final range in anchor.ranges) {
             rects.addAll(controller.anchorRects(range));
           }
           final segments = ghosttyBubbleSegments(rects);
           if (segments.isEmpty) continue; // fully off-screen
-          bubbles.add(segments);
+          specs.add(
+            GhosttyBubbleSpec(
+              segments: segments,
+              verified: isVerified?.call(anchor) ?? false,
+            ),
+          );
         }
-        if (bubbles.isEmpty) return const SizedBox.shrink();
+        if (specs.isEmpty) return const SizedBox.shrink();
         return IgnorePointer(
           child: CustomPaint(
             key: const Key('ghostty-bubble-paint'),
-            painter: _GhosttyBubblePainter(bubbles: bubbles, color: color),
+            painter: GhosttyBubblePainter(specs: specs, color: color),
             size: Size.infinite,
           ),
         );
@@ -209,40 +278,51 @@ class GhosttyBubbleLayer extends StatelessWidget {
 
 /// Strokes one outline per bubble segment — an OUTLINE (never an opaque fill
 /// over the glyphs) so the text stays readable and the capsule reads as a
-/// physical chip around it.
-class _GhosttyBubblePainter extends CustomPainter {
-  _GhosttyBubblePainter({required this.bubbles, required this.color});
+/// physical chip around it. A VERIFIED spec (#990) strokes thicker and adds a
+/// faint fill wash. Public (with final fields) so the widget test can assert
+/// the detected/verified shade selection.
+class GhosttyBubblePainter extends CustomPainter {
+  GhosttyBubblePainter({required this.specs, required this.color});
 
-  final List<List<GhosttyBubbleSegment>> bubbles;
+  final List<GhosttyBubbleSpec> specs;
   final Color color;
-
-  /// Outline stroke width, in logical px.
-  static const double _stroke = 1.5;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
+    final stroke = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = _stroke
+      ..strokeWidth = kGhosttyBubbleStrokeWidth
       ..color = color
       ..isAntiAlias = true;
-    for (final segments in bubbles) {
-      for (final segment in segments) {
-        canvas.drawRRect(segment.toRRect(), paint);
+    final verifiedStroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = kGhosttyBubbleVerifiedStrokeWidth
+      ..color = color
+      ..isAntiAlias = true;
+    final verifiedFill = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withValues(alpha: kGhosttyBubbleVerifiedFillAlpha)
+      ..isAntiAlias = true;
+    for (final spec in specs) {
+      for (final segment in spec.segments) {
+        final rrect = segment.toRRect();
+        if (spec.verified) canvas.drawRRect(rrect, verifiedFill);
+        canvas.drawRRect(rrect, spec.verified ? verifiedStroke : stroke);
       }
     }
   }
 
   @override
-  bool shouldRepaint(covariant _GhosttyBubblePainter old) {
+  bool shouldRepaint(covariant GhosttyBubblePainter old) {
     if (old.color != color) return true;
-    if (old.bubbles.length != bubbles.length) return true;
-    for (var i = 0; i < bubbles.length; i++) {
-      final a = bubbles[i];
-      final b = old.bubbles[i];
-      if (a.length != b.length) return true;
-      for (var j = 0; j < a.length; j++) {
-        if (a[j] != b[j]) return true;
+    if (old.specs.length != specs.length) return true;
+    for (var i = 0; i < specs.length; i++) {
+      final a = specs[i];
+      final b = old.specs[i];
+      if (a.verified != b.verified) return true;
+      if (a.segments.length != b.segments.length) return true;
+      for (var j = 0; j < a.segments.length; j++) {
+        if (a.segments[j] != b.segments[j]) return true;
       }
     }
     return false;

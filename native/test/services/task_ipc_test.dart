@@ -171,6 +171,19 @@ void main() {
       }
     });
 
+    test('SftpStatCommand round-trips requestId + path (#990)', () {
+      const cmd = SftpStatCommand(
+        sessionId: 'host:22:user:1',
+        requestId: 'pathstat-1',
+        path: '/etc/hosts',
+      );
+      final restored = SshTaskCommand.fromJson(cmd.toJson()) as SftpStatCommand;
+      expect(restored.kind, SshTaskCommandKind.sftpStat);
+      expect(restored.sessionId, 'host:22:user:1');
+      expect(restored.requestId, 'pathstat-1');
+      expect(restored.path, '/etc/hosts');
+    });
+
     test('unknown kind throws FormatException', () {
       expect(
         () => SshTaskCommand.fromJson({'kind': 'bogus', 'sessionId': 'sid'}),
@@ -246,6 +259,24 @@ void main() {
       // Task-global: empty sentinel sessionId (mirrors SshLifecycleEvent).
       expect(restored.sessionId, '');
       expect(restored.kind, SshTaskEventKind.controlModeTrace);
+    });
+
+    test('SftpStatResultEvent round-trips exists both ways (#990)', () {
+      for (final exists in [true, false]) {
+        final ev = SftpStatResultEvent(
+          sessionId: 'host:22:user:1',
+          requestId: 'pathstat-1',
+          path: '/etc/hosts',
+          exists: exists,
+        );
+        final restored =
+            SshTaskEvent.fromJson(ev.toJson()) as SftpStatResultEvent;
+        expect(restored.kind, SshTaskEventKind.sftpStatResult);
+        expect(restored.sessionId, 'host:22:user:1');
+        expect(restored.requestId, 'pathstat-1');
+        expect(restored.path, '/etc/hosts');
+        expect(restored.exists, exists);
+      }
     });
   });
 

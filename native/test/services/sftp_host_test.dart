@@ -53,6 +53,11 @@ class FakeSftpSession implements SftpSession {
   String? lastListedPath;
   String? lastDownloadedPath;
 
+  /// #990: when set, [sizeOf] (the stat seam the host's sftpStat handler uses)
+  /// succeeds ONLY for paths in this set and throws for anything else —
+  /// modelling a real server's "No such file" stat error.
+  Set<String>? statExisting;
+
   /// Records what the host wrote (#892): the resolved-or-literal path and the
   /// exact bytes, so a test can assert the upload reached the wrapper intact.
   String? lastUploadedPath;
@@ -74,7 +79,13 @@ class FakeSftpSession implements SftpSession {
   }
 
   @override
-  Future<int?> sizeOf(String path) async => fileBytes.length;
+  Future<int?> sizeOf(String path) async {
+    final existing = statExisting;
+    if (existing != null && !existing.contains(path)) {
+      throw Exception('No such file: $path');
+    }
+    return fileBytes.length;
+  }
 
   @override
   Future<int> download(
@@ -236,6 +247,96 @@ void main() {
     expect(done, isNotNull);
     expect(done!.requestId, 'sid-up#write0');
     expect(done!.totalBytes, payload.length);
+
+    await sub.cancel();
+  });
+
+  test('sftpStat replies exists=true for a path the server can stat (#990)',
+      () async {
+    final fake = FakeSftpSession()..statExisting = {'/etc/hosts'};
+    final ctx = await setUpConnected('sid-st', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    final results = <SftpStatResultEvent>[];
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpStatResultEvent) results.add(e);
+    });
+
+    ctx.proxy.sftpStat(requestId: 'sid-st#0', path: '/etc/hosts');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(results, hasLength(1));
+    expect(results.single.requestId, 'sid-st#0');
+    expect(results.single.path, '/etc/hosts');
+    expect(results.single.exists, isTrue);
+
+    await sub.cancel();
+  });
+
+  test('sftpStat replies exists=false (fail-open) when the stat errors (#990)',
+      () async {
+    final fake = FakeSftpSession()..statExisting = {'/etc/hosts'};
+    final ctx = await setUpConnected('sid-st2', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    final results = <SftpStatResultEvent>[];
+    final errors = <SftpErrorEvent>[];
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpStatResultEvent) results.add(e);
+      if (e is SftpErrorEvent) errors.add(e);
+    });
+
+    ctx.proxy.sftpStat(requestId: 'sid-st2#0', path: '/no/such/path990');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(results, hasLength(1));
+    expect(results.single.exists, isFalse);
+    // Fail-open is a RESULT, not an error — a missing path must not surface
+    // an SFTP error banner anywhere.
+    expect(errors, isEmpty);
+
+    await sub.cancel();
+  });
+
+  test('sftpStat replies exists=false for a session with no live client (#990)',
+      () async {
+    final fake = FakeSftpSession();
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+    final host = SessionHost(
+      gateway: pair.taskSide,
+      controllerFactory: _stubControllerFactory,
+      // Opener returning null = "session not connected" (matches production).
+      sftpOpener: (_) async => null,
+      snapshotInterval: const Duration(hours: 1),
+    );
+    addTearDown(host.dispose);
+    final proxy = SshSessionProxy(sessionId: 'sid-st3', gateway: pair.uiSide);
+    addTearDown(proxy.dispose);
+    proxy.connect(const SshConnectParams(
+      host: 'h',
+      port: 22,
+      username: 'u',
+      auth: SshAuth.password('p'),
+    ));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    final results = <SftpStatResultEvent>[];
+    final sub = proxy.sftpEvents.listen((e) {
+      if (e is SftpStatResultEvent) results.add(e);
+    });
+
+    proxy.sftpStat(requestId: 'sid-st3#0', path: '/etc/hosts');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(results, hasLength(1));
+    expect(results.single.exists, isFalse,
+        reason: 'no client → fail-open result, never a hang or an error event');
+    expect(fake.closed, isFalse);
 
     await sub.cancel();
   });

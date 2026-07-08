@@ -388,6 +388,20 @@ class SshSessionProxy {
     );
   }
 
+  /// Probe whether a remote path exists over SFTP (#990). The
+  /// [SftpStatResultEvent] arrives on [sftpEvents] keyed by [requestId] —
+  /// ALWAYS a result (errors collapse to `exists=false`, fail-open). Used by
+  /// the path-anchor verifier to upgrade a detected path to the verified shade.
+  void sftpStat({required String requestId, required String path}) {
+    gateway.send(
+      SftpStatCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        path: path,
+      ).toJson(),
+    );
+  }
+
   /// Send a PTY resize to the remote.
   ///
   /// #848 — NO-OP GUARD: a resize whose (cols, rows) are IDENTICAL to the last
@@ -526,6 +540,7 @@ class SshSessionProxy {
       case SftpDownloadDoneEvent():
       case SftpUploadDoneEvent():
       case SftpUploadProgressEvent():
+      case SftpStatResultEvent():
       case SftpErrorEvent():
         // SFTP results (#559/#892/#960) — forward to the file browser / writer
         // seam, which match by request id. They never touch the SSH lifecycle.
