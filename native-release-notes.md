@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+121 (2026-07-08) — URL/path bubbles are back, and the gutter marks feel like buttons
+- **Tap a URL or path to copy it — the bubble shows exactly what you'll get.** Detected URLs and file paths get a capsule bubble again; it hugs the real content across wrapped lines (rounded ends only at the true start/end, no margin whitespace), so the bubble IS the preview of the copy. Single tap copies; Open stays on long-press and the gutter mark. (#988)
+- **Gutter marks are bigger, high-contrast chips** — solid tappable buttons at the right edge (link vs folder glyphs), with pressed feedback and a comfortable touch target. (#989)
+
 ## v0.1.10+120 (2026-07-08) — the "screen stops updating" bug is fixed at the root
 - **The screen keeps painting.** The years-long "paint not happening" freeze (busy output + URL detection on) is root-caused and fixed — the screen no longer sticks on a stale frame while output streams. Reproduced from your actual bug-report trace, pinned by tests.
 - **Control mode: window switching works right after connect.** Tapping the tmux status bar switches windows deterministically on a freshly-attached session (no longer dependent on a lucky resize). (#906)
