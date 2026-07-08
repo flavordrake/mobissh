@@ -95,6 +95,12 @@ class _FakeController extends ChangeNotifier implements TerminalController {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// A test-owned verification signal (#990) — stands in for the
+/// SessionPathVerifier's ChangeNotifier surface.
+class _TestSignal extends ChangeNotifier {
+  void fire() => notifyListeners();
+}
+
 void main() {
   group('groupAnchorsByGutterRow (pure)', () {
     test('groups several matches on the SAME row under one key', () {
@@ -380,6 +386,193 @@ void main() {
         expect(tester.widget<AnimatedScale>(scaleFinder).scale, 1.0);
         // The tap-up fired the single-URL action overlay — tear it down.
         debugDismissUrlActions();
+      });
+    });
+
+    // #990 — detected vs VERIFIED path shades. A path anchor whose payload the
+    // per-session verifier confirmed (exists on the CONNECTED host via SFTP
+    // stat) renders its chip in the BOLD style (a contrast ring); an unverified
+    // one keeps the plain detected chip. The layer only consumes an OPAQUE
+    // `isVerified` predicate — WHY a path is verified is the caller's business.
+    group('verified path shade (#990)', () {
+      BoxDecoration chipDecorationOf(WidgetTester tester, int row) {
+        final boxes = tester.widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byKey(Key('gutter-mark-$row')),
+            matching: find.byType(DecoratedBox),
+          ),
+        );
+        return boxes
+            .map((b) => b.decoration)
+            .whereType<BoxDecoration>()
+            .firstWhere((d) => d.color != null);
+      }
+
+      Future<_FakeController> pumpVerifiable(
+        WidgetTester tester, {
+        required bool Function(StructuredAnchor anchor) isVerified,
+        bool Function(StructuredAnchor anchor)? isVisible,
+        Listenable? verificationListenable,
+      }) async {
+        final controller = _FakeController();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  Positioned.fill(
+                    child: GhosttyGutterLayer(
+                      controller: controller,
+                      registry: GutterPatternRegistry.standard(
+                        openPath: (_) async => true,
+                      ),
+                      color: const Color(0xFF5B9BD5),
+                      cellHeight: 20,
+                      isVerified: isVerified,
+                      isVisible: isVisible,
+                      verificationListenable: verificationListenable,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        return controller;
+      }
+
+      test('GutterMarkStyle.bold is a BOLDER variant of normal (ring)', () {
+        expect(GutterMarkStyle.normal.ringWidth, 0.0);
+        expect(
+          GutterMarkStyle.bold.ringWidth,
+          greaterThan(0.0),
+          reason: 'the verified chip must be visually bolder than detected',
+        );
+        expect(
+          GutterMarkStyle.bold.minTapExtent,
+          GutterMarkStyle.normal.minTapExtent,
+          reason: 'verification never changes tap semantics',
+        );
+      });
+
+      testWidgets('an UNVERIFIED path keeps the plain detected chip (no ring)',
+          (tester) async {
+        final controller = await pumpVerifiable(tester, isVerified: (_) => false);
+        controller.setAnchors([_pathAnchor('/no/such/path990', row: 3)]);
+        await tester.pump();
+        final deco = chipDecorationOf(tester, 3);
+        expect(deco.border, isNull);
+      });
+
+      testWidgets('a VERIFIED path renders the bold chip (contrast ring)',
+          (tester) async {
+        final controller = await pumpVerifiable(
+          tester,
+          isVerified: (a) => a.payload == '/etc/hosts',
+        );
+        controller.setAnchors([
+          _pathAnchor('/etc/hosts', row: 3),
+          _pathAnchor('/no/such/path990', row: 5),
+        ]);
+        await tester.pump();
+        final verified = chipDecorationOf(tester, 3);
+        expect(verified.border, isNotNull);
+        expect(
+          verified.border!.top.width,
+          GutterMarkStyle.bold.ringWidth,
+          reason: 'verified chip carries the bold ring',
+        );
+        final detected = chipDecorationOf(tester, 5);
+        expect(detected.border, isNull,
+            reason: 'the fake path on the SAME layer stays detected');
+      });
+
+      testWidgets(
+          'a verification arriving LATER upgrades the chip (listenable-driven)',
+          (tester) async {
+        final verified = <String>{};
+        final signal = _TestSignal();
+        addTearDown(signal.dispose);
+        final controller = await pumpVerifiable(
+          tester,
+          isVerified: (a) => verified.contains('${a.payload}'),
+          verificationListenable: signal,
+        );
+        controller.setAnchors([_pathAnchor('/etc/hosts', row: 4)]);
+        await tester.pump();
+        expect(chipDecorationOf(tester, 4).border, isNull);
+
+        // The async SFTP stat lands: the verifier notifies, no anchor change.
+        verified.add('/etc/hosts');
+        signal.fire();
+        await tester.pump();
+        expect(
+          chipDecorationOf(tester, 4).border,
+          isNotNull,
+          reason: 'the layer must repaint on verification results, not only '
+              'on anchor changes',
+        );
+      });
+
+      // #990 visibility gate: a SUPPRESSED anchor (single-segment root match
+      // not yet verified — pending or missing) renders NO chip at all; it
+      // appears once the verifier confirms existence.
+      testWidgets('a suppressed anchor renders NO mark until it becomes '
+          'visible (listenable-driven)', (tester) async {
+        final visible = <String>{};
+        final signal = _TestSignal();
+        addTearDown(signal.dispose);
+        final controller = await pumpVerifiable(
+          tester,
+          isVerified: (_) => false,
+          isVisible: (a) => visible.contains('${a.payload}'),
+          verificationListenable: signal,
+        );
+        controller.setAnchors([_pathAnchor('/config', row: 4)]);
+        await tester.pump();
+        expect(
+          find.byKey(const Key('gutter-mark-4')),
+          findsNothing,
+          reason: 'an unverified single-segment match must show NO affordance',
+        );
+
+        // The stat confirms it exists → the chip appears.
+        visible.add('/config');
+        signal.fire();
+        await tester.pump();
+        expect(find.byKey(const Key('gutter-mark-4')), findsOneWidget);
+      });
+
+      testWidgets('a multi-match row drops a suppressed anchor from its count',
+          (tester) async {
+        final controller = await pumpVerifiable(
+          tester,
+          isVerified: (_) => false,
+          isVisible: (a) => '${a.payload}' != '/config',
+        );
+        controller.setAnchors([
+          _urlAnchor('https://example.com', row: 6),
+          _pathAnchor('/config', row: 6),
+        ]);
+        await tester.pump();
+        // Only the URL remains → a single-pattern glyph mark, no count badge.
+        expect(find.byKey(const Key('gutter-mark-6')), findsOneWidget);
+        expect(find.text('2'), findsNothing);
+      });
+
+      testWidgets('a multi-match row with ONE verified anchor uses the bold chip',
+          (tester) async {
+        final controller = await pumpVerifiable(
+          tester,
+          isVerified: (a) => a.payload == '/etc/hosts',
+        );
+        controller.setAnchors([
+          _urlAnchor('https://example.com', row: 6),
+          _pathAnchor('/etc/hosts', row: 6),
+        ]);
+        await tester.pump();
+        expect(chipDecorationOf(tester, 6).border, isNotNull);
+        expect(find.text('2'), findsOneWidget);
       });
     });
 
