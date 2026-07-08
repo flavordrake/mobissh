@@ -228,7 +228,9 @@ class SshSessionController {
   int _reconnectAttempts = 0;
 
   /// The single authoritative "user intent suppresses auto-reconnect" bit
-  /// (#813). Set by [disconnect], reset by [connect]. This is the one bit the
+  /// (#813). Set by [disconnect]; cleared at the single transition seam in
+  /// [_emit] when a new connect actually starts (`connecting`/`reconnecting`,
+  /// #986). This is the one bit the
   /// issue permits ("keep at most ONE explicit user-intent bit"): the
   /// `disconnected` state alone is AMBIGUOUS — both a user ✕ (suppress) and an
   /// involuntary clean close while not-connected (don't suppress) land there —
@@ -316,11 +318,9 @@ class SshSessionController {
       return;
     }
 
-    // Fresh user-initiated connect — clear the user-intent bit so we'll
-    // reconnect again if the socket later flakes (#517). The `connecting` emit
-    // below moves state off `disconnected`, keeping the bit and the state-
-    // derived suppress predicate in lockstep (#813).
-    _userDisconnected = false;
+    // Fresh user-initiated connect — the `connecting` emit below clears the
+    // user-intent bit at the single transition seam in [_emit] (#986), so
+    // we'll reconnect again if the socket later flakes (#517/#813).
     _lastParams = params;
 
     ctrace(
@@ -343,6 +343,11 @@ class SshSessionController {
     // first connect pays it; subsequent connects find it already hydrated.
     if (!_hostKeyStore.isHydrated) {
       await _hostKeyStore.ready;
+      // #986: a user ✕/Disconnect raced in while we were parked at this await.
+      // The user's intent wins — abort instead of resurrecting a session the
+      // user closed (disconnect() already drove `disconnected`). Same guard
+      // after every await below.
+      if (_userDisconnected) return;
     }
 
     // Fail fast on an unusable private key BEFORE touching the network. A
@@ -395,9 +400,18 @@ class SshSessionController {
         params.port,
         timeout: handshakeTimeout,
       );
+      // #986: user disconnected while the socket was opening — tear the fresh
+      // socket down and bail before any SSH bytes flow.
+      if (_userDisconnected) {
+        ctrace('task.ssh', 'connect: aborted (user disconnected mid-open)');
+        socket.destroy();
+        return;
+      }
       _socket = socket;
       ctrace('task.ssh', 'connect: socket open OK → SSHClient handshake');
     } catch (e) {
+      // #986: don't overwrite a raced user `disconnected` with `failed`.
+      if (_userDisconnected) return;
       ctrace('task.ssh', 'connect: TCP connect FAILED — $e');
       _emit(
         _data.copyWith(
@@ -440,6 +454,9 @@ class SshSessionController {
       // transition to `authenticating` from `onVerifyHostKey`'s resolution.
       await client.authenticated;
     } catch (e) {
+      // #986: a raced user disconnect closed the client under us — that's the
+      // user's terminal `disconnected`, not an auth failure. Keep it.
+      if (_userDisconnected) return;
       // If we already transitioned to `failed` (e.g. user rejected the host
       // key) preserve the more-specific error message rather than overwriting
       // it with a generic "auth aborted" reason.
@@ -457,6 +474,19 @@ class SshSessionController {
       } catch (_) {
         /* ignore */
       }
+      return;
+    }
+
+    // #986: user disconnected during userauth but the auth still completed
+    // (close/auth race) — the session stays closed.
+    if (_userDisconnected) {
+      ctrace('task.ssh', 'connect: aborted (user disconnected mid-auth)');
+      try {
+        client.close();
+      } catch (_) {
+        /* ignore */
+      }
+      if (identical(_client, client)) _client = null;
       return;
     }
 
@@ -654,10 +684,10 @@ class SshSessionController {
         state == SshSessionState.reconnecting;
     if (!canReconnect) return;
     if (_lastParams == null) return;
-    // Explicit revive: overrides a prior user disconnect. Keep the bit and the
-    // state-derived suppress predicate consistent — the `reconnecting` emit in
-    // [_scheduleReconnect] moves state off `disconnected`/`failed` (#813).
-    _userDisconnected = false;
+    // Explicit revive: overrides a prior user disconnect. The `reconnecting`
+    // emit in [_scheduleReconnect] clears the user-intent bit at the single
+    // transition seam in [_emit] (#986), keeping the bit and the state-derived
+    // suppress predicate in lockstep (#813).
     // Force-now: drop any pending backoff timer and restart with a full budget.
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -924,6 +954,15 @@ class SshSessionController {
     _socket = null;
     final client = _client;
     _client = null;
+    // #986: drive the terminal state BEFORE the async client teardown. Closing
+    // the client resolves its `done` future, whose handler (wired in [connect]
+    // to [handleTransportClosed]) registered earlier on that future and so ran
+    // FIRST — inside the old `await client.done` window it observed the bit
+    // set while state was still `connected`: the #838 invariant fired on every
+    // user disconnect of a live session, and the clean-close path re-armed a
+    // spurious softDisconnected → reconnecting hop. Emitting first makes the
+    // handler see `disconnected` and ignore the stale close.
+    _emit(_data.copyWith(state: SshSessionState.disconnected));
     if (client != null) {
       try {
         client.close();
@@ -932,7 +971,6 @@ class SshSessionController {
         /* ignore */
       }
     }
-    _emit(_data.copyWith(state: SshSessionState.disconnected));
   }
 
   /// Release controller resources. Safe to call multiple times.
@@ -958,6 +996,16 @@ class SshSessionController {
         username: params.username,
       ),
     );
+  }
+
+  /// Attach a live [SSHClient] for tests (#986). Production reaches a non-null
+  /// [_client] only via [connect]; tests need one to exercise the [disconnect]
+  /// teardown ordering against the client's `done` future (whose handler,
+  /// wired in [connect], must observe `disconnected` — not the pre-#986
+  /// bit-set-but-still-connected window) without a real handshake.
+  @visibleForTesting
+  void debugAttachClientForTest(SSHClient client) {
+    _client = client;
   }
 
   /// Drive the host-key verification path directly, bypassing the real SSH
@@ -1017,6 +1065,17 @@ class SshSessionController {
       _terminalSinceMs ??= DateTime.now().millisecondsSinceEpoch;
     } else {
       _terminalSinceMs = null;
+    }
+    // #986: the SINGLE transition seam that clears the user-intent bit
+    // (rules/state-management.md: one transition function decides). Entering
+    // `connecting` (a fresh [connect]) or `reconnecting` ([reconnectNow] /
+    // [_scheduleReconnect]) means a NEW connect is actually starting, so a
+    // prior user ✕/Disconnect no longer suppresses anything. No other
+    // transition clears it — a user-closed session that stays closed keeps the
+    // bit (and per #1020 never resurrects a keepalive hold).
+    if (next.state == SshSessionState.connecting ||
+        next.state == SshSessionState.reconnecting) {
+      _userDisconnected = false;
     }
     _data = next;
     if (!_stateCtrl.isClosed) {
