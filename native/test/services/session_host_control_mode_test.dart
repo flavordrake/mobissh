@@ -404,6 +404,43 @@ void main() {
       expect(_s(shell.sent.toBytes()), contains('refresh-client -C 111,41'));
     });
 
+    test('an ATTACH capture requested in the SAME chunk as the handshake is '
+        'NOT gated out — capture-pane fires on confirm (#982 regression)',
+        () async {
+      final ctx = await setUpConnectedShell('cc:22:u:attach1',
+          confirmHandshake: false);
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      // Real `-CC attach`: the DCS and `%session-changed` (→ captureRequested)
+      // can arrive in ONE chunk. The attach capture is the ONLY paint of the
+      // pre-existing screen, so it must be sent the instant the gate opens.
+      shell.emit(_b('\x1bP1000p%begin 0 0 1\n%end 0 0 1\n%session-changed \$0 main\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), contains('capture-pane'),
+          reason: 'the attach capture was gated out — Stage-1 attach-render '
+              'regressed');
+      // Exactly ONE capture (no double-send between confirm + captureRequested).
+      expect('capture-pane'.allMatches(_s(shell.sent.toBytes())).length, 1);
+    });
+
+    test('an attach capture requested BEFORE the DCS is buffered and flushed on '
+        'confirm (#982)', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:attach2',
+          confirmHandshake: false);
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      // captureRequested arrives while the gate is closed → buffered, NOT sent.
+      shell.emit(_b('%session-changed \$0 main\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()).contains('capture-pane'), isFalse,
+          reason: 'a capture must not leak before the handshake');
+      // The DCS opens the gate → the buffered capture flushes exactly once.
+      shell.emit(_b('\x1bP1000p%begin 0 0 1\n%end 0 0 1\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), contains('capture-pane'));
+      expect('capture-pane'.allMatches(_s(shell.sent.toBytes())).length, 1);
+    });
+
     test('handshake NEVER confirmed → FALLBACK to scrape: the -CC channel is '
         'torn down and a resize becomes a PTY winsize resize (#982)', () async {
       final ctx = await setUpConnectedShell('cc:22:u:fallback',

@@ -776,6 +776,7 @@ class SessionHost {
     hosted.tmuxHandshakeConfirmed = false;
     hosted.pendingCcCols = null;
     hosted.pendingCcRows = null;
+    hosted.pendingCcCapture = false;
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -808,6 +809,7 @@ class SessionHost {
     hosted.refreshCoalescer = null;
     hosted.pendingCcCols = null;
     hosted.pendingCcRows = null;
+    hosted.pendingCcCapture = false;
     // Force the remote to repaint what -CC swallowed: a winsize resize makes a
     // shell/tmux redraw. dartssh2 rejects non-positive dims, so clamp.
     final cols = hosted.metrics.lastCols ?? 80;
@@ -938,6 +940,10 @@ class SessionHost {
           final tmux = hosted.tmuxChannel;
           if (tmux != null) {
             final result = tmux.ingest(bytes);
+            // #982: track whether the attach capture was fired inside the confirm
+            // branch this chunk, so the captureRequested block below does not
+            // double-send it (a harmless second repaint, but avoid the churn).
+            var capturedOnConfirm = false;
             // #909/#916: control mode ENDED (tmux detached / server died). Surface
             // it as ONE clean shell close so the controller drives a SINGLE
             // reconnect through its normal close path — instead of silently
@@ -974,12 +980,28 @@ class SessionHost {
               } catch (_) {
                 // Channel closed; the next connect re-syncs.
               }
+              // #982: flush a gated/same-chunk ATTACH capture the instant the gate
+              // opens — the attach capture is the ONLY paint of the pre-existing
+              // screen (tmux pushes none on `-CC attach`). Without this, an attach
+              // whose `%session-changed` shared the confirm chunk (or arrived
+              // while gated) would drop its capture and the grid would fall back
+              // to raw/late-%output — the Stage-1 attach-render regression.
+              if (result.captureRequested || hosted.pendingCcCapture) {
+                hosted.pendingCcCapture = false;
+                capturedOnConfirm = true;
+                try {
+                  hosted.shell?.send(tmux.frameCapture());
+                } catch (_) {
+                  // Channel closed; the next connect re-syncs.
+                }
+              }
             }
             // #982: still waiting on the handshake — do NOT issue any capture /
             // switch / resize command (it would leak). The buffered resize above
-            // flushes once confirmed; capture requests re-fire on the next
-            // notification. Render bytes (if any) still pass through below.
+            // flushes once confirmed; a gated capture request is remembered and
+            // flushed at confirm. Render bytes (if any) still pass through below.
             if (!hosted.tmuxHandshakeConfirmed) {
+              if (result.captureRequested) hosted.pendingCcCapture = true;
               final render = result.renderBytes;
               if (render.isNotEmpty) {
                 _scanAttention(sessionId, hosted, render);
@@ -1019,7 +1041,7 @@ class SessionHost {
             // switch redraw so the capture ack follows the resize ack in the FIFO.
             // The correlated response is rendered by a later `ingest` (clear +
             // write), exactly as a real `-CC` client repaints.
-            if (result.captureRequested) {
+            if (result.captureRequested && !capturedOnConfirm) {
               try {
                 hosted.shell?.send(tmux.frameCapture());
               } catch (_) {
@@ -1973,6 +1995,15 @@ class _HostedSession {
   /// instead of leaking mid-handshake. Null once flushed / never set.
   int? pendingCcCols;
   int? pendingCcRows;
+
+  /// #982: a `capture-pane` was requested (ATTACH `%session-changed`) while the
+  /// handshake gate was still closed. tmux emits the `\x1bP1000p` DCS and
+  /// `%session-changed` on attach, sometimes in the same ingest chunk; the
+  /// attach capture is the ONLY thing that paints the pre-existing screen tmux
+  /// does not push on `-CC attach`. Buffer the request here and flush ONE
+  /// `frameCapture` the moment the handshake confirms, so a gated attach capture
+  /// is never lost (the Stage-1 attach-render regression).
+  bool pendingCcCapture = false;
 
   /// #982: bounded timer armed when the entry command is written. If the `-CC`
   /// handshake is not confirmed before it fires, control mode FAILED (nested/no
