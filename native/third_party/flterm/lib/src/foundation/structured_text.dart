@@ -684,7 +684,7 @@ class StructuredTextScanner {
     // CLI's ~53-col content width in a 55-col terminal only bubbled/copied its
     // first row). Joining must key off where wrapped rows ACTUALLY end, not the
     // terminal edge.
-    final wrapCol = _inferWrapCol(reader, rows, cols);
+    final (wrapCol, wrapColCount) = _inferWrapCol(reader, rows, cols);
     final lines = <_LogicalLine>[];
     var r = 0;
     while (r < rows) {
@@ -748,7 +748,8 @@ class StructuredTextScanner {
           glyphs.add(_Glyph(content.isEmpty ? ' ' : content, absRow, c));
         }
         if (r < rows - 1 &&
-            _continuesOnto(reader, r, cols, wrapCol, blockIndent)) {
+            _continuesOnto(
+                reader, r, cols, wrapCol, wrapColCount, blockIndent)) {
           viaWidthJoin = !reader.rowWrap(r);
           r++;
           continue;
@@ -828,6 +829,7 @@ class StructuredTextScanner {
     int r,
     int cols,
     int wrapCol,
+    int wrapColCount,
     int blockIndent,
   ) {
     if (reader.rowWrap(r)) return true;
@@ -854,7 +856,46 @@ class StructuredTextScanner {
     // paragraph/block, not a wrap of this one — keeps #764 two-match behavior
     // for a complete URL followed by a differently-indented line.
     if (nextStart != blockIndent) return false;
-    return !_startsNewBlock(reader, next, cols, blockIndent);
+    if (_startsNewBlock(reader, next, cols, blockIndent)) return false;
+    // #1007: the wrap column must be a PLAUSIBLE wrap boundary, not the head
+    // row's own content-end echoed back. [_inferWrapCol] takes the MODE of long
+    // rows' end columns, so with exactly ONE long row in the buffer that row
+    // self-corroborates: a 38-col `SOMETEXT https://example.com/track993` line
+    // in a 55-col grid — provably not wrapped, 17 cols of headroom — "reached"
+    // its own wrapCol=38 and glued the next line's leading `1` onto the URL
+    // (`…/track9931`, the #993 emulator find). The boundary is trusted as-is
+    // when:
+    //   * CORROBORATED — at least TWO long rows end there (wrapColCount >= 2):
+    //     independent evidence of a consistent app content width (the #767
+    //     padded-app device fixture has 3 sibling rows ending at col 12 in a
+    //     20-col grid; a URL wrapping across 3+ rows corroborates itself with
+    //     its own full continuation rows); OR
+    //   * AT/NEAR THE GRID EDGE (wrapCol >= cols - 2) — the terminal itself
+    //     wraps there, so even a lone full-width row is a plausible wrap head
+    //     (the tmux hard-wrap class). The 2-col tolerance is the widest right
+    //     margin any green fixture requires: the REAL captured Claude-TUI
+    //     trace (`claude_wrapped_url_55col.cast.json`, the +22..+28
+    //     regression) hard-breaks its lone URL head at col 53 in a 55-col
+    //     grid — a TUI reserves a small FIXED right margin — and the reach
+    //     test's own wide-char/pad slack is 1. Do NOT widen without a real
+    //     captured trace: every extra col re-admits #1007-class false joins.
+    // Otherwise (a lone long row well short of the grid edge) fall back to the
+    // #996-class LOCAL token evidence: the head row must end in an
+    // unterminated-looking URL token AND the continuation's head token must
+    // look like a URL tail (`.` `/` `:`). This keeps the true single-sample
+    // join — the SAME 53-col capture replayed into a REMOUNTED ~94-col grid
+    // (#863's widget-tier harness) has no sibling rows and sits far from the
+    // new grid's edge, yet its halves carry the URL evidence — while the #993
+    // bug's bare `1` continuation fails it. Residual accepted risk (same class
+    // as #996's): a lone short COMPLETE-URL row followed at the same margin by
+    // a line whose first token carries `.`/`/`/`:` still glues that token.
+    final plausibleBoundary = wrapColCount >= 2 || wrapCol >= cols - 2;
+    if (!plausibleBoundary &&
+        !(_endsWithUrlToken(reader, r, cols) &&
+            _headLooksLikeUrlTail(reader, next, cols, nextStart))) {
+      return false;
+    }
+    return true;
   }
 
   /// Whether local [row]'s LAST whitespace-delimited token looks like a split
@@ -935,7 +976,17 @@ class StructuredTextScanner {
   /// full-terminal-width row that MAX would wrongly latch onto. Returns 0 when
   /// there are no wrap candidates (nothing to join by width).
   ///
-  int _inferWrapCol(CellReader reader, int rows, int cols) {
+  /// #1007: alongside the column, returns HOW MANY long rows end there (the
+  /// mode's count) so [_continuesOnto] can tell a CORROBORATED wrap column (a
+  /// consistent app content width shared by >= 2 rows) from a SELF-DEFINED one.
+  /// With exactly ONE long row in the buffer, that row's own content-end IS the
+  /// mode, making the join gate's `end >= wrapCol - 1` reach test vacuously
+  /// true — a 38-col line in a 55-col grid (provably not wrapped: 17 cols of
+  /// headroom) self-corroborated and glued the next line's leading `1` onto its
+  /// URL (`…/track9931`). The count lets the join demand extra evidence in that
+  /// degenerate case without losing the true single-sample joins (see
+  /// [_continuesOnto]).
+  (int, int) _inferWrapCol(CellReader reader, int rows, int cols) {
     final counts = <int, int>{};
     final threshold = cols ~/ 2;
     for (var r = 0; r < rows - 1; r++) {
@@ -952,7 +1003,7 @@ class StructuredTextScanner {
         bestCount = n;
       }
     });
-    return best;
+    return (best, bestCount);
   }
 
   /// Whether row [row] STARTS a new block rather than continuing the prior row:
