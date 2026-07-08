@@ -21,6 +21,10 @@ export 'package:libghostty/libghostty.dart'
         UnderlineStyle,
         initializeForWeb;
 
+// #988: the pure anchor→viewport-rect resolver is part of the public geometry
+// seam — the app's bubble decorator (and its headless tests) resolve per-row
+// rects with the SAME math `anchorRects` uses.
+export 'src/foundation/anchor_geometry.dart' show AnchorGeometry;
 export 'src/foundation/callbacks.dart' show OnResize;
 export 'src/foundation/cell_metrics.dart' show CellMetrics;
 export 'src/foundation/color_palette.dart' show ColorPalette;
