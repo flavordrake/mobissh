@@ -618,7 +618,17 @@ class TmuxControlParser {
   /// Unescape tmux's %output octal escaping: every `\NNN` (1–3 octal digits,
   /// tmux always emits 3) decodes to that byte; a `\` not followed by octal
   /// digits is kept literally. tmux escapes bytes < 0x20 and `\` itself
-  /// (`\134`). Returns raw bytes (UTF-8 / control bytes preserved exactly).
+  /// (`\134`) but sends UTF-8 / high bytes RAW. Returns raw bytes (UTF-8 /
+  /// control bytes preserved exactly).
+  ///
+  /// #982: the input string is the LATIN-1 decode of the raw `-CC` stream (the
+  /// channel decodes 1:1, byte↔code-unit), so EVERY code unit is already a single
+  /// byte in 0x00–0xFF — including a raw UTF-8 continuation/lead byte like 0xE2.
+  /// It must be emitted as that ONE byte (`c & 0xff`). The old code re-encoded
+  /// code units > 0x7f as multi-byte UTF-8 (treating 0xE2 as U+00E2 → 0xC3 0xA2),
+  /// which SHREDDED every multi-byte char in a real tmux status line into the
+  /// `â??` corruption the owner saw. tmux does NOT octal-escape high bytes
+  /// (verified against a live `-CC` capture), so this branch is the hot path.
   static Uint8List _unescapeOctal(String s) {
     final out = <int>[];
     final units = s.codeUnits;
@@ -636,13 +646,10 @@ class TmuxControlParser {
         }
         out.add(val & 0xff);
         i = j;
-      } else if (c <= 0x7f) {
-        out.add(c);
-        i++;
       } else {
-        // A non-ASCII code unit (shouldn't appear pre-unescape, but be safe):
-        // re-encode as UTF-8 bytes.
-        out.addAll(_utf8Byte(c));
+        // A raw stream byte (ASCII or a high UTF-8 byte) — one code unit == one
+        // byte after the latin1 decode. Emit it verbatim; do NOT re-encode.
+        out.add(c & 0xff);
         i++;
       }
     }
@@ -650,18 +657,6 @@ class TmuxControlParser {
   }
 
   static bool _isOctal(int c) => c >= 0x30 && c <= 0x37; // '0'..'7'
-
-  static List<int> _utf8Byte(int codeUnit) {
-    if (codeUnit < 0x80) return [codeUnit];
-    if (codeUnit < 0x800) {
-      return [0xc0 | (codeUnit >> 6), 0x80 | (codeUnit & 0x3f)];
-    }
-    return [
-      0xe0 | (codeUnit >> 12),
-      0x80 | ((codeUnit >> 6) & 0x3f),
-      0x80 | (codeUnit & 0x3f),
-    ];
-  }
 
   /// Parse a tmux window-layout string into a [WindowLayout]. Format:
   ///   `<csum>,WxH,X,Y` (single pane) or

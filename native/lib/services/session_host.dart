@@ -54,6 +54,14 @@ Future<SshShellTransport?> _defaultShellOpener(
 
 SshSessionController _defaultControllerFactory() => SshSessionController();
 
+/// #982: how long to wait for the `-CC` handshake (the `\x1bP1000p` DCS) after
+/// writing the entry command before declaring control mode FAILED and falling
+/// back to the scrape path. Nested tmux / a shell that never enters `-CC` never
+/// emits the DCS, so this bounds how long a control-mode connect can look bricked
+/// before it degrades to a working scrape session. A few seconds covers a slow
+/// login shell + `tmux -CC attach` round-trip over a high-latency link.
+const Duration kTmuxHandshakeTimeout = Duration(seconds: 4);
+
 /// Holds live SSH controllers, ingests commands from the UI side of the
 /// gateway, and emits state/output/snapshot events back.
 class SessionHost {
@@ -350,6 +358,7 @@ class SessionHost {
     if (hosted == null) return;
     final tmux = hosted.tmuxChannel;
     if (tmux == null) return; // flag OFF — ignore.
+    if (!hosted.tmuxHandshakeConfirmed) return; // #982: no -CC write pre-handshake.
     try {
       // #906: frame through the channel so the command's `%begin…%end` ack is
       // registered in the capture-correlation FIFO.
@@ -369,6 +378,7 @@ class SessionHost {
     if (hosted == null) return;
     final tmux = hosted.tmuxChannel;
     if (tmux == null) return; // flag OFF — ignore.
+    if (!hosted.tmuxHandshakeConfirmed) return; // #982: no -CC write pre-handshake.
     final String? line;
     switch (cmd.gesture) {
       case TmuxWindowGesture.nextWindow:
@@ -401,6 +411,7 @@ class SessionHost {
     if (hosted == null) return;
     final tmux = hosted.tmuxChannel;
     if (tmux == null) return; // flag OFF — ignore.
+    if (!hosted.tmuxHandshakeConfirmed) return; // #982: no -CC write pre-handshake.
     if (cmd.deltaLines == 0) return;
     final rows = hosted.metrics.lastRows ?? 24;
     try {
@@ -706,6 +717,8 @@ class SessionHost {
     hosted.tmuxChannel = null; // #909: drop the control-mode adapter on teardown.
     hosted.refreshCoalescer?.cancel(); // #916: drop the refresh-client coalescer.
     hosted.refreshCoalescer = null;
+    hosted.tmuxHandshakeTimer?.cancel(); // #982: cancel the handshake fallback timer.
+    hosted.tmuxHandshakeTimer = null;
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -757,6 +770,13 @@ class SessionHost {
     // storms a dead/reconnected shell.
     hosted.refreshCoalescer?.cancel();
     hosted.refreshCoalescer = null;
+    // #982: reset the handshake gate so a reconnect re-arms it from scratch.
+    hosted.tmuxHandshakeTimer?.cancel();
+    hosted.tmuxHandshakeTimer = null;
+    hosted.tmuxHandshakeConfirmed = false;
+    hosted.pendingCcCols = null;
+    hosted.pendingCcRows = null;
+    hosted.pendingCcCapture = false;
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -765,6 +785,39 @@ class SessionHost {
       } catch (_) {
         /* ignore */
       }
+    }
+  }
+
+  /// #982: control mode FAILED to hand-shake (nested tmux, no tmux, a shell that
+  /// never entered `-CC`) before the bounded timeout. Tear the control-mode
+  /// channel down and fall back to the SCRAPE path so the connection WORKS
+  /// instead of bricking on a swallowed/leaking channel: the live shell stays
+  /// open, its raw bytes now render normally, and resizes drive the PTY winsize.
+  /// A PTY resize nudge forces the (nested) remote to redraw so the swallowed
+  /// initial screen reappears. No-op if the handshake already confirmed or the
+  /// channel is already gone (reconnect raced us).
+  void _fallbackToScrape(String sessionId, _HostedSession hosted) {
+    if (hosted.tmuxHandshakeConfirmed || hosted.tmuxChannel == null) return;
+    ctrace('task.host',
+        'control-mode handshake timed out sid=$sessionId → scrape fallback');
+    hosted.tmuxHandshakeTimer?.cancel();
+    hosted.tmuxHandshakeTimer = null;
+    // Drop the -CC adapter + coalescer; the output listener's `tmuxChannel == null`
+    // branch now takes the unchanged scrape path for all subsequent bytes.
+    hosted.tmuxChannel = null;
+    hosted.refreshCoalescer?.cancel();
+    hosted.refreshCoalescer = null;
+    hosted.pendingCcCols = null;
+    hosted.pendingCcRows = null;
+    hosted.pendingCcCapture = false;
+    // Force the remote to repaint what -CC swallowed: a winsize resize makes a
+    // shell/tmux redraw. dartssh2 rejects non-positive dims, so clamp.
+    final cols = hosted.metrics.lastCols ?? 80;
+    final rows = hosted.metrics.lastRows ?? 24;
+    try {
+      hosted.shell?.resize(cols < 1 ? 80 : cols, rows < 1 ? 24 : rows);
+    } catch (_) {
+      // The next real resize fixes the winsize.
     }
   }
 
@@ -823,6 +876,15 @@ class SessionHost {
         // reconnected shell (the shellGeneration guard already discarded it).
         hosted.refreshCoalescer = RefreshClientCoalescer(
           onSettled: (cols, rows) {
+            // #982: NEVER write a `-CC` command before the handshake is confirmed.
+            // A resize that settles right after connect (keyboard/layout) would
+            // otherwise leak `refresh-client -C` into a plain/nested shell as
+            // text. Buffer the latest size and flush ONE resize on confirm.
+            if (!hosted.tmuxHandshakeConfirmed) {
+              hosted.pendingCcCols = cols;
+              hosted.pendingCcRows = rows;
+              return;
+            }
             try {
               // #906: frame through the channel so the resize's `%begin…%end` ack
               // is registered in the capture-correlation FIFO (and can't be
@@ -835,6 +897,16 @@ class SessionHost {
         );
         try {
           transport.send(TmuxControlChannel.entryCommand);
+          // #982: arm the fallback timer. If the `-CC` handshake (the P1000p DCS)
+          // is not confirmed before it fires, control mode FAILED (nested tmux,
+          // no tmux) — tear it down and fall back to scrape so the connection
+          // still WORKS instead of bricking on a swallowed/leaking channel.
+          hosted.tmuxHandshakeTimer?.cancel();
+          hosted.tmuxHandshakeTimer = Timer(kTmuxHandshakeTimeout, () {
+            if (!hosted.tmuxHandshakeConfirmed) {
+              _fallbackToScrape(sessionId, hosted);
+            }
+          });
         } catch (_) {
           // If the entry write fails the channel is dead; the controller's close
           // path drives reconnect, which re-opens + re-enters control mode.
@@ -868,6 +940,10 @@ class SessionHost {
           final tmux = hosted.tmuxChannel;
           if (tmux != null) {
             final result = tmux.ingest(bytes);
+            // #982: track whether the attach capture was fired inside the confirm
+            // branch this chunk, so the captureRequested block below does not
+            // double-send it (a harmless second repaint, but avoid the churn).
+            var capturedOnConfirm = false;
             // #909/#916: control mode ENDED (tmux detached / server died). Surface
             // it as ONE clean shell close so the controller drives a SINGLE
             // reconnect through its normal close path — instead of silently
@@ -881,6 +957,58 @@ class SessionHost {
                 hosted.shell?.close();
               } catch (_) {
                 /* already closing */
+              }
+              return;
+            }
+            // #982: the `-CC` handshake just confirmed. Cancel the fallback
+            // timer, mark the session live, and flush ONE buffered resize (the
+            // size the UI settled at while we held every write). This is the
+            // FIRST allowed `-CC` command — everything before it would have
+            // leaked into a not-yet-`-CC` shell.
+            if (result.handshakeConfirmed && !hosted.tmuxHandshakeConfirmed) {
+              hosted.tmuxHandshakeConfirmed = true;
+              hosted.tmuxHandshakeTimer?.cancel();
+              hosted.tmuxHandshakeTimer = null;
+              final cols =
+                  hosted.pendingCcCols ?? hosted.metrics.lastCols ?? 80;
+              final rows =
+                  hosted.pendingCcRows ?? hosted.metrics.lastRows ?? 24;
+              hosted.pendingCcCols = null;
+              hosted.pendingCcRows = null;
+              try {
+                hosted.shell?.send(tmux.frameResize(cols, rows));
+              } catch (_) {
+                // Channel closed; the next connect re-syncs.
+              }
+              // #982: flush a gated/same-chunk ATTACH capture the instant the gate
+              // opens — the attach capture is the ONLY paint of the pre-existing
+              // screen (tmux pushes none on `-CC attach`). Without this, an attach
+              // whose `%session-changed` shared the confirm chunk (or arrived
+              // while gated) would drop its capture and the grid would fall back
+              // to raw/late-%output — the Stage-1 attach-render regression.
+              if (result.captureRequested || hosted.pendingCcCapture) {
+                hosted.pendingCcCapture = false;
+                capturedOnConfirm = true;
+                try {
+                  hosted.shell?.send(tmux.frameCapture());
+                } catch (_) {
+                  // Channel closed; the next connect re-syncs.
+                }
+              }
+            }
+            // #982: still waiting on the handshake — do NOT issue any capture /
+            // switch / resize command (it would leak). The buffered resize above
+            // flushes once confirmed; a gated capture request is remembered and
+            // flushed at confirm. Render bytes (if any) still pass through below.
+            if (!hosted.tmuxHandshakeConfirmed) {
+              if (result.captureRequested) hosted.pendingCcCapture = true;
+              final render = result.renderBytes;
+              if (render.isNotEmpty) {
+                _scanAttention(sessionId, hosted, render);
+                hosted.appendScrollback(render);
+                _gateway.send(
+                  SshOutputEvent(sessionId: sessionId, bytes: render).toJson(),
+                );
               }
               return;
             }
@@ -913,7 +1041,7 @@ class SessionHost {
             // switch redraw so the capture ack follows the resize ack in the FIFO.
             // The correlated response is rendered by a later `ingest` (clear +
             // write), exactly as a real `-CC` client repaints.
-            if (result.captureRequested) {
+            if (result.captureRequested && !capturedOnConfirm) {
               try {
                 hosted.shell?.send(tmux.frameCapture());
               } catch (_) {
@@ -1854,6 +1982,34 @@ class _HostedSession {
   /// [SessionHost._ensureShell] (flag ON), cancelled + cleared with the shell in
   /// [SessionHost._dropShell]. Null on the scrape path (flag OFF).
   RefreshClientCoalescer? refreshCoalescer;
+
+  /// #982: whether this session's `-CC` handshake (the `\x1bP1000p` DCS) has been
+  /// confirmed. Until it is, NO `-CC` command may be written — in a NESTED tmux
+  /// `tmux -CC attach` fails, the DCS never arrives, and any refresh-client /
+  /// capture / control write LEAKS into the pane as literal text (the brick).
+  /// The entry command is the only allowed pre-handshake write.
+  bool tmuxHandshakeConfirmed = false;
+
+  /// #982: the latest (cols,rows) the UI wanted while the handshake was still
+  /// pending. Buffered so exactly ONE `refresh-client -C` flushes on confirm
+  /// instead of leaking mid-handshake. Null once flushed / never set.
+  int? pendingCcCols;
+  int? pendingCcRows;
+
+  /// #982: a `capture-pane` was requested (ATTACH `%session-changed`) while the
+  /// handshake gate was still closed. tmux emits the `\x1bP1000p` DCS and
+  /// `%session-changed` on attach, sometimes in the same ingest chunk; the
+  /// attach capture is the ONLY thing that paints the pre-existing screen tmux
+  /// does not push on `-CC attach`. Buffer the request here and flush ONE
+  /// `frameCapture` the moment the handshake confirms, so a gated attach capture
+  /// is never lost (the Stage-1 attach-render regression).
+  bool pendingCcCapture = false;
+
+  /// #982: bounded timer armed when the entry command is written. If the `-CC`
+  /// handshake is not confirmed before it fires, control mode FAILED (nested/no
+  /// tmux) and the host tears the channel down and falls back to the scrape
+  /// path. Cancelled on confirm and on shell drop.
+  Timer? tmuxHandshakeTimer;
 
   /// Intercepts tmux's DA2 (Secondary Device Attributes) query in the remote
   /// byte stream and answers as a `tmux`-class terminal so tmux advertises the

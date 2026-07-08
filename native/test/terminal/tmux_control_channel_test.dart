@@ -544,6 +544,86 @@ void main() {
       expect(c.sendCount, 0);
     });
   });
+
+  group('UTF-8 in %output (#982 status-line corruption)', () {
+    // Build a raw -CC chunk from a mix of ASCII text and explicit bytes — tmux
+    // sends UTF-8 / high bytes RAW in %output (verified against a live capture),
+    // NOT octal-escaped, so a status line with ★ / box-drawing arrives as its
+    // literal multi-byte UTF-8 bytes.
+    Uint8List raw(List<Object> parts) {
+      final b = <int>[];
+      for (final p in parts) {
+        if (p is String) {
+          b.addAll(utf8.encode(p));
+        } else if (p is int) {
+          b.add(p);
+        } else if (p is List<int>) {
+          b.addAll(p);
+        }
+      }
+      return Uint8List.fromList(b);
+    }
+
+    test('a raw multi-byte UTF-8 char renders verbatim, not re-encoded', () {
+      // ★ = U+2605 = 0xE2 0x98 0x85, ┤ = U+2524 = 0xE2 0x94 0xA4. The OLD parser
+      // re-encoded each high byte as UTF-8 (0xE2 → 0xC3 0xA2 …), shredding the
+      // char into the `â??` corruption. The bytes must pass through 1:1.
+      final ch = TmuxControlChannel();
+      final r = ch.ingest(raw(<Object>['%output %0 STAR[★]BOX[┤]END\n']));
+      expect(text(r.renderBytes), 'STAR[★]BOX[┤]END');
+      // Byte-exact: no doubling of the multi-byte sequence.
+      expect(r.renderBytes, raw(<Object>['STAR[★]BOX[┤]END']));
+    });
+
+    test('a UTF-8 char SPLIT across two ingest() chunks renders whole, not â??',
+        () {
+      // tmux can flush a multi-byte char across two %output events (two SSH
+      // chunks → two ingest calls). Each renderBytes is utf8.decode-d
+      // INDEPENDENTLY UI-side, so a chunk ending mid-char would corrupt. The
+      // channel must hold the incomplete tail and prepend it to the next chunk.
+      final ch = TmuxControlChannel();
+      // Chunk A ends with the FIRST byte of ★ (0xE2) — an incomplete sequence.
+      final a = ch.ingest(raw(<Object>['%output %0 A', 0xe2, '\n']));
+      // The incomplete lead byte is held back — A's render must not emit it alone.
+      expect(text(a.renderBytes), 'A');
+      expect(a.renderBytes, raw(<Object>['A']));
+      // Chunk B carries the remaining two bytes of ★ then 'B'.
+      final b = ch.ingest(raw(<Object>['%output %0 ', 0x98, 0x85, 'B\n']));
+      expect(text(b.renderBytes), '★B');
+      // End to end the split char reassembles exactly once.
+      final total = <int>[...a.renderBytes, ...b.renderBytes];
+      expect(utf8.decode(total), 'A★B');
+    });
+
+    test('a trailing split char does not stall a following ASCII-only chunk', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(raw(<Object>['%output %0 X', 0xe2, 0x94, '\n'])); // ┤ missing last byte
+      final r = ch.ingest(raw(<Object>['%output %0 ', 0xa4, 'Y\n']));
+      expect(text(r.renderBytes), '┤Y');
+    });
+  });
+
+  group('handshake confirmation signal (#982)', () {
+    test('the P1000p DCS sets handshakeConfirmed exactly once', () {
+      final ch = TmuxControlChannel();
+      expect(ch.handshakeConfirmed, isFalse);
+      final r1 = ch.ingest(bytes('\x1bP1000p%begin 1 0 1\n%end 1 0 1\n'));
+      expect(r1.handshakeConfirmed, isTrue);
+      expect(ch.handshakeConfirmed, isTrue);
+      // A later chunk does NOT re-signal (edge, not level) — the host acts once.
+      final r2 = ch.ingest(bytes('%session-changed \$0 main\n'));
+      expect(r2.handshakeConfirmed, isFalse);
+    });
+
+    test('output without the DCS never confirms the handshake (nested/plain)', () {
+      // A NESTED tmux / plain shell never emits P1000p → the gate stays closed →
+      // the host falls back to scrape instead of leaking -CC commands.
+      final ch = TmuxControlChannel();
+      final r = ch.ingest(bytes('bash: tmux: sessions should be nested\n'));
+      expect(r.handshakeConfirmed, isFalse);
+      expect(ch.handshakeConfirmed, isFalse);
+    });
+  });
 }
 
 /// A controllable fake [Timer] for the coalescer tests: it never auto-fires;
