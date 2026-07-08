@@ -17,12 +17,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/battery_optimization.dart';
 import '../services/clipboard.dart';
+import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/keepalive_providers.dart';
 import '../state/sessions.dart';
 import '../state/terminal_backend.dart';
 import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
+import '../storage/detection_exceptions_store.dart';
+import '../util/relative_time.dart';
 import 'feedback_overlay.dart' show VersionResolver, resolveBuildVersion;
 import 'settings_subheader.dart';
 import 'top_toast.dart';
@@ -42,6 +45,9 @@ class SettingsPanel extends ConsumerWidget {
     final fontSize = ref.watch(fontSizeProvider);
     final controlMode = ref.watch(tmuxControlModeProvider);
     final detection = ref.watch(detectionSettingsProvider);
+    // #995: persisted "Not a URL" / "Not a file" reports — listed for review,
+    // each removable (removal restores detection of that text).
+    final exceptions = ref.watch(detectionExceptionsProvider);
     // Flat layout (#897): a Column of top-level controls grouped by light,
     // non-collapsing subheaders. The 'settings-section' key is retained on the
     // root so existing tests / screenshots can still address the block, but it
@@ -213,6 +219,45 @@ class SettingsPanel extends ConsumerWidget {
               ? (v) => ref.read(detectionSettingsProvider.notifier).setPath(v)
               : null,
         ),
+        // #995: reviewable detection exceptions — the saved "Not a URL" /
+        // "Not a file" reports. Each entry shows the suppressed text + when/
+        // where it was reported, with a per-entry remove that restores
+        // detection. NOT cleared by Reset settings (user data, like favorites).
+        const SettingsSubheader('Detection exceptions'),
+        if (exceptions.isEmpty)
+          const ListTile(
+            key: ValueKey('detection-exceptions-empty'),
+            leading: Icon(Icons.playlist_remove_outlined),
+            title: Text('No exceptions'),
+            subtitle: Text(
+              'Use "Not a URL" / "Not a file" on a detected link or path to '
+              'stop detecting that exact text. Saved reports appear here.',
+            ),
+          )
+        else
+          for (var i = 0; i < exceptions.length; i++)
+            ListTile(
+              key: ValueKey('detection-exception-$i'),
+              leading: Icon(
+                exceptions[i].family == 'path'
+                    ? Icons.folder_off_outlined
+                    : Icons.link_off,
+              ),
+              title: Text(
+                exceptions[i].matchedText,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(_exceptionSubtitle(exceptions[i])),
+              trailing: IconButton(
+                key: ValueKey('detection-exception-remove-$i'),
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Remove exception (detect again)',
+                onPressed: () => ref
+                    .read(detectionExceptionsProvider.notifier)
+                    .removeException(exceptions[i]),
+              ),
+            ),
         const SizedBox(height: 16),
         // #897: destructive reset. Confirms, then restores every persisted user
         // pref to its documented default by calling each provider's setter (NOT
@@ -233,6 +278,16 @@ class SettingsPanel extends ConsumerWidget {
         const SizedBox(height: 8),
       ],
     );
+  }
+
+  /// Subtitle for one detection-exception row (#995): "when · host", dropping
+  /// whichever segment is unknown (a record may carry neither).
+  String _exceptionSubtitle(DetectionException e) {
+    final when = formatRelative(e.tsMs > 0 ? e.tsMs ~/ 1000 : null);
+    return [
+      if (when.isNotEmpty) when,
+      if (e.host.isNotEmpty) e.host,
+    ].join(' · ');
   }
 
   Future<void> _copyVersion(BuildContext context, String version) async {

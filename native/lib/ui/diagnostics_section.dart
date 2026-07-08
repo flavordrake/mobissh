@@ -13,6 +13,7 @@ import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
 import '../diagnostics/gesture_trace.dart';
+import '../storage/detection_exceptions_store.dart';
 import 'connection_audit.dart';
 import 'settings_subheader.dart';
 import 'top_toast.dart';
@@ -85,12 +86,29 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
     try {
       final info = await CrashReporter.environmentSnapshot();
       final crashJson = await CrashReporter.latestCrashContent();
+      // #995: the saved "Not a URL"/"Not a file" reports ride along (count +
+      // recent) so recurring false-positive classes can become detector fixes.
+      // Best-effort: a storage hiccup must not block the share path.
+      List<String> exceptionLines = const <String>[];
+      try {
+        final exceptions = await DetectionExceptionsStore().load();
+        exceptionLines = [
+          for (final e in exceptions)
+            '${e.matchedText} [${e.patternId}]'
+                '${e.host.isNotEmpty ? ' host=${e.host}' : ''}'
+                '${e.tsMs > 0 ? ' ts=${DateTime.fromMillisecondsSinceEpoch(e.tsMs, isUtc: true).toIso8601String()}' : ''}'
+                '${e.contextLine.isNotEmpty ? ' line=${e.contextLine}' : ''}',
+        ];
+      } catch (_) {
+        // Bundle ships without the corpus rather than not at all.
+      }
       final bundle = assembleFeedbackBundle(
         info: info,
         connectLog: connectLogSnapshot(),
         gestureLog: gestureLogSnapshot(),
         lifecycleLog: lifecycleLogSnapshot(),
         controlModeTrace: controlModeLogSnapshot(),
+        detectionExceptions: exceptionLines,
         crashJson: crashJson,
       );
 

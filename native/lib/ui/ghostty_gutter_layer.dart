@@ -189,9 +189,17 @@ class GutterPatternRegistry {
   /// action). A url/osc8 anchor whose payload is a well-formed file:// URI is
   /// a REMOTE PATH: it gets the PATH action set (Open in the explorer, Copy
   /// bare path, Copy sftp URL) instead of the browser URL actions.
+  ///
+  /// [onReportException] (#995): persists a "Not a URL" / "Not a file" false-
+  /// positive report for (patternId, payload). When non-null every action set
+  /// gains a LAST 'not' item, and the single-match action overlays offer the
+  /// same. The payload handed back is ALWAYS the ORIGINAL matched text (a
+  /// file:// anchor reports its file:// URI, not the derived bare path) —
+  /// suppression matches the anchor payload exactly.
   factory GutterPatternRegistry.standard({
     required Future<bool> Function(String path) openPath,
     String? Function(String path)? sftpUrlOf,
+    void Function(String patternId, String payload)? onReportException,
   }) {
     GutterItemAction copyAction(String payload) => GutterItemAction(
       keyLabel: 'copy',
@@ -212,6 +220,27 @@ class GutterPatternRegistry {
         }
       },
     );
+
+    // #995: the LAST 'not' list action — reports (patternId, ORIGINAL payload)
+    // as a false positive. Null callback → no item (purely additive).
+    GutterItemAction? notAction(
+      String patternId,
+      String payload,
+      String label,
+    ) {
+      final report = onReportException;
+      if (report == null) return null;
+      return GutterItemAction(
+        keyLabel: 'not',
+        // A file:// URL anchor reads as "Not a file" with the folder glyph
+        // even though its patternId is url/osc8.
+        icon: label == 'Not a file'
+            ? Icons.folder_off_outlined
+            : Icons.link_off,
+        label: label,
+        onInvoke: (context) async => report(patternId, payload),
+      );
+    }
 
     // #994: the path-class actions for a file:// url/osc8 anchor — Open the
     // explorer at the BARE path, copy the BARE path (command-line use), copy
@@ -239,6 +268,11 @@ class GutterPatternRegistry {
       typeLabel: 'Link',
       showActions: (context, anchor, markGlobal) {
         final payload = '${anchor.payload}';
+        // #995: report with the anchor's OWN patternId (url vs osc8) and its
+        // ORIGINAL payload text, whatever menu shape it gets below.
+        final markNot = onReportException == null
+            ? null
+            : () => onReportException(anchor.patternId, payload);
         // #994: a file:// anchor is a REMOTE path → the PATH menu.
         final barePath = fileUrlToRemotePath(payload);
         if (barePath != null) {
@@ -249,6 +283,7 @@ class GutterPatternRegistry {
             anchor: markGlobal,
             onOpen: openPath,
             sftpUrl: sftpUrlOf?.call(barePath),
+            onMarkNotDetection: markNot,
           );
           return;
         }
@@ -257,11 +292,21 @@ class GutterPatternRegistry {
           payload,
           highlightRects: const [],
           anchor: markGlobal,
+          onMarkNotDetection: markNot,
         );
       },
       itemActions: (payload) {
         final barePath = fileUrlToRemotePath(payload);
-        if (barePath != null) return fileUrlActions(barePath);
+        // #995: the 'not' action reports the ORIGINAL payload (the file://
+        // URI for a file:// anchor) — suppression keys on the matched text.
+        final not = notAction(
+          kGhosttyUrlPatternId,
+          payload,
+          barePath != null ? 'Not a file' : 'Not a URL',
+        );
+        if (barePath != null) {
+          return [...fileUrlActions(barePath), ?not];
+        }
         return [
           copyAction(payload),
           GutterItemAction(
@@ -276,6 +321,7 @@ class GutterPatternRegistry {
               }
             },
           ),
+          ?not,
         ];
       },
     );
@@ -290,10 +336,14 @@ class GutterPatternRegistry {
         highlightRects: const [],
         anchor: markGlobal,
         onOpen: openPath,
+        onMarkNotDetection: onReportException == null
+            ? null
+            : () => onReportException(anchor.patternId, '${anchor.payload}'),
       ),
       itemActions: (payload) => [
         openPathAction(payload),
         copyAction(payload),
+        ?notAction(kGhosttyPathPatternId, payload, 'Not a file'),
       ],
     );
 

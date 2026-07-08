@@ -68,12 +68,17 @@ String scrubSecrets(String input) {
 /// secrets before it enters the bundle.
 ///
 /// Returns a pretty-printed JSON string. Never throws.
+/// Cap on how many recent detection-exception entries ride in the bundle
+/// (#995). The COUNT always reports the full corpus size.
+const int maxDetectionExceptionsInBundle = 20;
+
 String assembleFeedbackBundle({
   required CrashEnvironmentInfo info,
   required List<String> connectLog,
   List<String> gestureLog = const <String>[],
   List<String> lifecycleLog = const <String>[],
   List<String> controlModeTrace = const <String>[],
+  List<String> detectionExceptions = const <String>[],
   String? crashJson,
 }) {
   final scrubbedLog = connectLog.map(scrubSecrets).toList(growable: false);
@@ -94,6 +99,20 @@ String assembleFeedbackBundle({
   // it carries only ids/indices/commands, never terminal content. Empty when
   // control mode is OFF.
   final scrubbedControlModeTrace = controlModeTrace
+      .map(scrubSecrets)
+      .toList(growable: false);
+  // #995: the saved "Not a URL" / "Not a file" reports (oldest first, so the
+  // RECENT entries are the tail). Count carries the full corpus size; the
+  // entry list is capped so a large corpus can't bloat the bundle. These are
+  // the raw material for turning recurring false-positive CLASSES into
+  // upstream detector fixes. Scrubbed like every other free-text ring.
+  final recentExceptions = detectionExceptions.length >
+          maxDetectionExceptionsInBundle
+      ? detectionExceptions.sublist(
+          detectionExceptions.length - maxDetectionExceptionsInBundle,
+        )
+      : detectionExceptions;
+  final scrubbedExceptions = recentExceptions
       .map(scrubSecrets)
       .toList(growable: false);
 
@@ -122,6 +141,8 @@ String assembleFeedbackBundle({
     'gestureLog': scrubbedGestureLog,
     'lifecycleLog': scrubbedLifecycleLog,
     'controlModeTrace': scrubbedControlModeTrace,
+    'detectionExceptionCount': detectionExceptions.length,
+    'detectionExceptions': scrubbedExceptions,
     'lastCrash': lastCrash,
     // Null-aware element: the entry is omitted entirely when there is no raw
     // (non-JSON) crash blob to preserve.

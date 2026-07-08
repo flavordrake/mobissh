@@ -183,6 +183,7 @@ import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../terminal/tmux_control_mode_flag.dart';
 import '../state/ctrl_modifier_provider.dart';
+import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
@@ -2367,6 +2368,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         openPath: _openPath,
         // #994: lets the registry offer "Copy sftp URL" for file:// anchors.
         sftpUrlOf: _sftpUrlFor,
+        // #995: "Not a URL" / "Not a file" — persist a detection exception.
+        onReportException: _reportDetectionException,
       );
 
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
@@ -2759,6 +2762,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// exists on this host. `pending` and `missing` are both suppressed.
   /// Multi-segment paths (and every non-path pattern) are always visible.
   bool _isPayloadVisible(String patternId, String payload) {
+    // #995: a user-reported false positive ("Not a URL" / "Not a file")
+    // suppresses this exact matched text — checked FIRST so it composes with
+    // (never forks) the #990 verification gate below. O(1) hash-set lookup.
+    if (ref
+        .read(detectionExceptionsProvider.notifier)
+        .isSuppressed(patternId, payload)) {
+      return false;
+    }
     if (patternId != kGhosttyPathPatternId) return true;
     if (!ghosttyPathRequiresVerification(payload)) return true;
     return _pathVerifier?.status(payload) == PathVerification.verified;
@@ -3711,6 +3722,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #778: a `path` long-press shows the PATH menu (Open → explorer, Copy path)
     // — the file-path analogue of the URL menu. A url/osc8 match keeps the URL
     // Copy/Open menu. The router suppresses selection for both.
+    // #995: every menu shape offers a LAST "Not a URL"/"Not a file" item that
+    // persists a detection exception for the ORIGINAL matched payload text.
+    void markNot() =>
+        _reportDetectionException(match.patternId, '${match.payload}');
     if (match.patternId == _kPathPatternId) {
       showPathActions(
         context,
@@ -3718,6 +3733,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         highlightRects: rects,
         anchor: globalAnchor,
         onOpen: _openPath,
+        onMarkNotDetection: markNot,
       );
       return;
     }
@@ -3732,6 +3748,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         anchor: globalAnchor,
         onOpen: _openPath,
         sftpUrl: _sftpUrlFor(filePath),
+        onMarkNotDetection: markNot,
       );
       return;
     }
@@ -3740,6 +3757,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       '${match.payload}',
       highlightRects: rects,
       anchor: globalAnchor,
+      onMarkNotDetection: markNot,
     );
   }
 
@@ -3758,6 +3776,61 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       }
     }
     return null;
+  }
+
+  /// #995: this view's session host (for the exception record) — from the live
+  /// session entry, falling back to the id's host segment when the entry is
+  /// gone.
+  String _sessionHost() {
+    for (final e in ref.read(sessionsProvider).entries) {
+      if (e.id == widget.sessionId) return e.host;
+    }
+    return widget.sessionId.split(':').first;
+  }
+
+  /// #995: persist a "Not a URL" / "Not a file" report for ([patternId],
+  /// [payload]) and suppress its affordances immediately (the provider watch in
+  /// [build] regroups the bubble + gutter layers on the state change).
+  ///
+  /// The LIVE anchor matching [payload] (when still on screen) supplies the
+  /// authoritative patternId (a shared url/osc8 menu passes the family
+  /// representative) and the context line via `textForRows` — defensively: a
+  /// scrolled-away anchor or an FFI hiccup just records an empty snippet.
+  void _reportDetectionException(String patternId, String payload) {
+    final controller = _controller;
+    var concretePatternId = patternId;
+    var contextLine = '';
+    if (controller != null) {
+      try {
+        for (final anchor in controller.anchors) {
+          if ('${anchor.payload}' != payload) continue;
+          concretePatternId = anchor.patternId;
+          if (anchor.ranges.isNotEmpty) {
+            final top = anchor.ranges.first.topRow;
+            contextLine = controller.textForRows(top, top);
+          }
+          break;
+        }
+      } catch (_) {
+        // Context is best-effort — the record is still useful without it.
+      }
+    }
+    if (contextLine.length > 200) {
+      contextLine = contextLine.substring(0, 200);
+    }
+    unawaited(
+      ref
+          .read(detectionExceptionsProvider.notifier)
+          .report(
+            patternId: concretePatternId,
+            matchedText: payload,
+            contextLine: contextLine,
+            host: _sessionHost(),
+          ),
+    );
+    if (mounted) {
+      showTopToast(context, "Won't detect again — undo in Settings");
+    }
   }
 
   /// The GLOBAL on-screen rects for [match]'s cell range (#734/#767). One per
@@ -3941,6 +4014,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         if (mounted) _forceTerminalRepaint();
       });
     });
+    // #995: watch the detection-exceptions list so a "Not a URL"/"Not a file"
+    // report (or a Settings remove) rebuilds this view — the bubble + gutter
+    // layers regroup through the [_isPayloadVisible] gate and the affordances
+    // disappear/return immediately. The hot per-anchor lookup itself reads the
+    // notifier's hash-set index, not this state.
+    ref.watch(detectionExceptionsProvider);
     final controller = _controller;
     if (controller == null) {
       return Container(
