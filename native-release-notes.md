@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+124 (2026-07-08) — file:// links act like paths; no more glued-on URL tails
+- **file:// links are treated as remote paths**: tap opens the file browser there; the menu offers the bare path (for command lines) and a full sftp:// URL. (#994)
+- **Short URLs no longer swallow the next line** — a line that never reached the wrap edge can't be joined anymore (the `…/track9931` class). (#1007)
+
 ## v0.1.10+123 (2026-07-08) — soft bubble wash + gutter chips ride their lines
 - **Bubbles are now a soft translucent wash** (no hard border) — same green family as the gutter chips, pale for detected, stronger for verified paths, with more breathing room under the text. (#1000)
 - **Gutter chips track their line while you scroll** instead of staying pinned. (#993)
