@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+129 (2026-07-08) — disconnect/reconnect state machine hardened
+- **Disconnecting a session is now clean**: no more phantom reconnect attempt (and debug assert) right after you close a session, and a session you closed can't resurrect itself if a connect was mid-flight. (#986)
+- **Keepalive stop is race-free**: a stale scheduled stop can no longer kill the background service just as another session connects — completes the #1018 fix. (#1021)
+
 ## v0.1.10+128 (2026-07-08) — keepalive survives connection blips
 - **The background connection service no longer dies during a reconnect** — a dropped session now holds the service through the whole soft-drop → reconnect cycle instead of releasing it for a moment (which could kill all sessions mid-recovery). Closing a session yourself still shuts it down. (#1018)
 
