@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+126 (2026-07-08) — copy a whole command line with one tap
+- **Command lines get their own gutter chip** (terminal glyph): tap copies the entire command — prompt stripped, wraps joined, paste-exact — while URLs/paths inside it keep their own bubbles and taps. Built from your real terminal captures; strict about not marking prose. Toggle under Settings → Command lines. (#998)
+- "Not a command" available in the chip's sheet, joining the detection exceptions. (#995)
+
 ## v0.1.10+125 (2026-07-08) — teach detection what's NOT a link or file
 - **"Not a URL" / "Not a file" in the long-press menu** — marks that text as a detection exception: its bubble and chip vanish now and stay gone across sessions. Review and remove exceptions under Settings → Detection exceptions. (#995)
 - Groundwork for whole-command detection (copy a full wrapped command line) landed under the hood. (#998)
