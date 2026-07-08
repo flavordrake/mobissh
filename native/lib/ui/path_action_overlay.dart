@@ -56,6 +56,11 @@ void debugDismissPathActions() => _dismiss();
 /// explorer navigation; when null the [debugPathOpenerOverride] (tests) or a
 /// no-op is used.
 ///
+/// [sftpUrl] (#994): the canonical `sftp://user@host[:port]/path` form of the
+/// path on its session's host. When non-null a third "Copy sftp URL" action is
+/// offered (a file:// anchor's share/canonical form); the bare-path Copy stays
+/// the primary copy for command-line pasting.
+///
 /// Safe to call from any context under an [Overlay]. No-op if no overlay.
 void showPathActions(
   BuildContext context,
@@ -63,6 +68,7 @@ void showPathActions(
   required List<Rect> highlightRects,
   required Offset anchor,
   Future<bool> Function(String path)? onOpen,
+  String? sftpUrl,
   Duration timeout = const Duration(seconds: 6),
 }) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
@@ -88,6 +94,16 @@ void showPathActions(
           if (ok) showTopToastInOverlay(overlay, 'Copied: $path');
         }());
       },
+      // #994: the canonical sftp:// form, only for anchors that carry one.
+      onCopySftp: sftpUrl == null
+          ? null
+          : () {
+              unawaited(() async {
+                final ok = await copyToClipboard(sftpUrl);
+                if (identical(_activeEntry, entry)) _dismiss();
+                if (ok) showTopToastInOverlay(overlay, 'Copied: $sftpUrl');
+              }());
+            },
       onOpen: () async {
         if (identical(_activeEntry, entry)) _dismiss();
         final ok = await opener(path);
@@ -117,6 +133,7 @@ class _PathActionLayer extends StatelessWidget {
     required this.onCopy,
     required this.onOpen,
     required this.onDismiss,
+    this.onCopySftp,
   });
 
   final String path;
@@ -125,6 +142,9 @@ class _PathActionLayer extends StatelessWidget {
   final VoidCallback onCopy;
   final Future<void> Function() onOpen;
   final VoidCallback onDismiss;
+
+  /// #994: copies the canonical sftp:// URL; null hides the action.
+  final VoidCallback? onCopySftp;
 
   @override
   Widget build(BuildContext context) {
@@ -183,8 +203,12 @@ class _PathActionLayer extends StatelessWidget {
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                // Wrap, not Row (#994): with the third "Copy sftp URL" action
+                // the buttons can exceed the max width — they flow to a second
+                // line instead of overflowing.
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     _ActionButton(
                       key: const Key('path-action-open'),
@@ -194,13 +218,19 @@ class _PathActionLayer extends StatelessWidget {
                         onOpen();
                       },
                     ),
-                    const SizedBox(width: 8),
                     _ActionButton(
                       key: const Key('path-action-copy'),
                       icon: Icons.content_copy,
                       label: 'Copy path',
                       onTap: onCopy,
                     ),
+                    if (onCopySftp != null)
+                      _ActionButton(
+                        key: const Key('path-action-copy-sftp'),
+                        icon: Icons.link,
+                        label: 'Copy sftp URL',
+                        onTap: onCopySftp!,
+                      ),
                   ],
                 ),
               ),

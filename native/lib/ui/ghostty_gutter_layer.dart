@@ -35,6 +35,7 @@ import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 
 import '../services/clipboard.dart';
+import '../util/file_url.dart';
 import 'path_action_overlay.dart';
 import 'top_toast.dart';
 import 'url_action_overlay.dart';
@@ -182,8 +183,15 @@ class GutterPatternRegistry {
   /// its `_openPath`); injectable so a widget test asserts the dispatch without
   /// pushing a real route. URL opening + clipboard honour the existing
   /// `url_action_overlay` / `clipboard` test seams.
+  ///
+  /// [sftpUrlOf] (#994) maps a bare remote path to its canonical
+  /// `sftp://user@host[:port]/path` form on the view's session (null omits the
+  /// action). A url/osc8 anchor whose payload is a well-formed file:// URI is
+  /// a REMOTE PATH: it gets the PATH action set (Open in the explorer, Copy
+  /// bare path, Copy sftp URL) instead of the browser URL actions.
   factory GutterPatternRegistry.standard({
     required Future<bool> Function(String path) openPath,
+    String? Function(String path)? sftpUrlOf,
   }) {
     GutterItemAction copyAction(String payload) => GutterItemAction(
       keyLabel: 'copy',
@@ -192,31 +200,84 @@ class GutterPatternRegistry {
       onInvoke: (context) => _copyWithToast(context, payload),
     );
 
+    GutterItemAction openPathAction(String path) => GutterItemAction(
+      keyLabel: 'open',
+      icon: Icons.folder_open,
+      label: 'Open',
+      onInvoke: (context) async {
+        final overlay = Overlay.maybeOf(context, rootOverlay: true);
+        final ok = await openPath(path);
+        if (!ok && overlay != null) {
+          showTopToastInOverlay(overlay, 'Could not open: $path');
+        }
+      },
+    );
+
+    // #994: the path-class actions for a file:// url/osc8 anchor — Open the
+    // explorer at the BARE path, copy the BARE path (command-line use), copy
+    // the canonical sftp:// form when the session identity is available.
+    List<GutterItemAction> fileUrlActions(String barePath) => [
+      openPathAction(barePath),
+      GutterItemAction(
+        keyLabel: 'copy',
+        icon: Icons.content_copy,
+        label: 'Copy path',
+        onInvoke: (context) => _copyWithToast(context, barePath),
+      ),
+      if (sftpUrlOf?.call(barePath) case final String sftpUrl)
+        GutterItemAction(
+          keyLabel: 'copy-sftp',
+          icon: Icons.link,
+          label: 'Copy sftp URL',
+          onInvoke: (context) => _copyWithToast(context, sftpUrl),
+        ),
+    ];
+
     final url = GutterPatternPresentation(
       patternId: kGhosttyUrlPatternId,
       icon: Icons.link,
       typeLabel: 'Link',
-      showActions: (context, anchor, markGlobal) => showUrlActions(
-        context,
-        '${anchor.payload}',
-        highlightRects: const [],
-        anchor: markGlobal,
-      ),
-      itemActions: (payload) => [
-        copyAction(payload),
-        GutterItemAction(
-          keyLabel: 'open',
-          icon: Icons.open_in_new,
-          label: 'Open',
-          onInvoke: (context) async {
-            final overlay = Overlay.maybeOf(context, rootOverlay: true);
-            final ok = await openDetectedUrl(payload);
-            if (!ok && overlay != null) {
-              showTopToastInOverlay(overlay, 'Could not open: $payload');
-            }
-          },
-        ),
-      ],
+      showActions: (context, anchor, markGlobal) {
+        final payload = '${anchor.payload}';
+        // #994: a file:// anchor is a REMOTE path → the PATH menu.
+        final barePath = fileUrlToRemotePath(payload);
+        if (barePath != null) {
+          showPathActions(
+            context,
+            barePath,
+            highlightRects: const [],
+            anchor: markGlobal,
+            onOpen: openPath,
+            sftpUrl: sftpUrlOf?.call(barePath),
+          );
+          return;
+        }
+        showUrlActions(
+          context,
+          payload,
+          highlightRects: const [],
+          anchor: markGlobal,
+        );
+      },
+      itemActions: (payload) {
+        final barePath = fileUrlToRemotePath(payload);
+        if (barePath != null) return fileUrlActions(barePath);
+        return [
+          copyAction(payload),
+          GutterItemAction(
+            keyLabel: 'open',
+            icon: Icons.open_in_new,
+            label: 'Open',
+            onInvoke: (context) async {
+              final overlay = Overlay.maybeOf(context, rootOverlay: true);
+              final ok = await openDetectedUrl(payload);
+              if (!ok && overlay != null) {
+                showTopToastInOverlay(overlay, 'Could not open: $payload');
+              }
+            },
+          ),
+        ];
+      },
     );
 
     final path = GutterPatternPresentation(
@@ -231,18 +292,7 @@ class GutterPatternRegistry {
         onOpen: openPath,
       ),
       itemActions: (payload) => [
-        GutterItemAction(
-          keyLabel: 'open',
-          icon: Icons.folder_open,
-          label: 'Open',
-          onInvoke: (context) async {
-            final overlay = Overlay.maybeOf(context, rootOverlay: true);
-            final ok = await openPath(payload);
-            if (!ok && overlay != null) {
-              showTopToastInOverlay(overlay, 'Could not open: $payload');
-            }
-          },
-        ),
+        openPathAction(payload),
         copyAction(payload),
       ],
     );
