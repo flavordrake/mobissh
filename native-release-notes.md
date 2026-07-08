@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+125 (2026-07-08) — teach detection what's NOT a link or file
+- **"Not a URL" / "Not a file" in the long-press menu** — marks that text as a detection exception: its bubble and chip vanish now and stay gone across sessions. Review and remove exceptions under Settings → Detection exceptions. (#995)
+- Groundwork for whole-command detection (copy a full wrapped command line) landed under the hood. (#998)
+
 ## v0.1.10+124 (2026-07-08) — file:// links act like paths; no more glued-on URL tails
 - **file:// links are treated as remote paths**: tap opens the file browser there; the menu offers the bare path (for command lines) and a full sftp:// URL. (#994)
 - **Short URLs no longer swallow the next line** — a line that never reached the wrap edge can't be joined anymore (the `…/track9931` class). (#1007)
