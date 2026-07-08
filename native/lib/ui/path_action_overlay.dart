@@ -61,6 +61,10 @@ void debugDismissPathActions() => _dismiss();
 /// offered (a file:// anchor's share/canonical form); the bare-path Copy stays
 /// the primary copy for command-line pasting.
 ///
+/// [onMarkNotDetection] (#995): when non-null a LAST "Not a file" item is
+/// offered (destructive-adjacent placement) — tapping dismisses the menu and
+/// fires the callback (the caller persists the detection exception).
+///
 /// Safe to call from any context under an [Overlay]. No-op if no overlay.
 void showPathActions(
   BuildContext context,
@@ -69,6 +73,7 @@ void showPathActions(
   required Offset anchor,
   Future<bool> Function(String path)? onOpen,
   String? sftpUrl,
+  VoidCallback? onMarkNotDetection,
   Duration timeout = const Duration(seconds: 6),
 }) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
@@ -114,6 +119,14 @@ void showPathActions(
       onDismiss: () {
         if (identical(_activeEntry, entry)) _dismiss();
       },
+      // #995: dismiss first, then report — the exception write regroups the
+      // affordance layers, so the menu must not outlive its anchor.
+      onMarkNotDetection: onMarkNotDetection == null
+          ? null
+          : () {
+              if (identical(_activeEntry, entry)) _dismiss();
+              onMarkNotDetection();
+            },
     ),
   );
   _activeEntry = entry;
@@ -134,6 +147,7 @@ class _PathActionLayer extends StatelessWidget {
     required this.onOpen,
     required this.onDismiss,
     this.onCopySftp,
+    this.onMarkNotDetection,
   });
 
   final String path;
@@ -145,6 +159,9 @@ class _PathActionLayer extends StatelessWidget {
 
   /// #994: copies the canonical sftp:// URL; null hides the action.
   final VoidCallback? onCopySftp;
+
+  /// #995: persists a "Not a file" detection exception; null hides the item.
+  final VoidCallback? onMarkNotDetection;
 
   @override
   Widget build(BuildContext context) {
@@ -230,6 +247,14 @@ class _PathActionLayer extends StatelessWidget {
                         icon: Icons.link,
                         label: 'Copy sftp URL',
                         onTap: onCopySftp!,
+                      ),
+                    // #995: LAST (destructive-adjacent) — report false positive.
+                    if (onMarkNotDetection != null)
+                      _ActionButton(
+                        key: const Key('path-action-not-file'),
+                        icon: Icons.folder_off_outlined,
+                        label: 'Not a file',
+                        onTap: onMarkNotDetection!,
                       ),
                   ],
                 ),

@@ -212,6 +212,65 @@ void main() {
       expect(decoded['lastCrash'], isNull);
     });
 
+    test('includes the detection-exceptions corpus when supplied (#995)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        detectionExceptions: const [
+          'https://false.positive/x [url] host=test-sshd',
+          '/config [path] host=test-sshd',
+        ],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded['detectionExceptionCount'], 2);
+      expect(decoded['detectionExceptions'], isA<List<Object?>>());
+      expect(
+        (decoded['detectionExceptions'] as List).first,
+        contains('https://false.positive/x'),
+        reason:
+            'the saved false-positive reports are the corpus for improving '
+            'the detector (#995)',
+      );
+    });
+
+    test('detection exceptions default empty + recent list is capped (#995)', () {
+      final none = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        crashJson: null,
+      );
+      final decodedNone = jsonDecode(none) as Map<String, Object?>;
+      expect(decodedNone['detectionExceptionCount'], 0);
+      expect(decodedNone['detectionExceptions'], isEmpty);
+
+      final many = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        detectionExceptions: [
+          for (var i = 0; i < 50; i++) 'https://fp.example/$i [url]',
+        ],
+        crashJson: null,
+      );
+      final decodedMany = jsonDecode(many) as Map<String, Object?>;
+      expect(decodedMany['detectionExceptionCount'], 50);
+      final recent = decodedMany['detectionExceptions'] as List;
+      expect(recent.length, lessThanOrEqualTo(20));
+      // The RECENT entries ride along (newest are at the end of the input).
+      expect(recent.last, contains('/49 '));
+    });
+
+    test('detection exceptions are scrubbed like the other rings (#995)', () {
+      const planted = 'hunter2-SUPER-SECRET-pw';
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        detectionExceptions: const ['token=$planted [url]'],
+        crashJson: null,
+      );
+      expect(blob.contains(planted), isFalse);
+    });
+
     test('contains NO credential material (planted password is scrubbed)', () {
       const plantedPassword = 'hunter2-SUPER-SECRET-pw';
       const plantedKey = 'BEGIN OPENSSH PRIVATE KEY';

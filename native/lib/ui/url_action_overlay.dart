@@ -68,12 +68,17 @@ void debugDismissUrlActions() => _dismiss();
 /// coordinates (one per rendered row the URL spans). [anchor] is the global
 /// point the menu is positioned near (typically the long-press location).
 ///
+/// [onMarkNotDetection] (#995): when non-null a LAST "Not a URL" item is
+/// offered (destructive-adjacent placement) — tapping dismisses the menu and
+/// fires the callback (the caller persists the detection exception).
+///
 /// Safe to call from any context under an [Overlay]. No-op if no overlay.
 void showUrlActions(
   BuildContext context,
   String url, {
   required List<Rect> highlightRects,
   required Offset anchor,
+  VoidCallback? onMarkNotDetection,
   Duration timeout = const Duration(seconds: 6),
 }) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
@@ -109,6 +114,14 @@ void showUrlActions(
       onDismiss: () {
         if (identical(_activeEntry, entry)) _dismiss();
       },
+      // #995: dismiss first, then report — the exception write regroups the
+      // affordance layers, so the menu must not outlive its anchor.
+      onMarkNotDetection: onMarkNotDetection == null
+          ? null
+          : () {
+              if (identical(_activeEntry, entry)) _dismiss();
+              onMarkNotDetection();
+            },
     ),
   );
   _activeEntry = entry;
@@ -128,6 +141,7 @@ class _UrlActionLayer extends StatelessWidget {
     required this.onCopy,
     required this.onOpen,
     required this.onDismiss,
+    this.onMarkNotDetection,
   });
 
   final String url;
@@ -136,6 +150,9 @@ class _UrlActionLayer extends StatelessWidget {
   final VoidCallback onCopy;
   final Future<void> Function() onOpen;
   final VoidCallback onDismiss;
+
+  /// #995: persists a "Not a URL" detection exception; null hides the item.
+  final VoidCallback? onMarkNotDetection;
 
   @override
   Widget build(BuildContext context) {
@@ -206,8 +223,12 @@ class _UrlActionLayer extends StatelessWidget {
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                // Wrap, not Row (#995): with the third "Not a URL" item the
+                // buttons can exceed the max width — they flow to a second
+                // line instead of overflowing (mirrors the path overlay).
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     _ActionButton(
                       key: const Key('url-action-copy'),
@@ -215,7 +236,6 @@ class _UrlActionLayer extends StatelessWidget {
                       label: 'Copy',
                       onTap: onCopy,
                     ),
-                    const SizedBox(width: 8),
                     _ActionButton(
                       key: const Key('url-action-open'),
                       icon: Icons.open_in_new,
@@ -224,6 +244,14 @@ class _UrlActionLayer extends StatelessWidget {
                         onOpen();
                       },
                     ),
+                    // #995: LAST (destructive-adjacent) — report false positive.
+                    if (onMarkNotDetection != null)
+                      _ActionButton(
+                        key: const Key('url-action-not-url'),
+                        icon: Icons.link_off,
+                        label: 'Not a URL',
+                        onTap: onMarkNotDetection!,
+                      ),
                   ],
                 ),
               ),
