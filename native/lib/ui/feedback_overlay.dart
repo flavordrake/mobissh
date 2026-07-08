@@ -29,6 +29,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
+import 'package:mobissh/diagnostics/paint_stats.dart'
+    show activePaintStatsSnapshot;
 import 'package:mobissh/diagnostics/gesture_trace.dart';
 import 'package:mobissh/diagnostics/session_byte_recorder.dart';
 import 'package:mobissh/ui/top_toast.dart';
@@ -353,6 +355,10 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       setState(() => _recording = false); // long-press while recording → stop
       return;
     }
+    // Paint replay harness: stamp the active session's paint-stack boundary
+    // counters into the rings BEFORE snapshotting, so a "paint not happening"
+    // report names the broken layer (bytesIn vs notifies vs paints).
+    _stampPaintStats();
     // Trace rings snapshotted at the START — they keep accumulating during the
     // window, so the report carries what happened across the whole repro.
     final connectLog = connectLogSnapshot();
@@ -413,6 +419,18 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     );
   }
 
+  /// Paint replay harness: one-line snapshot of the active session's
+  /// paint-stack boundary counters (bytesIn → writeErrors → contentNotifies →
+  /// paints → frameSyncs → lastSyncRebuiltRows), emitted into the lifecycle +
+  /// connect rings so every bug report carries it. No-op when no session is
+  /// active. Bounded: one line per report.
+  void _stampPaintStats() {
+    final stats = activePaintStatsSnapshot();
+    if (stats == null) return;
+    final line = stats.entries.map((e) => '${e.key}=${e.value}').join(' ');
+    clifecycle('paint-stats', line);
+  }
+
   Future<void> _onTap() async {
     if (_recording) {
       setState(() => _recording = false); // tap while recording → stop
@@ -426,6 +444,10 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     // The owner saw exactly this: interacting with the feedback control changed
     // the layout before the shot. Capturing immediately is truer; the small
     // affordance pill appearing in its own screenshot is an acceptable trade.
+    //
+    // Paint replay harness: stamp the paint-stack boundary counters first so
+    // they ride inside the connect/lifecycle logs of THIS report.
+    _stampPaintStats();
     final connectLog = connectLogSnapshot();
     final gestureLog = gestureLogSnapshot();
     final lifecycleLog = lifecycleLogSnapshot();

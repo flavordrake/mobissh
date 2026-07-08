@@ -208,6 +208,16 @@ class TerminalRenderBox extends RenderBox {
   var _debugForceRepaintCount = 0;
   Timer? _outputSettleTimer;
 
+  // PAINT-STACK BOUNDARY COUNTERS (paint replay harness). Monotonic since this
+  // render box was created. Capture-only — no behaviour change. Together with
+  // the app-side bytesIn/writeErrors counters they let a stale-paint report
+  // name the broken layer: bytes arrived → terminal notified
+  // ([debugContentNotifyCount]) → paint ran ([debugPaintCount]) → the sync
+  // re-read rows ([debugFrameSyncCount] / [debugRowsRebuiltLastSync]).
+  var _debugContentNotifyCount = 0;
+  var _debugPaintCount = 0;
+  var _debugFrameSyncCount = 0;
+
   // #922 TELEMETRY SEAM (capture only — NO behaviour change to paint/dirty/sync).
   //
   // When the app wires [onFrameDebug] (production flterm leaves it null → zero
@@ -336,6 +346,18 @@ class TerminalRenderBox extends RenderBox {
   /// #918 (test seam): whether the output settle tick is currently armed (a timer
   /// is pending). The #805 perf guard asserts this is FALSE when idle.
   bool get debugOutputTickArmed => _outputSettleTimer != null;
+
+  /// Paint replay harness: content-change notifies observed (a
+  /// [_onTerminalChanged] that survived the rows==0 guard). Monotonic.
+  int get debugContentNotifyCount => _debugContentNotifyCount;
+
+  /// Paint replay harness: [paint] executions. Monotonic. A stale screen with
+  /// bytes arriving but this NOT advancing = paint was never scheduled/ran.
+  int get debugPaintCount => _debugPaintCount;
+
+  /// Paint replay harness: paint-time frame syncs that ran with terminal-dirty
+  /// content ([_syncFrameState] with `_needsFrameSync` set). Monotonic.
+  int get debugFrameSyncCount => _debugFrameSyncCount;
 
   /// #918 (test seam): inject the settle-timer factory so headless tests fire the
   /// output tick deterministically and assert the idle-no-fire perf guard.
@@ -525,6 +547,7 @@ class TerminalRenderBox extends RenderBox {
 
   @override
   void paint(PaintingContext context, Offset offset) {
+    _debugPaintCount++;
     _syncFrameState();
 
     final canvas = context.canvas;
@@ -785,6 +808,7 @@ class TerminalRenderBox extends RenderBox {
   // gated on `_performingLayout`.
   void _onTerminalChanged() {
     if (_paintState.rows == 0) return;
+    _debugContentNotifyCount++;
 
     final scrollbackChanged = _terminal.scrollbackRows != _lastScrollbackRows;
 
@@ -925,6 +949,7 @@ class TerminalRenderBox extends RenderBox {
 
     final terminalDirty = _needsFrameSync;
     _needsFrameSync = false;
+    if (terminalDirty) _debugFrameSyncCount++;
     // #918: this frame consumed any coalesced force-repaint; a fresh input after
     // this paint may force again (once per frame).
     _forceCoalesced = false;
