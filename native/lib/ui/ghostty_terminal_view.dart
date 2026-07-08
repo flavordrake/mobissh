@@ -1094,6 +1094,40 @@ bool ghosttyHasCopyableSelection({
   required String snapshot,
 }) => liveSelection || snapshot.isNotEmpty;
 
+/// #1014: DECRST sequence resetting every synthesized-input-gating DEC private
+/// mode to its default, written LOCALLY into the terminal parser
+/// (`controller.write`) at the REVIVE boundary (`proxy.shellReady`, which
+/// re-fires on every reconnect — the same seam as the #702 resize-resync and
+/// the #717 focus latch).
+///
+/// Why: the flterm controller (and the libghostty VT terminal under it)
+/// SURVIVES a reconnect — only the task-side shell reopens. A pre-drop
+/// mouse-reporting TUI (tmux, mouse on) leaves `mouseTracking` ON, so the
+/// gesture overlay kept synthesizing SGR reports into the revived remote; a
+/// plain shell renders them as literal `[<65;...M` text at the prompt (owner
+/// telemetry 2026-07-08T18-13-09: sentSgrTrace bursts right after a SUCCESSFUL
+/// 5-session reconnect). Resetting the parser at shellReady re-syncs the local
+/// mode state to a fresh shell's reality; if the remote's TUI is still alive
+/// (tmux auto-attach) its redraw re-emits DECSET through the byte stream and
+/// the parser re-enables the modes naturally — no user action, no heuristics.
+///
+/// Ordering is safe: shellReady and PTY output arrive on the SAME gateway IPC
+/// stream (ssh_session_proxy `_handleEvent`), so this reset always lands
+/// BEFORE the revived shell's first output bytes.
+///
+/// Covered modes (all remote-toggled, all gate synthesized input):
+///   9/1000/1002/1003  mouse tracking (drive `controller.mouseTracking`);
+///   1005/1006/1015    mouse report encodings (UTF-8 / SGR / urxvt);
+///   1007              alternate scroll (wheel → arrow keys on alt screen);
+///   2004              bracketed paste.
+/// Deliberately NOT reset: the alternate SCREEN (would blank the restored
+/// grid) and DECCKM (keyboard arrows work in both encodings at a shell).
+/// LOCAL-only: DECRST produces no reply, so nothing is sent to the remote.
+const String ghosttyInputModeResetSequence =
+    '\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l'
+    '\x1b[?1005l\x1b[?1006l\x1b[?1015l'
+    '\x1b[?1007l\x1b[?2004l';
+
 /// SGR-1006 button1-PRESS report at the 1-based ([col], [row]) cell (#692).
 ///
 /// `CSI < 0 ; col ; row M` — button 0 (left), uppercase `M` = press.
@@ -2692,6 +2726,21 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // not the pre-shellReady default that gets dropped. Re-fires on reconnect.
       _shellReadySub = proxy.shellReady.listen((_) {
         if (!mounted) return;
+        // #1014: a shellReady tick is the REVIVE boundary — the terminal
+        // instance survived the reconnect, so re-sync its synthesized-input-
+        // gating DEC modes (stale tmux mouse mode kept the SGR path firing
+        // into the revived plain shell as literal [<65;...M text). Runs FIRST:
+        // shellReady precedes the new shell's output on the shared IPC stream,
+        // so a still-alive TUI's re-emitted DECSET re-enables the modes right
+        // after. See [ghosttyInputModeResetSequence].
+        final staleTracking = controller.mouseTracking;
+        controller.write(
+          Uint8List.fromList(ghosttyInputModeResetSequence.codeUnits),
+        );
+        ctrace(
+          'ui.modes1014',
+          'shellReady: input-mode reset (mouse was ${staleTracking.name})',
+        );
         // #717: a shellReady tick is a fresh connect (re-fires on reconnect), so
         // reset the per-connect focus latch and re-focus this connect. flterm is
         // autofocus:false, so without this the terminal stays unfocused and its
