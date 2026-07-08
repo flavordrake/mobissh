@@ -25,4 +25,29 @@ void main() {
       expect(kGhosttyUrlHighlightStyle.background, isNull);
     });
   });
+
+  // #990 visibility gate: single-segment root-level matches (`/word`) are
+  // overwhelmingly TUI slash-commands (`/config`, `/rc` — the +121 owner
+  // report), not paths. They get NO affordance until an SFTP stat confirms
+  // they exist. Multi-segment paths never require verification to SHOW.
+  group('#990 ghosttyPathRequiresVerification', () {
+    test('single-segment root matches require verification', () {
+      expect(ghosttyPathRequiresVerification('/config'), isTrue);
+      expect(ghosttyPathRequiresVerification('/rc'), isTrue);
+      expect(ghosttyPathRequiresVerification('/etc'), isTrue);
+      // Trailing slash doesn't add a segment.
+      expect(ghosttyPathRequiresVerification('/etc/'), isTrue);
+    });
+
+    test('multi-segment paths do NOT require verification to show', () {
+      expect(ghosttyPathRequiresVerification('/etc/hosts'), isFalse);
+      expect(ghosttyPathRequiresVerification('/no/such/path990'), isFalse);
+      expect(ghosttyPathRequiresVerification('/a/b/'), isFalse);
+    });
+
+    test('degenerate payloads are conservative (suppressed until verified)', () {
+      expect(ghosttyPathRequiresVerification('/'), isTrue);
+      expect(ghosttyPathRequiresVerification(''), isTrue);
+    });
+  });
 }

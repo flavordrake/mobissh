@@ -371,6 +371,8 @@ class SessionHost {
         _handleSftpUpload(cmd);
       case SftpUploadFileCommand():
         _handleSftpUploadFile(cmd);
+      case SftpStatCommand():
+        _handleSftpStat(cmd);
       case SshControlCommand():
         _handleControlCommand(cmd);
       case SshTmuxGestureCommand():
@@ -1588,6 +1590,36 @@ class SessionHost {
       ctrace('task.host', 'sftp uploadFile FAILED remote=${cmd.remotePath} — $e');
       _emitSftpError(cmd.sessionId, cmd.requestId, 'Upload failed: $e');
     }
+  }
+
+  /// #990: existence probe for a detected path anchor. ONE stat over the
+  /// session's SftpSession ([SftpSession.sizeOf] — a stat under the hood; no
+  /// new session-abstraction method so the existing fakes stay valid). ALWAYS
+  /// replies with a [SftpStatResultEvent]; every failure mode (missing path,
+  /// permission denied, session not connected, channel error) collapses to
+  /// `exists=false` — fail-open per the #990 contract, so the UI never blocks
+  /// or surfaces an error banner for a probe.
+  Future<void> _handleSftpStat(SftpStatCommand cmd) async {
+    var exists = false;
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp != null) {
+        await sftp.sizeOf(cmd.path);
+        exists = true;
+      }
+    } catch (e) {
+      ctrace('task.host', 'sftp stat MISS path=${cmd.path} — $e');
+      exists = false;
+    }
+    if (_disposed) return;
+    _gateway.send(
+      SftpStatResultEvent(
+        sessionId: cmd.sessionId,
+        requestId: cmd.requestId,
+        path: cmd.path,
+        exists: exists,
+      ).toJson(),
+    );
   }
 
   void _emitSftpError(String sessionId, String requestId, String message) {

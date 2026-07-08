@@ -176,7 +176,9 @@ import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
-import '../services/session_messages.dart' show TmuxWindowGesture;
+import '../services/path_verifier.dart';
+import '../services/session_messages.dart'
+    show SftpStatResultEvent, SshTaskEvent, TmuxWindowGesture;
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../terminal/tmux_control_mode_flag.dart';
@@ -2251,6 +2253,14 @@ class GhosttyTerminalView extends ConsumerStatefulWidget {
   @visibleForTesting
   static final Map<String, List<int>> debugGrids = <String, List<int>>{};
 
+  /// #990: the live per-session path verifier, exposed so the on-emulator
+  /// integration test can assert a printed REAL path upgrades to verified while
+  /// a FAKE one stays detected (`isVerified(path)`). Mirrors the other debug
+  /// seams: set in initState, cleared on dispose. Test-only.
+  @visibleForTesting
+  static final Map<String, SessionPathVerifier> debugPathVerifiers =
+      <String, SessionPathVerifier>{};
+
   @override
   ConsumerState<GhosttyTerminalView> createState() =>
       _GhosttyTerminalViewState();
@@ -2471,6 +2481,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// doesn't spam the scroll ring with identical offsets.
   int _lastRecordedScrollOffset = -1;
 
+  /// #990: the per-session detected-path VERIFICATION cache. Feeds the bolder
+  /// "verified" shade on the gutter chip + inline bubble for a path anchor
+  /// that exists on the CONNECTED host (one SFTP stat per path, debounced,
+  /// TTL-cached, fail-open). Scoped to this view == this session, so a path
+  /// verified on host A never bleeds onto host B. Null when the proxy failed
+  /// to resolve.
+  SessionPathVerifier? _pathVerifier;
+
+  /// #990: subscription routing [SftpStatResultEvent]s (broadcast, shared with
+  /// the file browser's listener) into [_pathVerifier]. Cancelled on dispose.
+  StreamSubscription<SshTaskEvent>? _sftpStatSub;
+
   @override
   void initState() {
     super.initState();
@@ -2583,6 +2605,27 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // visual is the widget-layer bubble decorator, coloured per the live
       // session theme in [build].
       _registerUrlPattern(controller);
+      // #990: per-session path verification. The verifier probes each detected
+      // path anchor ONCE (debounced, capped, TTL-cached) over the session's
+      // SFTP and the gutter/bubble layers read `isVerified` for the bolder
+      // shade. Anchors are noted off the SAME narrow decoration listenable the
+      // layers repaint on; results arrive on the broadcast sftpEvents stream.
+      _pathVerifier = SessionPathVerifier(
+        sessionId: widget.sessionId,
+        sendStat: proxy.sftpStat,
+      );
+      _sftpStatSub = proxy.sftpEvents.listen((event) {
+        if (event is SftpStatResultEvent) {
+          _pathVerifier?.onStatResult(
+            requestId: event.requestId,
+            exists: event.exists,
+          );
+        }
+      });
+      controller.decorationListenable.addListener(_notePathAnchors);
+      // #990 (test-only): expose the verifier so the on-emulator integration
+      // test can assert the real-path/fake-path shade split.
+      GhosttyTerminalView.debugPathVerifiers[widget.sessionId] = _pathVerifier!;
       // Paint replay harness: let the stats snapshot probe the live render-box
       // boundary counters (notifies / paints / frame syncs) at read time.
       _paintStats.boxProbe = _probePaintBox;
@@ -2648,6 +2691,50 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #748/#750/#751/#764 drift root cause (external re-sync on every notify) is
     // gone.
   }
+
+  /// #990: feed the CURRENTLY-ANCHORED detected paths to the per-session
+  /// verifier. Runs on the controller's narrow decoration listenable (fires on
+  /// anchor-set / painted-offset changes only). Cheap: the verifier debounces,
+  /// dedupes against its TTL cache, and caps in-flight stats — so this can
+  /// fire freely on every rescan. Gated on a connected session: probing a
+  /// dead session is pure noise (its stats would fail-open anyway).
+  void _notePathAnchors() {
+    final controller = _controller;
+    final verifier = _pathVerifier;
+    if (controller == null || verifier == null) return;
+    final proxy = _proxy;
+    if (proxy == null || proxy.data.state != SshSessionState.connected) return;
+    verifier.notePaths([
+      for (final anchor in controller.anchors)
+        if (anchor.patternId == kGhosttyPathPatternId) '${anchor.payload}',
+    ]);
+  }
+
+  /// #990: the OPAQUE verification predicate handed to the gutter + bubble
+  /// layers. True only for a PATH anchor whose payload the session verifier
+  /// confirmed (exists on the connected host, fresh in its TTL cache). The
+  /// layers never learn WHY — the predicate could later mean "downloaded
+  /// locally" without any paint change.
+  bool _isAnchorVerified(StructuredAnchor anchor) {
+    if (anchor.patternId != kGhosttyPathPatternId) return false;
+    return _pathVerifier?.isVerified('${anchor.payload}') ?? false;
+  }
+
+  /// #990 visibility gate (owner report on +121: `/config`, `/rc` bubbled): a
+  /// SINGLE-SEGMENT root-level path match is a low-confidence detection —
+  /// overwhelmingly a TUI slash-command — so it shows NO affordance (no
+  /// bubble, no gutter chip, no tap-copy) unless the verifier CONFIRMED it
+  /// exists on this host. `pending` and `missing` are both suppressed.
+  /// Multi-segment paths (and every non-path pattern) are always visible.
+  bool _isPayloadVisible(String patternId, String payload) {
+    if (patternId != kGhosttyPathPatternId) return true;
+    if (!ghosttyPathRequiresVerification(payload)) return true;
+    return _pathVerifier?.status(payload) == PathVerification.verified;
+  }
+
+  /// Anchor-shaped adapter of [_isPayloadVisible] for the gutter/bubble layers.
+  bool _isAnchorVisible(StructuredAnchor anchor) =>
+      _isPayloadVisible(anchor.patternId, '${anchor.payload}');
 
   /// #767: read the flterm viewport scroll offset, defensively (an FFI hiccup
   /// must never crash the session) — 0 if the controller can't report it. Used
@@ -3716,6 +3803,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     GhosttyTerminalView.debugByteRecorders.remove(widget.sessionId);
     GhosttyTerminalView.debugCellSizes.remove(widget.sessionId);
     GhosttyTerminalView.debugGrids.remove(widget.sessionId);
+    // #990: tear down the path verifier with its session view.
+    if (GhosttyTerminalView.debugPathVerifiers[widget.sessionId] ==
+        _pathVerifier) {
+      GhosttyTerminalView.debugPathVerifiers.remove(widget.sessionId);
+    }
+    _controller?.decorationListenable.removeListener(_notePathAnchors);
+    _sftpStatSub?.cancel();
+    _pathVerifier?.dispose();
+    _pathVerifier = null;
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
     _controller?.onResize = null;
@@ -4094,8 +4190,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             onSelectionClear: _clearSelection,
             // #726/#767: resolve a tapped cell (0-based viewport) to a detected
             // structured match. Detection lives INSIDE the terminal now, so we
-            // ask the controller directly — no app-side URL list.
-            urlAtCell: (col, row) => controller.matchAt(row: row, col: col),
+            // ask the controller directly — no app-side URL list. #990: a
+            // SUPPRESSED match (unverified single-segment path) shows NO
+            // affordance — including tap actions — so it doesn't hit-test.
+            urlAtCell: (col, row) {
+              final match = controller.matchAt(row: row, col: col);
+              if (match == null) return null;
+              if (!_isPayloadVisible(match.patternId, '${match.payload}')) {
+                return null;
+              }
+              return match;
+            },
             // #999: URL/OSC-8 taps copy; PATH taps navigate (file browser).
             onUrlTap: _onMatchTap,
             // #734: a long-press on a detected URL shows the Copy/Open action
@@ -4116,6 +4221,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           child: GhosttyBubbleLayer(
             controller: controller,
             color: highlightColor,
+            // #990: verified paths (exist on the connected host, per the
+            // session verifier's SFTP stat) paint the bolder bubble shade;
+            // unverified SINGLE-SEGMENT matches are suppressed entirely.
+            isVerified: _isAnchorVerified,
+            isVisible: _isAnchorVisible,
+            verificationListenable: _pathVerifier,
           ),
         ),
         // #962: right-edge LINE-SELECT layer. Drag the gutter to select WHOLE
@@ -4153,6 +4264,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             color: highlightColor,
             cellHeight: cellSize.height,
             padding: kGhosttyTerminalPadding,
+            // #990: a row with a verified path anchor renders the bold chip;
+            // unverified SINGLE-SEGMENT matches get no mark (and drop out of
+            // multi-match counts).
+            isVerified: _isAnchorVerified,
+            isVisible: _isAnchorVisible,
+            verificationListenable: _pathVerifier,
           ),
         ),
         // Selection affordances (bottom-right). #712: shown ONLY while a

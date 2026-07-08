@@ -108,6 +108,12 @@ class _FakeController extends ChangeNotifier implements TerminalController {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// A test-owned verification signal (#990) — stands in for the
+/// SessionPathVerifier's ChangeNotifier surface.
+class _TestSignal extends ChangeNotifier {
+  void fire() => notifyListeners();
+}
+
 void main() {
   const scanner = StructuredTextScanner();
   const cols = 50;
@@ -303,6 +309,162 @@ void main() {
       ]);
       await tester.pump();
       expect(find.byKey(const Key('ghostty-bubble-paint')), findsOneWidget);
+    });
+  });
+
+  // #990 — detected vs VERIFIED path shades on the inline bubble. A verified
+  // path (exists on the connected host per the session's SFTP stat) paints a
+  // BOLDER bubble: thicker stroke + a translucent fill wash. The layer only
+  // consumes an opaque `isVerified` predicate.
+  group('#990 verified path bubble shade', () {
+    StructuredAnchor pathAnchor(String path, {int row = 3}) => StructuredAnchor(
+      patternId: kGhosttyPathPatternId,
+      payload: path,
+      ranges: [
+        HighlightRange(
+          startRow: row,
+          startCol: 0,
+          endRow: row,
+          endCol: path.length,
+          payload: path,
+        ),
+      ],
+    );
+
+    Future<_FakeController> pumpVerifiable(
+      WidgetTester tester, {
+      required bool Function(StructuredAnchor anchor) isVerified,
+      bool Function(StructuredAnchor anchor)? isVisible,
+      Listenable? verificationListenable,
+    }) async {
+      final controller = _FakeController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: GhosttyBubbleLayer(
+                    controller: controller,
+                    color: const Color(0xFF5B9BD5),
+                    isVerified: isVerified,
+                    isVisible: isVisible,
+                    verificationListenable: verificationListenable,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      return controller;
+    }
+
+    GhosttyBubblePainter painterOf(WidgetTester tester) {
+      final paint = tester.widget<CustomPaint>(
+        find.byKey(const Key('ghostty-bubble-paint')),
+      );
+      return paint.painter! as GhosttyBubblePainter;
+    }
+
+    test('the verified stroke is BOLDER than the detected stroke', () {
+      expect(
+        kGhosttyBubbleVerifiedStrokeWidth,
+        greaterThan(kGhosttyBubbleStrokeWidth),
+      );
+    });
+
+    testWidgets('a verified path bubble is marked verified; an unverified one '
+        'is not', (tester) async {
+      final controller = await pumpVerifiable(
+        tester,
+        isVerified: (a) => a.payload == '/etc/hosts',
+      );
+      controller.setAnchors([
+        pathAnchor('/etc/hosts', row: 3),
+        pathAnchor('/no/such/path990', row: 5),
+      ]);
+      await tester.pump();
+      final painter = painterOf(tester);
+      expect(painter.specs, hasLength(2));
+      final byPayload = {
+        for (var i = 0; i < painter.specs.length; i++) i: painter.specs[i],
+      };
+      // Anchor order is preserved: [verified, unverified].
+      expect(byPayload[0]!.verified, isTrue);
+      expect(byPayload[1]!.verified, isFalse);
+    });
+
+    testWidgets('a URL bubble is never bold — the predicate decides, the layer '
+        'obeys', (tester) async {
+      final controller = await pumpVerifiable(
+        tester,
+        // The production predicate only ever returns true for path anchors.
+        isVerified: (a) => a.patternId == kGhosttyPathPatternId,
+      );
+      controller.setAnchors([
+        StructuredAnchor(
+          patternId: kGhosttyUrlPatternId,
+          payload: 'https://example.com',
+          ranges: const [
+            HighlightRange(startRow: 2, startCol: 4, endRow: 2, endCol: 23),
+          ],
+        ),
+      ]);
+      await tester.pump();
+      expect(painterOf(tester).specs.single.verified, isFalse);
+    });
+
+    // #990 visibility gate: a SUPPRESSED anchor (single-segment root match not
+    // yet verified) paints NO bubble; it appears once verified.
+    testWidgets('a suppressed anchor paints NO bubble until it becomes visible',
+        (tester) async {
+      final visible = <String>{};
+      final signal = _TestSignal();
+      addTearDown(signal.dispose);
+      final controller = await pumpVerifiable(
+        tester,
+        isVerified: (_) => false,
+        isVisible: (a) => visible.contains('${a.payload}'),
+        verificationListenable: signal,
+      );
+      controller.setAnchors([pathAnchor('/config')]);
+      await tester.pump();
+      expect(
+        find.byKey(const Key('ghostty-bubble-paint')),
+        findsNothing,
+        reason: 'an unverified single-segment match must show NO affordance',
+      );
+
+      visible.add('/config');
+      signal.fire();
+      await tester.pump();
+      expect(find.byKey(const Key('ghostty-bubble-paint')), findsOneWidget);
+    });
+
+    testWidgets('a verification arriving LATER repaints the bubble bold',
+        (tester) async {
+      final verified = <String>{};
+      final signal = _TestSignal();
+      addTearDown(signal.dispose);
+      final controller = await pumpVerifiable(
+        tester,
+        isVerified: (a) => verified.contains('${a.payload}'),
+        verificationListenable: signal,
+      );
+      controller.setAnchors([pathAnchor('/etc/hosts')]);
+      await tester.pump();
+      expect(painterOf(tester).specs.single.verified, isFalse);
+
+      verified.add('/etc/hosts');
+      signal.fire();
+      await tester.pump();
+      expect(
+        painterOf(tester).specs.single.verified,
+        isTrue,
+        reason: 'the bubble must repaint on verification results, not only '
+            'on anchor changes',
+      );
     });
   });
 

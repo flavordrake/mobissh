@@ -1,0 +1,14 @@
+{
+  "name": "mobissh-feedback",
+  "version": "1.0.0",
+  "description": "Dedicated bug-report/telemetry ingestion service for MobiSSH (#997)",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

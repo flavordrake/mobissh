@@ -55,13 +55,25 @@ class GutterMarkStyle {
     required this.chipSize,
     required this.glyphSize,
     required this.minTapExtent,
+    this.ringWidth = 0.0,
   });
 
-  /// The standard mark style. (#990 adds a `bold` verified-path variant here.)
+  /// The standard mark style — the plain "detected" shade.
   static const GutterMarkStyle normal = GutterMarkStyle(
     chipSize: 24.0,
     glyphSize: 16.0,
     minTapExtent: 40.0,
+  );
+
+  /// The BOLD variant (#990): the VERIFIED-path shade. Same geometry and tap
+  /// semantics as [normal] plus a contrast RING around the chip (stroked in
+  /// [onChipColor], so it stays monochrome + theme-compliant and reads at
+  /// phone density where a subtle fill change would not).
+  static const GutterMarkStyle bold = GutterMarkStyle(
+    chipSize: 24.0,
+    glyphSize: 16.0,
+    minTapExtent: 40.0,
+    ringWidth: 2.5,
   );
 
   /// Diameter of the filled chip behind the glyph.
@@ -74,6 +86,10 @@ class GutterMarkStyle {
   /// The mark's HIT box is expanded to this even though the painted chip is
   /// smaller — the extra area is invisible and centred on the row.
   final double minTapExtent;
+
+  /// Width of the contrast ring around the chip — 0 for the plain detected
+  /// shade, >0 for the bold VERIFIED shade (#990).
+  final double ringWidth;
 
   /// The chip fill: the theme accent forced OPAQUE. The session selection
   /// colour is often translucent (e.g. `0x33` alpha) — a see-through chip has
@@ -311,6 +327,10 @@ class GhosttyGutterLayer extends StatelessWidget {
     this.padding = 4.0,
     this.stripWidth = kGutterStripWidth,
     this.style = GutterMarkStyle.normal,
+    this.isVerified,
+    this.isVisible,
+    this.verifiedStyle = GutterMarkStyle.bold,
+    this.verificationListenable,
   });
 
   /// The SAME controller handed to the flterm `TerminalView`.
@@ -336,17 +356,47 @@ class GhosttyGutterLayer extends StatelessWidget {
   /// Chip sizing + colour derivation for the marks (#989).
   final GutterMarkStyle style;
 
+  /// #990: OPAQUE verification predicate. True → the anchor's row renders in
+  /// [verifiedStyle] (the bold shade). Null → every mark stays [style]. The
+  /// layer deliberately doesn't know WHY an anchor is verified (today:
+  /// exists-on-host via the session's SFTP stat) so the predicate's meaning
+  /// can change without paint rework.
+  final bool Function(StructuredAnchor anchor)? isVerified;
+
+  /// #990 visibility gate: OPAQUE suppression predicate — false means the
+  /// anchor gets NO gutter mark at all (a low-confidence single-segment match
+  /// awaiting verification, or confirmed missing). A suppressed anchor also
+  /// drops out of a multi-match row's count. Null → everything shows.
+  final bool Function(StructuredAnchor anchor)? isVisible;
+
+  /// The bold shade for verified anchors (#990).
+  final GutterMarkStyle verifiedStyle;
+
+  /// #990: fires when a verification result lands (no anchor change involved)
+  /// so the marks repaint. Merged with the controller's decoration listenable.
+  final Listenable? verificationListenable;
+
   @override
   Widget build(BuildContext context) {
+    final verification = verificationListenable;
     return ListenableBuilder(
-      listenable: controller.decorationListenable,
+      listenable: verification == null
+          ? controller.decorationListenable
+          : Listenable.merge([controller.decorationListenable, verification]),
       builder: (context, _) {
         // #812: don't draw mid-scroll — the marks reappear on settle. (Tap
         // routing via the gesture router's matchAt is unaffected.)
         if (controller.isScrolling) return const SizedBox.shrink();
         if (cellHeight <= 0) return const SizedBox.shrink();
         final byRow = groupAnchorsByGutterRow(
-          controller.anchors,
+          // #990 visibility gate: suppressed anchors never reach the grouping,
+          // so a suppressed match neither marks its row nor inflates a count.
+          isVisible == null
+              ? controller.anchors
+              : [
+                  for (final a in controller.anchors)
+                    if (isVisible!(a)) a,
+                ],
           gutterRowOf: controller.anchorGutterRow,
           hasPresentation: (id) => registry.forPattern(id) != null,
         );
@@ -387,7 +437,11 @@ class GhosttyGutterLayer extends StatelessWidget {
                   anchors: entry.value,
                   registry: registry,
                   color: color,
-                  style: style,
+                  // #990: a row with ANY verified anchor renders the bold
+                  // shade (a multi-match row's badge inherits it too).
+                  style: (isVerified != null && entry.value.any(isVerified!))
+                      ? verifiedStyle
+                      : style,
                   stripWidth: stripWidth,
                 ),
               ),
@@ -480,6 +534,11 @@ class _GutterMarkState extends State<_GutterMark> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: chipFill,
+                // #990: the VERIFIED shade — a contrast ring (bold), absent on
+                // the plain detected chip.
+                border: style.ringWidth > 0
+                    ? Border.all(color: onChip, width: style.ringWidth)
+                    : null,
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.35),

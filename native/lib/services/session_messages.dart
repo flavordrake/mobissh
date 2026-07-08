@@ -75,6 +75,14 @@ enum SshTaskCommandKind {
   /// [SftpUploadProgressEvent]s + a terminal [SftpUploadDoneEvent].
   sftpUploadFile,
 
+  /// Lightweight existence probe for ONE remote path (#990). The task stats
+  /// the path over the session's SftpSession and replies with a
+  /// [SftpStatResultEvent] (`exists` bool) — ALWAYS a result, never an error
+  /// event: a failed/denied stat is `exists=false` (fail-open — the UI keeps
+  /// the plain "detected" shade). Used by the path-anchor verifier; NEVER a
+  /// directory listing (that's [sftpList], too heavy for a probe).
+  sftpStat,
+
   // --- tmux control mode (#911, Part C) ---
 
   /// UI → task: a FULL tmux `-CC` control-command LINE, delivered ATOMICALLY
@@ -154,6 +162,11 @@ enum SshTaskEventKind {
   /// browser renders a determinate bar; resume reports its starting offset via
   /// the first event.
   sftpUploadProgress,
+
+  /// The reply to an [SshTaskCommandKind.sftpStat] probe (#990): whether the
+  /// path exists on the connected host. Errors collapse to `exists=false`
+  /// (fail-open) so the verifier needs no error branch.
+  sftpStatResult,
 
   /// An SFTP operation failed (list, download, or upload). Carries the request
   /// id so the UI can match it to the in-flight op without tearing down the
@@ -322,6 +335,12 @@ sealed class SshTaskCommand {
           localPath: json['localPath'] as String,
           remotePath: json['remotePath'] as String,
         );
+      case SshTaskCommandKind.sftpStat:
+        return SftpStatCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+        );
       case SshTaskCommandKind.controlCommand:
         return SshControlCommand(
           sessionId: sessionId,
@@ -461,6 +480,33 @@ class SftpUploadFileCommand extends SshTaskCommand {
     'requestId': requestId,
     'localPath': localPath,
     'remotePath': remotePath,
+  };
+}
+
+/// UI → task: does the remote path exist? (#990). The task stats [path] over
+/// the session's SftpSession and replies with a [SftpStatResultEvent] keyed by
+/// [requestId]. Mirrors [SftpListCommand]'s envelope; deliberately NOT a
+/// listing — a probe must stay cheap (one stat) because the verifier fires it
+/// for every currently-anchored detected path.
+class SftpStatCommand extends SshTaskCommand {
+  const SftpStatCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpStat;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
   };
 }
 
@@ -900,6 +946,13 @@ sealed class SshTaskEvent {
           sent: json['sent'] as int,
           totalBytes: json['totalBytes'] as int,
         );
+      case SshTaskEventKind.sftpStatResult:
+        return SftpStatResultEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+          exists: json['exists'] as bool,
+        );
       case SshTaskEventKind.sftpError:
         return SftpErrorEvent(
           sessionId: sessionId,
@@ -1304,6 +1357,37 @@ class SftpUploadProgressEvent extends SshTaskEvent {
     'requestId': requestId,
     'sent': sent,
     'totalBytes': totalBytes,
+  };
+}
+
+/// Task → UI: the reply to an [SftpStatCommand] probe (#990). [exists] is true
+/// iff the stat succeeded on the connected host; ANY failure (missing path,
+/// permission denied, session not connected) is `exists=false` — fail-open,
+/// the path anchor keeps the plain "detected" shade. Echoes [path] so the
+/// UI-side verifier can cache by path without holding request state beyond the
+/// id.
+class SftpStatResultEvent extends SshTaskEvent {
+  const SftpStatResultEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+    required this.exists,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+  final bool exists;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpStatResult;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
+    'exists': exists,
   };
 }
 

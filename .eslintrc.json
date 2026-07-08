@@ -66,7 +66,8 @@
     },
     {
       "files": [
-        "server/**/*.js"
+        "server/**/*.js",
+        "server-feedback/**/*.js"
       ],
       "env": {
         "browser": false,
