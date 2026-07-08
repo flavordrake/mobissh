@@ -73,6 +73,7 @@ class TmuxIngestResult {
     required this.activeWindowChanged,
     required this.exited,
     this.captureRequested = false,
+    this.handshakeConfirmed = false,
   });
 
   /// The octal-UNESCAPED bytes of the ACTIVE window's panes, demultiplexed and
@@ -98,6 +99,14 @@ class TmuxIngestResult {
   /// responds by sending [TmuxControlChannel.frameCapture]; the correlated
   /// `%begin…%end` response is rendered (clear + write) back through [ingest].
   final bool captureRequested;
+
+  /// True on the FIRST chunk in which tmux's `-CC` handshake was confirmed — the
+  /// `\x1bP1000p` DCS that ONLY a real control-mode session emits (#982). Until
+  /// this fires the host must NOT write ANY `-CC` command (refresh-client /
+  /// capture / control): in a NESTED tmux `tmux -CC attach` fails, the DCS never
+  /// arrives, and any command written into the plain/nested pane LEAKS as literal
+  /// text (the owner's brick). The entry command is the only pre-handshake write.
+  final bool handshakeConfirmed;
 }
 
 /// An ordered tmux window the control channel knows about (Part C, #911). Built
@@ -179,6 +188,19 @@ class TmuxControlChannel {
   /// history window at the bottom, like copy-mode freezing the view); rendering
   /// resumes — with a fresh live capture — when the user scrolls back to bottom.
   bool get scrolledBack => _scrollOffset > 0;
+
+  /// An incomplete trailing UTF-8 sequence carried between [ingest] calls (#982).
+  /// tmux can split a multi-byte UTF-8 char across two `%output` events (and thus
+  /// two SSH chunks / two [ingest] calls); each renderBytes chunk is decoded
+  /// INDEPENDENTLY UI-side (`utf8.decode` per SshOutputEvent), so a chunk that
+  /// ENDS mid-char corrupts to `â??`. We hold the incomplete tail here and prepend
+  /// it to the next chunk so every emitted renderBytes ends on a UTF-8 boundary.
+  List<int> _utf8Carry = const <int>[];
+
+  /// Whether tmux's `-CC` handshake (the `\x1bP1000p` DCS) has been observed on
+  /// this channel yet (#982). The host gates every `-CC` write on this.
+  bool _handshakeConfirmed = false;
+  bool get handshakeConfirmed => _handshakeConfirmed;
 
   /// Hard cap on how far back a swipe can scroll (#906 Stage 2). tmux clamps to
   /// the real history itself (a too-old `-S` just returns the oldest lines), so
@@ -363,9 +385,18 @@ class TmuxControlChannel {
     var activeChanged = false;
     var exited = false;
     var captureRequested = false;
+    var handshakeConfirmed = false;
 
     for (final ev in events) {
       switch (ev) {
+        case ControlModeEntered():
+          // #982: the `\x1bP1000p` DCS — proof a real `-CC` session opened. Only
+          // now may the host write `-CC` commands (refresh-client / capture /
+          // control); before this a nested/plain shell would echo them as text.
+          if (!_handshakeConfirmed) {
+            _handshakeConfirmed = true;
+            handshakeConfirmed = true;
+          }
         case CommandEnd():
           // #906 Stage 1: a command-output block completed. Correlate it to the
           // client command that produced it by FIFO order (tmux emits exactly one
@@ -396,6 +427,7 @@ class TmuxControlChannel {
           _windowNames.clear();
           _activeWindowId = null;
           _scrollOffset = 0;
+          _utf8Carry = const <int>[]; // #982: drop any partial char from the old session.
           captureRequested = true;
         case LayoutChange():
           // Record which window each leaf pane belongs to so %output can be
@@ -446,18 +478,68 @@ class TmuxControlChannel {
           exited = true;
         default:
           // CommandBegin, client notifications, UnhandledNotification,
-          // UnknownLine, ControlModeEntered: no render or window-tracking effect
-          // here. The parser already updated its own active-window/layout view.
+          // UnknownLine: no render or window-tracking effect here. The parser
+          // already updated its own active-window/layout view.
           break;
       }
     }
 
     return TmuxIngestResult(
-      renderBytes: render.toBytes(),
+      renderBytes: _emitOnUtf8Boundary(render.toBytes()),
       activeWindowChanged: activeChanged,
       exited: exited,
       captureRequested: captureRequested,
+      handshakeConfirmed: handshakeConfirmed,
     );
+  }
+
+  /// Prepend any carried partial UTF-8 sequence to [bytes], then split off a NEW
+  /// incomplete trailing sequence to carry to the next chunk, so the returned
+  /// bytes always end on a UTF-8 char boundary (#982). This stops a multi-byte
+  /// char that tmux split across two `%output` chunks from being decoded as two
+  /// malformed halves UI-side (`utf8.decode` runs per SshOutputEvent).
+  Uint8List _emitOnUtf8Boundary(Uint8List bytes) {
+    if (_utf8Carry.isEmpty && bytes.isEmpty) return bytes;
+    final Uint8List combined;
+    if (_utf8Carry.isEmpty) {
+      combined = bytes;
+    } else {
+      combined = Uint8List(_utf8Carry.length + bytes.length)
+        ..setRange(0, _utf8Carry.length, _utf8Carry)
+        ..setRange(_utf8Carry.length, _utf8Carry.length + bytes.length, bytes);
+      _utf8Carry = const <int>[];
+    }
+    final hold = _incompleteUtf8TailLength(combined);
+    if (hold == 0) return combined;
+    final cut = combined.length - hold;
+    _utf8Carry = combined.sublist(cut);
+    return Uint8List.sublistView(combined, 0, cut);
+  }
+
+  /// The number of trailing bytes of [b] that form an INCOMPLETE UTF-8 sequence
+  /// (a lead byte whose continuation bytes have not all arrived yet), or 0 when
+  /// the buffer ends on a complete char / ASCII / an undecodable byte (#982).
+  /// UTF-8 chars are at most 4 bytes, so scanning back at most 3 bytes for the
+  /// lead byte is sufficient.
+  static int _incompleteUtf8TailLength(Uint8List b) {
+    final n = b.length;
+    for (var back = 1; back <= 3 && back <= n; back++) {
+      final c = b[n - back];
+      if (c < 0x80) return 0; // ASCII byte — complete.
+      if ((c & 0xc0) == 0x80) continue; // continuation — keep seeking the lead.
+      final int need; // this is the lead byte; how many bytes the char needs.
+      if ((c & 0xe0) == 0xc0) {
+        need = 2;
+      } else if ((c & 0xf0) == 0xe0) {
+        need = 3;
+      } else if ((c & 0xf8) == 0xf0) {
+        need = 4;
+      } else {
+        return 0; // invalid lead — let allowMalformed handle it, don't stall.
+      }
+      return back < need ? back : 0; // hold only if not all bytes are present.
+    }
+    return 0;
   }
 
   /// Turn a `capture-pane` response (the visible pane rows, verbatim with SGR

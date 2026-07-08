@@ -94,7 +94,7 @@ void main() {
         InMemoryGatewayPair pair,
         List<_DriveableShellTransport> opened,
         StringBuffer forwarded,
-      })> setUpConnectedShell(String sid) async {
+      })> setUpConnectedShell(String sid, {bool confirmHandshake = true}) async {
     final socket = _SilentSocket();
     final sentinelClient = SSHClient(socket, username: 'u');
     addTearDown(() {
@@ -143,6 +143,17 @@ void main() {
       auth: SshAuth.password('p'),
     ));
     await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    // #982: a real `tmux -CC` session opens with the `\x1bP1000p` DCS handshake,
+    // and the host now GATES every `-CC` write on seeing it (so a nested/plain
+    // shell can't leak commands). Emit the handshake for flag-ON sessions so the
+    // gate opens exactly as it does against real tmux; the flush of the initial
+    // refresh-client it triggers is harmless (every assertion below clears `sent`
+    // or uses startsWith/contains).
+    if (confirmHandshake && tmuxControlMode && opened.isNotEmpty) {
+      opened.first.emit(_b('\x1bP1000p%begin 0 0 1\n%end 0 0 1\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
 
     addTearDown(() async {
       await proxy.dispose();
@@ -345,6 +356,74 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(shell.sent.length, 0);
+    });
+
+    // ---- #982: handshake gate — NO -CC write leaks before the DCS ----
+
+    test('BEFORE the handshake, a resize does NOT leak refresh-client into the '
+        'shell (only the entry command was written)', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:gate1',
+          confirmHandshake: false);
+      final shell = ctx.opened.first;
+      // The entry command is the ONLY allowed pre-handshake write.
+      expect(_s(shell.sent.toBytes()), startsWith('tmux -CC'));
+      shell.sent.clear();
+      ctx.proxy.sendResize(100, 30);
+      // Past the resize-coalescer settle: with the gate closed it must be BUFFERED,
+      // not written — a nested/plain shell would echo it as literal text.
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      expect(_s(shell.sent.toBytes()).contains('refresh-client'), isFalse,
+          reason: 'refresh-client leaked before the -CC handshake confirmed');
+    });
+
+    test('BEFORE the handshake, control commands + gestures are gated (no leak)',
+        () async {
+      final ctx = await setUpConnectedShell('cc:22:u:gate2',
+          confirmHandshake: false);
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      ctx.proxy.sendControlCommand('select-window -t @1');
+      ctx.proxy.sendTmuxGesture(TmuxWindowGesture.nextWindow);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(shell.sent.length, 0,
+          reason: 'a -CC command leaked into the pane before the handshake');
+    });
+
+    test('the BUFFERED resize FLUSHES once the handshake confirms', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:gate3',
+          confirmHandshake: false);
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      ctx.proxy.sendResize(111, 41);
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      // Still gated — nothing written yet.
+      expect(_s(shell.sent.toBytes()).contains('refresh-client'), isFalse);
+      // The DCS arrives → the gate opens and the buffered size flushes ONCE.
+      shell.emit(_b('\x1bP1000p%begin 0 0 1\n%end 0 0 1\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_s(shell.sent.toBytes()), contains('refresh-client -C 111,41'));
+    });
+
+    test('handshake NEVER confirmed → FALLBACK to scrape: the -CC channel is '
+        'torn down and a resize becomes a PTY winsize resize (#982)', () async {
+      final ctx = await setUpConnectedShell('cc:22:u:fallback',
+          confirmHandshake: false);
+      final shell = ctx.opened.first;
+      // Wait past the bounded handshake timeout — control mode FAILED (nested/no
+      // tmux). The host must fall back so the connection still WORKS.
+      await Future<void>.delayed(kTmuxHandshakeTimeout +
+          const Duration(milliseconds: 300));
+      shell.sent.clear();
+      shell.resizes.clear();
+      // Post-fallback the session is the plain scrape path: raw bytes render and
+      // a resize drives the PTY winsize (NOT refresh-client).
+      shell.emit(_b('\x1b[32mscrape-lives\x1b[0m\r\n'));
+      ctx.proxy.sendResize(120, 40);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(ctx.forwarded.toString(), contains('scrape-lives'));
+      expect(shell.resizes, contains((120, 40)),
+          reason: 'after fallback a resize must winsize the PTY, not refresh-client');
+      expect(_s(shell.sent.toBytes()).contains('refresh-client'), isFalse);
     });
   });
 
