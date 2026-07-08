@@ -111,15 +111,19 @@ void main() {
 
       session.emit(SshSessionState.connecting);
       await _drain();
-      expect(gateway.calls, isEmpty,
-          reason: 'no service start while still connecting');
+      // #1018: `connecting` now holds the service (hold-unless-terminal), so
+      // the count path starts it here already. Pre-#1018 the start waited for
+      // `connected` (production relied on ensureStarted #539 instead); the
+      // dip-free count is what keeps a mid-reconnect stop from firing.
+      expect(gateway.calls.first, 'init');
+      expect(gateway.calls.any((c) => c.startsWith('start:')), isTrue);
+      expect(controller.connectedCount, 1);
 
       session.emit(SshSessionState.connected);
       await _drain();
-      expect(gateway.calls.first, 'init');
-      expect(gateway.calls.any((c) => c.startsWith('start:')), isTrue);
       expect(await gateway.isRunningService, isTrue);
-      expect(controller.connectedCount, 1);
+      expect(controller.connectedCount, 1,
+          reason: 'no double-count when connecting reaches connected');
 
       await controller.dispose();
       await session.dispose();
@@ -287,6 +291,98 @@ void main() {
 
       await controller.dispose();
       await session.dispose();
+    });
+
+    // #1018: a single-session soft drop must not transiently release the
+    // service. The real reconnect path re-emits connecting/authenticating via
+    // connect(), so the hold must survive the FULL cycle — any 1→0 dip
+    // schedules an unawaited stop that races (and beats) the revive.
+    test(
+        'single-session soft drop → full reconnect cycle never stops the '
+        'service (#1018)', () async {
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final session = StubSession();
+      controller.attach(session);
+
+      session.emit(SshSessionState.connected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+
+      // connected → softDisconnected → reconnecting → (idle is set silently,
+      // not emitted) → connecting → authenticating → connected, exactly as
+      // SshSessionController emits during an auto-reconnect.
+      session.emit(SshSessionState.softDisconnected);
+      session.emit(SshSessionState.reconnecting);
+      await _drain();
+      session.emit(SshSessionState.connecting);
+      session.emit(SshSessionState.authenticating);
+      await _drain();
+      session.emit(SshSessionState.connected);
+      await _drain();
+
+      expect(gateway.calls.where((c) => c == 'stop'), isEmpty,
+          reason: 'no stop may be scheduled at ANY point mid-reconnect — an '
+              'unawaited stop lands after the revive and kills the task '
+              'isolate\n${gateway.calls}');
+      expect(await gateway.isRunningService, isTrue);
+      expect(controller.connectedCount, 1,
+          reason: 'count must not dip or double across the cycle');
+
+      await controller.dispose();
+      await session.dispose();
+    });
+
+    test('user disconnect after a soft drop still stops the service (#1018)',
+        () async {
+      // #986 adjacency: user intent ends in the terminal `disconnected`
+      // state — softDisconnected holding must not keep the FGS alive past it.
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final session = StubSession();
+      controller.attach(session);
+
+      session.emit(SshSessionState.connected);
+      await _drain();
+      session.emit(SshSessionState.softDisconnected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue,
+          reason: 'softDisconnected is reconnect-bound — it holds');
+
+      session.emit(SshSessionState.disconnected);
+      await _drain();
+      expect(await gateway.isRunningService, isFalse);
+      expect(controller.connectedCount, 0);
+
+      await controller.dispose();
+      await session.dispose();
+    });
+
+    test('multi-session: one soft-dropping session never stops the service '
+        '(#1018)', () async {
+      final gateway = FakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final a = StubSession();
+      final b = StubSession();
+      controller.attach(a);
+      controller.attach(b);
+
+      a.emit(SshSessionState.connected);
+      b.emit(SshSessionState.connected);
+      await _drain();
+      expect(controller.connectedCount, 2);
+
+      a.emit(SshSessionState.softDisconnected);
+      a.emit(SshSessionState.reconnecting);
+      await _drain();
+
+      expect(gateway.calls.where((c) => c == 'stop'), isEmpty);
+      expect(await gateway.isRunningService, isTrue);
+      expect(controller.connectedCount, 2);
+
+      await controller.dispose();
+      await a.dispose();
+      await b.dispose();
     });
   });
 

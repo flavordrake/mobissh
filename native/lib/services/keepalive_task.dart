@@ -445,18 +445,27 @@ class KeepaliveController {
   int get connectedCount => _connectedCount;
 
   /// Returns true while the given state should hold the foreground service
-  /// open. `reconnecting` (#517) is treated as "still connected" so Android
-  /// doesn't freeze the Dart isolate mid-reconnect.
+  /// open: every non-idle, non-terminal lifecycle state (#1018). The service
+  /// releases only on `idle`/`failed`/`disconnected` — a user disconnect ends
+  /// in `disconnected`, so user intent (#986) still tears it down.
   ///
-  /// This predicate drives the connected-COUNT (start on 0→1, stop on 1→0).
-  /// The in-flight handshake states (`connecting`, `authenticating`,
-  /// `awaitingHostKey`) deliberately do NOT increment the count — the service
-  /// for those is started explicitly by [ensureStarted] on connect-initiation
-  /// (#539). Because they never increment the count, they also never trigger
-  /// the 1→0 stop, so a session mid-handshake cannot tear the service down.
+  /// This predicate drives the connected-COUNT (start on 0→1, stop on 1→0),
+  /// so it must never dip to 0 mid-lifecycle: any transient 1→0 schedules an
+  /// unawaited stop that lands AFTER the next holding state already saw the
+  /// service running and skipped its start (#1018 — single-session
+  /// `connected → softDisconnected → reconnecting` killed the FGS
+  /// mid-reconnect). The reconnect attempt re-runs connect(), which re-emits
+  /// `connecting`/`authenticating` on the observed stream, so an enumerated
+  /// connected+reconnecting allow-list dips at `reconnecting → connecting`
+  /// too — hence hold-unless-terminal rather than a state allow-list.
+  ///
+  /// Consequence for fresh connects: `connecting` now increments the count,
+  /// so the count path may start the service itself. In production it is
+  /// already up — [ensureStarted] starts it on connect-initiation (#539) and
+  /// `_startIfStopped` is idempotent. A connect that never reaches
+  /// `connected` still releases via the terminal `failed`/`disconnected`.
   static bool _holdsService(SshSessionState state) {
-    return state == SshSessionState.connected ||
-        state == SshSessionState.reconnecting;
+    return state != SshSessionState.idle && !_isTerminal(state);
   }
 
   /// Start the foreground service immediately, independent of how many
