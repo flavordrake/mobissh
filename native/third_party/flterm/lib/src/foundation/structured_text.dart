@@ -187,6 +187,64 @@ final class TextPattern {
     );
   }
 
+  /// The built-in COMMAND-LINE pattern (#998 slice B) — a BLOCK-tier anchor
+  /// over a whole prompt-anchored command line, for copy-to-paste.
+  ///
+  /// Implements the issue's measured heuristic (design comment on #998,
+  /// validated against 15 real owner byte-traces / 379 joined logical lines
+  /// with zero prose misfires). Detection runs on the scanner's JOINED
+  /// logical line (the existing #925/#928/#996/#1007 wrap-join — this pattern
+  /// adds NO join logic of its own):
+  ///
+  /// **Stage 1 — prompt anchor (mandatory; no unanchored tier in v1):**
+  ///   * STRONG prompts fire at body score >= 2: a bash `user@host:path$ `
+  ///     prompt, a TUI line-number gutter (`56      curl …` — Claude Code
+  ///     code blocks AND shell `history` output, whose entries ARE commands),
+  ///     and Claude Code's `⎿  $ ` tool-result inner prompt.
+  ///   * WEAK prompts need score >= 3 AND a lexicon hit: `❯ ` (Claude's
+  ///     user-message echo — usually prose, so `❯ go` / `❯ /model` stay
+  ///     silent) and bare `$`/`#`/`%` doc-style prompts.
+  ///   * Bare `>` is EXCLUDED entirely (PS2 continuation and markdown
+  ///     blockquote both render as `> `; FP risk swamps value).
+  ///   * Diff-marked gutter rows (`\d+` gutter followed by `+`/`-`) are
+  ///     SKIPPED: the diff marker sits INSIDE the wrap join, so a naive
+  ///     extraction pastes corrupted text (`se`+`+ssion`). A context row of
+  ///     the same diff (no marker) still detects.
+  ///
+  /// **Stage 2 — body score** (each signal counts once): first token — or its
+  /// basename — in [lexicon] +2, OR first token executable-shaped
+  /// (`./x`, `/x`, `~/x`, `scripts/x`) +2; leading `VAR=value` assignment(s)
+  /// +1; a flag (`-x`/`--long`) +1; a shell operator (`| ; < > && $( `` ` ``)
+  /// +1. The first-token signals are mutually exclusive (a token is scored as
+  /// a lexicon word or as a path shape, not both) — the design lists them as
+  /// alternative identities of one token.
+  ///
+  /// The [lexicon] is APP-SUPPLIED so the fork stays app-agnostic;
+  /// [kDefaultCommandLexicon] (the design's curated ~100-word list) is the
+  /// default. It is a static list, NOT PATH-derived (would need remote exec).
+  ///
+  /// The pattern is [TextTier.block] with [rangeGroup] 1: the anchor covers
+  /// the COMMAND only (the prompt stays un-anchored ink) and inner url/path/
+  /// OSC-8 SPAN anchors coexist inside it (#998 slice A mechanics). The
+  /// payload is the prompt-stripped command with internal quoting/spacing
+  /// preserved verbatim (paste-ability is the point); there is NO
+  /// trailingTrim (a command legitimately ends in `"`, `)`, `&2`).
+  factory TextPattern.command({
+    String id = 'command',
+    HighlightStyle style = const HighlightStyle(),
+    List<String> lexicon = kDefaultCommandLexicon,
+  }) {
+    final lexiconSet = Set<String>.of(lexicon);
+    return TextPattern(
+      id: id,
+      regex: _kCommandPattern,
+      style: style,
+      tier: TextTier.block,
+      rangeGroup: 1,
+      normalize: (raw) => _extractCommand(raw, lexiconSet),
+    );
+  }
+
   /// The built-in OSC-8 HYPERLINK source (#767 Slice B) — the PRIMARY, exact
   /// URL source.
   ///
@@ -368,6 +426,128 @@ String _normalizeUrl(String raw) {
   final lower = raw.toLowerCase();
   if (lower.startsWith('http://') || lower.startsWith('https://')) return raw;
   return 'https://$raw';
+}
+
+/// The default command LEXICON for [TextPattern.command] (#998 slice B) — the
+/// design's curated ~100-word list of common command words. APP-SUPPLIABLE via
+/// the factory's `lexicon` parameter; this is only the default. Deliberately
+/// static (not PATH-derived — that would need remote exec). `command` and
+/// `yes` are EXCLUDED on purpose: the design's measured corpus scored
+/// `command -v wrangler…` at 2 (flag+operator, no lexicon hit) behind a strong
+/// prompt, and both words are common English prose.
+const List<String> kDefaultCommandLexicon = [
+  // vcs / dev tooling
+  'git', 'gh', 'make', 'cmake', 'gradle', 'mvn', 'cargo', 'rustc', 'go',
+  'gcc', 'clang', 'java', 'javac', 'node', 'npm', 'npx', 'yarn', 'pnpm',
+  'python', 'python3', 'pip', 'pip3', 'ruby', 'gem', 'dart', 'flutter',
+  'adb', 'jq', 'diff', 'patch',
+  // network / transfer
+  'curl', 'wget', 'ssh', 'scp', 'sftp', 'rsync', 'ping', 'dig', 'nslookup',
+  'traceroute', 'netstat', 'ss', 'ip', 'ifconfig', 'openssl', 'gpg',
+  // containers / services
+  'docker', 'podman', 'kubectl', 'systemctl', 'service', 'journalctl',
+  // package managers
+  'apt', 'apt-get', 'dpkg', 'yum', 'dnf', 'pacman', 'brew',
+  // shells / multiplexers
+  'bash', 'sh', 'zsh', 'fish', 'tmux', 'screen', 'env', 'export', 'source',
+  'sudo', 'su',
+  // files / text
+  'ls', 'cd', 'cp', 'mv', 'rm', 'mkdir', 'rmdir', 'touch', 'ln', 'cat',
+  'less', 'more', 'head', 'tail', 'grep', 'egrep', 'rg', 'ag', 'find', 'fd',
+  'sed', 'awk', 'cut', 'sort', 'uniq', 'wc', 'tr', 'xargs', 'tee', 'echo',
+  'printf', 'chmod', 'chown', 'chgrp', 'tar', 'gzip', 'gunzip', 'zip',
+  'unzip', 'base64', 'md5sum', 'sha256sum',
+  // system / processes
+  'ps', 'top', 'htop', 'kill', 'pkill', 'killall', 'df', 'du', 'mount',
+  'umount', 'crontab', 'history', 'which', 'whoami', 'uname', 'hostname',
+  'man', 'date',
+  // editors
+  'nano', 'vim', 'vi', 'emacs', 'code',
+];
+
+/// STRONG prompt alternatives (#998 B): fire at body score >= 2.
+///   * `user@host:path$ ` — bash prompt (sampled live from the owner's tmux).
+///   * `\d+` + 2+ spaces — TUI line-number gutter (Claude Code code blocks,
+///     shell `history`). The `(?!\s*[+-])` lookahead excludes DIFF-marked
+///     rows (`53  +    echo …`) — with backtracking, `\s{2,}` could otherwise
+///     shrink to leave a space before the `+` and defeat a bare `(?![+-])`.
+///   * `⎿  $ ` — Claude Code's tool-result inner prompt.
+const String _kStrongPromptAlt =
+    r'[\w.\-]+@[\w.\-]+:[^\s#$]*[#$]\s+'
+    r'|\d+\s{2,}(?!\s*[+\-])'
+    r'|⎿\s+\$\s+';
+
+/// WEAK prompt alternatives (#998 B): need body score >= 3 AND a lexicon hit.
+/// `❯ ` is Claude Code's USER-MESSAGE echo in the corpus (body usually prose
+/// — `❯ go`, `❯ /model`), so the stricter gate kills those while a real
+/// pasted command still detects. Bare `>` is deliberately ABSENT (PS2 /
+/// blockquote). Diff `+`/`-` rows can never reach here (they start with a
+/// digit or `+`/`-`, matching no prompt).
+const String _kWeakPromptAlt = r'❯\s+' r'|[$#%]\s+';
+
+/// The COMMAND-LINE regex (#998 B): a prompt anchor at line start, then the
+/// body as capture group 1 (the [TextPattern.rangeGroup] span — the prompt
+/// stays un-anchored ink). One match per logical line by construction (`^`,
+/// non-multiline). Scoring/suppression happens in [_extractCommand].
+final RegExp _kCommandPattern =
+    RegExp('^(?:$_kStrongPromptAlt|$_kWeakPromptAlt)(.+)\$');
+
+/// Whether a raw command match is anchored by a STRONG prompt (vs a weak
+/// one). Distinguishes the two score thresholds in [_extractCommand].
+final RegExp _kStrongPromptProbe = RegExp('^(?:$_kStrongPromptAlt)');
+
+/// A leading `VAR=value` shell assignment token (+1, counted once).
+final RegExp _kAssignmentToken = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=\S*$');
+
+/// An executable-shaped first token: `./x`, `/x`, `~/x`, `scripts/x` (+2).
+final RegExp _kExecPathToken = RegExp(r'^(\./|/|~/|scripts/)[\w./\-]+$');
+
+/// A flag anywhere in the body: whitespace-or-start, then `-x`/`--long` (+1).
+final RegExp _kCommandFlagProbe = RegExp(r'(?:^|\s)-{1,2}[A-Za-z0-9]');
+
+/// A shell operator anywhere in the body: `| ; < > && $( ` backtick (+1).
+/// `>` also covers `2>`; `|` also covers `||`.
+final RegExp _kShellOperatorProbe = RegExp(r'[|;<>`]|\$\(|&&');
+
+/// Validate + extract a raw [_kCommandPattern] match (#998 B). Returns the
+/// prompt-stripped command as the payload, or null to SUPPRESS the candidate.
+///
+/// Body score (each signal once): first non-assignment token in [lexicon]
+/// (exact or basename) +2, else executable-shaped +2; leading assignment(s)
+/// +1; flag +1; shell operator +1. STRONG prompts fire at score >= 2; WEAK
+/// prompts need score >= 3 AND the lexicon hit. Glyphs are verbatim from the
+/// joined cells, so internal quoting/spacing survives by construction; only
+/// trailing whitespace is trimmed (no punctuation trim — a command
+/// legitimately ends in `"`, `)`, `&2`).
+String? _extractCommand(String raw, Set<String> lexicon) {
+  final m = _kCommandPattern.firstMatch(raw);
+  if (m == null) return null;
+  final body = m.group(1)!.trimRight();
+  if (body.isEmpty) return null;
+  var score = 0;
+  var lexiconHit = false;
+  final tokens = body.split(RegExp(r'\s+'));
+  var i = 0;
+  while (i < tokens.length && _kAssignmentToken.hasMatch(tokens[i])) {
+    i++;
+  }
+  if (i > 0) score += 1; // leading VAR=value assignment(s)
+  if (i < tokens.length) {
+    final first = tokens[i];
+    final slash = first.lastIndexOf('/');
+    final basename = slash >= 0 ? first.substring(slash + 1) : first;
+    if (lexicon.contains(first) || lexicon.contains(basename)) {
+      score += 2;
+      lexiconHit = true;
+    } else if (_kExecPathToken.hasMatch(first)) {
+      score += 2;
+    }
+  }
+  if (_kCommandFlagProbe.hasMatch(body)) score += 1;
+  if (_kShellOperatorProbe.hasMatch(body)) score += 1;
+  final strong = _kStrongPromptProbe.hasMatch(raw);
+  if (strong ? score < 2 : (score < 3 || !lexiconHit)) return null;
+  return body;
 }
 
 /// A single detected structured-text match (#767).
@@ -774,6 +954,16 @@ class StructuredTextScanner {
       // content before its contentStart — so it is skipped wholesale. False for
       // the block's first row and for soft-wrap-flag continuations.
       var viaWidthJoin = false;
+      // #998 B: the block's ESTABLISHED hanging indent — set when a #996
+      // hanging-indent width-join fires (URL-token evidence), so FURTHER rows
+      // of the SAME block at the SAME indent can continue the join without
+      // per-row URL evidence (a wrapped command's middle rows carry none:
+      // the 14-06-30 trace hard-wraps `…2>/dev/` / `null || echo …` / `&2`
+      // at a 10-col hanging indent). -1 until established. [hangHeadEnd] is
+      // the establishing row's content-end — the block-local wrap column the
+      // continuation discipline keys off.
+      var hangIndent = -1;
+      var hangHeadEnd = -1;
       // Accumulate this row and every row it soft-wraps into.
       while (true) {
         final absRow = base + r;
@@ -807,9 +997,15 @@ class StructuredTextScanner {
         // blockIndent there). Soft-wrap-flag rows keep the min() rule: their
         // leading blanks can be REAL logical-line content (e.g. aligned columns
         // split by the terminal edge), so only the block margin is dropped.
+        // #998 B: in an ESTABLISHED hanging block, a continuation row's
+        // in-band content starts at [hangIndent]; anything painted LEFT of the
+        // block indent (a TUI spinner/status overlay leaving stray glyphs at
+        // col 0, like the `Ra` residue in the 14-06-30 trace) is out-of-band
+        // junk, not block content — clamp the walk to the hanging indent so
+        // it is excluded from the joined line.
         final rowStart = _contentStart(reader, r, cols);
         var skip = viaWidthJoin
-            ? rowStart
+            ? (hangIndent > 0 && rowStart < hangIndent ? hangIndent : rowStart)
             : (blockIndent < rowStart ? blockIndent : rowStart);
         if (skip > end) skip = end;
         for (var c = skip; c < end; c++) {
@@ -817,9 +1013,21 @@ class StructuredTextScanner {
           glyphs.add(_Glyph(content.isEmpty ? ' ' : content, absRow, c));
         }
         if (r < rows - 1 &&
-            _continuesOnto(
-                reader, r, cols, wrapCol, wrapColCount, blockIndent)) {
-          viaWidthJoin = !reader.rowWrap(r);
+            _continuesOnto(reader, r, cols, wrapCol, wrapColCount, blockIndent,
+                hangIndent, hangHeadEnd)) {
+          final widthJoin = !reader.rowWrap(r);
+          // #998 B: a width-join whose continuation starts DEEPER than the
+          // block indent is the #996 hanging shape — record the hanging
+          // indent + the head row's content-end so subsequent rows of this
+          // block can continue at the same discipline (see _continuesOnto).
+          if (widthJoin && hangIndent < 0) {
+            final nextStart = _contentStart(reader, r + 1, cols);
+            if (nextStart > blockIndent) {
+              hangIndent = nextStart;
+              hangHeadEnd = _contentEnd(reader, r, cols);
+            }
+          }
+          viaWidthJoin = widthJoin;
           r++;
           continue;
         }
@@ -900,12 +1108,37 @@ class StructuredTextScanner {
     int wrapCol,
     int wrapColCount,
     int blockIndent,
+    int hangIndent,
+    int hangHeadEnd,
   ) {
     if (reader.rowWrap(r)) return true;
     final end = _contentEnd(reader, r, cols);
     final next = r + 1;
     final nextStart = _contentStart(reader, next, cols);
     if (nextStart >= cols) return false; // blank row
+    // #998 B: an ESTABLISHED hanging-indent block (a prior #996 width-join at
+    // [hangIndent], which demanded the full URL-token evidence) continues
+    // through FURTHER rows without per-row evidence — a hard-wrapped command's
+    // middle rows carry no URL token (`…2>/dev/` / `null || echo …` / `&2` in
+    // the real 14-06-30 trace; the #996 doc's "extend only with a real
+    // captured trace" case). Discipline instead of evidence:
+    //   * row [r] is FULL-WIDTH at the block-local wrap column — its content
+    //     ends exactly at [hangHeadEnd] (the establishing row's end) or
+    //     reaches the global [wrapCol] where that inference applies;
+    //   * the continuation's IN-BAND content (at/after [blockIndent] — stray
+    //     glyphs a TUI overlay leaves LEFT of the block band, like the trace's
+    //     `Ra` spinner residue at col 0, are not block content) starts at
+    //     EXACTLY the established hanging indent;
+    //   * the continuation does not start a new block (bullet / fresh scheme).
+    // Once hanging, ONLY this rule continues the block (no fallthrough to the
+    // same-margin rule — a row back at the block margin is a SIBLING entry,
+    // not a wrap continuation of the hanging line).
+    if (hangIndent > 0) {
+      final bandStart = _contentStartFrom(reader, next, cols, blockIndent);
+      return bandStart == hangIndent &&
+          !_startsNewBlock(reader, next, cols, bandStart) &&
+          (end == hangHeadEnd || (wrapCol > 0 && end >= wrapCol - 1));
+    }
     // #996: hanging indent — deeper continuation; URL-token + local column
     // discipline evidence required (see the doc comment above).
     if (nextStart > blockIndent &&
@@ -1020,8 +1253,14 @@ class StructuredTextScanner {
 
   /// The column of the first non-blank cell on local [row], or [CellReader.cols]
   /// when the row is entirely blank. I.e. the row's LEFT INDENT / content start.
-  int _contentStart(CellReader reader, int row, int cols) {
-    for (var c = 0; c < cols; c++) {
+  int _contentStart(CellReader reader, int row, int cols) =>
+      _contentStartFrom(reader, row, cols, 0);
+
+  /// [_contentStart] restricted to columns at/after [from] (#998 B): the
+  /// hanging-block continuation test reads a row's IN-BAND content start,
+  /// ignoring stray glyphs a TUI overlay painted LEFT of the block indent.
+  int _contentStartFrom(CellReader reader, int row, int cols, int from) {
+    for (var c = from; c < cols; c++) {
       if (!_isBlankCell(reader, row, c)) return c;
     }
     return cols;

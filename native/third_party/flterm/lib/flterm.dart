@@ -39,7 +39,9 @@ export 'src/foundation/structured_text.dart'
         StructuredAnchor,
         StructuredMatch,
         StructuredTextScanner,
-        TextPattern;
+        TextPattern,
+        TextTier,
+        kDefaultCommandLexicon;
 export 'src/foundation/terminal_config.dart'
     show ScrollToBottom, TerminalConfig;
 export 'src/foundation/terminal_gesture_settings.dart'
