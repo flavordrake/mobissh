@@ -673,6 +673,24 @@ class KeepaliveController {
   Future<void> _stopIfRunning({bool notifyGateway = true}) async {
     if (!_gateway.isInitialized) return;
     if (!await _gateway.isRunningService) return;
+    // #1021: re-check the holder count after the await, immediately before the
+    // actual stop. This stop may be STALE: it was scheduled when the count hit
+    // 0 (session A terminal), but a concurrent connect (session B) can bump
+    // the count back up while `isRunningService` resolves — landing the stop
+    // then kills the FGS (and its task isolate) under B's live session.
+    // Complementary to the #1018 hold predicate: that keeps one session's
+    // lifecycle from dipping the count; this guards the stop path against a
+    // genuine 0→1 from ANOTHER session in the await gap. The `_enabled` term
+    // exempts the user toggle-off stop, which is unconditional by design
+    // ("drop the service even if sessions are still up"). No await sits
+    // between this check and `stopService`, so it cannot go stale itself.
+    if (_enabled && _connectedCount > 0) {
+      ctrace(
+        'ui.keepalive',
+        '_stopIfRunning: stale — count=$_connectedCount re-held, abort (#1021)',
+      );
+      return;
+    }
     await _gateway.stopService();
     // The task isolate is gone — tell the UI↔task gateway to re-buffer until a
     // fresh isolate re-handshakes, so a later reconnect isn't sent into the
