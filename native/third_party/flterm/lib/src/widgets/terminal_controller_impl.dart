@@ -343,7 +343,8 @@ class TerminalControllerImpl extends TerminalController
   }
 
   @override
-  StructuredMatch? matchAt({required int row, required int col}) {
+  StructuredMatch? matchAt(
+      {required int row, required int col, TextTier? tier}) {
     if (_detectionMatches.isEmpty) return null;
     // #863: UNIFY hit-test with paint. The widget-layer URL bubble PAINTS its
     // anchor rects via [anchorRects] -> [AnchorGeometry.rectsFor], which resolves
@@ -366,11 +367,24 @@ class TerminalControllerImpl extends TerminalController
       cols: _gridCols,
       rows: _gridRows,
     );
-    StructuredMatch? match;
+    // #998 A: resolve per TIER — a cell covered by both a span match and its
+    // containing block match answers with the SPAN (innermost) match, so an
+    // inline tap on a URL inside a command never routes to the command block.
+    // [tier] scopes the query (the block match stays resolvable). Within a
+    // tier the last detected containing match wins, as before.
+    StructuredMatch? span;
+    StructuredMatch? block;
     for (final m in _detectionMatches) {
-      if (m.contains(absRow, snappedCol)) match = m;
+      if (!m.contains(absRow, snappedCol)) continue;
+      if (m.tier == TextTier.block) {
+        block = m;
+      } else {
+        span = m;
+      }
     }
-    return match;
+    if (tier == TextTier.span) return span;
+    if (tier == TextTier.block) return block;
+    return span ?? block;
   }
 
   @override
