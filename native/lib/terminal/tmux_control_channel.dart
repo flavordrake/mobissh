@@ -63,7 +63,15 @@ import 'tmux_control_parser.dart';
 /// ([_PendingKind.other] — resize, gesture, control) is a plain ack we discard.
 /// This is exactly how iTerm2 correlates responses (a queue popped per block),
 /// not a guess at tmux's opaque command number.
-enum _PendingKind { capture, other }
+///
+/// [_PendingKind.windowList] (#906 switch fix) is the `list-windows -F …`
+/// response: on `-CC attach` to a PRE-EXISTING session tmux emits NO
+/// `%window-add`/`%layout-change` for the windows that existed before the client
+/// attached (verified against real tmux `-CC`), so the channel's window order
+/// stays empty and a status-bar tap can't resolve a target. We query the window
+/// list on attach and parse its block to build the order — mirroring the
+/// capture-pane-on-attach pattern, but for the WINDOW LIST instead of the SCREEN.
+enum _PendingKind { capture, windowList, other }
 
 /// The result of [TmuxControlChannel.ingest]: the bytes to render now, plus the
 /// authoritative active-window signal so the host can force a redraw on switch.
@@ -73,7 +81,9 @@ class TmuxIngestResult {
     required this.activeWindowChanged,
     required this.exited,
     this.captureRequested = false,
+    this.windowListRequested = false,
     this.handshakeConfirmed = false,
+    this.traceLines = const <String>[],
   });
 
   /// The octal-UNESCAPED bytes of the ACTIVE window's panes, demultiplexed and
@@ -100,6 +110,16 @@ class TmuxIngestResult {
   /// `%begin…%end` response is rendered (clear + write) back through [ingest].
   final bool captureRequested;
 
+  /// True when this chunk warrants a `list-windows` request — an ATTACH
+  /// (`%session-changed`) (#906 switch fix). On `-CC attach` to a pre-existing
+  /// session tmux emits NO `%window-add`/`%layout-change` for the pre-existing
+  /// windows, so the channel's window order stays empty and a status-bar tap
+  /// resolves to null (no switch). The host responds by sending
+  /// [TmuxControlChannel.frameWindowList]; the correlated `%begin…%end` response
+  /// is parsed (NOT rendered) into the ordered window list, so the tap mapping
+  /// works on a freshly-attached pre-populated session.
+  final bool windowListRequested;
+
   /// True on the FIRST chunk in which tmux's `-CC` handshake was confirmed — the
   /// `\x1bP1000p` DCS that ONLY a real control-mode session emits (#982). Until
   /// this fires the host must NOT write ANY `-CC` command (refresh-client /
@@ -107,6 +127,13 @@ class TmuxIngestResult {
   /// arrives, and any command written into the plain/nested pane LEAKS as literal
   /// text (the owner's brick). The entry command is the only pre-handshake write.
   final bool handshakeConfirmed;
+
+  /// Structured control-mode telemetry lines produced by THIS ingest (#906):
+  /// each parsed `%…` notification and a window-list snapshot whenever the order
+  /// changes. The pure channel only BUILDS these strings; the (impure) host
+  /// emits them via `cmtrace` so they reach the feedback bundle. Empty when the
+  /// chunk had nothing trace-worthy. Carries only ids/indices/names — no content.
+  final List<String> traceLines;
 }
 
 /// An ordered tmux window the control channel knows about (Part C, #911). Built
@@ -311,6 +338,23 @@ class TmuxControlChannel {
     return capturePaneRangeCommand(start, end);
   }
 
+  /// The `list-windows -F …` command line (#906 switch fix) — enumerate the
+  /// session's windows so the status-bar-tap mapping has a real ordered list on a
+  /// freshly-attached PRE-EXISTING session (tmux pushes no `%window-add` for
+  /// windows that predate the attach). `-F '#{window_id} #{window_index}
+  /// #{window_name}'` yields one line per window (`@id index name`), in index
+  /// order; the response is parsed by [_ingestWindowList], not rendered.
+  static Uint8List windowListCommand() =>
+      controlCommand("list-windows -F '#{window_id} #{window_index} #{window_name}'");
+
+  /// Register + frame a `list-windows` request (#906 switch fix). Pushes a
+  /// [_PendingKind.windowList] so the correlated response block is PARSED into
+  /// the ordered window list (not rendered). The host sends this on attach.
+  Uint8List frameWindowList() {
+    _pending.add(_PendingKind.windowList);
+    return windowListCommand();
+  }
+
   /// Register + frame a `refresh-client -C` resize (#906 Stage 1). Its response
   /// block is a plain ack ([_PendingKind.other]) — registered so it can't be
   /// mistaken for a capture response and consume a real capture out of order.
@@ -401,7 +445,13 @@ class TmuxControlChannel {
     var activeChanged = false;
     var exited = false;
     var captureRequested = false;
+    var windowListRequested = false;
     var handshakeConfirmed = false;
+    // #906 telemetry: structured lines the host will `cmtrace`. The window
+    // order at entry — compared at the end so ONE snapshot line is appended when
+    // the order changed this chunk (not one per mutation).
+    final trace = <String>[];
+    final beforeOrder = List<int>.of(_windowOrder);
 
     for (final ev in events) {
       switch (ev) {
@@ -423,6 +473,12 @@ class TmuxControlChannel {
             final kind = _pending.removeFirst();
             if (kind == _PendingKind.capture && !ev.isError) {
               render.add(_renderCapture(ev.response));
+            } else if (kind == _PendingKind.windowList && !ev.isError) {
+              // #906 switch fix: the `list-windows` response — parse it into the
+              // ordered window list so a status-bar tap resolves on a
+              // freshly-attached pre-existing session.
+              _ingestWindowList(ev.response);
+              trace.add('list-windows parsed rows=${ev.response.length}');
             }
           }
         case SessionChanged():
@@ -445,6 +501,12 @@ class TmuxControlChannel {
           _scrollOffset = 0;
           _utf8Carry = const <int>[]; // #982: drop any partial char from the old session.
           captureRequested = true;
+          trace.add('notif session-changed \$${ev.sessionId} name=${ev.name}');
+          // #906 switch fix: also QUERY the window list. tmux emits no
+          // `%window-add`/`%layout-change` for windows that predate this attach,
+          // so without an explicit `list-windows` the order stays empty and a
+          // status-bar tap can't resolve a target (the owner's "not switching").
+          windowListRequested = true;
         case LayoutChange():
           // Record which window each leaf pane belongs to so %output can be
           // filtered to the active window.
@@ -456,18 +518,24 @@ class TmuxControlChannel {
           // (e.g. we missed/lagged its %window-add) still registers it so a tap
           // can target it. Insertion order tracks tmux's index/status order.
           _trackWindow(ev.windowId);
+          trace.add('notif layout-change @${ev.windowId} '
+              'panes=${ev.layout.panes.length}');
         case WindowAdd():
           // #911: a new window enters the status bar (next index/position).
           _trackWindow(ev.windowId);
+          trace.add('notif window-add @${ev.windowId}');
         case WindowRenamed():
           // #911: track + record the latest name (diagnostic; mapping uses order).
           _trackWindow(ev.windowId);
           _windowNames[ev.windowId] = ev.name;
+          trace.add('notif window-renamed @${ev.windowId} name=${ev.name}');
         case SessionWindowChanged():
           // AUTHORITATIVE active window. A real change flips the rendered window
           // and signals the host to force a redraw so the grid repaints. Also
           // track it (#911) — the active window is necessarily a real window.
           _trackWindow(ev.windowId);
+          trace.add('notif session-window-changed @${ev.windowId} '
+              '(authoritative active)');
           if (ev.windowId != _activeWindowId) {
             _activeWindowId = ev.windowId;
             activeChanged = true;
@@ -490,6 +558,7 @@ class TmuxControlChannel {
           // target a gone window and the status mapping stays correct.
           _windowOrder.remove(ev.windowId);
           _windowNames.remove(ev.windowId);
+          trace.add('notif window-close @${ev.windowId}');
         case ControlModeExit():
           exited = true;
         default:
@@ -500,13 +569,76 @@ class TmuxControlChannel {
       }
     }
 
+    // #906 telemetry: if the window order changed this chunk, append ONE
+    // snapshot of the resulting ordered list (the tappable status mapping).
+    if (!_sameOrder(beforeOrder, _windowOrder)) {
+      trace.add('windowList ${windowListTrace()}');
+    }
+
     return TmuxIngestResult(
       renderBytes: _emitOnUtf8Boundary(render.toBytes()),
       activeWindowChanged: activeChanged,
       exited: exited,
       captureRequested: captureRequested,
+      windowListRequested: windowListRequested,
       handshakeConfirmed: handshakeConfirmed,
+      traceLines: trace,
     );
+  }
+
+  /// A compact, greppable snapshot of the ordered window list for the control-
+  /// mode trace (#906): `@id(name)` in status order, e.g. `@0(alpha) @1(bravo)`.
+  /// `[none]` when empty (the "not switching" precondition). Pure.
+  String windowListTrace() {
+    if (_windowOrder.isEmpty) return '[none]';
+    return _windowOrder
+        .map((id) => '@$id(${_windowNames[id] ?? '?'})')
+        .join(' ');
+  }
+
+  /// Whether two window-order lists are identical (same ids, same order). Pure —
+  /// avoids a foundation `listEquals` import in this deliberately Flutter-free
+  /// file (#906 telemetry).
+  static bool _sameOrder(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// Parse a `list-windows -F '#{window_id} #{window_index} #{window_name}'`
+  /// response into the ordered window list (#906 switch fix). Each line is
+  /// `@<id> <index> <name…>` (name may contain spaces). REBUILDS the order from
+  /// this authoritative snapshot (sorted by index — tmux already emits them in
+  /// index order) so a freshly-attached pre-existing session gets a correct
+  /// status-tap mapping. Malformed lines are skipped (fail-open, never throw).
+  /// The active window id is NOT set here — it stays authoritative from
+  /// `%session-window-changed`; this only builds the tappable order + names.
+  void _ingestWindowList(List<String> lines) {
+    final parsed = <({int id, int index, String name})>[];
+    for (final raw in lines) {
+      final line = raw.trimRight();
+      if (line.isEmpty) continue;
+      final parts = line.split(' ');
+      if (parts.length < 2) continue;
+      final idTok = parts[0];
+      if (!idTok.startsWith('@')) continue;
+      final id = int.tryParse(idTok.substring(1));
+      final index = int.tryParse(parts[1]);
+      if (id == null || index == null) continue;
+      final name = parts.length > 2 ? parts.sublist(2).join(' ') : '';
+      parsed.add((id: id, index: index, name: name));
+    }
+    if (parsed.isEmpty) return;
+    parsed.sort((a, b) => a.index.compareTo(b.index));
+    _windowOrder
+      ..clear()
+      ..addAll(parsed.map((w) => w.id));
+    _windowNames.clear();
+    for (final w in parsed) {
+      if (w.name.isNotEmpty) _windowNames[w.id] = w.name;
+    }
   }
 
   /// Prepend any carried partial UTF-8 sequence to [bytes], then split off a NEW

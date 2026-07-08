@@ -427,6 +427,16 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
       if (line is String) recordLifecycleLine(line);
       return;
     }
+    // #906: control-mode (`-CC`) telemetry forwarded from the task isolate.
+    // Record the (already-formatted) line into THIS (UI) isolate's control-mode
+    // ring — the copy the feedback bundle reads — then return. Like the lifecycle
+    // line above, it is task-global (not a session event), so intercept it here
+    // where every inbound payload passes, before the per-session proxy filter.
+    if (map['kind'] == SshTaskEventKind.controlModeTrace.name) {
+      final line = map['line'];
+      if (line is String) recordControlModeLine(line);
+      return;
+    }
     // First inbound payload proves the task isolate is alive and listening:
     // flush anything we buffered during spin-up, in order (#539).
     if (!_ready) {

@@ -126,6 +126,38 @@ void main() {
       expect((decoded['lifecycleLog'] as List), isEmpty);
     });
 
+    test('includes the control-mode trace when supplied (#906)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        controlModeTrace: const [
+          '19:22:19.001 [cc] gesture raw=tapStatusCol col=45 cols=90 → '
+              'dropped(reason=no-window-known) windows=[none]',
+        ],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded['controlModeTrace'], isA<List<Object?>>());
+      expect(
+        (decoded['controlModeTrace'] as List).single,
+        contains('no-window-known'),
+        reason:
+            'the control-mode trace must survive into the bundle so a "not '
+            'switching" report is diagnosable from one report (#906)',
+      );
+    });
+
+    test('controlModeTrace defaults to an empty list when omitted (#906)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded['controlModeTrace'], isA<List<Object?>>());
+      expect((decoded['controlModeTrace'] as List), isEmpty);
+    });
+
     test('gestureLog defaults to an empty list when omitted (#699)', () {
       final blob = assembleFeedbackBundle(
         info: info,

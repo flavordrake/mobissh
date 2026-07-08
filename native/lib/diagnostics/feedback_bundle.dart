@@ -73,6 +73,7 @@ String assembleFeedbackBundle({
   required List<String> connectLog,
   List<String> gestureLog = const <String>[],
   List<String> lifecycleLog = const <String>[],
+  List<String> controlModeTrace = const <String>[],
   String? crashJson,
 }) {
   final scrubbedLog = connectLog.map(scrubSecrets).toList(growable: false);
@@ -85,6 +86,14 @@ String assembleFeedbackBundle({
   // reconnect decisions). Survives the 200-event connect-ring churn so the next
   // wake-frozen occurrence is diagnosable from the bundle alone.
   final scrubbedLifecycleLog = lifecycleLog
+      .map(scrubSecrets)
+      .toList(growable: false);
+  // #906: dedicated control-mode (`-CC`) trace ring — attach path, window-list
+  // snapshots, parsed notifications, gesture resolutions — so ONE report fully
+  // diagnoses a "not switching" control-mode issue. Scrubbed like the others;
+  // it carries only ids/indices/commands, never terminal content. Empty when
+  // control mode is OFF.
+  final scrubbedControlModeTrace = controlModeTrace
       .map(scrubSecrets)
       .toList(growable: false);
 
@@ -112,6 +121,7 @@ String assembleFeedbackBundle({
     'connectLog': scrubbedLog,
     'gestureLog': scrubbedGestureLog,
     'lifecycleLog': scrubbedLifecycleLog,
+    'controlModeTrace': scrubbedControlModeTrace,
     'lastCrash': lastCrash,
     // Null-aware element: the entry is omitted entirely when there is no raw
     // (non-JSON) crash blob to preserve.

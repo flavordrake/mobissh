@@ -272,4 +272,63 @@ void main() {
       );
     });
   });
+
+  group('control-mode trace ring + forwarder (#906)', () {
+    tearDown(() => controlModeForwarder = null);
+
+    test('cmtrace appends a [cc]-tagged line to the control-mode ring', () {
+      cmtrace('attach sid=s entry=exec handshakeConfirmed=false');
+      expect(controlModeLogSnapshot(), hasLength(1));
+      expect(controlModeLogSnapshot().single, contains('[cc]'));
+      expect(controlModeLogSnapshot().single, contains('entry=exec'));
+    });
+
+    test('cmtrace invokes the forwarder with the same formatted line', () {
+      final forwarded = <String>[];
+      controlModeForwarder = forwarded.add;
+      cmtrace('gesture raw=tapStatusCol col=45 cols=90 → dropped(reason=no-window-known)');
+      expect(forwarded, hasLength(1));
+      expect(forwarded.single, controlModeLog.value.single);
+      expect(forwarded.single, contains('no-window-known'));
+    });
+
+    test('cmtrace does NOT touch the connect or lifecycle rings', () {
+      cmtrace('notif window-add @3');
+      expect(connectLog.value, isEmpty);
+      expect(lifecycleLog.value, isEmpty);
+    });
+
+    test('a throwing forwarder never breaks cmtrace recording', () {
+      controlModeForwarder = (_) => throw StateError('boom');
+      cmtrace('notif session-window-changed @1 (authoritative active)');
+      expect(controlModeLog.value.single, contains('session-window-changed @1'));
+    });
+
+    test('recordControlModeLine lands a pre-formatted line verbatim', () {
+      const line = '12:34:56.789 [cc] windowList @0(alpha) @1(bravo)';
+      recordControlModeLine(line);
+      expect(controlModeLogSnapshot().single, line);
+    });
+
+    test('recordControlModeLine does NOT re-invoke the forwarder (no echo)', () {
+      final forwarded = <String>[];
+      controlModeForwarder = forwarded.add;
+      recordControlModeLine('12:00:00.000 [cc] attach handshakeConfirmed=true');
+      expect(forwarded, isEmpty);
+    });
+
+    test('clearConnectLog also clears the control-mode ring', () {
+      cmtrace('notif window-add @0');
+      expect(controlModeLogSnapshot(), isNotEmpty);
+      clearConnectLog();
+      expect(controlModeLogSnapshot(), isEmpty);
+    });
+
+    test('the control-mode ring is bounded to controlModeLogCapacity', () {
+      for (var i = 0; i < controlModeLogCapacity + 40; i++) {
+        cmtrace('notif window-add @$i');
+      }
+      expect(controlModeLogSnapshot().length, controlModeLogCapacity);
+    });
+  });
 }
