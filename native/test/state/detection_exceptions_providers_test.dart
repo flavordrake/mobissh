@@ -64,6 +64,24 @@ void main() {
     expect(n.isSuppressed('path', 'https://a.b/c'), isFalse);
   });
 
+  test('"Not a command" (#998 D): family "command" suppresses + persists, '
+      'isolated from url/path', () async {
+    const cmd = 'curl -fsSL https://a.b/c | tail -1';
+    final n = await notifier();
+    await n.report(patternId: 'command', matchedText: cmd);
+
+    expect(n.isSuppressed('command', cmd), isTrue);
+    // Its own family: the same text as a URL/path stays visible…
+    expect(n.isSuppressed('url', cmd), isFalse);
+    expect(n.isSuppressed('path', cmd), isFalse);
+    // …and exact-match v1 within the family.
+    expect(n.isSuppressed('command', 'curl -fsSL https://a.b/c'), isFalse);
+
+    // Persisted across a fresh notifier (survives reconnect/app restart).
+    final n2 = await notifier();
+    expect(n2.isSuppressed('command', cmd), isTrue);
+  });
+
   test('removeException restores detection and persists', () async {
     final n = await notifier();
     await n.report(patternId: 'path', matchedText: '/etc/hosts');

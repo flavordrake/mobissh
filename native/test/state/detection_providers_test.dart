@@ -29,11 +29,13 @@ void main() {
       expect(s.enabled, isTrue);
       expect(s.url, isTrue);
       expect(s.path, isTrue);
+      expect(s.command, isTrue);
       expect(s.schemaVersion, detectionSettingsSchemaVersion);
       // The stored prefs still default all-true; the effective getters follow
       // the #971 kill switch (force-disabled while it's set).
       expect(s.detectUrls, !kDetectionDisabled971);
       expect(s.detectPaths, !kDetectionDisabled971);
+      expect(s.detectCommands, !kDetectionDisabled971);
     });
 
     test('#971 kill switch force-disables the getters regardless of prefs', () {
@@ -47,10 +49,17 @@ void main() {
       expect(on.path, isTrue);
     });
 
-    test('master off gates both url and path registration', () {
-      const s = DetectionSettings(enabled: false, url: true, path: true);
+    test('master off gates url, path AND command registration', () {
+      const s = DetectionSettings(
+        enabled: false,
+        url: true,
+        path: true,
+        command: true,
+      );
       expect(s.detectUrls, isFalse);
       expect(s.detectPaths, isFalse);
+      expect(s.detectCommands, isFalse);
+      expect(s.detectionActive, isFalse);
     });
 
     test('per-type off gates only that type', () {
@@ -60,21 +69,55 @@ void main() {
       const noPath = DetectionSettings(path: false);
       expect(noPath.detectUrls, !kDetectionDisabled971);
       expect(noPath.detectPaths, isFalse);
+      // #998 slice C: the command-line toggle is a third per-type gate.
+      const noCommand = DetectionSettings(command: false);
+      expect(noCommand.detectCommands, isFalse);
+      expect(noCommand.detectUrls, !kDetectionDisabled971);
+      expect(noCommand.detectPaths, !kDetectionDisabled971);
+    });
+
+    test('detectionActive is true while ANY type is registered (#998 C)', () {
+      const onlyCommand = DetectionSettings(url: false, path: false);
+      expect(onlyCommand.detectCommands, !kDetectionDisabled971);
+      expect(onlyCommand.detectionActive, !kDetectionDisabled971);
+      const allOff = DetectionSettings(url: false, path: false, command: false);
+      expect(allOff.detectionActive, isFalse);
     });
 
     test('toJsonString emits the versioned shape', () {
-      const s = DetectionSettings(enabled: true, url: false, path: true);
+      const s = DetectionSettings(
+        enabled: true,
+        url: false,
+        path: true,
+        command: false,
+      );
       final decoded = jsonDecode(s.toJsonString()) as Map<String, dynamic>;
       expect(decoded['v'], detectionSettingsSchemaVersion);
       expect(decoded['enabled'], true);
       expect(decoded['url'], false);
       expect(decoded['path'], true);
+      expect(decoded['command'], false);
     });
 
     test('fromJsonString round-trips a serialized value', () {
-      const s = DetectionSettings(enabled: false, url: false, path: true);
+      const s = DetectionSettings(
+        enabled: false,
+        url: false,
+        path: true,
+        command: false,
+      );
       final back = DetectionSettings.fromJsonString(s.toJsonString());
       expect(back, s);
+    });
+
+    test('a stored pre-#998 value (no command field) defaults command TRUE', () {
+      // The v1 shape persisted before the command toggle existed must hydrate
+      // with command detection ON (purely-additive setting, no regression).
+      final s = DetectionSettings.fromJsonString(
+        '{"v":1,"enabled":true,"url":false,"path":true}',
+      );
+      expect(s.command, isTrue);
+      expect(s.url, isFalse);
     });
 
     group('fromJsonString fallback', () {
@@ -169,13 +212,16 @@ void main() {
       expect(decoded['enabled'], false);
     });
 
-    test('setUrl / setPath persist independently (round-trip)', () async {
+    test('setUrl / setPath / setCommand persist independently (round-trip)',
+        () async {
       final n = DetectionSettingsNotifier(prefs: SharedPreferences.getInstance());
       await _settle();
       await n.setUrl(false);
       await n.setPath(false);
+      await n.setCommand(false);
       expect(n.state.url, isFalse);
       expect(n.state.path, isFalse);
+      expect(n.state.command, isFalse);
       expect(n.state.enabled, isTrue);
 
       // A fresh notifier reading the persisted value sees the same state.
@@ -184,6 +230,7 @@ void main() {
       await _settle();
       expect(n2.state.url, isFalse);
       expect(n2.state.path, isFalse);
+      expect(n2.state.command, isFalse);
       expect(n2.state.enabled, isTrue);
     });
   });

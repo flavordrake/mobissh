@@ -190,8 +190,8 @@ class SettingsPanel extends ConsumerWidget {
             kDetectionDisabled971
                 ? 'Temporarily turned off while we fix a repaint issue (#971). '
                   'Your setting is remembered and comes back when it\'s fixed.'
-                : 'Find URLs and file paths in terminal output and make them '
-                  'tappable.',
+                : 'Find URLs, file paths and command lines in terminal '
+                  'output and make them tappable.',
           ),
           value: detection.enabled,
           onChanged: (v) =>
@@ -219,6 +219,23 @@ class SettingsPanel extends ConsumerWidget {
               ? (v) => ref.read(detectionSettingsProvider.notifier).setPath(v)
               : null,
         ),
+        // #998 slice C: command-line detection — a gutter chip that copies the
+        // whole prompt-anchored command line paste-exact.
+        SwitchListTile(
+          key: const ValueKey('detection-command-toggle'),
+          secondary: const Icon(Icons.terminal),
+          contentPadding: const EdgeInsets.only(left: 32, right: 16),
+          title: const Text('Command lines'),
+          subtitle: const Text(
+            'Detect command lines at a shell prompt; the gutter chip copies '
+            'the whole command.',
+          ),
+          value: detection.command,
+          onChanged: detection.enabled
+              ? (v) =>
+                  ref.read(detectionSettingsProvider.notifier).setCommand(v)
+              : null,
+        ),
         // #995: reviewable detection exceptions — the saved "Not a URL" /
         // "Not a file" reports. Each entry shows the suppressed text + when/
         // where it was reported, with a per-entry remove that restores
@@ -230,19 +247,21 @@ class SettingsPanel extends ConsumerWidget {
             leading: Icon(Icons.playlist_remove_outlined),
             title: Text('No exceptions'),
             subtitle: Text(
-              'Use "Not a URL" / "Not a file" on a detected link or path to '
-              'stop detecting that exact text. Saved reports appear here.',
+              'Use "Not a URL" / "Not a file" / "Not a command" on a '
+              'detected item to stop detecting that exact text. Saved '
+              'reports appear here.',
             ),
           )
         else
           for (var i = 0; i < exceptions.length; i++)
             ListTile(
               key: ValueKey('detection-exception-$i'),
-              leading: Icon(
-                exceptions[i].family == 'path'
-                    ? Icons.folder_off_outlined
-                    : Icons.link_off,
-              ),
+              leading: Icon(switch (exceptions[i].family) {
+                'path' => Icons.folder_off_outlined,
+                // #998 D: "Not a command" reports (family 'command').
+                'command' => Icons.terminal,
+                _ => Icons.link_off,
+              }),
               title: Text(
                 exceptions[i].matchedText,
                 maxLines: 2,
@@ -369,6 +388,7 @@ class SettingsPanel extends ConsumerWidget {
     await detectionNotifier.setEnabled(true);
     await detectionNotifier.setUrl(true);
     await detectionNotifier.setPath(true);
+    await detectionNotifier.setCommand(true);
 
     if (context.mounted) {
       showTopToast(context, 'Settings reset to defaults');

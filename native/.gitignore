@@ -44,6 +44,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Kotlin tooling session artifacts (gradle drops these during builds).
+# Untracked build noise here is dangerous: ship-native.sh stages `native/`
+# wholesale, so anything not ignored would ship in a release commit.
+/android/.kotlin/
+
 # Signing material — keystore + key.properties MUST stay out of git.
 # Canonical location is /home/dev/.mobissh-android/ (per #501); these
 # patterns are defensive in case someone accidentally drops them in-tree.
