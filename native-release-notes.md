@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+127 (2026-07-08) — no more mouse-code garbage after a reconnect
+- **Reconnected sessions no longer spill `[<65;…M` mouse codes into the prompt** — the app resets its mouse/scroll mode assumptions when a session revives; a live TUI (tmux with mouse on) re-enables them automatically. From your connection-lost report — the reconnect itself was already succeeding. (#1014)
+
 ## v0.1.10+126 (2026-07-08) — copy a whole command line with one tap
 - **Command lines get their own gutter chip** (terminal glyph): tap copies the entire command — prompt stripped, wraps joined, paste-exact — while URLs/paths inside it keep their own bubbles and taps. Built from your real terminal captures; strict about not marking prose. Toggle under Settings → Command lines. (#998)
 - "Not a command" available in the chip's sheet, joining the detection exceptions. (#995)
