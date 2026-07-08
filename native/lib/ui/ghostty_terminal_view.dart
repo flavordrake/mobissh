@@ -1362,6 +1362,38 @@ Future<String?> ghosttyTapMatchAction(
   return ghosttyTapCopyMatch(match, copy: copy);
 }
 
+/// The structured-text patterns to register on the controller for [detection]
+/// (#888 Part A gating, #998 slice C). PURE — the registration list is the
+/// whole per-type gating contract, so a unit test can assert exactly which
+/// patterns each toggle adds/removes without an FFI terminal.
+///
+/// URLs (#767 Slice B): the OSC-8 hyperlink source is the PRIMARY, exact URL
+/// source ALONGSIDE the regex `url` pattern. The scanner runs both and an
+/// OSC-8 match WINS over an overlapping regex one, so a hyperlinked URL yields
+/// ONE exact anchor spanning all its wrapped rows; a plain-text URL still
+/// falls to the regex pattern. The URL toggle gates BOTH sources (one
+/// user-facing "URLs" type). #864: both carry the EMPTY highlight style (no
+/// fill, no underline) so the bubble decorator is the SINGLE affordance.
+///
+/// Paths (#778 Slice 1): absolute file paths get their own decorator and route
+/// a tap to the SFTP explorer; `://` contexts are rejected so a URL stays a URL.
+///
+/// Commands (#998 C): the fork's BLOCK-tier prompt-anchored command-line
+/// pattern (default [kDefaultCommandLexicon]). Its affordance is GUTTER-ONLY
+/// (no bubble — [kGhosttyCommandPatternId] is not a bubble pattern id) and its
+/// inner url/path/osc8 SPAN anchors coexist inside it (slice A tiering).
+List<TextPattern> ghosttyDetectionPatterns(DetectionSettings detection) => [
+  if (detection.detectUrls) ...[
+    TextPattern.osc8(
+      id: kGhosttyOsc8PatternId,
+      style: kGhosttyUrlHighlightStyle,
+    ),
+    TextPattern.url(id: kGhosttyUrlPatternId, style: kGhosttyUrlHighlightStyle),
+  ],
+  if (detection.detectPaths) TextPattern.path(id: kGhosttyPathPatternId),
+  if (detection.detectCommands) TextPattern.command(id: kGhosttyCommandPatternId),
+];
+
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
 /// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
 ///
@@ -2420,20 +2452,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// scroll leaves this false, so the selection is retained and tracks.
   bool _remoteOutputPending = false;
 
-  /// #767: the URL pattern id registered on the controller, so a theme-recolour
-  /// (clear + re-register) and the initial registration share one identity.
-  static const String _kUrlPatternId = kGhosttyUrlPatternId;
-
-  /// #767 Slice B: the OSC-8 hyperlink source id — the PRIMARY, exact URL
-  /// source registered ALONGSIDE the regex `url` pattern. The terminal reads the
-  /// OSC-8 URI off its own cells, so a wrapped link spans all rows and copy/open
-  /// get the exact full URI; an OSC-8 match wins over an overlapping regex one.
-  static const String _kOsc8PatternId = kGhosttyOsc8PatternId;
-
-  /// #778 paths Slice 1: the absolute file-path pattern id, registered alongside
-  /// the URL patterns so the terminal also detects/anchors paths over its own
-  /// cells. A `path` match routes a tap to the SFTP explorer (not clipboard).
-  static const String _kPathPatternId = kGhosttyPathPatternId;
+  // #767/#778/#998: the pattern ids registered on the controller live in
+  // ghostty_terminal_decorators.dart (kGhostty*PatternId); the registration
+  // list itself is the pure [ghosttyDetectionPatterns].
 
   /// #971: short per-session tag for repaint telemetry so multi-session captures
   /// are ATTRIBUTABLE (which view is stuck vs busy). `host#tail` from the session
@@ -2812,30 +2833,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // type (the controller no-ops on an empty pattern set). Master OFF →
     // register nothing.
     final detection = ref.read(detectionSettingsProvider);
-    if (detection.detectUrls) {
-      // #767 Slice B: register the OSC-8 hyperlink source as the PRIMARY, exact
-      // URL source ALONGSIDE the regex `url` pattern. The scanner runs both and
-      // an OSC-8 match WINS over an overlapping regex one (the partial first-row
-      // `https://…` over a hyperlink's visible text is suppressed), so a
-      // hyperlinked URL yields ONE exact anchor spanning all its wrapped rows. A
-      // plain-text URL (no OSC-8) still falls to the regex pattern unchanged.
-      // The URL toggle gates BOTH sources (one user-facing "URLs" type).
-      // #864: register both URL sources with the EMPTY highlight style (no fill,
-      // no underline) so the bubble decorator is the SINGLE affordance — the app
-      // never co-renders an underline that reads redundant with the chip.
-      controller.registerTextPattern(
-        TextPattern.osc8(id: _kOsc8PatternId, style: kGhosttyUrlHighlightStyle),
-      );
-      controller.registerTextPattern(
-        TextPattern.url(id: _kUrlPatternId, style: kGhosttyUrlHighlightStyle),
-      );
-    }
-    if (detection.detectPaths) {
-      // #778 paths Slice 1: also detect absolute file paths. A `path` anchor
-      // gets its own decorator (folder glyph + dotted underline) and routes a
-      // tap to the SFTP explorer; `://` contexts are rejected so a URL stays a
-      // URL.
-      controller.registerTextPattern(TextPattern.path(id: _kPathPatternId));
+    for (final pattern in ghosttyDetectionPatterns(detection)) {
+      controller.registerTextPattern(pattern);
     }
     // #921: tell the render box whether detection is now active. Active means the
     // controller's detection RenderState handle competes to consume the shared
@@ -2843,7 +2842,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // change to keep repainting. Deferred to a post-frame callback so the keyed
     // render box exists (this runs from initState-time registration before first
     // layout, where the box lookup would no-op).
-    final detectionActive = detection.detectUrls || detection.detectPaths;
+    final detectionActive = detection.detectionActive;
     // Detection-saga telemetry (#966-era "URLs not detected" report): record what
     // this registration + the SYNCHRONOUS rescan produced so the next bug report
     // is one-shot diagnosable instead of a blind build loop. Cheap; runs on init
@@ -2864,6 +2863,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     ctrace(
       'detect',
       'register url=${detection.detectUrls} path=${detection.detectPaths} '
+      'command=${detection.detectCommands} '
       'screen=${controller.activeScreen} mouse=${controller.mouseTracking} '
       'anchors=${anchors.length} gutterResolved=$gutterResolved',
     );
@@ -3193,7 +3193,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final detection = ref.read(detectionSettingsProvider);
-      _applyDetectionActive(detection.detectUrls || detection.detectPaths);
+      _applyDetectionActive(detection.detectionActive);
     });
     // 4. FORCE REPAINT WHEN FOCUS WAS RETAINED (#720): the #718 re-focus above
     //    only repaints when focus was LOST while backgrounded — the focus CHANGE
@@ -3415,7 +3415,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final detection = ref.read(detectionSettingsProvider);
-        _applyDetectionActive(detection.detectUrls || detection.detectPaths);
+        _applyDetectionActive(detection.detectionActive);
       });
     }
     if (ghosttyShouldCaptureKeyboardOnSessionSwitch(
@@ -3726,7 +3726,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // persists a detection exception for the ORIGINAL matched payload text.
     void markNot() =>
         _reportDetectionException(match.patternId, '${match.payload}');
-    if (match.patternId == _kPathPatternId) {
+    if (match.patternId == kGhosttyPathPatternId) {
       showPathActions(
         context,
         '${match.payload}',
@@ -4343,7 +4343,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // SUPPRESSED match (unverified single-segment path) shows NO
             // affordance — including tap actions — so it doesn't hit-test.
             urlAtCell: (col, row) {
-              final match = controller.matchAt(row: row, col: col);
+              // #998 C: glass taps hit-test SPAN-tier matches only. The
+              // BLOCK-tier command anchor's affordance is the gutter chip —
+              // a tap on command text that is not an inner URL/path must keep
+              // its pre-#998 behavior (selection etc.), never block tap-copy.
+              final match = controller.matchAt(
+                row: row,
+                col: col,
+                tier: TextTier.span,
+              );
               if (match == null) return null;
               if (!_isPayloadVisible(match.patternId, '${match.payload}')) {
                 return null;

@@ -31,6 +31,8 @@
 // Per memory feedback_monochrome_icons_no_emoji the mark is a Material glyph in
 // the theme highlight colour (currentColor), never an emoji.
 
+import 'dart:async' show unawaited;
+
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 
@@ -233,10 +235,13 @@ class GutterPatternRegistry {
       return GutterItemAction(
         keyLabel: 'not',
         // A file:// URL anchor reads as "Not a file" with the folder glyph
-        // even though its patternId is url/osc8.
-        icon: label == 'Not a file'
-            ? Icons.folder_off_outlined
-            : Icons.link_off,
+        // even though its patternId is url/osc8. Material has no terminal_off,
+        // so "Not a command" (#998 D) gets the generic block glyph.
+        icon: switch (label) {
+          'Not a file' => Icons.folder_off_outlined,
+          'Not a command' => Icons.block,
+          _ => Icons.link_off,
+        },
         label: label,
         onInvoke: (context) async => report(patternId, payload),
       );
@@ -347,6 +352,33 @@ class GutterPatternRegistry {
       ],
     );
 
+    // #998 slice C: the COMMAND-LINE block anchor. GUTTER-ONLY affordance —
+    // no bubble, no glass tap. A single-match chip tap COPIES the whole
+    // command payload paste-exact (the copy IS the primary use; no action
+    // overlay in between); a multi-match row's list sheet labels the copy
+    // "Copy command" and carries the LAST "Not a command" (#998 D → #995
+    // exception store, family 'command'). NOTE: a SOLO command chip therefore
+    // has no "Not a command" path of its own — the sheet appears when an
+    // inner url/path shares the chip's row (the common case for a detected
+    // command).
+    final command = GutterPatternPresentation(
+      patternId: kGhosttyCommandPatternId,
+      icon: Icons.terminal,
+      typeLabel: 'Command',
+      showActions: (context, anchor, markGlobal) {
+        unawaited(_copyWithToast(context, '${anchor.payload}'));
+      },
+      itemActions: (payload) => [
+        GutterItemAction(
+          keyLabel: 'copy',
+          icon: Icons.content_copy,
+          label: 'Copy command',
+          onInvoke: (context) => _copyWithToast(context, payload),
+        ),
+        ?notAction(kGhosttyCommandPatternId, payload, 'Not a command'),
+      ],
+    );
+
     return GutterPatternRegistry([
       url,
       // OSC-8 hyperlinks render the SAME affordance as a regex URL.
@@ -358,6 +390,7 @@ class GutterPatternRegistry {
         itemActions: url.itemActions,
       ),
       path,
+      command,
     ]);
   }
 

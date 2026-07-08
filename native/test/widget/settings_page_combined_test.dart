@@ -65,6 +65,7 @@ void main() {
       'detection-master-toggle',
       'detection-url-toggle',
       'detection-path-toggle',
+      'detection-command-toggle',
       'settings-reset-button',
     ]) {
       expect(

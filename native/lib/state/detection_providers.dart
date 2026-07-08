@@ -2,7 +2,8 @@
 //
 // Controls whether (and what kind of) structured-text detection runs over the
 // terminal's own cells. Detection is a GHOSTTY-backend affordance: the flterm
-// controller registers `TextPattern`s (osc8 + url + path) and maintains anchors
+// controller registers `TextPattern`s (osc8 + url + path + command, #998) and
+// maintains anchors
 // across scroll / wrap / eviction (#767, #778). When a type is OFF, that pattern
 // is simply NOT registered — the scan/decoration machinery already no-ops on an
 // empty pattern set, so OFF means zero scan + zero decoration.
@@ -65,6 +66,7 @@ class DetectionSettings {
     this.enabled = true,
     this.url = true,
     this.path = true,
+    this.command = true,
   });
 
   /// The schema version this instance was built from (defaults to current).
@@ -79,6 +81,11 @@ class DetectionSettings {
   /// Detect absolute file paths.
   final bool path;
 
+  /// Detect prompt-anchored COMMAND LINES (#998 slice C). Default TRUE like the
+  /// others (purely additive; a pre-#998 stored value hydrates it back on via
+  /// the field-by-field fallback below).
+  final bool command;
+
   /// Whether the URL patterns should be registered (master AND url), UNLESS the
   /// #971 kill switch has force-disabled detection (see [kDetectionDisabled971]).
   bool get detectUrls => !kDetectionDisabled971 && enabled && url;
@@ -87,21 +94,38 @@ class DetectionSettings {
   /// #971 kill switch has force-disabled detection.
   bool get detectPaths => !kDetectionDisabled971 && enabled && path;
 
-  DetectionSettings copyWith({bool? enabled, bool? url, bool? path}) {
+  /// Whether the command-line pattern should be registered (master AND command),
+  /// under the same #971 kill switch (#998 slice C).
+  bool get detectCommands => !kDetectionDisabled971 && enabled && command;
+
+  /// Whether ANY pattern is registered — the single truth the terminal view's
+  /// repaint gating reads (#921), instead of re-deriving boolean combinations
+  /// per call site (#998 C added a third type; state-management rule).
+  bool get detectionActive => detectUrls || detectPaths || detectCommands;
+
+  DetectionSettings copyWith({
+    bool? enabled,
+    bool? url,
+    bool? path,
+    bool? command,
+  }) {
     return DetectionSettings(
       schemaVersion: detectionSettingsSchemaVersion,
       enabled: enabled ?? this.enabled,
       url: url ?? this.url,
       path: path ?? this.path,
+      command: command ?? this.command,
     );
   }
 
-  /// Serialize to the persisted JSON shape: `{"v":1,"enabled":..,"url":..,"path":..}`.
+  /// Serialize to the persisted JSON shape:
+  /// `{"v":1,"enabled":..,"url":..,"path":..,"command":..}`.
   String toJsonString() => jsonEncode(<String, dynamic>{
     'v': detectionSettingsSchemaVersion,
     'enabled': enabled,
     'url': url,
     'path': path,
+    'command': command,
   });
 
   /// Parse a stored JSON string, FIELD-BY-FIELD with a per-field default
@@ -128,6 +152,8 @@ class DetectionSettings {
         enabled: field('enabled', def.enabled),
         url: field('url', def.url),
         path: field('path', def.path),
+        // Absent in pre-#998 stored values → defaults TRUE (additive).
+        command: field('command', def.command),
       );
     } catch (_) {
       // Corrupt / non-JSON value → safe all-true default (no silent disable).
@@ -141,14 +167,16 @@ class DetectionSettings {
       other.schemaVersion == schemaVersion &&
       other.enabled == enabled &&
       other.url == url &&
-      other.path == path;
+      other.path == path &&
+      other.command == command;
 
   @override
-  int get hashCode => Object.hash(schemaVersion, enabled, url, path);
+  int get hashCode => Object.hash(schemaVersion, enabled, url, path, command);
 
   @override
   String toString() =>
-      'DetectionSettings(v:$schemaVersion, enabled:$enabled, url:$url, path:$path)';
+      'DetectionSettings(v:$schemaVersion, enabled:$enabled, url:$url, '
+      'path:$path, command:$command)';
 }
 
 /// Persisted GLOBAL detection settings (#888 Part A). Synchronous default
@@ -200,6 +228,12 @@ class DetectionSettingsNotifier extends StateNotifier<DetectionSettings> {
   /// Toggle file-path detection.
   Future<void> setPath(bool value) async {
     state = state.copyWith(path: value);
+    await _persist();
+  }
+
+  /// Toggle command-line detection (#998 slice C).
+  Future<void> setCommand(bool value) async {
+    state = state.copyWith(command: value);
     await _persist();
   }
 }

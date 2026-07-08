@@ -37,6 +37,14 @@ const String kGhosttyOsc8PatternId = 'osc8';
 /// the path mark (a distinct glyph + action set from the URL).
 const String kGhosttyPathPatternId = 'path';
 
+/// The id of the COMMAND-LINE pattern (#998 slice C) — the fork's BLOCK-tier
+/// `TextPattern.command` over a whole prompt-anchored command line, for
+/// copy-to-paste. Matches the factory's default id. Deliberately ABSENT from
+/// [GhosttyBubbleLayer._bubblePatternIds]: the command block's affordance is
+/// GUTTER-ONLY (an Icons.terminal chip); its inner url/path/osc8 span anchors
+/// keep their own bubbles and taps inside it.
+const String kGhosttyCommandPatternId = 'command';
+
 /// #864: the URL/OSC-8 pattern highlight style — DELIBERATELY EMPTY (no
 /// background fill, no underline). The bubble is a WIDGET-layer decorator
 /// ([GhosttyBubbleLayer], #767 Slice B / #988) — never a per-glyph fill; the
