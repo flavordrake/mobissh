@@ -44,7 +44,16 @@ FALLBACK_X64="${APK_DIR}/app-x86_64-release.apk"
 NATIVE_DIST_HOST="${NATIVE_DIST_HOST:-/home/dev/workspace/mobissh/native-dist}"
 
 TS="$(date +%Y%m%dT%H%M%S%z)"
-STAMPED="mobissh-native-${TS}.apk"
+# Embed the app version (e.g. 0.1.10+117) in the published filename so a downloaded
+# APK is SELF-IDENTIFYING — it matches exactly what the app shows in Settings/
+# feedback. Was timestamp-only, which made builds indistinguishable once downloaded
+# (the owner couldn't tell +116 from +117). The `+` is path-safe: $TS already
+# carries one (the `+0000` tz offset) and serves fine. The timestamp stays for
+# uniqueness (two ships on the same build number can't overwrite each other).
+extract_version() { grep -E '^version:' "${NATIVE_DIR}/pubspec.yaml" | head -1 | awk '{print $2}' || true; }
+APP_VERSION="$(extract_version)"
+APP_VERSION="${APP_VERSION:-unknown}"
+STAMPED="mobissh-native-${APP_VERSION}-${TS}.apk"
 STABLE="mobissh-native.apk"
 # The commit the APK is built from — passed to the page generator so the page's
 # displayed hash ALWAYS matches the binary (never live HEAD on a page-only regen).
@@ -84,8 +93,8 @@ cp "${PUBLIC_DIR}/native-feedback.js" "${NATIVE_DIST_HOST}/native-feedback.js"
 
 # Fallback splits for non-arm64 devices (best-effort; published but not the
 # primary install link). The server's native-dist regex serves these names too.
-STAMPED_V7A="mobissh-native-${TS}-armeabi-v7a.apk"
-STAMPED_X64="mobissh-native-${TS}-x86_64.apk"
+STAMPED_V7A="mobissh-native-${APP_VERSION}-${TS}-armeabi-v7a.apk"
+STAMPED_X64="mobissh-native-${APP_VERSION}-${TS}-x86_64.apk"
 if [[ -f "$FALLBACK_V7A" ]]; then
   cp "$FALLBACK_V7A" "${NATIVE_DIST_HOST}/${STAMPED_V7A}"
 fi

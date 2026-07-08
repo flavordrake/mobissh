@@ -212,7 +212,11 @@ cat > "$OUT" <<HTMLEOF
   <h1>MobiSSH native</h1>
   <p class="sub">Latest build — refresh this page any time to get the newest APK.</p>
 
-  <a class="install" href="./${STABLE_APK}" download>⬇︎ Install latest APK</a>
+  <!-- Fetch the STABLE alias (always the newest build, cache-friendly) but SAVE
+       under the versioned+timestamped name so each download is uniquely named on
+       the device — the plain stable name made every download land as
+       mobissh-native.apk / (1) / (2), indistinguishable by version. -->
+  <a class="install" href="./${STABLE_APK}" download="${STAMPED_APK}">⬇︎ Install latest APK</a>
 
   <dl class="meta">
     <dt>Version</dt><dd>${APP_VERSION}</dd>
