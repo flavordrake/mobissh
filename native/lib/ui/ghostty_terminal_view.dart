@@ -1256,6 +1256,30 @@ bool ghosttyLongPressShowsPathMenu(StructuredMatch? matchAtCell) =>
 bool ghosttyMatchHasCopyablePayload(StructuredMatch match) =>
     '${match.payload}'.trim().isNotEmpty;
 
+/// #988: the single-TAP action for a detected structured match — COPY the exact
+/// anchor payload (wrap-joined, indent-aware; the #925/#928 extraction) for
+/// URLs AND file paths. The bubble is the visual preview of exactly this text,
+/// so what you see is what a tap copies. Open lives on the long-press menu and
+/// the gutter mark (a path tap used to open the SFTP explorer, #778 — #988
+/// unifies tap=copy across pattern kinds per the owner's spec).
+///
+/// Returns the success toast label, or null when nothing was copied (empty
+/// payload — the #810 guard — or the [copy] sink failed). [copy] is injected
+/// (production: `copyToClipboard`) so the dispatch is unit-testable headless.
+Future<String?> ghosttyTapCopyMatch(
+  StructuredMatch match, {
+  required Future<bool> Function(String text) copy,
+}) async {
+  // #810: never report a successful copy for an EMPTY payload. An empty-URI
+  // OSC-8 link could surface a non-null match with no payload; copying ""
+  // while toasting success is the "copied but empty" bug. Bail silently (no
+  // clipboard write, no toast) so the tap is a no-op rather than a lie.
+  if (!ghosttyMatchHasCopyablePayload(match)) return null;
+  final ok = await copy('${match.payload}');
+  if (!ok) return null;
+  return match.patternId == kGhosttyPathPatternId ? 'Copied path' : 'Copied URL';
+}
+
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
 /// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
 ///
@@ -2591,14 +2615,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// maintains the ANCHORS across scroll / wrap / resize / eviction — no app-side
   /// detect or push. Re-registering with the same id replaces the pattern.
   ///
-  /// #767 Slice B / #955: the pattern carries NO highlight background. The URL's
-  /// visual is now the right-edge GUTTER mark ([GhosttyGutterLayer]) — NOT an
-  /// inline fill/bubble painted over the glyphs (retired #955; it drifted off its
-  /// text during scroll). The fork's [HighlightPainter] only fills when a range
-  /// opts in with a background, so a no-background URL anchor leaves the glyphs
-  /// untouched; the gutter mark draws the affordance instead. The mark colour
-  /// comes from the gutter layer ([_lastHighlightColor]); this registration is
-  /// theme-independent.
+  /// #767 Slice B / #955 / #988: the pattern carries NO highlight background.
+  /// The visuals are WIDGET-layer decorators — the restored inline BUBBLE
+  /// ([GhosttyBubbleLayer], #988, on the post-#985 painted-offset geometry) and
+  /// the right-edge GUTTER mark ([GhosttyGutterLayer]) — never a per-glyph
+  /// fill. The fork's [HighlightPainter] only fills when a range opts in with a
+  /// background, so a no-background anchor leaves the glyphs untouched. The
+  /// decorator colour comes from the layers ([_lastHighlightColor]); this
+  /// registration is theme-independent.
   void _registerUrlPattern(TerminalController controller) {
     // #888 Part A: detection is gated on the GLOBAL detection settings. Read
     // them HERE so registration reflects the current toggles; a live change
@@ -3469,22 +3493,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   }
 
   /// Handle a single-TAP that landed on a detected structured match (the tap is
-  /// swallowed by the router). #726: a `url`/`osc8` match COPIES the URL + shows
-  /// a top-toast. #778: a `path` match OPENS the SFTP explorer at that path
-  /// instead (the primary affordance for a file path is "go there", not copy —
-  /// Copy path lives on the long-press menu). Routed by [StructuredMatch.patternId].
+  /// swallowed by the router). #726/#988: the tap COPIES the exact anchor
+  /// payload for URLs AND file paths — the bubble the tap landed on is the
+  /// visual preview of exactly this text ([ghosttyTapCopyMatch]). Open (browser
+  /// / SFTP explorer) lives on the long-press menu and the gutter mark.
   Future<void> _copyUrl(StructuredMatch match) async {
-    if (match.patternId == _kPathPatternId) {
-      _openPath('${match.payload}');
-      return;
-    }
-    // #810: never report a successful copy for an EMPTY payload. An empty-URI
-    // OSC-8 link could surface a non-null match with no payload; copying ""
-    // while toasting "Copied URL" is the "copied but empty" bug. Bail silently
-    // (no clipboard write, no toast) so the tap is a no-op rather than a lie.
-    if (!ghosttyMatchHasCopyablePayload(match)) return;
-    final ok = await copyToClipboard('${match.payload}');
-    if (ok && mounted) showTopToast(context, 'Copied URL');
+    final toast = await ghosttyTapCopyMatch(match, copy: copyToClipboard);
+    if (toast != null && mounted) showTopToast(context, toast);
   }
 
   /// #778 paths Slice 1: open the SFTP file explorer AT [path] (the tapped /
@@ -3752,13 +3767,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #971 (test-only): publish the measured cell size so the gesture test can
     // convert a status-bar label column to the exact tap pixel.
     GhosttyTerminalView.debugCellSizes[widget.sessionId] = cellSize;
-    // #755/#767/#955: URLs + paths are DETECTED + ANCHORED inside the terminal
-    // (the `url`/`path` structured-text patterns over its own cells). The VISUAL
-    // is the right-edge GUTTER mark ([GhosttyGutterLayer]) coloured with the live
-    // session selection colour — no inline fill, no host re-detect. The
-    // colourless pattern registration never needs re-registering on a theme
-    // change; we just track the colour the mark paints in, so cycling the session
-    // theme recolours the mark on the next build.
+    // #755/#767/#955/#988: URLs + paths are DETECTED + ANCHORED inside the
+    // terminal (the `url`/`path` structured-text patterns over its own cells).
+    // The VISUALS are the inline BUBBLE ([GhosttyBubbleLayer], restored #988 on
+    // the post-#985 painted-offset geometry) and the right-edge GUTTER mark
+    // ([GhosttyGutterLayer]), both coloured with the live session selection
+    // colour — no per-glyph fill, no host re-detect. The colourless pattern
+    // registration never needs re-registering on a theme change; we just track
+    // the colour the decorators paint in, so cycling the session theme
+    // recolours them on the next build.
     final highlightColor = palette.theme.selection;
     if (highlightColor != _lastHighlightColor) {
       _lastHighlightColor = highlightColor;
@@ -4023,6 +4040,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // parent builds the on-screen highlight rects + anchor from the match
             // and hands them to the overlay.
             onUrlLongPress: _showUrlMenu,
+          ),
+        ),
+        // #988: the restored inline BUBBLE layer — a paint-only, wrap-aware
+        // outline over each detected URL/OSC-8/path anchor, resolved via
+        // `controller.anchorRects` on the post-#985 painted-offset geometry
+        // (the SAME source the router's `matchAt` hit-tests with, #863, so the
+        // bubble IS the tappable region). IgnorePointer: taps fall through to
+        // the router below (single-tap copy). Hides mid-scroll, re-shows on
+        // settle — never drifts (#930 guard). Coexists with the gutter marks.
+        Positioned.fill(
+          child: GhosttyBubbleLayer(
+            controller: controller,
+            color: highlightColor,
           ),
         ),
         // #962: right-edge LINE-SELECT layer. Drag the gutter to select WHOLE

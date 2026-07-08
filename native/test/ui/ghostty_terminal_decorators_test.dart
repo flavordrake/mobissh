@@ -1,8 +1,9 @@
-// #955 — what survives of ghostty_terminal_decorators.dart after the inline
-// decorations (URL bubble / path underline painters + GhosttyTerminalDecoratorLayer)
-// were RETIRED in favour of the right-edge gutter (ghostty_gutter_layer.dart):
-// the shared pattern ids and the (empty) URL highlight style. The gutter widget
-// behaviour is covered in ghostty_gutter_layer_test.dart.
+// #955/#988 — the shared decorator contract in ghostty_terminal_decorators.dart:
+// the pattern ids and the (empty) URL highlight style. The style stays EMPTY
+// even with the inline bubble RESTORED (#988): the bubble is a WIDGET-layer
+// decorator (GhosttyBubbleLayer, covered in ghostty_bubble_layer_test.dart),
+// never a per-glyph fill; the gutter widget behaviour is covered in
+// ghostty_gutter_layer_test.dart.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
@@ -18,8 +19,8 @@ void main() {
 
   group('#864 URL highlight style', () {
     test('drops the underline AND the fill (no app ink over the glyphs)', () {
-      // With the inline bubble retired (#955), the URL affordance is the gutter
-      // mark; the pattern must paint NO inline fill/underline of its own.
+      // The URL affordances (bubble #988 + gutter mark #955) are widget-layer
+      // decorators; the pattern must paint NO per-glyph fill/underline of its own.
       expect(kGhosttyUrlHighlightStyle.underline, isNull);
       expect(kGhosttyUrlHighlightStyle.background, isNull);
     });
