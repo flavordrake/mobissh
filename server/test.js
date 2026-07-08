@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { Readable, Writable } = require('stream');
 
-const { rewriteManifest, handleSftpMessage, isPrivateIp, isCgnatIp, resumableUploads } = require('./index.js');
+const { rewriteManifest, handleSftpMessage, isPrivateIp, isCgnatIp, resumableUploads, server } = require('./index.js');
 
 test('rewriteManifest: sets id="mobissh"', () => {
   const input = Buffer.from(JSON.stringify({ name: 'MobiSSH', start_url: '/' }));
@@ -52,18 +52,21 @@ test('rewriteManifest: overwrites existing id', () => {
 
 test('handleSftpMessage: sftp_ls returns entries with correct shape', () => {
   const results = [];
+  // Mock attrs mirror the ssh2 Stats surface the handler reads (isSymbolicLink
+  // + atime/permissions/uid/gid were added with the file-explorer work; the
+  // old mock predated them and threw).
   const mockSftp = {
     readdir: (path, cb) => cb(null, [
-      { filename: 'file.txt', attrs: { isDirectory: () => false, size: 100, mtime: 1000 } },
-      { filename: 'subdir', attrs: { isDirectory: () => true, size: 0, mtime: 2000 } },
+      { filename: 'file.txt', attrs: { isDirectory: () => false, isSymbolicLink: () => false, size: 100, mtime: 1000, atime: 900, mode: 0o644, uid: 1000, gid: 1000 } },
+      { filename: 'subdir', attrs: { isDirectory: () => true, isSymbolicLink: () => false, size: 0, mtime: 2000, atime: 1900, mode: 0o755, uid: 1000, gid: 1000 } },
     ]),
   };
   handleSftpMessage({ type: 'sftp_ls', path: '/', requestId: '1' }, mockSftp, (msg) => results.push(msg));
   assert.equal(results.length, 1);
   assert.equal(results[0].type, 'sftp_ls_result');
   assert.equal(results[0].requestId, '1');
-  assert.deepEqual(results[0].entries[0], { name: 'file.txt', isDir: false, size: 100, mtime: 1000 });
-  assert.deepEqual(results[0].entries[1], { name: 'subdir', isDir: true, size: 0, mtime: 2000 });
+  assert.deepEqual(results[0].entries[0], { name: 'file.txt', isDir: false, isSymlink: false, size: 100, mtime: 1000, atime: 900, permissions: 0o644, uid: 1000, gid: 1000 });
+  assert.deepEqual(results[0].entries[1], { name: 'subdir', isDir: true, isSymlink: false, size: 0, mtime: 2000, atime: 1900, permissions: 0o755, uid: 1000, gid: 1000 });
 });
 
 test('handleSftpMessage: sftp_ls error returns sftp_error', () => {
@@ -384,4 +387,104 @@ test('sftp_upload_start: different connectionId rejects resume (#241)', () => {
   const entry = resumableUploads.get('fp-hijack');
   assert.equal(entry.connectionId, attackerConnId);
   resumableUploads.clear();
+});
+
+// ─── #997: feedback proxy + fail-open fallback ────────────────────────────────
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+function postTo(port, route, body) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port, path: route, method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }, (res) => {
+      let out = '';
+      res.on('data', (c) => { out += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: out }));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+test('feedback proxy: relays body to the service and mirrors its response', async () => {
+  // Stub feedback service that records what it receives.
+  const seen = [];
+  const stub = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      seen.push({ url: req.url, body });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true,"stub":true}');
+    });
+  });
+  await new Promise((r) => stub.listen(0, '127.0.0.1', r));
+
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  process.env.FEEDBACK_SERVICE_URL = `http://127.0.0.1:${stub.address().port}`;
+  try {
+    const payload = JSON.stringify({ title: 'proxied', comment: 'via stub' });
+    const res = await postTo(server.address().port, '/api/bug-report', payload);
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), { ok: true, stub: true }, 'stub response relayed verbatim');
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, '/api/bug-report');
+    assert.equal(seen[0].body, payload, 'raw body forwarded unmodified');
+  } finally {
+    delete process.env.FEEDBACK_SERVICE_URL;
+    await new Promise((r) => server.close(r));
+    await new Promise((r) => stub.close(r));
+  }
+});
+
+test('feedback proxy: unreachable service falls back to LOCAL handling (fail-open)', async () => {
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  // Nothing listens on port 1 — transport error → local fallback.
+  process.env.FEEDBACK_SERVICE_URL = 'http://127.0.0.1:1';
+  const uploadsDir = path.join(__dirname, '..', 'test-results', 'uploads');
+  try {
+    const res = await postTo(server.address().port, '/api/drop-telemetry', JSON.stringify({
+      reason: 'test-fallback', host: 'unit-test',
+    }));
+    assert.equal(res.status, 200);
+    const j = JSON.parse(res.body);
+    assert.equal(j.ok, true);
+    assert.ok(j.stamp, 'local handler answered with a stamp');
+    const metaFile = path.join(uploadsDir, `${j.stamp}-drop-telemetry.json`);
+    assert.ok(fs.existsSync(metaFile), 'report persisted locally despite service being down');
+    const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+    assert.equal(meta.reason, 'test-fallback');
+    fs.unlinkSync(metaFile); // keep the shared uploads dir clean of unit-test artifacts
+  } finally {
+    delete process.env.FEEDBACK_SERVICE_URL;
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('feedback routes: no FEEDBACK_SERVICE_URL means local handling (pre-cutover default)', async () => {
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const uploadsDir = path.join(__dirname, '..', 'test-results', 'uploads');
+  try {
+    const res = await postTo(server.address().port, '/api/bug-report', JSON.stringify({
+      title: 'local path', comment: 'full note\nsecond line',
+    }));
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), { ok: true, saved: true });
+    // Newest bug-report meta carries the full comment (#661 contract).
+    const metas = fs.readdirSync(uploadsDir).filter((n) => n.endsWith('-bug-report.json')).sort();
+    const newest = metas[metas.length - 1];
+    const meta = JSON.parse(fs.readFileSync(path.join(uploadsDir, newest), 'utf8'));
+    if (meta.title === 'local path') {
+      assert.equal(meta.comment, 'full note\nsecond line');
+      fs.unlinkSync(path.join(uploadsDir, newest));
+      const logFile = path.join(uploadsDir, newest.replace('.json', '.log'));
+      if (fs.existsSync(logFile)) fs.unlinkSync(logFile);
+    }
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });

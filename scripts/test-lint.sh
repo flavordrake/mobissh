@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 LOGFILE=/tmp/test-lint.log
 exec > >(tee "$LOGFILE") 2>&1
 
-npx eslint src/ public/ server/ tests/
+npx eslint src/ public/ server/ server-feedback/ tests/
 
 # SFTP message type sync check (catches missing router entries)
 scripts/test-sftp-sync.sh

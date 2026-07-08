@@ -1,0 +1,33 @@
+# MobiSSH feedback service (#997) — dedicated bug-report/telemetry container.
+# Lifecycle: scripts/feedback-ctl.sh {start|stop|restart|status|ensure}
+#
+# Joins the external `mobissh` network so mobissh-prod reaches it via Docker
+# DNS (http://mobissh-feedback:8082 — no port mapping; docker-proxy is absent
+# in this environment). Uploads bind-mount the SAME host path as
+# docker-compose.prod.yml so fd-dev sees every report at
+# /home/dev/workspace/mobissh/test-results/uploads/ — dev-loop parity for
+# watch-bug-reports.sh, assemble-repro.sh, and the replay harness.
+services:
+  feedback:
+    build:
+      context: .
+      dockerfile: docker/feedback/Dockerfile
+    image: mobissh-feedback:${TAG:-latest}
+    container_name: mobissh-feedback
+    restart: unless-stopped
+    networks:
+      - mobissh
+    environment:
+      PORT: "8082"
+      NODE_ENV: production
+      UPLOADS_DIR: /app/test-results/uploads
+      # Retention knob: files older than N days are deleted daily.
+      # 0 (default) keeps everything — the owner keeps traces; storage cheap.
+      FEEDBACK_RETENTION_DAYS: "${FEEDBACK_RETENTION_DAYS:-0}"
+    volumes:
+      - /var/lib/docker/volumes/dev_workspace/_data/mobissh/test-results/uploads:/app/test-results/uploads
+
+networks:
+  mobissh:
+    name: mobissh
+    external: true

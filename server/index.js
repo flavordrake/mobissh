@@ -63,6 +63,7 @@ const { Client } = require('ssh2');
 const { isOriginAllowed } = require('./origin');
 const TRACE_TRANSFER = process.env.MOBISSH_TRACE_TRANSFER === '1' || true; // default on for data gathering
 const { rewriteManifest } = require('./manifest');
+const feedbackStore = require('./feedback-store');
 
 const PORT = process.env.PORT || 8081;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -207,6 +208,82 @@ function sseBroadcast(event, data) {
   for (const client of sseClients) {
     client.write(msg);
   }
+}
+
+// ─── Bug-report / telemetry ingestion (#997) ─────────────────────────────────
+// Persistence for /api/bug-report, /api/drop-telemetry, /api/gesture-telemetry
+// and /api/native-crash lives in server/feedback-store.js, shared with the
+// dedicated feedback-service container (server-feedback/). When
+// FEEDBACK_SERVICE_URL is set (docker-compose.prod.yml defaults it to
+// http://mobissh-feedback:8082) the raw body is relayed to that service so the
+// app keeps posting to the single Tailscale endpoint. If the service is
+// unreachable the report is handled LOCALLY (fail-open — a bug report must
+// never be lost because the telemetry container is down). Both sides write to
+// the same host bind mount, so dev-loop consumers see the files either way.
+
+const FEEDBACK_PROXY_TIMEOUT_MS = parseInt(process.env.FEEDBACK_PROXY_TIMEOUT_MS || '', 10) || 10_000;
+
+/**
+ * Relay a buffered feedback body to the feedback service and return its
+ * response. The body is buffered (the local handlers always buffered too)
+ * rather than piped so a transport failure can still fall back to local
+ * handling with the full body. Service HTTP responses (4xx/5xx included) are
+ * relayed verbatim; only transport errors (DNS/connect/timeout) reject.
+ */
+function proxyFeedbackBody(serviceUrl, route, body, contentType) {
+  return new Promise((resolve, reject) => {
+    const proxyReq = http.request(new URL(serviceUrl + route), {
+      method: 'POST',
+      headers: {
+        'Content-Type': contentType || 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+      timeout: FEEDBACK_PROXY_TIMEOUT_MS,
+    }, (proxyRes) => {
+      let out = '';
+      proxyRes.on('data', (c) => { out += c; });
+      proxyRes.on('end', () => resolve({ status: proxyRes.statusCode || 502, body: out }));
+    });
+    proxyReq.on('timeout', () => proxyReq.destroy(new Error('feedback service timeout')));
+    proxyReq.on('error', reject);
+    proxyReq.end(body);
+  });
+}
+
+async function handleFeedbackUpload(req, res) {
+  const route = req.url;
+  const maxBytes = route === '/api/native-crash' ? feedbackStore.MAX_CRASH_BYTES : 0;
+  let body;
+  try {
+    body = await feedbackStore.readBody(req, maxBytes);
+  } catch (err) {
+    if (err.code === 'TOO_LARGE') {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end('{"error":"crash report exceeds 1MB"}');
+    }
+    return;
+  }
+  // Read per-request (not at boot) so tests can toggle it; the deployed value
+  // comes from docker-compose.prod.yml env — activating it is an explicit
+  // container recreate, never a silent flip.
+  const serviceUrl = (process.env.FEEDBACK_SERVICE_URL || '').replace(/\/+$/, '');
+  if (serviceUrl) {
+    try {
+      const relayed = await proxyFeedbackBody(serviceUrl, route, body, req.headers['content-type']);
+      console.log(`[feedback-proxy] ${route} -> ${serviceUrl} (${relayed.status})`);
+      res.writeHead(relayed.status, { 'Content-Type': 'application/json' });
+      res.end(relayed.body);
+      return;
+    } catch (err) {
+      // Fail-open: never lose a report because the telemetry container is down.
+      console.error(`[feedback-proxy] ${route} -> ${serviceUrl} unreachable (${err.message}) — falling back to LOCAL handling`);
+    }
+  }
+  const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
+  const result = feedbackStore.handleFeedbackRequest(route, body, reportDir);
+  if (result.sse) sseBroadcast(result.sse.event, result.sse.data);
+  res.writeHead(result.status, { 'Content-Type': 'application/json' });
+  res.end(result.body);
 }
 
 const MIME = {
@@ -722,362 +799,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // POST /api/drop-telemetry — auto-upload of connection-drop telemetry
-  // (connect log + gesture log + metadata, no screenshot). Client fires this
-  // on every recovery from a `reconnecting` state, throttled to 5min/device.
-  // Lands in test-results/uploads/ alongside bug reports so the watcher
-  // surfaces it the same way; distinguished by the filename prefix.
-  if (req.method === 'POST' && req.url === '/api/drop-telemetry') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        const { kind, reason, sessionId, host, ts, userAgent, url, version, connectLog, gestureLog } = data;
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
-        fs.mkdirSync(reportDir, { recursive: true });
-
-        let connectLogFile = '';
-        if (Array.isArray(connectLog) && connectLog.length > 0) {
-          connectLogFile = `${stamp}-drop-telemetry.connect-log.json`;
-          fs.writeFileSync(
-            path.join(reportDir, connectLogFile),
-            JSON.stringify(connectLog, null, 2),
-          );
-        }
-
-        let gestureLogFile = '';
-        if (Array.isArray(gestureLog) && gestureLog.length > 0) {
-          gestureLogFile = `${stamp}-drop-telemetry.gesture-log.json`;
-          fs.writeFileSync(
-            path.join(reportDir, gestureLogFile),
-            JSON.stringify(gestureLog, null, 2),
-          );
-        }
-
-        const meta = {
-          kind: kind || 'drop-recovery',
-          reason: reason || '',
-          sessionId: sessionId || '',
-          host: host || '',
-          ts: ts || Date.now(),
-          stamp,
-          userAgent: userAgent || '',
-          url: url || '',
-          version: version || '',
-          connectLogFile,
-          connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
-          gestureLogFile,
-          gestureLogEventCount: Array.isArray(gestureLog) ? gestureLog.length : 0,
-        };
-        fs.writeFileSync(path.join(reportDir, `${stamp}-drop-telemetry.json`), JSON.stringify(meta, null, 2));
-        console.log(`[drop-telemetry] ${stamp} reason="${meta.reason}" host="${meta.host}" connectEvents=${meta.connectLogEventCount} gestureEvents=${meta.gestureLogEventCount}`);
-        sseBroadcast('drop-telemetry', { reason: meta.reason, host: meta.host, stamp });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, stamp }));
-      } catch (err) {
-        console.error('[drop-telemetry] parse error:', err.message);
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end('{"error":"invalid json"}');
-      }
-    });
-    return;
-  }
-
-  // POST /api/gesture-telemetry — auto-upload of gesture-anomaly telemetry
-  // (#502 diagnostic). Fires when selection.ts detects a focus/IME anomaly
-  // during a gesture window. Independent throttle from drop-telemetry.
-  // Lands in test-results/uploads/ with prefix gesture-telemetry.
-  if (req.method === 'POST' && req.url === '/api/gesture-telemetry') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        const { kind, reason, eventCount, ts, userAgent, url, version, log } = data;
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
-        fs.mkdirSync(reportDir, { recursive: true });
-
-        let logFile = '';
-        if (Array.isArray(log) && log.length > 0) {
-          logFile = `${stamp}-gesture-telemetry.gesture-log.json`;
-          const logPath = path.join(reportDir, logFile);
-          const logBody = JSON.stringify(log, null, 2);
-          // Cap individual log files at ~1MB to bound disk usage.
-          const MAX_LOG_BYTES = 1024 * 1024;
-          const safeBody = Buffer.byteLength(logBody, 'utf8') > MAX_LOG_BYTES
-            ? JSON.stringify(log.slice(-Math.floor(log.length / 2)), null, 2)
-            : logBody;
-          fs.writeFileSync(logPath, safeBody);
-        }
-
-        const meta = {
-          kind: kind || 'gesture-anomaly',
-          reason: reason || '',
-          eventCount: typeof eventCount === 'number' ? eventCount : 0,
-          ts: ts || Date.now(),
-          stamp,
-          userAgent: userAgent || '',
-          url: url || '',
-          version: version || '',
-          logFile,
-          logEventCount: Array.isArray(log) ? log.length : 0,
-        };
-        fs.writeFileSync(
-          path.join(reportDir, `${stamp}-gesture-telemetry.json`),
-          JSON.stringify(meta, null, 2),
-        );
-        console.log(`[gesture-telemetry] ${stamp} reason="${meta.reason}" events=${meta.eventCount} logEvents=${meta.logEventCount}`);
-        sseBroadcast('gesture-telemetry', { reason: meta.reason, eventCount: meta.eventCount, stamp });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, stamp }));
-      } catch (err) {
-        console.error('[gesture-telemetry] parse error:', err.message);
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end('{"error":"invalid json"}');
-      }
-    });
-    return;
-  }
-
-  // POST /api/native-crash — auto-upload of native APK crash reports (#501).
-  // Body is a single crash JSON written by either the Dart-side CrashReporter
-  // or the Kotlin-side uncaught-exception handler. We cap at ~1MB (stack
-  // traces should be well under that) and persist into test-results/uploads/
-  // so the existing watcher surfaces it.
-  if (req.method === 'POST' && req.url === '/api/native-crash') {
-    let body = '';
-    let aborted = false;
-    const MAX_BYTES = 1024 * 1024;
-    req.on('data', (chunk) => {
-      if (aborted) return;
-      body += chunk;
-      if (Buffer.byteLength(body, 'utf8') > MAX_BYTES) {
-        aborted = true;
-        try { req.destroy(); } catch (e) {}
-        res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end('{"error":"crash report exceeds 1MB"}');
-      }
-    });
-    req.on('end', () => {
-      if (aborted) return;
-      try {
-        // Validate it's JSON; we re-stringify to normalize formatting on
-        // disk. If parsing fails, save the raw body to a .raw file so we
-        // never lose a crash report.
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
-        fs.mkdirSync(reportDir, { recursive: true });
-        let outFile;
-        let parsed = null;
-        try {
-          parsed = JSON.parse(body);
-        } catch (parseErr) {
-          outFile = path.join(reportDir, `${stamp}-native-crash.raw`);
-          fs.writeFileSync(outFile, body);
-          console.warn(`[native-crash] non-JSON body saved to ${outFile}: ${parseErr.message}`);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, raw: true, path: path.basename(outFile) }));
-          return;
-        }
-        const kind = (parsed && parsed.kind) || 'unknown';
-        outFile = path.join(reportDir, `${stamp}-native-crash.json`);
-        fs.writeFileSync(outFile, JSON.stringify(parsed, null, 2));
-        const errMsg = (parsed && parsed.error) || '';
-        console.log(`[native-crash] ${stamp} kind="${kind}" error="${errMsg.slice(0, 120)}"`);
-        sseBroadcast('native-crash', { kind, stamp, path: path.basename(outFile) });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, path: path.basename(outFile) }));
-      } catch (err) {
-        console.error('[native-crash] write error:', err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end('{"error":"failed to persist crash"}');
-      }
-    });
-    return;
-  }
-
-  // POST /api/bug-report — receive screenshot + logs from client, save to disk.
-  if (req.method === 'POST' && req.url === '/api/bug-report') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, sentSgrTrace, grid } = data;
-        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const reportDir = path.join(__dirname, '..', 'test-results', 'uploads');
-        fs.mkdirSync(reportDir, { recursive: true });
-
-        // Save screenshot
-        let screenshotFile = '';
-        if (screenshot) {
-          const imgData = screenshot.replace(/^data:image\/\w+;base64,/, '');
-          screenshotFile = `${ts}-bug-report.png`;
-          fs.writeFileSync(path.join(reportDir, screenshotFile), Buffer.from(imgData, 'base64'));
-          console.log(`[bug-report] screenshot: ${screenshotFile}`);
-        }
-
-        // #repro: a recorded burst of frames (in-app 10s "video"). Save each as a
-        // zero-padded PNG so the orchestrator can assemble them with ffmpeg
-        // (`ffmpeg -framerate 5 -i ${ts}-bug-report.frame-%03d.png out.mp4`).
-        let frameCount = 0;
-        let framesPattern = '';
-        if (Array.isArray(frames) && frames.length > 0) {
-          const MAX_FRAMES = 120; // guard against abuse
-          const n = Math.min(frames.length, MAX_FRAMES);
-          for (let i = 0; i < n; i++) {
-            const f = frames[i];
-            if (typeof f !== 'string' || !f) continue;
-            const fData = f.replace(/^data:image\/\w+;base64,/, '');
-            const name = `${ts}-bug-report.frame-${String(i + 1).padStart(3, '0')}.png`;
-            fs.writeFileSync(path.join(reportDir, name), Buffer.from(fData, 'base64'));
-            frameCount++;
-          }
-          framesPattern = `${ts}-bug-report.frame-%03d.png`;
-          console.log(`[bug-report] frames: ${frameCount} (${framesPattern})`);
-        }
-
-        // Full free-text body. The native in-app feedback (#661) sends the
-        // ENTIRE multi-line note as `comment` (no truncation). The web form
-        // (public/native-feedback.js) sends the full note as `logs` and only a
-        // first-line `title`. To kill the title-truncation data loss for BOTH,
-        // resolve the full body from `comment` first, falling back to `logs`,
-        // and persist it into the .json meta (below) so the orchestrator's
-        // watcher — which reads the .json — gets the complete note.
-        const fullComment = (typeof comment === 'string' && comment.length > 0)
-          ? comment
-          : (typeof logs === 'string' ? logs : '');
-
-        // Save logs / full comment as a sidecar text file too (unchanged for
-        // the web form; native reports also get a readable .log).
-        const logBody = (typeof logs === 'string' && logs.length > 0) ? logs : fullComment;
-        if (logBody) {
-          fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.log`), logBody);
-          console.log(`[bug-report] logs: ${ts}-bug-report.log`);
-        }
-
-        // Save 24h connect log if attached (added with the diagnostics work
-        // — every connect/reconnect/state-transition event for the past day)
-        let connectLogFile = '';
-        if (Array.isArray(connectLog) && connectLog.length > 0) {
-          connectLogFile = `${ts}-bug-report.connect-log.json`;
-          fs.writeFileSync(
-            path.join(reportDir, connectLogFile),
-            JSON.stringify(connectLog, null, 2),
-          );
-          console.log(`[bug-report] connect log: ${connectLogFile} (${connectLog.length} events)`);
-        }
-
-        // Save 24h gesture log if attached — every swipe / pinch / long-press
-        // / drag-select. For "swipes stopped working" bug reports.
-        let gestureLogFile = '';
-        if (Array.isArray(gestureLog) && gestureLog.length > 0) {
-          gestureLogFile = `${ts}-bug-report.gesture-log.json`;
-          fs.writeFileSync(
-            path.join(reportDir, gestureLogFile),
-            JSON.stringify(gestureLog, null, 2),
-          );
-          console.log(`[bug-report] gesture log: ${gestureLogFile} (${gestureLog.length} events)`);
-        }
-
-        // #790: the replay-harness trace — the raw bytes that reached the
-        // terminal (byteTrace: [{tMs,b64}]) + the scroll-offset events
-        // (scrollTrace: [{tMs,offset}]) + the viewport grid ({cols,rows}). Saved
-        // to a single sidecar so the replay harness (#791) can feed the captured
-        // bytes into a real Terminal at the same grid and replay the scroll to
-        // reproduce a scrollback-render bug. Mirrors the `frames` branch; capped
-        // (the client already bounds the rings, this is a server-side backstop).
-        let byteTraceFile = '';
-        let byteTraceEventCount = 0;
-        let scrollTraceEventCount = 0;
-        const hasByteTrace = Array.isArray(byteTrace) && byteTrace.length > 0;
-        const hasScrollTrace = Array.isArray(scrollTrace) && scrollTrace.length > 0;
-        if (hasByteTrace || hasScrollTrace) {
-          const MAX_BYTE_EVENTS = 8192;
-          const MAX_SCROLL_EVENTS = 8192;
-          const cappedBytes = hasByteTrace ? byteTrace.slice(-MAX_BYTE_EVENTS) : [];
-          const cappedScroll = hasScrollTrace ? scrollTrace.slice(-MAX_SCROLL_EVENTS) : [];
-          byteTraceEventCount = cappedBytes.length;
-          scrollTraceEventCount = cappedScroll.length;
-          byteTraceFile = `${ts}-bug-report.byte-trace.json`;
-          fs.writeFileSync(
-            path.join(reportDir, byteTraceFile),
-            JSON.stringify({
-              grid: (grid && typeof grid === 'object') ? grid : null,
-              byteTrace: cappedBytes,
-              scrollTrace: cappedScroll,
-            }, null, 2),
-          );
-          console.log(`[bug-report] byte trace: ${byteTraceFile} (${byteTraceEventCount} byte events, ${scrollTraceEventCount} scroll events)`);
-        }
-
-        // #793: the sent-SGR trace — the synthesized mouse/wheel SGR reports the
-        // app SENT to the remote (sentSgrTrace: [{tMs,b64}]). In tmux mouse mode
-        // the scroll is wheel-SGR sent TO tmux (local scroll never moves), so
-        // this is the half of #789 the OUTPUT byteTrace can't show. Filtered at
-        // the client send seam to SGR-mouse reports ONLY (never keystrokes), so
-        // no typed secret is ever present. Mirrors the byteTrace branch; capped.
-        let sentSgrTraceFile = '';
-        let sentSgrTraceEventCount = 0;
-        const hasSentSgrTrace = Array.isArray(sentSgrTrace) && sentSgrTrace.length > 0;
-        if (hasSentSgrTrace) {
-          const MAX_SENT_SGR_EVENTS = 8192;
-          const cappedSentSgr = sentSgrTrace.slice(-MAX_SENT_SGR_EVENTS);
-          sentSgrTraceEventCount = cappedSentSgr.length;
-          sentSgrTraceFile = `${ts}-bug-report.sent-sgr-trace.json`;
-          fs.writeFileSync(
-            path.join(reportDir, sentSgrTraceFile),
-            JSON.stringify({
-              grid: (grid && typeof grid === 'object') ? grid : null,
-              sentSgrTrace: cappedSentSgr,
-            }, null, 2),
-          );
-          console.log(`[bug-report] sent-SGR trace: ${sentSgrTraceFile} (${sentSgrTraceEventCount} events)`);
-        }
-
-        // Save metadata
-        const meta = {
-          title: title || `Bug report ${ts}`,
-          // #661: persist the FULL comment (untruncated) into the meta JSON.
-          // Back-compatible: empty string for web-form reports that send only
-          // a truncated title with no body.
-          comment: fullComment,
-          version,
-          url,
-          userAgent,
-          ts,
-          screenshotFile,
-          frameCount,
-          framesPattern,
-          connectLogFile,
-          connectLogEventCount: Array.isArray(connectLog) ? connectLog.length : 0,
-          gestureLogFile,
-          gestureLogEventCount: Array.isArray(gestureLog) ? gestureLog.length : 0,
-          // #790: replay-harness trace sidecar + counts + the captured grid.
-          byteTraceFile,
-          byteTraceEventCount,
-          scrollTraceEventCount,
-          // #793: sent-SGR (synthesized mouse/wheel reports the app sent) sidecar.
-          sentSgrTraceFile,
-          sentSgrTraceEventCount,
-          grid: (grid && typeof grid === 'object') ? grid : null,
-        };
-        fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.json`), JSON.stringify(meta, null, 2));
-
-        const reportTitle = title || `Bug report ${ts}`;
-        console.log(`[bug-report] saved: "${reportTitle}"`);
-        sseBroadcast('bug-report', { title: reportTitle, saved: true });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, saved: true }));
-      } catch (err) {
-        console.error('[bug-report] parse error:', err.message);
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end('{"error":"invalid json"}');
-      }
-    });
+  // POST /api/{bug-report,drop-telemetry,gesture-telemetry,native-crash} —
+  // bug-report/telemetry ingestion (#997). Proxied to the dedicated feedback
+  // service when FEEDBACK_SERVICE_URL is set, with fail-open local fallback.
+  // Persistence semantics live in server/feedback-store.js.
+  if (req.method === 'POST' && feedbackStore.FEEDBACK_ROUTES.includes(req.url)) {
+    handleFeedbackUpload(req, res);
     return;
   }
 
