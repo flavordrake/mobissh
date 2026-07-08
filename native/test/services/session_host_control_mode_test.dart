@@ -25,6 +25,7 @@ import 'package:mobissh/ssh/ssh_session.dart';
 import 'package:mobissh/ssh/ssh_session_proxy.dart';
 import 'package:mobissh/ssh/ssh_shell.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
+import 'package:mobissh/terminal/tmux_control_channel.dart';
 import 'package:mobissh/terminal/tmux_control_mode_flag.dart';
 
 class _SilentSocket implements SSHSocket {
@@ -93,6 +94,7 @@ void main() {
         SshSessionProxy proxy,
         InMemoryGatewayPair pair,
         List<_DriveableShellTransport> opened,
+        List<String> execCommands,
         StringBuffer forwarded,
       })> setUpConnectedShell(String sid, {bool confirmHandshake = true}) async {
     final socket = _SilentSocket();
@@ -111,7 +113,21 @@ void main() {
     }
 
     final opened = <_DriveableShellTransport>[];
+    // #982: control mode ON now opens the transport via the EXEC opener (the
+    // `tmux -CC …` invocation runs AS the channel command, not typed into a
+    // shell). The scrape path (flag OFF) still uses the shell opener. Both
+    // register into `opened` so the existing assertions on the transport hold;
+    // `execCommands` records what the exec opener was asked to run.
+    final execCommands = <String>[];
     Future<SshShellTransport?> opener(SSHClient c, int cols, int rows) async {
+      final t = _DriveableShellTransport();
+      opened.add(t);
+      return t;
+    }
+
+    Future<SshShellTransport?> execOpener(
+        SSHClient c, String command, int cols, int rows) async {
+      execCommands.add(command);
       final t = _DriveableShellTransport();
       opened.add(t);
       return t;
@@ -122,6 +138,7 @@ void main() {
       gateway: pair.taskSide,
       controllerFactory: factory,
       shellOpener: opener,
+      execOpener: execOpener,
       snapshotInterval: const Duration(hours: 1),
     );
     final proxy = SshSessionProxy(sessionId: sid, gateway: pair.uiSide);
@@ -165,6 +182,7 @@ void main() {
       proxy: proxy,
       pair: pair,
       opened: opened,
+      execCommands: execCommands,
       forwarded: forwarded,
     );
   }
@@ -174,10 +192,30 @@ void main() {
     setUp(() => prev = setTmuxControlModeForTest(true));
     tearDown(() => setTmuxControlModeForTest(prev));
 
-    test('enters control mode by writing tmux -CC to the shell stdin', () async {
-      final ctx = await setUpConnectedShell('cc:22:u:1');
+    test('enters control mode by RUNNING tmux -CC as the exec command — nothing '
+        'is typed into the shell (#982)', () async {
+      // Hold the handshake so no post-confirm resize flush muddies `sent` — we
+      // assert the ENTRY writes nothing into stdin.
+      final ctx =
+          await setUpConnectedShell('cc:22:u:1', confirmHandshake: false);
       expect(ctx.opened, hasLength(1));
-      expect(_s(ctx.opened.first.sent.toBytes()), startsWith('tmux -CC'));
+      // The `-CC` invocation is the EXEC channel's command, not a stdin write.
+      expect(ctx.execCommands, hasLength(1));
+      expect(ctx.execCommands.first, startsWith('tmux -CC'));
+      // #982: the entry line must NEVER be typed into the shell (the leak) — the
+      // exec channel carries it, so no bytes are written to stdin at entry.
+      expect(ctx.opened.first.sent.length, 0,
+          reason: 'the entry command must not be typed into the shell stdin — '
+              'that is exactly the #982 echo leak');
+    });
+
+    test('the exec command is entryExecCommand exactly (no trailing newline)',
+        () async {
+      final ctx = await setUpConnectedShell('cc:22:u:exec');
+      // The exec command line carries NO trailing newline (it is the channel
+      // command, not a keystroke) and matches the canonical entry invocation.
+      expect(ctx.execCommands.single, TmuxControlChannel.entryExecCommand);
+      expect(ctx.execCommands.single.endsWith('\n'), isFalse);
     });
 
     test('%output renders demuxed bytes to the UI (the grid)', () async {
@@ -361,12 +399,14 @@ void main() {
     // ---- #982: handshake gate — NO -CC write leaks before the DCS ----
 
     test('BEFORE the handshake, a resize does NOT leak refresh-client into the '
-        'shell (only the entry command was written)', () async {
+        'shell (nothing was written — entry runs as the exec command)', () async {
       final ctx = await setUpConnectedShell('cc:22:u:gate1',
           confirmHandshake: false);
       final shell = ctx.opened.first;
-      // The entry command is the ONLY allowed pre-handshake write.
-      expect(_s(shell.sent.toBytes()), startsWith('tmux -CC'));
+      // #982: the entry command runs as the EXEC channel command, so NOTHING is
+      // written to stdin at entry — not even the entry line.
+      expect(shell.sent.length, 0);
+      expect(ctx.execCommands.single, startsWith('tmux -CC'));
       shell.sent.clear();
       ctx.proxy.sendResize(100, 30);
       // Past the resize-coalescer settle: with the gate closed it must be BUFFERED,
@@ -470,6 +510,9 @@ void main() {
       final shell = ctx.opened.first;
       // No tmux -CC entry written.
       expect(shell.sent.length, 0);
+      // #982: the scrape path opens the interactive SHELL, never the exec opener.
+      expect(ctx.execCommands, isEmpty,
+          reason: 'flag OFF must use the shell opener, not the -CC exec opener');
       shell.emit(_b('\x1b[32mhello\x1b[0m\r\n'));
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(ctx.forwarded.toString(), contains('\x1b[32mhello\x1b[0m\r\n'));
