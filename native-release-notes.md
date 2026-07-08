@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+123 (2026-07-08) — soft bubble wash + gutter chips ride their lines
+- **Bubbles are now a soft translucent wash** (no hard border) — same green family as the gutter chips, pale for detected, stronger for verified paths, with more breathing room under the text. (#1000)
+- **Gutter chips track their line while you scroll** instead of staying pinned. (#993)
+
 ## v0.1.10+122 (2026-07-08) — tap a path to browse there, wrapped URLs join fully, fake paths verify away
 - **Tapping a detected path opens the file browser there** (file → its folder); copy moved to long-press. URLs still tap-copy. (#999)
 - **Paths are verified against the host**: real paths get a bolder mark once confirmed to exist; short matches like `/config` or `/rc` (usually command suggestions, not files) stay hidden unless they actually exist. (#990)
