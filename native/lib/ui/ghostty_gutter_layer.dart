@@ -37,9 +37,56 @@ import 'url_action_overlay.dart';
 import 'ghostty_terminal_decorators.dart';
 
 /// Width (logical px) of the right-edge gutter strip the marks sit in (#955).
-/// Thin so it never eats terminal real estate; the strip is a translucent
-/// overlay, not a reserved column (the PTY grid width is unchanged).
-const double kGutterStripWidth = 16.0;
+/// Still a translucent overlay, not a reserved column (the PTY grid width is
+/// unchanged). #989 widened it from 16 to match the line-select strip
+/// (`kGutterSelectStripWidth`) so the bigger chip fits inside it.
+const double kGutterStripWidth = 28.0;
+
+/// Sizing + colour derivation for the gutter detection mark chip (#989).
+///
+/// The mark is a FILLED opaque chip behind a bigger glyph so it reads as a
+/// physical, tappable button against terminal text in both themes — not a
+/// faint 14px glyph. Kept as a value type so #990's VERIFIED-path variant is
+/// one more static const (a bolder shade via [chipColor]) with zero paint-code
+/// rework.
+@immutable
+class GutterMarkStyle {
+  const GutterMarkStyle({
+    required this.chipSize,
+    required this.glyphSize,
+    required this.minTapExtent,
+  });
+
+  /// The standard mark style. (#990 adds a `bold` verified-path variant here.)
+  static const GutterMarkStyle normal = GutterMarkStyle(
+    chipSize: 24.0,
+    glyphSize: 16.0,
+    minTapExtent: 40.0,
+  );
+
+  /// Diameter of the filled chip behind the glyph.
+  final double chipSize;
+
+  /// Glyph (icon) size inside the chip; the count badge scales off it.
+  final double glyphSize;
+
+  /// Minimum effective touch target (Material's comfortable ~40dp minimum).
+  /// The mark's HIT box is expanded to this even though the painted chip is
+  /// smaller — the extra area is invisible and centred on the row.
+  final double minTapExtent;
+
+  /// The chip fill: the theme accent forced OPAQUE. The session selection
+  /// colour is often translucent (e.g. `0x33` alpha) — a see-through chip has
+  /// no contrast over terminal text.
+  Color chipColor(Color accent) => accent.withValues(alpha: 1.0);
+
+  /// Contrasting monochrome glyph colour for [chipColor] (luminance-picked, so
+  /// the glyph pops on the chip in both light and dark session themes).
+  Color onChipColor(Color accent) =>
+      ThemeData.estimateBrightnessForColor(chipColor(accent)) == Brightness.dark
+      ? Colors.white
+      : Colors.black;
+}
 
 /// One tap action shown for a match in the multi-match list sheet (#955).
 @immutable
@@ -263,6 +310,7 @@ class GhosttyGutterLayer extends StatelessWidget {
     required this.cellHeight,
     this.padding = 4.0,
     this.stripWidth = kGutterStripWidth,
+    this.style = GutterMarkStyle.normal,
   });
 
   /// The SAME controller handed to the flterm `TerminalView`.
@@ -285,6 +333,9 @@ class GhosttyGutterLayer extends StatelessWidget {
   /// Width of the right-edge strip the marks sit in.
   final double stripWidth;
 
+  /// Chip sizing + colour derivation for the marks (#989).
+  final GutterMarkStyle style;
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -300,7 +351,16 @@ class GhosttyGutterLayer extends StatelessWidget {
           hasPresentation: (id) => registry.forPattern(id) != null,
         );
         if (byRow.isEmpty) return const SizedBox.shrink();
+        // #989: the HIT box is at least minTapExtent square (invisible slack
+        // centred on the row); the painted chip stays inside the strip.
+        final boxWidth = stripWidth > style.minTapExtent
+            ? stripWidth
+            : style.minTapExtent;
+        final boxHeight = cellHeight > style.minTapExtent
+            ? cellHeight
+            : style.minTapExtent;
         return Stack(
+          clipBehavior: Clip.none,
           children: [
             // Translucent right-edge strip (visual hint only, never absorbs
             // taps — the marks below it are the hit targets).
@@ -316,14 +376,19 @@ class GhosttyGutterLayer extends StatelessWidget {
             for (final entry in byRow.entries)
               Positioned(
                 right: 0,
-                width: stripWidth,
-                top: padding + entry.key * cellHeight,
-                height: cellHeight,
+                width: boxWidth,
+                top:
+                    padding +
+                    entry.key * cellHeight -
+                    (boxHeight - cellHeight) / 2,
+                height: boxHeight,
                 child: _GutterMark(
                   key: Key('gutter-mark-${entry.key}'),
                   anchors: entry.value,
                   registry: registry,
                   color: color,
+                  style: style,
+                  stripWidth: stripWidth,
                 ),
               ),
           ],
@@ -335,21 +400,42 @@ class GhosttyGutterLayer extends StatelessWidget {
 
 /// One row's mark: a single-pattern glyph (taps straight to the action overlay)
 /// or a count badge for a multi-match row (taps to the list sheet) (#955).
-class _GutterMark extends StatelessWidget {
+///
+/// #989: the glyph sits on a FILLED opaque chip ([GutterMarkStyle]) so it reads
+/// as a physical button, and the chip scales down while pressed (cheap
+/// [AnimatedScale] — no cost when idle). Tap SEMANTICS are unchanged.
+class _GutterMark extends StatefulWidget {
   const _GutterMark({
     super.key,
     required this.anchors,
     required this.registry,
     required this.color,
+    required this.style,
+    required this.stripWidth,
   });
 
   final List<StructuredAnchor> anchors;
   final GutterPatternRegistry registry;
   final Color color;
+  final GutterMarkStyle style;
+  final double stripWidth;
+
+  @override
+  State<_GutterMark> createState() => _GutterMarkState();
+}
+
+class _GutterMarkState extends State<_GutterMark> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
 
   void _onTap(BuildContext context, Offset markGlobal) {
+    final anchors = widget.anchors;
     if (anchors.length == 1) {
-      final presentation = registry.forPattern(anchors.first.patternId);
+      final presentation = widget.registry.forPattern(anchors.first.patternId);
       if (presentation == null) return;
       presentation.showActions(context, anchors.first, markGlobal);
       return;
@@ -357,39 +443,69 @@ class _GutterMark extends StatelessWidget {
     showGutterPatternList(
       context,
       anchors: anchors,
-      registry: registry,
-      color: color,
+      registry: widget.registry,
+      color: widget.color,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final multi = anchors.length > 1;
-    final single = registry.forPattern(anchors.first.patternId);
+    final style = widget.style;
+    final multi = widget.anchors.length > 1;
+    final single = widget.registry.forPattern(widget.anchors.first.patternId);
+    final chipFill = style.chipColor(widget.color);
+    final onChip = style.onChipColor(widget.color);
+    // Centre the chip inside the visible strip (the hit box is wider).
+    final inset = (widget.stripWidth - style.chipSize) / 2;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTapUp: (details) => _onTap(context, details.globalPosition),
-      child: Center(
-        child: multi
-            ? Container(
-                width: 14,
-                height: 14,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: color, width: 1.2),
-                ),
-                child: Text(
-                  '${anchors.length}',
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 9,
-                    height: 1,
-                    fontWeight: FontWeight.w600,
+      onTapDown: (_) => _setPressed(true),
+      onTapCancel: () => _setPressed(false),
+      onTapUp: (details) {
+        _setPressed(false);
+        _onTap(context, details.globalPosition);
+      },
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: EdgeInsets.only(right: inset > 0 ? inset : 0),
+          child: AnimatedScale(
+            scale: _pressed ? 0.85 : 1.0,
+            duration: const Duration(milliseconds: 90),
+            curve: Curves.easeOut,
+            child: Container(
+              width: style.chipSize,
+              height: style.chipSize,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: chipFill,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
                   ),
-                ),
-              )
-            : Icon(single?.icon ?? Icons.adjust, size: 14, color: color),
+                ],
+              ),
+              child: multi
+                  ? Text(
+                      '${widget.anchors.length}',
+                      style: TextStyle(
+                        color: onChip,
+                        fontSize: style.glyphSize * 0.75,
+                        height: 1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    )
+                  : Icon(
+                      single?.icon ?? Icons.adjust,
+                      size: style.glyphSize,
+                      color: onChip,
+                    ),
+            ),
+          ),
+        ),
       ),
     );
   }

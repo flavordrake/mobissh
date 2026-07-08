@@ -149,6 +149,7 @@ void main() {
       WidgetTester tester, {
       Future<bool> Function(String path)? openPath,
       double cellHeight = 20,
+      Color color = const Color(0xFF5B9BD5),
     }) async {
       final controller = _FakeController();
       await tester.pumpWidget(
@@ -162,7 +163,7 @@ void main() {
                     registry: GutterPatternRegistry.standard(
                       openPath: openPath ?? (_) async => true,
                     ),
-                    color: const Color(0xFF5B9BD5),
+                    color: color,
                     cellHeight: cellHeight,
                   ),
                 ),
@@ -264,6 +265,122 @@ void main() {
       expect(find.byKey(const Key('gutter-item-1')), findsOneWidget);
       expect(find.text('https://example.com'), findsOneWidget);
       expect(find.text('/etc/hosts'), findsOneWidget);
+    });
+
+    // #989 — the mark must read as a physical tappable BUTTON: a filled chip
+    // backing (high contrast against terminal text), a bigger glyph, a >=40dp
+    // effective touch target, and pressed feedback. Visual/affordance only —
+    // the dispatch tests above must stay green unchanged.
+    group('mark affordance (#989)', () {
+      /// The chip [DecoratedBox] inside the mark for [row] — the FILLED backing
+      /// (a BoxDecoration with a colour), not the translucent strip.
+      BoxDecoration chipDecorationOf(WidgetTester tester, int row) {
+        final boxes = tester.widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byKey(Key('gutter-mark-$row')),
+            matching: find.byType(DecoratedBox),
+          ),
+        );
+        return boxes
+                .map((b) => b.decoration)
+                .whereType<BoxDecoration>()
+                .firstWhere((d) => d.color != null)
+            ;
+      }
+
+      testWidgets('mark hit target is at least 40x40 logical px', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([_urlAnchor('https://example.com', row: 4)]);
+        await tester.pump();
+        final size = tester.getSize(find.byKey(const Key('gutter-mark-4')));
+        expect(size.width, greaterThanOrEqualTo(GutterMarkStyle.normal.minTapExtent));
+        expect(size.height, greaterThanOrEqualTo(GutterMarkStyle.normal.minTapExtent));
+      });
+
+      testWidgets('mark has an OPAQUE filled chip even from a translucent accent',
+          (tester) async {
+        // The session selection colour is often translucent (e.g. 0x33 alpha) —
+        // the chip must force full opacity or it vanishes over terminal text.
+        final controller = await pumpLayer(
+          tester,
+          color: const Color(0x335B9BD5),
+        );
+        controller.setAnchors([_urlAnchor('https://example.com', row: 4)]);
+        await tester.pump();
+        final deco = chipDecorationOf(tester, 4);
+        expect(deco.color, isNotNull);
+        expect(deco.color!.a, 1.0, reason: 'chip fill must be fully opaque');
+      });
+
+      testWidgets('glyphs are bigger and stay DISTINCT per pattern', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([
+          _urlAnchor('https://example.com', row: 2),
+          _pathAnchor('/etc/hosts', row: 5),
+        ]);
+        await tester.pump();
+
+        final urlIcon = tester.widget<Icon>(
+          find.descendant(
+            of: find.byKey(const Key('gutter-mark-2')),
+            matching: find.byType(Icon),
+          ),
+        );
+        final pathIcon = tester.widget<Icon>(
+          find.descendant(
+            of: find.byKey(const Key('gutter-mark-5')),
+            matching: find.byType(Icon),
+          ),
+        );
+        expect(urlIcon.icon, isNot(pathIcon.icon));
+        expect(urlIcon.size, greaterThanOrEqualTo(GutterMarkStyle.normal.glyphSize));
+        expect(pathIcon.size, greaterThanOrEqualTo(GutterMarkStyle.normal.glyphSize));
+        expect(GutterMarkStyle.normal.glyphSize, greaterThan(14.0),
+            reason: 'the legacy faint mark was a bare 14px icon');
+      });
+
+      testWidgets('a multi-match count badge gets the chip backing too',
+          (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([
+          _urlAnchor('https://example.com', row: 5),
+          _pathAnchor('/etc/hosts', row: 5),
+        ]);
+        await tester.pump();
+        final deco = chipDecorationOf(tester, 5);
+        expect(deco.color!.a, 1.0);
+        expect(find.text('2'), findsOneWidget);
+      });
+
+      testWidgets('pressed feedback: the chip scales down while the pointer is down',
+          (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([_urlAnchor('https://example.com', row: 4)]);
+        await tester.pump();
+
+        final scaleFinder = find.descendant(
+          of: find.byKey(const Key('gutter-mark-4')),
+          matching: find.byType(AnimatedScale),
+        );
+        expect(tester.widget<AnimatedScale>(scaleFinder).scale, 1.0);
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(const Key('gutter-mark-4'))),
+        );
+        // Past the tap-deadline so the sole-competitor recognizer fires tapDown.
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          tester.widget<AnimatedScale>(scaleFinder).scale,
+          lessThan(1.0),
+          reason: 'the mark must visibly respond to touch (physical affordance)',
+        );
+
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(tester.widget<AnimatedScale>(scaleFinder).scale, 1.0);
+        // The tap-up fired the single-URL action overlay — tear it down.
+        debugDismissUrlActions();
+      });
     });
 
     testWidgets('tap a PATH item in the list sheet → opens the browser at path',
