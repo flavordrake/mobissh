@@ -5,7 +5,7 @@
 // files, so the trace JSON is compiled in as base64 and decoded at runtime by
 // `paintReplayFixtureJson`.
 //
-// Source: 2026-07-08T00-51-01-paint-not-happening.byte-trace.json
+// Source: psreadline_stale_paint_66x34.byte-trace.json
 // Events: 20, captured grid: 66x34
 
 import 'dart:convert';

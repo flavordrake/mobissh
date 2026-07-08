@@ -25,8 +25,10 @@ import 'replay_trace_harness.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // Owner upload 2026-07-08T00-51-01-bug-report.byte-trace.json ("paint not
+  // happening again", +118).
   const fixture =
-      'test/fixtures/replay/2026-07-08T00-51-01-paint-not-happening.byte-trace.json';
+      'test/fixtures/replay/psreadline_stale_paint_66x34.byte-trace.json';
 
   test('PowerShell PSReadLine trace: final VT state carries the tail content',
       () {

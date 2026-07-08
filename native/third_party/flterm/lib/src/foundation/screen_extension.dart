@@ -3,6 +3,24 @@ import 'package:libghostty/libghostty.dart'
 
 final _defaultWordPattern = RegExp(r'\w');
 
+/// Paint-staleness root fix (see terminal_controller_impl.dart): these helpers
+/// need only the GRID DIMENSIONS plus live `GridRef` cell reads. A
+/// `RenderState.update` here CONSUMES the terminal's shared per-row damage and
+/// can starve the render box's paint snapshot (the 2026-07-08 "paint not
+/// happening" root). Production callers (the controller's gesture paths) pass
+/// their cached grid via [cols]/[rows]; the RenderState fallback exists ONLY
+/// for widget-less unit tests, where no paint handle is alive to starve.
+({int cols, int rows}) _dimsOf(Terminal t, int? cols, int? rows) {
+  if (cols != null && rows != null) return (cols: cols, rows: rows);
+  final rs = RenderState()..update(t);
+  try {
+    return (cols: rs.cols, rows: rs.rows);
+  } finally {
+    rs.dispose();
+  }
+}
+
+
 /// Selection and word-boundary helpers for [Terminal].
 ///
 /// Provides hit-testing and text navigation operations used by the gesture
@@ -25,10 +43,14 @@ extension TerminalScreenExtension on Terminal {
   /// trimming trailing empty cells.
   ///
   /// Returns [row] clamped to the viewport when out of bounds.
-  ({int startRow, int endRow, int endCol}) lineBoundaryAt(int row) {
-    final rs = RenderState()..update(this);
-    try {
-      if (row < 0 || row >= rs.rows) {
+  ({int startRow, int endRow, int endCol}) lineBoundaryAt(
+    int row, {
+    int? cols,
+    int? rows,
+  }) {
+    final dims = _dimsOf(this, cols, rows);
+    {
+      if (row < 0 || row >= dims.rows) {
         return (startRow: row, endRow: row, endCol: 0);
       }
       var start = row;
@@ -40,14 +62,14 @@ extension TerminalScreenExtension on Terminal {
         start--;
       }
       var end = row;
-      while (end < rs.rows - 1) {
+      while (end < dims.rows - 1) {
         final ref = GridRef.at(this, col: 0, row: end);
         final wrap = ref.rowWrap;
         ref.dispose();
         if (!wrap) break;
         end++;
       }
-      var endCol = rs.cols;
+      var endCol = dims.cols;
       while (endCol > 0) {
         final ref = GridRef.at(this, col: endCol - 1, row: end);
         final hasContent = ref.graphemes.isNotEmpty;
@@ -57,8 +79,6 @@ extension TerminalScreenExtension on Terminal {
         endCol--;
       }
       return (startRow: start, endRow: end, endCol: endCol);
-    } finally {
-      rs.dispose();
     }
   }
 
@@ -70,10 +90,18 @@ extension TerminalScreenExtension on Terminal {
   /// returns the head column (inclusive) or the column after (exclusive).
   ///
   /// Returns [col] unchanged for single-width cells or out-of-bounds input.
-  int snapColToWideBoundary(int row, int col, {required bool inclusive}) {
-    final rs = RenderState()..update(this);
-    try {
-      if (row < 0 || row >= rs.rows || col < 0 || col >= rs.cols) return col;
+  int snapColToWideBoundary(
+    int row,
+    int col, {
+    required bool inclusive,
+    int? cols,
+    int? rows,
+  }) {
+    final dims = _dimsOf(this, cols, rows);
+    {
+      if (row < 0 || row >= dims.rows || col < 0 || col >= dims.cols) {
+        return col;
+      }
       final ref = GridRef.at(this, col: col, row: row);
       final w = ref.wide;
       final isW = ref.isWide;
@@ -81,8 +109,6 @@ extension TerminalScreenExtension on Terminal {
       if (isW) return inclusive ? col : col + 2;
       if (w == CellWidth.spacerTail) return inclusive ? col - 1 : col + 1;
       return col;
-    } finally {
-      rs.dispose();
     }
   }
 
@@ -96,21 +122,47 @@ extension TerminalScreenExtension on Terminal {
     int startRow,
     int startCol,
     int endRow,
-    int endCol,
-  ) {
+    int endCol, {
+    int? cols,
+    int? rows,
+  }) {
     final startIsTop = startRow != endRow
         ? startRow < endRow
         : startCol <= endCol;
 
     if (startIsTop) {
       return (
-        snapColToWideBoundary(startRow, startCol, inclusive: true),
-        snapColToWideBoundary(endRow, endCol, inclusive: false),
+        snapColToWideBoundary(
+          startRow,
+          startCol,
+          inclusive: true,
+          cols: cols,
+          rows: rows,
+        ),
+        snapColToWideBoundary(
+          endRow,
+          endCol,
+          inclusive: false,
+          cols: cols,
+          rows: rows,
+        ),
       );
     }
     return (
-      snapColToWideBoundary(startRow, startCol, inclusive: false),
-      snapColToWideBoundary(endRow, endCol, inclusive: true),
+      snapColToWideBoundary(
+        startRow,
+        startCol,
+        inclusive: false,
+        cols: cols,
+        rows: rows,
+      ),
+      snapColToWideBoundary(
+        endRow,
+        endCol,
+        inclusive: true,
+        cols: cols,
+        rows: rows,
+      ),
     );
   }
 
@@ -127,13 +179,15 @@ extension TerminalScreenExtension on Terminal {
     int row,
     int col, {
     Pattern? wordPattern,
+    int? cols,
+    int? rows,
   }) {
     final isWord = wordPattern ?? _defaultWordPattern;
-    final rs = RenderState()..update(this);
-    try {
-      if (row < 0 || row >= rs.rows) return (col, col + 1);
+    final dims = _dimsOf(this, cols, rows);
+    {
+      if (row < 0 || row >= dims.rows) return (col, col + 1);
 
-      final maxCol = rs.cols;
+      final maxCol = dims.cols;
       if (col < 0 || col >= maxCol) return (col, col + 1);
 
       int snapped;
@@ -197,8 +251,6 @@ extension TerminalScreenExtension on Terminal {
       }
 
       return (start, end);
-    } finally {
-      rs.dispose();
     }
   }
 }

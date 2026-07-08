@@ -65,10 +65,30 @@ scroll/scrollback + extracted content here.
 `sentSgrTrace` (recorder v2, #793) is parsed when present and ignored when absent
 (`BugReportTrace.sentSgrTrace`). This first fixture predates it.
 
-## Widget / emulator tier (STRETCH — follow-up)
+## Widget / emulator tier — the PAINT-STACK REPLAY HARNESS
 
-Where **pixels** matter (cursor block paint, outline drift, delayed paint), mount
-the real Terminal **widget**, replay the byte stream **and** the scroll-gesture
-stream from `scrollTrace` / `sentSgrTrace`, then screenshot at the buggy moment
-and assert the rendered pixels. The headless tier above does NOT block on this;
-it is tracked as a follow-up so the every-commit tier ships first.
+Built for the 2026-07-08T00-51-01 "paint not happening" report
+(`psreadline_stale_paint_66x34.byte-trace.json`). One command replays ANY
+bug-report byte-trace through the REAL production paint stack on the emulator:
+
+```
+scripts/paint-replay.sh                      # the committed default trace
+scripts/paint-replay.sh path/to/trace.json   # any captured trace
+```
+
+The script embeds the trace into
+`integration_test/fixtures/paint_replay_fixture.dart` (the emulator can't read
+repo files) and runs `integration_test/paint_replay_test.dart`: a live
+session's `GhosttyTerminalView`, chunks injected through the SAME
+`proxy.output` seam real SSH bytes use (`SshSessionProxy.debugInjectOutput`),
+expected final state derived from a reference VT at the captured grid — plus
+paint-stack BOUNDARY COUNTER assertions (`lib/diagnostics/paint_stats.dart`:
+bytesIn → writeErrors → contentNotifies → paints/frameSyncs) so a failure
+names the broken layer. The same counters ride in every bug report as a
+`[paint-stats]` lifecycle line.
+
+The trace above found its root headlessly, one layer lower — see
+`test/terminal/render_state_foreign_consume_test.dart` (libghostty damage is
+single-consumption; a foreign `RenderState.update` starves the paint handle's
+row snapshot) and `test/terminal/controller_no_damage_consume_test.dart` (the
+pinned fix: the controller owns NO RenderState).

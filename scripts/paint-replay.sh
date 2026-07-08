@@ -31,7 +31,7 @@ mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 LOGFILE="${MOBISSH_LOGDIR}/paint-replay.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
-DEFAULT_TRACE="${REPO_ROOT}/native/test/fixtures/replay/2026-07-08T00-51-01-paint-not-happening.byte-trace.json"
+DEFAULT_TRACE="${REPO_ROOT}/native/test/fixtures/replay/psreadline_stale_paint_66x34.byte-trace.json"
 TRACE_JSON="${1:-$DEFAULT_TRACE}"
 FIXTURE_DART="${REPO_ROOT}/native/integration_test/fixtures/paint_replay_fixture.dart"
 

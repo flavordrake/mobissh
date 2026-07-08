@@ -35,7 +35,28 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   final Terminal terminal;
-  final _renderState = RenderState();
+  // PAINT-STALENESS ROOT FIX (2026-07-08T00-51-01 "paint not happening", saga
+  // #887/#898/#900/#918/#921/#922/#931): this controller used to own its own
+  // `RenderState` and call `update(terminal)` before every dimension read
+  // (visibleRowsText, anchor geometry, the #873 prune, the #767 rescan, …).
+  // libghostty's `RenderState.update` CONSUMES the terminal's per-row damage,
+  // and — proven by test/terminal/render_state_foreign_consume_test.dart — a
+  // handle whose update runs AFTER another handle consumed that damage keeps
+  // serving its OLD row content even while reporting a non-clean DirtyState.
+  // So with detection active and ANY anchor live (e.g. a URL sitting on
+  // screen), the synchronous every-notify prune consumed the damage FIRST and
+  // the render box's paint-time sync rebuilt the full grid from a STALE
+  // snapshot: telemetry said `sync rebuilt=34` while the glass stayed frozen.
+  //
+  // The cure: the controller performs NO RenderState updates at all. Every
+  // former render-state cols/rows read comes from [_gridCols]/[_gridRows] —
+  // seeded from the config and updated by [handleResize], the single seam
+  // through which the render box resizes the terminal — and all CONTENT reads
+  // already went through live `GridRef`/`Formatter` queries, which do not
+  // consume damage. The render box's frame builder is now the ONLY RenderState
+  // consumer of this terminal, restoring libghostty's single-consumer contract.
+  int _gridCols;
+  int _gridRows;
   final _keyEncoder = KeyEncoder();
   final _mouseEncoder = MouseEncoder();
   final vt.KeyEvent _keyEvent;
@@ -185,6 +206,8 @@ class TerminalControllerImpl extends TerminalController
 
   TerminalControllerImpl({TerminalConfig config = const TerminalConfig()})
     : _config = config,
+      _gridCols = config.cols,
+      _gridRows = config.rows,
       _keyEvent = vt.KeyEvent(),
       _mouseEvent = MouseEvent(),
       _textInput = TerminalInputClient(),
@@ -340,6 +363,8 @@ class TerminalControllerImpl extends TerminalController
       row,
       col,
       inclusive: true,
+      cols: _gridCols,
+      rows: _gridRows,
     );
     StructuredMatch? match;
     for (final m in _detectionMatches) {
@@ -434,7 +459,6 @@ class TerminalControllerImpl extends TerminalController
   List<Rect> anchorRects(HighlightRange range) {
     final metrics = _lastMetrics;
     if (metrics.cellWidth <= 0 || metrics.cellHeight <= 0) return const [];
-    _renderState.update(terminal);
     // The grid padding offsets every cell rect into the TerminalView's local
     // space, so a widget-layer decorator pixel-aligns to the glyphs. The pure
     // [AnchorGeometry] does the offset/clip math (unit-tested headless); this
@@ -453,8 +477,8 @@ class TerminalControllerImpl extends TerminalController
       range,
       metrics: metrics,
       viewportOffset: screenViewportTop,
-      cols: _renderState.cols,
-      viewportRows: _renderState.rows,
+      cols: _gridCols,
+      viewportRows: _gridRows,
       origin: Offset(_lastPadding.left, _lastPadding.top),
     );
   }
@@ -479,7 +503,6 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   int? anchorGutterRow(HighlightRange range) {
-    _renderState.update(terminal);
     // #955: resolve against the PAINTED viewport offset — the SAME frame snapshot
     // [anchorRects]/[matchAt] use (`viewRow = absRow - _paintedViewportOffset`),
     // NOT the live `scrollbar.offset` (which can run a frame AHEAD of the painted
@@ -490,7 +513,7 @@ class TerminalControllerImpl extends TerminalController
     return AnchorGeometry.gutterRowFor(
       range,
       viewportOffset: screenViewportTop,
-      viewportRows: _renderState.rows,
+      viewportRows: _gridRows,
     );
   }
 
@@ -563,9 +586,8 @@ class TerminalControllerImpl extends TerminalController
     List<StructuredMatch> survivors;
     var changed = false;
     try {
-      _renderState.update(terminal);
-      final cols = _renderState.cols;
-      final visibleRows = _renderState.rows;
+      final cols = _gridCols;
+      final visibleRows = _gridRows;
       if (cols <= 0 || visibleRows <= 0) {
         // #883: a degenerate render state (mid-layout/churn) reads nothing —
         // it cannot CONFIRM a content change, so it must not evict. Leave the
@@ -772,9 +794,8 @@ class TerminalControllerImpl extends TerminalController
     }
     List<StructuredMatch> matches;
     try {
-      _renderState.update(terminal);
-      final visibleRows = _renderState.rows;
-      final cols = _renderState.cols;
+      final visibleRows = _gridRows;
+      final cols = _gridCols;
       if (visibleRows <= 0 || cols <= 0) {
         matches = const [];
       } else {
@@ -836,8 +857,7 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   List<bool> get viewportRowWraps {
-    _renderState.update(terminal);
-    final rows = _renderState.rows;
+    final rows = _gridRows;
     if (rows <= 0) return const [];
     final wraps = List<bool>.filled(rows, false);
     // The bottom visible row can never soft-wrap into a row below the viewport,
@@ -977,7 +997,6 @@ class TerminalControllerImpl extends TerminalController
     _mouseEvent.dispose();
     _keyEncoder.dispose();
     _mouseEncoder.dispose();
-    _renderState.dispose();
     _decorationNotifier.dispose();
     terminal.dispose();
     super.dispose();
@@ -1077,6 +1096,11 @@ class TerminalControllerImpl extends TerminalController
     _lastMetrics = metrics;
     _lastPadding = padding;
     _lastDevicePixelRatio = devicePixelRatio;
+    // Paint-staleness root fix: this is the single seam through which the
+    // render box resizes the terminal, so the cached grid the read paths use
+    // (instead of a damage-consuming RenderState.update) can never diverge.
+    _gridCols = cols;
+    _gridRows = rows;
     final cellWidthPx = (metrics.cellWidth * devicePixelRatio).round();
     final cellHeightPx = (metrics.cellHeight * devicePixelRatio).round();
     _mouseEncoder.setSize(
@@ -1199,9 +1223,8 @@ class TerminalControllerImpl extends TerminalController
   void selectAll() {
     terminal.scrollToBottom();
     final scrollbackLen = terminal.scrollbackRows;
-    _renderState.update(terminal);
-    final rows = _renderState.rows;
-    final cols = _renderState.cols;
+    final rows = _gridRows;
+    final cols = _gridCols;
 
     var lastScreenRow = -1;
     var lastContentCol = 0;
@@ -1245,8 +1268,7 @@ class TerminalControllerImpl extends TerminalController
     final selection = _selection;
     if (selection == null) return '';
 
-    _renderState.update(terminal);
-    final cols = _renderState.cols;
+    final cols = _gridCols;
     final total = terminal.totalRows;
     if (cols <= 0 || total <= 0) return '';
     final topRow = selection.topRow.clamp(0, total - 1);
@@ -1285,8 +1307,7 @@ class TerminalControllerImpl extends TerminalController
     int bottomRowAbs, {
     FormatterFormat format = .plain,
   }) {
-    _renderState.update(terminal);
-    final cols = _renderState.cols;
+    final cols = _gridCols;
     final total = terminal.totalRows;
     if (cols <= 0 || total <= 0) return '';
     var top = topRowAbs;
@@ -1320,8 +1341,7 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   String visibleRowsText(int topViewRow, int bottomViewRow) {
-    _renderState.update(terminal);
-    final cols = _renderState.cols;
+    final cols = _gridCols;
     if (cols <= 0) return '';
     var top = topViewRow;
     var bottom = bottomViewRow;
@@ -1411,12 +1431,15 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   void selectLine(int row, LineSelectMode lineSelectMode) {
-    final (:startRow, :endRow, :endCol) = terminal.lineBoundaryAt(row);
+    final (:startRow, :endRow, :endCol) = terminal.lineBoundaryAt(
+      row,
+      cols: _gridCols,
+      rows: _gridRows,
+    );
     final int effectiveEndCol;
     switch (lineSelectMode) {
       case .full:
-        _renderState.update(terminal);
-        effectiveEndCol = _renderState.cols;
+        effectiveEndCol = _gridCols;
       case .content:
         effectiveEndCol = endCol;
     }
@@ -1430,11 +1453,19 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   void selectWord(int row, int col) {
-    final adjCol = terminal.snapColToWideBoundary(row, col, inclusive: true);
+    final adjCol = terminal.snapColToWideBoundary(
+      row,
+      col,
+      inclusive: true,
+      cols: _gridCols,
+      rows: _gridRows,
+    );
     final (startCol, endCol) = terminal.wordBoundaryAt(
       row,
       adjCol,
       wordPattern: _config.wordPattern,
+      cols: _gridCols,
+      rows: _gridRows,
     );
     selection = TerminalSelection(
       startRow: row,
@@ -1496,6 +1527,8 @@ class TerminalControllerImpl extends TerminalController
       startCol,
       endRow,
       endCol,
+      cols: _gridCols,
+      rows: _gridRows,
     );
     selection = TerminalSelection(
       startRow: startRow,
@@ -1614,11 +1647,10 @@ class TerminalControllerImpl extends TerminalController
       _ => (0, 0),
     };
     if (dRow == 0 && dCol == 0) return false;
-    _renderState.update(terminal);
     selection = _selection!.moveEnd(
       dRow,
       dCol,
-      totalCols: _renderState.cols,
+      totalCols: _gridCols,
       totalRows: totalRows,
     );
     return true;
@@ -1653,10 +1685,9 @@ class TerminalControllerImpl extends TerminalController
   }
 
   TerminalSizeInfo _handleSizeQuery() {
-    _renderState.update(terminal);
     return TerminalSizeInfo(
-      rows: _renderState.rows,
-      columns: _renderState.cols,
+      rows: _gridRows,
+      columns: _gridCols,
       cellWidth: (_lastMetrics.cellWidth * _lastDevicePixelRatio).round(),
       cellHeight: (_lastMetrics.cellHeight * _lastDevicePixelRatio).round(),
     );
