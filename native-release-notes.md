@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+122 (2026-07-08) — tap a path to browse there, wrapped URLs join fully, fake paths verify away
+- **Tapping a detected path opens the file browser there** (file → its folder); copy moved to long-press. URLs still tap-copy. (#999)
+- **Paths are verified against the host**: real paths get a bolder mark once confirmed to exist; short matches like `/config` or `/rc` (usually command suggestions, not files) stay hidden unless they actually exist. (#990)
+- **Wrapped URLs in TUI output (Claude Code style hanging indent) now detect and copy in full** — your `agent-hub` curl example is the regression test. (#996)
+- Bug-report uploads can now run on a dedicated service container (server-side change, no app impact). (#997)
+
 ## v0.1.10+121 (2026-07-08) — URL/path bubbles are back, and the gutter marks feel like buttons
 - **Tap a URL or path to copy it — the bubble shows exactly what you'll get.** Detected URLs and file paths get a capsule bubble again; it hugs the real content across wrapped lines (rounded ends only at the true start/end, no margin whitespace), so the bubble IS the preview of the copy. Single tap copies; Open stays on long-press and the gutter mark. (#988)
 - **Gutter marks are bigger, high-contrast chips** — solid tappable buttons at the right edge (link vs folder glyphs), with pressed feedback and a comfortable touch target. (#989)
