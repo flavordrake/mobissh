@@ -43,8 +43,17 @@ const int connectLogCapacity = 600;
 /// bundle ships both rings.
 const int lifecycleLogCapacity = 80;
 
+/// Maximum number of lines retained by the dedicated [controlModeLog] ring
+/// (#906). tmux control-mode (`-CC`) telemetry — attach path, window-list
+/// snapshots, parsed `%…` notifications, gesture resolutions — is written in the
+/// foreground-task isolate. A DEDICATED ring (not the churny connect ring) keeps
+/// a full control-mode session's decisions intact so ONE bug report diagnoses a
+/// "not switching" issue. Bounded; empty when control mode is OFF (no cmtrace).
+const int controlModeLogCapacity = 200;
+
 final List<String> _ring = <String>[];
 final List<String> _lifecycleRing = <String>[];
+final List<String> _controlModeRing = <String>[];
 
 /// Optional sink invoked with every formatted lifecycle line as it is recorded
 /// by [clifecycle] (#766). The lifecycle ring is written ONLY in the
@@ -60,6 +69,15 @@ final List<String> _lifecycleRing = <String>[];
 /// isolate's host arms it; clearing it (set to null) on host dispose detaches
 /// the forwarder.
 void Function(String line)? lifecycleForwarder;
+
+/// Optional sink invoked with every formatted control-mode line as it is
+/// recorded by [cmtrace] (#906). Mirrors [lifecycleForwarder]: the control-mode
+/// ring is written ONLY in the foreground-task isolate, but the feedback bundle
+/// is assembled in the UI isolate. The task isolate's host sets this forwarder
+/// so each line is shipped across the UI↔task gateway, where the gateway calls
+/// [recordControlModeLine] to land it in the UI-side ring the bundle reads.
+/// Null by default (no IPC coupling); the host arms it and clears it on dispose.
+void Function(String line)? controlModeForwarder;
 
 // Consecutive-duplicate suppression: when the same `[where] msg` repeats
 // back-to-back (e.g. keepalive `recv`/`send` pings), collapse it into the last
@@ -95,6 +113,19 @@ ValueListenable<List<String>> get lifecycleLog => _lifecycleLog;
 /// resume-liveness probe outcome survives the connect-ring churn.
 List<String> lifecycleLogSnapshot() =>
     List<String>.unmodifiable(_lifecycleRing);
+
+final ValueNotifier<List<String>> _controlModeLog =
+    ValueNotifier<List<String>>(const <String>[]);
+
+/// Live, read-only view of the dedicated control-mode (`-CC`) telemetry ring
+/// (#906). The newest line is last.
+ValueListenable<List<String>> get controlModeLog => _controlModeLog;
+
+/// Read-only snapshot of the control-mode ring, newest line last (#906).
+/// Bundled into the feedback upload so a control-mode ("not switching") issue is
+/// fully diagnosable from the report alone. Empty when control mode is OFF.
+List<String> controlModeLogSnapshot() =>
+    List<String>.unmodifiable(_controlModeRing);
 
 String _timestamp(DateTime now) {
   String two(int n) => n.toString().padLeft(2, '0');
@@ -194,13 +225,59 @@ void recordLifecycleLine(String line) {
   _connectLog.value = List<String>.unmodifiable(_ring);
 }
 
-/// Clears the on-device connect-log + lifecycle-event ring buffers. Does not
-/// affect logcat.
+/// Record one structured tmux control-mode (`-CC`) telemetry line (#906): the
+/// attach entry-path, a window-list snapshot, a parsed `%…` notification, or a
+/// gesture resolution. Appends to the dedicated [controlModeLog] ring AND logcat
+/// (tagged `[CONTROLMODE]`), then ships the formatted line across the isolate
+/// boundary via [controlModeForwarder] so the UI-side ring the feedback bundle
+/// reads carries it. Written ONLY when control mode is active (flag-off-safe:
+/// nothing calls this on the scrape path, so the ring stays empty). Never
+/// collapsed — every control-mode decision is its own line. Never throws.
+void cmtrace(String msg) {
+  final ts = _timestamp(DateTime.now());
+  final line = '$ts [cc] $msg';
+
+  _controlModeRing.add(line);
+  while (_controlModeRing.length > controlModeLogCapacity) {
+    _controlModeRing.removeAt(0);
+  }
+  _controlModeLog.value = List<String>.unmodifiable(_controlModeRing);
+  debugPrint('[CONTROLMODE]$line');
+
+  final forward = controlModeForwarder;
+  if (forward != null) {
+    try {
+      forward(line);
+    } catch (_) {
+      // Swallow — diagnostics must not throw into the control-mode hot path.
+    }
+  }
+}
+
+/// Records an already-formatted control-mode [line] into the [controlModeLog]
+/// ring (#906). Counterpart to [cmtrace] for lines that ORIGINATED in the
+/// foreground-task isolate: the task forwards each line across the gateway and
+/// the UI-side gateway calls this so it lands in the UI isolate's ring — the one
+/// the feedback bundle reads. Stored verbatim (task-side timestamp preserved);
+/// the forwarder is NOT re-invoked (no echo back).
+void recordControlModeLine(String line) {
+  _controlModeRing.add(line);
+  while (_controlModeRing.length > controlModeLogCapacity) {
+    _controlModeRing.removeAt(0);
+  }
+  _controlModeLog.value = List<String>.unmodifiable(_controlModeRing);
+  debugPrint('[CONTROLMODE]$line');
+}
+
+/// Clears the on-device connect-log + lifecycle-event + control-mode ring
+/// buffers. Does not affect logcat.
 void clearConnectLog() {
   _ring.clear();
   _lifecycleRing.clear();
+  _controlModeRing.clear();
   _lastKey = null;
   _lastCount = 0;
   _connectLog.value = const <String>[];
   _lifecycleLog.value = const <String>[];
+  _controlModeLog.value = const <String>[];
 }

@@ -169,6 +169,15 @@ enum SshTaskEventKind {
   /// so the UI-side ring — the one the bundle reads — actually contains them.
   /// Task-global, so [sessionId] is the empty sentinel (mirrors ready).
   lifecycle,
+
+  /// Task → UI: one structured tmux control-mode (`-CC`) telemetry line (#906).
+  /// The control-mode trace (`cmtrace` / `controlModeLog`) is written in the
+  /// foreground-task isolate (attach path, window-list snapshots, parsed
+  /// notifications, gesture resolutions) whose ring the UI never reads. Mirrors
+  /// [lifecycle]: the task forwards each line so the UI-side ring — the one the
+  /// feedback bundle reads — carries it, so ONE bug report fully diagnoses a
+  /// control-mode issue. Task-global, so [sessionId] is the empty sentinel.
+  controlModeTrace,
 }
 
 /// One remote filesystem entry surfaced to the file browser (#559). Kept small
@@ -899,6 +908,8 @@ sealed class SshTaskEvent {
         );
       case SshTaskEventKind.lifecycle:
         return SshLifecycleEvent(line: json['line'] as String);
+      case SshTaskEventKind.controlModeTrace:
+        return SshControlModeTraceEvent(line: json['line'] as String);
     }
   }
 }
@@ -1115,6 +1126,39 @@ class SshLifecycleEvent extends SshTaskEvent {
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.lifecycle;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'line': line,
+  };
+}
+
+/// Task → UI: one already-formatted control-mode (`-CC`) telemetry line (#906).
+///
+/// The control-mode trace (`cmtrace` / `controlModeLog`) is written ONLY in the
+/// foreground-task isolate (the session host + the `-CC` channel adapter): the
+/// attach entry-path, window-list snapshots, each parsed `%…` notification, and
+/// each gesture RESOLUTION (raw → resolved command → sent|dropped). Its ring is
+/// a per-isolate static, so the copy the UI-side feedback bundle reads is
+/// otherwise EMPTY. The task forwards each line as one of these events; the
+/// UI-side gateway records it into the UI isolate's control-mode ring so the
+/// bundle carries it — one report fully diagnoses a "not switching" issue.
+///
+/// [line] is the fully-formatted ring line (`HH:mm:ss.SSS [cc] msg`), recorded
+/// verbatim on the UI side. Task-global, so [sessionId] is the empty sentinel.
+///
+/// [SYNC] single-codebase wire contract; keep the forwarder (SessionHost) and
+/// the UI-side recorder (FlutterForegroundSshGateway) in step.
+class SshControlModeTraceEvent extends SshTaskEvent {
+  const SshControlModeTraceEvent({required this.line}) : super('');
+
+  /// The fully-formatted control-mode ring line, preserved verbatim.
+  final String line;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.controlModeTrace;
 
   @override
   Map<String, dynamic> toJson() => {

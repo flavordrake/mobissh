@@ -234,6 +234,19 @@ void main() {
       expect(restored.sessionId, '');
       expect(restored.kind, SshTaskEventKind.lifecycle);
     });
+
+    test('SshControlModeTraceEvent preserves the formatted line verbatim (#906)',
+        () {
+      const line = '12:34:56.789 [cc] gesture raw=tapStatusCol col=45 cols=90 → '
+          'resolved=select-window -t @1 → sent';
+      const ev = SshControlModeTraceEvent(line: line);
+      final restored =
+          SshTaskEvent.fromJson(ev.toJson()) as SshControlModeTraceEvent;
+      expect(restored.line, line);
+      // Task-global: empty sentinel sessionId (mirrors SshLifecycleEvent).
+      expect(restored.sessionId, '');
+      expect(restored.kind, SshTaskEventKind.controlModeTrace);
+    });
   });
 
   group('SessionHost.encodeAuth', () {

@@ -115,6 +115,14 @@ class SessionHost {
       _gateway.send(SshLifecycleEvent(line: line).toJson());
     };
     lifecycleForwarder = _lifecycleForward;
+    // #906: arm the control-mode-trace forwarder the same way, so every
+    // `cmtrace` line (attach path, window-list, notifications, gesture
+    // resolution) reaches the UI-side control-mode ring the bundle reads.
+    _controlModeForward = (line) {
+      if (_disposed) return;
+      _gateway.send(SshControlModeTraceEvent(line: line).toJson());
+    };
+    controlModeForwarder = _controlModeForward;
     ctrace('task.host', 'ctor: listening; sending SshTaskReadyEvent');
     // Announce readiness as the FIRST task → UI payload (#539). The host is the
     // component that actually consumes commands, so its existence is the true
@@ -248,6 +256,10 @@ class SessionHost {
   /// it won't clobber a forwarder a different host installed afterward (matters
   /// for the desktop / in-process path where hosts share one isolate).
   void Function(String line)? _lifecycleForward;
+
+  /// The exact control-mode-forwarder closure this host installed into the global
+  /// [controlModeForwarder] (#906). Held so dispose detaches OUR closure only.
+  void Function(String line)? _controlModeForward;
 
   /// Minimum spacing between liveness-heartbeat lines per session (#838).
   /// The heartbeat piggybacks the 2s snapshot tick but only emits this often so
@@ -401,7 +413,19 @@ class SessionHost {
     if (hosted == null) return;
     final tmux = hosted.tmuxChannel;
     if (tmux == null) return; // flag OFF — ignore.
-    if (!hosted.tmuxHandshakeConfirmed) return; // #982: no -CC write pre-handshake.
+    // #906 telemetry: describe the RAW gesture so the resolution is traceable.
+    final raw = switch (cmd.gesture) {
+      TmuxWindowGesture.nextWindow => 'next-window',
+      TmuxWindowGesture.previousWindow => 'previous-window',
+      TmuxWindowGesture.tapStatusCol =>
+        'tapStatusCol col=${cmd.statusCol} cols=${cmd.statusCols}',
+    };
+    if (!hosted.tmuxHandshakeConfirmed) {
+      // #982: no -CC write pre-handshake. Trace the drop so a report shows a tap
+      // that arrived before the channel was live (vs a resolution failure).
+      cmtrace('gesture raw=$raw → dropped(reason=handshake-not-confirmed)');
+      return;
+    }
     final String? line;
     switch (cmd.gesture) {
       case TmuxWindowGesture.nextWindow:
@@ -414,7 +438,15 @@ class SessionHost {
           cmd.statusCols,
         );
     }
-    if (line == null) return; // no window known yet — nothing to target.
+    if (line == null) {
+      // No window known yet — nothing to target. This is EXACTLY the owner's
+      // "not switching" symptom, so trace it WITH the current window list so one
+      // report shows whether the list was empty (the pre-existing-attach bug).
+      cmtrace('gesture raw=$raw → dropped(reason=no-window-known) '
+          'windows=${tmux.windowListTrace()}');
+      return;
+    }
+    cmtrace('gesture raw=$raw → resolved=$line → sent');
     try {
       hosted.shell?.send(tmux.frameControl(line));
     } catch (_) {
@@ -800,6 +832,7 @@ class SessionHost {
     hosted.pendingCcCols = null;
     hosted.pendingCcRows = null;
     hosted.pendingCcCapture = false;
+    hosted.pendingCcWindowList = false;
     final shell = hosted.shell;
     hosted.shell = null;
     if (shell != null) {
@@ -823,6 +856,9 @@ class SessionHost {
     if (hosted.tmuxHandshakeConfirmed || hosted.tmuxChannel == null) return;
     ctrace('task.host',
         'control-mode handshake timed out sid=$sessionId → scrape fallback');
+    // #906 telemetry: record the fallback so a report distinguishes "control
+    // mode fell back to scrape" from "control mode live but not switching".
+    cmtrace('attach sid=$sessionId fellBackToScrape=true reason=handshake-timeout');
     hosted.tmuxHandshakeTimer?.cancel();
     hosted.tmuxHandshakeTimer = null;
     // Drop the -CC adapter + coalescer; the output listener's `tmuxChannel == null`
@@ -833,6 +869,7 @@ class SessionHost {
     hosted.pendingCcCols = null;
     hosted.pendingCcRows = null;
     hosted.pendingCcCapture = false;
+    hosted.pendingCcWindowList = false;
     // Force the remote to repaint what -CC swallowed: a winsize resize makes a
     // shell/tmux redraw. dartssh2 rejects non-positive dims, so clamp.
     final cols = hosted.metrics.lastCols ?? 80;
@@ -901,6 +938,9 @@ class SessionHost {
       if (tmuxControlMode) {
         final tmux = TmuxControlChannel();
         hosted.tmuxChannel = tmux;
+        // #906 telemetry: record the attach entry-path so a report shows control
+        // mode entered via exec (the #982 path) and is awaiting the handshake.
+        cmtrace('attach sid=$sessionId entry=exec handshakeConfirmed=false');
         // #916: the per-session refresh-client coalescer. Its settled emit is the
         // ONLY place a `refresh-client -C` is written to the shell — both the
         // resize handler and the switch-redraw enqueue here, so a burst collapses
@@ -970,10 +1010,18 @@ class SessionHost {
           final tmux = hosted.tmuxChannel;
           if (tmux != null) {
             final result = tmux.ingest(bytes);
+            // #906 telemetry: emit the channel's structured notification /
+            // window-list trace lines so a bug report fully diagnoses control
+            // mode (each `%…` notification + window-list snapshots).
+            for (final t in result.traceLines) {
+              cmtrace(t);
+            }
             // #982: track whether the attach capture was fired inside the confirm
             // branch this chunk, so the captureRequested block below does not
             // double-send it (a harmless second repaint, but avoid the churn).
             var capturedOnConfirm = false;
+            // #906 switch fix: same, for the attach `list-windows` request.
+            var windowListOnConfirm = false;
             // #909/#916: control mode ENDED (tmux detached / server died). Surface
             // it as ONE clean shell close so the controller drives a SINGLE
             // reconnect through its normal close path — instead of silently
@@ -999,6 +1047,9 @@ class SessionHost {
               hosted.tmuxHandshakeConfirmed = true;
               hosted.tmuxHandshakeTimer?.cancel();
               hosted.tmuxHandshakeTimer = null;
+              // #906 telemetry: the `-CC` handshake confirmed — control mode is
+              // live (the working path, not the scrape fallback).
+              cmtrace('attach sid=$sessionId handshakeConfirmed=true');
               final cols =
                   hosted.pendingCcCols ?? hosted.metrics.lastCols ?? 80;
               final rows =
@@ -1025,6 +1076,19 @@ class SessionHost {
                   // Channel closed; the next connect re-syncs.
                 }
               }
+              // #906 switch fix: flush the attach `list-windows` too, so the
+              // window order is built on a pre-existing session (tmux pushes no
+              // %window-add for pre-attach windows). Sent AFTER the capture so
+              // the FIFO order matches the send order.
+              if (result.windowListRequested || hosted.pendingCcWindowList) {
+                hosted.pendingCcWindowList = false;
+                windowListOnConfirm = true;
+                try {
+                  hosted.shell?.send(tmux.frameWindowList());
+                } catch (_) {
+                  // Channel closed; the next connect re-syncs.
+                }
+              }
             }
             // #982: still waiting on the handshake — do NOT issue any capture /
             // switch / resize command (it would leak). The buffered resize above
@@ -1032,6 +1096,7 @@ class SessionHost {
             // flushed at confirm. Render bytes (if any) still pass through below.
             if (!hosted.tmuxHandshakeConfirmed) {
               if (result.captureRequested) hosted.pendingCcCapture = true;
+              if (result.windowListRequested) hosted.pendingCcWindowList = true;
               final render = result.renderBytes;
               if (render.isNotEmpty) {
                 _scanAttention(sessionId, hosted, render);
@@ -1074,6 +1139,17 @@ class SessionHost {
             if (result.captureRequested && !capturedOnConfirm) {
               try {
                 hosted.shell?.send(tmux.frameCapture());
+              } catch (_) {
+                // Channel closed; the next connect re-syncs.
+              }
+            }
+            // #906 switch fix: on attach, also request the window list so a
+            // status-bar tap resolves on a pre-existing session (tmux emits no
+            // %window-add for pre-attach windows). Sent after the capture so the
+            // FIFO order matches; the response is parsed into the window order.
+            if (result.windowListRequested && !windowListOnConfirm) {
+              try {
+                hosted.shell?.send(tmux.frameWindowList());
               } catch (_) {
                 // Channel closed; the next connect re-syncs.
               }
@@ -1865,6 +1941,11 @@ class SessionHost {
       lifecycleForwarder = null;
     }
     _lifecycleForward = null;
+    // #906: detach the control-mode forwarder the same way (only if still ours).
+    if (identical(controlModeForwarder, _controlModeForward)) {
+      controlModeForwarder = null;
+    }
+    _controlModeForward = null;
   }
 
   Future<void> dispose() async {
@@ -2034,6 +2115,13 @@ class _HostedSession {
   /// `frameCapture` the moment the handshake confirms, so a gated attach capture
   /// is never lost (the Stage-1 attach-render regression).
   bool pendingCcCapture = false;
+
+  /// #906 switch fix: a `list-windows` was requested (ATTACH `%session-changed`)
+  /// while the handshake gate was still closed. Mirrors [pendingCcCapture]:
+  /// buffer the request and flush ONE `frameWindowList` the moment the handshake
+  /// confirms, so the window order is built even when `%session-changed` shared
+  /// the confirm chunk (or arrived while gated).
+  bool pendingCcWindowList = false;
 
   /// #982: bounded timer armed when the entry command is written. If the `-CC`
   /// handshake is not confirmed before it fires, control mode FAILED (nested/no

@@ -504,6 +504,11 @@ class SshSessionProxy {
         // recorded it into the lifecycle ring before _incoming, so a per-session
         // proxy has nothing to do — handle it for switch exhaustiveness only.
         break;
+      case SshControlModeTraceEvent():
+        // Task-global control-mode telemetry (#906). The UI-side gateway already
+        // recorded it into the control-mode ring before _incoming; a per-session
+        // proxy has nothing to do — handle it for switch exhaustiveness only.
+        break;
       case SftpListingEvent():
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():

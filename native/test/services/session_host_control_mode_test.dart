@@ -328,6 +328,23 @@ void main() {
           reason: '%exit must close the shell transport exactly once');
     });
 
+    // ---- #906 switch fix: query the window list on attach ----
+
+    test('ATTACH requests list-windows so a pre-existing session is tappable',
+        () async {
+      final ctx = await setUpConnectedShell('cc:22:u:winlist');
+      final shell = ctx.opened.first;
+      shell.sent.clear();
+      // tmux -CC attach to a PRE-EXISTING session: %session-changed with NO
+      // %window-add for the pre-attach windows. The host must query list-windows.
+      shell.emit(_b('%session-changed \$0 main\n'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final written = _s(shell.sent.toBytes());
+      expect(written, contains('list-windows -F'),
+          reason: 'attach must query the window list so a status-bar tap can '
+              'resolve a target on a pre-existing session (the "not switching" bug)');
+    });
+
     // ---- #911 Part C: atomic control-command delivery + real gestures ----
 
     test('a multi-token control command is delivered as ONE atomic line', () async {

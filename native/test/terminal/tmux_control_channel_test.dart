@@ -371,6 +371,133 @@ void main() {
     });
   });
 
+  group('list-windows on attach — pre-existing-session switch fix (#906)', () {
+    test('ATTACH (%session-changed) requests a window list', () {
+      final ch = TmuxControlChannel();
+      final r = ch.ingest(bytes('%session-changed \$0 main\n'));
+      expect(r.windowListRequested, isTrue,
+          reason: 'attach to a pre-existing session must query the window list — '
+              'tmux emits no %window-add for pre-attach windows');
+    });
+
+    test('frameWindowList returns the list-windows line AND registers a block', () {
+      final ch = TmuxControlChannel();
+      expect(text(ch.frameWindowList()),
+          "list-windows -F '#{window_id} #{window_index} #{window_name}'\n");
+      expect(ch.pendingCommandCount, 1);
+    });
+
+    test('the list-windows response builds the ordered window list + names', () {
+      final ch = TmuxControlChannel();
+      ch.frameWindowList();
+      ch.ingest(bytes(
+        '%begin 1 9 1\n@0 0 alpha\n@1 1 bravo\n@2 2 charlie\n%end 1 9 1\n',
+      ));
+      expect(ch.windows.map((w) => w.id).toList(), [0, 1, 2]);
+      expect(ch.windows.map((w) => w.name).toList(), ['alpha', 'bravo', 'charlie']);
+    });
+
+    test('list-windows ALONE (no %window-add) makes a status tap resolve — the '
+        'pre-existing-attach bug', () {
+      final ch = TmuxControlChannel();
+      // The reproduced failure: on attach to a pre-existing session tmux pushes
+      // NO %window-add, so without list-windows the order is empty and the tap
+      // resolves to null (no switch). With the list-windows response parsed, the
+      // three windows are known and the tap resolves.
+      expect(ch.selectWindowCommandForStatusCol(45, 90), isNull,
+          reason: 'precondition: empty order → null (the bug)');
+      ch.frameWindowList();
+      ch.ingest(bytes(
+        '%begin 1 9 1\n@0 0 alpha\n@1 1 bravo\n@2 2 charlie\n%end 1 9 1\n',
+      ));
+      expect(ch.selectWindowCommandForStatusCol(45, 90), 'select-window -t @1',
+          reason: 'after list-windows the middle-segment tap resolves to @1');
+    });
+
+    test('list-windows rebuilds order sorted by window index', () {
+      final ch = TmuxControlChannel();
+      ch.frameWindowList();
+      // Deliberately out of index order in the response.
+      ch.ingest(bytes(
+        '%begin 1 9 1\n@2 2 charlie\n@0 0 alpha\n@1 1 bravo\n%end 1 9 1\n',
+      ));
+      expect(ch.windows.map((w) => w.id).toList(), [0, 1, 2]);
+    });
+
+    test('malformed list-windows lines are skipped (fail-open)', () {
+      final ch = TmuxControlChannel();
+      ch.frameWindowList();
+      ch.ingest(bytes(
+        '%begin 1 9 1\ngarbage line\n@0 0 alpha\nnot-a-window\n@1 1 bravo\n%end 1 9 1\n',
+      ));
+      expect(ch.windows.map((w) => w.id).toList(), [0, 1]);
+    });
+
+    test('window names with spaces are preserved', () {
+      final ch = TmuxControlChannel();
+      ch.frameWindowList();
+      ch.ingest(bytes(
+        '%begin 1 9 1\n@0 0 my editor\n@1 1 log tail\n%end 1 9 1\n',
+      ));
+      expect(ch.windows.map((w) => w.name).toList(), ['my editor', 'log tail']);
+    });
+
+    test('the list-windows response does NOT render as screen bytes', () {
+      final ch = TmuxControlChannel();
+      ch.frameWindowList();
+      final r = ch.ingest(bytes(
+        '%begin 1 9 1\n@0 0 alpha\n@1 1 bravo\n%end 1 9 1\n',
+      ));
+      expect(text(r.renderBytes), isEmpty,
+          reason: 'a window-list block is parsed, not painted to the grid');
+    });
+
+    // ---- #906 telemetry: structured trace lines from ingest ----
+
+    test('a %window-add produces a notif trace line + a window-list snapshot', () {
+      final ch = TmuxControlChannel();
+      final r = ch.ingest(bytes('%window-add @3\n'));
+      expect(r.traceLines, contains('notif window-add @3'));
+      // The order changed, so a single snapshot line is appended.
+      expect(r.traceLines.any((l) => l.startsWith('windowList ')), isTrue);
+    });
+
+    test('a %session-window-changed produces an authoritative-active trace line',
+        () {
+      final ch = TmuxControlChannel();
+      final r = ch.ingest(bytes('%session-window-changed \$0 @2\n'));
+      expect(
+        r.traceLines,
+        contains('notif session-window-changed @2 (authoritative active)'),
+      );
+    });
+
+    test('the list-windows parse emits a windowList snapshot with @id(name)', () {
+      final ch = TmuxControlChannel();
+      ch.frameWindowList();
+      final r = ch.ingest(bytes(
+        '%begin 1 9 1\n@0 0 alpha\n@1 1 bravo\n%end 1 9 1\n',
+      ));
+      expect(r.traceLines, contains('list-windows parsed rows=2'));
+      expect(
+        r.traceLines,
+        contains('windowList @0(alpha) @1(bravo)'),
+      );
+    });
+
+    test('windowListTrace is [none] when no windows are known', () {
+      final ch = TmuxControlChannel();
+      expect(ch.windowListTrace(), '[none]');
+    });
+
+    test('an unchanged chunk emits NO windowList snapshot (bounded)', () {
+      final ch = TmuxControlChannel();
+      ch.ingest(bytes('%window-add @0\n')); // establishes order
+      final r = ch.ingest(bytes('%output %0 hello\n')); // no order change
+      expect(r.traceLines.any((l) => l.startsWith('windowList ')), isFalse);
+    });
+  });
+
   group('status-col → window mapping (#911 Step 2)', () {
     TmuxControlChannel threeWindows() {
       final ch = TmuxControlChannel();
