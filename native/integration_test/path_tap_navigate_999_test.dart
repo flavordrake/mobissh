@@ -161,10 +161,10 @@ void main() {
       // Wait for scroll-settle so the bubble geometry is live and resolvable.
       List<Rect> anchorRects() => [
         for (final range in anchorOf()!.ranges)
-          ...controller!.anchorRects(range),
+          ...controller.anchorRects(range),
       ];
       for (var i = 0;
-          i < 30 && (controller!.isScrolling || anchorRects().isEmpty);
+          i < 30 && (controller.isScrolling || anchorRects().isEmpty);
           i++) {
         await tester.pump(const Duration(milliseconds: 300));
       }
