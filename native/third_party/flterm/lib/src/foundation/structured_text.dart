@@ -51,6 +51,21 @@ final class HighlightStyle {
           underline == other.underline;
 }
 
+/// The anchoring TIER of a [TextPattern] (#998 slice A).
+///
+/// Tiers let a BLOCK-level anchor (a whole command line) CONTAIN span-level
+/// anchors (the URLs/paths inside it) with NEITHER suppressing the other:
+///   * [span] — an inline token (URL, path, OSC-8 link). The default; every
+///     pre-tier pattern keeps today's behavior with zero registration changes.
+///   * [block] — a whole-logical-line construct (a command line, #998 B). A
+///     block match may OVERLAP span matches and OSC-8 hyperlinked cells; the
+///     span-tier OSC-8-wins de-dup does not apply to it.
+/// Hit-testing prefers the INNERMOST tier: [StructuredTextScanner] emits both,
+/// and `TerminalController.matchAt` resolves a cell covered by both tiers to
+/// the span match (inline taps never route to the containing block), with the
+/// block match still resolvable via `matchAt(tier: TextTier.block)`.
+enum TextTier { span, block }
+
 /// A detectable structured-text pattern (#767).
 ///
 /// A pattern names a class of structured text (URL, path, …) with a [regex]
@@ -93,6 +108,27 @@ final class TextPattern {
   /// match always WINS over an overlapping [regex] match (see [StructuredTextScanner.scan]).
   final bool isOsc8Source;
 
+  /// The anchoring tier (#998 slice A). Defaults to [TextTier.span] — every
+  /// existing pattern keeps today's behavior with no registration change. A
+  /// [TextTier.block] pattern (a whole command line, #998 B) may CONTAIN span
+  /// matches / OSC-8 links without the span-tier de-dup suppressing it, and
+  /// loses hit-test ties to any covering span match (innermost wins).
+  final TextTier tier;
+
+  /// When set, emitted ranges cover THIS capture group's span instead of the
+  /// full match (#998 slice A) — e.g. a command pattern `^\$ (.+)$` with
+  /// `rangeGroup: 1` anchors only the command, so the prompt stays un-anchored
+  /// ink. GEOMETRY only: [normalize] still receives the FULL raw match (a
+  /// command scorer needs the prompt) and produces the payload as today. An
+  /// EMPTY or absent group suppresses the match (nothing to anchor).
+  ///
+  /// Dart's [Match] exposes no per-group offsets, so the group's span is
+  /// located as the LAST occurrence of the group text within the match — exact
+  /// whenever the group extends to the END of the match (the prompt-strip
+  /// shape this exists for); groups repeated elsewhere in the match resolve to
+  /// their final occurrence.
+  final int? rangeGroup;
+
   const TextPattern({
     required this.id,
     required this.regex,
@@ -100,6 +136,8 @@ final class TextPattern {
     this.normalize,
     this.trailingTrim = '',
     this.isOsc8Source = false,
+    this.tier = TextTier.span,
+    this.rangeGroup,
   });
 
   /// The built-in URL pattern (#726/#764 moved in-fork, #767).
@@ -350,10 +388,16 @@ final class StructuredMatch {
   /// The opaque value the match represents (e.g. the normalized URL string).
   final Object payload;
 
+  /// The producing pattern's [TextPattern.tier] (#998 slice A), stamped by the
+  /// scanner so hit-testing can prefer the innermost (span) match at a cell
+  /// covered by both tiers. Defaults to [TextTier.span].
+  final TextTier tier;
+
   const StructuredMatch({
     required this.patternId,
     required this.ranges,
     required this.payload,
+    this.tier = TextTier.span,
   });
 
   /// Returns true if the cell at ABSOLUTE ([row], [col]) falls in any range.
@@ -548,11 +592,15 @@ class StructuredTextScanner {
             end--;
           }
           if (end <= start) continue;
-          // De-dup: OSC-8 wins. Drop a regex match that overlaps ANY OSC-8
-          // hyperlinked cell, so a hyperlinked URL (whose visible text is also
-          // URL-shaped) yields only the exact OSC-8 anchor. A plain-text URL
-          // (no OSC-8) is unaffected — the map is empty, so this never fires.
-          if (hyperlinkedCells.isNotEmpty &&
+          // De-dup: OSC-8 wins WITHIN the span tier (#998 A). Drop a SPAN-tier
+          // regex match that overlaps ANY OSC-8 hyperlinked cell, so a
+          // hyperlinked URL (whose visible text is also URL-shaped) yields only
+          // the exact OSC-8 anchor. A BLOCK-tier match (a command line, #998 B)
+          // legitimately CONTAINS links — cross-tier containment is allowed, so
+          // it is exempt. A plain-text URL (no OSC-8) is unaffected — the map
+          // is empty, so this never fires.
+          if (pattern.tier == TextTier.span &&
+              hyperlinkedCells.isNotEmpty &&
               _overlapsHyperlink(line.glyphs, start, end, hyperlinkedCells)) {
             continue;
           }
@@ -564,10 +612,29 @@ class StructuredTextScanner {
           final Object? payload =
               pattern.normalize != null ? pattern.normalize!(raw) : raw;
           if (payload == null) continue;
+          // #998 A: rangeGroup narrows the ANCHORED span to the capture group
+          // (the prompt stays un-anchored ink). Geometry only — [raw]/[payload]
+          // above keep the full match. Dart's Match has no per-group offsets,
+          // so locate the group text's LAST occurrence within the match (exact
+          // for the suffix-group shape this exists for). The group span is
+          // clamped to the trailing-trimmed end.
+          var rangeStart = start;
+          var rangeEnd = end;
+          final rangeGroup = pattern.rangeGroup;
+          if (rangeGroup != null) {
+            final group =
+                rangeGroup <= m.groupCount ? m.group(rangeGroup) : null;
+            if (group == null || group.isEmpty) continue;
+            final matched = text.substring(m.start, m.end);
+            rangeStart = m.start + matched.lastIndexOf(group);
+            rangeEnd = rangeStart + group.length;
+            if (rangeEnd > end) rangeEnd = end;
+            if (rangeEnd <= rangeStart) continue;
+          }
           final ranges = _rangesFor(
             line.glyphs,
-            start,
-            end,
+            rangeStart,
+            rangeEnd,
             pattern.style,
             payload,
           );
@@ -577,6 +644,7 @@ class StructuredTextScanner {
               patternId: pattern.id,
               ranges: ranges,
               payload: payload,
+              tier: pattern.tier,
             ),
           );
         }
@@ -664,6 +732,7 @@ class StructuredTextScanner {
             patternId: pattern.id,
             ranges: ranges,
             payload: uri,
+            tier: pattern.tier,
           ),
         );
       }

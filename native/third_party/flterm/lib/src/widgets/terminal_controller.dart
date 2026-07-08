@@ -151,9 +151,17 @@ abstract class TerminalController extends ChangeNotifier
   /// drawn bubble, so a tap anywhere on a painted URL (incl. a `:port` URL or a
   /// wrapped multi-row URL) resolves to its match instead of landing a row off
   /// (#863). The returned [StructuredMatch.payload] recovers what the cells
-  /// represent (e.g. the URL behind a tap/long-press). When matches overlap, the
-  /// last detected one wins.
-  StructuredMatch? matchAt({required int row, required int col});
+  /// represent (e.g. the URL behind a tap/long-press).
+  ///
+  /// TIER preference (#998 slice A): when the cell is covered by both a
+  /// SPAN-tier match (url/path/OSC-8) and a BLOCK-tier match containing it (a
+  /// command line, #998 B), the SPAN match wins — an inline tap never routes
+  /// to the containing block. Pass [tier] to scope the query to one tier (e.g.
+  /// `tier: TextTier.block` resolves the containing command at a cell whose
+  /// default answer is the inner URL); null on a scoped query means no match
+  /// of that tier covers the cell. WITHIN a tier, overlapping matches keep
+  /// today's rule: the last detected one wins.
+  StructuredMatch? matchAt({required int row, required int col, TextTier? tier});
 
   /// The current detected structured-text ANCHORS (#767 Slice B).
   ///
