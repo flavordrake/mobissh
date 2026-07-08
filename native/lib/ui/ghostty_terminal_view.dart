@@ -1247,7 +1247,7 @@ bool ghosttyLongPressShowsPathMenu(StructuredMatch? matchAtCell) =>
 
 /// Whether a detected [match]'s payload is a real, copyable string (#810).
 ///
-/// The tap-copy path (`_copyUrl`) writes `'${match.payload}'` to the clipboard
+/// The tap-copy path (`_onMatchTap`) writes `'${match.payload}'` to the clipboard
 /// and shows a "Copied URL" toast. If the payload stringifies to empty (or
 /// whitespace only) — the #810 device bug, where an empty-URI OSC-8 link
 /// produced a non-null match with no payload — the toast would claim success
@@ -1256,12 +1256,12 @@ bool ghosttyLongPressShowsPathMenu(StructuredMatch? matchAtCell) =>
 bool ghosttyMatchHasCopyablePayload(StructuredMatch match) =>
     '${match.payload}'.trim().isNotEmpty;
 
-/// #988: the single-TAP action for a detected structured match — COPY the exact
-/// anchor payload (wrap-joined, indent-aware; the #925/#928 extraction) for
-/// URLs AND file paths. The bubble is the visual preview of exactly this text,
-/// so what you see is what a tap copies. Open lives on the long-press menu and
-/// the gutter mark (a path tap used to open the SFTP explorer, #778 — #988
-/// unifies tap=copy across pattern kinds per the owner's spec).
+/// #988: the tap-COPY action for a detected structured match — copies the exact
+/// anchor payload (wrap-joined, indent-aware; the #925/#928 extraction). The
+/// bubble is the visual preview of exactly this text, so what you see is what
+/// a tap copies. Since #999 the single tap only routes URLs/OSC-8 here (path
+/// taps NAVIGATE — see [ghosttyTapMatchAction]); the path branch stays because
+/// menu-driven copies may still label a path payload.
 ///
 /// Returns the success toast label, or null when nothing was copied (empty
 /// payload — the #810 guard — or the [copy] sink failed). [copy] is injected
@@ -1278,6 +1278,57 @@ Future<String?> ghosttyTapCopyMatch(
   final ok = await copy('${match.payload}');
   if (!ok) return null;
   return match.patternId == kGhosttyPathPatternId ? 'Copied path' : 'Copied URL';
+}
+
+/// #999: the file-browser TARGET directory for a tapped detected path — the
+/// pure dir-vs-file rule.
+///
+/// Without an SFTP stat we cannot cheaply know whether a detected path names a
+/// directory or a file (#990 is building stat infrastructure; a follow-up can
+/// refine this on top of it). V1 rule:
+///   * a TRAILING SLASH plausibly names a dir → open it directly (normalized,
+///     trailing slashes stripped);
+///   * anything else — an extension-like final segment or a bare segment we
+///     can't classify — opens the PARENT dir, where the tapped entry is still
+///     one tap away in the listing.
+/// Root (`/`) and degenerate inputs (empty/whitespace) resolve to `/`. Pure,
+/// unit-testable headless.
+String ghosttyPathBrowseTarget(String path) {
+  var p = path.trim();
+  final hadTrailingSlash = p.endsWith('/');
+  while (p.length > 1 && p.endsWith('/')) {
+    p = p.substring(0, p.length - 1);
+  }
+  if (p.isEmpty || p == '/') return '/';
+  if (hadTrailingSlash) return p;
+  final cut = p.lastIndexOf('/');
+  if (cut <= 0) return '/';
+  return p.substring(0, cut);
+}
+
+/// #999: the single-TAP dispatch for a detected structured match — a PATH
+/// anchor NAVIGATES (opens this app's SFTP file browser via the injected
+/// [openPath] seam; the #632/#950 favorites → browser entry point), everything
+/// else (URL/OSC-8) keeps #988's tap-copy via [ghosttyTapCopyMatch]. The owner
+/// verdict on #988's tap=copy-for-both: paths must navigate (the #778
+/// behaviour class); copy stays one interaction away on the long-press menu
+/// and the gutter mark.
+///
+/// Returns the copy toast label for the copy branch; null for the navigate
+/// branch (the pushed browser IS the feedback) and for an empty payload (the
+/// #810 guard applies to both kinds). Both sinks are injected so the dispatch
+/// is unit-testable headless.
+Future<String?> ghosttyTapMatchAction(
+  StructuredMatch match, {
+  required Future<bool> Function(String text) copy,
+  required Future<bool> Function(String path) openPath,
+}) async {
+  if (match.patternId == kGhosttyPathPatternId) {
+    if (!ghosttyMatchHasCopyablePayload(match)) return null;
+    await openPath('${match.payload}'.trim());
+    return null;
+  }
+  return ghosttyTapCopyMatch(match, copy: copy);
 }
 
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
@@ -3493,22 +3544,33 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   }
 
   /// Handle a single-TAP that landed on a detected structured match (the tap is
-  /// swallowed by the router). #726/#988: the tap COPIES the exact anchor
-  /// payload for URLs AND file paths — the bubble the tap landed on is the
-  /// visual preview of exactly this text ([ghosttyTapCopyMatch]). Open (browser
-  /// / SFTP explorer) lives on the long-press menu and the gutter mark.
-  Future<void> _copyUrl(StructuredMatch match) async {
-    final toast = await ghosttyTapCopyMatch(match, copy: copyToClipboard);
+  /// swallowed by the router). #726/#988/#999: a URL/OSC-8 tap COPIES the exact
+  /// anchor payload ([ghosttyTapCopyMatch]); a PATH tap NAVIGATES — opens the
+  /// SFTP file browser via [_openPath] (owner verdict on #988's tap=copy-for-
+  /// both). Copy for paths stays on the long-press menu + gutter mark.
+  Future<void> _onMatchTap(StructuredMatch match) async {
+    final toast = await ghosttyTapMatchAction(
+      match,
+      copy: copyToClipboard,
+      openPath: _openPath,
+    );
     if (toast != null && mounted) showTopToast(context, toast);
   }
 
-  /// #778 paths Slice 1: open the SFTP file explorer AT [path] (the tapped /
-  /// long-press-Open absolute file path). Absolute paths resolve without a pwd,
-  /// so the explorer lands directly at [path]; relative/pwd resolution is a later
-  /// slice. Routes through the single [openFileBrowser] entry point.
+  /// #778 paths Slice 1 / #999: open the SFTP file explorer for [path] (the
+  /// tapped / long-press-Open / gutter-Open absolute file path). The explorer
+  /// lands at [ghosttyPathBrowseTarget] — the dir itself for a trailing-slash
+  /// path, the PARENT dir otherwise (a detected path may name a FILE; without a
+  /// stat the parent listing is the useful landing). Absolute paths resolve
+  /// without a pwd; relative/pwd resolution is a later slice. Routes through
+  /// the single [openFileBrowser] entry point.
   Future<bool> _openPath(String path) async {
     if (!mounted) return false;
-    await openFileBrowser(context, widget.sessionId, initialPath: path);
+    await openFileBrowser(
+      context,
+      widget.sessionId,
+      initialPath: ghosttyPathBrowseTarget(path),
+    );
     return true;
   }
 
@@ -4034,7 +4096,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // structured match. Detection lives INSIDE the terminal now, so we
             // ask the controller directly — no app-side URL list.
             urlAtCell: (col, row) => controller.matchAt(row: row, col: col),
-            onUrlTap: _copyUrl,
+            // #999: URL/OSC-8 taps copy; PATH taps navigate (file browser).
+            onUrlTap: _onMatchTap,
             // #734: a long-press on a detected URL shows the Copy/Open action
             // menu (the same `showUrlActions` overlay the xterm path uses). The
             // parent builds the on-screen highlight rects + anchor from the match
