@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+128 (2026-07-08) — keepalive survives connection blips
+- **The background connection service no longer dies during a reconnect** — a dropped session now holds the service through the whole soft-drop → reconnect cycle instead of releasing it for a moment (which could kill all sessions mid-recovery). Closing a session yourself still shuts it down. (#1018)
+
 ## v0.1.10+127 (2026-07-08) — no more mouse-code garbage after a reconnect
 - **Reconnected sessions no longer spill `[<65;…M` mouse codes into the prompt** — the app resets its mouse/scroll mode assumptions when a session revives; a live TUI (tmux with mouse on) re-enables them automatically. From your connection-lost report — the reconnect itself was already succeeding. (#1014)
 
