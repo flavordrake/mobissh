@@ -62,6 +62,28 @@ class FakeKeepaliveGateway implements KeepaliveGateway {
   }
 }
 
+/// Gateway whose `isRunningService` reads can be suspended on a [Completer]
+/// (#1021). Lets a test hold `_stopIfRunning()` mid-await while another
+/// session's transition interleaves, reproducing the stale-stop race
+/// deterministically instead of relying on microtask ordering.
+class GatedFakeKeepaliveGateway extends FakeKeepaliveGateway {
+  /// When non-null, every `isRunningService` read suspends until completed.
+  Completer<void>? holdIsRunning;
+
+  @override
+  Future<bool> get isRunningService async {
+    final gate = holdIsRunning;
+    if (gate != null) await gate.future;
+    return _running;
+  }
+
+  void releaseGate() {
+    final gate = holdIsRunning;
+    holdIsRunning = null;
+    gate?.complete();
+  }
+}
+
 /// Test double for SshSessionController. We avoid spinning up a real
 /// dartssh2 client by emitting [SshSessionData] directly through the
 /// public broadcast stream.
@@ -383,6 +405,149 @@ void main() {
       await controller.dispose();
       await a.dispose();
       await b.dispose();
+    });
+  });
+
+  // #1021: `_stopIfRunning()` must re-check the holder count after its awaits
+  // and immediately before the actual `stopService` call. A stop scheduled by
+  // A going terminal (count → 0) is STALE if B's connect bumps the count back
+  // up before the stop's awaits resolve — landing it anyway kills the FGS
+  // (and its task isolate) under B's live session. Complementary to the #1018
+  // predicate fix: that keeps the count from dipping mid-lifecycle; this
+  // guards the stop PATH itself against a genuine 0→1 in the await gap.
+  group('KeepaliveController stale-stop recheck (#1021)', () {
+    test('stale stop aborts when a concurrent connect re-holds the service',
+        () async {
+      final gateway = GatedFakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final a = StubSession();
+      final b = StubSession();
+      controller.attach(a);
+      controller.attach(b);
+
+      a.emit(SshSessionState.connected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+      expect(controller.connectedCount, 1);
+
+      // Suspend all isRunningService reads so the scheduled stop parks
+      // mid-await, exactly like a slow platform-channel round trip.
+      gateway.holdIsRunning = Completer<void>();
+      a.emit(SshSessionState.disconnected); // count 1→0, stop scheduled
+      await _drain();
+
+      // B's connect interleaves BEFORE the stop's awaits resolve.
+      b.emit(SshSessionState.connecting); // count 0→1
+      await _drain();
+      expect(controller.connectedCount, 1);
+
+      gateway.releaseGate();
+      await _drain();
+
+      expect(gateway.calls.where((c) => c == 'stop'), isEmpty,
+          reason: 'the stale stop must abort — landing it kills the FGS under '
+              'B\'s live connection\n${gateway.calls}');
+      expect(await gateway.isRunningService, isTrue);
+      expect(controller.connectedCount, 1);
+
+      await controller.dispose();
+      await a.dispose();
+      await b.dispose();
+    });
+
+    test('A terminal alone still stops through the same delayed path',
+        () async {
+      final gateway = GatedFakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final a = StubSession();
+      controller.attach(a);
+
+      a.emit(SshSessionState.connected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+
+      gateway.holdIsRunning = Completer<void>();
+      a.emit(SshSessionState.disconnected);
+      await _drain();
+      gateway.releaseGate();
+      await _drain();
+
+      expect(gateway.calls.where((c) => c == 'stop'), hasLength(1),
+          reason: 'recheck must not block a legitimate stop\n${gateway.calls}');
+      expect(await gateway.isRunningService, isFalse);
+      expect(controller.connectedCount, 0);
+
+      await controller.dispose();
+      await a.dispose();
+    });
+
+    test('double-scheduled stale stops both abort under a concurrent connect',
+        () async {
+      // The #1020 red baseline showed double-scheduling shapes: a second
+      // terminal emit while count==0 re-schedules the stop via the #539
+      // leak-guard branch. Both parked stops must abort once B re-holds.
+      final gateway = GatedFakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final a = StubSession();
+      final b = StubSession();
+      controller.attach(a);
+      controller.attach(b);
+
+      a.emit(SshSessionState.connected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+
+      gateway.holdIsRunning = Completer<void>();
+      a.emit(SshSessionState.disconnected); // count 1→0, stop #1 scheduled
+      await _drain();
+      a.emit(SshSessionState.disconnected); // count==0 + terminal → stop #2
+      await _drain();
+
+      b.emit(SshSessionState.connecting); // count 0→1
+      await _drain();
+
+      gateway.releaseGate();
+      await _drain();
+
+      expect(gateway.calls.where((c) => c == 'stop'), isEmpty,
+          reason: 'BOTH parked stops are stale once B holds the service\n'
+              '${gateway.calls}');
+      expect(await gateway.isRunningService, isTrue);
+      expect(controller.connectedCount, 1);
+
+      await controller.dispose();
+      await a.dispose();
+      await b.dispose();
+    });
+
+    test('user toggle-off stop is unconditional even while sessions hold',
+        () async {
+      // The recheck exempts the disabled path: `enabled = false` means "drop
+      // the service even if sessions are still up" — a count recheck must not
+      // veto user intent. (Fast-path variant exists as "toggle off stops a
+      // running service"; this one parks the stop mid-await first.)
+      final gateway = GatedFakeKeepaliveGateway();
+      final controller = KeepaliveController(gateway: gateway);
+      final a = StubSession();
+      controller.attach(a);
+
+      a.emit(SshSessionState.connected);
+      await _drain();
+      expect(await gateway.isRunningService, isTrue);
+
+      gateway.holdIsRunning = Completer<void>();
+      controller.enabled = false; // stop scheduled with count still 1
+      await _drain();
+      gateway.releaseGate();
+      await _drain();
+
+      expect(gateway.calls.where((c) => c == 'stop'), hasLength(1),
+          reason: 'user disable stops regardless of holder count\n'
+              '${gateway.calls}');
+      expect(await gateway.isRunningService, isFalse);
+
+      await controller.dispose();
+      await a.dispose();
     });
   });
 
