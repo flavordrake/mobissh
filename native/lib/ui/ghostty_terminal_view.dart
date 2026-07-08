@@ -173,6 +173,7 @@ import 'package:xterm/xterm.dart' as xterm;
 
 import '../diagnostics/connect_trace.dart' show clifecycle, ctrace;
 import '../diagnostics/gesture_trace.dart';
+import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
 import '../services/session_messages.dart' show TmuxWindowGesture;
@@ -2381,6 +2382,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     widget.sessionId,
   );
 
+  /// Paint-stack boundary counters (paint replay harness). bytesIn/writeErrors
+  /// are incremented at the single proxy.output → controller.write seam below;
+  /// the render-box counters are probed live via [_probePaintBox]. Snapshotted
+  /// into the bug-report payload so a "paint not happening" report names the
+  /// broken layer (owner report 2026-07-08T00-51-01).
+  late final GhosttyPaintStats _paintStats = registerPaintStats(
+    widget.sessionId,
+  );
+
   /// #790: track the last scroll offset pushed to the recorder so a controller
   /// notify that didn't move the viewport (mouse-mode / selection / redraw)
   /// doesn't spam the scroll ring with identical offsets.
@@ -2460,13 +2470,25 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           // the rendered (possibly buggy) state. Allocation-light: the recorder
           // keeps the reference + a timestamp; no copy/encode here.
           _byteRecorder.recordBytes(bytes);
+          // Paint replay harness: count the chunk at the write seam BEFORE the
+          // write, so bytesIn reflects what was DELIVERED even if write throws.
+          _paintStats.bytesInChunks++;
+          _paintStats.bytesInTotal += bytes.length;
           // #760: mark that the imminent controller notify is driven by fresh
           // REMOTE output (not a local scroll), so _onControllerChanged can
           // invalidate a selection whose covered content was just redrawn.
           _remoteOutputPending = true;
           controller.write(bytes);
-        } catch (_) {
-          // Defensive — a single PTY byte must never crash the session.
+        } catch (e) {
+          // Defensive — a single PTY byte must never crash the session. But a
+          // silently-throwing write is indistinguishable from a healthy one on
+          // a stale screen, so COUNT it and (bounded) log the first few — the
+          // paint replay harness / bug report reads writeErrors to rule this
+          // layer in or out.
+          _paintStats.writeErrors++;
+          if (_paintStats.writeErrors <= 3) {
+            clifecycle('repaint', '$_repaintTag controller.write threw: $e');
+          }
         }
       });
       // Track remote mouse-mode changes so the #690 swipe-scroll overlay turns
@@ -2486,6 +2508,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // visual is the widget-layer bubble decorator, coloured per the live
       // session theme in [build].
       _registerUrlPattern(controller);
+      // Paint replay harness: let the stats snapshot probe the live render-box
+      // boundary counters (notifies / paints / frame syncs) at read time.
+      _paintStats.boxProbe = _probePaintBox;
       // #702: arm the first-connect resize re-sync on the proxy's shellReady
       // stream. The xterm #666 fit-burst is offstage for ghostty, so this is the
       // ghostty-LOCAL equivalent: once the task-side shell EXISTS, force-re-send
@@ -3050,6 +3075,25 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     return box;
   }
 
+  /// Paint replay harness: read the flterm render box's boundary counters for
+  /// the [GhosttyPaintStats] snapshot. Looks the box up fresh on every call
+  /// (it is re-created on theme-cycle remounts, so a captured reference would
+  /// go stale). Empty when unmounted / before first layout — the app-side
+  /// bytesIn/writeErrors counters still ship.
+  Map<String, Object?> _probePaintBox() {
+    if (!mounted) return const <String, Object?>{};
+    final box = _findTerminalRenderBox();
+    if (box == null) return const <String, Object?>{};
+    return <String, Object?>{
+      'contentNotifies': box.debugContentNotifyCount,
+      'paints': box.debugPaintCount,
+      'frameSyncs': box.debugFrameSyncCount,
+      'lastSyncRebuiltRows': box.debugRowsRebuiltLastSync,
+      'forceRepaints': box.debugForceRepaintCount,
+      'detectionActive': box.debugDetectionActive,
+    };
+  }
+
   TerminalRenderBox? _searchRenderBox(RenderObject node) {
     if (node is TerminalRenderBox) return node;
     TerminalRenderBox? found;
@@ -3603,6 +3647,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #790: this session's terminal is gone — drop its recorder ring (and clear
     // the active pointer if it referenced us, so a stale snapshot can't leak).
     unregisterByteRecorder(widget.sessionId);
+    // Paint replay harness: drop the paint-stack counters with the session.
+    _paintStats.boxProbe = null;
+    unregisterPaintStats(widget.sessionId);
     super.dispose();
   }
 

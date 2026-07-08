@@ -12,6 +12,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../diagnostics/connect_trace.dart';
 import '../services/session_host.dart';
 import '../services/session_messages.dart';
@@ -98,6 +100,16 @@ class SshSessionProxy {
   /// PTY output bytes streamed from the task side. Subscribers feed these
   /// into `Terminal.write(...)`.
   Stream<Uint8List> get output => _outputCtrl.stream;
+
+  /// TEST-ONLY (paint replay harness): inject [bytes] into the SAME [output]
+  /// stream real PTY bytes arrive on, so a recorded bug-report byte trace can
+  /// be replayed through the full production write→damage→paint path
+  /// (recorder → controller.write → notify → frame sync → paint) with the
+  /// terminal view none the wiser. Dropped after close, like a real event.
+  @visibleForTesting
+  void debugInjectOutput(Uint8List bytes) {
+    if (!_outputCtrl.isClosed) _outputCtrl.add(bytes);
+  }
 
   /// Fires when the task side reports the PTY shell is open + writable (#619).
   /// One tick per shell open. The run-on-connect [InitialCommandRunner] listens

@@ -29,6 +29,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
@@ -145,6 +146,9 @@ class TerminalScreen extends ConsumerWidget {
     // this — not each view's initState — is the single place that knows which is
     // foregrounded. The recorder itself is created lazily by each view.
     setActiveByteRecorder(activeEntry.id);
+    // Paint replay harness: same single place for the paint-stack counters, so
+    // the bug report snapshots the ON-SCREEN session's boundary counters.
+    setActivePaintStats(activeEntry.id);
 
     // #573: keybar visibility is PER-SESSION — read the ACTIVE session's flag.
     // Switching sessions re-watches the new active id, so each session shows

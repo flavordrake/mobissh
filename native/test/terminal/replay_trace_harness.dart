@@ -126,7 +126,15 @@ Uint8List lfToCrlf(Uint8List bytes) {
 /// `sentSgrTrace` (recorder v2 #793) is parsed when present and ignored when
 /// absent — this real fixture predates it.
 BugReportTrace loadByteTrace(String path) {
-  final json = jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
+  return parseByteTrace(File(path).readAsStringSync());
+}
+
+/// Parse a bug-report byte-trace from its raw JSON [source] string. The
+/// string-input seam exists for the ON-DEVICE paint replay tier
+/// (`integration_test/paint_replay_test.dart`), which embeds the fixture as a
+/// Dart constant because the emulator has no access to repo files.
+BugReportTrace parseByteTrace(String source) {
+  final json = jsonDecode(source) as Map<String, dynamic>;
   final grid = json['grid'] as Map<String, dynamic>;
 
   final byteTrace = [
