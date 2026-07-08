@@ -187,6 +187,7 @@ import '../state/detection_providers.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
+import '../util/file_url.dart';
 import 'file_browser_screen.dart';
 import 'ghostty_gutter_layer.dart';
 import 'ghostty_terminal_decorators.dart';
@@ -1308,6 +1309,24 @@ String ghosttyPathBrowseTarget(String path) {
   return p.substring(0, cut);
 }
 
+/// #994: the bare REMOTE path a file:// url/osc8 match names, or null when
+/// [match] is not file-URL-class.
+///
+/// Classification is by SCHEME at the ACTION layer — detection is untouched:
+/// file:// anchors come from the URL/OSC-8 patterns (`ls --hyperlink` / eza
+/// emit OSC-8 file:// links). Because they are URL-pattern matches, they are
+/// NOT subject to the #990 single-segment path suppression — an explicit
+/// file:// scheme is explicit intent. A `path`-pattern match returns null (it
+/// already has the path action set); a malformed file:// payload returns null
+/// so the caller falls back to plain-URL handling.
+String? ghosttyFileUrlPath(StructuredMatch match) {
+  if (match.patternId != kGhosttyUrlPatternId &&
+      match.patternId != kGhosttyOsc8PatternId) {
+    return null;
+  }
+  return fileUrlToRemotePath('${match.payload}');
+}
+
 /// #999: the single-TAP dispatch for a detected structured match — a PATH
 /// anchor NAVIGATES (opens this app's SFTP file browser via the injected
 /// [openPath] seam; the #632/#950 favorites → browser entry point), everything
@@ -1315,6 +1334,10 @@ String ghosttyPathBrowseTarget(String path) {
 /// verdict on #988's tap=copy-for-both: paths must navigate (the #778
 /// behaviour class); copy stays one interaction away on the long-press menu
 /// and the gutter mark.
+///
+/// #994: a url/osc8 match whose payload is a well-formed file:// URI is a
+/// REMOTE PATH on the session's host — it NAVIGATES through the same [openPath]
+/// seam with the authority-stripped, percent-decoded bare path.
 ///
 /// Returns the copy toast label for the copy branch; null for the navigate
 /// branch (the pushed browser IS the feedback) and for an empty payload (the
@@ -1328,6 +1351,11 @@ Future<String?> ghosttyTapMatchAction(
   if (match.patternId == kGhosttyPathPatternId) {
     if (!ghosttyMatchHasCopyablePayload(match)) return null;
     await openPath('${match.payload}'.trim());
+    return null;
+  }
+  final filePath = ghosttyFileUrlPath(match);
+  if (filePath != null) {
+    await openPath(filePath);
     return null;
   }
   return ghosttyTapCopyMatch(match, copy: copy);
@@ -2335,7 +2363,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// the instance [_openPath]. A future pattern (slice 4 custom regex) is a
   /// trivial registry entry — no paint code.
   late final GutterPatternRegistry _gutterRegistry =
-      GutterPatternRegistry.standard(openPath: _openPath);
+      GutterPatternRegistry.standard(
+        openPath: _openPath,
+        // #994: lets the registry offer "Copy sftp URL" for file:// anchors.
+        sftpUrlOf: _sftpUrlFor,
+      );
 
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
   /// long-press-start, held while the finger drags so each extend rebuilds the
@@ -3689,12 +3721,43 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       );
       return;
     }
+    // #994: a file:// url/osc8 anchor is a REMOTE path — it gets the PATH menu
+    // (Open → explorer, Copy path) plus the canonical sftp:// form.
+    final filePath = ghosttyFileUrlPath(match);
+    if (filePath != null) {
+      showPathActions(
+        context,
+        filePath,
+        highlightRects: rects,
+        anchor: globalAnchor,
+        onOpen: _openPath,
+        sftpUrl: _sftpUrlFor(filePath),
+      );
+      return;
+    }
     showUrlActions(
       context,
       '${match.payload}',
       highlightRects: rects,
       anchor: globalAnchor,
     );
+  }
+
+  /// #994: the canonical `sftp://user@host[:port]/path` form of [path] on THIS
+  /// view's session, from the live session entry's identity — or null when the
+  /// session is gone (the menu simply omits the sftp action).
+  String? _sftpUrlFor(String path) {
+    for (final e in ref.read(sessionsProvider).entries) {
+      if (e.id == widget.sessionId) {
+        return sftpUrlForRemotePath(
+          username: e.username,
+          host: e.host,
+          port: e.port,
+          path: path,
+        );
+      }
+    }
+    return null;
   }
 
   /// The GLOBAL on-screen rects for [match]'s cell range (#734/#767). One per
