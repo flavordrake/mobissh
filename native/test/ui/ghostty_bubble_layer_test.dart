@@ -15,7 +15,9 @@
 //      settle, and renders nothing for an off-screen anchor.
 //   3. TAP-COPY: a tap routed by the gesture router at a bubble cell resolves
 //      the match and ghosttyTapCopyMatch copies the EXACT wrap-joined URL (no
-//      injected whitespace) — for URLs AND file paths (#988 goal).
+//      injected whitespace). Since #999 the single TAP routes only URL/OSC-8
+//      matches here (path taps NAVIGATE — see ghostty_path_tap_navigate_999);
+//      ghosttyTapCopyMatch stays the shared copy HELPER for both kinds.
 
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
@@ -481,7 +483,7 @@ void main() {
       expect(toast, 'Copied URL');
     });
 
-    test('a PATH match copies too (tap = copy for BOTH kinds, #988)', () async {
+    test('the copy HELPER labels a PATH payload (menu copy path, #988/#999)', () async {
       const match = StructuredMatch(
         patternId: kGhosttyPathPatternId,
         payload: '/etc/ssh/sshd_config',
