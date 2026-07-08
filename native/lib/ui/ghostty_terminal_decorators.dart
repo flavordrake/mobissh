@@ -8,9 +8,11 @@
 // `anchorRects` resolves per-row rects purely from the resize-seam grid cache +
 // the PAINTED viewport offset, the SAME source `matchAt` hit-tests with (#863).
 // #988 restores the bubble on that stable geometry as the primary affordance:
-// a rounded outline that visibly respects line wraps and omits injected margin
-// whitespace, so the bubble IS the preview of what a single tap will copy. The
-// right-edge gutter marks (`ghostty_gutter_layer.dart`) coexist unchanged.
+// it visibly respects line wraps and omits injected margin whitespace, so the
+// bubble IS the preview of what a single tap will copy. #1000 re-skins it as a
+// translucent background WASH (no outline — the stroke crowded neighbors) in
+// the gutter chip's hue at a luminance-tuned alpha. The right-edge gutter
+// marks (`ghostty_gutter_layer.dart`) coexist unchanged.
 //
 // This file keeps the shared contract (pattern ids + the EMPTY highlight style
 // — the bubble is a WIDGET-layer decorator per the #767 Slice B design, never a
@@ -67,7 +69,7 @@ class GhosttyBubbleSegment {
   final bool roundLeft;
   final bool roundRight;
 
-  /// The rounded rect to stroke: capsule radius (half the segment height) on
+  /// The rounded rect to fill: capsule radius (half the segment height) on
   /// the rounded end(s), square corners on a cut (wrap-continuation) end.
   RRect toRRect() {
     final radius = Radius.circular(rect.height / 2);
@@ -96,14 +98,17 @@ class GhosttyBubbleSegment {
 /// feedback, carried over from the retired bubble's polish).
 const double _kBubblePadX = 3.0;
 
-/// VERTICAL inset: flterm's cell rect spans the full typographic line height
-/// (ascender + descender slack), so an uninset outline sits top-heavy over the
-/// glyphs (#864). Insetting shrinks that slack.
-const double _kBubblePadY = 1.0;
+/// TOP inset: flterm's cell rect spans the full typographic line height with
+/// its empty slack band at the TOP (#864), so the wash trims most of that band
+/// — but keeps a hair of it as breathing room above the glyph caps (#1000).
+const double _kBubbleTopInset = 2.0;
 
-/// DOWNWARD shift: after insetting, nudge the outline down so it is vertically
-/// CENTERED on the glyph ink (the cell's empty band is at the TOP, #864).
-const double _kBubbleShiftY = 1.5;
+/// BOTTOM outset (#1000): the glyph ink (descenders) runs close to the cell
+/// rect's bottom, so the wash EXPANDS downward past it — the #988 outline sat
+/// only 0.5px below and read cramped under descenders. The next row's top
+/// slack band (see [_kBubbleTopInset]) absorbs the overhang, so neighbors stay
+/// uncrowded.
+const double _kBubbleBottomOutset = 2.0;
 
 /// Compute the per-row bubble segments for an anchor's on-screen row rects
 /// (#988). Pure and headless-testable.
@@ -122,9 +127,9 @@ List<GhosttyBubbleSegment> ghosttyBubbleSegments(List<Rect> rowRects) {
     if (rect.width <= 0 || rect.height <= 0) continue;
     final bubble = Rect.fromLTRB(
       rect.left - _kBubblePadX,
-      rect.top + _kBubblePadY + _kBubbleShiftY,
+      rect.top + _kBubbleTopInset,
       rect.right + _kBubblePadX,
-      rect.bottom - _kBubblePadY + _kBubbleShiftY,
+      rect.bottom + _kBubbleBottomOutset,
     );
     if (bubble.width <= 0 || bubble.height <= 0) continue;
     padded.add(bubble);
@@ -155,17 +160,46 @@ bool ghosttyPathRequiresVerification(String payload) {
   return !p.substring(1).contains('/');
 }
 
-/// Stroke width of the plain "detected" bubble outline, logical px.
-const double kGhosttyBubbleStrokeWidth = 1.5;
+/// #1000 wash alphas — the bubble is a translucent background FILL (no
+/// stroke), tuned per terminal-BACKGROUND luminance: a dark terminal needs
+/// less pigment for the wash to register than a light one (where ambient
+/// screen brightness washes out faint tints). Detected < verified by a
+/// clearly-visible margin at phone density, and every value stays inside the
+/// readable band (glyphs legible in the wash; the wash still distinct from
+/// flterm's ~0x33-alpha native selection fill).
+const double kGhosttyBubbleDetectedWashAlphaOnDark = 0.26;
 
-/// Stroke width of the bolder VERIFIED bubble outline (#990) — a detected
-/// file path confirmed to exist on the connected host.
-const double kGhosttyBubbleVerifiedStrokeWidth = 2.5;
+/// Detected wash alpha over a LIGHT terminal background (#1000).
+const double kGhosttyBubbleDetectedWashAlphaOnLight = 0.32;
 
-/// Fill-wash alpha inside a VERIFIED bubble (#990). A faint tint (the text
-/// stays fully readable) that, with the thicker stroke, makes the verified
-/// shade legible at phone density.
-const double kGhosttyBubbleVerifiedFillAlpha = 0.15;
+/// VERIFIED wash alpha over a dark terminal background (#990 shade, #1000
+/// wash language): a detected file path confirmed to exist on the host.
+const double kGhosttyBubbleVerifiedWashAlphaOnDark = 0.42;
+
+/// Verified wash alpha over a LIGHT terminal background (#1000).
+const double kGhosttyBubbleVerifiedWashAlphaOnLight = 0.50;
+
+/// The bubble wash colour (#1000): the SAME opaque hue as the gutter chip —
+/// `GutterMarkStyle.chipColor` forces the accent's alpha to 1.0, mirrored here
+/// (the gutter file imports this one, so the derivation lives here and the
+/// chip's is kept in sync by the shared-hue widget test) — at the
+/// luminance-tuned wash alpha. One hue family for the whole detection
+/// affordance: chip green → pale green wash.
+Color ghosttyBubbleWashColor(
+  Color accent, {
+  required bool verified,
+  required Brightness backgroundBrightness,
+}) {
+  final dark = backgroundBrightness == Brightness.dark;
+  final alpha = verified
+      ? (dark
+            ? kGhosttyBubbleVerifiedWashAlphaOnDark
+            : kGhosttyBubbleVerifiedWashAlphaOnLight)
+      : (dark
+            ? kGhosttyBubbleDetectedWashAlphaOnDark
+            : kGhosttyBubbleDetectedWashAlphaOnLight);
+  return accent.withValues(alpha: alpha);
+}
 
 /// One anchor's renderable bubble (#990): its per-row [segments] plus whether
 /// it renders in the bolder VERIFIED shade. Public (with the painter) so the
@@ -198,6 +232,7 @@ class GhosttyBubbleLayer extends StatelessWidget {
     super.key,
     required this.controller,
     required this.color,
+    required this.backgroundBrightness,
     this.isVerified,
     this.isVisible,
     this.verificationListenable,
@@ -207,12 +242,17 @@ class GhosttyBubbleLayer extends StatelessWidget {
   /// `anchorRects` drive the bubbles; its notifications drive repaint.
   final TerminalController controller;
 
-  /// The theme accent the bubbles are stroked in (the session selection
-  /// colour). Rebuilds when the parent re-creates the layer with a new colour.
+  /// The theme accent the wash is tinted in (the session selection colour —
+  /// the gutter chip's hue family, #1000). Rebuilds when the parent re-creates
+  /// the layer with a new colour.
   final Color color;
 
+  /// The TERMINAL background's luminance (#1000): the wash alpha is tuned per
+  /// theme brightness ([ghosttyBubbleWashColor]), not one fixed constant.
+  final Brightness backgroundBrightness;
+
   /// #990: OPAQUE verification predicate — true renders the anchor's bubble in
-  /// the bolder VERIFIED shade (thicker stroke + faint fill). Null → every
+  /// the bolder VERIFIED shade (the stronger-alpha wash, #1000). Null → every
   /// bubble stays the plain detected shade. The layer doesn't know WHY an
   /// anchor is verified (today: exists-on-host via the session's SFTP stat),
   /// so the predicate's meaning can change without paint rework.
@@ -267,7 +307,11 @@ class GhosttyBubbleLayer extends StatelessWidget {
         return IgnorePointer(
           child: CustomPaint(
             key: const Key('ghostty-bubble-paint'),
-            painter: GhosttyBubblePainter(specs: specs, color: color),
+            painter: GhosttyBubblePainter(
+              specs: specs,
+              color: color,
+              backgroundBrightness: backgroundBrightness,
+            ),
             size: Size.infinite,
           ),
         );
@@ -276,38 +320,48 @@ class GhosttyBubbleLayer extends StatelessWidget {
   }
 }
 
-/// Strokes one outline per bubble segment — an OUTLINE (never an opaque fill
-/// over the glyphs) so the text stays readable and the capsule reads as a
-/// physical chip around it. A VERIFIED spec (#990) strokes thicker and adds a
-/// faint fill wash. Public (with final fields) so the widget test can assert
-/// the detected/verified shade selection.
+/// Fills one translucent background WASH per bubble segment (#1000) — never a
+/// stroke: the #988 outline visually crowded the lines above/below and the
+/// characters just outside the capsule, while a low-alpha fill stays inside
+/// the glyph rows. The wash colour is the gutter chip's hue at a
+/// luminance-tuned alpha ([ghosttyBubbleWashColor]); a VERIFIED spec (#990)
+/// fills the SAME hue at a clearly stronger alpha. Public (with final fields)
+/// so the widget test can assert the detected/verified shade selection.
 class GhosttyBubblePainter extends CustomPainter {
-  GhosttyBubblePainter({required this.specs, required this.color});
+  GhosttyBubblePainter({
+    required this.specs,
+    required this.color,
+    required this.backgroundBrightness,
+  });
 
   final List<GhosttyBubbleSpec> specs;
   final Color color;
+  final Brightness backgroundBrightness;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = kGhosttyBubbleStrokeWidth
-      ..color = color
-      ..isAntiAlias = true;
-    final verifiedStroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = kGhosttyBubbleVerifiedStrokeWidth
-      ..color = color
-      ..isAntiAlias = true;
-    final verifiedFill = Paint()
+    final detectedWash = Paint()
       ..style = PaintingStyle.fill
-      ..color = color.withValues(alpha: kGhosttyBubbleVerifiedFillAlpha)
+      ..color = ghosttyBubbleWashColor(
+        color,
+        verified: false,
+        backgroundBrightness: backgroundBrightness,
+      )
+      ..isAntiAlias = true;
+    final verifiedWash = Paint()
+      ..style = PaintingStyle.fill
+      ..color = ghosttyBubbleWashColor(
+        color,
+        verified: true,
+        backgroundBrightness: backgroundBrightness,
+      )
       ..isAntiAlias = true;
     for (final spec in specs) {
       for (final segment in spec.segments) {
-        final rrect = segment.toRRect();
-        if (spec.verified) canvas.drawRRect(rrect, verifiedFill);
-        canvas.drawRRect(rrect, spec.verified ? verifiedStroke : stroke);
+        canvas.drawRRect(
+          segment.toRRect(),
+          spec.verified ? verifiedWash : detectedWash,
+        );
       }
     }
   }
@@ -315,6 +369,7 @@ class GhosttyBubblePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant GhosttyBubblePainter old) {
     if (old.color != color) return true;
+    if (old.backgroundBrightness != backgroundBrightness) return true;
     if (old.specs.length != specs.length) return true;
     for (var i = 0; i < specs.length; i++) {
       final a = specs[i];

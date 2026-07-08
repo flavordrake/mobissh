@@ -3938,6 +3938,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (highlightColor != _lastHighlightColor) {
       _lastHighlightColor = highlightColor;
     }
+    // #1000: the bubble WASH tunes its alpha per the TERMINAL background's
+    // luminance (a dark theme needs less pigment than a light one), so derive
+    // the brightness from the live session palette alongside the accent.
+    final backgroundBrightness =
+        ThemeData.estimateBrightnessForColor(palette.theme.background);
     // #922: wrap in a LayoutBuilder so we read the terminal box's ACTUAL
     // constraints — the height the Scaffold has ALREADY shrunk for the soft
     // keyboard (terminal_screen.dart keeps `resizeToAvoidBottomInset:true`, so
@@ -3956,6 +3961,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           theme: theme,
           cellSize: cellSize,
           highlightColor: highlightColor,
+          backgroundBrightness: backgroundBrightness,
         );
       },
     );
@@ -4008,6 +4014,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     required TerminalTheme theme,
     required Size cellSize,
     required Color highlightColor,
+    required Brightness backgroundBrightness,
   }) {
     // #975 (test-only): publish the grid the router will map gestures with this
     // frame so the keyboard-race repro can see the SGR target vs the visible box.
@@ -4221,6 +4228,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           child: GhosttyBubbleLayer(
             controller: controller,
             color: highlightColor,
+            backgroundBrightness: backgroundBrightness,
             // #990: verified paths (exist on the connected host, per the
             // session verifier's SFTP stat) paint the bolder bubble shade;
             // unverified SINGLE-SEGMENT matches are suppressed entirely.

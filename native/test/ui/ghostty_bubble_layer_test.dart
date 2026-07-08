@@ -114,6 +114,31 @@ class _TestSignal extends ChangeNotifier {
   void fire() => notifyListeners();
 }
 
+/// One recorded drawRRect call: the Paint's style + color SNAPSHOT at call
+/// time (Paint is mutable; the values must be copied when recorded).
+class _RRectCall {
+  _RRectCall(this.rrect, Paint paint)
+    : style = paint.style,
+      color = paint.color;
+
+  final RRect rrect;
+  final PaintingStyle style;
+  final Color color;
+}
+
+/// A [Canvas] that records drawRRect calls so a test can assert the #1000
+/// wash paints FILLS only (no stroke) in the derived wash color. Every other
+/// canvas op is a no-op via noSuchMethod.
+class _RecordingCanvas implements Canvas {
+  final List<_RRectCall> rrects = [];
+
+  @override
+  void drawRRect(RRect rrect, Paint paint) => rrects.add(_RRectCall(rrect, paint));
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
 void main() {
   const scanner = StructuredTextScanner();
   const cols = 50;
@@ -232,6 +257,7 @@ void main() {
                   child: GhosttyBubbleLayer(
                     controller: controller,
                     color: const Color(0xFF5B9BD5),
+                    backgroundBrightness: Brightness.dark,
                   ),
                 ),
               ],
@@ -347,6 +373,7 @@ void main() {
                   child: GhosttyBubbleLayer(
                     controller: controller,
                     color: const Color(0xFF5B9BD5),
+                    backgroundBrightness: Brightness.dark,
                     isVerified: isVerified,
                     isVisible: isVisible,
                     verificationListenable: verificationListenable,
@@ -366,13 +393,6 @@ void main() {
       );
       return paint.painter! as GhosttyBubblePainter;
     }
-
-    test('the verified stroke is BOLDER than the detected stroke', () {
-      expect(
-        kGhosttyBubbleVerifiedStrokeWidth,
-        greaterThan(kGhosttyBubbleStrokeWidth),
-      );
-    });
 
     testWidgets('a verified path bubble is marked verified; an unverified one '
         'is not', (tester) async {
@@ -465,6 +485,195 @@ void main() {
         reason: 'the bubble must repaint on verification results, not only '
             'on anchor changes',
       );
+    });
+  });
+
+  // #1000 — bubble v2: a translucent background WASH replaces the outline.
+  // No stroke paints anywhere; the fill expands DOWNWARD inside the row box so
+  // descenders get room; the hue is the SAME opaque accent hue as the gutter
+  // chip (GutterMarkStyle.chipColor forces alpha 1.0); the alpha is tuned per
+  // terminal-background luminance and the VERIFIED shade is a clearly stronger
+  // wash of the same hue. Shape semantics from #988 are UNCHANGED.
+  group('#1000 translucent wash bubble', () {
+    const accent = Color(0x335B9BD5); // typical translucent selection accent
+
+    group('geometry: more bottom padding (descender room)', () {
+      // The cell rect's empty band sits at the TOP (#864): glyph ink runs from
+      // roughly rect.top + this slack down to rect.bottom (descenders).
+      const inkTopSlack = 2.5;
+
+      test('the fill expands DOWNWARD past the row-box bottom for descenders',
+          () {
+        const row = Rect.fromLTWH(20, 4, 160, 16);
+        final seg = ghosttyBubbleSegments(const [row]).single;
+        expect(
+          seg.rect.bottom - row.bottom,
+          greaterThanOrEqualTo(1.5),
+          reason: 'descenders were cramped at the #988 +0.5 — the wash must '
+              'extend further down within the row box',
+        );
+      });
+
+      test('bottom padding around the glyph ink >= top padding (centered)', () {
+        const row = Rect.fromLTWH(20, 4, 160, 16);
+        final seg = ghosttyBubbleSegments(const [row]).single;
+        final topPad = (row.top + inkTopSlack) - seg.rect.top;
+        final bottomPad = seg.rect.bottom - row.bottom;
+        expect(
+          bottomPad,
+          greaterThanOrEqualTo(topPad),
+          reason: 'text must sit centered-or-lower in the wash, never '
+              'cramped at the bottom',
+        );
+      });
+
+      test('the fill never invades the row ABOVE (neighbors uncrowded)', () {
+        const row = Rect.fromLTWH(20, 4, 160, 16);
+        final seg = ghosttyBubbleSegments(const [row]).single;
+        expect(seg.rect.top, greaterThanOrEqualTo(row.top));
+      });
+    });
+
+    group('wash color derivation (shared hue with the gutter chip)', () {
+      test('the wash hue is the accent hue — the gutter chip hue family', () {
+        for (final verified in [false, true]) {
+          for (final brightness in Brightness.values) {
+            final wash = ghosttyBubbleWashColor(
+              accent,
+              verified: verified,
+              backgroundBrightness: brightness,
+            );
+            // Same RGB as the chip (accent forced opaque, per
+            // GutterMarkStyle.chipColor) — only the alpha differs.
+            expect(wash.r, accent.r);
+            expect(wash.g, accent.g);
+            expect(wash.b, accent.b);
+          }
+        }
+      });
+
+      test('alpha sits in the readable band on BOTH theme luminances', () {
+        for (final verified in [false, true]) {
+          for (final brightness in Brightness.values) {
+            final wash = ghosttyBubbleWashColor(
+              accent,
+              verified: verified,
+              backgroundBrightness: brightness,
+            );
+            expect(wash.a, greaterThanOrEqualTo(0.15),
+                reason: 'too faint to read as an affordance');
+            expect(wash.a, lessThanOrEqualTo(0.55),
+                reason: 'too strong — glyphs must stay readable in the wash');
+          }
+        }
+      });
+
+      test('alpha is tuned PER background luminance, not one fixed constant',
+          () {
+        final dark = ghosttyBubbleWashColor(
+          accent,
+          verified: false,
+          backgroundBrightness: Brightness.dark,
+        );
+        final light = ghosttyBubbleWashColor(
+          accent,
+          verified: false,
+          backgroundBrightness: Brightness.light,
+        );
+        expect(dark.a, isNot(equals(light.a)));
+      });
+
+      test('the VERIFIED wash is clearly stronger than the detected wash', () {
+        for (final brightness in Brightness.values) {
+          final detected = ghosttyBubbleWashColor(
+            accent,
+            verified: false,
+            backgroundBrightness: brightness,
+          );
+          final verified = ghosttyBubbleWashColor(
+            accent,
+            verified: true,
+            backgroundBrightness: brightness,
+          );
+          expect(
+            verified.a - detected.a,
+            greaterThanOrEqualTo(0.12),
+            reason: 'the two shades must be distinct at phone density',
+          );
+        }
+      });
+    });
+
+    group('painter: fill-not-stroke', () {
+      List<GhosttyBubbleSpec> specsFor({required bool verified}) => [
+        GhosttyBubbleSpec(
+          segments: ghosttyBubbleSegments(const [
+            Rect.fromLTWH(20, 4, 160, 16),
+          ]),
+          verified: verified,
+        ),
+      ];
+
+      test('the detected bubble paints ONLY translucent fills — no stroke', () {
+        final canvas = _RecordingCanvas();
+        GhosttyBubblePainter(
+          specs: specsFor(verified: false),
+          color: accent,
+          backgroundBrightness: Brightness.dark,
+        ).paint(canvas, const Size(400, 400));
+        expect(canvas.rrects, hasLength(1),
+            reason: 'exactly one draw per segment — a wash, not fill+stroke');
+        for (final call in canvas.rrects) {
+          expect(call.style, PaintingStyle.fill,
+              reason: 'no hard border: the outline visually crowds neighbors');
+          // Paint.color roundtrips through the engine — compare ARGB32.
+          expect(
+            call.color.toARGB32(),
+            ghosttyBubbleWashColor(
+              accent,
+              verified: false,
+              backgroundBrightness: Brightness.dark,
+            ).toARGB32(),
+          );
+        }
+      });
+
+      test('the VERIFIED bubble is also a pure wash, at the stronger alpha',
+          () {
+        final canvas = _RecordingCanvas();
+        GhosttyBubblePainter(
+          specs: specsFor(verified: true),
+          color: accent,
+          backgroundBrightness: Brightness.light,
+        ).paint(canvas, const Size(400, 400));
+        expect(canvas.rrects, hasLength(1));
+        for (final call in canvas.rrects) {
+          expect(call.style, PaintingStyle.fill);
+          expect(
+            call.color.toARGB32(),
+            ghosttyBubbleWashColor(
+              accent,
+              verified: true,
+              backgroundBrightness: Brightness.light,
+            ).toARGB32(),
+          );
+        }
+      });
+
+      test('a background-brightness change repaints (alpha retune)', () {
+        final specs = specsFor(verified: false);
+        final dark = GhosttyBubblePainter(
+          specs: specs,
+          color: accent,
+          backgroundBrightness: Brightness.dark,
+        );
+        final light = GhosttyBubblePainter(
+          specs: specs,
+          color: accent,
+          backgroundBrightness: Brightness.light,
+        );
+        expect(light.shouldRepaint(dark), isTrue);
+      });
     });
   });
 
