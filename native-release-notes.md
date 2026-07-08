@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+120 (2026-07-08) — the "screen stops updating" bug is fixed at the root
+- **The screen keeps painting.** The years-long "paint not happening" freeze (busy output + URL detection on) is root-caused and fixed — the screen no longer sticks on a stale frame while output streams. Reproduced from your actual bug-report trace, pinned by tests.
+- **Control mode: window switching works right after connect.** Tapping the tmux status bar switches windows deterministically on a freshly-attached session (no longer dependent on a lucky resize). (#906)
+- **Bug reports now self-diagnose paint and control mode** — every report carries paint counters (bytes → notifies → paints) and a control-mode trace (attach, handshake, window list, each tap's resolution).
+
 ## v0.1.10+95 (2026-06-30) — gutter selection no longer fights the terminal's own selection
 - **Long-pressing the gutter selects ONLY the gutter lines** — the terminal's native text selection stays out of its way (no more two overlapping selections) — and dragging up/down adjusts the range. Copy still reads those visible lines verbatim. (#962)
 
