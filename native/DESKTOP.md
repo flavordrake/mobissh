@@ -72,3 +72,28 @@ flutter build linux          # → build/linux/x64/release/bundle/mobissh
 `libsecret-1-dev` is required because `flutter_secure_storage_linux` stores the
 vault via libsecret (the Linux Secret Service). macOS uses the Keychain instead
 and needs no extra system package.
+
+## Headless E2E smoke (#1012 Phase 0)
+
+`scripts/desktop-smoke.sh` runs the whole loop on this box: toolchain check
+(→ `scripts/setup-linux-desktop-toolchain.sh` if incomplete), test-sshd up,
+Xvfb, `flutter test integration_test/desktop_smoke_test.dart -d linux`, and an
+x11grab screenshot into `test-results/emulator-shots/`. The desktop process
+reaches `test-sshd:22` directly over the docker network — no socat/adb bridge.
+
+Proven end-to-end 2026-07-09 (Phase 0): release build (54 MB bundle;
+`lib/libghostty.so` 6.7 MB downloaded by libghostty 0.0.9's native-assets
+hook — the same mechanism that will fetch the macOS dylib), connect via the
+in-process SessionHost, shell bytes + echo round-trip, Ghostty rendering.
+
+Runtime caveats found on headless Linux (not desktop-session Linux / macOS):
+
+- **Vault**: libsecret throws `Failed to unlock the keyring` without a Secret
+  Service (gnome-keyring). The smoke overrides `secretsStoreProvider` with the
+  in-memory backend; a real desktop session provides a keyring, macOS uses the
+  Keychain. Graceful app handling of a missing Secret Service is follow-up UX.
+- **path_provider**: `getApplicationDocumentsDirectory` throws
+  `MissingPlatformDirectoryException` (no XDG user dirs headless) — the crash
+  reporter catches + logs it; non-fatal.
+- **UX deltas** (noted, not Phase 0 scope): the mobile keybar + hidden-IME
+  strip render on desktop; physical-keyboard-first input is a later phase.
