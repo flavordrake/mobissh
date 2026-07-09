@@ -164,7 +164,8 @@ final class TextPattern {
   /// pwd-relative resolution to a later slice:
   ///   * absolute — a leading `/` followed by one or more `/`-separated segments
   ///     of path chars (`[\w.\-~@+]`), e.g. `/etc/ssh/sshd_config`;
-  ///   * home — `~/…` (a `~` followed by `/` and segments) or a BARE `~`;
+  ///   * home — `~/…` (a `~` followed by `/` and segments); a BARE `~` never
+  ///     anchors (#1024 — it's usually prose: `cd ~`, `about ~5 seconds`);
   ///   * explicit-relative — `./x`, `../x`, or a `../` chain, e.g. `../../lib`.
   /// BARE relative tokens (`src/foo`) are DEFERRED to Slice 3 — including them
   /// would over-match ordinary prose like `and/or`.
@@ -316,9 +317,9 @@ const String _kPathLookbehindMeta = r'''${}*?\[\]()`|<>&;=\\''';
 /// The ABSOLUTE FILE PATH regex (#778, paths Slice 1; precision #826). Matches
 /// three shapes that resolve WITHOUT a working directory:
 ///   * absolute — `/` + one-or-more `/`-separated segments of path chars;
-///   * home — `~/…` or a BARE `~` (word-bounded so it isn't a stray tilde in
-///     prose like `approx ~3s` — a bare `~` matches only when not followed by a
-///     path char other than `/`);
+///   * home — `~/…` only (a BARE `~` never anchors, #1024: prose tildes like
+///     `cd ~` / `about ~5 seconds` are far more common than a tap-worthy lone
+///     home reference, and the #990 stat gate would happily VERIFY `~`);
 ///   * explicit-relative — `./…`, `../…`, or a `../` chain.
 /// A path char is `[\w.\-~@+]` (mirrors the issue's class). A NEGATIVE LOOKBEHIND
 /// keeps the match from starting MID-token — critically it rejects the `//` after
@@ -341,8 +342,7 @@ final RegExp _kPathPattern = RegExp(
   '(?<![\\w.\\-~@+:/$_kPathLookbehindMeta])'
   r'(?:'
   r'/(?:[\w.\-~@+]+/?)+' // absolute: /a/b/c
-  r'|~/(?:[\w.\-~@+]+/?)*' // home: ~/a/b
-  r'|~(?![\w.\-@+])' // bare ~ (not ~word)
+  r'|~/(?:[\w.\-~@+]+/?)*' // home: ~/a/b (a BARE ~ never anchors, #1024)
   r'|\.\.?/(?:[\w.\-~@+]+/?|\.\.?/)*' // ./x ../x ../../ chains
   r')'
   // #826: swallow any adjacent REJECT-class (glob/var/command-sub) suffix so
