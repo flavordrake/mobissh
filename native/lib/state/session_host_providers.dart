@@ -32,25 +32,27 @@ final gatewayPairProvider = Provider<InMemoryGatewayPair>((ref) {
 
 /// UI-side gateway the proxy + UI consumers talk to.
 ///
-/// Two production flavors, selected by [isDesktopProvider]:
+/// Two production flavors, selected by [usesInProcessHostProvider]:
 ///
 ///   - **Android**: [FlutterForegroundSshGateway] bound to FFT statics. The
 ///     `SessionHost` (and its `SSHClient`s) lives in the foreground-task
 ///     isolate so the socket survives the UI isolate being killed (#531).
 ///
-///   - **Desktop** (macOS / Linux / Windows, #577): an IN-PROCESS setup. The
-///     OS doesn't kill desktop processes, so there's no foreground service and
-///     no task isolate — we build an [InMemoryGatewayPair] and host a live
+///   - **Desktop** (macOS / Linux / Windows, #577) **and iOS** (#1026): an
+///     IN-PROCESS setup. Desktop processes aren't killed by the OS; iOS has
+///     no foreground-service equivalent (suspended sessions drop and revive
+///     on foreground via the resume machinery). Either way there's no task
+///     isolate — we build an [InMemoryGatewayPair] and host a live
 ///     [SessionHost] on its task side in the same isolate, returning the UI
 ///     side. This reuses the exact in-process path the unit tests exercise.
 ///     dartssh2 connects directly over dart:io (no WS bridge).
 ///
 /// Tests override this provider with a [TaskSshGateway] backed by
-/// `InMemoryGatewayPair.uiSide`, OR override [isDesktopProvider] to force a
-/// platform path deterministically.
+/// `InMemoryGatewayPair.uiSide`, OR override [isDesktopProvider] /
+/// [usesInProcessHostProvider] to force a platform path deterministically.
 final taskSshGatewayProvider = Provider<TaskSshGateway>((ref) {
-  if (ref.watch(isDesktopProvider)) {
-    // Desktop: host the SessionHost in-process. No FFT, no task isolate.
+  if (ref.watch(usesInProcessHostProvider)) {
+    // Desktop/iOS: host the SessionHost in-process. No FFT, no task isolate.
     final pair = InMemoryGatewayPair();
     final host = SessionHost(gateway: pair.taskSide);
     ref.onDispose(() async {

@@ -14,8 +14,10 @@ directly.
 | Keep-alive service | `flutter_foreground_task` | **no-op** (`NoopKeepaliveGateway`) |
 | Credential vault | flutter_secure_storage (Android Keystore) | flutter_secure_storage (macOS Keychain / libsecret on Linux) |
 
-The platform split is driven by `isDesktopProvider` (see
-`lib/platform/desktop.dart`). On desktop, `taskSshGatewayProvider`
+The hosting split is driven by `usesInProcessHostProvider` (see
+`lib/platform/desktop.dart`) — true on desktop AND iOS (#1026: no FGS
+equivalent, sessions revive on foreground); `isDesktopProvider` remains the
+desktop-UX predicate. On desktop, `taskSshGatewayProvider`
 (`lib/state/session_host_providers.dart`) builds an `InMemoryGatewayPair` and
 hosts a live `SessionHost` on its task side in the same isolate, returning the
 UI side. This reuses the exact in-process path the unit tests exercise — SSH

@@ -35,10 +35,10 @@ void main() {
     // Fire-and-forget — don't block first paint on bridge reachability.
     unawaited(CrashReporter.uploadPending());
     // Open the isolate port so the foreground task isolate can send data
-    // back to the UI (#512). Android-only: `flutter_foreground_task` is not
-    // available on desktop (macOS / Linux / Windows, #577) where there is no
-    // task isolate — calling it would throw `MissingPluginException` at boot.
-    if (!kIsDesktop) {
+    // back to the UI (#512). Android-only: platforms hosting the SessionHost
+    // in-process (desktop #577, iOS #1026) have no task isolate — calling
+    // this there would throw `MissingPluginException` at boot.
+    if (!kUsesInProcessHost) {
       FlutterForegroundTask.initCommunicationPort();
     }
     runApp(const ProviderScope(child: MobisshApp()));

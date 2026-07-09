@@ -200,10 +200,12 @@ Future<String?> _reconnectHostFromProfile(Ref ref, String host) async {
 ///      provider's future first).
 ///
 /// Telemetry flows through `clifecycle` (#766): its durable 80-line ring ships
-/// in the feedback upload and survives connect-ring churn. Desktop (#577) has
-/// no FLN/FGS machinery → no-op.
+/// in the feedback upload and survives connect-ring churn. Platforms without
+/// the FGS-task attention pipeline (desktop #577, iOS #1026 — the pending
+/// store is FFT-backed and notifications are posted from the task isolate)
+/// → no-op.
 final attentionUiFlnInitProvider = FutureProvider<void>((ref) async {
-  if (ref.watch(isDesktopProvider)) return;
+  if (ref.watch(usesInProcessHostProvider)) return;
   final binding = AttentionUiTapBinding(
     // clifecycle-bound bridge: the pending WRITE line lands in the uploaded
     // lifecycle ring (the task/background-isolate writes only reach logcat).
