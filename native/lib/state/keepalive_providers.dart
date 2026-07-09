@@ -18,12 +18,13 @@ import '../ssh/ssh_session.dart';
 import 'session_host_providers.dart';
 import 'sessions.dart';
 
-/// Selects the keep-alive gateway for the current platform (#577). Desktop has
-/// no foreground service (the process persists), so it uses a no-op gateway;
-/// Android uses the real `flutter_foreground_task`-backed gateway. Reading this
-/// keeps the FFT statics out of the desktop code path entirely.
+/// Selects the keep-alive gateway for the current platform (#577, #1026).
+/// Platforms without an Android-style foreground service (desktop: the
+/// process persists; iOS: no FGS equivalent exists) use a no-op gateway;
+/// Android uses the real `flutter_foreground_task`-backed gateway. Reading
+/// this keeps the FFT statics out of the non-Android code paths entirely.
 KeepaliveGateway _keepaliveGatewayFor(Ref ref) {
-  return ref.watch(isDesktopProvider)
+  return ref.watch(usesInProcessHostProvider)
       ? const NoopKeepaliveGateway()
       : FlutterForegroundTaskGateway();
 }
@@ -107,10 +108,11 @@ final batteryOptimizationProvider = Provider<BatteryOptimizationController>((
 /// machine (#737) — it only OBSERVES the sessions list via `ref.listen`, never
 /// mutates session state. The controller itself guards against re-nagging
 /// (prompts at most once, persists the asked flag), so this listener can fire
-/// freely on every connect without annoying the user. No-op on desktop (no
-/// Doze). Read this provider once at app start to arm the listener.
+/// freely on every connect without annoying the user. No-op off Android
+/// (Doze + the FFT battery-opt statics are Android-only — desktop #577,
+/// iOS #1026). Read this provider once at app start to arm the listener.
 final batteryOptimizationFirstConnectTriggerProvider = Provider<void>((ref) {
-  if (ref.read(isDesktopProvider)) return;
+  if (ref.read(usesInProcessHostProvider)) return;
   final controller = ref.read(batteryOptimizationProvider);
   var prompted = false;
   bool anyConnected(SessionsState s) =>
