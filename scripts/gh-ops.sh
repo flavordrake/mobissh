@@ -158,6 +158,14 @@ case "$CMD" in
     gh issue list --search "$1" --state open --json number,title --limit "${2:-5}"
     ;;
 
+  comments)
+    # Print an issue's comments (author, timestamp, body) — fetch-issues only
+    # returns the body, so design comments need this. Read-only.
+    [ $# -ge 1 ] || { echo "Error: comments requires ISSUE_NUM" >&2; exit 1; }
+    gh issue view "$1" --json comments \
+      --jq '.comments[] | "### \(.author.login) @ \(.createdAt)\n\n\(.body)\n"'
+    ;;
+
   version)
     CODE_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
     PORT="${MOBISSH_PORT:-8081}"
