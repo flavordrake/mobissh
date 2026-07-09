@@ -1004,4 +1004,41 @@ void main() {
       },
     );
   });
+
+  group('TextPattern.path() — bare tilde must NOT anchor (#1024)', () {
+    final pathPattern = TextPattern.path();
+
+    List<String> pathPayloads(String row, {int? cols}) {
+      final reader = _FakeCellReader([row], cols: cols ?? (row.length + 2));
+      return scanner
+          .scan(reader, [pathPattern])
+          .where((m) => m.patternId == 'path')
+          .map((m) => '${m.payload}')
+          .toList();
+    }
+
+    test('a lone `~` is not a path', () {
+      expect(pathPayloads('~'), isEmpty);
+    });
+
+    test('`cd ~` — trailing bare tilde is not a path', () {
+      expect(pathPayloads('cd ~'), isEmpty);
+    });
+
+    test('`~ 5 seconds` — prose tilde before a space is not a path', () {
+      expect(pathPayloads('~ 5 seconds'), isEmpty);
+    });
+
+    test('`about ~50%` — approx-tilde glued to a number is not a path', () {
+      expect(pathPayloads('about ~50% done'), isEmpty);
+    });
+
+    test('`~/x/y.txt` STILL anchors with the tilde in the payload', () {
+      expect(pathPayloads('open ~/x/y.txt now'), contains('~/x/y.txt'));
+    });
+
+    test('`~/x` STILL anchors with the tilde in the payload', () {
+      expect(pathPayloads('cat ~/x'), contains('~/x'));
+    });
+  });
 }
