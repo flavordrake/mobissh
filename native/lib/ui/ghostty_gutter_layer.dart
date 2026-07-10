@@ -472,6 +472,7 @@ class GhosttyGutterLayer extends StatelessWidget {
     this.isVisible,
     this.verifiedStyle = GutterMarkStyle.bold,
     this.verificationListenable,
+    this.chipAccentOf,
   });
 
   /// The SAME controller handed to the flterm `TerminalView`.
@@ -516,6 +517,26 @@ class GhosttyGutterLayer extends StatelessWidget {
   /// #990: fires when a verification result lands (no anchor change involved)
   /// so the marks repaint. Merged with the controller's decoration listenable.
   final Listenable? verificationListenable;
+
+  /// #1031: the detection style RESOLVER seam — maps a pattern id to its
+  /// effective chip accent HUE (stored colorHex override, else the session
+  /// accent; [GutterMarkStyle.chipColor] still forces it opaque). Null → every
+  /// mark keeps [color], the pre-#1031 behavior; the production view passes
+  /// the resolver-backed function, whose EMPTY-store output equals [color]
+  /// (zero visual change). A row whose anchors resolve to ONE accent uses it
+  /// (url+osc8 share a family color naturally); a mixed-accent multi-match row
+  /// keeps the neutral [color] — no single override applies to it.
+  final Color Function(String patternId)? chipAccentOf;
+
+  /// The chip accent for one row's [anchors] under the seam rule above.
+  Color _rowAccent(List<StructuredAnchor> anchors) {
+    final resolve = chipAccentOf;
+    if (resolve == null) return color;
+    final accents = <Color>{
+      for (final anchor in anchors) resolve(anchor.patternId),
+    };
+    return accents.length == 1 ? accents.first : color;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -581,7 +602,8 @@ class GhosttyGutterLayer extends StatelessWidget {
                   controller: controller,
                   anchors: entry.value,
                   registry: registry,
-                  color: color,
+                  // #1031: per-pattern chip accent via the resolver seam.
+                  color: _rowAccent(entry.value),
                   // #990: a row with ANY verified anchor renders the bold
                   // shade (a multi-match row's badge inherits it too).
                   style: (isVerified != null && entry.value.any(isVerified!))

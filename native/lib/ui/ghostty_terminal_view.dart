@@ -185,10 +185,12 @@ import '../terminal/tmux_control_mode_flag.dart';
 import '../state/ctrl_modifier_provider.dart';
 import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
+import '../state/detection_style_providers.dart';
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../util/file_url.dart';
+import 'detection_style_resolver.dart';
 import 'file_browser_screen.dart';
 import 'ghostty_gutter_layer.dart';
 import 'ghostty_terminal_decorators.dart';
@@ -4134,6 +4136,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // the brightness from the live session palette alongside the accent.
     final backgroundBrightness =
         ThemeData.estimateBrightnessForColor(palette.theme.background);
+    // #1031: the detection style RESOLVER — the single source of truth the
+    // bubble wash + gutter chip consult (and the future Detection Lab preview
+    // reads). Watching the styles provider means we resolve on CHANGE only
+    // (settings/theme), never per frame; an empty store composes to exactly
+    // the shipped #1000 derivation, so this is invisible until the owner
+    // tunes something in the lab.
+    final styleResolver = DetectionStyleResolver(
+      styles: ref.watch(detectionStylesProvider),
+      accent: highlightColor,
+      backgroundBrightness: backgroundBrightness,
+    );
     // #922: wrap in a LayoutBuilder so we read the terminal box's ACTUAL
     // constraints — the height the Scaffold has ALREADY shrunk for the soft
     // keyboard (terminal_screen.dart keeps `resizeToAvoidBottomInset:true`, so
@@ -4153,6 +4166,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           cellSize: cellSize,
           highlightColor: highlightColor,
           backgroundBrightness: backgroundBrightness,
+          styleResolver: styleResolver,
         );
       },
     );
@@ -4206,6 +4220,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     required Size cellSize,
     required Color highlightColor,
     required Brightness backgroundBrightness,
+    required DetectionStyleResolver styleResolver,
   }) {
     // #975 (test-only): publish the grid the router will map gestures with this
     // frame so the keyboard-race repro can see the SGR target vs the visible box.
@@ -4434,6 +4449,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             isVerified: _isAnchorVerified,
             isVisible: _isAnchorVisible,
             verificationListenable: _pathVerifier,
+            // #1031: per-pattern wash via the style resolver (empty store =
+            // bit-identical to the shipped derivation).
+            washColorOf: (patternId, {required bool verified}) => styleResolver
+                .resolveStyle(patternId, verified: verified)
+                .washColor,
           ),
         ),
         // #962: right-edge LINE-SELECT layer. Drag the gutter to select WHOLE
@@ -4478,6 +4498,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             isVerified: _isAnchorVerified,
             isVisible: _isAnchorVisible,
             verificationListenable: _pathVerifier,
+            // #1031: per-pattern chip accent via the style resolver (the chip
+            // stays opaque; only a colorHex override changes its hue).
+            chipAccentOf: (patternId) => styleResolver
+                .resolveStyle(patternId, verified: false)
+                .chipAccent,
           ),
         ),
         // Selection affordances (bottom-right). #712: shown ONLY while a
