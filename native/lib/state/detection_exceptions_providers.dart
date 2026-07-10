@@ -85,6 +85,13 @@ class DetectionExceptionsNotifier
     );
     _setState(entries);
   }
+
+  /// Prune EVERY exception in [patternId]'s family (#1031 slice 3: a deleted
+  /// custom pattern takes its suppressions with it — the lab's delete confirm
+  /// discloses the count first).
+  Future<void> pruneFamily(String patternId) async {
+    _setState(await _store.removeFamily(detectionExceptionFamily(patternId)));
+  }
 }
 
 /// Global detection-exceptions provider (#995). The terminal view watches the

@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/detection_providers.dart';
 import '../state/sessions.dart';
+import '../storage/custom_patterns_store.dart';
 import '../state/ui_prefs_providers.dart';
 import 'detection_style_resolver.dart';
 import 'ghostty_gutter_layer.dart';
@@ -33,9 +34,11 @@ class DetectionLabPatternSpec {
     required this.samplePrefix,
     required this.sampleMatch,
     required this.bubble,
+    this.isCustom = false,
   });
 
-  /// Stable lab key (`url` / `path` / `command`) used in widget keys.
+  /// Stable lab key (`url` / `path` / `command`; a custom pattern's ID) used
+  /// in widget keys.
   final String key;
 
   /// Front-loaded display name ("URLs", "File paths", "Command lines").
@@ -57,6 +60,12 @@ class DetectionLabPatternSpec {
   /// Whether this pattern paints an inline bubble wash. The command pattern
   /// is GUTTER-ONLY (#998 C) — its preview honestly shows chip-only.
   final bool bubble;
+
+  /// Whether this entry is a USER-DEFINED pattern (#1031 slice 3): its key is
+  /// the immutable `custom.*` id, its enable bit lives in the custom store
+  /// (not detectionSettingsProvider), and its detail page adds the
+  /// definition/delete affordances.
+  final bool isCustom;
 
   /// The id style reads resolve against (the first style id).
   String get primaryId => styleIds.first;
@@ -100,6 +109,40 @@ const List<DetectionLabPatternSpec> detectionLabPatternSpecs = [
 /// Lookup by lab key. Throws on an unknown key (a programming error).
 DetectionLabPatternSpec detectionLabPatternSpec(String key) =>
     detectionLabPatternSpecs.firstWhere((s) => s.key == key);
+
+/// The generic monochrome glyph every USER-DEFINED pattern renders with
+/// (#1031 slice 3 IA: one generic chip glyph — the gutter fallback uses the
+/// same one).
+const IconData kCustomPatternIcon = Icons.pattern;
+
+/// Build the lab spec for a USER-DEFINED pattern (#1031 slice 3). The sample
+/// line splits at the pattern's OWN first match ([compileCustomPatternRegex],
+/// defensive): prefix = the text before it, match = the matched span the
+/// wash/chip decorate. No match (or a broken regex) leaves [sampleMatch]
+/// empty — the card renders its honest no-match / error state instead of a
+/// fake highlight.
+DetectionLabPatternSpec detectionLabSpecForCustomPattern(CustomPattern p) {
+  final regex = compileCustomPatternRegex(p.source);
+  var prefix = p.sampleLine;
+  var match = '';
+  if (regex != null && p.sampleLine.isNotEmpty) {
+    final m = regex.firstMatch(p.sampleLine);
+    if (m != null && m.end > m.start) {
+      prefix = p.sampleLine.substring(0, m.start);
+      match = p.sampleLine.substring(m.start, m.end);
+    }
+  }
+  return DetectionLabPatternSpec(
+    key: p.id,
+    title: p.name,
+    icon: kCustomPatternIcon,
+    styleIds: [p.id],
+    samplePrefix: prefix,
+    sampleMatch: match,
+    bubble: true,
+    isCustom: true,
+  );
+}
 
 /// Whether [key]'s pattern type is enabled in [d] — the SAME provider bits the
 /// Settings toggles flip (one bit, three surfaces).

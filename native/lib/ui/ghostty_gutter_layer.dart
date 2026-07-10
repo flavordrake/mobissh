@@ -37,6 +37,7 @@ import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 
 import '../services/clipboard.dart';
+import '../storage/custom_patterns_store.dart' show isCustomPatternId;
 import '../util/file_url.dart';
 import 'path_action_overlay.dart';
 import 'top_toast.dart';
@@ -175,9 +176,19 @@ class GutterPatternPresentation {
 }
 
 /// Maps a pattern id to its [GutterPatternPresentation] (#955).
+///
+/// [fallbackFor] (#1031 slice 3): user-defined pattern ids are DYNAMIC
+/// (`custom.*`, created/deleted at runtime), so instead of rebuilding the
+/// registry per change, unknown ids resolve through this builder — the
+/// standard registry serves ONE generic presentation for every custom id.
 class GutterPatternRegistry {
-  GutterPatternRegistry(Iterable<GutterPatternPresentation> presentations)
-    : _byPattern = {for (final p in presentations) p.patternId: p};
+  GutterPatternRegistry(
+    Iterable<GutterPatternPresentation> presentations, {
+    GutterPatternPresentation? Function(String patternId)? fallbackFor,
+  }) : _byPattern = {for (final p in presentations) p.patternId: p},
+       // Named params can't initialize a private field directly.
+       // ignore: prefer_initializing_formals
+       _fallbackFor = fallbackFor;
 
   /// The standard registry: URLs (regex + OSC-8) and absolute file paths.
   ///
@@ -240,6 +251,8 @@ class GutterPatternRegistry {
         icon: switch (label) {
           'Not a file' => Icons.folder_off_outlined,
           'Not a command' => Icons.block,
+          // #1031 slice 3: user-defined pattern reports.
+          'Not a match' => Icons.search_off,
           _ => Icons.link_off,
         },
         label: label,
@@ -379,26 +392,67 @@ class GutterPatternRegistry {
       ],
     );
 
-    return GutterPatternRegistry([
-      url,
-      // OSC-8 hyperlinks render the SAME affordance as a regex URL.
-      GutterPatternPresentation(
-        patternId: kGhosttyOsc8PatternId,
-        icon: url.icon,
-        typeLabel: url.typeLabel,
-        showActions: url.showActions,
-        itemActions: url.itemActions,
-      ),
-      path,
-      command,
-    ]);
+    return GutterPatternRegistry(
+      [
+        url,
+        // OSC-8 hyperlinks render the SAME affordance as a regex URL.
+        GutterPatternPresentation(
+          patternId: kGhosttyOsc8PatternId,
+          icon: url.icon,
+          typeLabel: url.typeLabel,
+          showActions: url.showActions,
+          itemActions: url.itemActions,
+        ),
+        path,
+        command,
+      ],
+      // #1031 slice 3: ONE generic presentation covers every USER-DEFINED
+      // pattern (ids are dynamic — created/deleted at runtime). Following the
+      // url/path chip idiom, a single-match chip tap opens the generic action
+      // overlay — Copy + the LAST "Not a match" (#995, family = the custom
+      // id; no browser Open, the payload is an arbitrary token). The glass
+      // tap on the bubble is already the one-tap "Copy match" (the IA's v1
+      // tap action), and in a PLAIN shell the chip menu is the ONLY reachable
+      // "Not a match" surface (the long-press match menu is mouse-mode-only),
+      // so a copy-only chip would orphan the exceptions path.
+      fallbackFor: (patternId) {
+        if (!isCustomPatternId(patternId)) return null;
+        return GutterPatternPresentation(
+          patternId: patternId,
+          icon: Icons.pattern,
+          typeLabel: 'Match',
+          showActions: (context, anchor, markGlobal) {
+            final payload = '${anchor.payload}';
+            showUrlActions(
+              context,
+              payload,
+              highlightRects: const [],
+              anchor: markGlobal,
+              showOpen: false,
+              notLabel: 'Not a match',
+              onMarkNotDetection: onReportException == null
+                  ? null
+                  : () => onReportException(anchor.patternId, payload),
+            );
+          },
+          itemActions: (payload) => [
+            copyAction(payload),
+            ?notAction(patternId, payload, 'Not a match'),
+          ],
+        );
+      },
+    );
   }
 
   final Map<String, GutterPatternPresentation> _byPattern;
 
+  /// #1031 slice 3: resolves DYNAMIC (user-defined) pattern ids no static
+  /// entry covers. Null for a registry without one.
+  final GutterPatternPresentation? Function(String patternId)? _fallbackFor;
+
   /// The presentation for [patternId], or null when none is registered.
   GutterPatternPresentation? forPattern(String patternId) =>
-      _byPattern[patternId];
+      _byPattern[patternId] ?? _fallbackFor?.call(patternId);
 
   /// The registered pattern ids (for tests / introspection).
   Iterable<String> get patternIds => _byPattern.keys;

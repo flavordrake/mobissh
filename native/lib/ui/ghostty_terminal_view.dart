@@ -184,9 +184,11 @@ import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../terminal/tmux_control_mode_flag.dart';
 import '../state/ctrl_modifier_provider.dart';
+import '../state/custom_patterns_providers.dart';
 import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/detection_style_providers.dart';
+import '../storage/custom_patterns_store.dart';
 import '../storage/detection_styles_store.dart' show DetectionStyles;
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
@@ -1319,6 +1321,9 @@ Future<String?> ghosttyTapCopyMatch(
   if (!ghosttyMatchHasCopyablePayload(match)) return null;
   final ok = await copy('${match.payload}');
   if (!ok) return null;
+  // #1031 slice 3: a user-defined pattern's payload is neither a URL nor a
+  // path — the toast says what actually happened.
+  if (isCustomPatternId(match.patternId)) return 'Copied match';
   return match.patternId == kGhosttyPathPatternId ? 'Copied path' : 'Copied URL';
 }
 
@@ -1422,9 +1427,19 @@ Future<String?> ghosttyTapMatchAction(
 /// inner url/path/osc8 SPAN anchors coexist inside it (slice A tiering).
 /// [commandLexicon] (#1031 slice 2) is the Detection Lab's stored lexicon
 /// override; null keeps the fork's default list.
+///
+/// Customs (#1031 slice 3): every ENABLED [customPatterns] entry whose stored
+/// source COMPILES registers a SPAN-tier pattern under its own `custom.*` id,
+/// carrying the same EMPTY highlight style as the built-ins (#864 — the
+/// widget-layer bubble/gutter decorators are the single affordance). The
+/// compile is defensive ([compileCustomPatternRegex] never throws): a source
+/// that stopped compiling is simply not registered — the lab card shows its
+/// error state; the scanner never sees a bad pattern. Gated by the master
+/// switch + the #971 kill switch like every built-in type.
 List<TextPattern> ghosttyDetectionPatterns(
   DetectionSettings detection, {
   List<String>? commandLexicon,
+  List<CustomPattern> customPatterns = const [],
 }) => [
   if (detection.detectUrls) ...[
     TextPattern.osc8(
@@ -1439,7 +1454,28 @@ List<TextPattern> ghosttyDetectionPatterns(
       id: kGhosttyCommandPatternId,
       lexicon: commandLexicon ?? kDefaultCommandLexicon,
     ),
+  if (!kDetectionDisabled971 && detection.enabled)
+    for (final p in customPatterns)
+      if (p.enabled)
+        if (compileCustomPatternRegex(p.source) case final RegExp regex)
+          TextPattern(id: p.id, regex: regex, style: kGhosttyUrlHighlightStyle),
 ];
+
+/// Whether ANY pattern would register for ([detection], [customPatterns]) —
+/// the truth the #921 repaint gating must read. [DetectionSettings.detectionActive]
+/// only knows the built-in toggles, so a config with every built-in OFF but a
+/// custom pattern ON would otherwise report inactive while a pattern is
+/// registered and consuming per-row damage (the #921 stale-paint class).
+bool ghosttyDetectionActiveFor(
+  DetectionSettings detection,
+  List<CustomPattern> customPatterns,
+) =>
+    detection.detectionActive ||
+    (!kDetectionDisabled971 &&
+        detection.enabled &&
+        customPatterns.any(
+          (p) => p.enabled && compileCustomPatternRegex(p.source) != null,
+        ));
 
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
 /// scrollback pixel delta to apply to the [TerminalScrollController] (#690).
@@ -2910,9 +2946,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         .read(detectionStylesProvider)
         .of(kGhosttyCommandPatternId)
         ?.lexicon;
+    // #1031 slice 3: user-defined patterns register alongside the built-ins
+    // (enabled + compiling only; a change re-runs this via the build()
+    // customs ref.listen).
+    final customPatterns = ref.read(customPatternsProvider);
     for (final pattern in ghosttyDetectionPatterns(
       detection,
       commandLexicon: commandLexicon,
+      customPatterns: customPatterns,
     )) {
       controller.registerTextPattern(pattern);
     }
@@ -2921,8 +2962,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // terminal damage, so the PRIMARY screen must force a full re-read on content
     // change to keep repainting. Deferred to a post-frame callback so the keyed
     // render box exists (this runs from initState-time registration before first
-    // layout, where the box lookup would no-op).
-    final detectionActive = detection.detectionActive;
+    // layout, where the box lookup would no-op). #1031 slice 3: customs count
+    // (a custom-only config still competes for the shared damage).
+    final detectionActive = ghosttyDetectionActiveFor(
+      detection,
+      customPatterns,
+    );
     // Detection-saga telemetry (#966-era "URLs not detected" report): record what
     // this registration + the SYNCHRONOUS rescan produced so the next bug report
     // is one-shot diagnosable instead of a blind build loop. Cheap; runs on init
@@ -3273,7 +3318,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final detection = ref.read(detectionSettingsProvider);
-      _applyDetectionActive(detection.detectionActive);
+      _applyDetectionActive(
+        ghosttyDetectionActiveFor(detection, ref.read(customPatternsProvider)),
+      );
     });
     // 4. FORCE REPAINT WHEN FOCUS WAS RETAINED (#720): the #718 re-focus above
     //    only repaints when focus was LOST while backgrounded — the focus CHANGE
@@ -3495,7 +3542,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final detection = ref.read(detectionSettingsProvider);
-        _applyDetectionActive(detection.detectionActive);
+        _applyDetectionActive(
+          ghosttyDetectionActiveFor(
+            detection,
+            ref.read(customPatternsProvider),
+          ),
+        );
       });
     }
     if (ghosttyShouldCaptureKeyboardOnSessionSwitch(
@@ -3832,6 +3884,21 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       );
       return;
     }
+    // #1031 slice 3: a USER-DEFINED match gets the generic menu — Copy + "Not
+    // a match" (the IA's v1 tap-action cut: no Open; the payload is an
+    // arbitrary token, not a URL).
+    if (isCustomPatternId(match.patternId)) {
+      showUrlActions(
+        context,
+        '${match.payload}',
+        highlightRects: rects,
+        anchor: globalAnchor,
+        onMarkNotDetection: markNot,
+        showOpen: false,
+        notLabel: 'Not a match',
+      );
+      return;
+    }
     showUrlActions(
       context,
       '${match.payload}',
@@ -4102,6 +4169,21 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       final before = prev?.of(kGhosttyCommandPatternId)?.lexicon;
       final after = next.of(kGhosttyCommandPatternId)?.lexicon;
       if (listEquals(before, after)) return;
+      final c = _controller;
+      if (c == null) return;
+      c.clearTextPatterns();
+      _registerUrlPattern(c);
+      // Same starvation guard as the settings listen above (#968).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _forceTerminalRepaint();
+      });
+    });
+    // #1031 slice 3: a USER-DEFINED pattern change (create / edit / enable /
+    // delete) re-registers, exactly like the settings + lexicon listens above
+    // — the regex is baked into the registered TextPattern, so a live change
+    // must clear + re-register (and re-scan the current cells).
+    ref.listen<List<CustomPattern>>(customPatternsProvider, (prev, next) {
+      if (listEquals(prev, next)) return;
       final c = _controller;
       if (c == null) return;
       c.clearTextPatterns();
