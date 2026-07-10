@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+132 (2026-07-10) — define your own detection patterns
+- **Add your own patterns in the Detection lab**: name + regex with live validation and a sample-line preview highlighting what matches. Your patterns get the full treatment — bubbles, gutter chips, tap-copy, colors/intensity, "Not a match" exceptions — live in open sessions, no reconnect. Deleting a pattern tells you it also clears its saved exceptions. (#1031)
+
 ## v0.1.10+131 (2026-07-10) — pick any profile color + the Detection Lab
 - **Full color picker for profile colors** — the profile editor's swatch now opens a real HSV picker with hex entry; presets stay one-tap. (#1030)
 - **Detection Lab** (Settings → Detection → Detection lab): per-pattern control with live previews — recolor any pattern's highlight, tune wash intensity (detected and verified states where they exist), edit the command-word list, and see the real bubble/chip rendering update as you drag. Per-pattern and lab-wide resets included. (#1031)
