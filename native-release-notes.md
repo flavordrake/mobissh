@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+131 (2026-07-10) — pick any profile color + the Detection Lab
+- **Full color picker for profile colors** — the profile editor's swatch now opens a real HSV picker with hex entry; presets stay one-tap. (#1030)
+- **Detection Lab** (Settings → Detection → Detection lab): per-pattern control with live previews — recolor any pattern's highlight, tune wash intensity (detected and verified states where they exist), edit the command-word list, and see the real bubble/chip rendering update as you drag. Per-pattern and lab-wide resets included. (#1031)
+
 ## v0.1.10+130 (2026-07-09) — bare ~ is not a path
 - **A lone `~` no longer gets a path bubble** — only `~/...` anchors. (#1024)
 
