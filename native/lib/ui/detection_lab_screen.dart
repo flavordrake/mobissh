@@ -12,20 +12,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../state/custom_patterns_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/detection_style_providers.dart';
+import '../storage/custom_patterns_store.dart';
 import 'detection_lab_detail_screen.dart';
+import 'detection_lab_pattern_editor.dart';
 import 'detection_lab_preview.dart';
 import 'detection_style_resolver.dart';
 import 'settings_subheader.dart';
 
 export 'detection_lab_detail_screen.dart' show DetectionLabDetailScreen;
+export 'detection_lab_pattern_editor.dart'
+    show DetectionLabPatternEditorScreen;
 export 'detection_lab_preview.dart'
     show
         DetectionLabPatternSpec,
         DetectionPreviewLine,
         detectionLabPatternSpec,
-        detectionLabPatternSpecs;
+        detectionLabPatternSpecs,
+        detectionLabSpecForCustomPattern;
 
 class DetectionLabScreen extends ConsumerWidget {
   const DetectionLabScreen({super.key});
@@ -35,6 +41,7 @@ class DetectionLabScreen extends ConsumerWidget {
     final theme = Theme.of(context);
     final detection = ref.watch(detectionSettingsProvider);
     final styles = ref.watch(detectionStylesProvider);
+    final customPatterns = ref.watch(customPatternsProvider);
     final preview = detectionLabPreviewTheme(ref);
     // The SAME resolver the runtime layers consult — the mini previews recolor
     // live as the store changes (slice-1 wiring).
@@ -81,6 +88,30 @@ class DetectionLabScreen extends ConsumerWidget {
                 resolver: resolver,
                 preview: preview,
               ),
+            // Zone C (#1031 slice 3): USER-DEFINED patterns — same card
+            // anatomy, enable bit from the custom store, creation at the end
+            // of the list it extends (per the IA).
+            const SettingsSubheader('My patterns'),
+            for (final pattern in customPatterns)
+              _CustomPatternCard(
+                pattern: pattern,
+                detection: detection,
+                resolver: resolver,
+                preview: preview,
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+              child: FilledButton.tonalIcon(
+                key: const ValueKey('lab-add-pattern'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const DetectionLabPatternEditorScreen(),
+                  ),
+                ),
+                icon: const Icon(Icons.add),
+                label: const Text('Add pattern'),
+              ),
+            ),
             const SizedBox(height: 24),
             // Review change 4: the destructive lab-wide reset lives at the
             // BOTTOM, styled like the Settings reset (outlined, error color).
@@ -193,6 +224,110 @@ class _PatternCard extends ConsumerWidget {
                 foreground: preview.foreground,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A USER-DEFINED pattern's card (#1031 slice 3): same anatomy as a built-in
+/// (generic glyph, front-loaded name, right-edge enable switch, mini preview
+/// over the author's own sample line, chevron → the shared detail page).
+/// A stored regex that no longer compiles renders a visible ERROR state
+/// instead of the preview and cannot be enabled (registration would skip it
+/// anyway — auto-disabled on hydrate; never a silent drop, never a crash).
+class _CustomPatternCard extends ConsumerWidget {
+  const _CustomPatternCard({
+    required this.pattern,
+    required this.detection,
+    required this.resolver,
+    required this.preview,
+  });
+
+  final CustomPattern pattern;
+  final DetectionSettings detection;
+  final DetectionStyleResolver resolver;
+  final DetectionLabPreviewTheme preview;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final spec = detectionLabSpecForCustomPattern(pattern);
+    final broken = compileCustomPatternRegex(pattern.source) == null;
+    return Card(
+      key: ValueKey('lab-card-${pattern.id}'),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            key: ValueKey('lab-card-tile-${pattern.id}'),
+            leading: Icon(spec.icon),
+            title: Text(spec.title),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Switch(
+                  key: ValueKey('lab-enable-${pattern.id}'),
+                  value: pattern.enabled && !broken,
+                  // Master OFF greys it (Settings idiom); a broken regex
+                  // can't be enabled (fix it in the editor first).
+                  onChanged: detection.enabled && !broken
+                      ? (v) => ref
+                            .read(customPatternsProvider.notifier)
+                            .setEnabled(pattern.id, v)
+                      : null,
+                ),
+                const Icon(Icons.chevron_right),
+              ],
+            ),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => DetectionLabDetailScreen(spec: spec),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: broken
+                ? Row(
+                    key: ValueKey('lab-card-error-${pattern.id}'),
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 18,
+                        color: theme.colorScheme.error,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Pattern disabled — its regex no longer compiles. '
+                          'Open it to fix the expression.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : spec.sampleMatch.isEmpty
+                ? Text(
+                    'No sample match — open the pattern to set a sample line.',
+                    key: ValueKey('lab-card-nosample-${pattern.id}'),
+                    style: theme.textTheme.bodySmall,
+                  )
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: DetectionPreviewLine(
+                      key: ValueKey('lab-preview-${pattern.id}'),
+                      spec: spec,
+                      resolver: resolver,
+                      background: preview.background,
+                      foreground: preview.foreground,
+                    ),
+                  ),
           ),
         ],
       ),

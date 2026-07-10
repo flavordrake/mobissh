@@ -203,6 +203,18 @@ class DetectionExceptionsStore {
     return entries;
   }
 
+  /// Remove EVERY exception in [family] (#1031 slice 3: deleting a custom
+  /// pattern prunes its orphaned suppressions — disclosed in the delete
+  /// confirm, since exception reports are authored data). Returns the
+  /// updated list.
+  Future<List<DetectionException>> removeFamily(String family) async {
+    final entries = await load();
+    final before = entries.length;
+    entries.removeWhere((e) => e.family == family);
+    if (entries.length != before) await _saveAll(entries);
+    return entries;
+  }
+
   /// Clear all exceptions.
   Future<void> clear() async {
     final prefs = await _ensure();

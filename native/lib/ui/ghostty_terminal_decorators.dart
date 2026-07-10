@@ -22,6 +22,8 @@
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/widgets.dart';
 
+import '../storage/custom_patterns_store.dart' show isCustomPatternId;
+
 /// The id of the built-in URL pattern. Mirrors the pattern id the view registers
 /// on the controller so the gutter registry can route URL anchors to their mark.
 const String kGhosttyUrlPatternId = 'url';
@@ -303,6 +305,13 @@ class GhosttyBubbleLayer extends StatelessWidget {
     kGhosttyPathPatternId,
   };
 
+  /// Whether [patternId] paints a bubble: the built-in span types plus every
+  /// USER-DEFINED `custom.*` pattern (#1031 slice 3 — customs are span-tier
+  /// inline matches, so they get the same inline affordance; the command
+  /// BLOCK pattern stays gutter-only).
+  static bool _paintsBubble(String patternId) =>
+      _bubblePatternIds.contains(patternId) || isCustomPatternId(patternId);
+
   @override
   Widget build(BuildContext context) {
     final verification = verificationListenable;
@@ -314,7 +323,7 @@ class GhosttyBubbleLayer extends StatelessWidget {
         if (controller.isScrolling) return const SizedBox.shrink();
         final specs = <GhosttyBubbleSpec>[];
         for (final anchor in controller.anchors) {
-          if (!_bubblePatternIds.contains(anchor.patternId)) continue;
+          if (!_paintsBubble(anchor.patternId)) continue;
           // #990 visibility gate: suppressed anchors paint nothing.
           if (!(isVisible?.call(anchor) ?? true)) continue;
           final rects = <Rect>[];

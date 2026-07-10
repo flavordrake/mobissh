@@ -23,10 +23,15 @@ import 'package:flterm/flterm.dart' show kDefaultCommandLexicon;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../state/custom_patterns_providers.dart';
+import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/detection_style_providers.dart';
+import '../storage/custom_patterns_store.dart';
+import '../storage/detection_exceptions_store.dart';
 import '../storage/detection_styles_store.dart';
 import 'color_picker_sheet.dart';
+import 'detection_lab_pattern_editor.dart';
 import 'detection_lab_preview.dart';
 import 'detection_style_resolver.dart';
 import 'settings_subheader.dart';
@@ -43,7 +48,16 @@ class DetectionLabDetailScreen extends ConsumerStatefulWidget {
 
 class _DetectionLabDetailScreenState
     extends ConsumerState<DetectionLabDetailScreen> {
-  DetectionLabPatternSpec get spec => widget.spec;
+  /// The live spec. For a USER-DEFINED pattern (#1031 slice 3) it re-derives
+  /// from the CURRENT store record (build watches the provider) so an edit —
+  /// rename, new regex, new sample — reflects immediately; the immutable id
+  /// (`widget.spec.key`) is the stable handle. Falls back to the mount-time
+  /// spec while the record is gone (mid-delete pop).
+  DetectionLabPatternSpec get spec {
+    if (!widget.spec.isCustom) return widget.spec;
+    final live = ref.read(customPatternProvider(widget.spec.key));
+    return live == null ? widget.spec : detectionLabSpecForCustomPattern(live);
+  }
 
   /// Luminance override for the preview strip (null = follow the theme).
   Brightness? _luminance;
@@ -179,10 +193,61 @@ class _DetectionLabDetailScreenState
     );
   }
 
+  /// Delete a USER-DEFINED pattern (#1031 slice 3). The confirm DISCLOSES the
+  /// #995 exception-family pruning (IA review change 5: deleting authored
+  /// data as a side effect must be stated at the moment it happens), then
+  /// prunes the family, drops the TUNED style entry, removes the record, and
+  /// pops back to the lab root.
+  Future<void> _confirmDeleteCustom(CustomPattern custom) async {
+    final family = detectionExceptionFamily(custom.id);
+    final exceptionCount = ref
+        .read(detectionExceptionsProvider)
+        .where((e) => e.family == family)
+        .length;
+    final disclosure = exceptionCount > 0
+        ? 'Also removes $exceptionCount saved detection '
+              'exception${exceptionCount == 1 ? '' : 's'} reported for it.'
+        : 'No saved detection exceptions reference it.';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('lab-custom-delete-dialog'),
+        title: Text('Delete "${custom.name}"?'),
+        content: Text(
+          'Remove this pattern and its color and intensity tuning. '
+          '$disclosure',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('lab-custom-delete-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref.read(detectionExceptionsProvider.notifier).pruneFamily(custom.id);
+    await ref.read(detectionStylesProvider.notifier).resetPattern(custom.id);
+    await ref.read(customPatternsProvider.notifier).remove(custom.id);
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final detection = ref.watch(detectionSettingsProvider);
+    // #1031 slice 3: the live custom record (null for built-ins / mid-delete)
+    // — watching keeps title/sample/enable current across edits.
+    final custom = widget.spec.isCustom
+        ? ref.watch(customPatternProvider(widget.spec.key))
+        : null;
+    final customBroken =
+        custom != null && compileCustomPatternRegex(custom.source) == null;
     final styles = ref.watch(detectionStylesProvider);
     final stored = styles.of(spec.primaryId);
     final preview = detectionLabPreviewTheme(ref, luminanceOverride: _luminance);
@@ -191,7 +256,9 @@ class _DetectionLabDetailScreenState
       accent: preview.accent,
       backgroundBrightness: preview.brightness,
     );
-    final enabled = detectionLabTypeEnabled(detection, spec.key);
+    final enabled = widget.spec.isCustom
+        ? (custom?.enabled ?? false) && !customBroken
+        : detectionLabTypeEnabled(detection, spec.key);
     final inactiveValue =
         _clampBand(_draftInactive ?? stored?.inactiveIntensity ?? 1.0);
     final activeValue =
@@ -207,9 +274,17 @@ class _DetectionLabDetailScreenState
             child: Switch(
               key: const ValueKey('lab-detail-enable'),
               value: enabled,
-              onChanged: detection.enabled
-                  ? (v) => detectionLabSetTypeEnabled(ref, spec.key, v)
-                  : null,
+              // Master OFF greys it; a custom pattern flips its OWN store bit
+              // (a broken regex can't be enabled — fix it in the editor).
+              onChanged: !detection.enabled
+                  ? null
+                  : widget.spec.isCustom
+                  ? (custom == null || customBroken
+                        ? null
+                        : (v) => ref
+                              .read(customPatternsProvider.notifier)
+                              .setEnabled(custom.id, v))
+                  : (v) => detectionLabSetTypeEnabled(ref, spec.key, v),
             ),
           ),
         ],
@@ -301,6 +376,38 @@ class _DetectionLabDetailScreenState
                 key: const ValueKey('lab-detail-controls'),
                 padding: const EdgeInsets.only(bottom: 8),
                 children: [
+                  // #1031 slice 3: a custom pattern's DEFINITION — name/regex
+                  // edit via the shared editor (create and edit are one
+                  // screen; the id never changes, review change 5).
+                  if (widget.spec.isCustom) ...[
+                    const SettingsSubheader('Definition'),
+                    ListTile(
+                      key: const ValueKey('lab-custom-edit-row'),
+                      leading: const Icon(Icons.edit_outlined),
+                      title: const Text('Edit pattern'),
+                      subtitle: Text(
+                        customBroken
+                            ? 'Regex no longer compiles — open to fix it.'
+                            : custom?.source ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: customBroken
+                            ? TextStyle(color: theme.colorScheme.error)
+                            : const TextStyle(fontFamily: 'monospace'),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: custom == null
+                          ? null
+                          : () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) =>
+                                    DetectionLabPatternEditorScreen(
+                                      existing: custom,
+                                    ),
+                              ),
+                            ),
+                    ),
+                  ],
                   const SettingsSubheader('Style'),
                   ListTile(
                     key: const ValueKey('lab-color-row'),
@@ -412,6 +519,25 @@ class _DetectionLabDetailScreenState
                       label: const Text('Reset this pattern'),
                     ),
                   ),
+                  // #1031 slice 3: delete (custom only) — LAST, below reset;
+                  // the confirm discloses the exception pruning.
+                  if (widget.spec.isCustom) ...[
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('lab-custom-delete-button'),
+                        onPressed: custom == null
+                            ? null
+                            : () => _confirmDeleteCustom(custom),
+                        icon: const Icon(Icons.delete_outline),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: theme.colorScheme.error,
+                        ),
+                        label: const Text('Delete pattern'),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

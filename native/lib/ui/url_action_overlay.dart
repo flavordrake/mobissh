@@ -72,6 +72,10 @@ void debugDismissUrlActions() => _dismiss();
 /// offered (destructive-adjacent placement) — tapping dismisses the menu and
 /// fires the callback (the caller persists the detection exception).
 ///
+/// [showOpen] / [notLabel] (#1031 slice 3): a USER-DEFINED pattern's match is
+/// an arbitrary token, not a URL — its menu drops the Open action and labels
+/// the report item "Not a match". Defaults keep the URL menu exactly as-is.
+///
 /// Safe to call from any context under an [Overlay]. No-op if no overlay.
 void showUrlActions(
   BuildContext context,
@@ -79,6 +83,8 @@ void showUrlActions(
   required List<Rect> highlightRects,
   required Offset anchor,
   VoidCallback? onMarkNotDetection,
+  bool showOpen = true,
+  String notLabel = 'Not a URL',
   Duration timeout = const Duration(seconds: 6),
 }) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
@@ -114,6 +120,8 @@ void showUrlActions(
       onDismiss: () {
         if (identical(_activeEntry, entry)) _dismiss();
       },
+      showOpen: showOpen,
+      notLabel: notLabel,
       // #995: dismiss first, then report — the exception write regroups the
       // affordance layers, so the menu must not outlive its anchor.
       onMarkNotDetection: onMarkNotDetection == null
@@ -142,6 +150,8 @@ class _UrlActionLayer extends StatelessWidget {
     required this.onOpen,
     required this.onDismiss,
     this.onMarkNotDetection,
+    this.showOpen = true,
+    this.notLabel = 'Not a URL',
   });
 
   final String url;
@@ -153,6 +163,12 @@ class _UrlActionLayer extends StatelessWidget {
 
   /// #995: persists a "Not a URL" detection exception; null hides the item.
   final VoidCallback? onMarkNotDetection;
+
+  /// #1031 slice 3: false for a user-defined match (no browser Open).
+  final bool showOpen;
+
+  /// #1031 slice 3: "Not a match" for a user-defined pattern's report item.
+  final String notLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -236,20 +252,23 @@ class _UrlActionLayer extends StatelessWidget {
                       label: 'Copy',
                       onTap: onCopy,
                     ),
-                    _ActionButton(
-                      key: const Key('url-action-open'),
-                      icon: Icons.open_in_new,
-                      label: 'Open',
-                      onTap: () {
-                        onOpen();
-                      },
-                    ),
+                    if (showOpen)
+                      _ActionButton(
+                        key: const Key('url-action-open'),
+                        icon: Icons.open_in_new,
+                        label: 'Open',
+                        onTap: () {
+                          onOpen();
+                        },
+                      ),
                     // #995: LAST (destructive-adjacent) — report false positive.
                     if (onMarkNotDetection != null)
                       _ActionButton(
                         key: const Key('url-action-not-url'),
-                        icon: Icons.link_off,
-                        label: 'Not a URL',
+                        icon: notLabel == 'Not a URL'
+                            ? Icons.link_off
+                            : Icons.search_off,
+                        label: notLabel,
                         onTap: onMarkNotDetection!,
                       ),
                   ],
