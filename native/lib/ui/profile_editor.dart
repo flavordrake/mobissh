@@ -25,6 +25,7 @@ import '../diagnostics/connect_trace.dart';
 import '../state/profiles_providers.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
+import 'color_picker_sheet.dart';
 import 'top_toast.dart';
 
 enum _AuthKind { password, key }
@@ -483,19 +484,168 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
                 ),
               ),
               const SizedBox(height: 8),
-              TextField(
+              // #1030: first-class color section. One-tap preset chips + the
+              // shared picker sheet for custom colors. The hex field stays the
+              // backing value (same key + controller) so the save path and
+              // existing tests are unchanged — presets/picker just write it.
+              _ColorSection(controller: _colorCtrl),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Color section (#1030): swatch button (opens the shared picker), the hex
+/// TextField (backing value — `SavedProfile.color` persists exactly this
+/// text), and the shared preset chips for one-tap selection. Stateful only to
+/// repaint the swatch/selection ring as the controller text changes.
+class _ColorSection extends StatefulWidget {
+  const _ColorSection({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  State<_ColorSection> createState() => _ColorSectionState();
+}
+
+class _ColorSectionState extends State<_ColorSection> {
+  Color? get _current => colorFromHex(widget.controller.text);
+
+  void _setHex(String hex) {
+    setState(() => widget.controller.text = hex);
+  }
+
+  Future<void> _openPicker() async {
+    final result = await showColorPickerSheet(
+      context,
+      initial: _current,
+      title: 'Profile color',
+      // Short label: the sheet's action row is three-up on a 360dp phone and a
+      // longer label ellipsized on the emulator shot.
+      clearLabel: 'No color',
+      previewLabel: 'session row',
+    );
+    if (result == null) return; // cancelled — keep as-is
+    _setHex(result.color == null ? '' : hexFromColor(result.color!));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final current = _current;
+    final currentHex = current == null ? null : hexFromColor(current);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            // Custom-color affordance: current swatch (or a neutral palette
+            // glyph when colorless) opening the shared picker sheet.
+            InkResponse(
+              key: const Key('profile-editor-color-custom'),
+              onTap: _openPicker,
+              radius: 28,
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: current,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                ),
+                child: current == null
+                    ? Icon(
+                        Icons.palette_outlined,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      )
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
                 key: const Key('profile-editor-color'),
-                controller: _colorCtrl,
+                controller: widget.controller,
                 decoration: const InputDecoration(
                   labelText: 'Color (optional)',
                   hintText: '#ff8800',
                 ),
                 autocorrect: false,
                 enableSuggestions: false,
+                // Repaint the swatch + selection ring on manual hex edits.
+                onChanged: (_) => setState(() {}),
               ),
-            ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // One-tap quick swatches — the shared preset set the picker also
+        // offers, kept inline so the common case stays a single tap.
+        Wrap(
+          key: const Key('profile-editor-color-presets'),
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final preset in colorPickerPresets)
+              _PresetSwatch(
+                key: Key(
+                  'profile-editor-color-preset-${hexFromColor(preset)}',
+                ),
+                color: preset,
+                selected: hexFromColor(preset) == currentHex,
+                onTap: () => _setHex(hexFromColor(preset)),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Round one-tap swatch chip (44dp) with a selection ring — the editor-side
+/// twin of the picker's preset chip.
+class _PresetSwatch extends StatelessWidget {
+  const _PresetSwatch({
+    super.key,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkResponse(
+      onTap: onTap,
+      radius: 26,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: selected
+                ? theme.colorScheme.onSurface
+                : theme.colorScheme.outlineVariant,
+            width: selected ? 3 : 1,
           ),
         ),
+        child: selected
+            ? Icon(
+                Icons.check,
+                size: 22,
+                color: color.computeLuminance() > 0.5
+                    ? Colors.black
+                    : Colors.white,
+              )
+            : null,
       ),
     );
   }
