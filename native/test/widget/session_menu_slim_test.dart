@@ -26,6 +26,7 @@ import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
+import 'package:mobissh/ui/detection_lab_screen.dart';
 import 'package:mobissh/ui/session_menu.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -210,6 +211,28 @@ void main() {
         await _pumpFrames(tester);
         expect(container.read(detectionSettingsProvider).enabled, isFalse);
       }
+    });
+
+    testWidgets('#1031 review change 7: long-pressing the detection glyph '
+        'opens the Detection lab (menu closes first)', (tester) async {
+      final container = _makeContainer();
+      _add(container, 'host-a');
+
+      await tester.pumpWidget(_host(container: container));
+      await tester.tap(find.byKey(const Key('open-menu')));
+      await _pumpFrames(tester);
+
+      await tester.longPress(
+        find.byKey(const Key('session-menu-detection-toggle')),
+      );
+      await _pumpFrames(tester);
+
+      // The lab root is pushed on the app navigator and the overlay menu is
+      // gone (a route pushed UNDER the menu's barrier would be un-tappable).
+      expect(find.byType(DetectionLabScreen), findsOneWidget);
+      expect(find.byKey(const Key('session-menu')), findsNothing);
+      // The long-press must NOT have flipped the toggle.
+      expect(container.read(detectionSettingsProvider).enabled, isTrue);
     });
 
     testWidgets('font +/- still mutates only the active session', (

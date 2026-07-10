@@ -32,6 +32,7 @@ import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart' show ProfilesStore;
+import 'detection_lab_screen.dart';
 import 'favorites_menu_sheet.dart';
 import 'file_browser_screen.dart';
 import 'session_state_dot.dart';
@@ -561,6 +562,21 @@ class _SessionControlsRow extends ConsumerWidget {
             onTap: () => ref
                 .read(detectionSettingsProvider.notifier)
                 .setEnabled(!detectionOn),
+            // #1031 review change 7: the lab's most frequent job ("this
+            // highlight looks wrong") is noticed IN the terminal — long-press
+            // jumps straight to the Detection lab, no Settings scroll. Same
+            // #664 overlay idiom as the pickers: capture the app navigator,
+            // close the menu (its barrier sits above pushed routes), THEN
+            // push on that navigator.
+            onLongPress: () {
+              final navContext = Navigator.of(context).context;
+              onClose();
+              Navigator.of(navContext).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const DetectionLabScreen(),
+                ),
+              );
+            },
           ),
           // 4. Keybar visibility toggle. Filled icon = visible, outlined =
           // hidden, so the glyph itself communicates the toggle state.
@@ -658,6 +674,7 @@ class _StepButton extends StatelessWidget {
     required this.tooltip,
     required this.enabled,
     required this.onTap,
+    this.onLongPress,
     this.icon,
     this.iconWidget,
     this.selected = false,
@@ -676,13 +693,20 @@ class _StepButton extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  /// #1031 review change 7: optional long-press action (the detection glyph
+  /// long-presses into the Detection lab). When set, the IconButton drops its
+  /// tooltip — Tooltip installs its OWN long-press recognizer that would eat
+  /// the gesture (the #943 IconButton-tooltip gotcha) — and an outer
+  /// GestureDetector claims it instead.
+  final VoidCallback? onLongPress;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final color = selected ? theme.colorScheme.primary : null;
-    return IconButton(
+    final button = IconButton(
       key: itemKey,
-      tooltip: tooltip,
+      tooltip: onLongPress == null ? tooltip : null,
       iconSize: 20,
       constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
       padding: EdgeInsets.zero,
@@ -690,6 +714,12 @@ class _StepButton extends StatelessWidget {
       color: color,
       icon: iconWidget ?? Icon(icon),
       onPressed: enabled ? onTap : null,
+    );
+    if (onLongPress == null) return button;
+    return GestureDetector(
+      behavior: HitTestBehavior.deferToChild,
+      onLongPress: enabled ? onLongPress : null,
+      child: Semantics(label: tooltip, child: button),
     );
   }
 }

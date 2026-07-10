@@ -160,6 +160,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flterm/flterm.dart' hide Key;
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -186,6 +187,7 @@ import '../state/ctrl_modifier_provider.dart';
 import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/detection_style_providers.dart';
+import '../storage/detection_styles_store.dart' show DetectionStyles;
 import '../state/lifecycle_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
@@ -1418,7 +1420,12 @@ Future<String?> ghosttyTapMatchAction(
 /// pattern (default [kDefaultCommandLexicon]). Its affordance is GUTTER-ONLY
 /// (no bubble — [kGhosttyCommandPatternId] is not a bubble pattern id) and its
 /// inner url/path/osc8 SPAN anchors coexist inside it (slice A tiering).
-List<TextPattern> ghosttyDetectionPatterns(DetectionSettings detection) => [
+/// [commandLexicon] (#1031 slice 2) is the Detection Lab's stored lexicon
+/// override; null keeps the fork's default list.
+List<TextPattern> ghosttyDetectionPatterns(
+  DetectionSettings detection, {
+  List<String>? commandLexicon,
+}) => [
   if (detection.detectUrls) ...[
     TextPattern.osc8(
       id: kGhosttyOsc8PatternId,
@@ -1427,7 +1434,11 @@ List<TextPattern> ghosttyDetectionPatterns(DetectionSettings detection) => [
     TextPattern.url(id: kGhosttyUrlPatternId, style: kGhosttyUrlHighlightStyle),
   ],
   if (detection.detectPaths) TextPattern.path(id: kGhosttyPathPatternId),
-  if (detection.detectCommands) TextPattern.command(id: kGhosttyCommandPatternId),
+  if (detection.detectCommands)
+    TextPattern.command(
+      id: kGhosttyCommandPatternId,
+      lexicon: commandLexicon ?? kDefaultCommandLexicon,
+    ),
 ];
 
 /// Map a vertical swipe DELTA (logical px the finger moved this update) to a
@@ -2843,6 +2854,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       return false;
     }
     if (patternId != kGhosttyPathPatternId) return true;
+    // #1031 slice 2: the lab's "Short-path verification" knob gates the #990
+    // suppression. OFF → single-segment matches show immediately at the
+    // detected shade (the pre-#990 behavior, now an explicit user choice).
+    final verifyShortPaths = ref
+        .read(detectionStylesProvider)
+        .of(kGhosttyPathPatternId)
+        ?.verifyShortPaths;
+    if (verifyShortPaths == false) return true;
     if (!ghosttyPathRequiresVerification(payload)) return true;
     return _pathVerifier?.status(payload) == PathVerification.verified;
   }
@@ -2884,7 +2903,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // type (the controller no-ops on an empty pattern set). Master OFF →
     // register nothing.
     final detection = ref.read(detectionSettingsProvider);
-    for (final pattern in ghosttyDetectionPatterns(detection)) {
+    // #1031 slice 2: the command pattern registers with the lab's stored
+    // lexicon override (null = the fork's default list). A lexicon change
+    // re-runs this via the build() styles ref.listen.
+    final commandLexicon = ref
+        .read(detectionStylesProvider)
+        .of(kGhosttyCommandPatternId)
+        ?.lexicon;
+    for (final pattern in ghosttyDetectionPatterns(
+      detection,
+      commandLexicon: commandLexicon,
+    )) {
       controller.registerTextPattern(pattern);
     }
     // #921: tell the render box whether detection is now active. Active means the
@@ -4061,6 +4090,23 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // / didn't detect but failed to paint"). Force ONE coalesced full re-read
       // after re-registration. Post-frame so the keyed render box exists +
       // `_applyDetectionActive` (scheduled in _registerUrlPattern) has landed.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _forceTerminalRepaint();
+      });
+    });
+    // #1031 slice 2: a lab COMMAND-LEXICON change must re-register (the
+    // lexicon is baked into the registered TextPattern's normalize closure).
+    // Compared by CONTENT — color/intensity changes repaint via the resolver
+    // watch below and must NOT churn the pattern registrations.
+    ref.listen<DetectionStyles>(detectionStylesProvider, (prev, next) {
+      final before = prev?.of(kGhosttyCommandPatternId)?.lexicon;
+      final after = next.of(kGhosttyCommandPatternId)?.lexicon;
+      if (listEquals(before, after)) return;
+      final c = _controller;
+      if (c == null) return;
+      c.clearTextPatterns();
+      _registerUrlPattern(c);
+      // Same starvation guard as the settings listen above (#968).
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _forceTerminalRepaint();
       });

@@ -92,6 +92,22 @@ void main() {
     expect(container.read(detectionStylesProvider).isEmpty, isTrue);
   });
 
+  test('knob setters (#1031 slice 2) update state and persist', () async {
+    final container = await containerWith({});
+    final notifier = container.read(detectionStylesProvider.notifier);
+    await notifier.setVerifyShortPaths('path', false);
+    await notifier.setLexicon('command', ['git', 'kubectl']);
+
+    final styles = container.read(detectionStylesProvider);
+    expect(styles.of('path')!.verifyShortPaths, isFalse);
+    expect(styles.of('command')!.lexicon, ['git', 'kubectl']);
+
+    // Clearing back to null drops the field (absent = shipped default).
+    await notifier.setVerifyShortPaths('path', null);
+    await notifier.setLexicon('command', null);
+    expect(container.read(detectionStylesProvider).isEmpty, isTrue);
+  });
+
   group('detectionPatternStyleProvider (family)', () {
     test('exposes ONE pattern\'s override', () async {
       final container = await containerWith({

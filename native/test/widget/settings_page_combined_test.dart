@@ -14,7 +14,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:mobissh/state/detection_exceptions_providers.dart';
+import 'package:mobissh/state/detection_style_providers.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
+import 'package:mobissh/ui/detection_lab_screen.dart';
 import 'package:mobissh/ui/settings_screen.dart';
 
 Future<void> _pumpFrames(WidgetTester tester, {int count = 10}) async {
@@ -149,6 +152,58 @@ void main() {
 
     // The sample pref is back to its documented default.
     expect(container.read(fontSizeProvider), fontSizeDefault);
+  });
+
+  testWidgets('#1031 slice 2: a Detection lab row opens the lab route', (
+    tester,
+  ) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await _pumpPage(tester, container);
+
+    final row = find.byKey(const ValueKey('detection-lab-tile'));
+    expect(row, findsOneWidget, reason: 'entry row under Detection');
+
+    await tester.tap(row);
+    await _pumpFrames(tester);
+    expect(find.byType(DetectionLabScreen), findsOneWidget);
+  });
+
+  testWidgets('#1031 slice 2: Reset settings clears TUNED lab styles but '
+      'authored exceptions survive', (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await _pumpPage(tester, container);
+
+    // Tune a lab style + author an exception report.
+    await container
+        .read(detectionStylesProvider.notifier)
+        .setColorHex('url', '#e53935');
+    await container.read(detectionExceptionsProvider.notifier).report(
+          patternId: 'url',
+          matchedText: 'https://not.a.link',
+        );
+    await _pumpFrames(tester);
+    expect(container.read(detectionStylesProvider).isEmpty, isFalse);
+    expect(container.read(detectionExceptionsProvider), hasLength(1));
+
+    await tester.tap(find.byKey(const ValueKey('settings-reset-button')));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const ValueKey('settings-reset-confirm')));
+    await _pumpFrames(tester);
+
+    expect(
+      container.read(detectionStylesProvider).isEmpty,
+      isTrue,
+      reason: 'tuned lab styles reset with settings',
+    );
+    expect(
+      container.read(detectionExceptionsProvider),
+      hasLength(1),
+      reason: 'authored exception reports survive every reset (#995 rule)',
+    );
   });
 
   testWidgets('Reset settings can be cancelled (no change)', (tester) async {

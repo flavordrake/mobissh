@@ -172,6 +172,23 @@ void main() {
           .firstWhere((p) => p.id == kGhosttyCommandPatternId);
       expect(command.tier, TextTier.block);
     });
+
+    test('#1031 slice 2: a custom command LEXICON reaches the fork pattern '
+        '(weak prompt discriminates)', () {
+      // Weak `$ ` prompt + unknown first token: default lexicon scores 2
+      // (flag + operator, no hit) → suppressed; a lexicon containing the
+      // token scores 4 with the hit → detected.
+      const line = r'$ frobnicate --deep | sort';
+      final byDefault = ghosttyDetectionPatterns(const DetectionSettings())
+          .firstWhere((p) => p.id == kGhosttyCommandPatternId);
+      expect(byDefault.normalize!(line), isNull);
+
+      final byCustom = ghosttyDetectionPatterns(
+        const DetectionSettings(),
+        commandLexicon: const ['frobnicate'],
+      ).firstWhere((p) => p.id == kGhosttyCommandPatternId);
+      expect(byCustom.normalize!(line), 'frobnicate --deep | sort');
+    });
   });
 
   group('command gutter chip (#998 C)', () {

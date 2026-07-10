@@ -239,6 +239,75 @@ void main() {
       expect(detectionPatternHasActiveState('custom.jira'), isFalse);
     });
   });
+
+  group('#1031 slice 2 — intensity pair (review change 6: no inversion)', () {
+    test('a non-conflicting pair passes through unchanged', () {
+      final pair = detectionResolveIntensityPair(
+        inactive: 0.8,
+        active: 1.3,
+        activeDragged: false,
+      );
+      expect(pair.inactive, 0.8);
+      expect(pair.active, 1.3);
+    });
+
+    test('dragging DETECTED up past active PUSHES active up by the gap', () {
+      final pair = detectionResolveIntensityPair(
+        inactive: 1.3,
+        active: 1.3,
+        activeDragged: false,
+      );
+      expect(pair.inactive, 1.3);
+      expect(pair.active, closeTo(1.3 + kDetectionIntensityGap, 1e-9));
+    });
+
+    test('dragging ACTIVE down past detected PUSHES detected down by the gap',
+        () {
+      final pair = detectionResolveIntensityPair(
+        inactive: 1.0,
+        active: 0.9,
+        activeDragged: true,
+      );
+      expect(pair.active, 0.9);
+      expect(pair.inactive, closeTo(0.9 - kDetectionIntensityGap, 1e-9));
+    });
+
+    test('the push respects the band: detected caps at max - gap', () {
+      final pair = detectionResolveIntensityPair(
+        inactive: kDetectionIntensityMax,
+        active: 1.0,
+        activeDragged: false,
+      );
+      expect(pair.active, kDetectionIntensityMax);
+      expect(
+        pair.inactive,
+        closeTo(kDetectionIntensityMax - kDetectionIntensityGap, 1e-9),
+      );
+    });
+
+    test('the push respects the band: active floors at min + gap', () {
+      final pair = detectionResolveIntensityPair(
+        inactive: 1.0,
+        active: kDetectionIntensityMin,
+        activeDragged: true,
+      );
+      expect(pair.inactive, kDetectionIntensityMin);
+      expect(
+        pair.active,
+        closeTo(kDetectionIntensityMin + kDetectionIntensityGap, 1e-9),
+      );
+    });
+
+    test('out-of-band inputs clamp into the band first', () {
+      final pair = detectionResolveIntensityPair(
+        inactive: 0.0,
+        active: 9.0,
+        activeDragged: false,
+      );
+      expect(pair.inactive, kDetectionIntensityMin);
+      expect(pair.active, kDetectionIntensityMax);
+    });
+  });
 }
 
 /// The verified-on-dark base alpha via the shipped derivation (keeps the test

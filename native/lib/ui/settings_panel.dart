@@ -19,6 +19,7 @@ import '../services/battery_optimization.dart';
 import '../services/clipboard.dart';
 import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
+import '../state/detection_style_providers.dart';
 import '../state/keepalive_providers.dart';
 import '../state/sessions.dart';
 import '../state/terminal_backend.dart';
@@ -26,6 +27,7 @@ import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/detection_exceptions_store.dart';
 import '../util/relative_time.dart';
+import 'detection_lab_screen.dart';
 import 'feedback_overlay.dart' show VersionResolver, resolveBuildVersion;
 import 'settings_subheader.dart';
 import 'top_toast.dart';
@@ -236,6 +238,26 @@ class SettingsPanel extends ConsumerWidget {
                   ref.read(detectionSettingsProvider.notifier).setCommand(v)
               : null,
         ),
+        // #1031 slice 2: the Detection LAB — per-pattern colors, intensity,
+        // live previews, behavior knobs. Its OWN route (a workbench, not a
+        // settings row — the deliberate #897 exception per the reviewed IA);
+        // the everyday toggles above stay here and the lab binds the SAME
+        // providers. Placed after the type toggles, before exceptions, so the
+        // section reads simple → deep.
+        ListTile(
+          key: const ValueKey('detection-lab-tile'),
+          leading: const Icon(Icons.science_outlined),
+          title: const Text('Detection lab'),
+          subtitle: const Text(
+            'Colors, intensity, and live previews per pattern.',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const DetectionLabScreen(),
+            ),
+          ),
+        ),
         // #995: reviewable detection exceptions — the saved "Not a URL" /
         // "Not a file" reports. Each entry shows the suppressed text + when/
         // where it was reported, with a per-entry remove that restores
@@ -360,8 +382,9 @@ class SettingsPanel extends ConsumerWidget {
         title: const Text('Reset settings?'),
         content: const Text(
           'Restore all MobiSSH settings — font size, terminal engine, '
-          'keep-alive, link/path detection, and tmux control mode — to their '
-          'defaults. Saved profiles and credentials are not affected.',
+          'keep-alive, link/path detection, detection lab tuning, and tmux '
+          'control mode — to their defaults. Saved profiles, credentials, '
+          'and detection exceptions are not affected.',
         ),
         actions: [
           TextButton(
@@ -389,6 +412,10 @@ class SettingsPanel extends ConsumerWidget {
     await detectionNotifier.setUrl(true);
     await detectionNotifier.setPath(true);
     await detectionNotifier.setCommand(true);
+    // #1031 slice 2: lab styles are TUNED settings → reset with the rest.
+    // AUTHORED data survives (detection exceptions here; custom pattern
+    // definitions in slice 3) — the IA's one-sentence reset rule.
+    await ref.read(detectionStylesProvider.notifier).clearAllTuned();
 
     if (context.mounted) {
       showTopToast(context, 'Settings reset to defaults');
