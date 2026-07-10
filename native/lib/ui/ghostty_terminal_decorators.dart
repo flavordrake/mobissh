@@ -214,10 +214,19 @@ Color ghosttyBubbleWashColor(
 /// widget test can assert shade selection without reaching into paint calls.
 @immutable
 class GhosttyBubbleSpec {
-  const GhosttyBubbleSpec({required this.segments, required this.verified});
+  const GhosttyBubbleSpec({
+    required this.segments,
+    required this.verified,
+    this.washColor,
+  });
 
   final List<GhosttyBubbleSegment> segments;
   final bool verified;
+
+  /// #1031: the RESOLVED per-pattern wash fill (from the detection style
+  /// resolver seam). Null → the painter derives the shipped default from its
+  /// accent + brightness, exactly as before the seam existed.
+  final Color? washColor;
 }
 
 /// The restored inline bubble layer (#988) — a paint-only overlay drawing one
@@ -244,6 +253,7 @@ class GhosttyBubbleLayer extends StatelessWidget {
     this.isVerified,
     this.isVisible,
     this.verificationListenable,
+    this.washColorOf,
   });
 
   /// The SAME controller handed to the flterm `TerminalView`. Its `anchors` /
@@ -276,6 +286,15 @@ class GhosttyBubbleLayer extends StatelessWidget {
   /// listenable.
   final Listenable? verificationListenable;
 
+  /// #1031: the detection style RESOLVER seam — maps (patternId, state) to the
+  /// effective wash fill (stored override composed over the shipped #1000
+  /// derivation). Null → the pre-#1031 default derivation from [color] +
+  /// [backgroundBrightness]; the production view always passes the
+  /// resolver-backed function, whose EMPTY-store output is bit-identical to
+  /// that default (zero visual change).
+  final Color Function(String patternId, {required bool verified})?
+  washColorOf;
+
   /// The pattern ids that render a bubble. URL, OSC-8 and path share the ONE
   /// mechanism (#988); a per-pattern shade difference is a separate issue.
   static const Set<String> _bubblePatternIds = {
@@ -304,10 +323,18 @@ class GhosttyBubbleLayer extends StatelessWidget {
           }
           final segments = ghosttyBubbleSegments(rects);
           if (segments.isEmpty) continue; // fully off-screen
+          final verified = isVerified?.call(anchor) ?? false;
           specs.add(
             GhosttyBubbleSpec(
               segments: segments,
-              verified: isVerified?.call(anchor) ?? false,
+              verified: verified,
+              // #1031: resolve the per-pattern wash HERE (on decoration
+              // change), so the painter stays a dumb fill — no per-frame
+              // resolver reads.
+              washColor: washColorOf?.call(
+                anchor.patternId,
+                verified: verified,
+              ),
             ),
           );
         }
@@ -346,30 +373,29 @@ class GhosttyBubblePainter extends CustomPainter {
   final Color color;
   final Brightness backgroundBrightness;
 
+  /// The fill a spec paints in: its RESOLVED wash (#1031 seam) when present,
+  /// else the shipped derivation from the accent + brightness. Public so
+  /// tests assert the painted color without recording canvas calls.
+  Color effectiveWashColor(GhosttyBubbleSpec spec) =>
+      spec.washColor ??
+      ghosttyBubbleWashColor(
+        color,
+        verified: spec.verified,
+        backgroundBrightness: backgroundBrightness,
+      );
+
   @override
   void paint(Canvas canvas, Size size) {
-    final detectedWash = Paint()
-      ..style = PaintingStyle.fill
-      ..color = ghosttyBubbleWashColor(
-        color,
-        verified: false,
-        backgroundBrightness: backgroundBrightness,
-      )
-      ..isAntiAlias = true;
-    final verifiedWash = Paint()
-      ..style = PaintingStyle.fill
-      ..color = ghosttyBubbleWashColor(
-        color,
-        verified: true,
-        backgroundBrightness: backgroundBrightness,
-      )
-      ..isAntiAlias = true;
+    // One Paint per distinct wash color (typically 1–2: detected + verified).
+    final paints = <Color, Paint>{};
     for (final spec in specs) {
+      final wash = effectiveWashColor(spec);
+      final paint = paints[wash] ??= (Paint()
+        ..style = PaintingStyle.fill
+        ..color = wash
+        ..isAntiAlias = true);
       for (final segment in spec.segments) {
-        canvas.drawRRect(
-          segment.toRRect(),
-          spec.verified ? verifiedWash : detectedWash,
-        );
+        canvas.drawRRect(segment.toRRect(), paint);
       }
     }
   }
@@ -383,6 +409,7 @@ class GhosttyBubblePainter extends CustomPainter {
       final a = specs[i];
       final b = old.specs[i];
       if (a.verified != b.verified) return true;
+      if (a.washColor != b.washColor) return true;
       if (a.segments.length != b.segments.length) return true;
       for (var j = 0; j < a.segments.length; j++) {
         if (a.segments[j] != b.segments[j]) return true;
