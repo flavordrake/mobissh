@@ -81,6 +81,8 @@ class DetectionStylesNotifier extends StateNotifier<DetectionStyles> {
       colorHex: colorHex,
       inactiveIntensity: c.inactiveIntensity,
       activeIntensity: c.activeIntensity,
+      verifyShortPaths: c.verifyShortPaths,
+      lexicon: c.lexicon,
     ),
   );
 
@@ -92,6 +94,8 @@ class DetectionStylesNotifier extends StateNotifier<DetectionStyles> {
           colorHex: c.colorHex,
           inactiveIntensity: value,
           activeIntensity: c.activeIntensity,
+          verifyShortPaths: c.verifyShortPaths,
+          lexicon: c.lexicon,
         ),
       );
 
@@ -104,6 +108,34 @@ class DetectionStylesNotifier extends StateNotifier<DetectionStyles> {
       colorHex: c.colorHex,
       inactiveIntensity: c.inactiveIntensity,
       activeIntensity: value,
+      verifyShortPaths: c.verifyShortPaths,
+      lexicon: c.lexicon,
+    ),
+  );
+
+  /// Set (or clear, with null) the short-path verification gate (#1031 slice
+  /// 2 behavior knob, paths only — null = the shipped #990 default, true).
+  Future<void> setVerifyShortPaths(String patternId, bool? value) => _update(
+    patternId,
+    (c) => DetectionPatternStyle(
+      colorHex: c.colorHex,
+      inactiveIntensity: c.inactiveIntensity,
+      activeIntensity: c.activeIntensity,
+      verifyShortPaths: value,
+      lexicon: c.lexicon,
+    ),
+  );
+
+  /// Set (or clear, with null) the command lexicon override (#1031 slice 2
+  /// behavior knob, command pattern only — null = `kDefaultCommandLexicon`).
+  Future<void> setLexicon(String patternId, List<String>? value) => _update(
+    patternId,
+    (c) => DetectionPatternStyle(
+      colorHex: c.colorHex,
+      inactiveIntensity: c.inactiveIntensity,
+      activeIntensity: c.activeIntensity,
+      verifyShortPaths: c.verifyShortPaths,
+      lexicon: value == null ? null : List<String>.unmodifiable(value),
     ),
   );
 

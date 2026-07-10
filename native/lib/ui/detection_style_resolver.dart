@@ -32,6 +32,42 @@ const double kDetectionIntensityMin = 0.25;
 /// Ceiling of the intensity band — keeps glyphs legible inside the wash.
 const double kDetectionIntensityMax = 1.75;
 
+/// The MINIMUM visible margin the ACTIVE intensity keeps above the DETECTED
+/// one (#1031 IA review change 6): "detected < verified by a clearly-visible
+/// margin" (#1000) is the whole affordance grammar, so the lab's sliders may
+/// never invert it.
+const double kDetectionIntensityGap = 0.15;
+
+/// Resolve a (detected, active) intensity pair after a slider drag (#1031 IA
+/// review change 6): both values clamp into the band, then the DRAGGED value
+/// wins and PUSHES the other to preserve `active >= inactive + gap`. At the
+/// band edges the push reverses onto the dragged value (detected caps at
+/// max - gap; active floors at min + gap) so the invariant survives the
+/// extremes. Pure — unit-tested in detection_style_resolver_test.dart.
+({double inactive, double active}) detectionResolveIntensityPair({
+  required double inactive,
+  required double active,
+  required bool activeDragged,
+}) {
+  var i = inactive.clamp(kDetectionIntensityMin, kDetectionIntensityMax);
+  var a = active.clamp(kDetectionIntensityMin, kDetectionIntensityMax);
+  if (a >= i + kDetectionIntensityGap) return (inactive: i, active: a);
+  if (activeDragged) {
+    i = a - kDetectionIntensityGap;
+    if (i < kDetectionIntensityMin) {
+      i = kDetectionIntensityMin;
+      a = kDetectionIntensityMin + kDetectionIntensityGap;
+    }
+  } else {
+    a = i + kDetectionIntensityGap;
+    if (a > kDetectionIntensityMax) {
+      a = kDetectionIntensityMax;
+      i = kDetectionIntensityMax - kDetectionIntensityGap;
+    }
+  }
+  return (inactive: i, active: a);
+}
+
 /// Whether [patternId] has a REAL active state at runtime today. Per #990 the
 /// verified (active) rendering is wired for PATHS only; url/command gain a
 /// pressed state in a later slice. The lab UI reads this so it never offers a

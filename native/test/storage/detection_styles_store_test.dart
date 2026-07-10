@@ -128,6 +128,61 @@ void main() {
     });
   });
 
+  group('behavior knobs (#1031 slice 2: verifyShortPaths + lexicon)', () {
+    test('knob fields round-trip alongside style fields', () async {
+      final store = await storeWith({});
+      await store.setPatternStyle(
+        'path',
+        const DetectionPatternStyle(verifyShortPaths: false),
+      );
+      await store.setPatternStyle(
+        'command',
+        const DetectionPatternStyle(lexicon: ['git', 'kubectl']),
+      );
+      final styles = await store.load();
+      expect(styles.of('path')!.verifyShortPaths, isFalse);
+      expect(styles.of('path')!.colorHex, isNull);
+      expect(styles.of('command')!.lexicon, ['git', 'kubectl']);
+    });
+
+    test('a knob-only style is NOT empty; clearing the knob removes the entry',
+        () async {
+      final store = await storeWith({});
+      await store.setPatternStyle(
+        'path',
+        const DetectionPatternStyle(verifyShortPaths: false),
+      );
+      expect((await store.load()).of('path'), isNotNull);
+      await store.setPatternStyle('path', const DetectionPatternStyle());
+      expect((await store.load()).of('path'), isNull);
+    });
+
+    test('wrong-typed knob fields are dropped field-by-field', () async {
+      final store = await storeWith({
+        detectionStylesPrefsKey:
+            '{"v":1,"styles":{"path":{"color":"#33AA55","verify":"nope"},'
+            '"command":{"lexicon":[1,2],"inactive":0.8}}}',
+      });
+      final styles = await store.load();
+      expect(styles.of('path')!.colorHex, '#33AA55');
+      expect(styles.of('path')!.verifyShortPaths, isNull,
+          reason: 'non-bool verify dropped');
+      expect(styles.of('command')!.inactiveIntensity, 0.8);
+      expect(styles.of('command')!.lexicon, isNull,
+          reason: 'non-string lexicon entries drop the list');
+    });
+
+    test('resetPattern clears knobs too (knobs are TUNED data)', () async {
+      final store = await storeWith({});
+      await store.setPatternStyle(
+        'command',
+        const DetectionPatternStyle(lexicon: ['git']),
+      );
+      await store.resetPattern('command');
+      expect((await store.load()).of('command'), isNull);
+    });
+  });
+
   group('reset seams (#1031 IA review: per-pattern + lab-wide)', () {
     test('resetPattern removes ONE pattern, leaves the rest', () async {
       final store = await storeWith({});

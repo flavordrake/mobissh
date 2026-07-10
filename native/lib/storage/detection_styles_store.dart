@@ -51,6 +51,8 @@ class DetectionPatternStyle {
     this.colorHex,
     this.inactiveIntensity,
     this.activeIntensity,
+    this.verifyShortPaths,
+    this.lexicon,
   });
 
   /// `#RRGGBB` hue override, or null to follow the session accent.
@@ -62,31 +64,68 @@ class DetectionPatternStyle {
   /// Multiplier on the ACTIVE (verified) wash alpha, or null for 1.0.
   final double? activeIntensity;
 
+  /// #1031 slice 2 BEHAVIOR knob (paths only): gate low-confidence
+  /// single-segment path matches behind SFTP verification (#990). Null =
+  /// shipped default (true). Stored per pattern id like every other TUNED
+  /// value — the IA's documented growth path (knobs inside the styles record,
+  /// so resets come free).
+  final bool? verifyShortPaths;
+
+  /// #1031 slice 2 BEHAVIOR knob (command pattern only): the app-supplied
+  /// command lexicon fed to `TextPattern.command(lexicon:)`. Null = shipped
+  /// default (`kDefaultCommandLexicon`).
+  final List<String>? lexicon;
+
   /// True when every field is absent — no override at all (such a style is
   /// never persisted; setting it removes the entry).
   bool get isEmpty =>
-      colorHex == null && inactiveIntensity == null && activeIntensity == null;
+      colorHex == null &&
+      inactiveIntensity == null &&
+      activeIntensity == null &&
+      verifyShortPaths == null &&
+      lexicon == null;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     if (colorHex != null) 'color': colorHex,
     if (inactiveIntensity != null) 'inactive': inactiveIntensity,
     if (activeIntensity != null) 'active': activeIntensity,
+    if (verifyShortPaths != null) 'verify': verifyShortPaths,
+    if (lexicon != null) 'lexicon': lexicon,
   };
 
   /// Parse one stored record, field-by-field: a wrong-typed field is dropped
   /// (falls back to absent), a non-map or all-invalid record returns null so
-  /// the caller drops the entry entirely. Never throws.
+  /// the caller drops the entry entirely. A lexicon with any non-string entry
+  /// is dropped whole (a partial lexicon would silently change detection).
+  /// Never throws.
   static DetectionPatternStyle? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final color = raw['color'];
     final inactive = raw['inactive'];
     final active = raw['active'];
+    final verify = raw['verify'];
+    final lexiconRaw = raw['lexicon'];
+    List<String>? lexicon;
+    if (lexiconRaw is List && lexiconRaw.every((e) => e is String)) {
+      lexicon = List<String>.unmodifiable(lexiconRaw.cast<String>());
+    }
     final style = DetectionPatternStyle(
       colorHex: color is String && color.isNotEmpty ? color : null,
       inactiveIntensity: inactive is num ? inactive.toDouble() : null,
       activeIntensity: active is num ? active.toDouble() : null,
+      verifyShortPaths: verify is bool ? verify : null,
+      lexicon: lexicon,
     );
     return style.isEmpty ? null : style;
+  }
+
+  static bool _lexiconEquals(List<String>? a, List<String>? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -94,15 +133,23 @@ class DetectionPatternStyle {
       other is DetectionPatternStyle &&
       other.colorHex == colorHex &&
       other.inactiveIntensity == inactiveIntensity &&
-      other.activeIntensity == activeIntensity;
+      other.activeIntensity == activeIntensity &&
+      other.verifyShortPaths == verifyShortPaths &&
+      _lexiconEquals(other.lexicon, lexicon);
 
   @override
-  int get hashCode => Object.hash(colorHex, inactiveIntensity, activeIntensity);
+  int get hashCode => Object.hash(
+    colorHex,
+    inactiveIntensity,
+    activeIntensity,
+    verifyShortPaths,
+    lexicon == null ? null : Object.hashAll(lexicon!),
+  );
 
   @override
   String toString() =>
       'DetectionPatternStyle(color:$colorHex, inactive:$inactiveIntensity, '
-      'active:$activeIntensity)';
+      'active:$activeIntensity, verify:$verifyShortPaths, lexicon:$lexicon)';
 }
 
 /// The immutable set of stored overrides, keyed by pattern id. This is the

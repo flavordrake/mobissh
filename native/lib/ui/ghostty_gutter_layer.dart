@@ -684,8 +684,6 @@ class _GutterMarkState extends State<_GutterMark> {
     final style = widget.style;
     final multi = widget.anchors.length > 1;
     final single = widget.registry.forPattern(widget.anchors.first.patternId);
-    final chipFill = style.chipColor(widget.color);
-    final onChip = style.onChipColor(widget.color);
     // Centre the chip inside the visible strip (the hit box is wider).
     final inset = (widget.stripWidth - style.chipSize) / 2;
     return GestureDetector(
@@ -704,45 +702,81 @@ class _GutterMarkState extends State<_GutterMark> {
             scale: _pressed ? 0.85 : 1.0,
             duration: const Duration(milliseconds: 90),
             curve: Curves.easeOut,
-            child: Container(
-              width: style.chipSize,
-              height: style.chipSize,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: chipFill,
-                // #990: the VERIFIED shade — a contrast ring (bold), absent on
-                // the plain detected chip.
-                border: style.ringWidth > 0
-                    ? Border.all(color: onChip, width: style.ringWidth)
-                    : null,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.35),
-                    blurRadius: 3,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: multi
-                  ? Text(
-                      '${widget.anchors.length}',
-                      style: TextStyle(
-                        color: onChip,
-                        fontSize: style.glyphSize * 0.75,
-                        height: 1,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    )
-                  : Icon(
-                      single?.icon ?? Icons.adjust,
-                      size: style.glyphSize,
-                      color: onChip,
-                    ),
+            child: GutterMarkChip(
+              style: style,
+              accent: widget.color,
+              icon: multi ? null : (single?.icon ?? Icons.adjust),
+              count: multi ? widget.anchors.length : null,
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The PAINTED chip: a filled opaque circle behind a monochrome glyph (or a
+/// count badge), with the #990 bold ring when [style] carries one. Extracted
+/// from the private mark so the Detection Lab preview (#1031 slice 2) renders
+/// the REAL chip — same [GutterMarkStyle] derivations, zero styling code
+/// twice. Paint only; the gutter's [_GutterMark] wraps it with the gesture +
+/// press-scale behavior.
+class GutterMarkChip extends StatelessWidget {
+  const GutterMarkChip({
+    super.key,
+    required this.style,
+    required this.accent,
+    this.icon,
+    this.count,
+  }) : assert(icon != null || count != null, 'provide an icon or a count');
+
+  /// Sizing + colour derivation ([GutterMarkStyle.normal] / [.bold]).
+  final GutterMarkStyle style;
+
+  /// The accent HUE — [GutterMarkStyle.chipColor] forces it opaque.
+  final Color accent;
+
+  /// Single-pattern glyph (null for a multi-match count chip).
+  final IconData? icon;
+
+  /// Multi-match count badge (null for a single-pattern glyph chip).
+  final int? count;
+
+  @override
+  Widget build(BuildContext context) {
+    final chipFill = style.chipColor(accent);
+    final onChip = style.onChipColor(accent);
+    return Container(
+      width: style.chipSize,
+      height: style.chipSize,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: chipFill,
+        // #990: the VERIFIED shade — a contrast ring (bold), absent on
+        // the plain detected chip.
+        border: style.ringWidth > 0
+            ? Border.all(color: onChip, width: style.ringWidth)
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: count != null
+          ? Text(
+              '$count',
+              style: TextStyle(
+                color: onChip,
+                fontSize: style.glyphSize * 0.75,
+                height: 1,
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          : Icon(icon, size: style.glyphSize, color: onChip),
     );
   }
 }
