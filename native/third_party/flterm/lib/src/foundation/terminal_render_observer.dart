@@ -51,6 +51,19 @@ abstract class TerminalRenderObserver implements Listenable {
   /// [reportPaintedViewportOffset]; a settle timer flips it back.
   bool get isScrolling;
 
+  /// #1064: whether the grid CONTENT is currently churning — a live/streaming
+  /// TUI is rewriting cells and the detection rescan has not yet SETTLED (the
+  /// trailing content-settle debounce is still pending). The render box ORs this
+  /// with [isScrolling] to set `TerminalPaintState.washSuppressed`, so the
+  /// [HighlightPainter] HIDES the detection wash during content churn exactly as
+  /// it hides during scroll. The owner's rule: the wash is visible ONLY when the
+  /// screen is quiescent (not scrolling AND content settled). +140 paused only on
+  /// scroll, so a repainting TUI (isScrolling=false, content churning) left the
+  /// wash shown at stale spots; this term fixes that. Flipped true on a content
+  /// notify, back to false when the rescan debounce fires after a quiet gap (a
+  /// genuine settle — NOT the mid-churn max-wait reconcile, which keeps churning).
+  bool get contentSettling;
+
   /// Report the viewport offset the render box JUST painted the text with
   /// (#803). The render box calls this at the end of each frame sync, handing
   /// back the SAME `viewportOffset` the [HighlightPainter] read from the frame

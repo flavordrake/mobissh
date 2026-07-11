@@ -359,10 +359,12 @@ class TerminalRenderBox extends RenderBox {
   /// content ([_syncFrameState] with `_needsFrameSync` set). Monotonic.
   int get debugFrameSyncCount => _debugFrameSyncCount;
 
-  /// #1062 (test seam): whether the LAST paint hid the detection wash because
-  /// the controller was scrolling. Proves the render-layer hide-on-scroll wiring
-  /// (`_renderObserver.isScrolling` → `_paintState.washSuppressed` →
-  /// [HighlightPainter] early-return) without a pixel read.
+  /// #1062/#1064 (test seam): whether the LAST paint hid the detection wash
+  /// because the screen was CHURNING — scrolling OR content updating. Proves the
+  /// render-layer quiesce-gate wiring
+  /// (`_renderObserver.isScrolling || _renderObserver.contentSettling` →
+  /// `_paintState.washSuppressed` → [HighlightPainter] early-return) without a
+  /// pixel read.
   @visibleForTesting
   bool get debugWashSuppressed => _paintState.washSuppressed;
 
@@ -954,12 +956,19 @@ class TerminalRenderBox extends RenderBox {
   void _syncFrameState() {
     if (_paintState.rows == 0) return;
 
-    // #1062: read the controller's scroll state EACH paint (unconditional — not
-    // gated on terminalDirty) so the HighlightPainter hides the detection wash
-    // while the painted offset is in flight and re-shows it on settle. The
-    // re-show is driven by a controller notify on scroll-settle (which repaints
-    // this box with isScrolling now false).
-    _paintState.washSuppressed = _renderObserver.isScrolling;
+    // #1062/#1064: read the controller's QUIESCENCE state EACH paint
+    // (unconditional — not gated on terminalDirty) so the HighlightPainter hides
+    // the detection wash while the screen is CHURNING and re-shows it on settle.
+    // Churn = an active scroll (painted offset in flight, [isScrolling]) OR
+    // content updating (a live/streaming TUI repaint before the rescan debounce
+    // settles, [contentSettling]). The owner's rule (#1064): the wash is visible
+    // ONLY when quiescent. +140 gated on scroll alone, so a repainting TUI with
+    // isScrolling=false left the wash shown at stale spots; the content-settle
+    // term fixes that. The re-show is driven by a controller notify on settle
+    // (scroll-settle flips isScrolling false; the content-settle debounce flips
+    // contentSettling false), which repaints this box with the wash unsuppressed.
+    _paintState.washSuppressed =
+        _renderObserver.isScrolling || _renderObserver.contentSettling;
 
     final terminalDirty = _needsFrameSync;
     _needsFrameSync = false;

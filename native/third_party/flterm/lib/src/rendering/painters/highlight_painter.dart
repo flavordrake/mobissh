@@ -26,14 +26,16 @@ class HighlightPainter implements TerminalPainter {
 
   @override
   void paint(Canvas canvas) {
-    // #1062: HIDE the detection wash while the painted viewport offset is in
-    // flight. During a scroll the rescan/relocate that keeps each range's
-    // ABSOLUTE rows aligned to its token is deferred (#1044), so a wash painted
-    // this frame can sit over the cells its token just scrolled off of (the
-    // owner's "pinned wash"). The controller re-derives + re-shows the wash on
-    // scroll-settle at the correct offset (the #988 bubble stance ported to the
-    // behind-glyph fill). This is the ONLY detection-wash writer, so skipping
-    // the whole layer is exactly "hide the wash".
+    // #1062/#1064: HIDE the detection wash while the screen is CHURNING — an
+    // active scroll (painted offset in flight) OR content updating (a live TUI
+    // repaint). In either case the rescan/relocate that keeps each range's
+    // ABSOLUTE rows aligned to its token is deferred / not-yet-settled (#1044),
+    // so a wash painted this frame can sit over cells its token just left (the
+    // owner's "pinned"/"stale" wash). The controller re-derives + re-shows the
+    // wash on SETTLE at the correct positions (the #988 bubble stance ported to
+    // the behind-glyph fill). This is the ONLY detection-wash writer, so skipping
+    // the whole layer is exactly "hide the wash". The render box sets
+    // washSuppressed = isScrolling || contentSettling each paint.
     if (_state.washSuppressed) return;
 
     final highlights = _state.highlights;

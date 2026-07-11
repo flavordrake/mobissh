@@ -254,6 +254,16 @@ abstract class TerminalController extends ChangeNotifier
   @override
   bool get isScrolling;
 
+  /// #1064: whether the grid CONTENT is currently churning (a live/streaming TUI
+  /// repaint) and the detection rescan has not yet settled. The render box ORs
+  /// this with [isScrolling] to hide the detection wash, so the wash is visible
+  /// ONLY when the screen is QUIESCENT — not scrolling AND content settled. This
+  /// closes the +140 gap: pausing only on scroll left the wash shown at stale
+  /// spots on a repainting TUI (isScrolling=false). Set true on a content notify;
+  /// cleared when the rescan debounce fires after a quiet gap.
+  @override
+  bool get contentSettling;
+
   /// A [Listenable] that fires ONLY when the inputs a widget-layer decorator
   /// reads have changed (#805): the detected [anchors] set, or the
   /// [paintedViewportOffset] the decorator resolves [anchorRects] against.

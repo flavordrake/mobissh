@@ -49,6 +49,9 @@ class _FakeGutterController extends ChangeNotifier
   bool get isScrolling => false;
 
   @override
+  bool get contentSettling => false;
+
+  @override
   Listenable get decorationListenable => this;
 
   @override
