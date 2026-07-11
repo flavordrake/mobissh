@@ -48,6 +48,38 @@ class PortForwardsSheet extends StatefulWidget {
   final SessionEntry entry;
   final ProfilesStore store;
 
+  /// Default remote host shown when the field is blank — a bare `-L
+  /// localPort:remotePort` binds the SSH server's own loopback (#1054).
+  static const String defaultRemoteHost = '127.0.0.1';
+
+  /// The concrete effect line for the add form: `localPort → remoteHost:remotePort`.
+  /// Empty ports render as a `·` placeholder so the shape is always visible;
+  /// a blank remote host shows the resolved default (127.0.0.1).
+  static String previewMapping(
+    String localPort,
+    String remoteHost,
+    String remotePort,
+  ) {
+    final l = localPort.trim().isEmpty ? '·' : localPort.trim();
+    final h = remoteHost.trim().isEmpty ? defaultRemoteHost : remoteHost.trim();
+    final r = remotePort.trim().isEmpty ? '·' : remotePort.trim();
+    return '$l  →  $h:$r';
+  }
+
+  /// Plain-language direction so `ssh -L` can't be misread: what reaches what,
+  /// through which host ([sessionHost]).
+  static String previewSemantics(
+    String localPort,
+    String remoteHost,
+    String remotePort,
+    String sessionHost,
+  ) {
+    final l = localPort.trim().isEmpty ? '·' : localPort.trim();
+    final h = remoteHost.trim().isEmpty ? defaultRemoteHost : remoteHost.trim();
+    final r = remotePort.trim().isEmpty ? '·' : remotePort.trim();
+    return 'Apps on this phone at 127.0.0.1:$l reach $h:$r through $sessionHost.';
+  }
+
   @override
   State<PortForwardsSheet> createState() => _PortForwardsSheetState();
 }
@@ -75,9 +107,19 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
       if (!mounted) return;
       setState(() => _forwards = list);
     });
+    // Live effect preview (#1054): rebuild the `L → host:R` line as the user
+    // types so the concrete mapping + direction stay in front of them.
+    _localPortCtrl.addListener(_onFieldChanged);
+    _remoteHostCtrl.addListener(_onFieldChanged);
+    _remotePortCtrl.addListener(_onFieldChanged);
     // Hydrate: the task replays the authoritative table.
     widget.entry.proxy.forwardList();
     unawaited(_loadDefaults());
+  }
+
+  void _onFieldChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
@@ -260,8 +302,10 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
       dense: true,
       leading: Icon(glyph, size: 20, color: color),
       title: Text(
+        // Compact `L → host:R` mapping (#1054) — same shape as the add-form
+        // preview so a saved forward reads identically to its preview.
         '${f.localPort}  →  ${f.remoteHost}:${f.remotePort}',
-        style: theme.textTheme.bodyMedium,
+        style: theme.textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
       ),
       subtitle: Text(
         subtitle,
@@ -304,12 +348,56 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
   }
 
   Widget _addForm(ThemeData theme) {
+    final mapping = PortForwardsSheet.previewMapping(
+      _localPortCtrl.text,
+      _remoteHostCtrl.text,
+      _remotePortCtrl.text,
+    );
+    final semantics = PortForwardsSheet.previewSemantics(
+      _localPortCtrl.text,
+      _remoteHostCtrl.text,
+      _remotePortCtrl.text,
+      widget.entry.host,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Live effect preview (#1054): the concrete mapping, big + monospace,
+          // so the direction and endpoints are unambiguous before Add.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  mapping,
+                  key: const Key('forward-preview'),
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontFamily: 'monospace',
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  semantics,
+                  key: const Key('forward-preview-semantics'),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               SizedBox(
@@ -321,7 +409,8 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
                     labelText: 'Local',
-                    hintText: '18088',
+                    hintText: '8888',
+                    helperText: 'phone',
                     isDense: true,
                   ),
                 ),
@@ -342,6 +431,8 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
                   autocorrect: false,
                   decoration: const InputDecoration(
                     labelText: 'Remote host',
+                    hintText: 'hostname',
+                    helperText: 'resolved from the SSH server',
                     isDense: true,
                   ),
                 ),
@@ -356,7 +447,8 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
                     labelText: 'Remote',
-                    hintText: '8088',
+                    hintText: '8250',
+                    helperText: 'on server',
                     isDense: true,
                   ),
                 ),
