@@ -199,10 +199,14 @@ void main() {
         const DetectionPatternStyle(activeIntensity: 100.0),
         brightness: Brightness.light,
       ).resolveStyle('path', verified: true);
+      // #1053: with the behind-glyphs verified base raised, base × maxIntensity
+      // exceeds 1.0, so the alpha saturates at the [0,1] ceiling (the multiplier
+      // is still clamped to the band first — both clamps engage).
       expect(
         resolvedHigh.washColor.a,
         closeTo(
-          kGhosttyBubbleVerifiedWashAlphaOnLight * kDetectionIntensityMax,
+          (kGhosttyBubbleVerifiedWashAlphaOnLight * kDetectionIntensityMax)
+              .clamp(0.0, 1.0),
           0.01,
         ),
       );
