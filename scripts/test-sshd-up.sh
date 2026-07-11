@@ -5,6 +5,14 @@
 #
 # Needed after a host/process restart (the container + network join die with it).
 # Mirrors what tests/emulator/sshd-fixture.js does, for manual/orchestrator use.
+#
+# TEARDOWN (#1049): run from an AGENT WORKTREE, compose names the fixture
+# agent-<worktree-id>-test-sshd-1. That fixture intentionally OUTLIVES this
+# script call (multi-test agent runs re-use it), so there is no EXIT trap here;
+# instead scripts/ci-reap.sh removes agent-* fixtures older than
+# CI_REAP_MAX_AGE_HOURS (6h) using the container's docker Created timestamp as
+# the age marker. Run scripts (native-connect-test.sh, desktop-smoke.sh) that
+# call this on-demand DO tear down what they spawned, on exit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

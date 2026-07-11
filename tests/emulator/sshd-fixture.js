@@ -3,6 +3,14 @@
  *
  * Docker test-sshd lifecycle helper. Starts the Alpine+OpenSSH container
  * from docker-compose.test.yml and waits for SSH to be ready.
+ *
+ * TEARDOWN (#1049): the compose project (and thus the container name) derives
+ * from process.cwd() — in an agent worktree that is agent-<id>-test-sshd-1.
+ * This helper does NOT tear down (parallel Playwright workers share the
+ * fixture). The mandated wrappers (scripts/run-appium-tests.sh,
+ * scripts/run-emulator-tests.sh) down the same compose project via EXIT trap;
+ * direct playwright invocations are backstopped by scripts/ci-reap.sh (6h age
+ * sweep).
  */
 
 const { execSync } = require('child_process');

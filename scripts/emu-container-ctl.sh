@@ -14,6 +14,14 @@
 #   status   print container + guest boot state (exit 0 booted, 1 not).
 #   logs     tail the emulator container log.
 #
+# IDLE-STOP POLICY (#1049, operator directive 2026-07-11): the emulator is no
+# longer always-on. A 5-day idle mobissh-emulator (2.8GB) swap-thrashed the PVE
+# host, so scripts/ci-reap.sh STOPS the container after CI_REAP_EMU_IDLE_HOURS
+# (12h) without use. Every ensure/up/restart/wipe touches the last-used marker
+# (${MOBISSH_TMPDIR}/emulator-last-used); `ensure` re-boots a stopped emulator
+# on demand (~2min cost) — callers already go through ensure, so idle-stop is
+# transparent apart from that boot wait.
+#
 # Env: EMU_BOOT_TIMEOUT (default 300s), EMU_GPU / EMU_MEMORY_MB / EMU_CORES pass
 #      through to the container (see docker-compose.emulator.yml).
 set -euo pipefail
@@ -28,10 +36,24 @@ exec > >(tee -a "$LOGFILE") 2>&1
 COMPOSE_FILE="docker-compose.emulator.yml"
 CONTAINER="mobissh-emulator"
 EMU_BOOT_TIMEOUT="${EMU_BOOT_TIMEOUT:-300}"
+EMU_MARKER="${MOBISSH_TMPDIR}/emulator-last-used"
 
 log() { echo "> [$(date +%Y%m%dT%H%M%S%z)] $*"; }
 err() { echo "! [$(date +%Y%m%dT%H%M%S%z)] $*" >&2; }
 ok()  { echo "+ [$(date +%Y%m%dT%H%M%S%z)] $*"; }
+
+# Last-used marker read by scripts/ci-reap.sh for the idle-stop policy (#1049).
+touch_last_used() {
+  date +%Y%m%dT%H%M%S%z > "$EMU_MARKER"
+}
+
+# Opportunistic orphan sweep (#1049) — cheap; the marker is touched FIRST so
+# this emulator reads as active. Non-fatal: a reap failure must not block ensure.
+opportunistic_reap() {
+  if ! scripts/ci-reap.sh run; then
+    err "ci-reap sweep failed (non-fatal)"
+  fi
+}
 
 is_running() {
   docker ps --filter "name=${CONTAINER}" --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER}$"
@@ -71,12 +93,15 @@ wait_boot() {
 
 cmd_up() {
   ensure_network
+  touch_last_used
   log "docker compose up -d (${CONTAINER})"
   docker compose -f "$COMPOSE_FILE" up -d --build
   wait_boot
 }
 
 cmd_ensure() {
+  touch_last_used
+  opportunistic_reap
   if is_running && guest_booted; then
     ok "${CONTAINER} already up + booted."
     return 0
@@ -91,6 +116,7 @@ cmd_ensure() {
 
 cmd_restart() {
   ensure_network
+  touch_last_used
   log "recreating ${CONTAINER} (fresh -read-only overlay = clean /data)"
   docker compose -f "$COMPOSE_FILE" up -d --build --force-recreate
   wait_boot
@@ -98,6 +124,7 @@ cmd_restart() {
 
 cmd_wipe() {
   ensure_network
+  touch_last_used
   log "wipe: full down + up recreate of ${CONTAINER}"
   docker compose -f "$COMPOSE_FILE" down || true
   docker compose -f "$COMPOSE_FILE" up -d --build --force-recreate

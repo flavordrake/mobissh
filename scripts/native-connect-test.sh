@@ -75,7 +75,17 @@ EMU_ADBD_ENDPOINT="${EMU_ADBD_ENDPOINT:-${EMU_CONTAINER_NAME}:5556}"
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
 
+# Per-worktree fixture teardown (#1049): if THIS run spawns the test-sshd
+# fixture (step 2 below), it downs it on exit — including failure paths. A
+# fixture that was already up (canonical, or deliberately persistent via
+# test-sshd-up.sh) is not ours to tear down; scripts/ci-reap.sh sweeps those.
+source "${REPO_ROOT}/scripts/lib/testsshd-fixture.sh"
+SPAWNED_SSHD_PROJECT=""
+
 cleanup() {
+  if [[ -n "$SPAWNED_SSHD_PROJECT" ]]; then
+    testsshd_fixture_down "$SPAWNED_SSHD_PROJECT" "${REPO_ROOT}/docker-compose.test.yml"
+  fi
   # Tear down the socat proxy + adb reverse so repeated runs don't stack.
   if [[ -f "$PROXY_PID_FILE" ]]; then
     local pid
@@ -163,11 +173,21 @@ else
 fi
 log "device: $DEVICE"
 
-# 2. Verify test-sshd reachable from this container.
+# 2. Verify test-sshd reachable from this container; spawn it if missing.
+#    Spawner owns teardown (#1049): the EXIT trap downs the fixture we spawn
+#    here, so an agent run can never strand an agent-<id>-test-sshd-1 orphan.
 if ! getent hosts "$SSHD_HOST" >/dev/null 2>&1; then
-  err "$SSHD_HOST not resolvable — is the mobissh docker network joined + test-sshd up?"
-  err "try: docker compose -f docker-compose.test.yml up -d"
-  exit 2
+  log "$SSHD_HOST not resolvable — running test-sshd-up.sh (teardown on exit)"
+  if ! "${REPO_ROOT}/scripts/test-sshd-up.sh"; then
+    err "test-sshd-up failed — cannot reach $SSHD_HOST"
+    exit 2
+  fi
+  # test-sshd-up.sh composes up from REPO_ROOT — that dirname is the project.
+  SPAWNED_SSHD_PROJECT="$(cd "$REPO_ROOT" && testsshd_compose_project)"
+  if ! getent hosts "$SSHD_HOST" >/dev/null 2>&1; then
+    err "$SSHD_HOST still not resolvable after test-sshd-up.sh"
+    exit 2
+  fi
 fi
 log "$SSHD_HOST resolves OK"
 

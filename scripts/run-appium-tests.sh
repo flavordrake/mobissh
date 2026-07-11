@@ -96,6 +96,13 @@ PORT=$MOBISSH_PORT scripts/server-ctl.sh ensure
 # Ensure shared Docker network exists (external: true in compose requires pre-creation)
 docker network create mobissh 2>/dev/null || true
 docker compose -f docker-compose.test.yml up -d test-sshd 2>&1
+# Per-worktree fixture teardown (#1049): run from an agent worktree, the compose
+# project above (and any re-up by tests' sshd-fixture.js — same project) is
+# agent-<id>; down it when this run exits, INCLUDING failure paths. From the
+# main checkout the project is `mobissh` and fixture_down is a guarded no-op.
+source scripts/lib/testsshd-fixture.sh
+FIXTURE_PROJECT="$(testsshd_compose_project)"
+trap 'testsshd_fixture_down "$FIXTURE_PROJECT"' EXIT
 # Join shared network so we can reach test-sshd via DNS
 docker network connect mobissh "$(hostname)" 2>/dev/null || true
 wait_for_port test-sshd 22 "test-sshd" 20

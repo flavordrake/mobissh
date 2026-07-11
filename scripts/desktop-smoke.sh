@@ -47,9 +47,17 @@ mkdir -p "$FRAMES_DIR"
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
 
+# Per-worktree fixture teardown (#1049): if THIS run spawns test-sshd (step 2),
+# down it on exit. Pre-existing fixtures are left alone (ci-reap.sh sweeps).
+source "${REPO_ROOT}/scripts/lib/testsshd-fixture.sh"
+SPAWNED_SSHD_PROJECT=""
+
 XVFB_PID=""
 WATCHER_PID=""
 cleanup() {
+  if [[ -n "$SPAWNED_SSHD_PROJECT" ]]; then
+    testsshd_fixture_down "$SPAWNED_SSHD_PROJECT" "${REPO_ROOT}/docker-compose.test.yml"
+  fi
   if [[ -n "$WATCHER_PID" ]] && kill -0 "$WATCHER_PID" 2>/dev/null; then
     kill "$WATCHER_PID" 2>/dev/null || true
   fi
@@ -76,12 +84,15 @@ else
 fi
 
 # 2. test-sshd reachable (bring it up + join the mobissh network if needed).
+#    Spawner owns teardown (#1049): a fixture spawned here is downed on exit.
 if ! getent hosts "$SMOKE_HOST" >/dev/null 2>&1; then
-  log "$SMOKE_HOST not resolvable — running test-sshd-up.sh"
+  log "$SMOKE_HOST not resolvable — running test-sshd-up.sh (teardown on exit)"
   if ! "${REPO_ROOT}/scripts/test-sshd-up.sh"; then
     err "test-sshd-up failed — cannot reach $SMOKE_HOST"
     exit 2
   fi
+  # test-sshd-up.sh composes up from REPO_ROOT — that dirname is the project.
+  SPAWNED_SSHD_PROJECT="$(cd "$REPO_ROOT" && testsshd_compose_project)"
 fi
 log "$SMOKE_HOST resolves OK"
 
