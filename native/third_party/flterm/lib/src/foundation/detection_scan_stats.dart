@@ -58,6 +58,14 @@ class DetectionScanStats {
   /// set — no reassignment, no decoration notify (the #1046 churn killer).
   int notifiesSuppressed = 0;
 
+  /// #1060: anchor-bakes where a live match's behind-glyph WASH was WITHHELD
+  /// because the anchor's payload is currently unconfirmed on the grid (its
+  /// miss-grace timer is running). Proves the runtime path that keeps a stale
+  /// wash from floating over moved/blank cells on a churning TUI: >0 during an
+  /// in-place repaint burst, 0 on a stable shell. The anchor itself stays live
+  /// (gutter chip + hit-test) — only its wash waits for re-confirmation.
+  int washSuppressedForGrace = 0;
+
   /// One flat map for telemetry / test assertions.
   Map<String, int> snapshot() => <String, int>{
         'rescans': rescans,
@@ -72,6 +80,7 @@ class DetectionScanStats {
         'pruneRelocated': pruneRelocated,
         'matchesReused': matchesReused,
         'notifiesSuppressed': notifiesSuppressed,
+        'washSuppressedForGrace': washSuppressedForGrace,
       };
 
   /// Zero every counter (tests bracket a measured phase with this).
@@ -88,5 +97,6 @@ class DetectionScanStats {
     pruneRelocated = 0;
     matchesReused = 0;
     notifiesSuppressed = 0;
+    washSuppressedForGrace = 0;
   }
 }

@@ -505,9 +505,30 @@ class TerminalControllerImpl extends TerminalController
   /// scan path (a PTY byte must never take the session down).
   List<HighlightRange> _styledHighlights(List<StructuredMatch> matches) {
     final resolver = _detectionHighlightStyleOf;
-    if (resolver == null) return [for (final m in matches) ...m.ranges];
+    if (resolver == null) {
+      return [
+        for (final m in matches)
+          if (!_detectionMissTimers.containsKey(m)) ...m.ranges,
+      ];
+    }
     final out = <HighlightRange>[];
     for (final m in matches) {
+      // #1060: an anchor whose payload is currently UNCONFIRMED on the grid
+      // (its miss-grace timer is running because an in-place TUI repaint erased
+      // the cells under it and the relocate has not yet re-anchored it) must
+      // NOT paint its behind-glyph WASH: the baked absolute rows are where the
+      // content USED to be, so the wash would float over the now-blank/rewritten
+      // cells (the owner's live-TUI screenshot). Suppressing the fill matches
+      // what a BLOCK anchor already does through its grace afterlife ("no
+      // stale-highlight cost", see [_detectionMissGraceBlockMs]) — the anchor
+      // itself stays live in [_detectionMatches] so the GUTTER CHIP keeps its
+      // #1046 continuity and the payload stays hit-testable; only the pale wash
+      // band waits until the anchor re-confirms at real cells. The wash returns
+      // in the same notify the relocate/re-validate cancels the grace.
+      if (_detectionMissTimers.containsKey(m)) {
+        _detectionStats.washSuppressedForGrace++;
+        continue;
+      }
       HighlightStyle? style;
       try {
         style = resolver(m);
@@ -907,6 +928,12 @@ class TerminalControllerImpl extends TerminalController
 
     List<StructuredMatch> survivors;
     var changed = false;
+    // #1060: whether any anchor was UNCONFIRMED (miss-grace) at entry. The wash
+    // set can only flip in a !changed pass when grace was active going in (an
+    // anchor left it, re-confirmed in place) or becomes active during it (an
+    // anchor entered it) — so the wash re-derive below stays a no-op (zero work)
+    // on the common all-confirmed frame, preserving the #1044 hot-path budget.
+    final graceActiveAtEntry = _detectionMissTimers.isNotEmpty;
     try {
       final cols = _gridCols;
       final visibleRows = _gridRows;
@@ -1018,12 +1045,24 @@ class TerminalControllerImpl extends TerminalController
       return;
     }
 
-    if (!changed) return; // nothing dropped or moved
-    _detectionMatches = survivors;
-    highlights = _styledHighlights(survivors);
-    // The anchor set shrank/moved → wake the narrow decoration listener so the
-    // decorator re-resolves and the orphaned box vanishes immediately.
-    _decorationNotifier.notify();
+    if (changed) {
+      _detectionMatches = survivors;
+      highlights = _styledHighlights(survivors);
+      // The anchor set shrank/moved → wake the narrow decoration listener so the
+      // decorator re-resolves and the orphaned box vanishes immediately.
+      _decorationNotifier.notify();
+      return;
+    }
+    // #1060: no rows changed, but a match may have just ENTERED miss-grace (its
+    // cells vanished under an in-place repaint) or LEFT it (re-confirmed in
+    // place) this pass — which flips whether it paints a wash. Re-derive the
+    // styled highlights from the current matches + grace set; the equality gate
+    // keeps a genuinely-unchanged frame free (no notify), preserving the #1046
+    // churn-suppression. Skipped entirely when no anchor was or is in grace, so
+    // the all-confirmed hot path does zero extra work.
+    if (graceActiveAtEntry || _detectionMissTimers.isNotEmpty) {
+      restyleDetectionHighlights();
+    }
   }
 
   /// #873/#883: re-validate [match] against the current cells and decide
@@ -1499,6 +1538,11 @@ class TerminalControllerImpl extends TerminalController
         // churn killer: a TUI repainting a row with identical content keeps
         // its anchor INSTANCE and its chip never blinks.
         _detectionStats.notifiesSuppressed++;
+        // #1060: reconcile keeps identity but may have armed/cancelled a
+        // miss-grace during this pass, which flips whether an anchor paints a
+        // wash. Re-derive the styled highlights (equality-gated, so a truly
+        // unchanged frame still notifies nothing — the #1046 promise holds).
+        restyleDetectionHighlights();
         return;
       }
       _detectionMatches = merged;

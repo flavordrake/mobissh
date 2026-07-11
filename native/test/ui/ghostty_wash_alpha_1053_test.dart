@@ -1,9 +1,11 @@
-// #1053 (P0 regression) — the behind-glyphs wash must be OBVIOUSLY visible.
+// #1053 / #1060 — the behind-glyphs wash must be visible but SECONDARY.
 // Since #1045 the fill composites UNDER full-brightness glyphs over a near-black
-// terminal cell background, so the old over-glyphs alphas (0.26/0.42) were
-// near-invisible. These assert the re-tuned alphas clear a visibility floor on
-// BOTH themes, keep detected < verified with a clear margin, and that the
-// Detection Lab intensity multiplier still composes on top of the new bases.
+// terminal cell background. #1053 re-tuned the old over-glyphs alphas (0.26/0.42)
+// UP to clear a visibility floor; #1060 (owner P0 on +138) dialled them back
+// DOWN — 0.55 detected was "much too intense" and dominated the text. These now
+// assert the alphas sit in the #1060 band: above a low visibility floor, below a
+// "not overpowering" ceiling for DETECTED, detected < verified with a clear
+// margin, and that the Detection Lab intensity multiplier still composes on top.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,14 +15,23 @@ import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
 
 /// The alpha below which a translucent green wash over a near-black terminal
 /// background reads as "near-invisible" (the +136/#1045 regression state).
-const double _kVisibilityFloor = 0.45;
+/// #1060 lowered the DETECTED base under the old #1053 floor (0.45), so the
+/// floor tracks the new quiet-but-visible target.
+const double _kVisibilityFloor = 0.28;
+
+/// #1060 "not overpowering" ceiling for the DETECTED wash — above this the fill
+/// dominates the glyphs it annotates (the +138 complaint). Verified is allowed
+/// to run stronger (it is the confirmed-existence shade), so this bounds detected
+/// only.
+const double _kDetectedCeiling = 0.42;
 
 /// The minimum margin verified must keep above detected so the two states stay
 /// visually distinct at phone density.
 const double _kMinSeparation = 0.10;
 
 void main() {
-  group('#1053 behind-glyphs wash alphas clear the visibility floor', () {
+  group('#1060 behind-glyphs wash alphas sit in the visible-but-secondary band',
+      () {
     test('every wash alpha is at or above the visibility floor (both themes)',
         () {
       expect(kGhosttyBubbleDetectedWashAlphaOnDark,
@@ -31,6 +42,14 @@ void main() {
           greaterThanOrEqualTo(_kVisibilityFloor));
       expect(kGhosttyBubbleVerifiedWashAlphaOnLight,
           greaterThanOrEqualTo(_kVisibilityFloor));
+    });
+
+    test('the DETECTED wash stays below the "not overpowering" ceiling (#1060)',
+        () {
+      expect(kGhosttyBubbleDetectedWashAlphaOnDark,
+          lessThanOrEqualTo(_kDetectedCeiling));
+      expect(kGhosttyBubbleDetectedWashAlphaOnLight,
+          lessThanOrEqualTo(_kDetectedCeiling));
     });
 
     test('detected stays clearly below verified on both themes', () {
