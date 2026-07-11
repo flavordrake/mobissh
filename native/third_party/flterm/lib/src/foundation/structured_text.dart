@@ -32,23 +32,30 @@ import 'highlight_range.dart';
 /// underline is drawn.
 @immutable
 final class HighlightStyle {
-  /// Translucent fill drawn behind matched cells (null → painter default).
+  /// Translucent fill drawn behind matched cells' glyphs (null → no fill).
   final Color? background;
 
   /// Underline color drawn under matched cells (null → no underline).
   final Color? underline;
 
-  const HighlightStyle({this.background, this.underline});
+  /// #1045: draw [background] as a wash CAPSULE ([highlightCapsuleRRect]:
+  /// padded, top-inset, descender-outset, rounded caps ONLY on the anchor's
+  /// true first/last rows) instead of bare cell rects. False keeps the
+  /// pre-#1045 rect fill.
+  final bool capsule;
+
+  const HighlightStyle({this.background, this.underline, this.capsule = false});
 
   @override
-  int get hashCode => Object.hash(background, underline);
+  int get hashCode => Object.hash(background, underline, capsule);
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is HighlightStyle &&
           background == other.background &&
-          underline == other.underline;
+          underline == other.underline &&
+          capsule == other.capsule;
 }
 
 /// The anchoring TIER of a [TextPattern] (#998 slice A).

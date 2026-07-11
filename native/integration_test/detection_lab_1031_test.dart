@@ -6,8 +6,9 @@
 // → the lab root. Open the URL detail: assert the review's gating (no active
 // preview/slider for url). Pick the red preset via the shared #1030 picker +
 // drag the detected-intensity slider up, then pop back to the terminal and
-// assert the LIVE bubble painter now fills the red hue at a stronger-than-
-// shipped alpha (the slice-1 provider→resolver wiring, no reconnect).
+// assert the LIVE behind-glyph wash (#1045: the controller's baked styled
+// highlight ranges) now fills the red hue at a stronger-than-shipped alpha
+// (provider → resolver → restyle wiring, no reconnect).
 //
 // Screenshot windows (the orchestrator runs `scripts/emu-shot.sh <label>`
 // while each marker window is open — the PNGs are reviewed for phone-density
@@ -32,6 +33,8 @@ import 'package:integration_test/integration_test.dart';
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/detection_style_providers.dart';
 import 'package:mobissh/state/sessions.dart';
+import 'package:mobissh/state/ui_prefs_providers.dart'
+    show sessionTerminalThemeProvider;
 import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
@@ -201,28 +204,37 @@ void main() {
         await tester.pump(const Duration(milliseconds: 250));
       }
 
-      // THE PROOF: the live bubble painter now fills the override — red hue,
-      // alpha ABOVE the shipped detected base (intensity > 1) — with no
-      // reconnect and no manual refresh (slice-1 provider→resolver wiring).
-      final paintFinder = find.byKey(const Key('ghostty-bubble-paint'));
-      for (var i = 0; i < 20 && paintFinder.evaluate().isEmpty; i++) {
+      // THE PROOF (#1045): the live BEHIND-GLYPH wash — the controller's baked
+      // styled highlight ranges, painted by the fork under the glyphs — now
+      // fills the override: red hue, alpha ABOVE the shipped detected base
+      // (intensity > 1), capsule geometry — with no reconnect and no manual
+      // refresh (provider → resolver → post-frame restyle wiring).
+      HighlightRange? washRange() {
+        for (final r in controller!.highlights) {
+          if (r.payload == url && r.background != null) return r;
+        }
+        return null;
+      }
+
+      for (var i = 0; i < 20 && washRange() == null; i++) {
         await tester.pump(const Duration(milliseconds: 250));
       }
-      expect(paintFinder, findsOneWidget, reason: 'bubble layer not painting');
-      final painter =
-          tester.widget<CustomPaint>(paintFinder).painter!
-              as GhosttyBubblePainter;
-      expect(painter.specs, isNotEmpty);
-      final wash = painter.effectiveWashColor(painter.specs.first);
+      final range = washRange();
+      expect(range, isNotNull, reason: 'no styled wash range for the URL');
+      expect(range!.capsule, isTrue, reason: 'the wash draws the capsule look');
+      final wash = range.background!;
       expect(
         wash.r > wash.g && wash.r > wash.b,
         isTrue,
         reason: 'wash must carry the red override hue, got $wash',
       );
+      final palette = container.read(sessionTerminalThemeProvider(sessionId));
       final baseDetectedAlpha = ghosttyBubbleWashColor(
         const Color(0xFFE53935),
         verified: false,
-        backgroundBrightness: painter.backgroundBrightness,
+        backgroundBrightness: ThemeData.estimateBrightnessForColor(
+          palette.theme.background,
+        ),
       ).a;
       expect(
         wash.a,

@@ -43,8 +43,9 @@ final class HighlightRange {
   /// Column where the range ends on [endRow] (exclusive).
   final int endCol;
 
-  /// Translucent fill drawn behind the cells. When null the highlight
-  /// painter falls back to [HighlightTheme.defaultBackground].
+  /// Translucent fill drawn behind the cells' glyphs (the highlight pass
+  /// paints between the cell background and the glyph ink). When null the
+  /// painter draws NO fill for this range (#767 Slice B opt-in).
   final Color? background;
 
   /// Underline color drawn under the cells. When null no underline is drawn.
@@ -56,6 +57,23 @@ final class HighlightRange {
   /// or path string) when the user taps or long-presses a highlighted cell.
   final Object? payload;
 
+  /// #1045: draw this range's background as a WASH CAPSULE instead of a bare
+  /// cell rect: the fill is padded/inset per [highlightCapsuleRRect] (a little
+  /// horizontal breathing room, the top slack band trimmed, a descender
+  /// outset) so it frames the glyphs like the retired widget-layer bubble
+  /// (#988/#1000) — but painted by [HighlightPainter] UNDER the glyph ink.
+  final bool capsule;
+
+  /// #1045: this range holds the anchor's TRUE START — its first row rounds
+  /// the capsule's LEFT end. False on wrap-continuation ranges, whose left
+  /// edge is cut square (the match flows through the wrap as ONE object).
+  /// Only meaningful with [capsule].
+  final bool capsuleStart;
+
+  /// #1045: this range holds the anchor's TRUE END — its last row rounds the
+  /// capsule's RIGHT end. See [capsuleStart].
+  final bool capsuleEnd;
+
   const HighlightRange({
     required this.startRow,
     required this.startCol,
@@ -64,6 +82,9 @@ final class HighlightRange {
     this.background,
     this.underline,
     this.payload,
+    this.capsule = false,
+    this.capsuleStart = false,
+    this.capsuleEnd = false,
   });
 
   /// Normalized top row (inclusive). The smaller of [startRow] and [endRow].
@@ -105,12 +126,15 @@ final class HighlightRange {
       background: background,
       underline: underline,
       payload: payload,
+      capsule: capsule,
+      capsuleStart: capsuleStart,
+      capsuleEnd: capsuleEnd,
     );
   }
 
   @override
-  int get hashCode =>
-      Object.hash(startRow, startCol, endRow, endCol, background, underline);
+  int get hashCode => Object.hash(startRow, startCol, endRow, endCol,
+      background, underline, capsule, capsuleStart, capsuleEnd);
 
   @override
   bool operator ==(Object other) =>
@@ -122,12 +146,62 @@ final class HighlightRange {
           endCol == other.endCol &&
           background == other.background &&
           underline == other.underline &&
-          payload == other.payload;
+          payload == other.payload &&
+          capsule == other.capsule &&
+          capsuleStart == other.capsuleStart &&
+          capsuleEnd == other.capsuleEnd;
 
   @override
   String toString() =>
       'HighlightRange($startRow:$startCol-$endRow:$endCol, '
       'payload: $payload)';
+}
+
+/// #1045 capsule wash geometry — the polish constants ported from the retired
+/// widget-layer bubble so the behind-glyph wash reads IDENTICALLY.
+///
+/// HORIZONTAL padding on both sides so the capsule FRAMES the text with a
+/// little breathing room instead of clipping the first/last glyph (#864 device
+/// feedback).
+const double kHighlightCapsulePadX = 3.0;
+
+/// TOP inset: the cell rect spans the full typographic line height with its
+/// empty slack band at the TOP (#864), so the wash trims most of that band —
+/// but keeps a hair of it as breathing room above the glyph caps (#1000).
+const double kHighlightCapsuleTopInset = 2.0;
+
+/// BOTTOM outset (#1000): the glyph ink (descenders) runs close to the cell
+/// rect's bottom, so the wash EXPANDS downward past it. The next row's top
+/// slack band (see [kHighlightCapsuleTopInset]) absorbs the overhang, so
+/// neighbors stay uncrowded.
+const double kHighlightCapsuleBottomOutset = 2.0;
+
+/// The rounded rect a capsule highlight row fills (#1045): [cellRect] (the
+/// row's cell-range rect) padded/inset by the constants above, with capsule
+/// radius (half the padded height) ONLY on the ends that are the anchor's
+/// true start/end — a wrap-continuation edge is cut square so a wrapped match
+/// reads as ONE object flowing through the wrap (#988). Pure; shared by the
+/// fork's [HighlightPainter] and the app's Detection Lab preview so the
+/// preview IS the runtime look.
+RRect highlightCapsuleRRect(
+  Rect cellRect, {
+  required bool roundLeft,
+  required bool roundRight,
+}) {
+  final rect = Rect.fromLTRB(
+    cellRect.left - kHighlightCapsulePadX,
+    cellRect.top + kHighlightCapsuleTopInset,
+    cellRect.right + kHighlightCapsulePadX,
+    cellRect.bottom + kHighlightCapsuleBottomOutset,
+  );
+  final radius = Radius.circular(rect.height / 2);
+  return RRect.fromRectAndCorners(
+    rect,
+    topLeft: roundLeft ? radius : Radius.zero,
+    bottomLeft: roundLeft ? radius : Radius.zero,
+    topRight: roundRight ? radius : Radius.zero,
+    bottomRight: roundRight ? radius : Radius.zero,
+  );
 }
 
 /// Default colors for the structured-text highlight paint pass.

@@ -6,11 +6,14 @@
 // appends `custom.<slug>` entries here.
 //
 // [DetectionPreviewLine] renders one sample terminal line with the REAL
-// affordance code — the wash via [GhosttyBubblePainter] fed by the SAME
-// [DetectionStyleResolver] the runtime layers consult, and the chip via the
-// shared [GutterMarkChip] — over a terminal-colored strip. No parallel
+// affordance code — the wash via [DetectionWashPreviewPainter] (the fork's
+// #1045 `highlightCapsuleRRect` geometry, painted BEHIND the sample glyphs
+// exactly like flterm's HighlightPainter paints it behind the grid's) fed by
+// the SAME [DetectionStyleResolver] the runtime consults, and the chip via
+// the shared [GutterMarkChip] — over a terminal-colored strip. No parallel
 // preview styling exists (IA: preview trust — the preview IS the value).
 
+import 'package:flterm/flterm.dart' show highlightCapsuleRRect;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -246,9 +249,39 @@ DetectionLabPreviewTheme detectionLabPreviewTheme(
   );
 }
 
+/// #1045: the preview's wash painter — the fork's [highlightCapsuleRRect]
+/// capsule geometry (the SAME pure function flterm's HighlightPainter fills
+/// with) at the resolver's wash colour, painted below the sample glyphs. A
+/// single-row sample is a full capsule (both caps rounded). Public fields so
+/// the lab tests assert the painted colour without recording canvas calls.
+class DetectionWashPreviewPainter extends CustomPainter {
+  DetectionWashPreviewPainter({required this.washColor});
+
+  final Color washColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRRect(
+      highlightCapsuleRRect(
+        Offset.zero & size,
+        roundLeft: true,
+        roundRight: true,
+      ),
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = washColor
+        ..isAntiAlias = true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant DetectionWashPreviewPainter old) =>
+      old.washColor != washColor;
+}
+
 /// One sample terminal line: prefix ink, the match under the REAL wash
-/// ([GhosttyBubblePainter] + resolver output), and the REAL gutter chip
-/// ([GutterMarkChip]) at the right edge — over a terminal-colored strip.
+/// ([DetectionWashPreviewPainter] + resolver output), and the REAL gutter
+/// chip ([GutterMarkChip]) at the right edge — over a terminal-colored strip.
 class DetectionPreviewLine extends StatelessWidget {
   const DetectionPreviewLine({
     super.key,
@@ -296,8 +329,11 @@ class DetectionPreviewLine extends StatelessWidget {
       overflow: TextOverflow.clip,
     );
     if (spec.bubble) {
-      // Measure the match so the REAL painter gets its exact glyph rect (the
-      // runtime feeds it anchor rects; here the sample text IS the anchor).
+      // Measure the match so the painter gets its exact glyph rect (the
+      // runtime feeds flterm's HighlightPainter the anchor's cell rects; here
+      // the sample text IS the anchor). CustomPaint's `painter` slot paints
+      // BELOW the child text — the same behind-glyph order as the runtime
+      // (#1045), so the preview shows undimmed glyphs over the wash.
       final tp = TextPainter(
         text: TextSpan(text: spec.sampleMatch, style: textStyle),
         textDirection: TextDirection.ltr,
@@ -309,19 +345,8 @@ class DetectionPreviewLine extends StatelessWidget {
         width: size.width,
         height: size.height,
         child: CustomPaint(
-          painter: GhosttyBubblePainter(
-            specs: [
-              GhosttyBubbleSpec(
-                segments: ghosttyBubbleSegments([
-                  Rect.fromLTWH(0, 0, size.width, size.height),
-                ]),
-                verified: verified,
-                washColor: resolved.washColor,
-              ),
-            ],
-            color: resolver.accent,
-            backgroundBrightness: resolver.backgroundBrightness,
-          ),
+          key: const Key('detection-wash-preview'),
+          painter: DetectionWashPreviewPainter(washColor: resolved.washColor),
           child: match,
         ),
       );

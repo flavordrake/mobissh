@@ -1,15 +1,19 @@
-// On-emulator acceptance for #988 — the restored inline URL BUBBLE + single-tap
-// copy, wrap-aware, on the post-#985 painted-offset geometry.
+// On-emulator acceptance for #988/#1045 — the inline URL WASH (now painted by
+// the fork's highlight pass BEHIND the glyphs) + single-tap copy, wrap-aware,
+// on the post-#985 painted-offset geometry.
 //
 // Device-class behaviour a headless test cannot cover: a REAL ~200-char URL
 // soft-wrapped by the live libghostty grid (authoritative rowWrap flags, real
-// cell metrics, real scroll offsets), the bubble layer painting over it, a real
-// tap routed through the gesture router at a bubble rect, and the system
-// clipboard receiving the EXACT wrap-joined URL. Then the #930 regression
-// guard: stream output to scroll the URL away (bubble must be HIDDEN or
-// aligned — never misaligned), scroll back, and tap-copy again at the freshly
-// resolved bubble rect: if the bubble/hit geometry drifted, the tap misses and
-// the clipboard keeps its sentinel.
+// cell metrics, real scroll offsets), the styled highlight bake covering all
+// its rows (#1045: capsule ranges with a background, caps on the true
+// first/last rows), a real tap routed through the gesture router at an anchor
+// rect, and the system clipboard receiving the EXACT wrap-joined URL. Then the
+// #930 regression guard, #1045 edition: stream output to scroll the URL away
+// (the wash is baked in ABSOLUTE rows and painted with the same frame offset
+// as the glyphs, so it scrolls WITH the text — the old hide-while-scrolling
+// special case is gone), scroll back, and tap-copy again at the freshly
+// resolved anchor rect: if paint/hit geometry drifted, the tap misses and the
+// clipboard keeps its sentinel.
 //
 // The URL is delivered via base64 so the typed COMMAND ECHO never contains the
 // URL text — exactly ONE detected anchor carries the payload.
@@ -145,19 +149,28 @@ void main() {
         reason: 'a 200-char URL must wrap across >= 3 rows',
       );
 
-      // Wait for the scroll-settle so the bubble layer is SHOWN, then assert
-      // the bubble paint exists and its geometry spans ALL wrapped rows.
-      Finder bubble() => find.byKey(const Key('ghostty-bubble-paint'));
-      for (var i = 0;
-          i < 30 && (controller.isScrolling || bubble().evaluate().isEmpty);
-          i++) {
+      // #1045: the wash is the controller's styled highlight BAKE — one
+      // capsule range per wrapped row, background from the resolver, caps on
+      // the true first/last rows. Painted by the fork's highlight pass under
+      // the glyphs (paint-order proof lives in the fork suite).
+      List<HighlightRange> washRanges() => [
+        for (final r in controller.highlights)
+          if (r.payload == url && r.background != null) r,
+      ];
+      for (var i = 0; i < 30 && washRanges().isEmpty; i++) {
         await tester.pump(const Duration(milliseconds: 300));
       }
+      final styled = washRanges();
       expect(
-        bubble(),
-        findsOneWidget,
-        reason: 'the bubble layer never painted for the detected anchor',
+        styled.length,
+        anchor.ranges.length,
+        reason: 'every wrapped row must carry a styled wash range',
       );
+      expect(styled.first.capsule, isTrue);
+      expect(styled.first.capsuleStart, isTrue);
+      expect(styled.first.capsuleEnd, isFalse);
+      expect(styled.last.capsuleEnd, isTrue);
+      expect(styled.last.capsuleStart, isFalse);
 
       List<Rect> bubbleRects() => [
         for (final range in anchorOf()!.ranges)
@@ -177,8 +190,8 @@ void main() {
         );
       }
 
-      // Hold with the bubble on screen (~20s) so the host can screenshot it.
-      debugPrint('BUBBLE_HOLD_988 bubble visible, rows=${rects.length} '
+      // Hold with the wash on screen (~20s) so the host can screenshot it.
+      debugPrint('WASH_HOLD_1045 wash visible, rows=${rects.length} '
           '(screenshot now)');
       for (var i = 0; i < 80; i++) {
         await tester.pump(const Duration(milliseconds: 250));
@@ -206,26 +219,16 @@ void main() {
             '${clip == null ? 'null' : '${clip.length} chars'}',
       );
 
-      // #930 regression guard, part 1: stream a screenful+ so the URL scrolls
-      // into scrollback. Mid-stream the bubble must be HIDDEN whenever the
-      // controller reports scrolling (hidden is acceptable — misaligned is
-      // not), and once the anchor is fully off-screen the bubble paints
-      // NOTHING (no stale outline over unrelated text).
+      // #930 regression guard, #1045 edition: stream a screenful+ so the URL
+      // scrolls into scrollback. The wash is baked in ABSOLUTE buffer rows and
+      // the fork maps them through the SAME painted offset as the glyphs each
+      // frame — it scrolls WITH the text (no hide-while-scrolling special
+      // case, no widget-layer geometry to drift). Mid-stream the styled bake
+      // must survive (the anchor is live), and once the anchor is fully
+      // off-screen its rows resolve NO on-screen rects (the painter clips).
       entry.proxy.sendInput(Uint8List.fromList(utf8.encode('seq 1 200\n')));
       for (var i = 0; i < 24; i++) {
         await tester.pump(const Duration(milliseconds: 500));
-        if (!controller.isScrolling) continue;
-        // The hide is driven by the controller's POST-FRAME decoration notify
-        // (#812 rising edge): isScrolling flips during the paint that moved
-        // the offset, and the layer rebuilds one frame later. Grant exactly
-        // that frame, then (still scrolling) the bubble MUST be gone.
-        await tester.pump();
-        if (!controller.isScrolling) continue; // settled in the meantime
-        expect(
-          bubble(),
-          findsNothing,
-          reason: 'mid-scroll the bubble must hide, never drift (#930)',
-        );
       }
       expect(
         anchorOf(),
@@ -233,14 +236,15 @@ void main() {
         reason: 'the URL anchor vanished from the scanned window (#767)',
       );
       expect(
+        washRanges(),
+        isNotEmpty,
+        reason: 'the styled wash bake must survive the scroll (#1045 — the '
+            'fill tracks the grid, it does not unmount)',
+      );
+      expect(
         bubbleRects(),
         isEmpty,
         reason: 'the URL is in scrollback — no on-screen rects expected',
-      );
-      expect(
-        bubble(),
-        findsNothing,
-        reason: 'no stale bubble may remain once its anchor is off-screen',
       );
 
       // Part 2: scroll BACK to the URL and prove paint+hit still agree — the
@@ -260,9 +264,10 @@ void main() {
         reason: 'after scrolling back the anchor must resolve on-screen rects',
       );
       expect(
-        bubble(),
-        findsOneWidget,
-        reason: 'the bubble must re-show on scroll settle',
+        washRanges(),
+        isNotEmpty,
+        reason: 'the styled wash must still cover the anchor after the '
+            'scroll round-trip (#1045)',
       );
 
       // Up to 3 attempts, each RE-RESOLVING the rect first: the earlier tap

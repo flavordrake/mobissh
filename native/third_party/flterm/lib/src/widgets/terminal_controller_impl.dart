@@ -164,6 +164,10 @@ class TerminalControllerImpl extends TerminalController
   List<StructuredMatch> _detectionMatches = const [];
   static const _detectionScanner = StructuredTextScanner();
 
+  /// #1045: the per-match style resolver the detection bake routes through
+  /// (see [TerminalController.detectionHighlightStyleOf]).
+  HighlightStyle? Function(StructuredMatch match)? _detectionHighlightStyleOf;
+
   /// #767: debounce for the cell re-scan. The terminal notifies on every output
   /// write AND every scroll; coalesce a burst into one scan so streaming output
   /// doesn't re-scan every byte. Cancelled on dispose.
@@ -321,6 +325,76 @@ class TerminalControllerImpl extends TerminalController
       if (range.contains(absRow, col)) match = range;
     }
     return match;
+  }
+
+  @override
+  HighlightStyle? Function(StructuredMatch match)?
+      get detectionHighlightStyleOf => _detectionHighlightStyleOf;
+
+  @override
+  set detectionHighlightStyleOf(
+      HighlightStyle? Function(StructuredMatch match)? value) {
+    _detectionHighlightStyleOf = value;
+  }
+
+  @override
+  void restyleDetectionHighlights() {
+    if (_detectionMatches.isEmpty) return;
+    final next = _styledHighlights(_detectionMatches);
+    // Equality-gated so opportunistic callers (every build) never churn
+    // listeners; the setter's `identical` check would notify on a fresh but
+    // equal list.
+    if (next.length == _highlights.length) {
+      var same = true;
+      for (var i = 0; i < next.length; i++) {
+        if (next[i] != _highlights[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    highlights = next;
+  }
+
+  /// #1045: bake [matches] into paintable [HighlightRange]s. With no resolver
+  /// installed this is the pre-#1045 bake (the ranges carry their pattern's
+  /// static style). With [_detectionHighlightStyleOf] set, each match resolves
+  /// per ANCHOR: null suppresses it (paints nothing — the anchor itself stays
+  /// hit-testable via [_detectionMatches]); a style is stamped onto all its
+  /// ranges with capsule caps on the true first/last range. Defensive: an
+  /// app-side resolver throw suppresses that match rather than crashing the
+  /// scan path (a PTY byte must never take the session down).
+  List<HighlightRange> _styledHighlights(List<StructuredMatch> matches) {
+    final resolver = _detectionHighlightStyleOf;
+    if (resolver == null) return [for (final m in matches) ...m.ranges];
+    final out = <HighlightRange>[];
+    for (final m in matches) {
+      HighlightStyle? style;
+      try {
+        style = resolver(m);
+      } catch (_) {
+        style = null;
+      }
+      if (style == null) continue;
+      final ranges = m.ranges;
+      for (var i = 0; i < ranges.length; i++) {
+        final r = ranges[i];
+        out.add(HighlightRange(
+          startRow: r.startRow,
+          startCol: r.startCol,
+          endRow: r.endRow,
+          endCol: r.endCol,
+          background: style.background,
+          underline: style.underline,
+          payload: r.payload,
+          capsule: style.capsule,
+          capsuleStart: style.capsule && i == 0,
+          capsuleEnd: style.capsule && i == ranges.length - 1,
+        ));
+      }
+    }
+    return out;
   }
 
   @override
@@ -661,7 +735,7 @@ class TerminalControllerImpl extends TerminalController
 
     if (!changed) return; // nothing dropped or moved
     _detectionMatches = survivors;
-    highlights = [for (final m in survivors) ...m.ranges];
+    highlights = _styledHighlights(survivors);
     // The anchor set shrank/moved → wake the narrow decoration listener so the
     // decorator re-resolves and the orphaned box vanishes immediately.
     _decorationNotifier.notify();
@@ -861,7 +935,7 @@ class TerminalControllerImpl extends TerminalController
       matches = const [];
     }
     _detectionMatches = matches;
-    highlights = [for (final m in matches) ...m.ranges];
+    highlights = _styledHighlights(matches);
     // #805: the detected anchor set just changed (a settled re-scan), so wake the
     // narrow decoration listener — the decorator layer re-resolves now, not on
     // every mid-scroll redraw notify. (highlights= already fired the general

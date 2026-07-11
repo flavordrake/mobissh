@@ -1,9 +1,10 @@
-// #955/#988 — the shared decorator contract in ghostty_terminal_decorators.dart:
-// the pattern ids and the (empty) URL highlight style. The style stays EMPTY
-// even with the inline bubble RESTORED (#988): the bubble is a WIDGET-layer
-// decorator (GhosttyBubbleLayer, covered in ghostty_bubble_layer_test.dart),
-// never a per-glyph fill; the gutter widget behaviour is covered in
-// ghostty_gutter_layer_test.dart.
+// #955/#988/#1045 — the shared decorator contract in
+// ghostty_terminal_decorators.dart: the pattern ids and the (empty)
+// REGISTRATION highlight style. The registration style stays EMPTY even with
+// the wash painted by the fork (#1045): the fill is resolved per ANCHOR via
+// the controller's detectionHighlightStyleOf seam (ghostty_wash_style_1045_
+// test.dart), never baked into the pattern; the gutter widget behaviour is
+// covered in ghostty_gutter_layer_test.dart.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
@@ -17,10 +18,11 @@ void main() {
     });
   });
 
-  group('#864 URL highlight style', () {
-    test('drops the underline AND the fill (no app ink over the glyphs)', () {
-      // The URL affordances (bubble #988 + gutter mark #955) are widget-layer
-      // decorators; the pattern must paint NO per-glyph fill/underline of its own.
+  group('#864 URL registration style', () {
+    test('drops the underline AND the fill (the resolver seam owns the wash)',
+        () {
+      // #1045: the wash comes from the per-anchor resolver at bake time; a
+      // registration-baked fill could not express verified alpha/suppression.
       expect(kGhosttyUrlHighlightStyle.underline, isNull);
       expect(kGhosttyUrlHighlightStyle.background, isNull);
     });

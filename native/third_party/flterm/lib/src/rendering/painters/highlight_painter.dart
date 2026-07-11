@@ -60,18 +60,34 @@ class HighlightPainter implements TerminalPainter {
           Offset.zero,
         );
 
-        // #767 Slice B: only fill when the range OPTS IN with a background.
-        // This painter draws ABOVE the text layer, so an unconditional fill (the
-        // old `?? defaultBackground`) painted OVER and HID the glyphs — wrong for
-        // a no-background style (e.g. a URL anchor whose decorator is the widget-
-        // layer BUBBLE outline, not a fill). A null background now draws nothing
-        // here (the optional underline branch is unchanged), leaving the glyphs
-        // visible. This painter remains ONE optional built-in decorator, not the
-        // mechanism every pattern is forced through.
+        // #767 Slice B: only fill when the range OPTS IN with a background —
+        // a null background draws nothing (the optional underline branch is
+        // unchanged). This painter remains ONE optional built-in decorator,
+        // not the mechanism every pattern is forced through. (The old comment
+        // here claimed the pass painted above the text; the stack order —
+        // TerminalPainterStack.paint: background → highlight → text — puts
+        // this fill BENEATH the glyph ink, which is exactly why #1045 routes
+        // the detection wash through it: glyphs stay full-contrast on top.)
+        //
+        // #1045: a capsule range draws the ported bubble-wash geometry
+        // ([highlightCapsuleRRect]) — padded/inset, with rounded caps ONLY on
+        // the anchor's true first/last rows (a wrap-continuation edge is cut
+        // square, so a wrapped match reads as ONE object).
         final background = range.background;
         if (background != null) {
           _fillPaint.color = background;
-          canvas.drawRect(rect, _fillPaint);
+          if (range.capsule) {
+            canvas.drawRRect(
+              highlightCapsuleRRect(
+                rect,
+                roundLeft: range.capsuleStart && absRow == topRow,
+                roundRight: range.capsuleEnd && absRow == bottomRow,
+              ),
+              _fillPaint,
+            );
+          } else {
+            canvas.drawRect(rect, _fillPaint);
+          }
         }
 
         final underline = range.underline;

@@ -187,13 +187,17 @@ void main() {
       expect(tokenDetected(), isTrue,
           reason: 'custom anchor never appeared for $token');
 
-      // Bubble wash + gutter chip both render for the custom anchor.
-      final bubbleFinder = find.byKey(const Key('ghostty-bubble-paint'));
-      for (var i = 0; i < 20 && bubbleFinder.evaluate().isEmpty; i++) {
+      // Wash + gutter chip both render for the custom anchor. #1045: the wash
+      // is the controller's styled highlight bake (painted by the fork behind
+      // the glyphs), so assert the custom match carries a styled range.
+      bool customWashBaked() => controller!.highlights.any(
+        (r) => r.payload == token && r.background != null && r.capsule,
+      );
+      for (var i = 0; i < 20 && !customWashBaked(); i++) {
         await tester.pump(const Duration(milliseconds: 250));
       }
-      expect(bubbleFinder, findsOneWidget,
-          reason: 'custom span anchors must paint the bubble wash');
+      expect(customWashBaked(), isTrue,
+          reason: 'custom span anchors must bake the capsule wash');
       bool anyGutterMark() => find
           .byWidgetPredicate(
             (w) => w.key is Key && '${w.key}'.contains('gutter-mark-'),
