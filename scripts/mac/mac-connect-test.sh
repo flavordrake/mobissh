@@ -112,10 +112,19 @@ else
 fi
 
 # 4. Run the integration test (same committed file as Android/emulator).
-log "flutter test $TEST_FILE -d $DEVICE ($(date +%Y%m%dT%H%M%S%z))"
+#    The committed tests default their SSH target to the docker DNS name
+#    `test-sshd:22` — great on fd-dev, unresolvable on the Mac — and read
+#    SMOKE_HOST/SMOKE_PORT dart-defines. Point them at the local hop
+#    (127.0.0.1:2222) so they reach the fixture via the tailnet bridge
+#    (mac-runner verified, 2026-07-11: without this the run fails
+#    `Failed host lookup: 'test-sshd'`).
+SMOKE_HOST="${SMOKE_HOST:-127.0.0.1}"
+SMOKE_PORT="${SMOKE_PORT:-$BRIDGE_PORT}"
+log "flutter test $TEST_FILE -d $DEVICE (SMOKE_HOST=$SMOKE_HOST SMOKE_PORT=$SMOKE_PORT) ($(date +%Y%m%dT%H%M%S%z))"
 cd "$NATIVE_DIR"
 rc=0
-flutter test "$TEST_FILE" -d "$DEVICE" || rc=$?
+flutter test "$TEST_FILE" -d "$DEVICE" \
+  --dart-define=SMOKE_HOST="$SMOKE_HOST" --dart-define=SMOKE_PORT="$SMOKE_PORT" || rc=$?
 if [ $rc -eq 0 ]; then
   log "PASS: $TEST_FILE on $TARGET"
 else

@@ -12,11 +12,14 @@
 	<!-- #577: outbound SSH connections (dartssh2 over dart:io sockets). -->
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<!-- #577: flutter_secure_storage stores the credential vault in the macOS
-	     Keychain. App-sandboxed apps must declare their keychain access group. -->
+	<!-- #577/#1012: dropped for ad-hoc mac-runner builds (an explicit
+	     $(AppIdentifierPrefix) group forces a provisioning profile). Needed for the
+	     `flutter test -d macos` debug build to sign ad-hoc. Restore under a real
+	     DEVELOPMENT_TEAM for a signed release. See Release.entitlements for detail.
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)com.flavordrake.mobissh</string>
 	</array>
+	-->
 </dict>
 </plist>

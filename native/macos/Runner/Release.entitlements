@@ -7,11 +7,18 @@
 	<!-- #577: outbound SSH connections (dartssh2 over dart:io sockets). -->
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<!-- #577: flutter_secure_storage stores the credential vault in the macOS
-	     Keychain. App-sandboxed apps must declare their keychain access group. -->
+	<!-- #577/#1012: an EXPLICIT keychain-access-group with $(AppIdentifierPrefix)
+	     forces an Apple Developer provisioning profile, which is impossible for the
+	     ad-hoc (account-less) mac-runner build. Dropped so `flutter build macos`
+	     signs ad-hoc (identity `-`). flutter_secure_storage still works: without an
+	     explicit group the app gets its DEFAULT per-app keychain access group, so
+	     vault persistence is intact — only cross-target keychain SHARING is lost.
+	     Restore the group below under a real DEVELOPMENT_TEAM for a signed/notarized
+	     release build (mac-runner verified ad-hoc E2E green without it, 2026-07-11).
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)com.flavordrake.mobissh</string>
 	</array>
+	-->
 </dict>
 </plist>
