@@ -28,9 +28,6 @@ export 'src/foundation/anchor_geometry.dart' show AnchorGeometry;
 export 'src/foundation/callbacks.dart' show OnResize;
 export 'src/foundation/cell_metrics.dart' show CellMetrics;
 export 'src/foundation/color_palette.dart' show ColorPalette;
-// #1044: detection hot-path counters — the replay perf suite and bug-report
-// telemetry read these off `TerminalController.detectionScanStats`.
-export 'src/foundation/detection_scan_stats.dart' show DetectionScanStats;
 export 'src/foundation/dynamic_color.dart' show DynamicColor;
 // #1045: the capsule wash geometry is shared with the app's Detection Lab
 // preview so the preview renders EXACTLY the fork's behind-glyph look.

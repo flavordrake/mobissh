@@ -2909,14 +2909,6 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     final controller = _controller;
     final verifier = _pathVerifier;
     if (controller == null || verifier == null) return;
-    // #1044: while the viewport is actively scrolling this fires PER FRAME
-    // (the decoration listenable tracks the painted offset, #993), and when a
-    // relative anchor is live each pass re-reads the WHOLE visible viewport
-    // text over FFI for the cwd ladder (#1036) — a heavy per-frame tax during
-    // a fling. Verification noting is quiesce work: skip mid-scroll; the
-    // settle edge fires this listenable once more and that pass notes
-    // everything (the verifier's TTL cache absorbs the batching).
-    if (controller.isScrolling) return;
     final proxy = _proxy;
     if (proxy == null || proxy.data.state != SshSessionState.connected) return;
     final anchors = controller.anchors;
