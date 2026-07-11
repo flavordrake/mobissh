@@ -2,6 +2,7 @@ export 'foundation/anchor_geometry.dart';
 export 'foundation/callbacks.dart';
 export 'foundation/cell_metrics.dart';
 export 'foundation/color_palette.dart';
+export 'foundation/detection_scan_stats.dart';
 export 'foundation/dynamic_color.dart';
 export 'foundation/highlight_range.dart';
 export 'foundation/input_types.dart';
