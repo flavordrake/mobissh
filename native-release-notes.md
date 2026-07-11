@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+141 (2026-07-11) — highlights settle correctly on live-updating screens
+- **Detection highlights now behave the way you'd expect on a busy screen**: the wash shows behind matched links/paths when the screen is steady, pauses while the screen scrolls OR while content is updating (the gutter chips stay), and repaints in the right place once things settle. Fixes the highlight sticking at a stale spot on a live-repainting TUI. (#1064)
+
 ## v0.1.10+140 (2026-07-11) — highlights hide cleanly during scroll, reappear in place
 - **Detection highlights no longer stick to the screen while you scroll** — the wash hides during an active scroll and reappears locked to its text once you stop, instead of freezing at a stale position. (#1062)
 

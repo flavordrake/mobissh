@@ -41,8 +41,6 @@ import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
 import 'support/connect_helpers.dart';
 
-const _url = 'https://docs.brew.sh/Tap-Trust';
-
 /// Every ON-SCREEN capsule wash cell-run that sits over cells NOT holding (part
 /// of) its payload, mapped at [offset]. Empty == every visible wash is on its
 /// token's glyphs.
