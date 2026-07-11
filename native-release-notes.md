@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+133 (2026-07-11) — HTML files render for real + relative paths detect via your cwd
+- **HTML files open rendered** (not raw source) — relative CSS/images/scripts inside the page load from the remote directory over SFTP; pinch-zoom native; "view source" in the app bar. (#1037)
+- **Relative paths like `specs/001/spec.md` now detect**: the app tracks each session's working directory (shell advisories + your prompt) and only shows the affordance when the resolved file actually exists — tap opens the browser there; the menu copies both the relative and absolute forms. (#1036)
+
 ## v0.1.10+132 (2026-07-10) — define your own detection patterns
 - **Add your own patterns in the Detection lab**: name + regex with live validation and a sample-line preview highlighting what matches. Your patterns get the full treatment — bubbles, gutter chips, tap-copy, colors/intensity, "Not a match" exceptions — live in open sessions, no reconnect. Deleting a pattern tells you it also clears its saved exceptions. (#1031)
 
