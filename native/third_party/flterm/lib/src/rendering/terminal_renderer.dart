@@ -359,6 +359,13 @@ class TerminalRenderBox extends RenderBox {
   /// content ([_syncFrameState] with `_needsFrameSync` set). Monotonic.
   int get debugFrameSyncCount => _debugFrameSyncCount;
 
+  /// #1062 (test seam): whether the LAST paint hid the detection wash because
+  /// the controller was scrolling. Proves the render-layer hide-on-scroll wiring
+  /// (`_renderObserver.isScrolling` → `_paintState.washSuppressed` →
+  /// [HighlightPainter] early-return) without a pixel read.
+  @visibleForTesting
+  bool get debugWashSuppressed => _paintState.washSuppressed;
+
   /// #918 (test seam): inject the settle-timer factory so headless tests fire the
   /// output tick deterministically and assert the idle-no-fire perf guard.
   void debugSetOutputSettleTickFactory(
@@ -946,6 +953,13 @@ class TerminalRenderBox extends RenderBox {
   // Syncs terminal state into paint-ready frame buffers.
   void _syncFrameState() {
     if (_paintState.rows == 0) return;
+
+    // #1062: read the controller's scroll state EACH paint (unconditional — not
+    // gated on terminalDirty) so the HighlightPainter hides the detection wash
+    // while the painted offset is in flight and re-shows it on settle. The
+    // re-show is driven by a controller notify on scroll-settle (which repaints
+    // this box with isScrolling now false).
+    _paintState.washSuppressed = _renderObserver.isScrolling;
 
     final terminalDirty = _needsFrameSync;
     _needsFrameSync = false;

@@ -655,6 +655,13 @@ class TerminalControllerImpl extends TerminalController
     // scroll stays "scrolling" for its whole duration. The decorator re-shows only
     // once the offset holds still for [_scrollSettleMs].
     _markScrolling();
+    // #1062: telemetry — a painted-offset move while a wash is live means the
+    // render layer hid the wash this scroll frame (HighlightPainter early-return
+    // on washSuppressed). Count it so a bug report / test proves the
+    // hide-on-scroll path fired (mirrors [washSuppressedForGrace]).
+    if (_isScrolling && _highlights.isNotEmpty) {
+      _detectionStats.washHiddenForScroll++;
+    }
     // This fires DURING the render box's paint phase, so a synchronous
     // notifyListeners() would rebuild the decorator layer mid-frame (illegal).
     // Defer to a post-frame callback: the decorator then re-resolves its rects
@@ -770,6 +777,16 @@ class TerminalControllerImpl extends TerminalController
       _rescanPendingSettle = false;
       _rescanDetections();
     }
+    // #1062: the WASH hid during the scroll (HighlightPainter early-returns on
+    // washSuppressed, which the render box reads from [isScrolling] each paint).
+    // Now that scrolling stopped, wake the RENDER layer so it repaints with
+    // isScrolling=false and re-shows the wash at the settled (correct) offset.
+    // The quiesce rescan above only notifies when the styled list actually
+    // CHANGES (equality-gated), so a pure fling that revealed no new content
+    // would otherwise leave the wash hidden until the next output frame. Only
+    // when anchors exist — a pattern-less/empty terminal has no wash to re-show
+    // (the #805 battery guard; mirrors [reportPaintedViewportOffset]).
+    if (_detectionMatches.isNotEmpty) notifyListeners();
     _decorationNotifier.notify();
   }
 

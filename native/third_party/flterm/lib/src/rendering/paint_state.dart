@@ -45,6 +45,18 @@ class TerminalPaintState {
 
   var viewportOffset = 0;
 
+  /// #1062: while the painted viewport offset is actively CHANGING (a user
+  /// scroll / fling, or a streaming-output auto-scroll), the detection WASH
+  /// [highlights] is HIDDEN. The render box sets this each paint from the
+  /// controller's `isScrolling`. It exists because during a scroll the
+  /// rescan/relocate that keeps a wash's ABSOLUTE rows aligned to its token is
+  /// DEFERRED (#1044 scan-gating), so a mid-scroll wash can sit over the cells
+  /// where its token USED to be (the owner's "pinned wash"). Rather than chase
+  /// the offset per frame (float/pin, burned twice), the wash follows the #988
+  /// bubble stance: hidden while in flight, re-derived + re-shown on settle at
+  /// the correct offset. The [HighlightPainter] early-returns when this is set.
+  var washSuppressed = false;
+
   var cursor = const Cursor();
   var cursorWide = false;
   var cursorFocused = true;

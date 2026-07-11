@@ -66,6 +66,15 @@ class DetectionScanStats {
   /// (gutter chip + hit-test) — only its wash waits for re-confirmation.
   int washSuppressedForGrace = 0;
 
+  /// #1062: painted-offset reports where the detection WASH was HIDDEN because
+  /// the viewport was actively scrolling (a wash was live AND `isScrolling`).
+  /// Proves the hide-on-scroll path fired: >0 during a scroll/fling over
+  /// detected content, 0 on a stationary screen. The wash's baked absolute rows
+  /// can drift off their tokens mid-scroll (the rescan/relocate is deferred for
+  /// perf, #1044), so rather than paint a pinned/stale band the render layer
+  /// hides it and re-shows on settle at the correct offset (the #988 stance).
+  int washHiddenForScroll = 0;
+
   /// One flat map for telemetry / test assertions.
   Map<String, int> snapshot() => <String, int>{
         'rescans': rescans,
@@ -81,6 +90,7 @@ class DetectionScanStats {
         'matchesReused': matchesReused,
         'notifiesSuppressed': notifiesSuppressed,
         'washSuppressedForGrace': washSuppressedForGrace,
+        'washHiddenForScroll': washHiddenForScroll,
       };
 
   /// Zero every counter (tests bracket a measured phase with this).
@@ -98,5 +108,6 @@ class DetectionScanStats {
     matchesReused = 0;
     notifiesSuppressed = 0;
     washSuppressedForGrace = 0;
+    washHiddenForScroll = 0;
   }
 }

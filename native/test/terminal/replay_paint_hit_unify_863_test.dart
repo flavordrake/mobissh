@@ -234,7 +234,15 @@ void main() {
 
         // Drain the #812 scroll-settle timer that reportPaintedViewportOffset
         // armed, so no timer is pending when the widget tree is torn down.
-        await tester.pump(const Duration(milliseconds: 200));
+        // #1062: settling now re-shows the detection wash via a controller
+        // notify, which repaints and reports the REAL painted offset — under
+        // this SYNTHETIC skew (paintedViewportOffset was forced to a value the
+        // render box never painted) that differs and re-arms one more settle
+        // cycle before it converges (the real painted offset holds still). Pump
+        // a few settle windows so the scroll state comes fully to rest.
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 200));
+        }
       },
     );
   });

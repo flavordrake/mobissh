@@ -248,6 +248,10 @@ abstract class TerminalController extends ChangeNotifier
   /// copy is UNAFFECTED: [matchAt] / [anchors] are independent of the draw, so a
   /// link stays tappable throughout a scroll even while its bubble is hidden.
   /// Defaults to false before the first paint (a static screen draws normally).
+  ///
+  /// #1062: also read by the render box each paint (via [TerminalRenderObserver])
+  /// to HIDE the behind-glyph detection wash while scrolling.
+  @override
   bool get isScrolling;
 
   /// A [Listenable] that fires ONLY when the inputs a widget-layer decorator
