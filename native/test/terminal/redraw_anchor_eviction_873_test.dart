@@ -1,30 +1,25 @@
 @Tags(['ffi'])
 library;
 
-// INVARIANT (#873): a detection anchor (URL/path highlight) must be RE-VALIDATED
-// against the CURRENT grid cells when the grid is redrawn — IMMEDIATELY, not only
-// after the debounced full re-scan. A device report (0.1.10+55, "orphaned file
-// markups look like folder") described STRAY leftover highlight boxes stuck on
-// screen where a path/URL USED to be: the line was redrawn (tmux/app rewrote the
-// row with DIFFERENT text) or scrolled out of the bounded scrollback window, yet
-// the old anchor still painted over text that no longer contained the match.
+// INVARIANT (#873, amended by #1046): a detection anchor (URL/path highlight)
+// must be RE-VALIDATED against the CURRENT grid cells when the grid is
+// redrawn, and a stale anchor must be evicted on a BOUNDED clock that does
+// NOT depend on the debounced rescan. A device report (0.1.10+55, "orphaned
+// file markups look like folder") described STRAY leftover highlight boxes
+// stuck on screen where a path/URL USED to be: discovery of new matches is
+// DEBOUNCED (~120ms) and a streaming TUI keeps cancelling/pushing the timer,
+// so the stale match lingered in `anchors`/`matchAt` for seconds.
 //
-// ROOT: discovery of new matches is DEBOUNCED (~120ms) and a streaming TUI keeps
-// cancelling/pushing the timer, so the stale match lingered in
-// `anchors`/`matchAt` (and thus the painted decorator) for the whole debounce
-// window — often far longer under continuous output. The fix re-validates live
-// anchors against the current cells SYNCHRONOUSLY on each redraw and drops any
-// whose cell-run no longer carries the match, so eviction never waits on the
-// debounce. (The full bounded-window re-scan still runs, debounced, to DISCOVER
-// new matches.)
-//
-// This facet is headless-reproducible (unlike the #868 during-scroll paint-lag
-// that needs a recording): the KEY assertion reads `anchors` BEFORE the debounce
-// fires (no settle) — against pre-fix code the stale anchor is still present.
-//
-// The test drives a REAL flterm TerminalController (real libghostty VT parser,
-// ffi-tagged): detect a URL/path, then redraw the row in place with non-matching
-// text (or scroll it past the bounded window), and assert the anchor is GONE.
+// #1046 AMENDMENT: eviction is no longer INSTANTANEOUS — an in-place TUI
+// repaint routinely leaves a notify observable between a row's erase and its
+// redraw, and instant eviction + debounced rediscovery was the flickering
+// gutter chip (vanish→reappear 0.2–1.4s in the owner byte-trace). A missed
+// anchor now rides a bounded MISS GRACE (~350ms span / ~1.5s block) during
+// which it is retried (validate/relocate) on every notify; if the payload
+// stays gone the grace timer evicts it — INDEPENDENT of the debounce, so the
+// #873 orphan stays bounded even under a stream that pushes the debounce out
+// forever. These tests pin exactly that: eviction lands within the grace
+// bound WHILE a stream keeps the debounce from ever firing.
 
 import 'dart:typed_data';
 
@@ -37,12 +32,6 @@ void main() {
   // Detection re-scan is debounced (~120ms); settle past it before reading.
   Future<void> settle() =>
       Future<void>.delayed(const Duration(milliseconds: 250));
-
-  // A short tick that pumps async microtasks/timers but stays WELL UNDER the
-  // ~120ms detection debounce — so a stale anchor only survives if the
-  // SYNCHRONOUS re-validation (#873) failed to drop it.
-  Future<void> tick() =>
-      Future<void>.delayed(const Duration(milliseconds: 10));
 
   Uint8List bytes(String s) => Uint8List.fromList(s.codeUnits);
 
@@ -64,10 +53,25 @@ void main() {
     return controller;
   }
 
+  // Keep the detection debounce PERPETUALLY pushed out (chunks < 120ms apart,
+  // rewriting an unrelated bottom row) while real time crosses the ~350ms miss
+  // grace — the #873 streaming-TUI shape. Eviction observed during this stream
+  // proves it is grace-driven, not debounce-driven.
+  Future<void> streamPastGrace(TerminalController controller,
+      {int rows = 24}) async {
+    for (var i = 0; i < 8; i++) {
+      controller.write(
+        bytes('\x1b[$rows;1H\x1b[2Kstream tick $i'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+    }
+  }
+
   group('#873 — anchors re-validated against current cells on redraw', () {
     test(
-      'a URL row REDRAWN in place is evicted IMMEDIATELY — BEFORE the debounced '
-      'rescan fires (the orphaned-box window: this is the #873 RED assertion)',
+      'a URL row REDRAWN in place is evicted within the bounded miss grace — '
+      'while a stream keeps the debounced rescan from EVER firing (the #873 '
+      'orphaned-box bound, #1046-amended)',
       () async {
         final controller = newController();
         addTearDown(controller.dispose);
@@ -78,16 +82,17 @@ void main() {
         expect(controller.anchors.where((a) => a.payload == url), hasLength(1),
             reason: 'precondition: the URL is detected before the redraw');
 
-        // Redraw the URL's row in place with non-matching prose, then check
-        // WITHOUT settling — the debounce has NOT fired. Pre-fix, the stale
-        // anchor still paints the orphaned box for the whole debounce window.
+        // Redraw the URL's row in place with non-matching prose, then stream
+        // sub-debounce chunks for ~720ms: the debounce never fires, real time
+        // crosses the ~350ms grace — the orphan must be gone.
         controller.write(redrawRow(3, 'just some prose with no link here'));
-        await tick();
+        await streamPastGrace(controller);
 
         expect(controller.anchors.where((a) => a.payload == url), isEmpty,
-            reason: 'the redrawn row no longer holds the URL, so its anchor must '
-                'be evicted synchronously — a lingering anchor is the orphaned '
-                'box (#873)');
+            reason: 'the redrawn row no longer holds the URL: its anchor must '
+                'be evicted within the miss grace even though the stream '
+                'keeps pushing the debounce out — a longer-lived anchor is '
+                'the #873 orphaned box');
 
         // matchAt at the redrawn viewport row must also resolve nothing for it.
         final viewRow = 3 - 1 - controller.scrollbar.offset;
@@ -100,7 +105,7 @@ void main() {
     );
 
     test(
-      'a PATH row REDRAWN in place is evicted immediately (pre-debounce)',
+      'a PATH row REDRAWN in place is evicted within the miss grace',
       () async {
         final controller = newController();
         addTearDown(controller.dispose);
@@ -113,10 +118,11 @@ void main() {
             reason: 'precondition: the path is detected');
 
         controller.write(redrawRow(2, 'plain words only no path'));
-        await tick();
+        await streamPastGrace(controller);
 
         expect(controller.anchors.where((a) => a.payload == path), isEmpty,
-            reason: 'the redrawn row no longer holds the path; anchor evicted');
+            reason: 'the redrawn row no longer holds the path; anchor evicted '
+                'within the grace bound');
       },
     );
 
@@ -137,10 +143,10 @@ void main() {
 
         // Redraw only the FIRST URL's row (viewport row 1).
         controller.write(redrawRow(1, 'no link now'));
-        await tick();
+        await streamPastGrace(controller);
 
         expect(controller.anchors.where((a) => a.payload == url), isEmpty,
-            reason: 'the redrawn URL is evicted');
+            reason: 'the redrawn URL is evicted (within the grace bound)');
         expect(controller.anchors.where((a) => a.payload == otherUrl),
             hasLength(1),
             reason: 'the untouched URL stays detected — eviction is targeted');
@@ -162,7 +168,7 @@ void main() {
         // must survive — the prune validates content, it does not blanket-clear
         // on every notify.
         controller.write(redrawRow(1, url));
-        await tick();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
 
         expect(controller.anchors.where((a) => a.payload == url), hasLength(1),
             reason: 'a repaint that still carries the URL keeps its anchor');
@@ -170,11 +176,51 @@ void main() {
     );
 
     test(
-      'a URL pushed PAST the bounded scrollback window is evicted (no anchor '
-      'lingers for content the scan can no longer see)',
+      'a row MOVED by an in-place repaint keeps its anchor at the NEW rows in '
+      'the same notify — no vanish/reappear gap (#1046 atomic relocate)',
       () async {
-        // Small grid; push the URL well past the 200-row bounded window while the
-        // viewport stays at the live tail (no scroll-up).
+        final controller = newController();
+        addTearDown(controller.dispose);
+
+        controller.write(bytes('above\r\n'));
+        controller.write(bytes('$url\r\n'));
+        await settle();
+        expect(controller.anchors.where((a) => a.payload == url), hasLength(1));
+        final oldTop = controller.anchors
+            .firstWhere((a) => a.payload == url)
+            .ranges
+            .first
+            .topRow;
+
+        // One chunk: erase the URL's row AND redraw the URL two rows lower —
+        // the TUI line-move shape. The anchor must be present at the new rows
+        // IMMEDIATELY after the write (no debounce wait).
+        controller.write(
+          bytes('\x1b[2;1H\x1b[2Kmoved away\x1b[4;1H\x1b[2K$url'),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        final anchorsNow =
+            controller.anchors.where((a) => a.payload == url).toList();
+        expect(anchorsNow, hasLength(1),
+            reason: 'the moved URL must stay anchored with NO gap (#1046)');
+        expect(anchorsNow.first.ranges.first.topRow, isNot(oldTop),
+            reason: 'and at its NEW rows (relocated, not stale)');
+      },
+    );
+
+    test(
+      'a URL pushed PAST the bounded scan coverage is evicted (no anchor '
+      'lingers for content the scan can no longer vouch for)',
+      () async {
+        // Small grid; push the URL well past the scan window while the
+        // viewport stays at the live tail (no scroll-up). The URL's last scan
+        // saw it as a GRID row (mutable), so the one-burst flood dirties the
+        // whole coverage — the settled rescan covers only the new window and
+        // the out-of-coverage anchor is dropped. (#1044 note: had the URL
+        // been scanned while already IN scrollback — the scrolled-through
+        // case — the immutable-row cache would legitimately retain it; see
+        // detection_scan_cache_1044_test.dart in the fork.)
         final controller = newController(rows: 6, cols: 40);
         addTearDown(controller.dispose);
 
@@ -189,10 +235,13 @@ void main() {
         }
         controller.write(bytes(filler.toString()));
         await settle();
+        // Past the grace-sized dust window too (the drop is a coverage trim,
+        // not a grace eviction, but keep the read deterministic).
+        await Future<void>.delayed(const Duration(milliseconds: 500));
 
         expect(controller.anchors.where((a) => a.payload == url), isEmpty,
-            reason: 'the URL scrolled past the bounded scan window; its anchor '
-                'must be evicted, not linger from a prior scan');
+            reason: 'the URL scrolled past the scanned coverage; its anchor '
+                'must not linger');
       },
     );
   });
