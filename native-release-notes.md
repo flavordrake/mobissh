@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+136 (2026-07-11) — wash behind the text + SSH port forwarding
+- **Detection washes now paint BEHIND the glyphs** — text stays full brightness; same capsule shape, and the wash now scrolls with the text. (#1045)
+- **Local port forwarding (ssh -L)**: session menu → Port forwards — add/remove tunnels on a live session, star one to arm it automatically on connect (and it re-arms itself after a reconnect). Listens on 127.0.0.1 only. (#1047)
+
 ## v0.1.10+135 (2026-07-11) — command copy is honest about wraps
 - **Wrapped commands join more completely** (word-wrapped continuations now included, with the wrap's space restored), and **when a command can't be fully captured the chip says so** — ellipsis mark on the chip and a "Copied — may be incomplete" toast instead of a silent partial copy. Your report's exact case is the test fixture. (#1042)
 
