@@ -129,6 +129,15 @@ final class TextPattern {
   /// their final occurrence.
   final int? rangeGroup;
 
+  /// Non-null iff this pattern is a COMMAND source ([TextPattern.command],
+  /// #998 B) — the scorer lexicon the factory captured. #1042 uses it two
+  /// ways: the scanner's IN-BLOCK continuation join re-runs the establishment
+  /// probe (strong prompt + scored body) on the accumulating logical line,
+  /// and only command matches are evaluated for [StructuredMatch.maybeIncomplete].
+  /// Null for every non-command pattern (URL/path/OSC-8/custom) — zero
+  /// behavior change there.
+  final Set<String>? commandLexicon;
+
   const TextPattern({
     required this.id,
     required this.regex,
@@ -138,6 +147,7 @@ final class TextPattern {
     this.isOsc8Source = false,
     this.tier = TextTier.span,
     this.rangeGroup,
+    this.commandLexicon,
   });
 
   /// The built-in URL pattern (#726/#764 moved in-fork, #767).
@@ -278,6 +288,9 @@ final class TextPattern {
       tier: TextTier.block,
       rangeGroup: 1,
       normalize: (raw) => _extractCommand(raw, lexiconSet),
+      // #1042: marks this pattern as the command source — enables the
+      // scanner's in-block continuation join + maybeIncomplete marking.
+      commandLexicon: lexiconSet,
     );
   }
 
@@ -569,6 +582,13 @@ final RegExp _kCommandPattern =
 /// one). Distinguishes the two score thresholds in [_extractCommand].
 final RegExp _kStrongPromptProbe = RegExp('^(?:$_kStrongPromptAlt)');
 
+/// Whether a row's head (read from its content start) is ANY prompt shape —
+/// strong or weak (#1042). A fresh prompt row is a SIBLING entry: it ends a
+/// command block for both the in-block continuation join and the
+/// maybeIncomplete marking (a successor prompt means the block legitimately
+/// finished, not that its wrap was lost).
+final RegExp _kAnyPromptProbe = RegExp('^(?:$_kStrongPromptAlt|$_kWeakPromptAlt)');
+
 /// A leading `VAR=value` shell assignment token (+1, counted once).
 final RegExp _kAssignmentToken = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=\S*$');
 
@@ -646,11 +666,23 @@ final class StructuredMatch {
   /// covered by both tiers. Defaults to [TextTier.span].
   final TextTier tier;
 
+  /// #1042: true when this COMMAND match's payload is LIKELY TRUNCATED — its
+  /// last row's successor was REJECTED as a wrap continuation while still
+  /// looking like block content (non-blank, not a fresh prompt, not a new
+  /// block) AND either the last row's content reaches the wrap boundary
+  /// (the #1007 corroborated-wrapCol / grid-edge machinery) or the successor
+  /// sits DEEPER than the block indent (the Claude-TUI continuation band —
+  /// the owner-trace shape). The join itself stays boundary-gated (precision
+  /// stance); this flag is the honesty valve the widget layer surfaces
+  /// ("Copied — may be incomplete"). Always false for non-command patterns.
+  final bool maybeIncomplete;
+
   const StructuredMatch({
     required this.patternId,
     required this.ranges,
     required this.payload,
     this.tier = TextTier.span,
+    this.maybeIncomplete = false,
   });
 
   /// Returns true if the cell at ABSOLUTE ([row], [col]) falls in any range.
@@ -691,17 +723,24 @@ final class StructuredAnchor {
   /// a soft-wrapped match spans (a single-row match has exactly one).
   final List<HighlightRange> ranges;
 
+  /// #1042: whether the underlying command match's payload is LIKELY
+  /// TRUNCATED (see [StructuredMatch.maybeIncomplete]) — the widget layer
+  /// renders the incomplete chip variant / hedged copy toast off this.
+  final bool maybeIncomplete;
+
   const StructuredAnchor({
     required this.patternId,
     required this.payload,
     required this.ranges,
+    this.maybeIncomplete = false,
   });
 
   /// Builds an anchor from a detected [StructuredMatch].
   StructuredAnchor.fromMatch(StructuredMatch match)
     : patternId = match.patternId,
       payload = match.payload,
-      ranges = match.ranges;
+      ranges = match.ranges,
+      maybeIncomplete = match.maybeIncomplete;
 
   /// Returns true if the cell at ABSOLUTE ([row], [col]) falls in any range.
   bool contains(int row, int col) {
@@ -830,7 +869,21 @@ class StructuredTextScanner {
 
     if (regexPatterns.isEmpty) return matches;
 
-    final lines = _assembleLines(reader, rows, cols);
+    // #1042: the wrap-column inference is shared by the line assembly's join
+    // gates AND the maybeIncomplete boundary test below, so it is computed
+    // once here. The command lexicon (non-null only when a TextPattern.command
+    // is registered) arms the in-block continuation join inside the assembly.
+    final (wrapCol, wrapColCount) = _inferWrapCol(reader, rows, cols);
+    Set<String>? commandLexicon;
+    for (final p in regexPatterns) {
+      if (p.commandLexicon != null) {
+        commandLexicon = p.commandLexicon;
+        break;
+      }
+    }
+
+    final lines = _assembleLines(
+        reader, rows, cols, wrapCol, wrapColCount, commandLexicon);
     for (final line in lines) {
       final text = line.text;
       if (text.isEmpty) continue;
@@ -892,12 +945,19 @@ class StructuredTextScanner {
             payload,
           );
           if (ranges.isEmpty) continue;
+          // #1042: a COMMAND match whose successor row was rejected as a
+          // continuation while still looking like block content is LIKELY
+          // TRUNCATED — mark it so the widget layer can say so.
+          final maybeIncomplete = pattern.commandLexicon != null &&
+              _commandMaybeIncomplete(
+                  reader, line, cols, wrapCol, wrapColCount);
           matches.add(
             StructuredMatch(
               patternId: pattern.id,
               ranges: ranges,
               payload: payload,
               tier: pattern.tier,
+              maybeIncomplete: maybeIncomplete,
             ),
           );
         }
@@ -997,16 +1057,23 @@ class StructuredTextScanner {
   /// AUTHORITATIVE [CellReader.rowWrap] flag (never guessed from width). A
   /// blank cell becomes a single space so column positions stay aligned and a
   /// URL never silently swallows a gap.
-  List<_LogicalLine> _assembleLines(CellReader reader, int rows, int cols) {
+  /// [wrapCol]/[wrapColCount] are [_inferWrapCol]'s result, hoisted to the
+  /// caller (#1042) so the maybeIncomplete boundary test shares the exact
+  /// inference the join gates use: the dominant content-end among long rows —
+  /// an app (Claude TUI, gh, a pager) often wraps NARROWER than the terminal
+  /// and PADS the rest of the row with blanks, so joining must key off where
+  /// wrapped rows ACTUALLY end, not the terminal edge. [commandLexicon]
+  /// (non-null iff a [TextPattern.command] is registered) arms the #1042
+  /// in-block continuation join.
+  List<_LogicalLine> _assembleLines(
+    CellReader reader,
+    int rows,
+    int cols,
+    int wrapCol,
+    int wrapColCount,
+    Set<String>? commandLexicon,
+  ) {
     final base = reader.baseAbsRow;
-    // Infer the app's WRAP COLUMN — the dominant content-end among long rows. An
-    // app (Claude TUI, gh, a pager) often wraps NARROWER than the terminal and
-    // PADS the rest of the row with blanks, so the terminal's last cell is empty
-    // even on a wrapped row (the device bug: a plain-text URL wrapping at the
-    // CLI's ~53-col content width in a 55-col terminal only bubbled/copied its
-    // first row). Joining must key off where wrapped rows ACTUALLY end, not the
-    // terminal edge.
-    final (wrapCol, wrapColCount) = _inferWrapCol(reader, rows, cols);
     final lines = <_LogicalLine>[];
     var r = 0;
     while (r < rows) {
@@ -1085,24 +1152,59 @@ class StructuredTextScanner {
           final content = reader.cellContent(r, c);
           glyphs.add(_Glyph(content.isEmpty ? ' ' : content, absRow, c));
         }
-        if (r < rows - 1 &&
-            _continuesOnto(reader, r, cols, wrapCol, wrapColCount, blockIndent,
-                hangIndent, hangHeadEnd)) {
-          final widthJoin = !reader.rowWrap(r);
-          // #998 B: a width-join whose continuation starts DEEPER than the
-          // block indent is the #996 hanging shape — record the hanging
-          // indent + the head row's content-end so subsequent rows of this
-          // block can continue at the same discipline (see _continuesOnto).
-          if (widthJoin && hangIndent < 0) {
-            final nextStart = _contentStart(reader, r + 1, cols);
-            if (nextStart > blockIndent) {
-              hangIndent = nextStart;
-              hangHeadEnd = _contentEnd(reader, r, cols);
-            }
+        if (r < rows - 1) {
+          var continues = _continuesOnto(reader, r, cols, wrapCol,
+              wrapColCount, blockIndent, hangIndent, hangHeadEnd);
+          // #1042: IN-BLOCK continuation join — an ESTABLISHED command block
+          // (the accumulated line already carries a STRONG prompt + scored
+          // body, the #998 B/#1013 machinery) whose head row reaches the wrap
+          // boundary continues onto a non-blank, non-prompt, non-new-block
+          // successor even without URL-token evidence. Evaluated only AFTER
+          // every pre-existing rule rejected, so URL/hang joins keep their
+          // exact behavior (and their mid-token spaceless gluing).
+          var commandJoin = false;
+          if (!continues && commandLexicon != null) {
+            commandJoin = _commandBlockContinues(reader, r, cols, wrapCol,
+                wrapColCount, glyphs, commandLexicon);
+            continues = commandJoin;
           }
-          viaWidthJoin = widthJoin;
-          r++;
-          continue;
+          if (continues) {
+            final widthJoin = !reader.rowWrap(r);
+            // #998 B: a width-join whose continuation starts DEEPER than the
+            // block indent is the #996 hanging shape — record the hanging
+            // indent + the head row's content-end so subsequent rows of this
+            // block can continue at the same discipline (see _continuesOnto).
+            if (widthJoin && hangIndent < 0) {
+              final nextStart = _contentStart(reader, r + 1, cols);
+              if (nextStart > blockIndent) {
+                hangIndent = nextStart;
+                hangHeadEnd = _contentEnd(reader, r, cols);
+              }
+            }
+            if (commandJoin) {
+              // #1042: a command seam whose head ends SHORT of the grid edge
+              // is a TUI WORD wrap — the breaking space was consumed by the
+              // wrap (the 07-02 wrangler trace: `|| echo` / `"wrangler: NOT
+              // on PATH"` with no space cell anywhere), so joining spaceless
+              // would corrupt the paste (`echo"wrangler…`). Reinsert ONE
+              // space, tagged to the head row's first padding cell so range
+              // mapping stays cell-true. A head ending EXACTLY at the grid
+              // edge is a mid-token hard break (every char preserved) and
+              // glues spaceless, like the URL joins. Residual accepted risk:
+              // a mid-token TUI break at a content width SHORT of the grid
+              // edge (no URL evidence, so no pre-#1042 rule claimed it) gains
+              // a wrong internal space — still strictly better than the
+              // silent first-row truncation it replaces, and the marking
+              // rules keep the copy honest.
+              final end = _contentEnd(reader, r, cols);
+              if (end < cols) {
+                glyphs.add(_Glyph(' ', absRow, end));
+              }
+            }
+            viaWidthJoin = widthJoin;
+            r++;
+            continue;
+          }
         }
         break;
       }
@@ -1271,6 +1373,111 @@ class StructuredTextScanner {
       return false;
     }
     return true;
+  }
+
+  /// #1042 in-block continuation: whether an ESTABLISHED command block whose
+  /// accumulated line is [glyphs] continues from local row [r] onto row [r]+1.
+  ///
+  /// Runs ONLY after every pre-existing join rule rejected the seam, and only
+  /// when a [TextPattern.command] is registered ([lexicon] non-null at the
+  /// caller). Bounded liberality (#1042): the block is already a
+  /// STRONG-prompt command with a scored body (re-probed on the accumulated
+  /// text — weak `$`/`❯` prompts never get the liberal join), the head row's
+  /// content REACHES the wrap boundary ([_reachesWrapBoundary] — the #1007
+  /// corroborated-wrapCol / grid-edge machinery, reused), and the successor
+  /// does not END the block: a blank row, a fresh prompt row (a sibling
+  /// entry), or a new-block start (bullet / fresh scheme) all stop it. The
+  /// successor's INDENT is deliberately unconstrained — a Claude-TUI
+  /// tool-result wraps its command into a deeper `⎿` band the same-margin
+  /// rule can never accept (the 07-02 wrangler trace), and the establishment
+  /// + boundary gates carry the precision instead.
+  bool _commandBlockContinues(
+    CellReader reader,
+    int r,
+    int cols,
+    int wrapCol,
+    int wrapColCount,
+    List<_Glyph> glyphs,
+    Set<String> lexicon,
+  ) {
+    if (glyphs.isEmpty) return false;
+    final end = _contentEnd(reader, r, cols);
+    if (!_reachesWrapBoundary(end, cols, wrapCol, wrapColCount)) return false;
+    final next = r + 1;
+    final nextStart = _contentStart(reader, next, cols);
+    if (nextStart >= cols) return false; // blank row: the block ended
+    if (_startsNewBlock(reader, next, cols, nextStart)) return false;
+    if (_isPromptRow(reader, next, cols, nextStart)) return false;
+    // Establishment LAST (the costliest gate): the accumulated line must
+    // already BE a strong-prompt command per the #998 B scorer.
+    final text = _LogicalLine(glyphs).text;
+    return _kStrongPromptProbe.hasMatch(text) &&
+        _extractCommand(text, lexicon) != null;
+  }
+
+  /// #1042: whether content ending at column [end] reaches the wrap boundary.
+  ///
+  /// Reuses the #1007 machinery: the inferred [wrapCol] is trusted when
+  /// CORROBORATED (>= 2 long rows end there) or itself at/near the grid edge,
+  /// and the reach test keeps the 1-col wide-char/pad slack. Independently,
+  /// content within 2 cols of the GRID edge reaches it — the fixed right
+  /// margin a TUI reserves (the #1007 doc's 53-in-55 Claude-TUI capture; the
+  /// 07-02 wrangler trace word-wraps at 56-in-58). Do NOT widen the 2-col
+  /// tolerance without a real captured trace.
+  bool _reachesWrapBoundary(int end, int cols, int wrapCol, int wrapColCount) {
+    if (wrapCol > 0 &&
+        (wrapColCount >= 2 || wrapCol >= cols - 2) &&
+        end >= wrapCol - 1) {
+      return true;
+    }
+    return end >= cols - 2;
+  }
+
+  /// #1042: whether local [row], read from its content start [from], begins
+  /// with ANY prompt shape (strong or weak — [_kAnyPromptProbe]). 40 head
+  /// chars cover the longest realistic `user@host:path$ ` prompt.
+  bool _isPromptRow(CellReader reader, int row, int cols, int from) =>
+      _kAnyPromptProbe.hasMatch(_rowHead(reader, row, cols, from, 40));
+
+  /// #1042: whether a COMMAND match on [line] is LIKELY TRUNCATED — the
+  /// honesty-valve signal behind [StructuredMatch.maybeIncomplete].
+  ///
+  /// True iff the line's last row has a successor that was REJECTED as a
+  /// continuation (it follows an assembled line, so every join rule already
+  /// declined it) while still looking like block content — non-blank, not a
+  /// fresh prompt row, not a new-block start — AND the evidence points at a
+  /// lost wrap:
+  ///   * the last row's content reaches the wrap boundary
+  ///     ([_reachesWrapBoundary]) — it filled up, yet nothing joined (e.g. a
+  ///     WEAK-prompt command, which never gets the #1042 in-block join); OR
+  ///   * the successor sits DEEPER than the block indent — the Claude-TUI
+  ///     continuation band (the owner trace: `  ⎿  $ echo …` whose
+  ///     genuinely multi-line command continues at the deeper `ssh pve` band
+  ///     that no boundary evidence may join).
+  /// Everything else stays silent: a blank row, a fresh prompt, a new block,
+  /// or a same-indent short row (a bash command followed by its output) are
+  /// legitimate block ends, and an absent successor (window edge) proves
+  /// nothing. Accepted hedge: a complete `⎿  $ cmd` whose OUTPUT paints in
+  /// the same deeper band reads as "MAY be incomplete" — a hedge glyph/toast,
+  /// never a modal, and strictly better than a silent partial copy.
+  bool _commandMaybeIncomplete(
+    CellReader reader,
+    _LogicalLine line,
+    int cols,
+    int wrapCol,
+    int wrapColCount,
+  ) {
+    if (line.glyphs.isEmpty) return false;
+    final lastLocal = line.glyphs.last.absRow - reader.baseAbsRow;
+    final next = lastLocal + 1;
+    if (next >= reader.rows) return false; // successor unknown → stay silent
+    final nextStart = _contentStart(reader, next, cols);
+    if (nextStart >= cols) return false; // blank row: legitimate end
+    if (_startsNewBlock(reader, next, cols, nextStart)) return false;
+    if (_isPromptRow(reader, next, cols, nextStart)) return false;
+    final end = _contentEnd(reader, lastLocal, cols);
+    if (_reachesWrapBoundary(end, cols, wrapCol, wrapColCount)) return true;
+    return nextStart > line.glyphs.first.col;
   }
 
   /// Whether local [row]'s LAST whitespace-delimited token looks like a split
