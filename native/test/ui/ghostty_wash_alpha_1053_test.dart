@@ -1,0 +1,123 @@
+// #1053 (P0 regression) — the behind-glyphs wash must be OBVIOUSLY visible.
+// Since #1045 the fill composites UNDER full-brightness glyphs over a near-black
+// terminal cell background, so the old over-glyphs alphas (0.26/0.42) were
+// near-invisible. These assert the re-tuned alphas clear a visibility floor on
+// BOTH themes, keep detected < verified with a clear margin, and that the
+// Detection Lab intensity multiplier still composes on top of the new bases.
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/storage/detection_styles_store.dart';
+import 'package:mobissh/ui/detection_style_resolver.dart';
+import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
+
+/// The alpha below which a translucent green wash over a near-black terminal
+/// background reads as "near-invisible" (the +136/#1045 regression state).
+const double _kVisibilityFloor = 0.45;
+
+/// The minimum margin verified must keep above detected so the two states stay
+/// visually distinct at phone density.
+const double _kMinSeparation = 0.10;
+
+void main() {
+  group('#1053 behind-glyphs wash alphas clear the visibility floor', () {
+    test('every wash alpha is at or above the visibility floor (both themes)',
+        () {
+      expect(kGhosttyBubbleDetectedWashAlphaOnDark,
+          greaterThanOrEqualTo(_kVisibilityFloor));
+      expect(kGhosttyBubbleDetectedWashAlphaOnLight,
+          greaterThanOrEqualTo(_kVisibilityFloor));
+      expect(kGhosttyBubbleVerifiedWashAlphaOnDark,
+          greaterThanOrEqualTo(_kVisibilityFloor));
+      expect(kGhosttyBubbleVerifiedWashAlphaOnLight,
+          greaterThanOrEqualTo(_kVisibilityFloor));
+    });
+
+    test('detected stays clearly below verified on both themes', () {
+      expect(
+        kGhosttyBubbleVerifiedWashAlphaOnDark -
+            kGhosttyBubbleDetectedWashAlphaOnDark,
+        greaterThanOrEqualTo(_kMinSeparation),
+      );
+      expect(
+        kGhosttyBubbleVerifiedWashAlphaOnLight -
+            kGhosttyBubbleDetectedWashAlphaOnLight,
+        greaterThanOrEqualTo(_kMinSeparation),
+      );
+    });
+
+    test('all alphas stay within a sane [floor, 1.0] range', () {
+      for (final a in [
+        kGhosttyBubbleDetectedWashAlphaOnDark,
+        kGhosttyBubbleDetectedWashAlphaOnLight,
+        kGhosttyBubbleVerifiedWashAlphaOnDark,
+        kGhosttyBubbleVerifiedWashAlphaOnLight,
+      ]) {
+        expect(a, lessThanOrEqualTo(1.0));
+        expect(a, greaterThanOrEqualTo(_kVisibilityFloor));
+      }
+    });
+  });
+
+  group('#1053 ghosttyBubbleWashColor carries the re-tuned alphas', () {
+    const accent = Color(0xFF5B9BD5);
+
+    test('the composed wash alpha matches the re-tuned constant per state', () {
+      expect(
+        ghosttyBubbleWashColor(accent,
+                verified: false, backgroundBrightness: Brightness.dark)
+            .a,
+        closeTo(kGhosttyBubbleDetectedWashAlphaOnDark, 1e-9),
+      );
+      expect(
+        ghosttyBubbleWashColor(accent,
+                verified: true, backgroundBrightness: Brightness.dark)
+            .a,
+        closeTo(kGhosttyBubbleVerifiedWashAlphaOnDark, 1e-9),
+      );
+      expect(
+        ghosttyBubbleWashColor(accent,
+                verified: false, backgroundBrightness: Brightness.light)
+            .a,
+        closeTo(kGhosttyBubbleDetectedWashAlphaOnLight, 1e-9),
+      );
+      expect(
+        ghosttyBubbleWashColor(accent,
+                verified: true, backgroundBrightness: Brightness.light)
+            .a,
+        closeTo(kGhosttyBubbleVerifiedWashAlphaOnLight, 1e-9),
+      );
+    });
+  });
+
+  group('#1053 the Detection Lab intensity band still multiplies the new base',
+      () {
+    const accent = Color(0xFF5B9BD5);
+
+    test('a mid-band multiplier scales the raised detected base', () {
+      const resolver = DetectionStyleResolver(
+        styles: DetectionStyles.empty,
+        accent: accent,
+        backgroundBrightness: Brightness.dark,
+      );
+      final base = resolver.resolveStyle('url', verified: false).washColor.a;
+      // Empty store → base is the shipped constant, unmultiplied.
+      expect(base, closeTo(kGhosttyBubbleDetectedWashAlphaOnDark, 1e-9));
+
+      final scaled = DetectionStyleResolver(
+        styles: const DetectionStyles({
+          'path': DetectionPatternStyle(inactiveIntensity: 1.2),
+        }),
+        accent: accent,
+        backgroundBrightness: Brightness.dark,
+      ).resolveStyle('path', verified: false).washColor.a;
+      expect(
+        scaled,
+        closeTo(
+          (kGhosttyBubbleDetectedWashAlphaOnDark * 1.2).clamp(0.0, 1.0),
+          0.01,
+        ),
+      );
+    });
+  });
+}

@@ -124,25 +124,30 @@ bool ghosttyPathRequiresVerification(String payload) {
 }
 
 /// #1000 wash alphas — the wash is a translucent background FILL (no stroke),
-/// tuned per terminal-BACKGROUND luminance: a dark terminal needs less pigment
-/// for the wash to register than a light one (where ambient screen brightness
-/// washes out faint tints). Detected < verified by a clearly-visible margin at
-/// phone density, and every value stays inside the readable band (glyphs
-/// legible in the wash; the wash still distinct from flterm's ~0x33-alpha
-/// native selection fill). #1045: the glyphs now paint OVER the wash, so
-/// "legible" is by construction — the band still governs how loud the wash
-/// itself reads.
-const double kGhosttyBubbleDetectedWashAlphaOnDark = 0.26;
+/// tuned per terminal-BACKGROUND luminance. #1053 (P0 regression): these were
+/// tuned LOW for the OLD over-glyphs regime, where any higher value dimmed the
+/// text. Since #1045 the glyphs paint OVER the wash (full brightness by
+/// construction), so the fill composites UNDER the text over the near-black
+/// terminal cell background — at 0.26 the green was near-invisible against
+/// black. The behind-glyphs regime WANTS a much stronger fill: a louder wash no
+/// longer costs glyph contrast, so the alphas are re-tuned UP until the
+/// highlight obviously reads on both dark AND light terminals. Detected stays a
+/// clear-but-secondary fill; verified is clearly stronger (detected < verified
+/// by a visible margin). The Detection Lab intensity band still multiplies
+/// these via `resolveStyle`, clamped to [0,1] — at the top of the band a
+/// verified wash saturates to opaque, which is fine now that glyphs are on top.
+const double kGhosttyBubbleDetectedWashAlphaOnDark = 0.55;
 
-/// Detected wash alpha over a LIGHT terminal background (#1000).
-const double kGhosttyBubbleDetectedWashAlphaOnLight = 0.32;
+/// Detected wash alpha over a LIGHT terminal background (#1000, re-tuned #1053).
+const double kGhosttyBubbleDetectedWashAlphaOnLight = 0.48;
 
 /// VERIFIED wash alpha over a dark terminal background (#990 shade, #1000
-/// wash language): a detected file path confirmed to exist on the host.
-const double kGhosttyBubbleVerifiedWashAlphaOnDark = 0.42;
+/// wash language, re-tuned #1053): a detected file path confirmed to exist on
+/// the host.
+const double kGhosttyBubbleVerifiedWashAlphaOnDark = 0.78;
 
-/// Verified wash alpha over a LIGHT terminal background (#1000).
-const double kGhosttyBubbleVerifiedWashAlphaOnLight = 0.50;
+/// Verified wash alpha over a LIGHT terminal background (#1000, re-tuned #1053).
+const double kGhosttyBubbleVerifiedWashAlphaOnLight = 0.66;
 
 /// The wash colour (#1000): the SAME opaque hue as the gutter chip —
 /// `GutterMarkStyle.chipColor` forces the accent's alpha to 1.0, mirrored here
