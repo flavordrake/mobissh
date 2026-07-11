@@ -140,6 +140,9 @@ class _HighlightObserver implements TerminalRenderObserver {
   void reportPaintedViewportOffset(int offset) {}
 
   @override
+  bool get isScrolling => false;
+
+  @override
   void addListener(VoidCallback listener) {}
 
   @override
