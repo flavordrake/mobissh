@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+137 (2026-07-11) — visible washes, clearer port forwards
+- **Detection washes are clearly visible again** — the highlight behind links/paths was too faint after moving behind the text; the fill is now strong and obvious while the text stays crisp. Tune it in the Detection lab if you want it softer. (#1053)
+- **Port forwards show the exact mapping** — the sheet previews `8888 → hostname:8250` live as you type, with a plain-language note on which direction it tunnels. (#1054)
+- Infra: test fixtures and the emulator now clean themselves up so they can't pile up and thrash the host. (#1049)
+
 ## v0.1.10+136 (2026-07-11) — wash behind the text + SSH port forwarding
 - **Detection washes now paint BEHIND the glyphs** — text stays full brightness; same capsule shape, and the wash now scrolls with the text. (#1045)
 - **Local port forwarding (ssh -L)**: session menu → Port forwards — add/remove tunnels on a live session, star one to arm it automatically on connect (and it re-arms itself after a reconnect). Listens on 127.0.0.1 only. (#1047)
