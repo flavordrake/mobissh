@@ -22,6 +22,7 @@ import '../services/pdf_detect.dart';
 import '../services/session_messages.dart';
 import '../services/text_file_detect.dart';
 import 'file_browser_screen.dart';
+import 'html_file_viewer.dart';
 import 'markdown_file_viewer.dart';
 import 'text_file_viewer.dart';
 
@@ -86,6 +87,22 @@ final fileViewerRegistryProvider = Provider<FileViewerRegistry>((ref) {
             settings: const RouteSettings(name: kFileBrowserRouteName),
             builder: (_) =>
                 MarkdownFileViewerScreen(sessionId: sessionId, entry: entry),
+          ),
+        );
+      },
+    ),
+    // HTML (#1037): rendered in a WebView with SFTP-backed relative
+    // resolution (loopback resolver). MUST precede the generic text viewer —
+    // `.html`/`.htm` are also text, first match wins. "View source" in its
+    // app bar escapes to the text viewer.
+    FileViewer(
+      matches: (entry, {mime}) => isHtmlEntry(entry, mime: mime),
+      open: (context, sessionId, entry) {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            settings: const RouteSettings(name: kFileBrowserRouteName),
+            builder: (_) =>
+                HtmlFileViewerScreen(sessionId: sessionId, entry: entry),
           ),
         );
       },
