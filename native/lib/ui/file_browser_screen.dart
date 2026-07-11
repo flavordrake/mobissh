@@ -34,11 +34,11 @@ import 'file_viewer_registry.dart';
 import 'pdf_viewer_screen.dart';
 import 'top_toast.dart';
 
-/// Resolves the destination sink for downloads. Overridden in widget tests to
-/// avoid touching the real filesystem; production uses the app Downloads dir.
-final downloadSinkFactoryProvider = Provider<DownloadSinkFactory>(
-  (ref) => defaultDownloadSinkFactory,
-);
+// `downloadSinkFactoryProvider` moved to services/sftp_download.dart (#1038):
+// the browser AND every viewer's Download action resolve the same seam, so a
+// single test override covers both. Re-exported here so existing importers
+// (tests) keep working unchanged.
+export '../services/sftp_download.dart' show downloadSinkFactoryProvider;
 
 /// Picks a single LOCAL file to upload (#960). Returns its on-device path +
 /// display name, or null when the user cancels. The task isolate reads the path

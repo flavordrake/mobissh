@@ -21,7 +21,9 @@ import 'package:pdfrx/pdfrx.dart';
 
 import '../services/pdf_fetcher.dart';
 import '../services/session_messages.dart';
+import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
+import 'file_viewer_actions.dart';
 
 /// Builds the actual page-rendering widget for a fetched [file]. Production
 /// returns a pdfium-backed [PdfViewer.file]; widget tests override this seam
@@ -167,6 +169,13 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
         actions: [
+          // #1038: Download + Share from any open preview.
+          FileViewerActions(
+            source: RemoteFileSource(
+              sessionId: widget.sessionId,
+              entry: widget.entry,
+            ),
+          ),
           if (_phase == _Phase.ready && pages != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),

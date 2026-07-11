@@ -22,10 +22,12 @@
 // source plus a small note, mirroring the raw/source toggle.
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../services/viewer_file_actions.dart';
 import 'fill_media_viewer.dart';
 
 /// Builds the live render surface for a mermaid [source]. Swapped out in widget
@@ -83,6 +85,12 @@ class MermaidDiagramView extends StatelessWidget {
       context,
       child: mermaidFillBuilder(source),
       selfZooming: true,
+      // #1038: the diagram has no remote file — share/download its SOURCE as
+      // a mermaid text file.
+      source: BytesFileSource(
+        fileName: 'diagram.mmd',
+        bytes: Uint8List.fromList(utf8.encode(source)),
+      ),
     );
   }
 

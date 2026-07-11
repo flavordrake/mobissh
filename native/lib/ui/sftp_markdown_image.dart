@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/sftp_image_fetcher.dart';
+import '../services/viewer_file_actions.dart';
 import 'fill_media_viewer.dart';
 
 /// Max height of the inline thumbnail; the full image is shown in the fill
@@ -62,6 +63,10 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
   String? _networkUrl;
   bool _started = false;
 
+  /// Basename of the resolved remote image path — names the Download/Share
+  /// copy in the fill viewer (#1038).
+  String? _remoteName;
+
   /// Pointer-down position for the raw-pointer tap detection below.
   Offset? _tapDownPos;
 
@@ -90,6 +95,8 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
       setState(() => _phase = _ImgPhase.broken);
       return;
     }
+    final base = path.split('/').last;
+    _remoteName = base.isEmpty ? 'image' : base;
     _fetchSftp(path);
   }
 
@@ -113,7 +120,10 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
     // top-left/overflowing); FilterQuality.medium keeps it crisp when zoomed
     // via the InteractiveViewer (#949).
     final Widget full;
+    ViewerFileSource? source;
     if (_isNetwork && _networkUrl != null) {
+      // Network-URL image: a web resource, not a file we hold — no
+      // Download/Share source (#1038 caveat).
       full = Image.network(
         _networkUrl!,
         fit: BoxFit.contain,
@@ -127,10 +137,16 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
         filterQuality: FilterQuality.medium,
         errorBuilder: (_, _, _) => _fillBroken(),
       );
+      // #1038: the bytes are already in memory — share/download them
+      // directly, no second SFTP fetch.
+      source = BytesFileSource(
+        fileName: _remoteName ?? 'image',
+        bytes: _bytes!,
+      );
     } else {
       return;
     }
-    showFillMediaViewer(context, child: full, label: widget.alt);
+    showFillMediaViewer(context, child: full, label: widget.alt, source: source);
   }
 
   Widget _fillBroken() => const Icon(
