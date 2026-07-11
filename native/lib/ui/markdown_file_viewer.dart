@@ -30,7 +30,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
+import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
+import 'file_viewer_actions.dart';
 import 'mermaid_diagram_view.dart';
 import 'sftp_markdown_image.dart';
 
@@ -127,6 +129,13 @@ class _MarkdownFileViewerScreenState
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
         actions: [
+          // #1038: Download + Share from any open preview.
+          FileViewerActions(
+            source: RemoteFileSource(
+              sessionId: widget.sessionId,
+              entry: widget.entry,
+            ),
+          ),
           if (_phase == _Phase.ready)
             IconButton(
               key: const Key('markdown-raw-toggle'),

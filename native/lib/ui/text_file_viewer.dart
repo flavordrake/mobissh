@@ -17,7 +17,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
+import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
+import 'file_viewer_actions.dart';
 
 /// Full-screen read-only preview route for a single remote text [entry] on
 /// [sessionId].
@@ -88,6 +90,13 @@ class _TextFileViewerScreenState extends ConsumerState<TextFileViewerScreen> {
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
         actions: [
+          // #1038: Download + Share from any open preview.
+          FileViewerActions(
+            source: RemoteFileSource(
+              sessionId: widget.sessionId,
+              entry: widget.entry,
+            ),
+          ),
           // #855: one-tap return to the terminal (collapses the whole
           // browser/viewer stack), not viewer→browser→…→terminal.
           IconButton(

@@ -27,6 +27,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'downloads_publisher.dart';
@@ -59,6 +60,15 @@ typedef DownloadSinkFactory =
 Future<FileDownloadSink> defaultDownloadSinkFactory(String fileName) async {
   return AppDownloadsSink.create(fileName);
 }
+
+/// Resolves the destination sink for downloads. Overridden in widget/emulator
+/// tests to avoid touching the real filesystem; production uses the Downloads
+/// pipeline above. Lives here (not in the browser) since #1038: the browser
+/// AND every viewer's Download action share this seam — one override covers
+/// both. Re-exported by file_browser_screen.dart for existing importers.
+final downloadSinkFactoryProvider = Provider<DownloadSinkFactory>(
+  (ref) => defaultDownloadSinkFactory,
+);
 
 /// Offset-honoring core sink: writes chunks at their byte offset into a given
 /// [File] via a [RandomAccessFile], tracks the highest end position written,
@@ -231,7 +241,8 @@ class AppDownloadsSink implements FileDownloadSink {
 
 /// Writes a download into a private app TEMP directory rather than Downloads.
 /// Used by the in-app PDF viewer (#557): the file is fetched to temp, rendered,
-/// then deleted on close. [finish] returns the temp file path; [file] exposes
+/// then deleted on close; and by the viewer Share staging (#1038, [subdir]
+/// `mobissh_share`). [finish] returns the temp file path; [file] exposes
 /// the [File] so the caller can delete it explicitly. Delegates offset-honoring
 /// assembly + length verification to [OffsetFileSink].
 class TempFileSink implements FileDownloadSink {
@@ -242,10 +253,13 @@ class TempFileSink implements FileDownloadSink {
   /// The temp file being written. The caller deletes this when done.
   File get file => _inner.file;
 
-  static Future<TempFileSink> create(String fileName) async {
+  static Future<TempFileSink> create(
+    String fileName, {
+    String subdir = 'mobissh_pdf',
+  }) async {
     final base = await getTemporaryDirectory();
     final dir = await Directory(
-      '${base.path}/mobissh_pdf',
+      '${base.path}/$subdir',
     ).create(recursive: true);
     final safeName = _sanitizeTemp(fileName);
     final stamp = DateTime.now().microsecondsSinceEpoch;

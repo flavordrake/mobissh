@@ -20,6 +20,9 @@
 
 import 'package:flutter/material.dart';
 
+import '../services/viewer_file_actions.dart';
+import 'file_viewer_actions.dart';
+
 /// Pushes the shared [FillMediaViewer] route with [child] as the zoomable
 /// surface. Returns when the user closes the viewer.
 ///
@@ -27,17 +30,28 @@ import 'package:flutter/material.dart';
 /// whose built-in zoom is crisp and which a Flutter [InteractiveViewer] can't
 /// drive anyway). For those we present the child full-bleed and defer all
 /// gestures to it. Plain images (the default) get the [InteractiveViewer].
+///
+/// [source] (#1038): the underlying file, when the caller has one — enables
+/// the shared Download + Share actions in the overlay. Callers that hold the
+/// bytes already (inline SFTP images, mermaid source) pass a
+/// [BytesFileSource]; media without a file (network-URL images) pass null and
+/// get no actions.
 Future<void> showFillMediaViewer(
   BuildContext context, {
   required Widget child,
   String? label,
   bool selfZooming = false,
+  ViewerFileSource? source,
 }) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
       fullscreenDialog: true,
-      builder: (_) =>
-          FillMediaViewer(label: label, selfZooming: selfZooming, child: child),
+      builder: (_) => FillMediaViewer(
+        label: label,
+        selfZooming: selfZooming,
+        source: source,
+        child: child,
+      ),
     ),
   );
 }
@@ -49,6 +63,7 @@ class FillMediaViewer extends StatefulWidget {
     required this.child,
     this.label,
     this.selfZooming = false,
+    this.source,
   });
 
   /// The media surface — an image widget, or a self-zooming diagram surface.
@@ -60,6 +75,9 @@ class FillMediaViewer extends StatefulWidget {
   /// When true the child owns its zoom/pan (WebView) — presented full-bleed
   /// without the [InteractiveViewer]. See the file header (#949).
   final bool selfZooming;
+
+  /// The viewed file, when known — surfaces Download + Share (#1038).
+  final ViewerFileSource? source;
 
   @override
   State<FillMediaViewer> createState() => _FillMediaViewerState();
@@ -142,15 +160,32 @@ class _FillMediaViewerState extends State<FillMediaViewer> {
             Positioned(
               top: 8,
               right: 8,
-              child: Material(
-                color: Colors.black54,
-                shape: const CircleBorder(),
-                child: IconButton(
-                  key: const Key('fill-media-close'),
-                  tooltip: 'Close',
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.of(context).maybePop(),
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // #1038: Download + Share when the media has a file source.
+                  if (widget.source != null) ...[
+                    Material(
+                      color: Colors.black54,
+                      shape: const StadiumBorder(),
+                      child: FileViewerActions(
+                        source: widget.source!,
+                        iconColor: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Material(
+                    color: Colors.black54,
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      key: const Key('fill-media-close'),
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

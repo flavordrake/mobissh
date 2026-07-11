@@ -31,7 +31,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../services/html_loopback_server.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_image_fetcher.dart';
+import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
+import 'file_viewer_actions.dart';
 import 'text_file_viewer.dart';
 import 'top_toast.dart';
 
@@ -161,6 +163,13 @@ class _HtmlFileViewerScreenState extends ConsumerState<HtmlFileViewerScreen> {
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
         actions: [
+          // #1038: Download + Share from any open preview.
+          FileViewerActions(
+            source: RemoteFileSource(
+              sessionId: widget.sessionId,
+              entry: widget.entry,
+            ),
+          ),
           // View source: the existing monospace text viewer for this entry.
           // Monochrome Material glyph (no emoji).
           IconButton(

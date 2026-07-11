@@ -45,6 +45,11 @@ class FileViewerRegistry {
 
   final List<FileViewer> _viewers;
 
+  /// The registered viewers, in match order. Exposed for the #1038 drift
+  /// guard: every registered viewer must render the shared Download + Share
+  /// actions, and the guard pins this list's size.
+  List<FileViewer> get viewers => List.unmodifiable(_viewers);
+
   /// Returns the first viewer that matches [entry], or null if none do (the
   /// browser then falls back to download).
   FileViewer? viewerFor(SftpEntry entry, {String? mime}) {
