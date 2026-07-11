@@ -133,9 +133,39 @@ abstract class TerminalController extends ChangeNotifier
   void registerTextPattern(TextPattern pattern);
 
   /// Removes all registered structured-text patterns and clears any highlights
-  /// they produced (#767). Use this, then [registerTextPattern], to restyle
-  /// detection (e.g. on a theme change).
+  /// they produced (#767). Use this, then [registerTextPattern], to
+  /// re-REGISTER detection (a pattern-set / regex / lexicon change). For a
+  /// pure STYLE change use [restyleDetectionHighlights] — no rescan.
   void clearTextPatterns();
+
+  /// #1045: per-MATCH style resolver for the detection highlight bake.
+  ///
+  /// When set, every time detection matches are baked into [highlights] (a
+  /// settled re-scan, a prune, or [restyleDetectionHighlights]) each match is
+  /// resolved through this callback INSTEAD of its pattern's static
+  /// [TextPattern.style]:
+  ///   * a [HighlightStyle] styles all the match's ranges (background /
+  ///     underline / capsule geometry; capsule caps land on the true
+  ///     first/last ranges);
+  ///   * null SUPPRESSES the match — it paints NOTHING (the #990/#995
+  ///     visibility gates), while [anchors] / [matchAt] still expose it
+  ///     (hit-testing and the gutter marks are not the fill's business).
+  ///
+  /// A static per-pattern style cannot express per-anchor state (the #990
+  /// verified alpha, a #995 exception, Detection Lab live-apply) — this seam
+  /// resolves ON CHANGE (bake time), never per frame, so the paint path stays
+  /// a dumb fill. Null (the default) keeps the pattern-style bake.
+  HighlightStyle? Function(StructuredMatch match)? get detectionHighlightStyleOf;
+  set detectionHighlightStyleOf(
+      HighlightStyle? Function(StructuredMatch match)? value);
+
+  /// #1045: re-bake [highlights] from the CURRENT detection matches through
+  /// [detectionHighlightStyleOf] — no rescan, no debounce. Call when app-side
+  /// style state changes out-of-band (a path verification lands, a Detection
+  /// Lab style is tuned, an exception is filed/removed). A no-op (no listener
+  /// churn) when the resulting ranges are unchanged, so callers may invoke it
+  /// opportunistically (e.g. on every build).
+  void restyleDetectionHighlights();
 
   /// Returns the structured-text match covering the VIEWPORT cell at
   /// ([row], [col]), or null when none covers it (#767).

@@ -29,8 +29,16 @@ export 'src/foundation/callbacks.dart' show OnResize;
 export 'src/foundation/cell_metrics.dart' show CellMetrics;
 export 'src/foundation/color_palette.dart' show ColorPalette;
 export 'src/foundation/dynamic_color.dart' show DynamicColor;
+// #1045: the capsule wash geometry is shared with the app's Detection Lab
+// preview so the preview renders EXACTLY the fork's behind-glyph look.
 export 'src/foundation/highlight_range.dart'
-    show HighlightRange, HighlightTheme;
+    show
+        HighlightRange,
+        HighlightTheme,
+        highlightCapsuleRRect,
+        kHighlightCapsuleBottomOutset,
+        kHighlightCapsulePadX,
+        kHighlightCapsuleTopInset;
 export 'src/foundation/input_types.dart' show KeyboardState, MouseAutoHide;
 export 'src/foundation/structured_text.dart'
     show

@@ -1,7 +1,9 @@
-// #1031 slice 1 — the painters CONSUME the style resolver: GhosttyBubbleLayer
-// takes a washColorOf seam (per-pattern effective wash) and GhosttyGutterLayer
-// a chipAccentOf seam (per-pattern chip hue). The zero-visual-change
-// invariant: a resolver over an EMPTY store paints EXACTLY what the layers
+// #1031 slice 1 — the painters CONSUME the style resolver. #1045 moved the
+// bubble wash INTO the fork's highlight paint (per-anchor styles resolved via
+// `detectionHighlightStyleOf` — see ghostty_wash_style_1045_test.dart for that
+// seam's zero-visual-change invariant); the GUTTER keeps its widget-layer
+// chipAccentOf seam (per-pattern chip hue), pinned here. The zero-change
+// invariant: a resolver over an EMPTY store paints EXACTLY what the layer
 // painted before the seam existed.
 
 import 'package:flterm/flterm.dart' hide Key;
@@ -28,46 +30,6 @@ StructuredAnchor _anchor(String patternId, String payload, {int row = 2}) =>
         ),
       ],
     );
-
-/// Fake controller for the BUBBLE layer: scripted anchors + real-geometry
-/// anchorRects (mirrors ghostty_bubble_layer_test.dart).
-class _FakeBubbleController extends ChangeNotifier
-    implements TerminalController {
-  static const CellMetrics metrics = CellMetrics(
-    cellWidth: 8,
-    cellHeight: 16,
-    baseline: 12,
-  );
-
-  List<StructuredAnchor> _anchors = const [];
-
-  void setAnchors(List<StructuredAnchor> value) {
-    _anchors = value;
-    notifyListeners();
-  }
-
-  @override
-  List<StructuredAnchor> get anchors => _anchors;
-
-  @override
-  bool get isScrolling => false;
-
-  @override
-  Listenable get decorationListenable => this;
-
-  @override
-  List<Rect> anchorRects(HighlightRange range) => AnchorGeometry.rectsFor(
-        range,
-        metrics: metrics,
-        viewportOffset: 0,
-        cols: 50,
-        viewportRows: 24,
-        origin: const Offset(4, 4),
-      );
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
 
 /// Fake controller for the GUTTER layer: scripted anchors + anchorGutterRow
 /// (mirrors ghostty_gutter_layer_test.dart).
@@ -100,13 +62,6 @@ class _FakeGutterController extends ChangeNotifier
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-GhosttyBubblePainter _painterOf(WidgetTester tester) {
-  final paint = tester.widget<CustomPaint>(
-    find.byKey(const Key('ghostty-bubble-paint')),
-  );
-  return paint.painter! as GhosttyBubblePainter;
-}
-
 /// The chip Container's fill inside a gutter mark.
 Color _chipFillOf(WidgetTester tester, int row) {
   final containers = tester.widgetList<Container>(
@@ -125,98 +80,6 @@ Color _chipFillOf(WidgetTester tester, int row) {
 }
 
 void main() {
-  group('GhosttyBubbleLayer consumes the resolver (washColorOf seam)', () {
-    Future<_FakeBubbleController> pumpBubble(
-      WidgetTester tester, {
-      Color Function(String patternId, {required bool verified})? washColorOf,
-    }) async {
-      final controller = _FakeBubbleController();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Stack(
-              children: [
-                Positioned.fill(
-                  child: GhosttyBubbleLayer(
-                    controller: controller,
-                    color: _accent,
-                    backgroundBrightness: Brightness.dark,
-                    washColorOf: washColorOf,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-      return controller;
-    }
-
-    testWidgets('an override wash from the seam is what the painter fills',
-        (tester) async {
-      const overrideWash = Color(0x4D33AA55);
-      final controller = await pumpBubble(
-        tester,
-        washColorOf: (id, {required bool verified}) =>
-            id == kGhosttyUrlPatternId
-                ? overrideWash
-                : ghosttyBubbleWashColor(
-                    _accent,
-                    verified: verified,
-                    backgroundBrightness: Brightness.dark,
-                  ),
-      );
-      controller.setAnchors([
-        _anchor(kGhosttyUrlPatternId, 'https://example.com', row: 2),
-        _anchor(kGhosttyPathPatternId, '/etc/hosts', row: 5),
-      ]);
-      await tester.pump();
-      final painter = _painterOf(tester);
-      expect(painter.specs, hasLength(2));
-      expect(painter.specs[0].washColor, overrideWash);
-      expect(
-        painter.specs[1].washColor,
-        ghosttyBubbleWashColor(
-          _accent,
-          verified: false,
-          backgroundBrightness: Brightness.dark,
-        ),
-        reason: 'only the overridden pattern changes',
-      );
-    });
-
-    testWidgets('ZERO CHANGE: an empty-store resolver paints the SAME wash as '
-        'no seam at all', (tester) async {
-      // Baseline: no seam.
-      final bare = await pumpBubble(tester);
-      bare.setAnchors([_anchor(kGhosttyUrlPatternId, 'https://example.com')]);
-      await tester.pump();
-      final baseline = _painterOf(tester).effectiveWashColor(
-        _painterOf(tester).specs.single,
-      );
-
-      // Resolver-backed seam over an EMPTY store.
-      const resolver = DetectionStyleResolver(
-        styles: DetectionStyles.empty,
-        accent: _accent,
-        backgroundBrightness: Brightness.dark,
-      );
-      final wired = await pumpBubble(
-        tester,
-        washColorOf: (id, {required bool verified}) =>
-            resolver.resolveStyle(id, verified: verified).washColor,
-      );
-      wired.setAnchors([_anchor(kGhosttyUrlPatternId, 'https://example.com')]);
-      await tester.pump();
-      final painter = _painterOf(tester);
-      expect(
-        painter.effectiveWashColor(painter.specs.single),
-        baseline,
-        reason: 'the resolver with no overrides must be invisible',
-      );
-    });
-  });
-
   group('GhosttyGutterLayer consumes the resolver (chipAccentOf seam)', () {
     Future<_FakeGutterController> pumpGutter(
       WidgetTester tester, {
