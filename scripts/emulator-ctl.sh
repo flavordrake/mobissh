@@ -25,6 +25,13 @@
 # Env: EMU_CORES (default 0-2), EMU_MEMORY_MB (default 4096), AVD (default
 #      MobiSSH_Pixel7), EMU_WIPE (default 0; 1 → boot with -wipe-data and drop
 #      -read-only so the reset persists to the userdata qcow2).
+#
+# IDLE-STOP POLICY (#1049, operator directive 2026-07-11): "always-on" no longer
+# means "runs for days unused" — an idle emulator + orphaned agent-*-test-sshd-1
+# fixtures swap-thrashed the PVE host. `ensure` runs scripts/ci-reap.sh
+# opportunistically (sweeps stale fixtures; stops the mobissh-emulator CONTAINER
+# after 12h idle — this legacy in-fd-dev process variant is not auto-stopped,
+# only the container is). Re-boot on demand via ensure costs ~2min.
 set -euo pipefail
 
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
@@ -116,6 +123,10 @@ boot() {
 cmd="${1:-ensure}"
 case "$cmd" in
   ensure)
+    # Opportunistic orphan sweep (#1049) — non-fatal, must not block the boot.
+    if ! "$(dirname "$0")/ci-reap.sh" run; then
+      err "ci-reap sweep failed (non-fatal)"
+    fi
     dev="$(live_device)"
     if is_booted "$dev"; then
       log "reusing live emulator: $dev (no reboot)"
