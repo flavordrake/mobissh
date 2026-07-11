@@ -178,6 +178,7 @@ import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
 import '../services/path_verifier.dart';
+import '../services/session_cwd_tracker.dart';
 import '../services/session_messages.dart'
     show SftpStatResultEvent, SshTaskEvent, TmuxWindowGesture;
 import '../ssh/ssh_session.dart';
@@ -1287,7 +1288,12 @@ bool ghosttyLongPressShowsUrlMenu(StructuredMatch? urlAtCell) =>
 /// false for those (the URL menu owns them) — the two are mutually exclusive at
 /// a single cell. Pure, so the routing decision is unit-testable headless.
 bool ghosttyLongPressShowsPathMenu(StructuredMatch? matchAtCell) =>
-    matchAtCell != null && matchAtCell.patternId == kGhosttyPathPatternId;
+    matchAtCell != null &&
+    (matchAtCell.patternId == kGhosttyPathPatternId ||
+        // #1036: a VERIFIED relative-path anchor gets the same path menu
+        // (unverified ones never reach a long-press — the visibility gate
+        // suppresses their hit-test entirely).
+        matchAtCell.patternId == kGhosttyRelPathPatternId);
 
 /// Whether a detected [match]'s payload is a real, copyable string (#810).
 ///
@@ -1391,10 +1397,22 @@ Future<String?> ghosttyTapMatchAction(
   StructuredMatch match, {
   required Future<bool> Function(String text) copy,
   required Future<bool> Function(String path) openPath,
+  String Function(String relative)? resolveRelative,
 }) async {
   if (match.patternId == kGhosttyPathPatternId) {
     if (!ghosttyMatchHasCopyablePayload(match)) return null;
     await openPath('${match.payload}'.trim());
+    return null;
+  }
+  // #1036: a RELATIVE path anchor navigates with RESOLVED-ABSOLUTE semantics
+  // (the #999 rule applied to the cwd-resolved path). The resolver is injected
+  // (production: the session's SessionCwdTracker) so this stays pure; a tap
+  // can only arrive on a VERIFIED anchor (the #990-style visibility gate
+  // suppresses hit-testing otherwise), so the resolved path exists.
+  if (match.patternId == kGhosttyRelPathPatternId) {
+    if (!ghosttyMatchHasCopyablePayload(match)) return null;
+    final relative = '${match.payload}'.trim();
+    await openPath(resolveRelative?.call(relative) ?? relative);
     return null;
   }
   final filePath = ghosttyFileUrlPath(match);
@@ -1449,6 +1467,10 @@ List<TextPattern> ghosttyDetectionPatterns(
     TextPattern.url(id: kGhosttyUrlPatternId, style: kGhosttyUrlHighlightStyle),
   ],
   if (detection.detectPaths) TextPattern.path(id: kGhosttyPathPatternId),
+  // #1036: bare relative paths (`a/b`), verification-gated at the widget
+  // layer — an anchor is invisible until its cwd-resolved absolute verifies.
+  if (detection.detectRelPaths)
+    TextPattern.relativePath(id: kGhosttyRelPathPatternId),
   if (detection.detectCommands)
     TextPattern.command(
       id: kGhosttyCommandPatternId,
@@ -2405,6 +2427,13 @@ class GhosttyTerminalView extends ConsumerStatefulWidget {
   static final Map<String, SessionPathVerifier> debugPathVerifiers =
       <String, SessionPathVerifier>{};
 
+  /// #1036: the live per-session cwd tracker, exposed so the on-emulator
+  /// integration test can assert the cwd ladder (OSC 7 / prompt-derived)
+  /// tracked a `cd` before resolving a relative anchor. Test-only.
+  @visibleForTesting
+  static final Map<String, SessionCwdTracker> debugCwdTrackers =
+      <String, SessionCwdTracker>{};
+
   @override
   ConsumerState<GhosttyTerminalView> createState() =>
       _GhosttyTerminalViewState();
@@ -2485,6 +2514,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         sftpUrlOf: _sftpUrlFor,
         // #995: "Not a URL" / "Not a file" — persist a detection exception.
         onReportException: _reportDetectionException,
+        // #1036: resolves a RELATIVE anchor payload against the live session
+        // cwd at ACTION time (the tracker is read fresh on every dispatch).
+        resolveRelative: (relative) => _cwdTracker.resolve(relative),
       );
 
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
@@ -2632,6 +2664,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// the file browser's listener) into [_pathVerifier]. Cancelled on dispose.
   StreamSubscription<SshTaskEvent>? _sftpStatSub;
 
+  /// #1036: per-session working-directory tracker (OSC 7 > prompt-derived >
+  /// last-known > home). Refreshed lazily in [_notePathAnchors] whenever a
+  /// relative-path anchor is live; read by the visibility gate / tap / menu
+  /// dispatch to resolve a relative payload to the absolute path the #990
+  /// verifier keys on. Scoped to this view == this session, like the verifier.
+  final SessionCwdTracker _cwdTracker = SessionCwdTracker();
+
   @override
   void initState() {
     super.initState();
@@ -2765,6 +2804,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // #990 (test-only): expose the verifier so the on-emulator integration
       // test can assert the real-path/fake-path shade split.
       GhosttyTerminalView.debugPathVerifiers[widget.sessionId] = _pathVerifier!;
+      // #1036 (test-only): expose the cwd tracker so the emulator test can
+      // assert the ladder followed a `cd`.
+      GhosttyTerminalView.debugCwdTrackers[widget.sessionId] = _cwdTracker;
       // Paint replay harness: let the stats snapshot probe the live render-box
       // boundary counters (notifies / paints / frame syncs) at read time.
       _paintStats.boxProbe = _probePaintBox;
@@ -2858,10 +2900,49 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (controller == null || verifier == null) return;
     final proxy = _proxy;
     if (proxy == null || proxy.data.state != SshSessionState.connected) return;
+    final anchors = controller.anchors;
+    // #1036: RELATIVE anchors are noted under their cwd-RESOLVED absolute path
+    // — the verifier cache is keyed on the resolved path, so a later `cd`
+    // re-resolves to a fresh key that starts pending (hidden) again. Refresh
+    // the cwd ladder first, and only when a relative anchor is actually live
+    // (the refresh reads controller text — cheap, but not free).
+    final hasRelative = anchors.any(
+      (a) => a.patternId == kGhosttyRelPathPatternId,
+    );
+    if (hasRelative) _refreshCwd(controller);
     verifier.notePaths([
-      for (final anchor in controller.anchors)
-        if (anchor.patternId == kGhosttyPathPatternId) '${anchor.payload}',
+      for (final anchor in anchors)
+        if (anchor.patternId == kGhosttyPathPatternId)
+          '${anchor.payload}'
+        else if (anchor.patternId == kGhosttyRelPathPatternId)
+          _cwdTracker.resolve('${anchor.payload}'),
     ]);
+  }
+
+  /// #1036: refresh the session cwd ladder from the live terminal — the OSC 7
+  /// advisory ([TerminalController.pwd], strongest) and the most recent
+  /// on-screen strong prompt (`user@host:PATH$`, scanned bottom-up over the
+  /// visible rows). Defensive on every FFI read: a hiccup must never crash the
+  /// session, and a failed refresh just leaves the sticky last-known cwd (the
+  /// #990 verifier absorbs staleness).
+  void _refreshCwd(TerminalController controller) {
+    try {
+      _cwdTracker.noteOsc7(controller.pwd);
+    } catch (_) {}
+    try {
+      // One verbatim viewport read (row 0 = top visible row), scanned
+      // BOTTOM-UP: the lowest strong prompt is the current one; rows above it
+      // belong to older commands, so stop at the first hit either way.
+      final lines = controller
+          .visibleRowsText(0, controller.scrollbar.visible - 1)
+          .split('\n');
+      for (var i = lines.length - 1; i >= 0; i--) {
+        if (promptCwd(lines[i]) != null) {
+          _cwdTracker.notePromptLine(lines[i]);
+          return;
+        }
+      }
+    } catch (_) {}
   }
 
   /// #990: the OPAQUE verification predicate handed to the gutter + bubble
@@ -2870,6 +2951,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// layers never learn WHY — the predicate could later mean "downloaded
   /// locally" without any paint change.
   bool _isAnchorVerified(StructuredAnchor anchor) {
+    // #1036: a relative anchor is verified iff its cwd-RESOLVED absolute is —
+    // and since the visibility gate hides it otherwise, every VISIBLE relpath
+    // anchor renders in the verified shade by construction.
+    if (anchor.patternId == kGhosttyRelPathPatternId) {
+      return _pathVerifier?.isVerified(
+            _cwdTracker.resolve('${anchor.payload}'),
+          ) ??
+          false;
+    }
     if (anchor.patternId != kGhosttyPathPatternId) return false;
     return _pathVerifier?.isVerified('${anchor.payload}') ?? false;
   }
@@ -2888,6 +2978,16 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         .read(detectionExceptionsProvider.notifier)
         .isSuppressed(patternId, payload)) {
       return false;
+    }
+    // #1036: a RELATIVE-path anchor is suppressed until its cwd-RESOLVED
+    // absolute path verifies. Unconditional (no lab knob bypass): hidden-
+    // until-verified IS the contract for this class — shape-level recall is
+    // deliberately broad (`and/or` matches), the stat is the precision gate.
+    // Both `pending` and `missing` stay hidden (hide-on-fail, unlike
+    // multi-segment absolutes which show at the detected shade).
+    if (patternId == kGhosttyRelPathPatternId) {
+      return _pathVerifier?.status(_cwdTracker.resolve(payload)) ==
+          PathVerification.verified;
     }
     if (patternId != kGhosttyPathPatternId) return true;
     // #1031 slice 2: the lab's "Short-path verification" knob gates the #990
@@ -3815,6 +3915,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       match,
       copy: copyToClipboard,
       openPath: _openPath,
+      // #1036: relative anchors navigate to their cwd-RESOLVED absolute.
+      resolveRelative: _cwdTracker.resolve,
     );
     if (toast != null && mounted) showTopToast(context, toast);
   }
@@ -3865,6 +3967,25 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         highlightRects: rects,
         anchor: globalAnchor,
         onOpen: _openPath,
+        onMarkNotDetection: markNot,
+      );
+      return;
+    }
+    // #1036: a RELATIVE anchor's menu works in RESOLVED-ABSOLUTE semantics —
+    // Open navigates to the resolved path, "Copy path" copies the resolved
+    // absolute, an extra "Copy relative" copies the matched text verbatim,
+    // and the sftp:// form uses the absolute. The exception report keeps the
+    // ORIGINAL relative payload (suppression keys on the matched text).
+    if (match.patternId == kGhosttyRelPathPatternId) {
+      final resolved = _cwdTracker.resolve('${match.payload}');
+      showPathActions(
+        context,
+        resolved,
+        relativeText: '${match.payload}',
+        highlightRects: rects,
+        anchor: globalAnchor,
+        onOpen: _openPath,
+        sftpUrl: _sftpUrlFor(resolved),
         onMarkNotDetection: markNot,
       );
       return;
@@ -4090,6 +4211,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (GhosttyTerminalView.debugPathVerifiers[widget.sessionId] ==
         _pathVerifier) {
       GhosttyTerminalView.debugPathVerifiers.remove(widget.sessionId);
+    }
+    // #1036: drop the cwd tracker's debug seam with its session view.
+    if (GhosttyTerminalView.debugCwdTrackers[widget.sessionId] ==
+        _cwdTracker) {
+      GhosttyTerminalView.debugCwdTrackers.remove(widget.sessionId);
     }
     _controller?.decorationListenable.removeListener(_notePathAnchors);
     _sftpStatSub?.cancel();

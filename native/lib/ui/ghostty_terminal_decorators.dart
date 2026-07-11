@@ -39,6 +39,15 @@ const String kGhosttyOsc8PatternId = 'osc8';
 /// the path mark (a distinct glyph + action set from the URL).
 const String kGhosttyPathPatternId = 'path';
 
+/// The id of the RELATIVE FILE PATH pattern (#1036) — the fork's
+/// `TextPattern.relativePath` over bare `a/b` tokens. Distinct from
+/// [kGhosttyPathPatternId] so gating can treat it separately: a relpath anchor
+/// is INVISIBLE until its cwd-resolved absolute path passes the #990 SFTP-stat
+/// verification (there is no "detected but unverified" visible state for this
+/// class — shape-level recall is deliberately broad, the verifier is the
+/// precision gate).
+const String kGhosttyRelPathPatternId = 'relpath';
+
 /// The id of the COMMAND-LINE pattern (#998 slice C) — the fork's BLOCK-tier
 /// `TextPattern.command` over a whole prompt-anchored command line, for
 /// copy-to-paste. Matches the factory's default id. Deliberately ABSENT from
@@ -303,6 +312,9 @@ class GhosttyBubbleLayer extends StatelessWidget {
     kGhosttyUrlPatternId,
     kGhosttyOsc8PatternId,
     kGhosttyPathPatternId,
+    // #1036: relative paths share the path bubble; the visibility gate keeps
+    // them invisible until their cwd-resolved absolute verifies.
+    kGhosttyRelPathPatternId,
   };
 
   /// Whether [patternId] paints a bubble: the built-in span types plus every

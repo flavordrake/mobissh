@@ -221,6 +221,23 @@ class SettingsPanel extends ConsumerWidget {
               ? (v) => ref.read(detectionSettingsProvider.notifier).setPath(v)
               : null,
         ),
+        // #1036: relative-path detection — cwd-resolved and VERIFICATION-gated
+        // (an anchor only ever shows once its resolved path exists on the host).
+        SwitchListTile(
+          key: const ValueKey('detection-relpath-toggle'),
+          secondary: const Icon(Icons.subdirectory_arrow_right),
+          contentPadding: const EdgeInsets.only(left: 32, right: 16),
+          title: const Text('Relative paths'),
+          subtitle: const Text(
+            'Detect paths relative to the shell directory; shown only after '
+            'they verify on the host.',
+          ),
+          value: detection.relpath,
+          onChanged: detection.enabled
+              ? (v) =>
+                  ref.read(detectionSettingsProvider.notifier).setRelpath(v)
+              : null,
+        ),
         // #998 slice C: command-line detection — a gutter chip that copies the
         // whole prompt-anchored command line paste-exact.
         SwitchListTile(
@@ -412,6 +429,7 @@ class SettingsPanel extends ConsumerWidget {
     await detectionNotifier.setUrl(true);
     await detectionNotifier.setPath(true);
     await detectionNotifier.setCommand(true);
+    await detectionNotifier.setRelpath(true);
     // #1031 slice 2: lab styles are TUNED settings → reset with the rest.
     // AUTHORED data survives (detection exceptions here; custom pattern
     // definitions in slice 3) — the IA's one-sentence reset rule.

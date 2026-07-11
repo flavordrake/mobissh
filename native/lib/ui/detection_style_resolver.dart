@@ -74,7 +74,9 @@ const double kDetectionIntensityGap = 0.15;
 /// control that tunes a state with no runtime effect (#1031 IA review change
 /// 1: no dead controls). Unknown / custom ids have no active state.
 bool detectionPatternHasActiveState(String patternId) =>
-    patternId == kGhosttyPathPatternId;
+    patternId == kGhosttyPathPatternId ||
+    // #1036: a relative-path anchor's ONLY visible state is verified (active).
+    patternId == kGhosttyRelPathPatternId;
 
 /// Parse a `#RRGGBB` (or bare `RRGGBB`) hex string to an opaque [Color].
 /// Anything else — wrong length, non-hex digits, empty — returns null so a

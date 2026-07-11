@@ -188,6 +188,41 @@ final class TextPattern {
     );
   }
 
+  /// The built-in RELATIVE FILE PATH pattern (paths Slice 3 — MobiSSH #1036).
+  ///
+  /// Matches BARE >=2-segment relative tokens (`specs/x/spec.md`, `a/b.txt`)
+  /// that [TextPattern.path] deliberately defers: tokens with no leading `/`,
+  /// `~/`, `./` or `../` anchor. The shape is DELIBERATELY BROAD — `and/or`
+  /// matches it — because the CONSUMER is expected to gate visibility on an
+  /// out-of-band precision check (MobiSSH resolves the token against the
+  /// session cwd and only shows an affordance once an SFTP stat verifies the
+  /// resolved absolute path; a prose token simply never verifies). What the
+  /// shape itself excludes is anything ANOTHER pattern owns or that cannot be
+  /// cwd-relative:
+  ///   * absolute / home / explicit-relative starts (`/`, `~/`, `./`, `../`)
+  ///     — [TextPattern.path]'s territory (a `(?!(?:\.{1,2}|~)/)` lookahead;
+  ///     the shared lookbehind already blocks mid-token anchoring);
+  ///   * `://` contexts — the same lookbehind rejects a start after `/` or
+  ///     `:`, so `https://example.com/docs` never yields `example.com/docs`;
+  ///   * `~user/...` — the first segment excludes a leading `~`;
+  ///   * glob / shell-var / command-sub contamination — the #826 swallow +
+  ///     #874 terminator machinery, REUSED via [_validateRelativePath].
+  ///
+  /// Distinct id (`relpath`) and [TextTier.span] so gating / telemetry /
+  /// decorators treat it separately from absolute paths. Reuses the scanner's
+  /// wrap-join + `_rangesFor` machinery unchanged; the existing
+  /// [TextPattern.path] is untouched.
+  factory TextPattern.relativePath({String id = 'relpath',
+      HighlightStyle style = const HighlightStyle()}) {
+    return TextPattern(
+      id: id,
+      regex: _kRelativePathPattern,
+      style: style,
+      trailingTrim: _kPathTrailingTrim,
+      normalize: _validateRelativePath,
+    );
+  }
+
   /// The built-in COMMAND-LINE pattern (#998 slice B) — a BLOCK-tier anchor
   /// over a whole prompt-anchored command line, for copy-to-paste.
   ///
@@ -402,6 +437,44 @@ String? _validatePath(String raw) {
   if (path.isEmpty) return null;
   // #826: a surviving glob/var/command-sub token is not an openable path.
   if (_kPathRejectProbe.hasMatch(path)) return null;
+  return path;
+}
+
+/// The RELATIVE FILE PATH regex (paths Slice 3 — MobiSSH #1036). Matches a
+/// BARE >=2-segment relative token:
+///   * the SAME negative lookbehind as [_kPathPattern] — no mid-token anchor,
+///     no start after `/` or `:` (so `https://example.com/docs` never yields
+///     `example.com/docs`), no start after a glob/var metachar;
+///   * a lookahead excluding the starts [TextPattern.path] owns (`./`, `../`)
+///     — `~/` cannot occur because the FIRST segment excludes a leading `~`
+///     (which also keeps `~user/x` — a home reference, not cwd-relative — out);
+///     a dot-LEADING first segment (`.claude/rules`) still matches;
+///   * first segment + one-or-more `/`-joined further segments (>=2 segments
+///     total — a single token or a lone `src/` never anchors), optional
+///     trailing slash;
+///   * the #826 trailing swallow group, so a glob/var-contaminated token
+///     reaches [_validateRelativePath] whole and is suppressed (backtracking
+///     can't carve a clean-looking sub-path out of it).
+final RegExp _kRelativePathPattern = RegExp(
+  '(?<![\\w.\\-~@+:/$_kPathLookbehindMeta])'
+  r'(?!\.{1,2}/)' // ./ and ../ starts belong to TextPattern.path
+  r'[\w.\-@+]+' // first segment (no leading ~ — see doc above)
+  r'(?:/[\w.\-~@+]+)+' // >=1 further segment → >=2 segments total
+  r'/?'
+  '(?:[$_kPathReject][^\\s]*)?', // #826 swallow → validate sees the whole token
+);
+
+/// Validate a raw RELATIVE path match (#1036). Reuses [_validatePath]'s #874
+/// terminator trim + quote strip + #826 reject gate, then RE-CHECKS the
+/// >=2-segment shape: the trim can leave a single segment (`a` out of `a/;b`
+/// is not a relative path anymore), which must suppress rather than anchor a
+/// bare word.
+String? _validateRelativePath(String raw) {
+  final path = _validatePath(raw);
+  if (path == null) return null;
+  final core = path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+  final slash = core.indexOf('/');
+  if (slash <= 0 || slash >= core.length - 1) return null;
   return path;
 }
 
