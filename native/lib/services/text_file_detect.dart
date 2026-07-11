@@ -124,3 +124,32 @@ bool isMarkdownEntry(SftpEntry entry, {String? mime}) {
   if (entry.isDirectory) return false;
   return hasMarkdownExtension(entry.name) || isMarkdownMime(mime);
 }
+
+/// HTML extensions (lowercase, no leading dot). A subset of [_textExtensions]
+/// that the rendered HTML viewer handles (#1037).
+const Set<String> _htmlExtensions = {'html', 'htm'};
+
+/// True when [name] ends with an HTML extension (`.html` / `.htm`,
+/// case-insensitive).
+bool hasHtmlExtension(String name) {
+  final dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot == name.length - 1) return false;
+  return _htmlExtensions.contains(name.substring(dot + 1).toLowerCase());
+}
+
+/// True when [mime] denotes HTML content (`text/html` /
+/// `application/xhtml+xml`). MIME parameters (`; charset=…`) are ignored.
+bool isHtmlMime(String? mime) {
+  if (mime == null || mime.isEmpty) return false;
+  final base = mime.split(';').first.trim().toLowerCase();
+  return base == 'text/html' || base == 'application/xhtml+xml';
+}
+
+/// True when [entry] is a regular HTML file, by extension or an explicit HTML
+/// [mime]. Directories are never HTML. Used by the viewer registry to route
+/// `.html`/`.htm` to the rendered WebView viewer (#1037) BEFORE the generic
+/// monospace text viewer (first-match-wins).
+bool isHtmlEntry(SftpEntry entry, {String? mime}) {
+  if (entry.isDirectory) return false;
+  return hasHtmlExtension(entry.name) || isHtmlMime(mime);
+}
