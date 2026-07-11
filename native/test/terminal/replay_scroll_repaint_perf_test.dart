@@ -207,19 +207,33 @@ void main() {
 
         final buildsBeforeOutput = counters.layerBuilds;
 
+        // #1044 amendment: output that changes NOTHING decoration-relevant is
+        // now correctly INVISIBLE to the gutter (an unchanged reconcile
+        // suppresses its notify — the #1046 churn killer). The starvation
+        // probe therefore appends output that CHANGES the anchor set: a new
+        // URL must wake the gutter once the settled re-scan lands.
         controller.write(
-          Uint8List.fromList('more output appended below\r\n'.codeUnits),
+          Uint8List.fromList(
+            'and now https://second.example.com/starve too\r\n'.codeUnits,
+          ),
         );
         await tester.pump(const Duration(milliseconds: 300));
         await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
 
+        expect(
+          controller.anchors.any(
+            (a) => a.payload.toString().contains('second.example.com'),
+          ),
+          isTrue,
+          reason: 'the appended URL is detected',
+        );
         expect(
           counters.layerBuilds,
           greaterThan(buildsBeforeOutput),
-          reason: 'with a live anchor on screen, a settled re-scan after new '
-              'output must still rebuild the gutter so the mark tracks the text — '
-              'the #805 gate must not over-throttle (before=$buildsBeforeOutput, '
-              'after=${counters.layerBuilds})',
+          reason: 'an anchor-set CHANGE after new output must still rebuild '
+              'the gutter — the #805 gate must not over-throttle '
+              '(before=$buildsBeforeOutput, after=${counters.layerBuilds})',
         );
 
         expect(

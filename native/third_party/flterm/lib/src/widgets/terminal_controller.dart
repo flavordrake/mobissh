@@ -167,6 +167,13 @@ abstract class TerminalController extends ChangeNotifier
   /// opportunistically (e.g. on every build).
   void restyleDetectionHighlights();
 
+  /// #1044: monotonic counters over the detection scan/prune hot path — scan
+  /// invocations, rows read, µs, cache hits, prune re-validations, identity
+  /// reuse. The replay perf suite asserts on these ("pure scroll = 0 scans")
+  /// and bug-report telemetry snapshots them. Counters only; resetting is the
+  /// caller's business (tests bracket a measured phase with `reset()`).
+  DetectionScanStats get detectionScanStats;
+
   /// Returns the structured-text match covering the VIEWPORT cell at
   /// ([row], [col]), or null when none covers it (#767).
   ///
