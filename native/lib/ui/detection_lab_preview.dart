@@ -95,6 +95,18 @@ const List<DetectionLabPatternSpec> detectionLabPatternSpecs = [
     sampleMatch: '/etc/ssh/sshd_config',
     bubble: true,
   ),
+  // #1036: relative paths — verification-gated (an anchor is INVISIBLE until
+  // its cwd-resolved absolute passes the SFTP stat), so the preview's sample
+  // renders the VERIFIED state, the only visible one this pattern has.
+  DetectionLabPatternSpec(
+    key: 'relpath',
+    title: 'Relative paths',
+    icon: Icons.subdirectory_arrow_right,
+    styleIds: [kGhosttyRelPathPatternId],
+    samplePrefix: 'wrote ',
+    sampleMatch: 'specs/001/spec.md',
+    bubble: true,
+  ),
   DetectionLabPatternSpec(
     key: 'command',
     title: 'Command lines',
@@ -149,6 +161,7 @@ DetectionLabPatternSpec detectionLabSpecForCustomPattern(CustomPattern p) {
 bool detectionLabTypeEnabled(DetectionSettings d, String key) => switch (key) {
   'url' => d.url,
   'path' => d.path,
+  'relpath' => d.relpath,
   'command' => d.command,
   _ => false,
 };
@@ -159,6 +172,7 @@ Future<void> detectionLabSetTypeEnabled(WidgetRef ref, String key, bool v) {
   return switch (key) {
     'url' => n.setUrl(v),
     'path' => n.setPath(v),
+    'relpath' => n.setRelpath(v),
     'command' => n.setCommand(v),
     _ => Future<void>.value(),
   };

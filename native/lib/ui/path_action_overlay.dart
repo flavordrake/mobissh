@@ -65,6 +65,11 @@ void debugDismissPathActions() => _dismiss();
 /// offered (destructive-adjacent placement) — tapping dismisses the menu and
 /// fires the callback (the caller persists the detection exception).
 ///
+/// [relativeText] (#1036): the ORIGINAL relative matched text for a
+/// relative-path anchor whose [path] is the cwd-RESOLVED absolute. When
+/// non-null an extra "Copy relative" action copies it verbatim; "Copy path"
+/// stays the resolved absolute (and Open / sftp:// already use it).
+///
 /// Safe to call from any context under an [Overlay]. No-op if no overlay.
 void showPathActions(
   BuildContext context,
@@ -73,6 +78,7 @@ void showPathActions(
   required Offset anchor,
   Future<bool> Function(String path)? onOpen,
   String? sftpUrl,
+  String? relativeText,
   VoidCallback? onMarkNotDetection,
   Duration timeout = const Duration(seconds: 6),
 }) {
@@ -107,6 +113,18 @@ void showPathActions(
                 final ok = await copyToClipboard(sftpUrl);
                 if (identical(_activeEntry, entry)) _dismiss();
                 if (ok) showTopToastInOverlay(overlay, 'Copied: $sftpUrl');
+              }());
+            },
+      // #1036: the original relative text, only for relative-path anchors.
+      onCopyRelative: relativeText == null
+          ? null
+          : () {
+              unawaited(() async {
+                final ok = await copyToClipboard(relativeText);
+                if (identical(_activeEntry, entry)) _dismiss();
+                if (ok) {
+                  showTopToastInOverlay(overlay, 'Copied: $relativeText');
+                }
               }());
             },
       onOpen: () async {
@@ -147,6 +165,7 @@ class _PathActionLayer extends StatelessWidget {
     required this.onOpen,
     required this.onDismiss,
     this.onCopySftp,
+    this.onCopyRelative,
     this.onMarkNotDetection,
   });
 
@@ -159,6 +178,9 @@ class _PathActionLayer extends StatelessWidget {
 
   /// #994: copies the canonical sftp:// URL; null hides the action.
   final VoidCallback? onCopySftp;
+
+  /// #1036: copies the ORIGINAL relative matched text; null hides the action.
+  final VoidCallback? onCopyRelative;
 
   /// #995: persists a "Not a file" detection exception; null hides the item.
   final VoidCallback? onMarkNotDetection;
@@ -241,6 +263,15 @@ class _PathActionLayer extends StatelessWidget {
                       label: 'Copy path',
                       onTap: onCopy,
                     ),
+                    // #1036: for a relative anchor, the original matched text
+                    // (Copy path above copies the resolved absolute).
+                    if (onCopyRelative != null)
+                      _ActionButton(
+                        key: const Key('path-action-copy-relative'),
+                        icon: Icons.content_copy,
+                        label: 'Copy relative',
+                        onTap: onCopyRelative!,
+                      ),
                     if (onCopySftp != null)
                       _ActionButton(
                         key: const Key('path-action-copy-sftp'),

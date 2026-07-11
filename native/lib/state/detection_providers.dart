@@ -67,6 +67,7 @@ class DetectionSettings {
     this.url = true,
     this.path = true,
     this.command = true,
+    this.relpath = true,
   });
 
   /// The schema version this instance was built from (defaults to current).
@@ -86,6 +87,12 @@ class DetectionSettings {
   /// the field-by-field fallback below).
   final bool command;
 
+  /// Detect RELATIVE file paths (#1036). Default TRUE (purely additive):
+  /// safe because a relpath anchor is INVISIBLE until its cwd-resolved
+  /// absolute path passes the #990 SFTP-stat verification — turning the
+  /// pattern on changes nothing visible for a token that doesn't resolve.
+  final bool relpath;
+
   /// Whether the URL patterns should be registered (master AND url), UNLESS the
   /// #971 kill switch has force-disabled detection (see [kDetectionDisabled971]).
   bool get detectUrls => !kDetectionDisabled971 && enabled && url;
@@ -98,16 +105,22 @@ class DetectionSettings {
   /// under the same #971 kill switch (#998 slice C).
   bool get detectCommands => !kDetectionDisabled971 && enabled && command;
 
+  /// Whether the RELATIVE-path pattern should be registered (master AND
+  /// relpath), under the same #971 kill switch (#1036).
+  bool get detectRelPaths => !kDetectionDisabled971 && enabled && relpath;
+
   /// Whether ANY pattern is registered — the single truth the terminal view's
   /// repaint gating reads (#921), instead of re-deriving boolean combinations
   /// per call site (#998 C added a third type; state-management rule).
-  bool get detectionActive => detectUrls || detectPaths || detectCommands;
+  bool get detectionActive =>
+      detectUrls || detectPaths || detectCommands || detectRelPaths;
 
   DetectionSettings copyWith({
     bool? enabled,
     bool? url,
     bool? path,
     bool? command,
+    bool? relpath,
   }) {
     return DetectionSettings(
       schemaVersion: detectionSettingsSchemaVersion,
@@ -115,6 +128,7 @@ class DetectionSettings {
       url: url ?? this.url,
       path: path ?? this.path,
       command: command ?? this.command,
+      relpath: relpath ?? this.relpath,
     );
   }
 
@@ -126,6 +140,7 @@ class DetectionSettings {
     'url': url,
     'path': path,
     'command': command,
+    'relpath': relpath,
   });
 
   /// Parse a stored JSON string, FIELD-BY-FIELD with a per-field default
@@ -154,6 +169,8 @@ class DetectionSettings {
         path: field('path', def.path),
         // Absent in pre-#998 stored values → defaults TRUE (additive).
         command: field('command', def.command),
+        // Absent in pre-#1036 stored values → defaults TRUE (additive).
+        relpath: field('relpath', def.relpath),
       );
     } catch (_) {
       // Corrupt / non-JSON value → safe all-true default (no silent disable).
@@ -168,15 +185,17 @@ class DetectionSettings {
       other.enabled == enabled &&
       other.url == url &&
       other.path == path &&
-      other.command == command;
+      other.command == command &&
+      other.relpath == relpath;
 
   @override
-  int get hashCode => Object.hash(schemaVersion, enabled, url, path, command);
+  int get hashCode =>
+      Object.hash(schemaVersion, enabled, url, path, command, relpath);
 
   @override
   String toString() =>
       'DetectionSettings(v:$schemaVersion, enabled:$enabled, url:$url, '
-      'path:$path, command:$command)';
+      'path:$path, command:$command, relpath:$relpath)';
 }
 
 /// Persisted GLOBAL detection settings (#888 Part A). Synchronous default
@@ -234,6 +253,12 @@ class DetectionSettingsNotifier extends StateNotifier<DetectionSettings> {
   /// Toggle command-line detection (#998 slice C).
   Future<void> setCommand(bool value) async {
     state = state.copyWith(command: value);
+    await _persist();
+  }
+
+  /// Toggle RELATIVE-path detection (#1036).
+  Future<void> setRelpath(bool value) async {
+    state = state.copyWith(relpath: value);
     await _persist();
   }
 }

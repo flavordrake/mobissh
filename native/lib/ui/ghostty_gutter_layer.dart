@@ -209,10 +209,15 @@ class GutterPatternRegistry {
   /// same. The payload handed back is ALWAYS the ORIGINAL matched text (a
   /// file:// anchor reports its file:// URI, not the derived bare path) —
   /// suppression matches the anchor payload exactly.
+  /// [resolveRelative] (#1036) maps a RELATIVE anchor payload to its
+  /// cwd-resolved ABSOLUTE path (the view passes the session cwd tracker's
+  /// resolve). Called at ACTION time so a menu opened after a `cd` resolves
+  /// against the live cwd. Null → relative payloads act on their raw text.
   factory GutterPatternRegistry.standard({
     required Future<bool> Function(String path) openPath,
     String? Function(String path)? sftpUrlOf,
     void Function(String patternId, String payload)? onReportException,
+    String Function(String relative)? resolveRelative,
   }) {
     GutterItemAction copyAction(String payload) => GutterItemAction(
       keyLabel: 'copy',
@@ -365,6 +370,56 @@ class GutterPatternRegistry {
       ],
     );
 
+    // #1036: the RELATIVE-path anchor. Same affordance family as `path`, but
+    // every action works in RESOLVED-ABSOLUTE semantics (Open navigates to
+    // the cwd-resolved path; Copy path copies the absolute; Copy relative
+    // copies the matched text; sftp:// uses the absolute). Only VERIFIED
+    // anchors ever reach these (the visibility gate suppresses the rest).
+    String resolveRel(String relative) =>
+        resolveRelative?.call(relative) ?? relative;
+    final relpath = GutterPatternPresentation(
+      patternId: kGhosttyRelPathPatternId,
+      icon: Icons.folder_open,
+      typeLabel: 'Path',
+      showActions: (context, anchor, markGlobal) {
+        final payload = '${anchor.payload}';
+        final resolved = resolveRel(payload);
+        showPathActions(
+          context,
+          resolved,
+          relativeText: payload,
+          highlightRects: const [],
+          anchor: markGlobal,
+          onOpen: openPath,
+          sftpUrl: sftpUrlOf?.call(resolved),
+          // #995: report the ORIGINAL relative payload — suppression keys on
+          // the matched text, not the resolved form.
+          onMarkNotDetection: onReportException == null
+              ? null
+              : () => onReportException(anchor.patternId, payload),
+        );
+      },
+      itemActions: (payload) {
+        final resolved = resolveRel(payload);
+        return [
+          openPathAction(resolved),
+          GutterItemAction(
+            keyLabel: 'copy',
+            icon: Icons.content_copy,
+            label: 'Copy path',
+            onInvoke: (context) => _copyWithToast(context, resolved),
+          ),
+          GutterItemAction(
+            keyLabel: 'copy-relative',
+            icon: Icons.content_copy,
+            label: 'Copy relative',
+            onInvoke: (context) => _copyWithToast(context, payload),
+          ),
+          ?notAction(kGhosttyRelPathPatternId, payload, 'Not a file'),
+        ];
+      },
+    );
+
     // #998 slice C: the COMMAND-LINE block anchor. GUTTER-ONLY affordance —
     // no bubble, no glass tap. A single-match chip tap COPIES the whole
     // command payload paste-exact (the copy IS the primary use; no action
@@ -404,6 +459,7 @@ class GutterPatternRegistry {
           itemActions: url.itemActions,
         ),
         path,
+        relpath,
         command,
       ],
       // #1031 slice 3: ONE generic presentation covers every USER-DEFINED

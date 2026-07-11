@@ -80,7 +80,13 @@ void main() {
       const onlyCommand = DetectionSettings(url: false, path: false);
       expect(onlyCommand.detectCommands, !kDetectionDisabled971);
       expect(onlyCommand.detectionActive, !kDetectionDisabled971);
-      const allOff = DetectionSettings(url: false, path: false, command: false);
+      // #1036 added a fourth type — "all off" must turn it off too.
+      const allOff = DetectionSettings(
+        url: false,
+        path: false,
+        command: false,
+        relpath: false,
+      );
       expect(allOff.detectionActive, isFalse);
     });
 

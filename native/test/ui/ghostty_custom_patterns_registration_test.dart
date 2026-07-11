@@ -82,15 +82,24 @@ void main() {
 
   group('ghosttyDetectionActiveFor (#921 repaint gating)', () {
     test('true when ONLY a custom pattern is on', () {
-      const detection =
-          DetectionSettings(url: false, path: false, command: false);
+      // #1036 added the relpath type — "only a custom on" turns it off too.
+      const detection = DetectionSettings(
+        url: false,
+        path: false,
+        command: false,
+        relpath: false,
+      );
       expect(detection.detectionActive, isFalse);
       expect(ghosttyDetectionActiveFor(detection, [_pattern()]), isTrue);
     });
 
     test('false when the only custom is disabled or invalid', () {
-      const detection =
-          DetectionSettings(url: false, path: false, command: false);
+      const detection = DetectionSettings(
+        url: false,
+        path: false,
+        command: false,
+        relpath: false,
+      );
       expect(
         ghosttyDetectionActiveFor(detection, [_pattern(enabled: false)]),
         isFalse,
