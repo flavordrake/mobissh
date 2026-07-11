@@ -70,6 +70,9 @@ class _FakeController extends ChangeNotifier implements TerminalController {
   bool get isScrolling => false;
 
   @override
+  bool get contentSettling => false;
+
+  @override
   Listenable get decorationListenable => this;
 
   @override

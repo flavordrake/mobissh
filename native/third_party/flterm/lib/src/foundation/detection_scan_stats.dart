@@ -75,6 +75,15 @@ class DetectionScanStats {
   /// hides it and re-shows on settle at the correct offset (the #988 stance).
   int washHiddenForScroll = 0;
 
+  /// #1064: content-change notifies where the detection WASH was HIDDEN because
+  /// the grid is CHURNING (content updating — a live/streaming TUI repaint) and
+  /// a wash was live. The quiesce-gated wash rule pauses the wash during content
+  /// churn just as [washHiddenForScroll] pauses it during scroll: >0 while a
+  /// live-updating TUI rewrites detected content, 0 on a settled screen. This is
+  /// the case +140 missed — it paused only on scroll, not on content updates, so
+  /// a repainting TUI (isScrolling=false) left the wash shown at stale spots.
+  int washHiddenForContentChurn = 0;
+
   /// One flat map for telemetry / test assertions.
   Map<String, int> snapshot() => <String, int>{
         'rescans': rescans,
@@ -91,6 +100,7 @@ class DetectionScanStats {
         'notifiesSuppressed': notifiesSuppressed,
         'washSuppressedForGrace': washSuppressedForGrace,
         'washHiddenForScroll': washHiddenForScroll,
+        'washHiddenForContentChurn': washHiddenForContentChurn,
       };
 
   /// Zero every counter (tests bracket a measured phase with this).
@@ -109,5 +119,6 @@ class DetectionScanStats {
     notifiesSuppressed = 0;
     washSuppressedForGrace = 0;
     washHiddenForScroll = 0;
+    washHiddenForContentChurn = 0;
   }
 }

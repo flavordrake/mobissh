@@ -45,16 +45,20 @@ class TerminalPaintState {
 
   var viewportOffset = 0;
 
-  /// #1062: while the painted viewport offset is actively CHANGING (a user
-  /// scroll / fling, or a streaming-output auto-scroll), the detection WASH
-  /// [highlights] is HIDDEN. The render box sets this each paint from the
-  /// controller's `isScrolling`. It exists because during a scroll the
-  /// rescan/relocate that keeps a wash's ABSOLUTE rows aligned to its token is
-  /// DEFERRED (#1044 scan-gating), so a mid-scroll wash can sit over the cells
-  /// where its token USED to be (the owner's "pinned wash"). Rather than chase
-  /// the offset per frame (float/pin, burned twice), the wash follows the #988
-  /// bubble stance: hidden while in flight, re-derived + re-shown on settle at
-  /// the correct offset. The [HighlightPainter] early-returns when this is set.
+  /// #1062/#1064: the detection WASH [highlights] is HIDDEN while the screen is
+  /// CHURNING and re-shown once it is QUIESCENT. The render box sets this each
+  /// paint to `isScrolling || contentSettling`:
+  ///   - `isScrolling` (#1062): the painted viewport offset is in flight (a user
+  ///     scroll / fling or streaming-output auto-scroll). A mid-scroll wash can
+  ///     sit over the cells where its token USED to be (the rescan/relocate that
+  ///     keeps a wash's ABSOLUTE rows aligned is DEFERRED, #1044 scan-gating).
+  ///   - `contentSettling` (#1064): a live/streaming TUI is rewriting cells and
+  ///     the content-settle rescan has not fired yet — the wash could sit at a
+  ///     stale spot (the case +140 missed by pausing only on scroll).
+  /// Rather than chase the offset per frame (float/pin, burned twice), the wash
+  /// follows the #988 bubble stance: hidden while churning, re-derived + re-shown
+  /// on settle at the correct positions. The owner's rule (#1064): the wash is
+  /// visible ONLY when quiescent. The [HighlightPainter] early-returns when set.
   var washSuppressed = false;
 
   var cursor = const Cursor();

@@ -223,6 +223,10 @@ void main() {
         }
       }
 
+      // #1064: the ceiling keeps a trailing settle armed (so the wash re-shows
+      // if the churn stops); drain it so no Timer is pending at teardown.
+      await tester.pump(const Duration(milliseconds: 400));
+
       expect(anchoredDuringChurn, isTrue,
           reason: 'a line repainted faster than the debounce must still '
               'anchor via the max-wait ceiling; the trailing debounce alone '

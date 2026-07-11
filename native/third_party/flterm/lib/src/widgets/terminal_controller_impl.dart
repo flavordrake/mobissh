@@ -297,6 +297,20 @@ class TerminalControllerImpl extends TerminalController
   /// settle edge instead of competing with fling frames for FFI/regex time.
   bool _rescanPendingSettle = false;
 
+  /// #1064: the CONTENT is churning — a content notify arrived and the trailing
+  /// content-settle rescan has not yet fired after a quiet gap. Exposed as
+  /// [contentSettling]; the render box ORs it with [isScrolling] to hide the
+  /// detection wash (paint_state `washSuppressed`), so the wash pauses during a
+  /// live/streaming TUI repaint exactly as it pauses during scroll (the case
+  /// +140 missed). Set true on a content notify ([_onTerminalChanged]); cleared
+  /// ONLY by [_onDetectionSettled] — the trailing debounce firing after
+  /// [_detectionDebounceMs] of QUIET (a genuine settle). Deliberately NOT cleared
+  /// by [_onDetectionMaxWait]: the max-wait ceiling reconciles mid-churn to keep
+  /// detections live, but the screen is still churning, so the wash stays hidden
+  /// until real quiescence — clearing it there would flash the wash every
+  /// [_detectionMaxWaitMs] during continuous churn. Reset on clear / dispose.
+  bool _washContentSettling = false;
+
   /// #1044: how many rows of scanned coverage to RETAIN around the viewport.
   /// Scrolling through a long buffer accumulates coverage (and its matches);
   /// beyond this the far end is trimmed and re-scanned on return. Generous —
@@ -572,8 +586,12 @@ class TerminalControllerImpl extends TerminalController
     if (_textPatterns.isEmpty && _detectionMatches.isEmpty) return;
     _textPatterns.clear();
     _detectionDebounce?.cancel();
+    _detectionDebounce = null;
     _detectionMaxWait?.cancel();
     _detectionMaxWait = null;
+    // #1064: no patterns → no wash; drop the content-churn pause so a stale flag
+    // never outlives the timers that would clear it.
+    _washContentSettling = false;
     _cancelAllMissGrace();
     _invalidateDetectionScanCache();
     _detectionMatches = const [];
@@ -638,6 +656,9 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   bool get isScrolling => _isScrolling;
+
+  @override
+  bool get contentSettling => _washContentSettling;
 
   @override
   Listenable get decorationListenable => _decorationNotifier;
@@ -860,32 +881,68 @@ class TerminalControllerImpl extends TerminalController
     _detectionDebounce?.cancel();
     _detectionDebounce = Timer(
       const Duration(milliseconds: _detectionDebounceMs),
-      _fireDetectionRescan,
+      _onDetectionSettled,
     );
     // #1044: arm the max-wait ceiling at the START of a churn chain and do NOT
     // push it out on later notifies (`??=`). Continuous sub-debounce churn (a
     // repainting status line, progress bar, spinner) keeps cancelling the
     // trailing debounce above, so without this it would fire never and the
     // line would never anchor; this forces one reconcile after
-    // [_detectionMaxWaitMs] regardless. [_fireDetectionRescan] clears it so a
+    // [_detectionMaxWaitMs] regardless. [_onDetectionMaxWait] clears it so a
     // quiet gap starts a fresh chain.
     _detectionMaxWait ??= Timer(
       const Duration(milliseconds: _detectionMaxWaitMs),
-      _fireDetectionRescan,
+      _onDetectionMaxWait,
     );
   }
 
-  /// #1044: the debounce / max-wait timer target. Cancels BOTH timers (whichever
-  /// did not fire) and clears the ceiling so the next notify starts a fresh
-  /// churn chain, then runs the scan. Routing both timers through here keeps the
-  /// trailing edge and the ceiling from double-scanning and guarantees the
-  /// ceiling is re-armable.
-  void _fireDetectionRescan() {
-    _detectionDebounce?.cancel();
+  /// #1044/#1064: the TRAILING-edge target — the content held QUIET for
+  /// [_detectionDebounceMs] (a genuine SETTLE). Cancels the ceiling so it does
+  /// not double-scan, runs the reconcile scan, then RE-SHOWS the detection wash
+  /// (#1064): matching was paused while the grid churned, so now that it is
+  /// quiescent the wash must repaint at the fresh positions. [_rescanDetections]
+  /// only notifies when the styled list actually CHANGES (equality-gated), so a
+  /// churn that ended on the SAME matches (a clock tick beside an unchanged URL)
+  /// would otherwise leave the wash hidden — wake the render layer explicitly so
+  /// it repaints with `contentSettling` now false and the wash reappears.
+  void _onDetectionSettled() {
     _detectionDebounce = null;
     _detectionMaxWait?.cancel();
     _detectionMaxWait = null;
     _rescanDetections();
+    if (_washContentSettling) {
+      _washContentSettling = false;
+      // Re-show the wash only when a wash is live (anchors exist); a pattern-less
+      // / empty terminal has nothing to re-show (mirrors [_onScrollSettled]'s
+      // #805 battery guard). The render box reads `contentSettling` each paint.
+      if (_detectionMatches.isNotEmpty) notifyListeners();
+    }
+  }
+
+  /// #1044/#1064: the CEILING target — continuous sub-debounce churn starved the
+  /// trailing edge, so force ONE reconcile after [_detectionMaxWaitMs] to keep a
+  /// live-updating line anchoring. Unlike [_onDetectionSettled] this is NOT a
+  /// settle: the grid is still churning, so [_washContentSettling] stays TRUE and
+  /// the wash stays HIDDEN (re-showing it here would flash the wash every ceiling
+  /// window during continuous churn — the opposite of the owner's quiesce-gate).
+  ///
+  /// #1064: re-arm ONE trailing debounce so a genuine settle is still detected —
+  /// if the churn STOPS right after this ceiling fire (no further notify to
+  /// re-arm the trailing edge), this re-armed timer fires [_onDetectionSettled]
+  /// after a quiet gap, clearing the flag and re-showing the wash. Without it the
+  /// wash could stay stranded-hidden until the next unrelated content change.
+  /// Continuous churn simply cancels + re-arms this on the next notify (no-op).
+  /// The max-wait ceiling itself re-arms on the next notify (`??=` in
+  /// [_scheduleDetectionRescan]).
+  void _onDetectionMaxWait() {
+    _detectionMaxWait = null;
+    _rescanDetections();
+    if (_textPatterns.isEmpty) return;
+    _detectionDebounce?.cancel();
+    _detectionDebounce = Timer(
+      const Duration(milliseconds: _detectionDebounceMs),
+      _onDetectionSettled,
+    );
   }
 
   /// #873: SYNCHRONOUSLY re-validate the live detection anchors against the
@@ -2676,6 +2733,20 @@ class TerminalControllerImpl extends TerminalController
     // active grid in place — mark the mutable suffix dirty so the next rescan
     // re-reads it (and only it).
     _contentDirty = true;
+    // #1064: content is CHURNING — pause the detection wash (hide it) until the
+    // rescan SETTLES. Only when a pattern is registered (else there is no wash and
+    // no settle timer would ever fire to clear the flag). The flag ORs with
+    // isScrolling in the render box's `washSuppressed`, so a live/streaming TUI
+    // repaint (isScrolling=false) now hides the wash — the case +140 missed.
+    // Cleared by [_onDetectionSettled] after a quiet gap.
+    if (_textPatterns.isNotEmpty) {
+      _washContentSettling = true;
+      // Telemetry: prove the content-churn pause fired over LIVE detected content
+      // (>0 on a live-updating TUI with a wash, 0 on a settled screen).
+      if (_detectionMatches.isNotEmpty) {
+        _detectionStats.washHiddenForContentChurn++;
+      }
+    }
     _scheduleDetectionRescan();
 
     // #887: the remaining work emits notifications that REBUILD or read layout
