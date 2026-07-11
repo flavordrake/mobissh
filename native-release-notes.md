@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+140 (2026-07-11) — highlights hide cleanly during scroll, reappear in place
+- **Detection highlights no longer stick to the screen while you scroll** — the wash hides during an active scroll and reappears locked to its text once you stop, instead of freezing at a stale position. (#1062)
+
 ## v0.1.10+139 (2026-07-11) — highlights stay locked to their text + calmer intensity
 - **Detection highlights no longer float off their text** on a repainting TUI — when a line is erased and redrawn, the wash is withheld until the pattern reappears at real cells instead of lingering over blank space. (#1060)
 - **Wash intensity dialed back** — the highlight is clearly visible but no longer overpowering; still tunable in the Detection lab. (#1060)
