@@ -126,6 +126,26 @@ class TerminalControllerImpl extends TerminalController
   /// that the bubble reappears promptly once the user lifts off.
   static const int _scrollSettleMs = 140;
 
+  /// #1044: CEILING on [_scrollSettleTimer]. A line repainting IN PLACE while
+  /// the viewport bottom-follows re-arms the settle timer on every frame (the
+  /// painted offset jitters by a row as the follow re-pins), so a pure trailing
+  /// settle holds [_isScrolling] TRUE for the whole repaint burst — and
+  /// [_rescanDetections] defers EVERY scan at the scroll gate, so the churning
+  /// line never anchors (the on-emulator #1044 failure a detection-debounce
+  /// ceiling alone does NOT cover, because the defer is at the settle gate).
+  /// This ceiling forces a QUIESCE reconcile after this long of unbroken
+  /// scroll-churn — but ONLY when [_contentDirty] shows the grid was actually
+  /// rewritten (content waiting to be scanned). A real user fling (no new
+  /// content) is untouched: the drag-gate's "zero scans while flinging"
+  /// invariant holds. Armed once per scrolling episode (`??=`), re-armed for
+  /// the next window on fire. Cancelled on dispose / real settle.
+  Timer? _scrollSettleMaxWait;
+
+  /// #1044: how long of CONTINUOUS scroll-churn (offset never holding still)
+  /// forces one quiesce reconcile via [_scrollSettleMaxWait]. Bounded so a
+  /// perpetually-repainting bottom-following line still scans periodically.
+  static const int _scrollSettleMaxWaitMs = 300;
+
   /// #805: fires ONLY when a widget-layer decorator's inputs change — the
   /// detected [_detectionMatches] set (after a settled re-scan) or the
   /// [_paintedViewportOffset] (after a frame paints a new offset). A decorator
@@ -173,6 +193,21 @@ class TerminalControllerImpl extends TerminalController
   /// doesn't re-scan every byte. Cancelled on dispose.
   Timer? _detectionDebounce;
 
+  /// #1044: MAX-WAIT ceiling for the [_detectionDebounce]. A region that
+  /// repaints IN PLACE faster than [_detectionDebounceMs] — a progress bar,
+  /// spinner, clock, or a repainting-TUI status line (the owner's Claude-Code
+  /// TUI) — re-arms the trailing debounce on EVERY notify, so a pure trailing
+  /// debounce fires NEVER and the churning line never anchors (the on-emulator
+  /// #1044 acceptance failure: "the repainted line never anchored"). This
+  /// single ceiling timer is armed at the START of a churn chain and is NOT
+  /// pushed out by later notifies (`??=`), so it forces ONE reconcile after
+  /// [_detectionMaxWaitMs] of unbroken churn; [_fireDetectionRescan] then
+  /// clears it so the next quiet gap re-arms a fresh chain. This is the
+  /// content-update settle path — SEPARATE from the scroll drag-gate (which
+  /// suppresses all scan work during an active fling, [_rescanDetections]).
+  /// Cancelled on dispose / clear.
+  Timer? _detectionMaxWait;
+
   /// #767: how many scrollback rows ABOVE the active viewport the re-scan reads.
   /// Bounded so detection never walks unbounded history on every notify — only
   /// the active screen plus this many recent scrollback rows are scanned, which
@@ -182,6 +217,15 @@ class TerminalControllerImpl extends TerminalController
   /// #767: debounce window (ms) for the cell re-scan. Mirrors the app's old
   /// 120ms URL re-detect debounce, now owned by the controller.
   static const int _detectionDebounceMs = 120;
+
+  /// #1044: force a reconcile scan after this long of CONTINUOUS sub-debounce
+  /// churn even if the content never "settles" (see [_detectionMaxWait]).
+  /// Bounded so a perpetually-repainting region still scans PERIODICALLY —
+  /// detections stay live on a live-updating line — without paying a full scan
+  /// on every sub-interval notify. Comfortably above [_detectionDebounceMs] so
+  /// a normal streaming burst still coalesces on the trailing edge; the ceiling
+  /// only bites when the trailing edge can never be reached.
+  static const int _detectionMaxWaitMs = 300;
 
   /// #883: the COORDINATE-FRAME EPOCH of [_detectionMatches] — the
   /// scrollbackRows/cols/visibleRows observed when the matches' absolute rows
@@ -207,6 +251,100 @@ class TerminalControllerImpl extends TerminalController
   /// little slack catches small same-burst appends; larger bursts simply defer
   /// to the debounced rescan.
   static const int _relocateRowSlack = 4;
+
+  /// #1044: detection hot-path counters (see [DetectionScanStats]).
+  final DetectionScanStats _detectionStats = DetectionScanStats();
+
+  /// #1044: the CONTENT-KEYED SCAN CACHE — the absolute-row range
+  /// `[_scannedLo, _scannedHi)` whose detection results ([_detectionMatches]
+  /// restricted to those rows) are CURRENT. The key invariant that makes a
+  /// row cache possible without consuming libghostty damage (which is single-
+  /// consumption and owned by the paint snapshot — reference_paint_root_985):
+  /// scrollback rows are IMMUTABLE in place. VT writes only address the
+  /// active grid; absolute `screen` rows are append-stable (#883), and the
+  /// whole frame is invalidated wholesale on the shifts the epoch below
+  /// tracks. So a covered row above the grid cannot have changed since it
+  /// was scanned, and a rescan only needs to read (a) rows newly entering
+  /// the window and (b) the MUTABLE suffix (every row that has been part of
+  /// the active grid since the last completed scan — [_scannedGridLo]).
+  /// `-1` = no valid cache (full-window scan on next pass).
+  int _scannedLo = -1;
+  int _scannedHi = -1;
+
+  /// #1044: `terminal.scrollbackRows` at the last COMPLETED scan — the first
+  /// row that has been part of the (mutable) active grid since then. On a
+  /// dirty rescan the cache is trimmed to the clean prefix `[.., this)` and
+  /// the suffix re-read.
+  int _scannedGridLo = 0;
+
+  /// #1044: the cache's own coordinate-frame epoch (scrollback shrink /
+  /// resize / screen flip / pattern-suppression flip all invalidate). Kept
+  /// SEPARATE from the #883 `_detectionFrame*` epoch: the prune ADVANCES that
+  /// one on full confirmation, which must not launder a cache staleness.
+  int _scannedScrollback = 0;
+  int _scannedCols = 0;
+  int _scannedRows = 0;
+  TerminalScreen _scannedScreen = .primary;
+  bool _scannedSuppressHeuristics = false;
+
+  /// #1044: a terminal content notify arrived since the last completed scan —
+  /// the active grid may have been rewritten in place, so the mutable suffix
+  /// must be re-read on the next rescan. Scroll notifies never set this
+  /// (viewport movement cannot change cell content).
+  bool _contentDirty = false;
+
+  /// #1044: a rescan fired while [_isScrolling]; run ONE reconcile on the
+  /// settle edge instead of competing with fling frames for FFI/regex time.
+  bool _rescanPendingSettle = false;
+
+  /// #1044: how many rows of scanned coverage to RETAIN around the viewport.
+  /// Scrolling through a long buffer accumulates coverage (and its matches);
+  /// beyond this the far end is trimmed and re-scanned on return. Generous —
+  /// match storage is cheap; re-scanning is the expensive part.
+  static const int _detectionCacheRetentionRows = 2000;
+
+  /// #1044: fixed row slack added around a partial scan region before the
+  /// wrap-flag extension, so the #1042 command IN-BLOCK continuation join
+  /// (which joins across NON-wrapped rows) sees its block context. A block
+  /// deeper than this may join differently at a region edge than a full scan
+  /// would — accepted; the next full-window scan (frame shift) reconverges.
+  static const int _detectionRegionJoinSlack = 12;
+
+  /// #1044: hard cap on the wrap-flag region extension (defensive — a
+  /// pathological all-wrapped buffer must not turn a partial scan into an
+  /// unbounded walk).
+  static const int _detectionRegionWrapCap = 200;
+
+  /// #1046: MISS-GRACE timers, one per anchor whose payload is currently
+  /// unaccounted for on the grid. An in-place TUI repaint routinely leaves a
+  /// notify observable BETWEEN a row's erase and its redraw (the owner trace
+  /// shows the payload back at every chunk boundary while the anchor
+  /// blinked), and a moved line can be off-grid for one whole chunk. A
+  /// missed anchor is therefore KEPT and retried (validate/relocate on each
+  /// subsequent notify); only when the payload stays gone for
+  /// [_detectionMissGraceMs] does the timer evict it. Keyed by match
+  /// INSTANCE (StructuredMatch has identity equality). Timers are cancelled
+  /// when the match re-validates, relocates, is replaced by an equal fresh
+  /// match, or the controller is disposed / patterns cleared.
+  final Map<StructuredMatch, Timer> _detectionMissTimers =
+      <StructuredMatch, Timer>{};
+
+  /// #1046: how long a missed SPAN anchor survives while its payload is
+  /// unaccounted for. Long enough to ride a mid-chunk erase→redraw and a
+  /// one-chunk absence (~230ms observed in the owner trace), short enough
+  /// that a genuinely rewritten row sheds its orphaned WASH well inside the
+  /// #873 comfort band.
+  static const int _detectionMissGraceMs = 350;
+
+  /// #1046: the BLOCK-tier (command) grace. A wrapped command's assembled
+  /// logical line mutates through a TUI redraw (the continuation row lands a
+  /// chunk later → the scorer sees a truncated body → a DIFFERENT payload),
+  /// so the exact-payload relocate can miss for most of a redraw burst
+  /// (~1.0s observed in the owner trace). A block anchor paints NO wash —
+  /// its only affordance is the gutter chip — so the longer afterlife has no
+  /// stale-highlight cost, and it is what keeps the chip from blinking at
+  /// every repaint (#1046's owner report WAS a command chip).
+  static const int _detectionMissGraceBlockMs = 1500;
 
   TerminalControllerImpl({TerminalConfig config = const TerminalConfig()})
     : _config = config,
@@ -400,6 +538,9 @@ class TerminalControllerImpl extends TerminalController
   @override
   void registerTextPattern(TextPattern pattern) {
     _textPatterns[pattern.id] = pattern;
+    // #1044: the pattern SET changed — cached per-row results were computed
+    // with the old set and cannot be trusted.
+    _invalidateDetectionScanCache();
     // Scan synchronously so a freshly-registered pattern highlights any URLs
     // already on screen without waiting for the next output/scroll notify.
     _rescanDetections();
@@ -410,6 +551,10 @@ class TerminalControllerImpl extends TerminalController
     if (_textPatterns.isEmpty && _detectionMatches.isEmpty) return;
     _textPatterns.clear();
     _detectionDebounce?.cancel();
+    _detectionMaxWait?.cancel();
+    _detectionMaxWait = null;
+    _cancelAllMissGrace();
+    _invalidateDetectionScanCache();
     _detectionMatches = const [];
     // Clear only the detection-driven highlights (which are the only writer of
     // _highlights once a pattern is registered).
@@ -477,6 +622,9 @@ class TerminalControllerImpl extends TerminalController
   Listenable get decorationListenable => _decorationNotifier;
 
   @override
+  DetectionScanStats get detectionScanStats => _detectionStats;
+
+  @override
   void reportPaintedViewportOffset(int offset) {
     if (offset == _paintedViewportOffset) return;
     _paintedViewportOffset = offset;
@@ -530,6 +678,55 @@ class TerminalControllerImpl extends TerminalController
       const Duration(milliseconds: _scrollSettleMs),
       _onScrollSettled,
     );
+    // #1044: arm the settle CEILING once at the start of a scrolling episode
+    // and do NOT push it out on later offset changes (`??=`). Continuous
+    // scroll-churn (a bottom-following repainting line) keeps re-arming the
+    // trailing settle above, so without this it would never fire and every
+    // content rescan would defer forever; the ceiling forces one quiesce
+    // reconcile after [_scrollSettleMaxWaitMs] — but only when content is
+    // actually pending (see [_onScrollSettledMaxWait]).
+    _scrollSettleMaxWait ??= Timer(
+      const Duration(milliseconds: _scrollSettleMaxWaitMs),
+      _onScrollSettledMaxWait,
+    );
+  }
+
+  /// #1044: the settle-ceiling target. Forces ONE quiesce reconcile when
+  /// continuous scroll-churn has starved the trailing [_scrollSettleTimer]
+  /// past [_scrollSettleMaxWaitMs] AND [_contentDirty] shows the grid was
+  /// actually rewritten (a bottom-following repaint). A pure user fling never
+  /// sets [_contentDirty], so it is left scrolling with zero scan work — the
+  /// drag-gate invariant. This does NOT
+  /// leave the scrolling state (the offset is still moving, the decorator stays
+  /// hidden); it only unblocks DETECTION so a perpetually-repainting line
+  /// anchors and keeps scanning periodically. The next genuine settle still
+  /// runs [_onScrollSettled] normally.
+  void _onScrollSettledMaxWait() {
+    _scrollSettleMaxWait = null;
+    if (_disposed || !_isScrolling) return;
+    // The trigger is [_contentDirty] ALONE — the active grid was rewritten
+    // since the last scan (a bottom-following repaint). A PURE fling never sets
+    // it (scroll notifies don't; that is the basis of "pure scroll = 0 scans"),
+    // so a real fling is left scrolling with zero scan work — drag-gate intact.
+    // NOT [_rescanPendingSettle]: that flag is set whenever a debounce happens
+    // to fire mid-fling and defer at the scroll gate (discovery-only, no content
+    // change), so forcing on it would scan during a legitimate fling (#1044
+    // regression: it broke the pure-fling zero-passes invariant).
+    if (_contentDirty) {
+      _rescanPendingSettle = false;
+      // Bypass the scroll gate for this ONE forced reconcile — the whole point
+      // is to scan despite _isScrolling, because the "scroll" is really content
+      // churn that will never settle on its own.
+      _rescanDetections(bypassScrollGate: true);
+    }
+    // Re-arm for the next ceiling window so an unbroken churn keeps getting a
+    // periodic scan (and a still-live fling gets re-evaluated next window).
+    if (_isScrolling) {
+      _scrollSettleMaxWait = Timer(
+        const Duration(milliseconds: _scrollSettleMaxWaitMs),
+        _onScrollSettledMaxWait,
+      );
+    }
   }
 
   /// #812: trailing edge — the painted offset has held still for [_scrollSettleMs].
@@ -538,8 +735,20 @@ class TerminalControllerImpl extends TerminalController
   /// painted offset (painted == live → exact placement, no drift).
   void _onScrollSettled() {
     _scrollSettleTimer = null;
+    // #1044: a genuine settle supersedes the ceiling — cancel it so it does not
+    // fire a redundant reconcile after the offset has already come to rest.
+    _scrollSettleMaxWait?.cancel();
+    _scrollSettleMaxWait = null;
     if (_disposed || !_isScrolling) return;
     _isScrolling = false;
+    // #1044: the QUIESCE reconcile — any rescan that fired mid-scroll was
+    // deferred; run exactly one now that the offset is stable, so newly-
+    // revealed rows are scanned (cache-partial) and anchors appear. This is
+    // the debounced settle pass the #918 settle-tick precedent describes.
+    if (_rescanPendingSettle) {
+      _rescanPendingSettle = false;
+      _rescanDetections();
+    }
     _decorationNotifier.notify();
   }
 
@@ -613,8 +822,32 @@ class TerminalControllerImpl extends TerminalController
     _detectionDebounce?.cancel();
     _detectionDebounce = Timer(
       const Duration(milliseconds: _detectionDebounceMs),
-      _rescanDetections,
+      _fireDetectionRescan,
     );
+    // #1044: arm the max-wait ceiling at the START of a churn chain and do NOT
+    // push it out on later notifies (`??=`). Continuous sub-debounce churn (a
+    // repainting status line, progress bar, spinner) keeps cancelling the
+    // trailing debounce above, so without this it would fire never and the
+    // line would never anchor; this forces one reconcile after
+    // [_detectionMaxWaitMs] regardless. [_fireDetectionRescan] clears it so a
+    // quiet gap starts a fresh chain.
+    _detectionMaxWait ??= Timer(
+      const Duration(milliseconds: _detectionMaxWaitMs),
+      _fireDetectionRescan,
+    );
+  }
+
+  /// #1044: the debounce / max-wait timer target. Cancels BOTH timers (whichever
+  /// did not fire) and clears the ceiling so the next notify starts a fresh
+  /// churn chain, then runs the scan. Routing both timers through here keeps the
+  /// trailing edge and the ceiling from double-scanning and guarantees the
+  /// ceiling is re-armable.
+  void _fireDetectionRescan() {
+    _detectionDebounce?.cancel();
+    _detectionDebounce = null;
+    _detectionMaxWait?.cancel();
+    _detectionMaxWait = null;
+    _rescanDetections();
   }
 
   /// #873: SYNCHRONOUSLY re-validate the live detection anchors against the
@@ -656,6 +889,7 @@ class TerminalControllerImpl extends TerminalController
     if (_detectionMatches.isEmpty) return;
     // No patterns left (cleared) — nothing legitimately detectable; drop all.
     if (_textPatterns.isEmpty) {
+      _cancelAllMissGrace();
       _detectionMatches = const [];
       highlights = const [];
       _decorationNotifier.notify();
@@ -696,7 +930,25 @@ class TerminalControllerImpl extends TerminalController
         final drop = _detectionFrameScrollback - scrollback;
         var allConfirmed = true;
         survivors = <StructuredMatch>[];
+        _detectionStats.prunes++;
+        // #1046: ONE shared grid scan, lazily performed on the first trusted-
+        // frame miss, so a miss can be atomically RELOCATED (see below)
+        // instead of evict-now / rediscover-after-the-debounce.
+        List<StructuredMatch>? gridMatches;
         for (final m in _detectionMatches) {
+          // #1044: a match whose rows sit fully BELOW the active grid lives
+          // in immutable scrollback — VT writes only address the grid and
+          // absolute rows are append-stable (#883), so in an UNSHIFTED frame
+          // its cells cannot have changed. Keep it without a re-read; only
+          // matches touching the grid (the in-place TUI rewrite surface #873
+          // exists for) pay for a re-validation scan. (Corner: a row edited
+          // in the same chunk that scrolled it out of the grid is caught by
+          // the next debounced rescan's dirty suffix, not this prune.)
+          if (!frameShifted && _matchBottomRow(m) < scrollback) {
+            survivors.add(m);
+            _detectionStats.pruneSkippedImmutable++;
+            continue;
+          }
           final v = _revalidatedMatch(
             m,
             scanPatterns,
@@ -706,12 +958,45 @@ class TerminalControllerImpl extends TerminalController
             drop: drop,
           );
           if (v == null) {
-            changed = true; // confirmed gone → evict
+            // #1046: the rows under the anchor changed — but an in-place TUI
+            // repaint (Claude-CLI etc.) MOVES lines by rewriting the whole
+            // view shifted, usually within the SAME chunk. Evicting now and
+            // waiting for the debounced rescan to rediscover the payload at
+            // its new rows leaves a visible affordance gap — the owner's
+            // flickering gutter chip (vanish→reappear windows of 0.2–1.4s in
+            // the report's byte-trace, because streaming keeps pushing the
+            // debounce out). Instead, RELOCATE atomically: one shared scan of
+            // the active grid (where all in-place rewrites live), adopt the
+            // same payload at its new rows in this same notify.
+            final grid = gridMatches ??=
+                _scanWindow(scrollback, maxEndAbs, cols, scanPatterns);
+            final moved = _nearestRelocation(m, grid, survivors);
+            if (moved != null) {
+              _cancelMissGrace(m);
+              survivors.add(moved);
+              changed = true; // moved → ranges updated
+              _detectionStats.pruneRelocated++;
+              continue;
+            }
+            // Not on the grid at all RIGHT NOW — which, mid-repaint, often
+            // means "a notify landed between the erase and the redraw of the
+            // same chunk" (the #1046 trace shows the payload back on the
+            // grid at every chunk BOUNDARY while the anchor blinked). Give
+            // the anchor a bounded MISS GRACE instead of evicting: keep it,
+            // retry validate/relocate on every subsequent notify, and evict
+            // via the grace timer only if the payload stays gone. This
+            // trades the #873 "evict immediately" for "evict within
+            // ~[_detectionMissGraceMs]" — still far inside the multi-second
+            // orphan lingering #873 was about, and it kills the blink.
+            survivors.add(m);
+            _armMissGrace(m);
             continue;
           }
           if (identical(v, m)) {
+            _cancelMissGrace(m); // content re-confirmed at its rows
             if (frameShifted) allConfirmed = false; // kept on deferral
           } else {
+            _cancelMissGrace(m);
             changed = true; // re-located → ranges updated
           }
           survivors.add(v);
@@ -829,7 +1114,138 @@ class TerminalControllerImpl extends TerminalController
       startAbsRow: startAbs,
       endAbsRow: endAbs,
     );
-    return _detectionScanner.scan(reader, scanPatterns);
+    // #1044: this is the prune's per-match re-read — count + time it so the
+    // replay perf suite can pin the prune cost.
+    _detectionStats.pruneWindowScans++;
+    final sw = Stopwatch()..start();
+    final matches = _detectionScanner.scan(reader, scanPatterns);
+    _detectionStats.pruneMicros += sw.elapsedMicroseconds;
+    return matches;
+  }
+
+  /// #1044: the LOWEST absolute row a match's ranges touch — the row that
+  /// decides whether the match lives fully in immutable scrollback.
+  int _matchBottomRow(StructuredMatch m) {
+    var bottom = m.ranges.first.bottomRow;
+    for (final r in m.ranges) {
+      if (r.bottomRow > bottom) bottom = r.bottomRow;
+    }
+    return bottom;
+  }
+
+  /// #1046: start (or keep) the miss-grace countdown for [m]. Idempotent —
+  /// a match already in grace keeps its ORIGINAL deadline, so a streaming
+  /// repaint cannot extend a truly-gone anchor's afterlife indefinitely.
+  void _armMissGrace(StructuredMatch m) {
+    if (_detectionMissTimers.containsKey(m)) return;
+    _detectionMissTimers[m] = Timer(
+      Duration(
+        milliseconds: m.tier == TextTier.block
+            ? _detectionMissGraceBlockMs
+            : _detectionMissGraceMs,
+      ),
+      () => _onMissGraceExpired(m),
+    );
+  }
+
+  /// #1046: the payload was re-confirmed (validated in place, relocated, or
+  /// replaced by an equal fresh match) — the anchor is no longer missing.
+  void _cancelMissGrace(StructuredMatch m) {
+    _detectionMissTimers.remove(m)?.cancel();
+  }
+
+  /// #1046: cancel every pending miss-grace timer (dispose / pattern clear /
+  /// full-set replacement).
+  void _cancelAllMissGrace() {
+    for (final t in _detectionMissTimers.values) {
+      t.cancel();
+    }
+    _detectionMissTimers.clear();
+  }
+
+  /// #1046: the grace ran out with the payload still unaccounted for. One
+  /// final validate/relocate attempt (content may have returned with no
+  /// notify since), then evict for real.
+  void _onMissGraceExpired(StructuredMatch m) {
+    _detectionMissTimers.remove(m);
+    if (_disposed) return;
+    final live = _detectionMatches;
+    final idx = live.indexOf(m); // identity equality
+    if (idx < 0) return; // already resolved elsewhere
+    try {
+      final cols = _gridCols;
+      final visibleRows = _gridRows;
+      if (cols <= 0 || visibleRows <= 0) return; // degenerate: keep, rescan reconciles
+      final scanPatterns = _currentScanPatterns();
+      if (scanPatterns.isEmpty) return; // pattern-less paths clear wholesale
+      final scrollback = terminal.scrollbackRows;
+      final gridMatches =
+          _scanWindow(scrollback, scrollback + visibleRows, cols, scanPatterns);
+      final survivors = live.toList();
+      final moved = _nearestRelocation(m, gridMatches, survivors);
+      if (moved != null) {
+        survivors[idx] = moved;
+        _detectionStats.pruneRelocated++;
+      } else {
+        survivors.removeAt(idx);
+      }
+      _detectionMatches = survivors;
+      highlights = _styledHighlights(survivors);
+      _decorationNotifier.notify();
+    } catch (_) {
+      // Defensive: an FFI hiccup here must not crash — leave the match for
+      // the debounced rescan's reconcile to settle.
+    }
+  }
+
+  /// The pattern set a scan/prune should run RIGHT NOW — the registered
+  /// patterns minus the #824/#834 alt-screen heuristic suppression.
+  List<TextPattern> _currentScanPatterns() {
+    final suppressHeuristics =
+        _activeScreen == .alternate && _mouseTracking == .none;
+    return suppressHeuristics
+        ? [for (final p in _textPatterns.values) if (p.isOsc8Source) p]
+        : _textPatterns.values.toList(growable: false);
+  }
+
+  /// #1046: among [gridMatches], the same-payload candidate NEAREST to the
+  /// missed match [m] (by top-row distance) that is not just another live
+  /// anchor's cells — a second occurrence of the same payload that is already
+  /// anchored (in [survivors] or still pending in [_detectionMatches]) must
+  /// not be double-claimed. Null when the payload is really gone.
+  StructuredMatch? _nearestRelocation(
+    StructuredMatch m,
+    List<StructuredMatch> gridMatches,
+    List<StructuredMatch> survivors,
+  ) {
+    final mTop = m.ranges.first.topRow;
+    StructuredMatch? best;
+    var bestDist = 1 << 30;
+    for (final f in gridMatches) {
+      if (f.patternId != m.patternId || f.payload != m.payload) continue;
+      var claimed = false;
+      for (final other in survivors) {
+        if (!identical(other, m) && _sameMatch(other, f)) {
+          claimed = true;
+          break;
+        }
+      }
+      if (!claimed) {
+        for (final other in _detectionMatches) {
+          if (!identical(other, m) && _sameMatch(other, f)) {
+            claimed = true;
+            break;
+          }
+        }
+      }
+      if (claimed) continue;
+      final dist = (f.ranges.first.topRow - mTop).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = f;
+      }
+    }
+    return best;
   }
 
   /// #767: re-scan the active screen plus a bounded scrollback window for every
@@ -839,9 +1255,24 @@ class TerminalControllerImpl extends TerminalController
   /// scrollback eviction is corrected by construction (no ghost mark). Defensive:
   /// a formatter/FFI hiccup must never crash the session, so it falls back to no
   /// detection.
-  void _rescanDetections() {
+  void _rescanDetections({bool bypassScrollGate = false}) {
     if (_textPatterns.isEmpty) {
+      _cancelAllMissGrace();
       _detectionMatches = const [];
+      return;
+    }
+    // #1044: while the viewport is actively scrolling, DEFER. A scroll cannot
+    // change cell content (absolute rows are append-stable, VT writes only
+    // address the grid), so the only work a mid-scroll rescan could do is
+    // discover newly-revealed rows — not worth competing with fling frames
+    // for FFI/regex time. [_onScrollSettled] runs exactly one reconcile on
+    // the settle edge (the quiesce pass). [bypassScrollGate] is set ONLY by
+    // [_onScrollSettledMaxWait] — the ceiling that force-scans when content
+    // churn keeps the scroll state from ever settling (a bottom-following
+    // repainting line); that path has already confirmed content is pending.
+    if (_isScrolling && !bypassScrollGate) {
+      _rescanPendingSettle = true;
+      _detectionStats.rescansDeferredScrolling++;
       return;
     }
     // #824: HEURISTIC structured-text detection (the regex `url`/`path` patterns)
@@ -874,73 +1305,385 @@ class TerminalControllerImpl extends TerminalController
       // On the alt-screen with no OSC-8 source registered there is nothing to
       // detect; drop any anchors carried over from the primary screen so the
       // underlines vanish the instant vim opens, and wake the decorator.
+      _invalidateDetectionScanCache();
+      _cancelAllMissGrace();
       if (_detectionMatches.isEmpty) return;
       _detectionMatches = const [];
       highlights = const [];
       _decorationNotifier.notify();
       return;
     }
-    List<StructuredMatch> matches;
     try {
       final visibleRows = _gridRows;
       final cols = _gridCols;
       if (visibleRows <= 0 || cols <= 0) {
-        matches = const [];
+        // Degenerate mid-layout dims — keep the pre-#1044 behavior (clear the
+        // matches) and drop the cache with them.
+        _invalidateDetectionScanCache();
+        _cancelAllMissGrace();
+        if (_detectionMatches.isEmpty) return;
+        _detectionMatches = const [];
+        highlights = const [];
+        _decorationNotifier.notify();
+        return;
+      }
+      // Scan the region that is ACTUALLY ON SCREEN wherever the viewport
+      // currently sits in scrollback, not a range anchored only to the bottom.
+      // The viewport's top absolute row is the scroll offset; it occupies
+      // [viewportTop, viewportTop + visibleRows). Scan that plus up to
+      // _detectionScrollbackWindow rows of margin ABOVE and BELOW it, so a URL
+      // the user scrolled far up to (#787) — or just scrolled near — is picked
+      // up, while the bounded margin keeps this off an O(scrollback) walk.
+      // (Anchored-to-bottom previously missed anything scrolled past the
+      // window.) The margin also gives the wrap-join enough context rows above
+      // the first visible row to assemble a URL that wraps across the boundary.
+      final scrollback = terminal.scrollbackRows;
+      // #958: the viewport top in SCREEN space. On the ALT screen
+      // `scrollbar.offset` is alt-local (always 0) while the alt viewport
+      // actually sits AFTER the primary history in `PointTag.screen` space —
+      // using the raw offset made the scan window cover primary HISTORY rows
+      // instead of the visible alt rows, so with history longer than the
+      // margin nothing on a tmux screen was ever detected (the other half of
+      // #958). See [screenViewportTop].
+      final viewportTop =
+          _activeScreen == .alternate ? scrollback : scrollbar.offset;
+      final startAbs = viewportTop - _detectionScrollbackWindow < 0
+          ? 0
+          : viewportTop - _detectionScrollbackWindow;
+      // Clamp the bottom to the last buffer row so we never read past the
+      // active screen (defensive; the reader also guards per-cell).
+      final maxEndAbs = scrollback + visibleRows; // exclusive
+      var endAbs = viewportTop + visibleRows + _detectionScrollbackWindow;
+      if (endAbs > maxEndAbs) endAbs = maxEndAbs;
+      if (endAbs <= startAbs) return;
+
+      // ---- #1044: the content-keyed scan cache ----
+      // The cache claims: every row in [_scannedLo, _scannedHi) still holds
+      // the content it held when [_detectionMatches] was reconciled. Valid
+      // only while the coordinate frame holds (no scrollback shrink, no
+      // resize, same screen) and the effective pattern set is unchanged.
+      // Frame STABILITY is separate from cache COVERAGE: a zero-scrollback
+      // TUI dirties its whole (all-grid) coverage on every repaint — the
+      // cache goes empty but the coordinate frame is perfectly stable, and
+      // the #1046 miss grace must keep applying there. Only a real frame
+      // shift (scrollback shrink, resize, screen/suppression flip) makes
+      // stored rows garbage.
+      final frameStable = _scannedLo >= 0 &&
+          scrollback >= _scannedScrollback &&
+          cols == _scannedCols &&
+          visibleRows == _scannedRows &&
+          _activeScreen == _scannedScreen &&
+          suppressHeuristics == _scannedSuppressHeuristics;
+      var cacheValid = frameStable;
+      if (cacheValid && _contentDirty) {
+        // Content arrived since the last scan: every row that has been part
+        // of the MUTABLE active grid since then (>= _scannedGridLo — a suffix
+        // of the buffer, since the grid is always the bottom rows) is
+        // suspect. Trim the cache to its clean prefix; the suspect suffix
+        // falls into the extension region below and is re-read.
+        _scannedHi =
+            _scannedGridLo < _scannedLo ? _scannedLo : _scannedGridLo;
+        if (_scannedHi > maxEndAbs) _scannedHi = maxEndAbs;
+        if (_scannedHi <= _scannedLo) cacheValid = false;
+      }
+      // A window disjoint from the cached range (a scroll-to-top jump) would
+      // leave an unscanned gap inside the single contiguous coverage
+      // interval — fall back to a full window scan.
+      if (cacheValid && (startAbs > _scannedHi || endAbs < _scannedLo)) {
+        cacheValid = false;
+      }
+
+      // The CORE regions that must actually be read.
+      final regions = <(int, int)>[];
+      if (!cacheValid) {
+        regions.add((startAbs, endAbs));
       } else {
-        // Scan the region that is ACTUALLY ON SCREEN wherever the viewport
-        // currently sits in scrollback, not a range anchored only to the bottom.
-        // The viewport's top absolute row is the scroll offset; it occupies
-        // [viewportTop, viewportTop + visibleRows). Scan that plus up to
-        // _detectionScrollbackWindow rows of margin ABOVE and BELOW it, so a URL
-        // the user scrolled far up to (#787) — or just scrolled near — is picked
-        // up, while the bounded margin keeps this off an O(scrollback) walk.
-        // (Anchored-to-bottom previously missed anything scrolled past the
-        // window.) The margin also gives the wrap-join enough context rows above
-        // the first visible row to assemble a URL that wraps across the boundary.
-        final scrollback = terminal.scrollbackRows;
-        // #958: the viewport top in SCREEN space. On the ALT screen
-        // `scrollbar.offset` is alt-local (always 0) while the alt viewport
-        // actually sits AFTER the primary history in `PointTag.screen` space —
-        // using the raw offset made the scan window cover primary HISTORY rows
-        // instead of the visible alt rows, so with history longer than the
-        // margin nothing on a tmux screen was ever detected (the other half of
-        // #958). See [screenViewportTop].
-        final viewportTop =
-            _activeScreen == .alternate ? scrollback : scrollbar.offset;
-        final startAbs = viewportTop - _detectionScrollbackWindow < 0
-            ? 0
-            : viewportTop - _detectionScrollbackWindow;
-        // Clamp the bottom to the last buffer row so we never read past the
-        // active screen (defensive; the reader also guards per-cell).
-        final maxEndAbs = scrollback + visibleRows; // exclusive
-        var endAbs = viewportTop + visibleRows + _detectionScrollbackWindow;
-        if (endAbs > maxEndAbs) endAbs = maxEndAbs;
+        if (startAbs < _scannedLo) regions.add((startAbs, _scannedLo));
+        if (endAbs > _scannedHi) regions.add((_scannedHi, endAbs));
+      }
+
+      if (regions.isEmpty) {
+        // Pure viewport movement over already-scanned rows: ZERO cell reads,
+        // zero regex passes — the #1044 core promise. The live matches are
+        // still current by the immutability invariant, so nothing to notify.
+        _detectionStats.rescanCacheHits++;
+        _contentDirty = false;
+        _scannedGridLo = scrollback;
+        _scannedScrollback = scrollback;
+        return;
+      }
+
+      // Read each core region EXTENDED to logical-line boundaries (wrap
+      // flags) plus a fixed block-join slack, so a wrapped/joined match
+      // crossing a region edge assembles exactly as a full scan would. The
+      // extension rows are context only — they are already covered by the
+      // cache — so fresh matches are ADOPTED only when they intersect a CORE
+      // region (cached instances are authoritative for pure-extension rows).
+      final fresh = <StructuredMatch>[];
+      final sw = Stopwatch()..start();
+      for (final (coreLo, coreHi) in regions) {
+        var lo = coreLo - _detectionRegionJoinSlack;
+        if (lo < 0) lo = 0;
+        var guard = 0;
+        while (lo > 0 && guard < _detectionRegionWrapCap && _absRowWrap(lo - 1)) {
+          lo--;
+          guard++;
+        }
+        var hi = coreHi + _detectionRegionJoinSlack;
+        if (hi > maxEndAbs) hi = maxEndAbs;
+        guard = 0;
+        while (hi < maxEndAbs &&
+            guard < _detectionRegionWrapCap &&
+            _absRowWrap(hi - 1)) {
+          hi++;
+          guard++;
+        }
         final reader = _ScreenCellReader(
           terminal: terminal,
           cols: cols,
-          startAbsRow: startAbs,
-          endAbsRow: endAbs,
+          startAbsRow: lo,
+          endAbsRow: hi,
         );
-        matches = _detectionScanner.scan(reader, scanPatterns);
-        // #883: a fresh scan emits absolute rows in the CURRENT coordinate
-        // frame — record that frame as the matches' anchor epoch so the
-        // synchronous prune can tell a real in-place content change (frame
-        // unchanged → evict, #873) from coordinate drift after a scrollback
-        // eviction/clear or a resize reflow (frame shifted → keep/re-locate).
-        _detectionFrameScrollback = scrollback;
-        _detectionFrameCols = cols;
-        _detectionFrameRows = visibleRows;
+        _detectionStats.rescanRows += hi - lo;
+        for (final m in _detectionScanner.scan(reader, scanPatterns)) {
+          if (_matchIntersects(m, coreLo, coreHi)) fresh.add(m);
+        }
       }
+      _detectionStats.rescans++;
+      _detectionStats.rescanMicros += sw.elapsedMicroseconds;
+
+      // New contiguous coverage = cached ∪ window, trimmed to the retention
+      // band around the viewport (coverage and its matches must not grow
+      // unboundedly over a long scroll session).
+      var newLo = cacheValid && _scannedLo < startAbs ? _scannedLo : startAbs;
+      var newHi = cacheValid && _scannedHi > endAbs ? _scannedHi : endAbs;
+      final keepLo = viewportTop - _detectionCacheRetentionRows;
+      final keepHi =
+          viewportTop + visibleRows + _detectionCacheRetentionRows;
+      if (newLo < keepLo) newLo = keepLo;
+      if (newLo < 0) newLo = 0;
+      if (newHi > keepHi) newHi = keepHi;
+
+      // ---- identity-preserving reconcile (#1046) ----
+      // graceUnmatched only within a STABLE coordinate frame: after a frame
+      // shift (scrollback clear/eviction, resize, screen flip) the stored
+      // rows are garbage, so an unmatched cached anchor is dropped outright
+      // (pre-#1046 semantics; keeps ESC[3J from leaving 350ms ghosts at
+      // wrong rows). A merely-empty cache (all-grid coverage dirtied by a
+      // TUI repaint) keeps the grace — the frame is stable there.
+      final merged = _reconcileDetections(fresh, regions, newLo, newHi,
+          graceUnmatched: frameStable);
+
+      _scannedLo = newLo;
+      _scannedHi = newHi;
+      _scannedGridLo = scrollback;
+      _scannedScrollback = scrollback;
+      _scannedCols = cols;
+      _scannedRows = visibleRows;
+      _scannedScreen = _activeScreen;
+      _scannedSuppressHeuristics = suppressHeuristics;
+      _contentDirty = false;
+      // #883: a fresh scan emits absolute rows in the CURRENT coordinate
+      // frame — record that frame as the matches' anchor epoch so the
+      // synchronous prune can tell a real in-place content change (frame
+      // unchanged → evict, #873) from coordinate drift after a scrollback
+      // eviction/clear or a resize reflow (frame shifted → keep/re-locate).
+      _detectionFrameScrollback = scrollback;
+      _detectionFrameCols = cols;
+      _detectionFrameRows = visibleRows;
+
+      if (merged == null) {
+        // The reconciled set is element-wise IDENTICAL to the live one: an
+        // unchanged rescan must be invisible to the gutter/bubble layers —
+        // no reassignment, no bake, no decoration notify. This is the #1046
+        // churn killer: a TUI repainting a row with identical content keeps
+        // its anchor INSTANCE and its chip never blinks.
+        _detectionStats.notifiesSuppressed++;
+        return;
+      }
+      _detectionMatches = merged;
     } catch (_) {
-      matches = const [];
+      // A read/FFI hiccup must never crash the session — and (post-#883
+      // stance) must not spuriously clear live anchors either. Drop the cache
+      // (unknown state) and let the next pass reconcile from content.
+      _invalidateDetectionScanCache();
+      return;
     }
-    _detectionMatches = matches;
-    highlights = _styledHighlights(matches);
+    highlights = _styledHighlights(_detectionMatches);
     // #805: the detected anchor set just changed (a settled re-scan), so wake the
     // narrow decoration listener — the decorator layer re-resolves now, not on
     // every mid-scroll redraw notify. (highlights= already fired the general
     // notify for the built-in HighlightPainter.)
     _decorationNotifier.notify();
+  }
+
+  /// #1044: drop the scan cache — the next [_rescanDetections] performs a
+  /// full window scan. Called whenever the cached per-row results can no
+  /// longer be trusted wholesale (pattern-set change, screen churn, FFI
+  /// hiccup).
+  void _invalidateDetectionScanCache() {
+    _scannedLo = -1;
+    _scannedHi = -1;
+    _contentDirty = true;
+  }
+
+  /// #1044: whether any of [m]'s ranges touch absolute rows [lo, hi).
+  bool _matchIntersects(StructuredMatch m, int lo, int hi) {
+    for (final r in m.ranges) {
+      if (r.topRow < hi && r.bottomRow >= lo) return true;
+    }
+    return false;
+  }
+
+  /// #1044: whether ALL of [m]'s rows lie inside covered rows [lo, hi).
+  bool _matchWithin(StructuredMatch m, int lo, int hi) {
+    for (final r in m.ranges) {
+      if (r.topRow < lo || r.bottomRow >= hi) return false;
+    }
+    return true;
+  }
+
+  /// #1044: libghostty's authoritative soft-wrap flag for an ABSOLUTE screen
+  /// row (true iff it continues onto the next row). Defensive like the cell
+  /// reader — a read hiccup reads as "no wrap".
+  bool _absRowWrap(int absRow) {
+    GridRef? ref;
+    try {
+      ref = GridRef.at(
+        terminal,
+        col: 0,
+        row: absRow,
+        pointTag: PointTag.screen,
+      );
+      return ref.rowWrap;
+    } catch (_) {
+      return false;
+    } finally {
+      ref?.dispose();
+    }
+  }
+
+  /// #1044/#1046: merge freshly-scanned matches with the still-covered cached
+  /// ones, PRESERVING INSTANCE IDENTITY for matches whose content did not
+  /// change. Returns the merged list, or null when it is element-wise
+  /// identical to the live [_detectionMatches] (caller then skips the bake +
+  /// notify entirely).
+  ///
+  ///   * cached matches outside the new coverage band are dropped (they will
+  ///     re-anchor from content when scrolled back into the window);
+  ///   * cached matches intersecting a re-scanned CORE region are replaced by
+  ///     the fresh finds — but a fresh match VALUE-equal to a replaced one
+  ///     adopts the OLD instance, so an unchanged row re-scanned keeps its
+  ///     anchor identity (no gutter unregister/re-register churn, #1046);
+  ///   * cached matches in untouched covered rows are kept as-is;
+  ///   * fresh matches may extend past the coverage edge (a wrap-extended
+  ///     read) — they are real, freshly-read content, so they stand.
+  List<StructuredMatch>? _reconcileDetections(
+    List<StructuredMatch> fresh,
+    List<(int, int)> coreRegions,
+    int coveredLo,
+    int coveredHi, {
+    required bool graceUnmatched,
+  }) {
+    bool inScanned(StructuredMatch m) {
+      for (final (lo, hi) in coreRegions) {
+        if (_matchIntersects(m, lo, hi)) return true;
+      }
+      return false;
+    }
+
+    final merged = <StructuredMatch>[];
+    final replaced = <StructuredMatch>[];
+    for (final m in _detectionMatches) {
+      if (!_matchWithin(m, coveredLo, coveredHi)) {
+        _cancelMissGrace(m); // trimmed out of coverage
+        continue;
+      }
+      if (inScanned(m)) {
+        replaced.add(m); // identity-reuse candidate for an equal fresh match
+      } else {
+        merged.add(m);
+      }
+    }
+    for (final f in fresh) {
+      var adopted = f;
+      for (var i = 0; i < replaced.length; i++) {
+        if (_sameMatch(replaced[i], f)) {
+          adopted = replaced.removeAt(i);
+          _cancelMissGrace(adopted); // re-confirmed by the fresh scan
+          _detectionStats.matchesReused++;
+          break;
+        }
+      }
+      merged.add(adopted);
+    }
+    // #1046: cached matches in a re-scanned region with NO equal fresh match.
+    // A same-payload fresh match elsewhere means the line MOVED — the fresh
+    // instance carries it on (atomic move; drop the stale one). Otherwise the
+    // payload is unaccounted for RIGHT NOW, which mid-repaint is routinely a
+    // transient — keep it under the same miss grace the prune uses; the
+    // grace timer (or a later scan) settles it for real.
+    for (final m in replaced) {
+      var movedElsewhere = false;
+      for (final f in fresh) {
+        if (f.patternId == m.patternId && f.payload == m.payload) {
+          movedElsewhere = true;
+          break;
+        }
+      }
+      if (movedElsewhere) {
+        _cancelMissGrace(m);
+        continue; // the fresh match IS this anchor at its new rows
+      }
+      if (!graceUnmatched) {
+        _cancelMissGrace(m); // frame shifted — the rows are garbage; drop
+        continue;
+      }
+      merged.add(m);
+      _armMissGrace(m);
+    }
+    merged.sort(_compareMatches);
+    if (merged.length == _detectionMatches.length) {
+      var same = true;
+      for (var i = 0; i < merged.length; i++) {
+        if (!identical(merged[i], _detectionMatches[i])) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return null;
+    }
+    return merged;
+  }
+
+  /// #1046: VALUE equality between a cached and a fresh match — same pattern,
+  /// tier, honesty flag, payload, and per-row ranges. This is "the row
+  /// re-scanned to the identical result", the condition under which the old
+  /// instance keeps its identity.
+  bool _sameMatch(StructuredMatch a, StructuredMatch b) {
+    if (a.patternId != b.patternId ||
+        a.tier != b.tier ||
+        a.maybeIncomplete != b.maybeIncomplete ||
+        a.payload != b.payload ||
+        a.ranges.length != b.ranges.length) {
+      return false;
+    }
+    for (var i = 0; i < a.ranges.length; i++) {
+      if (a.ranges[i] != b.ranges[i]) return false;
+    }
+    return true;
+  }
+
+  /// #1044: deterministic reading-order sort for the reconciled match list
+  /// (top row, then start col, then pattern id) — mirrors the line order a
+  /// full-window scan emitted, which [matchAt]'s "last containing wins"
+  /// tie-break was written against.
+  static int _compareMatches(StructuredMatch a, StructuredMatch b) {
+    final ra = a.ranges.first;
+    final rb = b.ranges.first;
+    if (ra.topRow != rb.topRow) return ra.topRow - rb.topRow;
+    if (ra.startCol != rb.startCol) return ra.startCol - rb.startCol;
+    return a.patternId.compareTo(b.patternId);
   }
 
   @override
@@ -1017,10 +1760,14 @@ class TerminalControllerImpl extends TerminalController
   /// scanned range, is never detected. Schedule the same debounced rescan the
   /// output path uses so a scroll burst coalesces into one scan.
   void _onScrollChanged() {
-    // #873: a scroll can move a match out of the bounded scan window; re-validate
-    // live anchors against the current cells immediately (the debounced rescan
-    // below handles DISCOVERY of newly-visible matches).
-    _pruneStaleDetections();
+    // #1044: NO prune here. A viewport scroll cannot change cell content —
+    // absolute screen rows are append-stable (#883) and VT writes only address
+    // the active grid — so the per-tick synchronous re-validation this used to
+    // run (every live match re-read cell-by-cell over FFI plus a full pattern
+    // pass, EVERY scroll frame) was pure waste: the dominant per-frame cost of
+    // the #1044 fling lag. Content changes arrive via _onTerminalChanged,
+    // which still prunes. Discovery of newly-revealed rows stays debounced
+    // below (and defers to the settle edge while the fling is live).
     _scheduleDetectionRescan();
     notifyListeners();
   }
@@ -1078,7 +1825,10 @@ class TerminalControllerImpl extends TerminalController
   void dispose() {
     _disposed = true;
     _detectionDebounce?.cancel();
+    _detectionMaxWait?.cancel();
+    _cancelAllMissGrace();
     _scrollSettleTimer?.cancel();
+    _scrollSettleMaxWait?.cancel();
     terminal.removeListener(_onTerminalChanged);
     detach();
     _keyEvent.dispose();
@@ -1861,6 +2611,10 @@ class TerminalControllerImpl extends TerminalController
     // viewport scrolled; re-scan registered structured-text patterns on a
     // debounce so the highlights track new content. No-op when none registered.
     // This only (re)arms a Timer — safe to run mid-frame (it fires outside it).
+    // #1044: a TERMINAL notify (unlike a scroll notify) may have rewritten the
+    // active grid in place — mark the mutable suffix dirty so the next rescan
+    // re-reads it (and only it).
+    _contentDirty = true;
     _scheduleDetectionRescan();
 
     // #887: the remaining work emits notifications that REBUILD or read layout
