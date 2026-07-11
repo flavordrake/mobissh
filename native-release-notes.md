@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+138 (2026-07-11) — smooth scroll with detection on + steady chips
+- **Scrolling is smooth again with detection on** — the terminal no longer re-scans every frame while you scroll; detected marks are cached and refresh only when content changes. Live-updating lines (progress bars, repainting TUI status) still get detected. (#1044)
+- **No more flickering gutter chip** on a repainting line — the mark holds steady instead of blinking. (#1046)
+
 ## v0.1.10+137 (2026-07-11) — visible washes, clearer port forwards
 - **Detection washes are clearly visible again** — the highlight behind links/paths was too faint after moving behind the text; the fill is now strong and obvious while the text stays crisp. Tune it in the Detection lab if you want it softer. (#1053)
 - **Port forwards show the exact mapping** — the sheet previews `8888 → hostname:8250` live as you type, with a plain-language note on which direction it tunnels. (#1054)
