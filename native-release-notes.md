@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+139 (2026-07-11) — highlights stay locked to their text + calmer intensity
+- **Detection highlights no longer float off their text** on a repainting TUI — when a line is erased and redrawn, the wash is withheld until the pattern reappears at real cells instead of lingering over blank space. (#1060)
+- **Wash intensity dialed back** — the highlight is clearly visible but no longer overpowering; still tunable in the Detection lab. (#1060)
+
 ## v0.1.10+138 (2026-07-11) — smooth scroll with detection on + steady chips
 - **Scrolling is smooth again with detection on** — the terminal no longer re-scans every frame while you scroll; detected marks are cached and refresh only when content changes. Live-updating lines (progress bars, repainting TUI status) still get detected. (#1044)
 - **No more flickering gutter chip** on a repainting line — the mark holds steady instead of blinking. (#1046)
