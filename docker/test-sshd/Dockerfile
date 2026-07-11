@@ -8,9 +8,15 @@ RUN apk add --no-cache openssh-server bash tmux \
  && chmod 700 /home/testuser/.ssh
 
 # Allow password auth (for the password credential test path)
+# AllowTcpForwarding=local (#1047): the ssh -L integration test needs the
+# server to accept direct-tcpip channels. `local` permits ONLY local
+# forwarding — remote (-R) stays blocked, matching the app's v1 scope.
+# NOTE: Alpine's stock sshd_config ships an UNCOMMENTED `AllowTcpForwarding no`
+# and sshd honours the FIRST occurrence — an appended line is dead config, so
+# replace the existing directive in place.
 RUN sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
  && sed -i 's/^#PermitEmptyPasswords .*/PermitEmptyPasswords no/' /etc/ssh/sshd_config \
- && echo 'AllowTcpForwarding no' >> /etc/ssh/sshd_config \
+ && sed -i 's/^AllowTcpForwarding .*/AllowTcpForwarding local/' /etc/ssh/sshd_config \
  && echo 'X11Forwarding no' >> /etc/ssh/sshd_config
 
 COPY testuser_id_ed25519.pub /home/testuser/.ssh/authorized_keys

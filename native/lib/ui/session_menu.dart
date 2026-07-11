@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../main.dart' show openConnectHome;
+import '../services/session_messages.dart' show ForwardInfo, ForwardStatus;
 import '../ssh/ssh_session.dart';
 import '../state/detection_providers.dart';
 import '../state/favorites_providers.dart';
@@ -35,6 +36,7 @@ import '../storage/profiles_store.dart' show ProfilesStore;
 import 'detection_lab_screen.dart';
 import 'favorites_menu_sheet.dart';
 import 'file_browser_screen.dart';
+import 'port_forwards_sheet.dart';
 import 'session_state_dot.dart';
 
 /// Opens the session menu as a NON-MODAL overlay anchored to the bottom, above
@@ -537,6 +539,23 @@ class _SessionControlsRow extends ConsumerWidget {
               },
             ),
           ),
+          // 3a. Port forwards (#1047) — opens the ssh -L sheet for the ACTIVE
+          // session. The glyph carries a count badge while any forward is
+          // ACTIVE (cheap: the proxy caches the latest table). Same #664
+          // overlay idiom as the pickers: capture the app navigator + the
+          // entry/store, close the menu, THEN show the sheet.
+          _ForwardsButton(
+            entry: sessions.active,
+            enabled: hasActive,
+            onOpen: (entry) {
+              final navContext = Navigator.of(context).context;
+              final store = ref.read(profilesStoreProvider);
+              onClose();
+              unawaited(
+                showPortForwardsSheet(navContext, entry: entry, store: store),
+              );
+            },
+          ),
           // Files moved to a PER-ROW affordance (#649): each session row now
           // carries its own `session-menu-files-${id}` icon next to its X.
           // 3b. Link/path DETECTION toggle (#955/#888) — GLOBAL. Its glyph is a
@@ -720,6 +739,71 @@ class _StepButton extends StatelessWidget {
       behavior: HitTestBehavior.deferToChild,
       onLongPress: enabled ? onLongPress : null,
       child: Semantics(label: tooltip, child: button),
+    );
+  }
+}
+
+/// Port-forwards control (#1047): a ~44px monochrome icon that opens the ssh
+/// -L sheet for the ACTIVE session, wearing a small count badge while any
+/// forward is ACTIVE. Reactive via the proxy's forward stream (initialData =
+/// the proxy's cached table, so a re-opened menu shows the count immediately).
+class _ForwardsButton extends StatelessWidget {
+  const _ForwardsButton({
+    required this.entry,
+    required this.enabled,
+    required this.onOpen,
+  });
+
+  final SessionEntry? entry;
+  final bool enabled;
+  final void Function(SessionEntry entry) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final e = entry;
+    if (e == null) {
+      return IconButton(
+        key: const Key('session-menu-port-forwards'),
+        tooltip: 'Port forwards',
+        iconSize: 20,
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        icon: const Icon(Icons.settings_ethernet),
+        onPressed: null,
+      );
+    }
+    return StreamBuilder<List<ForwardInfo>>(
+      stream: e.proxy.forwardEvents,
+      initialData: e.proxy.forwards,
+      builder: (context, snapshot) {
+        final forwards = snapshot.data ?? const <ForwardInfo>[];
+        final activeCount =
+            forwards.where((f) => f.status == ForwardStatus.active).length;
+        final glyph = Icon(
+          Icons.settings_ethernet,
+          color: activeCount > 0 ? theme.colorScheme.primary : null,
+        );
+        return IconButton(
+          key: const Key('session-menu-port-forwards'),
+          tooltip: activeCount > 0
+              ? 'Port forwards ($activeCount active)'
+              : 'Port forwards',
+          iconSize: 20,
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          icon: activeCount > 0
+              ? Badge.count(
+                  key: const Key('session-menu-port-forwards-badge'),
+                  count: activeCount,
+                  child: glyph,
+                )
+              : glyph,
+          onPressed: enabled ? () => onOpen(e) : null,
+        );
+      },
     );
   }
 }

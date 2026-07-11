@@ -108,6 +108,24 @@ enum SshTaskCommandKind {
   /// no `%output` for copy-mode scroll, so the client must capture it. A no-op
   /// unless control mode is ON. NEVER used by the scrape (flag-OFF) path.
   tmuxScroll,
+
+  // --- Local port forwarding, ssh -L (#1047) ---
+
+  /// UI → task: add (or update, keyed by localPort) a LOCAL port forward for
+  /// this session. The task stores the config on the hosted session and arms a
+  /// 127.0.0.1 listener the moment the session is `connected` (immediately for
+  /// a live session; on the `connected` transition otherwise — which also makes
+  /// reconnect re-arm "for free"). Replies with an [SshForwardListEvent].
+  forwardAdd,
+
+  /// UI → task: remove the forward listening on `localPort` — closes the
+  /// listener + every live pipe and forgets the config. Replies with an
+  /// [SshForwardListEvent].
+  forwardRemove,
+
+  /// UI → task: replay the session's current forward table as an
+  /// [SshForwardListEvent] (sheet-open hydration).
+  forwardList,
 }
 
 /// The kind of tmux window gesture an [SshTmuxGestureCommand] carries (#911).
@@ -182,6 +200,13 @@ enum SshTaskEventKind {
   /// so the UI-side ring — the one the bundle reads — actually contains them.
   /// Task-global, so [sessionId] is the empty sentinel (mirrors ready).
   lifecycle,
+
+  /// Task → UI: the session's CURRENT port-forward table (#1047) — the reply to
+  /// every forwardAdd/forwardRemove/forwardList AND pushed on any status change
+  /// (armed on connect, dropped on disconnect, bind/channel errors). One small
+  /// authoritative-list event instead of per-forward deltas keeps the UI free
+  /// of reconciliation state.
+  forwardList,
 
   /// Task → UI: one structured tmux control-mode (`-CC`) telemetry line (#906).
   /// The control-mode trace (`cmtrace` / `controlModeLog`) is written in the
@@ -363,6 +388,20 @@ sealed class SshTaskCommand {
           sessionId: sessionId,
           deltaLines: (json['deltaLines'] as int?) ?? 0,
         );
+      case SshTaskCommandKind.forwardAdd:
+        return SshForwardAddCommand(
+          sessionId: sessionId,
+          localPort: json['localPort'] as int,
+          remoteHost: json['remoteHost'] as String,
+          remotePort: json['remotePort'] as int,
+        );
+      case SshTaskCommandKind.forwardRemove:
+        return SshForwardRemoveCommand(
+          sessionId: sessionId,
+          localPort: json['localPort'] as int,
+        );
+      case SshTaskCommandKind.forwardList:
+        return SshForwardListCommand(sessionId: sessionId);
     }
   }
 }
@@ -840,6 +879,73 @@ class SshTmuxScrollCommand extends SshTaskCommand {
 }
 
 // ---------------------------------------------------------------------------
+// Port-forward commands (#1047)
+// ---------------------------------------------------------------------------
+
+/// UI → task: add/update the LOCAL forward listening on 127.0.0.1:[localPort],
+/// tunnelling each connection to [remoteHost]:[remotePort] via a direct-tcpip
+/// channel (ssh -L). Keyed by [localPort] — re-adding the same port replaces
+/// the target (idempotent, so profile-armed re-sends are safe). The task
+/// replies with an [SshForwardListEvent].
+class SshForwardAddCommand extends SshTaskCommand {
+  const SshForwardAddCommand({
+    required String sessionId,
+    required this.localPort,
+    required this.remoteHost,
+    required this.remotePort,
+  }) : super(sessionId);
+
+  final int localPort;
+  final String remoteHost;
+  final int remotePort;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.forwardAdd;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'localPort': localPort,
+    'remoteHost': remoteHost,
+    'remotePort': remotePort,
+  };
+}
+
+/// UI → task: remove the forward keyed by [localPort] — the task closes the
+/// listener + live pipes and forgets the config, then replies with an
+/// [SshForwardListEvent]. A no-op for an unknown port (still replies).
+class SshForwardRemoveCommand extends SshTaskCommand {
+  const SshForwardRemoveCommand({
+    required String sessionId,
+    required this.localPort,
+  }) : super(sessionId);
+
+  final int localPort;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.forwardRemove;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'localPort': localPort,
+  };
+}
+
+/// UI → task: replay the session's current forward table (sheet hydration).
+class SshForwardListCommand extends SshTaskCommand {
+  const SshForwardListCommand({required String sessionId}) : super(sessionId);
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.forwardList;
+
+  @override
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
+}
+
+// ---------------------------------------------------------------------------
 // Events (task → UI)
 // ---------------------------------------------------------------------------
 
@@ -961,10 +1067,79 @@ sealed class SshTaskEvent {
         );
       case SshTaskEventKind.lifecycle:
         return SshLifecycleEvent(line: json['line'] as String);
+      case SshTaskEventKind.forwardList:
+        return SshForwardListEvent(
+          sessionId: sessionId,
+          forwards: (json['forwards'] as List)
+              .map(
+                (f) =>
+                    ForwardInfo.fromJson(Map<String, dynamic>.from(f as Map)),
+              )
+              .toList(),
+        );
       case SshTaskEventKind.controlModeTrace:
         return SshControlModeTraceEvent(line: json['line'] as String);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Port-forward status (#1047)
+// ---------------------------------------------------------------------------
+
+/// Lifecycle status of one forward as reported by the task side (#1047).
+enum ForwardStatus {
+  /// Config held, listener not bound yet — the session isn't `connected`
+  /// (pre-connect add, or dropped with the session awaiting re-arm).
+  starting,
+
+  /// Listener bound on 127.0.0.1 and accepting. [ForwardInfo.error] may still
+  /// carry the LAST per-connection channel failure (ssh -L keeps listening).
+  active,
+
+  /// The listener could not bind (port in use) — [ForwardInfo.error] says why.
+  error,
+}
+
+/// One forward's wire-serializable status row (#1047). Kept small: it crosses
+/// the isolate IPC on every table change.
+class ForwardInfo {
+  const ForwardInfo({
+    required this.localPort,
+    required this.remoteHost,
+    required this.remotePort,
+    required this.status,
+    this.error,
+  });
+
+  final int localPort;
+  final String remoteHost;
+  final int remotePort;
+  final ForwardStatus status;
+
+  /// Bind failure (status == error) or the most recent per-connection channel
+  /// failure (status may still be active — the listener survives).
+  final String? error;
+
+  Map<String, dynamic> toJson() => {
+    'localPort': localPort,
+    'remoteHost': remoteHost,
+    'remotePort': remotePort,
+    'status': status.name,
+    if (error != null) 'error': error,
+  };
+
+  factory ForwardInfo.fromJson(Map<String, dynamic> json) => ForwardInfo(
+    localPort: json['localPort'] as int,
+    remoteHost: json['remoteHost'] as String,
+    remotePort: json['remotePort'] as int,
+    // Unknown status (future schema) degrades to starting — never a crash.
+    status: ForwardStatus.values.firstWhere(
+      (s) => s.name == json['status'],
+      orElse: () => ForwardStatus.starting,
+    ),
+    error: json['error'] as String?,
+  );
 }
 
 class SshStateEvent extends SshTaskEvent {
@@ -1218,6 +1393,32 @@ class SshControlModeTraceEvent extends SshTaskEvent {
     'kind': kind.name,
     'sessionId': sessionId,
     'line': line,
+  };
+}
+
+/// Task → UI: the session's current forward table (#1047). Authoritative list
+/// (not a delta) so the UI just replaces its cached copy. Emitted in reply to
+/// every forward command and pushed on any status change.
+///
+/// [SYNC] single-codebase wire contract; the round-trip suite in
+/// `forward_messages_test.dart` is the sync check — keep this event, the host
+/// emitter (SessionHost._emitForwardList) and the proxy recorder in step.
+class SshForwardListEvent extends SshTaskEvent {
+  const SshForwardListEvent({
+    required String sessionId,
+    required this.forwards,
+  }) : super(sessionId);
+
+  final List<ForwardInfo> forwards;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.forwardList;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'forwards': forwards.map((f) => f.toJson()).toList(),
   };
 }
 

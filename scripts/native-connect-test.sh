@@ -56,7 +56,10 @@ TEST_FILE="${1:-integration_test/connect_smoke_test.dart}"
 NATIVE_DIR="${REPO_ROOT}/native"
 PROXY_PID_FILE="${MOBISSH_TMPDIR}/connect-test-socat.pid"
 PROXY2_PID_FILE="${MOBISSH_TMPDIR}/connect-test-socat2.pid"
-SSHD_HOST="test-sshd"
+# Overridable (#1047): when several per-worktree fixture containers share the
+# `test-sshd` network alias, Docker DNS round-robins among them — pin a
+# specific container name here for a deterministic target.
+SSHD_HOST="${SSHD_HOST:-test-sshd}"
 SSHD_PORT="22"
 BRIDGE_PORT="2222"
 BRIDGE_PORT2="${BRIDGE_PORT2:-}"
