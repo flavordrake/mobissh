@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+135 (2026-07-11) — command copy is honest about wraps
+- **Wrapped commands join more completely** (word-wrapped continuations now included, with the wrap's space restored), and **when a command can't be fully captured the chip says so** — ellipsis mark on the chip and a "Copied — may be incomplete" toast instead of a silent partial copy. Your report's exact case is the test fixture. (#1042)
+
 ## v0.1.10+134 (2026-07-11) — download & share from any open preview
 - **Every file preview (text, markdown, HTML, PDF, images, mermaid) now has Download and Share in the app bar** — no navigating back to the browser; Share hands the actual file to Android's share sheet with the right type. (#1038)
 
