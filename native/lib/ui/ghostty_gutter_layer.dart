@@ -50,6 +50,14 @@ import 'ghostty_terminal_decorators.dart';
 /// (`kGutterSelectStripWidth`) so the bigger chip fits inside it.
 const double kGutterStripWidth = 28.0;
 
+/// The INCOMPLETE chip variant glyph (#1042): an anchor whose payload is
+/// likely truncated ([StructuredAnchor.maybeIncomplete] — today only command
+/// anchors at an unjoinable wrap) renders this ellipsis mark instead of its
+/// pattern glyph, same chip size. Monochrome Material glyph per
+/// feedback_monochrome_icons_no_emoji; the ellipsis IS the semantics ("there
+/// is more than the copy will carry").
+const IconData kGutterIncompleteIcon = Icons.more_horiz;
+
 /// Sizing + colour derivation for the gutter detection mark chip (#989).
 ///
 /// The mark is a FILLED opaque chip behind a bigger glyph so it reads as a
@@ -172,7 +180,12 @@ class GutterPatternPresentation {
   ) showActions;
 
   /// The action buttons for this pattern's row in the multi-match list sheet.
-  final List<GutterItemAction> Function(String payload) itemActions;
+  ///
+  /// #1042: [anchor] is the full anchor when the sheet invokes this (so a
+  /// command copy can hedge its toast off [StructuredAnchor.maybeIncomplete]);
+  /// callers that only have the payload text (tests, previews) may omit it.
+  final List<GutterItemAction> Function(String payload,
+      {StructuredAnchor? anchor}) itemActions;
 }
 
 /// Maps a pattern id to its [GutterPatternPresentation] (#955).
@@ -318,7 +331,7 @@ class GutterPatternRegistry {
           onMarkNotDetection: markNot,
         );
       },
-      itemActions: (payload) {
+      itemActions: (payload, {anchor}) {
         final barePath = fileUrlToRemotePath(payload);
         // #995: the 'not' action reports the ORIGINAL payload (the file://
         // URI for a file:// anchor) — suppression keys on the matched text.
@@ -363,7 +376,7 @@ class GutterPatternRegistry {
             ? null
             : () => onReportException(anchor.patternId, '${anchor.payload}'),
       ),
-      itemActions: (payload) => [
+      itemActions: (payload, {anchor}) => [
         openPathAction(payload),
         copyAction(payload),
         ?notAction(kGhosttyPathPatternId, payload, 'Not a file'),
@@ -399,7 +412,7 @@ class GutterPatternRegistry {
               : () => onReportException(anchor.patternId, payload),
         );
       },
-      itemActions: (payload) {
+      itemActions: (payload, {anchor}) {
         final resolved = resolveRel(payload);
         return [
           openPathAction(resolved),
@@ -433,15 +446,20 @@ class GutterPatternRegistry {
       patternId: kGhosttyCommandPatternId,
       icon: Icons.terminal,
       typeLabel: 'Command',
+      // #1042: an anchor flagged maybeIncomplete (an unjoinable wrap left
+      // evidence the payload is truncated) hedges the copy toast — the copy
+      // itself is unchanged (still the best payload we honestly have).
       showActions: (context, anchor, markGlobal) {
-        unawaited(_copyWithToast(context, '${anchor.payload}'));
+        unawaited(_copyWithToast(context, '${anchor.payload}',
+            mayBeIncomplete: anchor.maybeIncomplete));
       },
-      itemActions: (payload) => [
+      itemActions: (payload, {anchor}) => [
         GutterItemAction(
           keyLabel: 'copy',
           icon: Icons.content_copy,
           label: 'Copy command',
-          onInvoke: (context) => _copyWithToast(context, payload),
+          onInvoke: (context) => _copyWithToast(context, payload,
+              mayBeIncomplete: anchor?.maybeIncomplete ?? false),
         ),
         ?notAction(kGhosttyCommandPatternId, payload, 'Not a command'),
       ],
@@ -491,7 +509,7 @@ class GutterPatternRegistry {
                   : () => onReportException(anchor.patternId, payload),
             );
           },
-          itemActions: (payload) => [
+          itemActions: (payload, {anchor}) => [
             copyAction(payload),
             ?notAction(patternId, payload, 'Not a match'),
           ],
@@ -518,10 +536,22 @@ class GutterPatternRegistry {
 ///
 /// The overlay is captured BEFORE the async clipboard write so the toast still
 /// lands after the list sheet has popped (the root overlay outlives the sheet).
-Future<void> _copyWithToast(BuildContext context, String text) async {
+/// #1042: [mayBeIncomplete] switches the toast to the honesty hedge — the
+/// anchor's payload is likely truncated (an unjoinable wrap), so the toast
+/// says so instead of implying a clean copy.
+Future<void> _copyWithToast(
+  BuildContext context,
+  String text, {
+  bool mayBeIncomplete = false,
+}) async {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   final ok = await copyToClipboard(text);
-  if (ok && overlay != null) showTopToastInOverlay(overlay, 'Copied: $text');
+  if (ok && overlay != null) {
+    showTopToastInOverlay(
+      overlay,
+      mayBeIncomplete ? 'Copied — may be incomplete' : 'Copied: $text',
+    );
+  }
 }
 
 /// Group detected [anchors] by the VIEWPORT row their gutter mark belongs on
@@ -815,7 +845,13 @@ class _GutterMarkState extends State<_GutterMark> {
             child: GutterMarkChip(
               style: style,
               accent: widget.color,
-              icon: multi ? null : (single?.icon ?? Icons.adjust),
+              // #1042: a likely-truncated anchor renders the ellipsis-marked
+              // incomplete variant — same chip, same size, honest glyph.
+              icon: multi
+                  ? null
+                  : (widget.anchors.first.maybeIncomplete
+                      ? kGutterIncompleteIcon
+                      : (single?.icon ?? Icons.adjust)),
               count: multi ? widget.anchors.length : null,
             ),
           ),
@@ -940,12 +976,17 @@ class _GutterPatternListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final payload = '${anchor.payload}';
-    final actions = presentation.itemActions(payload);
+    final actions = presentation.itemActions(payload, anchor: anchor);
+    // #1042: a likely-truncated anchor gets the ellipsis glyph and the sheet's
+    // one-line note in the subtitle.
+    final incomplete = anchor.maybeIncomplete;
     return ListTile(
       key: Key('gutter-item-$index'),
-      leading: Icon(presentation.icon),
+      leading: Icon(incomplete ? kGutterIncompleteIcon : presentation.icon),
       title: Text(payload, maxLines: 2, overflow: TextOverflow.ellipsis),
-      subtitle: Text(presentation.typeLabel),
+      subtitle: Text(incomplete
+          ? '${presentation.typeLabel} — may be incomplete'
+          : presentation.typeLabel),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

@@ -382,5 +382,99 @@ void main() {
       await tester.pump();
       expect(find.byKey(const Key('gutter-mark-5')), findsNothing);
     });
+
+    // #1042 — the maybeIncomplete honesty affordances: the chip renders an
+    // ellipsis-marked variant (same size), the copy toast says so, and the
+    // multi-match sheet carries a one-line note. No modals.
+    group('maybeIncomplete affordances (#1042)', () {
+      StructuredAnchor incompleteAnchor({List<int> rows = const [5]}) =>
+          StructuredAnchor(
+            patternId: kGhosttyCommandPatternId,
+            payload: _command,
+            maybeIncomplete: true,
+            ranges: [
+              for (final r in rows)
+                HighlightRange(
+                  startRow: r,
+                  startCol: 0,
+                  endRow: r,
+                  endCol: 20,
+                  payload: _command,
+                ),
+            ],
+          );
+
+      testWidgets('an incomplete command anchor renders the ellipsis chip '
+          'variant', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([incompleteAnchor(rows: const [5])]);
+        await tester.pump();
+        final icon = tester.widget<Icon>(
+          find.descendant(
+            of: find.byKey(const Key('gutter-mark-5')),
+            matching: find.byType(Icon),
+          ),
+        );
+        expect(icon.icon, kGutterIncompleteIcon,
+            reason: 'the incomplete variant is the ellipsis-marked glyph');
+        expect(icon.icon, isNot(Icons.terminal));
+        expect(icon.size, GutterMarkStyle.normal.glyphSize,
+            reason: 'same size as the normal chip glyph');
+      });
+
+      testWidgets('tap the incomplete chip → copies the payload, toast reads '
+          '"Copied — may be incomplete"', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([incompleteAnchor(rows: const [5])]);
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('gutter-mark-5')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(lastClipboard, _command,
+            reason: 'the copy itself is unchanged — the toast is the hedge');
+        expect(find.text('Copied — may be incomplete'), findsOneWidget);
+        await drainToast(tester);
+      });
+
+      testWidgets('a COMPLETE command anchor keeps the normal toast text',
+          (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([_commandAnchor(rows: const [5])]);
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('gutter-mark-5')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(lastClipboard, _command);
+        expect(find.textContaining('Copied:'), findsOneWidget);
+        expect(find.textContaining('may be incomplete'), findsNothing);
+        await drainToast(tester);
+      });
+
+      testWidgets('the multi-match sheet shows the one-line note and its '
+          '"Copy command" toast hedges too', (tester) async {
+        final controller = await pumpLayer(tester);
+        controller.setAnchors([
+          incompleteAnchor(rows: const [3]),
+          _urlAnchor(row: 3),
+        ]);
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('gutter-mark-3')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('gutter-pattern-list')), findsOneWidget);
+        expect(find.text('Command — may be incomplete'), findsOneWidget,
+            reason: 'the sheet subtitle is the one-line note');
+
+        await tester.tap(find.byKey(const Key('gutter-item-0-copy')));
+        await tester.pumpAndSettle();
+        expect(lastClipboard, _command);
+        expect(find.text('Copied — may be incomplete'), findsOneWidget);
+        await drainToast(tester);
+      });
+    });
   });
 }
