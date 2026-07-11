@@ -233,6 +233,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     double? fontSize,
     String? fontFamily,
     String? colorHex,
+    List<ProfileForward> forwards = const [],
   }) async {
     // Captured before the async gap so we can pop a pushed "New session" route
     // after dispatching connect without touching `context` post-await.
@@ -329,6 +330,17 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // `SshConnectCommand.controlMode`. Default OFF → scrape path unchanged.
       ref.read(tmuxControlModeProvider);
       await entry.proxy.connect(params);
+      // #1047: arm the profile's default port forwards. Sent AFTER connect on
+      // the same ordered gateway, so the task-side hosted session exists when
+      // forwardAdd lands; the listeners bind on the `connected` transition.
+      // Idempotent (keyed by localPort) — a dedup re-connect just refreshes.
+      for (final fwd in forwards) {
+        entry.proxy.forwardAdd(
+          localPort: fwd.localPort,
+          remoteHost: fwd.remoteHost,
+          remotePort: fwd.remotePort,
+        );
+      }
       // Once we've proven network reachability, fire-and-forget a crash upload
       // sweep. Tailscale being down at boot is the common case.
       unawaited(CrashReporter.uploadPending());
@@ -458,6 +470,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       fontSize: profile.fontSize,
       fontFamily: profile.fontFamily,
       colorHex: profile.color,
+      forwards: profile.forwards,
     );
   }
 

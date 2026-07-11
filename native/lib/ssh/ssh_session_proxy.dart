@@ -70,6 +70,12 @@ class SshSessionProxy {
   final StreamController<SshTaskEvent> _sftpCtrl =
       StreamController<SshTaskEvent>.broadcast();
 
+  /// Port-forward table updates (#1047). Each event is the AUTHORITATIVE
+  /// current list; [forwards] caches the latest so late subscribers (the
+  /// session-menu badge, a re-opened sheet) render without a round-trip.
+  final StreamController<List<ForwardInfo>> _forwardCtrl =
+      StreamController<List<ForwardInfo>>.broadcast();
+
   SshSessionData _data = const SshSessionData();
   ProxySnapshot _snapshot = const ProxySnapshot(state: SshSessionState.idle);
   StreamSubscription<Map<String, dynamic>>? _eventSub;
@@ -121,6 +127,15 @@ class SshSessionProxy {
   /// [SftpDownloadChunkEvent], [SftpDownloadDoneEvent], [SftpErrorEvent].
   /// The file browser filters by request id.
   Stream<SshTaskEvent> get sftpEvents => _sftpCtrl.stream;
+
+  /// Port-forward table stream (#1047): the authoritative list on every
+  /// change. Pair with [forwards] as `initialData` for late subscribers.
+  Stream<List<ForwardInfo>> get forwardEvents => _forwardCtrl.stream;
+
+  /// Latest forward table received from the task side (#1047). Empty until
+  /// the first [SshForwardListEvent].
+  List<ForwardInfo> get forwards => _forwards;
+  List<ForwardInfo> _forwards = const [];
 
   /// Latest snapshot received from the task side. Used by the audit screen
   /// and by `rebind()` to redraw without waiting for the next emit.
@@ -402,6 +417,46 @@ class SshSessionProxy {
     );
   }
 
+  /// Add (or update — keyed by [localPort]) an ssh -L port forward (#1047):
+  /// listen on 127.0.0.1:[localPort] on the device, tunnel each connection to
+  /// [remoteHost]:[remotePort] via a direct-tcpip channel. Idempotent, so
+  /// re-sending profile defaults on (re)connect is safe. Status arrives on
+  /// [forwardEvents].
+  void forwardAdd({
+    required int localPort,
+    String remoteHost = '127.0.0.1',
+    required int remotePort,
+  }) {
+    if (_disposed) return;
+    gateway.send(
+      SshForwardAddCommand(
+        sessionId: sessionId,
+        localPort: localPort,
+        remoteHost: remoteHost,
+        remotePort: remotePort,
+      ).toJson(),
+    );
+  }
+
+  /// Remove the forward keyed by [localPort] (#1047) — the task closes the
+  /// listener + live pipes. The updated table arrives on [forwardEvents].
+  void forwardRemove(int localPort) {
+    if (_disposed) return;
+    gateway.send(
+      SshForwardRemoveCommand(
+        sessionId: sessionId,
+        localPort: localPort,
+      ).toJson(),
+    );
+  }
+
+  /// Ask the task to replay the current forward table (#1047) — sheet-open
+  /// hydration. The reply arrives on [forwardEvents] (and updates [forwards]).
+  void forwardList() {
+    if (_disposed) return;
+    gateway.send(SshForwardListCommand(sessionId: sessionId).toJson());
+  }
+
   /// Send a PTY resize to the remote.
   ///
   /// #848 — NO-OP GUARD: a resize whose (cols, rows) are IDENTICAL to the last
@@ -459,6 +514,7 @@ class SshSessionProxy {
     if (!_outputCtrl.isClosed) await _outputCtrl.close();
     if (!_shellReadyCtrl.isClosed) await _shellReadyCtrl.close();
     if (!_sftpCtrl.isClosed) await _sftpCtrl.close();
+    if (!_forwardCtrl.isClosed) await _forwardCtrl.close();
   }
 
   void _handleEvent(Map<String, dynamic> payload) {
@@ -535,6 +591,11 @@ class SshSessionProxy {
         // recorded it into the control-mode ring before _incoming; a per-session
         // proxy has nothing to do — handle it for switch exhaustiveness only.
         break;
+      case SshForwardListEvent():
+        // Port-forward table (#1047): cache the authoritative list for late
+        // subscribers (menu badge) and fan out to the sheet.
+        _forwards = event.forwards;
+        if (!_forwardCtrl.isClosed) _forwardCtrl.add(event.forwards);
       case SftpListingEvent():
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():

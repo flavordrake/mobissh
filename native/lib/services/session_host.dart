@@ -16,6 +16,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show SocketException;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -31,6 +32,7 @@ import '../ssh/ssh_session.dart';
 import '../ssh/ssh_shell.dart';
 import '../ssh/sftp_session.dart';
 import 'attention_signal_scanner.dart';
+import 'port_forwarder.dart';
 import 'session_attention_notification.dart';
 import 'session_messages.dart';
 import 'task_ssh_gateway.dart';
@@ -70,6 +72,13 @@ Future<SshShellTransport?> _defaultExecOpener(
 
 SshSessionController _defaultControllerFactory() => SshSessionController();
 
+/// Builds the per-session direct-tcpip tunnel opener for the ssh -L engine
+/// (#1047). Production resolves the session's live `SSHClient` at ACCEPT time
+/// (not arm time) so a forward armed early — or re-armed across a reconnect —
+/// always dials over the CURRENT client. Tests inject fakes.
+typedef HostForwardOpenerFactory = ForwardTunnelOpener Function(
+    String sessionId);
+
 /// #982: how long to wait for the `-CC` handshake (the `\x1bP1000p` DCS) after
 /// writing the entry command before declaring control mode FAILED and falling
 /// back to the scrape path. Nested tmux / a shell that never enters `-CC` never
@@ -87,6 +96,7 @@ class SessionHost {
     SftpSessionOpener? sftpOpener,
     HostShellOpener? shellOpener,
     HostExecOpener? execOpener,
+    HostForwardOpenerFactory? forwardOpenerFactory,
     this.snapshotInterval = const Duration(seconds: 2),
     this.resumeProbeTimeout = const Duration(seconds: 2),
     this.resumeStaleThreshold = const Duration(seconds: 20),
@@ -100,6 +110,7 @@ class SessionHost {
        _sftpOpener = sftpOpener,
        _shellOpener = shellOpener ?? _defaultShellOpener,
        _execOpener = execOpener ?? _defaultExecOpener,
+       _forwardOpenerFactory = forwardOpenerFactory,
        _attentionNotifier = attentionNotifier,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch) {
     _commandSub = _gateway.incoming.listen(_dispatch);
@@ -147,6 +158,11 @@ class SessionHost {
   /// used when [tmuxControlMode] is ON: the tmux `-CC` invocation runs as the
   /// channel's exec command instead of being typed into an interactive shell.
   final HostExecOpener _execOpener;
+
+  /// Per-session direct-tcpip tunnel opener factory for ssh -L forwards
+  /// (#1047). Null in production → [_defaultForwardOpener] dials over the
+  /// session's live `SSHClient.forwardLocal`. Tests inject a fake.
+  final HostForwardOpenerFactory? _forwardOpenerFactory;
 
   /// How often a snapshot is pushed to the UI side. Tests use a short
   /// interval; production defaults to two seconds.
@@ -379,6 +395,13 @@ class SessionHost {
         _handleTmuxGesture(cmd);
       case SshTmuxScrollCommand():
         _handleTmuxScroll(cmd);
+      case SshForwardAddCommand():
+        _handleForwardAdd(cmd);
+      case SshForwardRemoveCommand():
+        _handleForwardRemove(cmd);
+      case SshForwardListCommand():
+        final s = _sessions[cmd.sessionId];
+        if (s != null) _emitForwardList(cmd.sessionId, s);
     }
   }
 
@@ -476,6 +499,161 @@ class SessionHost {
     } catch (_) {
       // Channel closed; reconnect re-syncs.
     }
+  }
+
+  // --- Local port forwarding, ssh -L (#1047) ---
+
+  /// Default tunnel opener: dial a direct-tcpip channel over the session's
+  /// LIVE `SSHClient` (resolved per accepted connection, so a reconnect's new
+  /// client is picked up automatically). Throws when the session has no client
+  /// — the engine reports it as a per-connection channel error and keeps
+  /// listening, mirroring `ssh -L`.
+  ForwardTunnelOpener _defaultForwardOpener(String sessionId) {
+    return (String remoteHost, int remotePort) async {
+      final client = _sessions[sessionId]?.controller.client;
+      if (client == null) {
+        throw StateError('session not connected');
+      }
+      return client.forwardLocal(remoteHost, remotePort);
+    };
+  }
+
+  /// Store/refresh the forward config keyed by localPort; arm immediately when
+  /// the session is already `connected` (ad hoc on a live session), otherwise
+  /// the `connected` transition arms it. Always replies with the table.
+  Future<void> _handleForwardAdd(SshForwardAddCommand cmd) async {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) return;
+    final config = PortForwardConfig(
+      localPort: cmd.localPort,
+      remoteHost: cmd.remoteHost,
+      remotePort: cmd.remotePort,
+    );
+    // Re-add of an existing port: replace the config; drop a live listener so
+    // it re-arms at the (possibly new) target.
+    final prior = hosted.forwardListeners.remove(cmd.localPort);
+    if (prior != null) unawaited(prior.close());
+    hosted.forwardErrors.remove(cmd.localPort);
+    hosted.forwardConfigs[cmd.localPort] = config;
+    clifecycle(
+      'task.host',
+      'forward add ${cmd.localPort} → ${cmd.remoteHost}:${cmd.remotePort} '
+          '(state=${hosted.controller.data.state.name})',
+    );
+    if (hosted.controller.data.state == SshSessionState.connected) {
+      await _armForward(cmd.sessionId, hosted, config);
+    }
+    _emitForwardList(cmd.sessionId, hosted);
+  }
+
+  Future<void> _handleForwardRemove(SshForwardRemoveCommand cmd) async {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) return;
+    hosted.forwardConfigs.remove(cmd.localPort);
+    hosted.forwardErrors.remove(cmd.localPort);
+    final listener = hosted.forwardListeners.remove(cmd.localPort);
+    if (listener != null) {
+      clifecycle('task.host', 'forward remove ${cmd.localPort}');
+      await listener.close();
+    }
+    _emitForwardList(cmd.sessionId, hosted);
+  }
+
+  /// Arm every configured-but-unbound forward. Called on each `connected`
+  /// transition (initial connect AND reconnect) — the re-arm contract.
+  Future<void> _armForwards(String sessionId, _HostedSession hosted) async {
+    for (final config in hosted.forwardConfigs.values.toList()) {
+      await _armForward(sessionId, hosted, config);
+    }
+    if (hosted.forwardConfigs.isNotEmpty) {
+      _emitForwardList(sessionId, hosted);
+    }
+  }
+
+  /// Bind one forward's loopback listener. A bind failure (port in use) is
+  /// recorded as the forward's error — never a session failure. Guards the
+  /// await: a teardown/drop/config-removal that raced the bind closes the
+  /// fresh listener instead of leaking it.
+  Future<void> _armForward(
+    String sessionId,
+    _HostedSession hosted,
+    PortForwardConfig config,
+  ) async {
+    if (hosted.forwardListeners.containsKey(config.localPort)) return;
+    final opener =
+        (_forwardOpenerFactory ?? _defaultForwardOpener)(sessionId);
+    try {
+      final listener = await PortForwardListener.start(
+        config: config,
+        openTunnel: opener,
+        onChannelError: (error) {
+          // Per-connection channel failure: the listener survives (ssh -L
+          // semantics); surface the message on the row + telemetry.
+          hosted.forwardErrors[config.localPort] = error;
+          clifecycle(
+            'task.host',
+            'forward ${config.localPort} channel error: $error',
+          );
+          _emitForwardList(sessionId, hosted);
+        },
+      );
+      // Raced by teardown / disconnect / remove while binding?
+      final stillWanted = _sessions[sessionId] == hosted &&
+          hosted.forwardConfigs.containsKey(config.localPort) &&
+          hosted.controller.data.state == SshSessionState.connected;
+      if (!stillWanted) {
+        await listener.close();
+        return;
+      }
+      hosted.forwardListeners[config.localPort] = listener;
+      hosted.forwardErrors.remove(config.localPort);
+      clifecycle(
+        'task.host',
+        'forward ${config.localPort} → '
+            '${config.remoteHost}:${config.remotePort} ACTIVE',
+      );
+    } on SocketException catch (e) {
+      hosted.forwardErrors[config.localPort] =
+          'Port ${config.localPort} is already in use (${e.osError?.message ?? e.message})';
+      clifecycle(
+        'task.host',
+        'forward ${config.localPort} bind FAILED: ${e.message}',
+      );
+    } catch (e) {
+      hosted.forwardErrors[config.localPort] = 'Forward failed: $e';
+    }
+  }
+
+  /// Close every live listener, KEEPING the configs so the next `connected`
+  /// re-arms them. Emits the table (rows fall back to `starting`).
+  void _dropForwards(String sessionId, _HostedSession hosted) {
+    if (hosted.forwardListeners.isEmpty) return;
+    for (final listener in hosted.forwardListeners.values.toList()) {
+      unawaited(listener.close());
+    }
+    hosted.forwardListeners.clear();
+    _emitForwardList(sessionId, hosted);
+  }
+
+  void _emitForwardList(String sessionId, _HostedSession hosted) {
+    if (_disposed) return;
+    final forwards = <ForwardInfo>[
+      for (final config in hosted.forwardConfigs.values)
+        ForwardInfo(
+          localPort: config.localPort,
+          remoteHost: config.remoteHost,
+          remotePort: config.remotePort,
+          status: hosted.forwardListeners.containsKey(config.localPort)
+              ? ForwardStatus.active
+              : (hosted.forwardErrors.containsKey(config.localPort)
+                    ? ForwardStatus.error
+                    : ForwardStatus.starting),
+          error: hosted.forwardErrors[config.localPort],
+        ),
+    ];
+    _gateway.send(
+      SshForwardListEvent(sessionId: sessionId, forwards: forwards).toJson(),
+    );
   }
 
   void _handleHostKeyDecision(SshHostKeyDecisionCommand cmd) {
@@ -701,6 +879,10 @@ class SessionHost {
       // shell whose output re-pipes to the terminal.
       if (data.state != SshSessionState.connected) {
         _dropShell(hosted);
+        // #1047: forwards die with the connection — close every listener
+        // synchronously (the config is RETAINED so re-entering `connected`
+        // re-arms it below; that is the reconnect re-arm contract).
+        _dropForwards(cmd.sessionId, hosted);
       }
       // Open the PTY shell the first time we reach `connected` (and re-open
       // after a reconnect, which re-enters `connected`). Without this the
@@ -713,6 +895,9 @@ class SessionHost {
         // happens before the remote ever produced a byte.
         hosted.connectedAtMs = _nowMs();
         unawaited(_ensureShell(cmd.sessionId, hosted));
+        // #1047: (re)arm every configured port forward now that the client is
+        // live — covers both a pre-connect forwardAdd and the reconnect re-arm.
+        unawaited(_armForwards(cmd.sessionId, hosted));
       }
     });
 
@@ -769,6 +954,18 @@ class SessionHost {
   Future<void> _teardown(String sessionId, _HostedSession hosted) async {
     await hosted.stateSub?.cancel();
     hosted.stateSub = null;
+    // #1047: a torn-down session takes its forwards (listeners AND config)
+    // with it — a later fresh connect re-arms from the profile defaults.
+    for (final listener in hosted.forwardListeners.values.toList()) {
+      try {
+        await listener.close();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    hosted.forwardListeners.clear();
+    hosted.forwardConfigs.clear();
+    hosted.forwardErrors.clear();
     await hosted.shellSub?.cancel();
     hosted.shellSub = null;
     hosted.tmuxChannel = null; // #909: drop the control-mode adapter on teardown.
@@ -2101,6 +2298,20 @@ class _HostedSession {
   /// Opened on the first list/download command, reused after, closed on
   /// teardown. Null until the first SFTP op.
   SftpSession? sftp;
+
+  /// #1047: DESIRED ssh -L forwards, keyed by localPort. Configs survive a
+  /// connection drop (the re-arm-on-reconnect contract) and die only with the
+  /// hosted session itself. Insertion-ordered so the UI list is stable.
+  final Map<int, PortForwardConfig> forwardConfigs = {};
+
+  /// #1047: LIVE loopback listeners, keyed by localPort. Strictly a subset of
+  /// [forwardConfigs]; emptied whenever the session leaves `connected`.
+  final Map<int, PortForwardListener> forwardListeners = {};
+
+  /// #1047: last bind/channel error per localPort — cleared on a successful
+  /// (re)bind, kept alongside an ACTIVE listener for per-connection channel
+  /// failures (the listener survives those, mirroring `ssh -L`).
+  final Map<int, String> forwardErrors = {};
 
   /// Live PTY shell channel, opened on first `connected`. Output is piped to
   /// the UI terminal via SshOutputEvent; input commands write here. Null until

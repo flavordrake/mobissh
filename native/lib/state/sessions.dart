@@ -401,6 +401,17 @@ class SessionsNotifier extends Notifier<SessionsState> {
         ),
         title: entry.title,
       );
+      // #1047: re-arm the profile's default port forwards. When the foreground
+      // isolate was torn down (last-session drop) the fresh SessionHost has no
+      // forward config, so the reconnect must re-send it. Idempotent when the
+      // hosted session survived (keyed by localPort).
+      for (final fwd in match.forwards) {
+        entry.proxy.forwardAdd(
+          localPort: fwd.localPort,
+          remoteHost: fwd.remoteHost,
+          remotePort: fwd.remotePort,
+        );
+      }
     } catch (_) {
       // Best-effort: degrade to the bare held-params reconnect.
       entry.proxy.reconnect();

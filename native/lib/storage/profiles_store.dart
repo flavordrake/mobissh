@@ -21,6 +21,59 @@ import '../diagnostics/connect_trace.dart';
 import 'secrets_store.dart';
 import 'vault.dart';
 
+/// One profile-default LOCAL port forward (ssh -L, #1047): listen on
+/// 127.0.0.1:[localPort] on the device, tunnel to [remoteHost]:[remotePort]
+/// as reachable from the SSH server. Armed automatically on (re)connect.
+/// Identity within a profile is [localPort] (one listener per port).
+class ProfileForward {
+  const ProfileForward({
+    required this.localPort,
+    required this.remoteHost,
+    required this.remotePort,
+  });
+
+  final int localPort;
+  final String remoteHost;
+  final int remotePort;
+
+  Map<String, dynamic> toJson() => {
+    'localPort': localPort,
+    'remoteHost': remoteHost,
+    'remotePort': remotePort,
+  };
+
+  /// Validating decode: null for anything unusable (corrupt-resilience per
+  /// .claude/rules — a bad entry is dropped, never a crash). An absent/empty
+  /// remoteHost defaults to 127.0.0.1 (the ssh -L default target).
+  static ProfileForward? fromJson(Map<String, dynamic> json) {
+    final lp = _coercePort(json['localPort']);
+    final rp = _coercePort(json['remotePort']);
+    if (lp == null || rp == null) return null;
+    final hostRaw = json['remoteHost'];
+    final host = (hostRaw is String && hostRaw.trim().isNotEmpty)
+        ? hostRaw.trim()
+        : '127.0.0.1';
+    return ProfileForward(localPort: lp, remoteHost: host, remotePort: rp);
+  }
+
+  static int? _coercePort(Object? raw) {
+    final int v;
+    if (raw is int) {
+      v = raw;
+    } else if (raw is double) {
+      v = raw.toInt();
+    } else if (raw is String) {
+      final parsed = int.tryParse(raw);
+      if (parsed == null) return null;
+      v = parsed;
+    } else {
+      return null;
+    }
+    if (v < 1 || v > 65535) return null;
+    return v;
+  }
+}
+
 /// Persisted profile shape. Connection metadata + optional visual identity +
 /// optional vault references. Equality is by (host, port, username) — the
 /// natural identity used for dedupe everywhere else in the app.
@@ -39,6 +92,7 @@ class SavedProfile {
     this.keyVaultId,
     this.initialCommand,
     this.defaultPath = '',
+    this.forwards = const [],
   });
 
   final String title;
@@ -93,6 +147,12 @@ class SavedProfile {
   /// .claude/rules code-style), so legacy profiles keep their current behaviour.
   final String defaultPath;
 
+  /// Profile-default LOCAL port forwards (ssh -L, #1047), armed on every
+  /// (re)connect of a session matching this profile. Empty for legacy
+  /// profiles (absent field reads back as [] via [_coerceForwards] — the
+  /// schema migration, no key bump per .claude/rules code-style).
+  final List<ProfileForward> forwards;
+
   /// Identity key for dedupe / lookup. Matches the PWA's behavior of treating
   /// (host:port:username) as the unique constraint.
   String get identityKey => '$host:$port:$username';
@@ -138,6 +198,21 @@ class SavedProfile {
     return null;
   }
 
+  /// Validate a raw stored forwards list (#1047). Non-list / absent → [];
+  /// corrupt entries inside the list are dropped individually (per
+  /// [ProfileForward.fromJson]). This IS the schema migration for the
+  /// absent-field case — no key bump.
+  static List<ProfileForward> _coerceForwards(Object? raw) {
+    if (raw is! List) return const [];
+    final out = <ProfileForward>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final fwd = ProfileForward.fromJson(Map<String, dynamic>.from(entry));
+      if (fwd != null) out.add(fwd);
+    }
+    return out;
+  }
+
   /// Validate a raw stored default path (#891). Returns the trimmed string when
   /// it's a non-empty String; anything else (null, absent on an OLD profile,
   /// non-String) yields '' so legacy profiles + corrupt values fall back to the
@@ -168,6 +243,10 @@ class SavedProfile {
     // #891: omit when empty so old profiles + default-empty ones stay byte-for-
     // byte identical (absent field is the migration signal, not a key bump).
     if (defaultPath.isNotEmpty) out['defaultPath'] = defaultPath;
+    // #1047: same omit-when-empty policy for the default forwards.
+    if (forwards.isNotEmpty) {
+      out['forwards'] = forwards.map((f) => f.toJson()).toList();
+    }
     return out;
   }
 
@@ -234,6 +313,7 @@ class SavedProfile {
     }
 
     final String defaultPath = _coerceDefaultPath(json['defaultPath']);
+    final List<ProfileForward> forwards = _coerceForwards(json['forwards']);
 
     return SavedProfile(
       title: title,
@@ -249,6 +329,7 @@ class SavedProfile {
       keyVaultId: keyVaultId,
       initialCommand: initialCommand,
       defaultPath: defaultPath,
+      forwards: forwards,
     );
   }
 
@@ -260,6 +341,7 @@ class SavedProfile {
     String? fontFamily,
     String? theme,
     String? defaultPath,
+    List<ProfileForward>? forwards,
   }) {
     return SavedProfile(
       title: title ?? this.title,
@@ -275,6 +357,7 @@ class SavedProfile {
       keyVaultId: keyVaultId ?? this.keyVaultId,
       initialCommand: initialCommand,
       defaultPath: defaultPath ?? this.defaultPath,
+      forwards: forwards ?? this.forwards,
     );
   }
 
@@ -562,6 +645,7 @@ class ProfilesStore {
             keyVaultId: profile.keyVaultId,
             initialCommand: profile.initialCommand,
             defaultPath: profile.defaultPath,
+            forwards: profile.forwards,
           );
           updated++;
           continue;
@@ -709,6 +793,26 @@ class ProfilesStore {
     final idx = list.indexWhere((p) => p.identityKey == identityKey);
     if (idx < 0) return false;
     list[idx] = list[idx].copyWith(theme: themeKey);
+    await save(list);
+    return true;
+  }
+
+  /// Persist the profile-default port forwards (#1047) onto the profile
+  /// matching [identityKey] (`host:port:username`). The sheet's per-forward
+  /// "profile default" toggle calls this with the full desired list (an empty
+  /// list clears them).
+  ///
+  /// NO-OP when no saved profile matches — an ad-hoc connect must NOT be
+  /// materialized as a saved profile just because the user armed a forward
+  /// (mirrors [setFontSize]/[setTheme]). Returns true iff a profile updated.
+  Future<bool> setForwards(
+    String identityKey,
+    List<ProfileForward> forwards,
+  ) async {
+    final list = await load();
+    final idx = list.indexWhere((p) => p.identityKey == identityKey);
+    if (idx < 0) return false;
+    list[idx] = list[idx].copyWith(forwards: forwards);
     await save(list);
     return true;
   }
