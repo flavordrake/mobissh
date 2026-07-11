@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+134 (2026-07-11) — download & share from any open preview
+- **Every file preview (text, markdown, HTML, PDF, images, mermaid) now has Download and Share in the app bar** — no navigating back to the browser; Share hands the actual file to Android's share sheet with the right type. (#1038)
+
 ## v0.1.10+133 (2026-07-11) — HTML files render for real + relative paths detect via your cwd
 - **HTML files open rendered** (not raw source) — relative CSS/images/scripts inside the page load from the remote directory over SFTP; pinch-zoom native; "view source" in the app bar. (#1037)
 - **Relative paths like `specs/001/spec.md` now detect**: the app tracks each session's working directory (shell advisories + your prompt) and only shows the affordance when the resolved file actually exists — tap opens the browser there; the menu copies both the relative and absolute forms. (#1036)
