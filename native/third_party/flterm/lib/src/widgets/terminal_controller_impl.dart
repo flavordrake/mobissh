@@ -2018,7 +2018,17 @@ class TerminalControllerImpl extends TerminalController
   }
 
   void _wireTerminalCallbacks() {
-    terminal.onWritePty = _emitOutput;
+    // #1072 (telemetry, additive): `onWritePty` is EXCLUSIVELY terminal
+    // auto-replies (DA/DSR/CPR/XTVERSION/OSC answers) — user keystrokes emit via
+    // [sendKey]/[sendText]/[paste] straight through [_emitOutput], never here.
+    // TEE those replies to [onTerminalReply] (diagnostics ring) THEN forward via
+    // [_emitOutput] EXACTLY as before. Pure observer: the forwarded bytes are
+    // unchanged, so backend behavior is identical whether or not a reply
+    // listener is attached.
+    terminal.onWritePty = (bytes) {
+      onTerminalReply?.call(bytes);
+      _emitOutput(bytes);
+    };
     terminal.onBell = () => onBell?.call();
     terminal.onTitleChanged = () => onTitleChanged?.call();
     terminal.onColorScheme = () => _brightness == .light ? .light : .dark;

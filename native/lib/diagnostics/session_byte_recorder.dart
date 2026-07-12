@@ -35,17 +35,27 @@ import 'dart:typed_data';
 
 import 'feedback_bundle.dart' show scrubSecrets;
 
-/// Default byte-ring cap: ~256 KB of the most recent terminal output. Past this
+/// Default byte-ring cap: ~1 MB of the most recent terminal output. Past this
 /// the oldest chunks are evicted (backward-looking — newest always wins).
-const int kByteRecorderMaxBytes = 256 * 1024;
+///
+/// #1072: raised from 256 KB → 1 MB so a RESUME-SPANNING window survives. The
+/// DA-leak repro straddles suspend/resume; on a busy terminal 256 KB held only
+/// a few seconds, evicting the pre-resume bytes before the report was captured.
+/// 1 MB (with the 60 s age cap below) holds the full ~30 s+ window the byte
+/// stream needs to show what happened across the resume. Conservative: 4× the
+/// old cap, still bounded and backward-looking.
+const int kByteRecorderMaxBytes = 1024 * 1024;
 
 /// Default byte-ring event cap (defense against a flood of tiny chunks blowing
-/// the list length even under the byte cap).
-const int kByteRecorderMaxEvents = 4096;
+/// the list length even under the byte cap). #1072: raised in step with the
+/// 4× byte cap so the event cap is not the new binding limit.
+const int kByteRecorderMaxEvents = 16384;
 
-/// Default age cap for BOTH rings: ~30 s. Events older than this (relative to
-/// the newest event) are evicted.
-const Duration kByteRecorderMaxAge = Duration(seconds: 30);
+/// Default age cap for the byte/scroll/termReply rings: ~60 s. Events older than
+/// this (relative to the newest event) are evicted. #1072: raised from 30 s →
+/// 60 s so a suspend/resume-spanning window is retained (the byte cap above is
+/// still the usual binding limit on a busy terminal).
+const Duration kByteRecorderMaxAge = Duration(seconds: 60);
 
 /// Default scroll-ring event cap.
 const int kScrollRecorderMaxEvents = 2048;
@@ -53,6 +63,11 @@ const int kScrollRecorderMaxEvents = 2048;
 /// Default sent-SGR-ring event cap (#793). The synthesized mouse/wheel reports
 /// the app SENDS are short and infrequent; a modest cap holds a full swipe burst.
 const int kSentSgrRecorderMaxEvents = 1024;
+
+/// #1072: default terminal-auto-reply ring event cap. DA/DSR/CPR/XTVERSION/OSC
+/// replies are short and infrequent; a modest cap holds a full burst. Age
+/// eviction shares [kByteRecorderMaxAge].
+const int kTermReplyRecorderMaxEvents = 1024;
 
 class _ByteEvent {
   _ByteEvent(this.tMs, this.bytes);
@@ -91,6 +106,36 @@ bool isSentSgrMouseReport(Uint8List chunk) {
   return true;
 }
 
+/// #1072: coarse classification of a terminal AUTO-REPLY chunk by its leading
+/// bytes, for the term-reply diagnostics trace. Pure + allocation-free.
+///
+///   `DA1`      `ESC [ ?` (`\x1b[?…`)  — primary device attributes reply
+///   `DA2`      `ESC [ >` (`\x1b[>…`)  — secondary device attributes reply
+///   `DSR`/`CPR``ESC [` + digits + `R`/`n` — cursor position / device status
+///   `OSC`      `ESC ]`               — OSC query answer
+///   `other`    anything else (e.g. XTVERSION `ESC P … ST`)
+///
+/// Best-effort: it only inspects the shape, never decodes content, so it can't
+/// leak anything a scrub would catch.
+String termReplyKind(Uint8List chunk) {
+  if (chunk.length < 2) return 'other';
+  if (chunk[0] != 0x1b) return 'other';
+  // OSC: ESC ]
+  if (chunk[1] == 0x5d) return 'OSC';
+  // CSI replies: ESC [
+  if (chunk[1] == 0x5b) {
+    if (chunk.length >= 3) {
+      if (chunk[2] == 0x3f) return 'DA1'; // ESC [ ?
+      if (chunk[2] == 0x3e) return 'DA2'; // ESC [ >
+    }
+    // DSR/CPR: ESC [ <digits/;> terminated by 'R' (0x52) or 'n' (0x6e).
+    final last = chunk[chunk.length - 1];
+    if (last == 0x52 || last == 0x6e) return chunk[chunk.length - 1] == 0x52 ? 'CPR' : 'DSR';
+    return 'other';
+  }
+  return 'other';
+}
+
 /// A bounded, backward-looking recorder of the raw bytes written to ONE
 /// session's terminal plus its scroll-offset events. See the file header.
 class SessionByteRecorder {
@@ -100,6 +145,7 @@ class SessionByteRecorder {
     this.maxAge = kByteRecorderMaxAge,
     this.maxScrollEvents = kScrollRecorderMaxEvents,
     this.maxSentSgrEvents = kSentSgrRecorderMaxEvents,
+    this.maxTermReplyEvents = kTermReplyRecorderMaxEvents,
     int Function()? nowMs,
   }) : _nowMs = nowMs ?? _defaultNowMs;
 
@@ -108,6 +154,7 @@ class SessionByteRecorder {
   final Duration maxAge;
   final int maxScrollEvents;
   final int maxSentSgrEvents;
+  final int maxTermReplyEvents;
 
   /// Monotonic relative-ms clock. Injected in tests for determinism; production
   /// uses an epoch-anchored elapsed millis.
@@ -127,6 +174,11 @@ class SessionByteRecorder {
   // scroll never moves). NEVER carries keystrokes, so a typed password can never
   // be recorded — the filter is the security boundary.
   final ListQueue<_ByteEvent> _sentSgr = ListQueue<_ByteEvent>();
+  // #1072: terminal auto-reply ring — the DA/DSR/CPR/XTVERSION/OSC responses the
+  // terminal itself writes back (teed from flterm's `onWritePty`, never user
+  // keystrokes). Reveals a spurious/duplicated device-attributes reply (the
+  // #1072 DA-leak). Each event also carries a coarse `kind` computed at snapshot.
+  final ListQueue<_ByteEvent> _termReply = ListQueue<_ByteEvent>();
 
   int? _cols;
   int? _rows;
@@ -178,6 +230,25 @@ class SessionByteRecorder {
             _sentSgr.length > maxSentSgrEvents)) {
       if (_sentSgr.length == 1 && _sentSgr.first.tMs >= ageFloor) break;
       _sentSgr.removeFirst();
+    }
+  }
+
+  /// #1072: append a terminal AUTO-REPLY chunk (teed from flterm's
+  /// `onWritePty`). These are the terminal's own DA/DSR/CPR/XTVERSION/OSC
+  /// responses — NOT user keystrokes, which never reach `onWritePty` — so a
+  /// typed password can't enter this ring. Hot path: store the reference +
+  /// timestamp, then evict past the age/event caps. No copy/encode here (cold
+  /// path at snapshot). Same eviction discipline as the sent-SGR ring.
+  void recordTermReply(Uint8List chunk) {
+    if (chunk.isEmpty) return;
+    final t = _nowMs();
+    _termReply.add(_ByteEvent(t, chunk));
+    final ageFloor = t - maxAge.inMilliseconds;
+    while (_termReply.isNotEmpty &&
+        (_termReply.first.tMs < ageFloor ||
+            _termReply.length > maxTermReplyEvents)) {
+      if (_termReply.length == 1 && _termReply.first.tMs >= ageFloor) break;
+      _termReply.removeFirst();
     }
   }
 
@@ -235,6 +306,28 @@ class SessionByteRecorder {
     return out;
   }
 
+  /// #1072: snapshot the terminal-auto-reply ring as a list of
+  /// `{tMs, b64, kind}`, oldest first. SCRUBS each chunk (defense in depth —
+  /// device-attributes/cursor replies carry no credentials, but the ring uses
+  /// the same cold-path scrub as the output ring) and tags a coarse [kind].
+  /// Encode + scrub + classify happen here, not on the hot path.
+  List<Map<String, Object?>> snapshotTermReplyTrace() {
+    final out = <Map<String, Object?>>[];
+    for (final ev in _termReply) {
+      final text = utf8.decode(ev.bytes, allowMalformed: true);
+      final scrubbed = scrubSecrets(text);
+      final bytes = identical(scrubbed, text) || scrubbed == text
+          ? ev.bytes
+          : Uint8List.fromList(utf8.encode(scrubbed));
+      out.add(<String, Object?>{
+        'tMs': ev.tMs,
+        'b64': base64Encode(bytes),
+        'kind': termReplyKind(ev.bytes),
+      });
+    }
+    return out;
+  }
+
   /// #793 (test-only): the live total of bytes retained in the byte ring, so the
   /// O(1)-eviction tests can assert `_byteTotal` stays consistent with the
   /// surviving chunks after `ListQueue` eviction.
@@ -259,6 +352,7 @@ class SessionByteRecorder {
     _byteTotal = 0;
     _scroll.clear();
     _sentSgr.clear();
+    _termReply.clear();
     _cols = null;
     _rows = null;
   }
@@ -315,6 +409,11 @@ List<Map<String, Object?>> activeScrollTraceSnapshot() =>
 /// active session, or empty when none is active.
 List<Map<String, Object?>> activeSentSgrTraceSnapshot() =>
     _active?.snapshotSentSgrTrace() ?? const <Map<String, Object?>>[];
+
+/// #1072: terminal auto-reply trace (DA/DSR/CPR/XTVERSION/OSC responses the
+/// terminal generated) of the active session, or empty when none is active.
+List<Map<String, Object?>> activeTermReplyTraceSnapshot() =>
+    _active?.snapshotTermReplyTrace() ?? const <Map<String, Object?>>[];
 
 /// Grid `{cols, rows}` of the active session, or null when none is active.
 Map<String, Object?>? activeGridSnapshot() => _active?.grid();
