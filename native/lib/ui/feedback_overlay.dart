@@ -28,6 +28,8 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:mobissh/diagnostics/connect_trace.dart';
+import 'package:mobissh/diagnostics/detection_geom.dart'
+    show activeDetectionGeomSnapshot;
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
 import 'package:mobissh/diagnostics/paint_stats.dart'
     show activePaintStatsSnapshot;
@@ -91,7 +93,9 @@ Map<String, Object?> buildFeedbackPayload({
   List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
   List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
   List<Map<String, Object?>> sentSgrTrace = const <Map<String, Object?>>[],
+  List<Map<String, Object?>> termReplyTrace = const <Map<String, Object?>>[],
   Map<String, Object?>? grid,
+  Map<String, Object?>? detectionGeom,
   // #967: the pre-send Review & Send sheet lets the user EXCLUDE categories.
   // These gate ASSEMBLY (not just display) so an excluded artifact is provably
   // absent from the uploaded body. Default true → report quality preserved; the
@@ -188,7 +192,23 @@ Map<String, Object?> buildFeedbackPayload({
     // Filtered at the send seam to SGR-mouse reports ONLY, so a typed password
     // is NEVER recorded. Omitted entirely when no session is active.
     if (includeTraces && sentSgrTrace.isNotEmpty) 'sentSgrTrace': sentSgrTrace,
+    // #1072: terminal AUTO-REPLY trace (DA/DSR/CPR/XTVERSION/OSC answers the
+    // terminal generated, teed from flterm's onWritePty — never keystrokes).
+    // Shape mirrors byteTrace ({tMs,b64}) plus a coarse `kind`. The server
+    // persists it as `${ts}-bug-report.term-reply-trace.json`; the COUNT rides
+    // in the bundle json so a DA-leak (#1072) shows the duplicated reply.
+    // Already scrubbed at snapshot time. Omitted when no session is active.
+    if (includeTraces && termReplyTrace.isNotEmpty) ...<String, Object?>{
+      'termReplyTrace': termReplyTrace,
+      'termReplyTraceEventCount': termReplyTrace.length,
+    },
     if (includeTraces && grid != null) 'grid': grid,
+    // #1072: detection-wash GEOMETRY at capture time (frozen-bubble diagnosis)
+    // — viewport offsets, last-painted wash rows, a monotonic paintTick, and
+    // per-anchor rows (absolute / gutter / wash-drawn / payload-actual). A
+    // second capture whose paintTick didn't advance proves the wash never
+    // repainted. Read-only telemetry; omitted when no session is active.
+    if (includeTraces && detectionGeom != null) 'detectionGeom': detectionGeom,
   };
 }
 
@@ -428,7 +448,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       byteTrace: activeByteTraceSnapshot(),
       scrollTrace: activeScrollTraceSnapshot(),
       sentSgrTrace: activeSentSgrTraceSnapshot(),
+      termReplyTrace: activeTermReplyTraceSnapshot(),
       grid: activeGridSnapshot(),
+      detectionGeom: activeDetectionGeomSnapshot(),
     );
   }
 
@@ -471,6 +493,11 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final byteTrace = activeByteTraceSnapshot();
     final scrollTrace = activeScrollTraceSnapshot();
     final sentSgrTrace = activeSentSgrTraceSnapshot();
+    // #1072: snapshot the terminal auto-reply ring + the detection-wash geometry
+    // at the EXACT moment of tap — both backward/point-in-time, so the report
+    // reflects the state the owner is reporting.
+    final termReplyTrace = activeTermReplyTraceSnapshot();
+    final detectionGeom = activeDetectionGeomSnapshot();
     final grid = activeGridSnapshot();
     final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
     final bytes = await widget.screenshotCapturer(_captureKey, dpr);
@@ -490,7 +517,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       byteTrace: byteTrace,
       scrollTrace: scrollTrace,
       sentSgrTrace: sentSgrTrace,
+      termReplyTrace: termReplyTrace,
       grid: grid,
+      detectionGeom: detectionGeom,
     );
   }
 
@@ -505,7 +534,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     List<Map<String, Object?>> byteTrace = const <Map<String, Object?>>[],
     List<Map<String, Object?>> scrollTrace = const <Map<String, Object?>>[],
     List<Map<String, Object?>> sentSgrTrace = const <Map<String, Object?>>[],
+    List<Map<String, Object?>> termReplyTrace = const <Map<String, Object?>>[],
     Map<String, Object?>? grid,
+    Map<String, Object?>? detectionGeom,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -533,7 +564,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
         byteTrace: byteTrace,
         scrollTrace: scrollTrace,
         sentSgrTrace: sentSgrTrace,
+        termReplyTrace: termReplyTrace,
         grid: grid,
+        detectionGeom: detectionGeom,
       ),
     );
     if (review == null) return; // cancelled / dismissed — nothing sent
@@ -550,7 +583,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       byteTrace: byteTrace,
       scrollTrace: scrollTrace,
       sentSgrTrace: sentSgrTrace,
+      termReplyTrace: termReplyTrace,
       grid: grid,
+      detectionGeom: detectionGeom,
       includeImages: review.includeImages,
       includeTraces: review.includeTraces,
     );
@@ -677,7 +712,9 @@ class _FeedbackReviewSheet extends StatefulWidget {
     required this.byteTrace,
     required this.scrollTrace,
     required this.sentSgrTrace,
+    required this.termReplyTrace,
     required this.grid,
+    required this.detectionGeom,
   });
 
   final String version;
@@ -690,7 +727,9 @@ class _FeedbackReviewSheet extends StatefulWidget {
   final List<Map<String, Object?>> byteTrace;
   final List<Map<String, Object?>> scrollTrace;
   final List<Map<String, Object?>> sentSgrTrace;
+  final List<Map<String, Object?>> termReplyTrace;
   final Map<String, Object?>? grid;
+  final Map<String, Object?>? detectionGeom;
 
   @override
   State<_FeedbackReviewSheet> createState() => _FeedbackReviewSheetState();
@@ -810,7 +849,9 @@ class _FeedbackReviewSheetState extends State<_FeedbackReviewSheet> {
               title: const Text('Include diagnostic traces'),
               subtitle: Text(
                 'Terminal I/O + logs ($_traceLineCount log lines'
-                '${widget.byteTrace.isNotEmpty ? ", terminal bytes" : ""}), '
+                '${widget.byteTrace.isNotEmpty ? ", terminal bytes" : ""}'
+                '${widget.termReplyTrace.isNotEmpty ? ", terminal replies" : ""}'
+                '${widget.detectionGeom != null ? ", wash geometry" : ""}), '
                 'device & app version.',
               ),
               value: _includeTraces,

@@ -173,6 +173,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart' as xterm;
 
 import '../diagnostics/connect_trace.dart' show clifecycle, ctrace;
+import '../diagnostics/detection_geom.dart';
+import '../diagnostics/feedback_bundle.dart' show scrubSecrets;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
@@ -2712,6 +2714,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // damage/frame path dropped the redraw. Coalesced to once per frame.
         _forceTerminalRepaint();
       };
+      // #1072 (telemetry, additive): TEE the terminal's own AUTO-REPLIES
+      // (DA/DSR/CPR/XTVERSION/OSC answers flterm writes back through
+      // `onWritePty`) into the diagnostics ring. This is a PURE observer — the
+      // reply still forwards through the controller's onOutput seam above
+      // exactly as before — so it changes nothing that reaches the SSH stream;
+      // it only lets a bug report show a spurious/duplicated DA reply (#1072).
+      // User keystrokes never reach onTerminalReply (they bypass onWritePty), so
+      // no typed content can enter this ring.
+      controller.onTerminalReply = _byteRecorder.recordTermReply;
       // Grid resize. flterm reports (cols, rows) from its OWN layout; we RECORD
       // it for the replay harness but do NOT let it write _cols/_rows or the PTY.
       controller.onResize = (cols, rows) {
@@ -2821,6 +2832,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // Paint replay harness: let the stats snapshot probe the live render-box
       // boundary counters (notifies / paints / frame syncs) at read time.
       _paintStats.boxProbe = _probePaintBox;
+      // #1072 (telemetry, additive): install the detection-geometry probe so the
+      // bug report can snapshot this session's live wash offsets + per-anchor
+      // rows for the frozen-bubble diagnosis. Read-only.
+      registerDetectionGeom(widget.sessionId, _probeDetectionGeom);
       // #702: arm the first-connect resize re-sync on the proxy's shellReady
       // stream. The xterm #666 fit-burst is offstage for ghostty, so this is the
       // ghostty-LOCAL equivalent: once the task-side shell EXISTS, force-re-send
@@ -3600,6 +3615,86 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     return found;
   }
 
+  /// #1072 (telemetry, additive): assemble this session's detection-wash
+  /// GEOMETRY snapshot for the bug-report bundle (frozen-bubble diagnosis).
+  /// READ-ONLY — reads controller + render-box accessors, mutates nothing.
+  /// Null before first layout / when the controller or render box is gone.
+  ///
+  /// Per anchor (capped) it records the absolute top row, the resolved gutter
+  /// row, the row the wash painter WOULD draw on (`absTopRow -
+  /// paintedViewportOffset`), and the viewport row where the payload text is
+  /// ACTUALLY visible now — so a divergence localizes the freeze to a layer.
+  Map<String, Object?>? _probeDetectionGeom() {
+    if (!mounted) return null;
+    final controller = _controller;
+    if (controller == null) return null;
+    final box = _findTerminalRenderBox();
+
+    final paintedOffset = controller.paintedViewportOffset;
+    final gridRows = controller.scrollbar.visible;
+
+    // Cap the per-anchor detail so a screen full of matches can't bloat the
+    // bundle. The COUNT below always reports the full anchor set.
+    const maxAnchors = 12;
+    final anchors = controller.anchors;
+    final anchorGeom = <Map<String, Object?>>[];
+    for (final anchor in anchors.take(maxAnchors)) {
+      if (anchor.ranges.isEmpty) continue;
+      final topRange = anchor.ranges.first;
+      final absTopRow = topRange.topRow;
+      final payloadStr = anchor.payload.toString();
+      final prefix =
+          payloadStr.length > 24 ? payloadStr.substring(0, 24) : payloadStr;
+      anchorGeom.add(<String, Object?>{
+        // Scrubbed defensively — a URL/path payload is not a credential, but the
+        // same no-secrets contract as every other bundle string applies.
+        'payloadPrefix': scrubSecrets(prefix),
+        'patternId': anchor.patternId,
+        'absTopRow': absTopRow,
+        'gutterRow': controller.anchorGutterRow(topRange),
+        'washDrawnViewRow': absTopRow - paintedOffset,
+        'payloadActualViewRow':
+            _payloadActualViewRow(controller, payloadStr, gridRows),
+      });
+    }
+
+    return <String, Object?>{
+      'activeScreen': controller.activeScreen.name,
+      'screenViewportTop': controller.screenViewportTop,
+      'scrollbarOffset': controller.scrollbar.offset,
+      'paintedViewportOffset': paintedOffset,
+      'gridRows': gridRows,
+      // The viewport rows the HighlightPainter actually drew the wash on last
+      // paint (empty when nothing drew). `null` when the box isn't resolvable.
+      'drawnWashViewRows': box?.washViewRows,
+      // Monotonic paint counter: compare across two captures to see whether the
+      // wash layer repaints AT ALL (a frozen bubble that never advances = the
+      // paint was never scheduled). Reuses the existing render-box paint count.
+      'paintTick': box?.debugPaintCount,
+      'anchorCount': anchors.length,
+      'anchors': anchorGeom,
+    };
+  }
+
+  /// #1072: the viewport row whose visible text currently contains [payloadStr]
+  /// (matched on a bounded prefix so a long/wrapped payload still localizes), or
+  /// -1 when the payload isn't visible. Scans single rows — the head row of a
+  /// wrapped match carries the prefix. Cold path (bug-report time only).
+  int _payloadActualViewRow(
+    TerminalController controller,
+    String payloadStr,
+    int gridRows,
+  ) {
+    if (gridRows <= 0 || payloadStr.isEmpty) return -1;
+    final needle =
+        payloadStr.length > 16 ? payloadStr.substring(0, 16) : payloadStr;
+    for (var r = 0; r < gridRows; r++) {
+      final text = controller.visibleRowsText(r, r);
+      if (text.contains(needle)) return r;
+    }
+    return -1;
+  }
+
   /// #720: force flterm to repaint on resume even when focus was RETAINED.
   ///
   /// Gated by [ghosttyShouldCycleFocusForRepaint]: only the ACTIVE, connected
@@ -4289,6 +4384,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     _pathVerifier = null;
     _controller?.removeListener(_onControllerChanged);
     _controller?.onOutput = null;
+    // #1072: drop the auto-reply tee with the session.
+    _controller?.onTerminalReply = null;
     _controller?.onResize = null;
     _controller?.dispose();
     _scrollController.dispose();
@@ -4298,6 +4395,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // Paint replay harness: drop the paint-stack counters with the session.
     _paintStats.boxProbe = null;
     unregisterPaintStats(widget.sessionId);
+    // #1072: drop the detection-geometry probe with the session.
+    unregisterDetectionGeom(widget.sessionId);
     super.dispose();
   }
 

@@ -256,7 +256,9 @@ void main() {
           byteTrace: const [{'tMs': 1, 'b64': 'zz'}],
           scrollTrace: const [{'tMs': 1, 'offset': 3}],
           sentSgrTrace: const [{'tMs': 1, 'b64': 'yy'}],
+          termReplyTrace: const [{'tMs': 1, 'b64': 'xx', 'kind': 'DA1'}],
           grid: const {'cols': 80, 'rows': 24},
+          detectionGeom: const {'paintTick': 7, 'anchorCount': 0, 'anchors': []},
           includeImages: images,
           includeTraces: traces,
         );
@@ -266,9 +268,12 @@ void main() {
       for (final k in const [
         'screenshot', 'frames', 'connectLog', 'gestureLog', 'lifecycleLog',
         'byteTrace', 'scrollTrace', 'sentSgrTrace', 'grid',
+        'termReplyTrace', 'termReplyTraceEventCount', 'detectionGeom',
       ]) {
         expect(p.containsKey(k), isTrue, reason: '$k present by default');
       }
+      // #1072: the count mirrors the trace length.
+      expect(p['termReplyTraceEventCount'], 1);
     });
 
     test('excludeImages OMITS screenshot + frames, keeps traces + comment', () {
@@ -286,6 +291,7 @@ void main() {
       for (final k in const [
         'connectLog', 'gestureLog', 'lifecycleLog',
         'byteTrace', 'scrollTrace', 'sentSgrTrace', 'grid',
+        'termReplyTrace', 'termReplyTraceEventCount', 'detectionGeom',
       ]) {
         expect(p.containsKey(k), isFalse, reason: '$k must be omitted');
       }

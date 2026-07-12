@@ -367,6 +367,12 @@ class TerminalRenderBox extends RenderBox {
   @visibleForTesting
   List<int> get debugWashViewRows => _paintState.debugWashViewRows;
 
+  /// #1072 (telemetry): the VIEWPORT rows the [HighlightPainter] drew the
+  /// detection wash on in the LAST paint — the SAME data as [debugWashViewRows]
+  /// but readable from production diagnostics (the bug-report bundle) without
+  /// the test-only restriction. Read-only; the painter resets it every paint.
+  List<int> get washViewRows => _paintState.debugWashViewRows;
+
   /// #918 (test seam): inject the settle-timer factory so headless tests fire the
   /// output tick deterministically and assert the idle-no-fire perf guard.
   void debugSetOutputSettleTickFactory(

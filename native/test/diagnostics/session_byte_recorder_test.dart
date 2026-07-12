@@ -319,4 +319,59 @@ void main() {
       expect(activeGridSnapshot(), isNull);
     });
   });
+
+  // #1072: terminal AUTO-REPLY ring — the DA/DSR/CPR/OSC responses the terminal
+  // itself generates (teed from flterm's onWritePty). Same eviction/scrub
+  // discipline as the byte ring, plus a coarse `kind` tag per event.
+  group('term-reply ring', () {
+    test('records {tMs, b64, kind} that round-trips the exact bytes', () {
+      final rec = SessionByteRecorder();
+      rec.recordTermReply(Uint8List.fromList(utf8.encode('\x1b[?62c')));
+      final snap = rec.snapshotTermReplyTrace();
+      expect(snap, hasLength(1));
+      final ev = snap.single;
+      expect(ev['tMs'], isA<int>());
+      expect(utf8.decode(base64Decode(ev['b64'] as String)), '\x1b[?62c');
+    });
+
+    test('classifies replies by leading bytes', () {
+      Uint8List b(String s) => Uint8List.fromList(utf8.encode(s));
+      expect(termReplyKind(b('\x1b[?62c')), 'DA1');
+      expect(termReplyKind(b('\x1b[>1;95;0c')), 'DA2');
+      expect(termReplyKind(b('\x1b[8;24;80R')), 'CPR');
+      expect(termReplyKind(b('\x1b[0n')), 'DSR');
+      expect(termReplyKind(b('\x1b]11;rgb:0000/0000/0000\x1b\\')), 'OSC');
+      expect(termReplyKind(b('plain')), 'other');
+    });
+
+    test('evicts oldest past the event cap', () {
+      final rec = SessionByteRecorder(maxTermReplyEvents: 3);
+      for (var i = 0; i < 6; i++) {
+        rec.recordTermReply(Uint8List.fromList([0x1b, 0x5b, 0x30 + i, 0x6e]));
+      }
+      final snap = rec.snapshotTermReplyTrace();
+      expect(snap, hasLength(3), reason: 'only the newest 3 survive the cap');
+    });
+
+    test('scrubs credential-looking bytes at snapshot', () {
+      final rec = SessionByteRecorder();
+      rec.recordTermReply(
+        Uint8List.fromList(utf8.encode('\x1b]0;token=SECRET123\x1b\\')),
+      );
+      final decoded =
+          utf8.decode(base64Decode(rec.snapshotTermReplyTrace().single['b64'] as String));
+      expect(decoded, isNot(contains('SECRET123')));
+      expect(decoded, contains('[REDACTED]'));
+    });
+
+    test('active registry routes the term-reply snapshot to the active session',
+        () {
+      final a = registerByteRecorder('s-a');
+      a.recordTermReply(Uint8List.fromList(utf8.encode('\x1b[?62c')));
+      setActiveByteRecorder('s-a');
+      expect(activeTermReplyTraceSnapshot(), hasLength(1));
+      setActiveByteRecorder(null);
+      expect(activeTermReplyTraceSnapshot(), isEmpty);
+    });
+  });
 }

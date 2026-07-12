@@ -29,6 +29,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../diagnostics/detection_geom.dart';
 import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../ssh/ssh_session.dart';
@@ -149,6 +150,9 @@ class TerminalScreen extends ConsumerWidget {
     // Paint replay harness: same single place for the paint-stack counters, so
     // the bug report snapshots the ON-SCREEN session's boundary counters.
     setActivePaintStats(activeEntry.id);
+    // #1072: same single place for the detection-geometry probe, so the bug
+    // report snapshots the ON-SCREEN session's wash geometry.
+    setActiveDetectionGeom(activeEntry.id);
 
     // #573: keybar visibility is PER-SESSION — read the ACTIVE session's flag.
     // Switching sessions re-watches the new active id, so each session shows

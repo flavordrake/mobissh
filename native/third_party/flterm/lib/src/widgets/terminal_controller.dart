@@ -34,6 +34,18 @@ abstract class TerminalController extends ChangeNotifier
   /// [sendText], and [paste].
   ValueChanged<Uint8List>? onOutput;
 
+  /// #1072 (telemetry, additive): called with the bytes of a terminal
+  /// AUTO-REPLY — a response the terminal itself generates and writes back to
+  /// the backend (DA1/DA2 device attributes, DSR/CPR cursor reports, XTVERSION,
+  /// OSC query answers). These flow through libghostty's `onWritePty`, the SAME
+  /// channel [onOutput] emits on, but are NOT user keystrokes (keystrokes emit
+  /// via [sendKey]/[sendText]/[paste] directly, bypassing `onWritePty`). This is
+  /// a pure TEE: it fires with the exact bytes just before [onOutput] forwards
+  /// them, so a diagnostics ring can capture auto-replies (e.g. the #1072
+  /// DA-leak) without changing what reaches the backend. Never set in
+  /// production paths that only care about forwarding; leave null there.
+  ValueChanged<Uint8List>? onTerminalReply;
+
   /// Called when the terminal receives a BEL character (0x07).
   VoidCallback? onBell;
 
