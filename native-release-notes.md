@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+142 (2026-07-12) — detection highlights track their text live
+- **Highlights now move with their text** — the wash stays locked to its link/path as the screen scrolls or repaints, painted behind the glyphs so the text stays full-brightness on top. No more sticking, floating, or blinking. This restores the original live-tracking behavior with the text simply drawn on top. (#1067)
+
 ## v0.1.10+141 (2026-07-11) — highlights settle correctly on live-updating screens
 - **Detection highlights now behave the way you'd expect on a busy screen**: the wash shows behind matched links/paths when the screen is steady, pauses while the screen scrolls OR while content is updating (the gutter chips stay), and repaints in the right place once things settle. Fixes the highlight sticking at a stale spot on a live-repainting TUI. (#1064)
 
