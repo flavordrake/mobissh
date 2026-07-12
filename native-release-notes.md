@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+143 (2026-07-12) — highlights no longer accumulate; back to the simple, correct model
+- **Detection highlights don't pile up anymore** on a repainting screen — when a link/path is overwritten by new text, its highlight disappears immediately instead of leaving a stale band behind. This rolls the detection back to the original simple model (rebuild from what's on screen each frame), keeping only the behind-the-glyphs paint so text stays full-brightness. (#1069)
+
 ## v0.1.10+142 (2026-07-12) — detection highlights track their text live
 - **Highlights now move with their text** — the wash stays locked to its link/path as the screen scrolls or repaints, painted behind the glyphs so the text stays full-brightness on top. No more sticking, floating, or blinking. This restores the original live-tracking behavior with the text simply drawn on top. (#1067)
 
