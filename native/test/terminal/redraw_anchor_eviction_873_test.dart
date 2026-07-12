@@ -176,8 +176,10 @@ void main() {
     );
 
     test(
-      'a row MOVED by an in-place repaint keeps its anchor at the NEW rows in '
-      'the same notify — no vanish/reappear gap (#1046 atomic relocate)',
+      'a row MOVED by an in-place repaint evicts at the OLD rows immediately, '
+      'then re-discovers at the NEW rows on the debounced rescan — no STALE '
+      'anchor lingers over the moved-away cells (#1069 no-accumulation; the '
+      '#1046 atomic-relocate no-blink guarantee was traded away)',
       () async {
         final controller = newController();
         addTearDown(controller.dispose);
@@ -192,20 +194,36 @@ void main() {
             .first
             .topRow;
 
-        // One chunk: erase the URL's row AND redraw the URL two rows lower —
-        // the TUI line-move shape. The anchor must be present at the new rows
-        // IMMEDIATELY after the write (no debounce wait).
+        // One chunk: erase the URL's row AND redraw the URL two rows lower — the
+        // TUI line-move shape. The synchronous prune (#873) evicts the anchor at
+        // its OLD rows on the SAME notify, so NO stale wash lingers over the
+        // 'moved away' cells (the #1069 guarantee). Discovery of the URL at its
+        // NEW rows is DEBOUNCED, so it is not re-anchored 10ms later — that brief
+        // gap is the sanctioned #1069 tradeoff: rolling back the #1044 retained-
+        // match cache (the accumulation source) also drops the #1046 atomic
+        // relocate, so a moved anchor blinks rather than piling up.
         controller.write(
           bytes('\x1b[2;1H\x1b[2Kmoved away\x1b[4;1H\x1b[2K$url'),
         );
         await Future<void>.delayed(const Duration(milliseconds: 10));
 
+        // No anchor lingers at the OLD (now 'moved away') rows — the immediate
+        // eviction is what prevents accumulation.
+        final staleAtOld = controller.anchors.where(
+          (a) => a.payload == url && a.ranges.first.topRow == oldTop,
+        );
+        expect(staleAtOld, isEmpty,
+            reason: 'the moved URL must NOT linger at its old rows — a retained '
+                'anchor there is exactly the #1069 accumulation');
+
+        // Once the debounced rescan runs the URL re-anchors at its NEW rows.
+        await settle();
         final anchorsNow =
             controller.anchors.where((a) => a.payload == url).toList();
         expect(anchorsNow, hasLength(1),
-            reason: 'the moved URL must stay anchored with NO gap (#1046)');
+            reason: 'the moved URL re-anchors once the debounced rescan runs');
         expect(anchorsNow.first.ranges.first.topRow, isNot(oldTop),
-            reason: 'and at its NEW rows (relocated, not stale)');
+            reason: 'and at its NEW rows (re-discovered from content)');
       },
     );
 

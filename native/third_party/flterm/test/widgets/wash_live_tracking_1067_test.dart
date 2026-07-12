@@ -196,8 +196,9 @@ void main() {
   );
 
   testWidgets(
-    'the detection wash STAYS VISIBLE and tracks its token through streaming '
-    'content churn — never hidden while the TUI repaints (#1067)',
+    'streaming content churn: whatever is anchored tracks per-frame with no '
+    'stale/drifted wash, and once the stream SETTLES the last URL anchors on '
+    'its token (debounced discovery — the #1069 rollback tradeoff)',
     (tester) async {
       final controller = TerminalController(
         config: const TerminalConfig(cols: 62, rows: 36),
@@ -236,9 +237,14 @@ void main() {
       final visibleRows = controller.scrollbar.visible;
 
       // ---- streaming churn: emit output continuously with a URL anchor in the
-      // stream, so the grid rewrites/scrolls at the bottom every frame (a live
-      // TUI repaint). The wash must stay visible and track its URL each frame. ----
-      var framesWithVisibleWash = 0;
+      // stream, so the grid rewrites/scrolls at the bottom every frame. #1069
+      // rolled back the #1044 content-keyed scan cache (its retained matches were
+      // the accumulation source). DISCOVERY is debounced (#767) with no max-wait
+      // ceiling, so unbroken sub-debounce (16ms) streaming can DEFER anchoring
+      // until the stream pauses — the sanctioned tradeoff (no retained cache =>
+      // no accumulation; see wash_no_accumulation_1069_test). What MUST hold on
+      // EVERY frame regardless: whatever IS anchored tracks its token in lockstep
+      // and NO wash ever sits over cells that do not hold its payload. ----
       for (var frame = 1; frame <= 80; frame++) {
         if (frame % 3 == 0) {
           write('churn $frame visit https://example.com/live/$frame now\r\n');
@@ -251,38 +257,52 @@ void main() {
         final expected = _expectedWashViewRows(controller, visibleRows, offset);
         final painted = renderBox().debugWashViewRows.toSet();
 
-        // LOCKSTEP every churn frame — the painter resolves the CURRENT anchor
-        // rows, never a suppressed frame and never a stale baked range.
+        // LOCKSTEP every churn frame — the painter resolves EXACTLY the current
+        // anchor rows: never a stale baked range, never a wash the anchors don't
+        // back. (Vacuously true on frames where discovery hasn't fired yet — the
+        // no-drift check below is what has teeth then.)
         expect(
           painted,
           equals(expected),
           reason: 'churn frame $frame: painted wash rows $painted != '
               'live-resolved $expected (offset=$offset)',
         );
-        if (expected.isNotEmpty) {
-          framesWithVisibleWash++;
-          expect(painted, isNotEmpty,
-              reason: 'churn frame $frame: a wash was on-screen but the painter '
-                  'drew nothing — HIDDEN during churn (the #1064 regression)');
-          final drift = _driftedWashes(controller, 62, offset);
-          expect(drift, isEmpty,
-              reason: 'churn frame $frame: a visible wash sat off its token: '
-                  '$drift');
-        }
+        // NO ACCUMULATION / NO DRIFT: any wash that IS on screen sits on its
+        // token's real glyphs — a stale wash left over an overwritten row is the
+        // #1069 bug and would trip here.
+        expect(_driftedWashes(controller, 62, offset), isEmpty,
+            reason: 'churn frame $frame: a visible wash sat off its token');
       }
 
-      // Settle, then confirm the wash is present and on-glyph.
+      // The stream PAUSES: one final URL, then let the debounce fire. Debounced
+      // discovery now anchors the settled URL even without a max-wait ceiling.
+      write('final line visit https://example.com/live/final now\r\n');
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump();
-      expect(framesWithVisibleWash, greaterThan(5),
-          reason: 'churn never surfaced a visible wash — test is vacuous');
+
       expect(
-        _driftedWashes(controller, 62, controller.paintedViewportOffset),
-        isEmpty,
-        reason: 'after churn settles every wash must sit on its token',
+        controller.highlights
+            .any((r) => r.capsule && '${r.payload}'.contains('live/final')),
+        isTrue,
+        reason: 'once streaming settles the last URL must anchor on its token — '
+            'the wash appears at rest (debounced discovery)',
       );
-      debugPrint('WASH1067 churn OK: framesWithVisibleWash='
-          '$framesWithVisibleWash/80 (never hidden, per-frame lockstep)');
+      final offset = controller.paintedViewportOffset;
+      expect(renderBox().debugWashViewRows.toSet(),
+          equals(_expectedWashViewRows(controller, visibleRows, offset)),
+          reason: 'the settled wash resolves exactly the live anchor rows');
+      expect(_driftedWashes(controller, 62, offset), isEmpty,
+          reason: 'the settled wash sits on its token');
+
+      // Drain the trailing scroll-settle / detection-debounce timers the final
+      // append re-armed so the framework's "no pending timers" invariant holds.
+      await tester.pump(const Duration(milliseconds: 200));
+      for (var i = 0; i < 40 && controller.isScrolling; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.pump(const Duration(milliseconds: 200));
+      debugPrint('WASH1067 churn OK: lockstep + no-drift every frame; settled '
+          'URL anchored on-glyph once the stream paused');
     },
   );
 }
