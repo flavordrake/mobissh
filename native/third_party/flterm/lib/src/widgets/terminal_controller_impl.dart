@@ -183,6 +183,23 @@ class TerminalControllerImpl extends TerminalController
   /// 120ms URL re-detect debounce, now owned by the controller.
   static const int _detectionDebounceMs = 120;
 
+  /// #1071: MAX-WAIT CEILING for the debounced discovery re-scan. The debounce
+  /// above is cancelled+re-armed on EVERY notify, so a continuously-repainting
+  /// TUI (Claude Code streaming output, a spinner/status line updating faster
+  /// than [_detectionDebounceMs]) pushes the trailing edge out forever and
+  /// [_rescanDetections] NEVER fires — no new match is ever discovered, so no
+  /// bubble appears and toggling a pattern on looks dead (device report #1071,
+  /// build +143). Eviction ([_pruneStaleDetections]) stays synchronous, so the
+  /// net effect on a busy screen is zero washes. This is the same discovery
+  /// starvation #1044-v2 fixed with a max-wait ceiling; the #1069 rollback
+  /// dropped the ceiling because it was bundled with the accumulating scan
+  /// cache — but the two are separable. This timer is armed ONCE per burst
+  /// (not re-armed per notify) so discovery fires within this window even if
+  /// the churn never pauses. It forces a FULL live-cell rescan (no cache), so
+  /// it cannot reintroduce accumulation.
+  Timer? _detectionMaxWait;
+  static const int _detectionMaxWaitMs = 500;
+
   /// #883: the COORDINATE-FRAME EPOCH of [_detectionMatches] — the
   /// scrollbackRows/cols/visibleRows observed when the matches' absolute rows
   /// were last anchored (a successful [_rescanDetections]) or fully
@@ -410,6 +427,7 @@ class TerminalControllerImpl extends TerminalController
     if (_textPatterns.isEmpty && _detectionMatches.isEmpty) return;
     _textPatterns.clear();
     _detectionDebounce?.cancel();
+    _detectionMaxWait?.cancel();
     _detectionMatches = const [];
     // Clear only the detection-driven highlights (which are the only writer of
     // _highlights once a pattern is registered).
@@ -613,8 +631,26 @@ class TerminalControllerImpl extends TerminalController
     _detectionDebounce?.cancel();
     _detectionDebounce = Timer(
       const Duration(milliseconds: _detectionDebounceMs),
-      _rescanDetections,
+      _fireDetectionRescan,
     );
+    // #1071: arm the max-wait ceiling ONCE per burst (`??=`, not re-armed per
+    // notify) so discovery still fires within _detectionMaxWaitMs when the
+    // debounce above is perpetually cancelled by a never-pausing repaint.
+    _detectionMaxWait ??= Timer(
+      const Duration(milliseconds: _detectionMaxWaitMs),
+      _fireDetectionRescan,
+    );
+  }
+
+  /// #1071: run the discovery rescan and clear BOTH debounce timers so whichever
+  /// fired first (the quiet-settle debounce OR the max-wait ceiling) cancels the
+  /// other; the next notify re-arms a fresh burst.
+  void _fireDetectionRescan() {
+    _detectionDebounce?.cancel();
+    _detectionDebounce = null;
+    _detectionMaxWait?.cancel();
+    _detectionMaxWait = null;
+    _rescanDetections();
   }
 
   /// #873: SYNCHRONOUSLY re-validate the live detection anchors against the
@@ -1078,6 +1114,7 @@ class TerminalControllerImpl extends TerminalController
   void dispose() {
     _disposed = true;
     _detectionDebounce?.cancel();
+    _detectionMaxWait?.cancel();
     _scrollSettleTimer?.cancel();
     terminal.removeListener(_onTerminalChanged);
     detach();
