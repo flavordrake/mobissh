@@ -1,21 +1,21 @@
-// On-emulator acceptance for #1067 (owner DEFINITIVE P0) — the detection WASH
-// must STAY VISIBLE and TRACK its token every paint (scroll AND churn), with the
-// glyphs ON TOP (undimmed). This SUPERSEDES the hide-on-scroll (#1062) / quiesce
-// (#1064) / miss-grace (#1060) machinery that HID the wash.
+// On-emulator acceptance for #1074 — the detection WASH is now a LIVE widget
+// LAYER ([GhosttyWashLayer]) painted UNDER a TRANSPARENT terminal, NOT the fork's
+// render-box highlight pass. This supersedes the #1067/#1069/#1071 render-box
+// wash acceptance (which asserted `renderBox.debugWashViewRows` / capsule
+// highlights — both gone with the relocation).
 //
-// Drives a REAL SSH → shell → flterm chain against the live device paint stack.
-// It prints a URL + a multi-segment path sandwiched mid-history, then:
-//   * PHASE SCROLL — swipes them back on-screen and oscillates. Every frame the
-//     painter must resolve the wash onto EXACTLY the on-screen anchor rows
-//     (`renderBox.debugWashViewRows == { absRow - paintedOffset }`) — never a
-//     hidden frame, never a stale band. Holds a MID-SCROLL window for an
-//     external screenshot (wash on its moving token, text legible on top).
-//   * PHASE CHURN — streams output continuously (a live TUI repaint) with a URL
-//     in the stream. Same per-frame lockstep + never-hidden invariant. Holds a
-//     MID-CHURN window for an external screenshot.
+// The owner's bug: on a continuously-repainting TUI the render-box wash FROZE /
+// went stale while the gutter chip (a widget layer) tracked fine. So the
+// acceptance here is: the wash LAYER tracks its token LIVE, in LOCKSTEP WITH THE
+// GUTTER, through scroll AND churn — every sampled frame the wash's occupied
+// viewport rows equal the gutter's rows for the SAME anchors (both resolve from
+// the live anchor set + painted offset). Glyphs stay full-contrast because the
+// terminal is transparent (backgroundOpacity 0) and the wash sits BELOW it — no
+// dimming is possible by construction; a screenshot at churn + settle confirms
+// visually.
 //
 // Bridge: scripts/native-connect-test.sh (127.0.0.1:2222 → socat → test-sshd).
-// Run: scripts/native-connect-test.sh integration_test/wash_live_tracking_1067_shot_test.dart
+// Run: scripts/native-connect-test.sh integration_test/wash_underlay_1074_shot_test.dart
 // Screenshots: fire scripts/emu-shot.sh while a *_WINDOW_OPEN marker is logged.
 
 import 'dart:convert';
@@ -31,49 +31,52 @@ import 'package:integration_test/integration_test.dart';
 import 'package:mobissh/main.dart' show MobisshApp;
 import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/sessions.dart';
+import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
 import 'support/connect_helpers.dart';
 
-const _url = 'https://example.com/track1067';
+const _url = 'https://example.com/track1074';
+// A MULTI-segment absolute path — always visible (no #990 short-path suppress).
 const _path = '/usr/local/lib/python3.11/site-packages';
 
-/// The set of VIEWPORT rows every on-screen highlight range occupies at
-/// [offset] — the LIVE-resolved rows the wash painter must have drawn this
-/// frame (mirrors the painter's `absRow - offset` map + on-screen clip).
-Set<int> _expectedWashViewRows(TerminalController c, int offset) {
-  final visible = c.scrollbar.visible;
+/// The wash gate the layer uses, reduced to what needs no verifier: URL / OSC-8
+/// / multi-segment path patterns paint a wash. Colour value is irrelevant to the
+/// row-tracking assertion — only null-vs-non-null (paints or not) matters here.
+Color? _washColorFor(StructuredAnchor a) =>
+    ghosttyPatternPaintsWash(a.patternId) ? const Color(0xFF00FF00) : null;
+
+/// The set of viewport rows the WASH LAYER paints this frame — the LIVE
+/// resolution the layer performs (`ghosttyResolveWashes` over the controller's
+/// current anchors + `anchorRects`), reduced to each capsule's top viewport row.
+Set<int> _washRows(
+  TerminalController c, {
+  required double cellHeight,
+  required double padding,
+}) {
   final out = <int>{};
-  for (final r in c.highlights) {
-    for (var absRow = r.topRow; absRow <= r.bottomRow; absRow++) {
-      final viewRow = absRow - offset;
-      if (viewRow < 0 || viewRow >= visible) continue;
-      out.add(viewRow);
+  for (final wash in ghosttyResolveWashes(
+    c.anchors,
+    rectsOf: c.anchorRects,
+    washColorFor: _washColorFor,
+  )) {
+    for (final rect in wash.rects) {
+      out.add(((rect.top - padding) / cellHeight).round());
     }
   }
   return out;
 }
 
-/// Every ON-SCREEN capsule wash cell-run that sits over cells NOT holding (part
-/// of) its payload, at [offset]. Empty == every visible wash is on its glyphs.
-List<String> _driftedWashes(TerminalController c, int offset) {
-  final visible = c.scrollbar.visible;
-  final out = <String>[];
-  for (final r in c.highlights) {
-    if (!r.capsule) continue;
-    final payload = '${r.payload}';
-    for (var absRow = r.topRow; absRow <= r.bottomRow; absRow++) {
-      final viewRow = absRow - offset;
-      if (viewRow < 0 || viewRow >= visible) continue;
-      final rowText = c.visibleRowsText(viewRow, viewRow);
-      final startCol = absRow == r.topRow ? r.topCol : 0;
-      final endCol = absRow == r.bottomRow ? r.bottomCol : rowText.length;
-      final s = startCol.clamp(0, rowText.length);
-      final e = endCol.clamp(0, rowText.length);
-      final slice = (e > s ? rowText.substring(s, e) : '').trim();
-      final onGlyph = slice.isNotEmpty &&
-          (payload.contains(slice) || slice.contains(payload));
-      if (!onGlyph) out.add('view=$viewRow "$slice" payload=$payload');
+/// The set of viewport rows the GUTTER paints for the SAME wash-painting anchors
+/// (`anchorGutterRow` — the layer the owner reports tracks fine). The wash rows
+/// must equal these every frame ("tracks live WITH the gutter").
+Set<int> _gutterRowsForWashAnchors(TerminalController c) {
+  final out = <int>{};
+  for (final a in c.anchors) {
+    if (_washColorFor(a) == null) continue;
+    for (final range in a.ranges) {
+      final r = c.anchorGutterRow(range);
+      if (r != null) out.add(r);
     }
   }
   return out;
@@ -83,8 +86,8 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'the detection wash stays VISIBLE and tracks its token per-frame through '
-    'scroll AND churn, text on top (#1067)',
+    'the wash LAYER tracks its token LIVE and in LOCKSTEP with the gutter '
+    'through scroll AND churn, under a transparent terminal (#1074)',
     (tester) async {
       FlutterForegroundTask.initCommunicationPort();
 
@@ -137,9 +140,20 @@ void main() {
 
       final termKey = find.byKey(Key('ghostty-terminal-$sessionId'));
       expect(termKey, findsOneWidget, reason: 'no ghostty terminal view');
-      TerminalRenderBox renderBox() => tester.renderObject<TerminalRenderBox>(
-            find.descendant(of: termKey, matching: find.byType(TerminalRenderer)),
-          );
+
+      // #1074: the terminal renders TRANSPARENT — the wash below shows through,
+      // it CANNOT dim the glyphs (they paint opaque on top). Assert the invariant.
+      final renderer = tester.widget<TerminalRenderer>(
+        find.descendant(of: termKey, matching: find.byType(TerminalRenderer)),
+      );
+      expect(renderer.theme.backgroundOpacity, 0.0,
+          reason: 'terminal must be transparent so the wash sits BELOW it');
+      expect(renderer.theme.backgroundOpacityCells, isFalse,
+          reason: 'explicit-bg cells stay opaque and occlude the wash');
+
+      final cellSize = GhosttyTerminalView.debugCellSizes[sessionId];
+      expect(cellSize, isNotNull, reason: 'no measured cell size');
+      final cellHeight = cellSize!.height;
 
       final out = <int>[];
       final sub = entry.proxy.output.listen(out.addAll);
@@ -149,13 +163,12 @@ void main() {
       }
       expect(out.isNotEmpty, isTrue, reason: 'no shell prompt — dead PTY');
 
-      // A TALL block of URL anchors sandwiched mid-history so scrolling back
-      // places many washes across the viewport at once — a small oscillation
-      // then keeps several on-screen for the whole screenshot window.
+      // A TALL block of URL anchors + a path, sandwiched mid-history so scrolling
+      // back places several washes across the viewport at once.
       entry.proxy.sendInput(
         Uint8List.fromList(utf8.encode(
-          'clear; seq 100; for i in \$(seq 1 12); do echo VISIT1067 \$i $_url; '
-          'done; echo PATH1067 $_path; seq 200\n',
+          'clear; seq 100; for i in \$(seq 1 12); do echo VISIT1074 \$i $_url; '
+          'done; echo PATH1074 $_path; seq 200\n',
         )),
       );
       var tailSeen = false;
@@ -175,30 +188,38 @@ void main() {
       final bodyX = rect.left + rect.width * 0.35;
       var lockstepFrames = 0;
 
-      // Per-frame invariant: the painter resolved EXACTLY the on-screen anchor
-      // rows (never hidden, never stale), and every visible wash is on-glyph.
+      bool washPaintPresent() =>
+          find.byKey(const Key('ghostty-wash-paint')).evaluate().isNotEmpty;
+
+      // Per-frame invariant: the wash layer's rows == the gutter's rows for the
+      // SAME anchors (live lockstep), and the wash CustomPaint is mounted while
+      // any wash is on-screen (never a frozen/absent layer).
       Future<void> sample(String phase) async {
         await tester.pump(const Duration(milliseconds: 16));
         await tester.pump(const Duration(milliseconds: 16));
         controller!.reportPaintedViewportOffset(controller.scrollbar.offset);
-        final offset = controller.paintedViewportOffset;
-        final expected = _expectedWashViewRows(controller, offset);
-        final painted = renderBox().debugWashViewRows.toSet();
-        expect(painted, equals(expected),
-            reason: '[$phase] painted wash rows $painted != live-resolved '
-                '$expected (offset=$offset) — not tracking per-frame');
-        if (expected.isNotEmpty) {
+        final washRows = _washRows(
+          controller,
+          cellHeight: cellHeight,
+          padding: kGhosttyTerminalPadding,
+        );
+        final gutterRows = _gutterRowsForWashAnchors(controller);
+        expect(washRows, equals(gutterRows),
+            reason: '[$phase] wash rows $washRows != gutter rows $gutterRows — '
+                'the wash is not tracking live WITH the gutter');
+        if (gutterRows.isNotEmpty) {
           lockstepFrames++;
-          final drift = _driftedWashes(controller, offset);
-          expect(drift, isEmpty,
-              reason: '[$phase] a visible wash sat off its token: $drift');
+          expect(washPaintPresent(), isTrue,
+              reason: '[$phase] wash anchors on-screen but the wash layer '
+                  'painted nothing (frozen/absent)');
         }
       }
 
-      bool washVisible() => controller!.highlights.any((r) =>
-          r.capsule &&
-          ('${r.payload}'.contains('track1067') ||
-              '${r.payload}'.contains('site-packages')));
+      bool washVisible() => controller!.anchors.any((a) =>
+          _washColorFor(a) != null &&
+          a.ranges.any((r) => controller.anchorGutterRow(r) != null) &&
+          ('${a.payload}'.contains('track1074') ||
+              '${a.payload}'.contains('site-packages')));
 
       // ---- PHASE SCROLL: swipe a wash anchor back on-screen. ----
       var washOnScreen = false;
@@ -222,12 +243,9 @@ void main() {
       expect(washOnScreen, isTrue,
           reason: 'never scrolled a wash anchor back on-screen');
 
-      // MID-SCROLL screenshot window: small swipe oscillation. The TALL URL
-      // block spans the viewport, so a few-row scroll each way keeps many washes
-      // on-screen while they MOVE — an external shot lands on a moving wash with
-      // legible text on top. Assertions run throughout (never hidden, lockstep).
-      // A small up-swipe re-centers if the block ever drifts fully off.
-      debugPrint('WASH1067_MIDSCROLL_WINDOW_OPEN');
+      // MID-SCROLL screenshot window: small oscillation keeps washes on-screen
+      // while they MOVE — an external shot lands on a moving wash, text legible.
+      debugPrint('WASH1074_MIDSCROLL_WINDOW_OPEN');
       for (var o = 0; o < 44; o++) {
         final down = (o ~/ 3).isEven;
         final startY = rect.top + rect.height * (down ? 0.40 : 0.60);
@@ -256,17 +274,17 @@ void main() {
           }
         }
       }
-      debugPrint('WASH1067_MIDSCROLL_WINDOW_CLOSED');
+      debugPrint('WASH1074_MIDSCROLL_WINDOW_CLOSED');
 
-      // Settle so the churn phase starts from a stable frame at the bottom.
+      // Settle so the churn phase starts from a stable bottom frame.
       entry.proxy.sendInput(Uint8List.fromList(utf8.encode('clear\n')));
       for (var i = 0; i < 12; i++) {
         await tester.pump(const Duration(milliseconds: 200));
       }
 
       // ---- PHASE CHURN: stream output continuously (a live TUI repaint) with a
-      // URL in the stream; the wash must stay visible + track it each frame. ----
-      debugPrint('WASH1067_MIDCHURN_WINDOW_OPEN');
+      // URL in the stream; the wash must stay live + track it each frame. ----
+      debugPrint('WASH1074_MIDCHURN_WINDOW_OPEN');
       for (var f = 0; f < 60; f++) {
         if (f % 3 == 0) {
           entry.proxy.sendInput(Uint8List.fromList(
@@ -277,28 +295,31 @@ void main() {
         }
         await sample('churn$f');
       }
-      debugPrint('WASH1067_MIDCHURN_WINDOW_CLOSED');
+      debugPrint('WASH1074_MIDCHURN_WINDOW_CLOSED');
 
-      // Settle + final on-glyph check.
+      // Settle + final lockstep check.
       for (var i = 0; i < 15; i++) {
         await tester.pump(const Duration(milliseconds: 200));
       }
       controller!.reportPaintedViewportOffset(controller.scrollbar.offset);
       expect(controller.isScrolling, isFalse, reason: 'never settled');
-      expect(_driftedWashes(controller, controller.paintedViewportOffset),
-          isEmpty,
-          reason: 'after everything settles every wash must sit on its token');
+      expect(
+        _washRows(controller,
+            cellHeight: cellHeight, padding: kGhosttyTerminalPadding),
+        equals(_gutterRowsForWashAnchors(controller)),
+        reason: 'after settle the wash rows must still equal the gutter rows',
+      );
       expect(lockstepFrames, greaterThan(20),
           reason: 'too few frames had a visible wash — acceptance is vacuous');
-      debugPrint('WASH1067 pass: lockstepFrames=$lockstepFrames '
-          '(never hidden, per-frame lockstep through scroll AND churn)');
+      debugPrint('WASH1074 pass: lockstepFrames=$lockstepFrames '
+          '(wash layer in per-frame lockstep with the gutter, scroll AND churn)');
 
       // Final settled hold for a stationary reference screenshot.
-      debugPrint('WASH1067_SETTLED_WINDOW_OPEN');
+      debugPrint('WASH1074_SETTLED_WINDOW_OPEN');
       for (var i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 300));
       }
-      debugPrint('WASH1067_SETTLED_WINDOW_CLOSED');
+      debugPrint('WASH1074_SETTLED_WINDOW_CLOSED');
     },
   );
 }
