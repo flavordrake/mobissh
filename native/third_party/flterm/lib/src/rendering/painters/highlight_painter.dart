@@ -26,19 +26,20 @@ class HighlightPainter implements TerminalPainter {
 
   @override
   void paint(Canvas canvas) {
-    // #1062/#1064: HIDE the detection wash while the screen is CHURNING — an
-    // active scroll (painted offset in flight) OR content updating (a live TUI
-    // repaint). In either case the rescan/relocate that keeps each range's
-    // ABSOLUTE rows aligned to its token is deferred / not-yet-settled (#1044),
-    // so a wash painted this frame can sit over cells its token just left (the
-    // owner's "pinned"/"stale" wash). The controller re-derives + re-shows the
-    // wash on SETTLE at the correct positions (the #988 bubble stance ported to
-    // the behind-glyph fill). This is the ONLY detection-wash writer, so skipping
-    // the whole layer is exactly "hide the wash". The render box sets
-    // washSuppressed = isScrolling || contentSettling each paint.
-    if (_state.washSuppressed) return;
-
+    // #1067: the wash is NEVER hidden. It TRACKS its token LIVE every paint:
+    // each range carries the anchor's ABSOLUTE buffer rows (the persistent #767
+    // anchor set), and this painter maps `viewRow = absRow - viewportOffset`
+    // against the SAME painted offset the glyphs use this frame (set by the
+    // render box's frame sync). So the wash lands wherever the anchor CURRENTLY
+    // is — through scroll AND content churn — with no baked/cached screen range
+    // and no suppression gate. The pre-#1045 #988 live-resolution, repointed
+    // behind the glyphs (the stack order background → highlight → text draws
+    // this fill BENEATH the glyph ink, so the token stays full-contrast on top).
     final highlights = _state.highlights;
+    // #1067: record the live-resolved viewport rows this paint for the test seam
+    // (empty when nothing draws — reset every paint so it never goes stale).
+    final washViewRows = <int>[];
+    _state.debugWashViewRows = washViewRows;
     if (highlights.isEmpty) return;
 
     final rows = _state.rows;
@@ -58,6 +59,7 @@ class HighlightPainter implements TerminalPainter {
       for (var absRow = topRow; absRow <= bottomRow; absRow++) {
         final viewRow = absRow - offset;
         if (viewRow < 0 || viewRow >= rows) continue;
+        washViewRows.add(viewRow);
 
         final startCol = absRow == topRow ? range.topCol : 0;
         final endCol = absRow == bottomRow ? range.bottomCol : cols;

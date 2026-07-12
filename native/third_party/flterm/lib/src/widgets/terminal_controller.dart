@@ -249,20 +249,10 @@ abstract class TerminalController extends ChangeNotifier
   /// link stays tappable throughout a scroll even while its bubble is hidden.
   /// Defaults to false before the first paint (a static screen draws normally).
   ///
-  /// #1062: also read by the render box each paint (via [TerminalRenderObserver])
-  /// to HIDE the behind-glyph detection wash while scrolling.
+  /// #1044: also gates the detection RESCAN — a scan that fires mid-scroll is
+  /// deferred to the settle edge instead of competing with fling frames.
   @override
   bool get isScrolling;
-
-  /// #1064: whether the grid CONTENT is currently churning (a live/streaming TUI
-  /// repaint) and the detection rescan has not yet settled. The render box ORs
-  /// this with [isScrolling] to hide the detection wash, so the wash is visible
-  /// ONLY when the screen is QUIESCENT — not scrolling AND content settled. This
-  /// closes the +140 gap: pausing only on scroll left the wash shown at stale
-  /// spots on a repainting TUI (isScrolling=false). Set true on a content notify;
-  /// cleared when the rescan debounce fires after a quiet gap.
-  @override
-  bool get contentSettling;
 
   /// A [Listenable] that fires ONLY when the inputs a widget-layer decorator
   /// reads have changed (#805): the detected [anchors] set, or the

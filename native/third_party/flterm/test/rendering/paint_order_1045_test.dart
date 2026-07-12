@@ -141,10 +141,6 @@ class _HighlightObserver implements TerminalRenderObserver {
 
   @override
   bool get isScrolling => false;
-
-  @override
-  bool get contentSettling => false;
-
   @override
   void addListener(VoidCallback listener) {}
 

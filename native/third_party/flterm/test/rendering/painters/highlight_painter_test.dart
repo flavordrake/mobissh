@@ -22,14 +22,12 @@ void main() {
     const canvasColor = ui.Color(0xFF112233); // the "text/background" beneath
 
     Future<ByteData> render(
-      List<HighlightRange> highlights, {
-      bool washSuppressed = false,
-    }) async {
+      List<HighlightRange> highlights,
+    ) async {
       final state = TerminalPaintState(TerminalTheme.dark(), metrics)
         ..cols = 4
         ..rows = 1
         ..viewportOffset = 0
-        ..washSuppressed = washSuppressed
         ..highlights = highlights;
 
       final recorder = ui.PictureRecorder();
@@ -77,28 +75,6 @@ void main() {
       ]);
       // Opaque fill over the canvas → the cell reads back the fill color.
       expect(pixelArgb(bytes, x: 4, y: 8), fill.toARGB32());
-    });
-
-    // #1062: while the painted offset is in flight the render box sets
-    // `washSuppressed`; the painter must draw NOTHING (hide-on-scroll) even for
-    // a non-null background range, so a wash whose baked absolute rows have
-    // drifted off their token mid-scroll never paints a pinned/stale band.
-    test('washSuppressed HIDES an otherwise-filled background range', () async {
-      const fill = ui.Color(0xFFEE0000);
-      final bytes = await render(
-        const [
-          HighlightRange(
-            startRow: 0,
-            startCol: 0,
-            endRow: 0,
-            endCol: 4,
-            background: fill,
-          ),
-        ],
-        washSuppressed: true,
-      );
-      // Suppressed → the cells keep the canvas color, not the fill.
-      expect(pixelArgb(bytes, x: 4, y: 8), canvasColor.toARGB32());
     });
   });
 }

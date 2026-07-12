@@ -58,32 +58,6 @@ class DetectionScanStats {
   /// set — no reassignment, no decoration notify (the #1046 churn killer).
   int notifiesSuppressed = 0;
 
-  /// #1060: anchor-bakes where a live match's behind-glyph WASH was WITHHELD
-  /// because the anchor's payload is currently unconfirmed on the grid (its
-  /// miss-grace timer is running). Proves the runtime path that keeps a stale
-  /// wash from floating over moved/blank cells on a churning TUI: >0 during an
-  /// in-place repaint burst, 0 on a stable shell. The anchor itself stays live
-  /// (gutter chip + hit-test) — only its wash waits for re-confirmation.
-  int washSuppressedForGrace = 0;
-
-  /// #1062: painted-offset reports where the detection WASH was HIDDEN because
-  /// the viewport was actively scrolling (a wash was live AND `isScrolling`).
-  /// Proves the hide-on-scroll path fired: >0 during a scroll/fling over
-  /// detected content, 0 on a stationary screen. The wash's baked absolute rows
-  /// can drift off their tokens mid-scroll (the rescan/relocate is deferred for
-  /// perf, #1044), so rather than paint a pinned/stale band the render layer
-  /// hides it and re-shows on settle at the correct offset (the #988 stance).
-  int washHiddenForScroll = 0;
-
-  /// #1064: content-change notifies where the detection WASH was HIDDEN because
-  /// the grid is CHURNING (content updating — a live/streaming TUI repaint) and
-  /// a wash was live. The quiesce-gated wash rule pauses the wash during content
-  /// churn just as [washHiddenForScroll] pauses it during scroll: >0 while a
-  /// live-updating TUI rewrites detected content, 0 on a settled screen. This is
-  /// the case +140 missed — it paused only on scroll, not on content updates, so
-  /// a repainting TUI (isScrolling=false) left the wash shown at stale spots.
-  int washHiddenForContentChurn = 0;
-
   /// One flat map for telemetry / test assertions.
   Map<String, int> snapshot() => <String, int>{
         'rescans': rescans,
@@ -98,9 +72,6 @@ class DetectionScanStats {
         'pruneRelocated': pruneRelocated,
         'matchesReused': matchesReused,
         'notifiesSuppressed': notifiesSuppressed,
-        'washSuppressedForGrace': washSuppressedForGrace,
-        'washHiddenForScroll': washHiddenForScroll,
-        'washHiddenForContentChurn': washHiddenForContentChurn,
       };
 
   /// Zero every counter (tests bracket a measured phase with this).
@@ -117,8 +88,5 @@ class DetectionScanStats {
     pruneRelocated = 0;
     matchesReused = 0;
     notifiesSuppressed = 0;
-    washSuppressedForGrace = 0;
-    washHiddenForScroll = 0;
-    washHiddenForContentChurn = 0;
   }
 }

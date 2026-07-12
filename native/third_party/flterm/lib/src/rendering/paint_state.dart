@@ -45,21 +45,12 @@ class TerminalPaintState {
 
   var viewportOffset = 0;
 
-  /// #1062/#1064: the detection WASH [highlights] is HIDDEN while the screen is
-  /// CHURNING and re-shown once it is QUIESCENT. The render box sets this each
-  /// paint to `isScrolling || contentSettling`:
-  ///   - `isScrolling` (#1062): the painted viewport offset is in flight (a user
-  ///     scroll / fling or streaming-output auto-scroll). A mid-scroll wash can
-  ///     sit over the cells where its token USED to be (the rescan/relocate that
-  ///     keeps a wash's ABSOLUTE rows aligned is DEFERRED, #1044 scan-gating).
-  ///   - `contentSettling` (#1064): a live/streaming TUI is rewriting cells and
-  ///     the content-settle rescan has not fired yet — the wash could sit at a
-  ///     stale spot (the case +140 missed by pausing only on scroll).
-  /// Rather than chase the offset per frame (float/pin, burned twice), the wash
-  /// follows the #988 bubble stance: hidden while churning, re-derived + re-shown
-  /// on settle at the correct positions. The owner's rule (#1064): the wash is
-  /// visible ONLY when quiescent. The [HighlightPainter] early-returns when set.
-  var washSuppressed = false;
+  /// #1067 test seam: the VIEWPORT rows the [HighlightPainter] resolved the wash
+  /// onto in the LAST paint (`absRow - viewportOffset` per painted range row).
+  /// Lets a headless / emulator test prove per-frame LIVE tracking —
+  /// `washViewRow == tokenAbsoluteRow - viewportOffset` every frame — without a
+  /// pixel read. Rewritten each paint; empty when nothing was drawn.
+  List<int> debugWashViewRows = const [];
 
   var cursor = const Cursor();
   var cursorWide = false;
