@@ -40,29 +40,12 @@ abstract class TerminalRenderObserver implements Listenable {
   /// when nothing is highlighted.
   List<HighlightRange> get highlights;
 
-  /// #1062: whether the painted viewport offset is currently in flight (a user
-  /// scroll / fling or a streaming-output auto-scroll). The render box reads
-  /// this each frame and sets `TerminalPaintState.washSuppressed`, so the
-  /// [HighlightPainter] HIDES the detection wash while scrolling — the wash's
-  /// baked absolute rows can drift off their tokens mid-scroll because the
-  /// rescan/relocate is deferred for perf (#1044). The wash re-shows on settle
-  /// at the correct offset (the #988 bubble stance ported to the behind-glyph
-  /// fill). Flipped by the same painted-offset report as
-  /// [reportPaintedViewportOffset]; a settle timer flips it back.
+  /// Whether the painted viewport offset is currently in flight (a user scroll /
+  /// fling or a streaming-output auto-scroll). Exposed as scroll state; the
+  /// controller uses it to gate the detection RESCAN for perf (#1044). The
+  /// detection wash is NOT gated on it — the wash tracks its token live every
+  /// paint via [HighlightPainter] (#1067).
   bool get isScrolling;
-
-  /// #1064: whether the grid CONTENT is currently churning — a live/streaming
-  /// TUI is rewriting cells and the detection rescan has not yet SETTLED (the
-  /// trailing content-settle debounce is still pending). The render box ORs this
-  /// with [isScrolling] to set `TerminalPaintState.washSuppressed`, so the
-  /// [HighlightPainter] HIDES the detection wash during content churn exactly as
-  /// it hides during scroll. The owner's rule: the wash is visible ONLY when the
-  /// screen is quiescent (not scrolling AND content settled). +140 paused only on
-  /// scroll, so a repainting TUI (isScrolling=false, content churning) left the
-  /// wash shown at stale spots; this term fixes that. Flipped true on a content
-  /// notify, back to false when the rescan debounce fires after a quiet gap (a
-  /// genuine settle — NOT the mid-churn max-wait reconcile, which keeps churning).
-  bool get contentSettling;
 
   /// Report the viewport offset the render box JUST painted the text with
   /// (#803). The render box calls this at the end of each frame sync, handing

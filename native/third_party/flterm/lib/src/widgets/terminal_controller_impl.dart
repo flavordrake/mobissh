@@ -297,20 +297,6 @@ class TerminalControllerImpl extends TerminalController
   /// settle edge instead of competing with fling frames for FFI/regex time.
   bool _rescanPendingSettle = false;
 
-  /// #1064: the CONTENT is churning — a content notify arrived and the trailing
-  /// content-settle rescan has not yet fired after a quiet gap. Exposed as
-  /// [contentSettling]; the render box ORs it with [isScrolling] to hide the
-  /// detection wash (paint_state `washSuppressed`), so the wash pauses during a
-  /// live/streaming TUI repaint exactly as it pauses during scroll (the case
-  /// +140 missed). Set true on a content notify ([_onTerminalChanged]); cleared
-  /// ONLY by [_onDetectionSettled] — the trailing debounce firing after
-  /// [_detectionDebounceMs] of QUIET (a genuine settle). Deliberately NOT cleared
-  /// by [_onDetectionMaxWait]: the max-wait ceiling reconciles mid-churn to keep
-  /// detections live, but the screen is still churning, so the wash stays hidden
-  /// until real quiescence — clearing it there would flash the wash every
-  /// [_detectionMaxWaitMs] during continuous churn. Reset on clear / dispose.
-  bool _washContentSettling = false;
-
   /// #1044: how many rows of scanned coverage to RETAIN around the viewport.
   /// Scrolling through a long buffer accumulates coverage (and its matches);
   /// beyond this the far end is trimmed and re-scanned on return. Generous —
@@ -520,29 +506,18 @@ class TerminalControllerImpl extends TerminalController
   List<HighlightRange> _styledHighlights(List<StructuredMatch> matches) {
     final resolver = _detectionHighlightStyleOf;
     if (resolver == null) {
-      return [
-        for (final m in matches)
-          if (!_detectionMissTimers.containsKey(m)) ...m.ranges,
-      ];
+      // #1067: no grace-based withholding — the wash resolves live from the
+      // anchor's current rows each paint, so a match in miss-grace still paints.
+      return [for (final m in matches) ...m.ranges];
     }
     final out = <HighlightRange>[];
     for (final m in matches) {
-      // #1060: an anchor whose payload is currently UNCONFIRMED on the grid
-      // (its miss-grace timer is running because an in-place TUI repaint erased
-      // the cells under it and the relocate has not yet re-anchored it) must
-      // NOT paint its behind-glyph WASH: the baked absolute rows are where the
-      // content USED to be, so the wash would float over the now-blank/rewritten
-      // cells (the owner's live-TUI screenshot). Suppressing the fill matches
-      // what a BLOCK anchor already does through its grace afterlife ("no
-      // stale-highlight cost", see [_detectionMissGraceBlockMs]) — the anchor
-      // itself stays live in [_detectionMatches] so the GUTTER CHIP keeps its
-      // #1046 continuity and the payload stays hit-testable; only the pale wash
-      // band waits until the anchor re-confirms at real cells. The wash returns
-      // in the same notify the relocate/re-validate cancels the grace.
-      if (_detectionMissTimers.containsKey(m)) {
-        _detectionStats.washSuppressedForGrace++;
-        continue;
-      }
+      // #1067: a match in miss-grace still paints its wash. The wash resolves
+      // LIVE each paint from the anchor's current rows (the persistent #767
+      // anchor), so it sits wherever the anchor currently is — there is no baked
+      // stale band to withhold. The grace mechanism keeps the anchor (gutter
+      // chip + hit-test) alive until re-confirmation; it no longer gates the
+      // wash (the #1060 suppression is removed per the owner's definitive spec).
       HighlightStyle? style;
       try {
         style = resolver(m);
@@ -589,9 +564,6 @@ class TerminalControllerImpl extends TerminalController
     _detectionDebounce = null;
     _detectionMaxWait?.cancel();
     _detectionMaxWait = null;
-    // #1064: no patterns → no wash; drop the content-churn pause so a stale flag
-    // never outlives the timers that would clear it.
-    _washContentSettling = false;
     _cancelAllMissGrace();
     _invalidateDetectionScanCache();
     _detectionMatches = const [];
@@ -658,9 +630,6 @@ class TerminalControllerImpl extends TerminalController
   bool get isScrolling => _isScrolling;
 
   @override
-  bool get contentSettling => _washContentSettling;
-
-  @override
   Listenable get decorationListenable => _decorationNotifier;
 
   @override
@@ -676,13 +645,6 @@ class TerminalControllerImpl extends TerminalController
     // scroll stays "scrolling" for its whole duration. The decorator re-shows only
     // once the offset holds still for [_scrollSettleMs].
     _markScrolling();
-    // #1062: telemetry — a painted-offset move while a wash is live means the
-    // render layer hid the wash this scroll frame (HighlightPainter early-return
-    // on washSuppressed). Count it so a bug report / test proves the
-    // hide-on-scroll path fired (mirrors [washSuppressedForGrace]).
-    if (_isScrolling && _highlights.isNotEmpty) {
-      _detectionStats.washHiddenForScroll++;
-    }
     // This fires DURING the render box's paint phase, so a synchronous
     // notifyListeners() would rebuild the decorator layer mid-frame (illegal).
     // Defer to a post-frame callback: the decorator then re-resolves its rects
@@ -798,14 +760,10 @@ class TerminalControllerImpl extends TerminalController
       _rescanPendingSettle = false;
       _rescanDetections();
     }
-    // #1062: the WASH hid during the scroll (HighlightPainter early-returns on
-    // washSuppressed, which the render box reads from [isScrolling] each paint).
-    // Now that scrolling stopped, wake the RENDER layer so it repaints with
-    // isScrolling=false and re-shows the wash at the settled (correct) offset.
-    // The quiesce rescan above only notifies when the styled list actually
-    // CHANGES (equality-gated), so a pure fling that revealed no new content
-    // would otherwise leave the wash hidden until the next output frame. Only
-    // when anchors exist — a pattern-less/empty terminal has no wash to re-show
+    // #1067: the wash tracks live every paint (never hidden), so a settle needs
+    // no re-show. Wake the decoration listeners so the gutter/decorator
+    // re-resolve their anchor rects at the now-stable painted offset. Only when
+    // anchors exist — a pattern-less/empty terminal has no decoration to move
     // (the #805 battery guard; mirrors [reportPaintedViewportOffset]).
     if (_detectionMatches.isNotEmpty) notifyListeners();
     _decorationNotifier.notify();
@@ -896,43 +854,26 @@ class TerminalControllerImpl extends TerminalController
     );
   }
 
-  /// #1044/#1064: the TRAILING-edge target — the content held QUIET for
+  /// #1044: the TRAILING-edge target — the content held QUIET for
   /// [_detectionDebounceMs] (a genuine SETTLE). Cancels the ceiling so it does
-  /// not double-scan, runs the reconcile scan, then RE-SHOWS the detection wash
-  /// (#1064): matching was paused while the grid churned, so now that it is
-  /// quiescent the wash must repaint at the fresh positions. [_rescanDetections]
-  /// only notifies when the styled list actually CHANGES (equality-gated), so a
-  /// churn that ended on the SAME matches (a clock tick beside an unchanged URL)
-  /// would otherwise leave the wash hidden — wake the render layer explicitly so
-  /// it repaints with `contentSettling` now false and the wash reappears.
+  /// not double-scan, then runs the reconcile scan so newly-settled content
+  /// anchors. The wash tracks live every paint (#1067), so no re-show is needed.
   void _onDetectionSettled() {
     _detectionDebounce = null;
     _detectionMaxWait?.cancel();
     _detectionMaxWait = null;
     _rescanDetections();
-    if (_washContentSettling) {
-      _washContentSettling = false;
-      // Re-show the wash only when a wash is live (anchors exist); a pattern-less
-      // / empty terminal has nothing to re-show (mirrors [_onScrollSettled]'s
-      // #805 battery guard). The render box reads `contentSettling` each paint.
-      if (_detectionMatches.isNotEmpty) notifyListeners();
-    }
   }
 
-  /// #1044/#1064: the CEILING target — continuous sub-debounce churn starved the
+  /// #1044: the CEILING target — continuous sub-debounce churn starved the
   /// trailing edge, so force ONE reconcile after [_detectionMaxWaitMs] to keep a
-  /// live-updating line anchoring. Unlike [_onDetectionSettled] this is NOT a
-  /// settle: the grid is still churning, so [_washContentSettling] stays TRUE and
-  /// the wash stays HIDDEN (re-showing it here would flash the wash every ceiling
-  /// window during continuous churn — the opposite of the owner's quiesce-gate).
+  /// live-updating line anchoring.
   ///
-  /// #1064: re-arm ONE trailing debounce so a genuine settle is still detected —
-  /// if the churn STOPS right after this ceiling fire (no further notify to
-  /// re-arm the trailing edge), this re-armed timer fires [_onDetectionSettled]
-  /// after a quiet gap, clearing the flag and re-showing the wash. Without it the
-  /// wash could stay stranded-hidden until the next unrelated content change.
-  /// Continuous churn simply cancels + re-arms this on the next notify (no-op).
-  /// The max-wait ceiling itself re-arms on the next notify (`??=` in
+  /// Re-arm ONE trailing debounce so a genuine settle is still detected — if the
+  /// churn STOPS right after this ceiling fire (no further notify to re-arm the
+  /// trailing edge), this re-armed timer fires [_onDetectionSettled] after a
+  /// quiet gap. Continuous churn simply cancels + re-arms this on the next notify
+  /// (no-op). The max-wait ceiling itself re-arms on the next notify (`??=` in
   /// [_scheduleDetectionRescan]).
   void _onDetectionMaxWait() {
     _detectionMaxWait = null;
@@ -2733,20 +2674,6 @@ class TerminalControllerImpl extends TerminalController
     // active grid in place — mark the mutable suffix dirty so the next rescan
     // re-reads it (and only it).
     _contentDirty = true;
-    // #1064: content is CHURNING — pause the detection wash (hide it) until the
-    // rescan SETTLES. Only when a pattern is registered (else there is no wash and
-    // no settle timer would ever fire to clear the flag). The flag ORs with
-    // isScrolling in the render box's `washSuppressed`, so a live/streaming TUI
-    // repaint (isScrolling=false) now hides the wash — the case +140 missed.
-    // Cleared by [_onDetectionSettled] after a quiet gap.
-    if (_textPatterns.isNotEmpty) {
-      _washContentSettling = true;
-      // Telemetry: prove the content-churn pause fired over LIVE detected content
-      // (>0 on a live-updating TUI with a wash, 0 on a settled screen).
-      if (_detectionMatches.isNotEmpty) {
-        _detectionStats.washHiddenForContentChurn++;
-      }
-    }
     _scheduleDetectionRescan();
 
     // #887: the remaining work emits notifications that REBUILD or read layout
