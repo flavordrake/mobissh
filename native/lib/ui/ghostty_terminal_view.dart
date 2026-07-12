@@ -323,6 +323,14 @@ ColorPalette ghosttyPaletteFromXterm(xterm.TerminalTheme palette) {
 /// pubspec.yaml registers the bundled TTFs under, so flterm's
 /// `FontDataResolver` finds the asset. Pure (no native libghostty .so), so it is
 /// unit-testable headless.
+///
+/// #1074: the theme is built TRANSPARENT (`backgroundOpacity: 0`,
+/// `backgroundOpacityCells: false`). The ghostty backend now composites over an
+/// app-owned solid backdrop + [GhosttyWashLayer] mounted BELOW the terminal, so
+/// the terminal must not paint its own opaque grid fill — at opacity 0 flterm's
+/// `background_painter` skips the default-bg grid fill (the backdrop + wash show
+/// through) while explicit-bg cells + glyphs stay OPAQUE (cells=false), so they
+/// occlude the wash and the text stays full-contrast on top.
 TerminalTheme buildGhosttyTheme({
   required String family,
   required double fontSize,
@@ -330,11 +338,19 @@ TerminalTheme buildGhosttyTheme({
 }) {
   final base = TerminalTheme.dark();
   if (palette == null) {
-    return base.copyWith(fontFamily: family, fontSize: fontSize);
+    return base.copyWith(
+      fontFamily: family,
+      fontSize: fontSize,
+      backgroundOpacity: 0.0,
+      backgroundOpacityCells: false,
+    );
   }
   return base.copyWith(
     fontFamily: family,
     fontSize: fontSize,
+    // #1074: transparent terminal — the app paints the backdrop + wash below.
+    backgroundOpacity: 0.0,
+    backgroundOpacityCells: false,
     palette: ghosttyPaletteFromXterm(palette),
     // Cursor + selection live on the THEME (not the ColorPalette). Map the
     // xterm palette's cursor/selection to flterm's fixed DynamicColor so the
@@ -2788,17 +2804,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // #971 (test-only): expose the sent-SGR recorder so the gesture test can
       // assert a status-bar tap actually forwarded an SGR mouse click to tmux.
       GhosttyTerminalView.debugByteRecorders[widget.sessionId] = _byteRecorder;
-      // #1045: the detection WASH paints inside the fork's highlight pass —
-      // BEHIND the glyphs (background → highlight fill → glyph ink), so text
-      // stays full-contrast on top and the wash scrolls WITH the grid. Install
-      // the per-anchor style resolver BEFORE registration so the synchronous
-      // first scan already bakes styled ranges. The resolver runs at BAKE time
-      // (scan / prune / restyle), never per frame.
-      controller.detectionHighlightStyleOf = _detectionHighlightStyleFor;
+      // #1074: the detection WASH is a LIVE widget LAYER ([GhosttyWashLayer])
+      // painted UNDER the transparent terminal — NOT the fork's highlight pass.
+      // So the app installs NO `detectionHighlightStyleOf` resolver: the fork's
+      // HighlightPainter draws nothing for detection (registration is colourless
+      // below), and the wash tracks live off the controller's anchor set every
+      // build instead of only when the render box repaints (the #1045 frozen-
+      // band root cause). Discovery / anchors (#1069/#1071) are untouched.
       // #767: register the built-in URL pattern so the terminal detects URLs
       // over its OWN cells and maintains the anchors across scroll / wrap /
-      // resize / eviction. #767 Slice B / #1045: the REGISTRATION carries no
-      // fill — the wash is resolved per anchor through the seam above.
+      // resize / eviction. #767 Slice B / #1074: the REGISTRATION carries no
+      // fill — the wash is painted by the widget layer from the live anchors.
       _registerUrlPattern(controller);
       // #990: per-session path verification. The verifier probes each detected
       // path anchor ONCE (debounced, capped, TTL-cached) over the session's
@@ -2818,11 +2834,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         }
       });
       controller.decorationListenable.addListener(_notePathAnchors);
-      // #1045: a verification result changes an anchor's wash (verified alpha,
-      // #990 suppressed→visible) with NO anchor change — re-bake the styled
-      // highlights when one lands. Equality-gated in the fork, so a result
-      // that changes nothing visible costs one compare.
-      _pathVerifier!.addListener(_restyleDetectionWash);
+      // #1074: a verification result changes an anchor's wash (verified alpha,
+      // #990 suppressed→visible) with NO anchor change. The wash is now a widget
+      // layer that repaints off `_pathVerifier` (passed as the layer's
+      // repaintListenable), so no fork re-bake is needed here.
       // #990 (test-only): expose the verifier so the on-emulator integration
       // test can assert the real-path/fake-path shade split.
       GhosttyTerminalView.debugPathVerifiers[widget.sessionId] = _pathVerifier!;
@@ -2987,8 +3002,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   bool _isAnchorVerified(StructuredAnchor anchor) =>
       _isPayloadVerified(anchor.patternId, '${anchor.payload}');
 
-  /// Payload-shaped core of [_isAnchorVerified] — shared with the #1045 wash
-  /// resolver, which styles [StructuredMatch]es rather than anchors.
+  /// Payload-shaped core of [_isAnchorVerified] — shared with the #1074 wash
+  /// layer's colour closure, which gates by anchor payload.
   bool _isPayloadVerified(String patternId, String payload) {
     // #1036: a relative anchor is verified iff its cwd-RESOLVED absolute is —
     // and since the visibility gate hides it otherwise, every VISIBLE relpath
@@ -2998,51 +3013,6 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     if (patternId != kGhosttyPathPatternId) return false;
     return _pathVerifier?.isVerified(payload) ?? false;
-  }
-
-  /// #1045: the per-anchor wash resolver installed as the controller's
-  /// `detectionHighlightStyleOf`. Composes the SAME gates the widget-layer
-  /// overlay used — [ghosttyPatternPaintsWash] (command stays gutter-only),
-  /// [_isPayloadVisible] (#990 suppressed-until-verified, #995 exceptions,
-  /// #1036 relpath hiding) and [_isPayloadVerified] (#990 shade) — over the
-  /// #1031 style resolver, ONE seam for visibility and colour. Reads the live
-  /// providers via `ref.read`: it runs at bake time (a scan, a prune, a
-  /// [_restyleDetectionWash]) — never during paint.
-  HighlightStyle? _detectionHighlightStyleFor(StructuredMatch match) {
-    final payload = '${match.payload}';
-    return ghosttyWashHighlightStyle(
-      patternId: match.patternId,
-      visible: _isPayloadVisible(match.patternId, payload),
-      verified: _isPayloadVerified(match.patternId, payload),
-      washColorOf: (patternId, {required bool verified}) =>
-          _currentStyleResolver()
-              .resolveStyle(patternId, verified: verified)
-              .washColor,
-    );
-  }
-
-  /// #1045: the live style-resolver inputs (stored overrides, session accent,
-  /// terminal-background luminance) read on demand at bake time. Cheap: three
-  /// provider reads + a brightness estimate, only on scan/restyle.
-  DetectionStyleResolver _currentStyleResolver() {
-    final palette = ref.read(sessionTerminalThemeProvider(widget.sessionId));
-    return DetectionStyleResolver(
-      styles: ref.read(detectionStylesProvider),
-      accent: palette.theme.selection,
-      backgroundBrightness: ThemeData.estimateBrightnessForColor(
-        palette.theme.background,
-      ),
-    );
-  }
-
-  /// #1045: re-bake the styled detection highlights from the CURRENT matches.
-  /// Fired by the path verifier (a stat result landed) and post-frame after
-  /// every build (the build already re-runs on styles / exceptions / theme /
-  /// settings changes — the watched providers — so this catches Detection Lab
-  /// live-apply and #995 exception filings). The fork no-ops when the bake is
-  /// unchanged, so opportunistic calls never churn listeners.
-  void _restyleDetectionWash() {
-    _controller?.restyleDetectionHighlights();
   }
 
   /// #990 visibility gate (owner report on +121: `/config`, `/rc` bubbled): a
@@ -3104,13 +3074,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// maintains the ANCHORS across scroll / wrap / resize / eviction — no app-side
   /// detect or push. Re-registering with the same id replaces the pattern.
   ///
-  /// #767 Slice B / #955 / #988 / #1045: the REGISTRATION carries NO highlight
-  /// background. The inline WASH is resolved per anchor through the
-  /// controller's `detectionHighlightStyleOf` seam
-  /// ([_detectionHighlightStyleFor]) and painted by the fork BEHIND the glyphs;
-  /// the right-edge GUTTER mark ([GhosttyGutterLayer]) stays a widget-layer
-  /// decorator. Colour comes from the resolver at bake time; this registration
-  /// is theme-independent.
+  /// #767 Slice B / #955 / #988 / #1074: the REGISTRATION carries NO highlight
+  /// background. The WASH is a LIVE widget layer ([GhosttyWashLayer]) painted
+  /// UNDER the transparent terminal, resolved per anchor from the controller's
+  /// live anchors; the right-edge GUTTER mark ([GhosttyGutterLayer]) is a
+  /// sibling widget layer. Colour comes from the wash layer's closure each
+  /// build; this registration is theme-independent.
   void _registerUrlPattern(TerminalController controller) {
     // #888 Part A: detection is gated on the GLOBAL detection settings. Read
     // them HERE so registration reflects the current toggles; a live change
@@ -4379,7 +4348,6 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
     _controller?.decorationListenable.removeListener(_notePathAnchors);
     _sftpStatSub?.cancel();
-    _pathVerifier?.removeListener(_restyleDetectionWash);
     _pathVerifier?.dispose();
     _pathVerifier = null;
     _controller?.removeListener(_onControllerChanged);
@@ -4537,15 +4505,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #971 (test-only): publish the measured cell size so the gesture test can
     // convert a status-bar label column to the exact tap pixel.
     GhosttyTerminalView.debugCellSizes[widget.sessionId] = cellSize;
-    // #755/#767/#955/#988/#1045: URLs + paths are DETECTED + ANCHORED inside
+    // #755/#767/#955/#988/#1074: URLs + paths are DETECTED + ANCHORED inside
     // the terminal (the `url`/`path` structured-text patterns over its own
-    // cells). The VISUALS are the behind-glyph WASH (the fork's highlight
-    // paint, styled per anchor via [_detectionHighlightStyleFor]) and the
-    // right-edge GUTTER mark ([GhosttyGutterLayer]), both coloured with the
-    // live session selection colour — no host re-detect. The colourless
-    // pattern registration never needs re-registering on a theme change; the
-    // post-frame restyle below re-bakes the wash and the gutter re-reads its
-    // colour, so cycling the session theme recolours them on the next build.
+    // cells). The VISUALS are the LIVE wash LAYER ([GhosttyWashLayer], capsule
+    // fills UNDER the transparent terminal) and the right-edge GUTTER mark
+    // ([GhosttyGutterLayer]), both coloured with the live session selection
+    // colour — no host re-detect. The colourless pattern registration never
+    // needs re-registering on a theme change; cycling the session theme rebuilds
+    // this view, which recolours both widget layers on the next build.
     final highlightColor = palette.theme.selection;
     if (highlightColor != _lastHighlightColor) {
       _lastHighlightColor = highlightColor;
@@ -4556,25 +4523,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     final backgroundBrightness =
         ThemeData.estimateBrightnessForColor(palette.theme.background);
     // #1031: the detection style RESOLVER — the single source of truth the
-    // bubble wash + gutter chip consult (and the future Detection Lab preview
-    // reads). Watching the styles provider means we resolve on CHANGE only
+    // wash layer + gutter chip consult (and the Detection Lab preview reads).
+    // Watching the styles provider means we resolve on CHANGE only
     // (settings/theme), never per frame; an empty store composes to exactly
     // the shipped #1000 derivation, so this is invisible until the owner
-    // tunes something in the lab.
+    // tunes something in the lab. #1074: the wash is a widget layer built from
+    // this resolver, so a style-input change (lab live-apply, theme cycle, #995
+    // exception — all of which rebuild this view via the provider watches)
+    // recolours it by rebuilding the layer; no fork re-bake / post-frame needed.
     final styleResolver = DetectionStyleResolver(
       styles: ref.watch(detectionStylesProvider),
       accent: highlightColor,
       backgroundBrightness: backgroundBrightness,
     );
-    // #1045: the wash paints inside the fork from BAKED styled ranges, so a
-    // style-input change (lab live-apply, theme cycle, #995 exception — all of
-    // which rebuild this view via the provider watches) must re-bake them.
-    // Post-frame: the re-bake notifies controller listeners, which is illegal
-    // mid-build. Equality-gated in the fork → calling it every build converges
-    // (no notify when nothing changed).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _restyleDetectionWash();
-    });
     // #922: wrap in a LayoutBuilder so we read the terminal box's ACTUAL
     // constraints — the height the Scaffold has ALREADY shrunk for the soft
     // keyboard (terminal_screen.dart keeps `resizeToAvoidBottomInset:true`, so
@@ -4652,9 +4613,45 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // frame so the keyboard-race repro can see the SGR target vs the visible box.
     GhosttyTerminalView.debugGrids[widget.sessionId] =
         <int>[_cols, _rows, _lastSentCols, _lastSentRows];
+    // #1074: one anchor's wash FILL colour (null → paints nothing). Composes the
+    // SAME gates the retired #1045 render-box resolver did — pattern routing +
+    // the #990/#995/#1036 visibility suppression — over the live #1031 style
+    // resolver captured this build. Read via `ref.read` inside the layer's
+    // ListenableBuilder rebuilds (safe: never establishes a dependency).
+    Color? washColorFor(StructuredAnchor anchor) {
+      final patternId = anchor.patternId;
+      final payload = '${anchor.payload}';
+      return ghosttyWashCapsuleColor(
+        patternId: patternId,
+        visible: _isPayloadVisible(patternId, payload),
+        verified: _isPayloadVerified(patternId, payload),
+        washColorOf: (id, {required bool verified}) =>
+            styleResolver.resolveStyle(id, verified: verified).washColor,
+      );
+    }
+
     return Stack(
       key: Key('ghostty-terminal-${widget.sessionId}'),
       children: [
+        // #1074: SOLID BACKDROP — the opaque terminal background the transparent
+        // terminal (backgroundOpacity 0) composites over. Bottom of the stack.
+        Positioned.fill(
+          child: ColoredBox(color: theme.background),
+        ),
+        // #1074: the LIVE wash LAYER, UNDER the terminal. Capsule fills resolved
+        // from the controller's CURRENT anchors every build (decoration listenable
+        // + the path verifier for the #990 verified shade). Default-bg cells above
+        // are transparent so the wash shows through BEHIND the glyphs; explicit-bg
+        // cells + glyphs stay opaque and occlude it. This is the root fix for the
+        // #1045 frozen band: the wash tracks live like the gutter, not only when
+        // the render box repaints.
+        Positioned.fill(
+          child: GhosttyWashLayer(
+            controller: controller,
+            washColorFor: washColorFor,
+            repaintListenable: _pathVerifier,
+          ),
+        ),
         Positioned.fill(
           child: TerminalView(
             // #918: keyed so _forceTerminalRepaint can locate the render box.
@@ -4857,14 +4854,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             onUrlLongPress: _showUrlMenu,
           ),
         ),
-        // #1045: the inline wash is NO LONGER a widget layer here — it paints
-        // inside flterm's own highlight pass (background → wash → glyphs), so
-        // the glyphs stay full-contrast on top, the fill scrolls WITH the grid
-        // (no hide-while-scrolling special case), and taps still route through
-        // the gesture router's `matchAt` (the fill was never the hit-test).
-        // Styling/gating flows through `detectionHighlightStyleOf` (see
-        // [_detectionHighlightStyleFor]). The gutter marks below coexist
-        // unchanged.
+        // #1074: the detection wash is the LIVE [GhosttyWashLayer] mounted at
+        // the BOTTOM of this stack (under the transparent terminal), not here and
+        // not in the fork's paint pass. Taps route through the gesture router's
+        // `matchAt` (the fill was never the hit-test). The gutter marks below
+        // coexist unchanged.
         // #962: right-edge LINE-SELECT layer. Drag the gutter to select WHOLE
         // viewport rows; on release the rows' text is copied (auto-copy). This
         // replaces per-character touch selection as the primary copy path — line

@@ -1,10 +1,9 @@
-// #1031 slice 1 — the painters CONSUME the style resolver. #1045 moved the
-// bubble wash INTO the fork's highlight paint (per-anchor styles resolved via
-// `detectionHighlightStyleOf` — see ghostty_wash_style_1045_test.dart for that
-// seam's zero-visual-change invariant); the GUTTER keeps its widget-layer
-// chipAccentOf seam (per-pattern chip hue), pinned here. The zero-change
-// invariant: a resolver over an EMPTY store paints EXACTLY what the layer
-// painted before the seam existed.
+// #1031 slice 1 — the painters CONSUME the style resolver. #1074 relocated the
+// wash to a LIVE widget layer under a transparent terminal (its colour gate is
+// in ghostty_wash_style_1045_test.dart's ghosttyWashCapsuleColor group); the
+// GUTTER keeps its widget-layer chipAccentOf seam (per-pattern chip hue), pinned
+// here. The zero-change invariant: a resolver over an EMPTY store paints EXACTLY
+// what the layer painted before the seam existed.
 
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
