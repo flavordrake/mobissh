@@ -1116,6 +1116,7 @@ class TerminalControllerImpl extends TerminalController
     _detectionDebounce?.cancel();
     _detectionMaxWait?.cancel();
     _scrollSettleTimer?.cancel();
+    _reconnectSettle?.cancel();
     terminal.removeListener(_onTerminalChanged);
     detach();
     _keyEvent.dispose();
@@ -1207,7 +1208,7 @@ class TerminalControllerImpl extends TerminalController
     _mouseEncoder.sync(terminal);
     final result = _mouseEncoder.encode(_mouseEvent);
     if (result.isEmpty) return;
-    _emitOutput(utf8.encode(result));
+    _emitAutoReply(utf8.encode(result));
   }
 
   @override
@@ -1270,7 +1271,7 @@ class TerminalControllerImpl extends TerminalController
           ..mods = _currentMods()
           ..setPosition(x: 0, y: 0);
         final result = _mouseEncoder.encode(_mouseEvent);
-        if (result.isNotEmpty) _emitOutput(utf8.encode(result));
+        if (result.isNotEmpty) _emitAutoReply(utf8.encode(result));
       }
       return;
     }
@@ -1761,6 +1762,36 @@ class TerminalControllerImpl extends TerminalController
     return true;
   }
 
+  /// #1072: RECONNECT SETTLE window. On a revive (`shellReady` re-fire, NOT the
+  /// first connect) the app arms this; while active, terminal AUTO-replies
+  /// (DA/DSR/CPR/XTVERSION/OSC answers, focus reports, mouse reports) are DROPPED
+  /// instead of written to the PTY. During a reconnect the remote (tmux) is
+  /// mid-reattach and does NOT consume these write-backs, so its tty echoes them
+  /// as literal input at the idle prompt — the owner's recurring `?62c` (DA
+  /// reply) and stray `[<..M` (mouse) leaks. Time-bounded so initial-connect
+  /// capability detection and a user-relaunched TUI's live queries (after the
+  /// window) are answered normally.
+  static const Duration _reconnectSettleWindow = Duration(milliseconds: 600);
+  Timer? _reconnectSettle;
+  bool _reconnectSettleActive = false;
+
+  @override
+  void beginReconnectSettle() {
+    _reconnectSettleActive = true;
+    _reconnectSettle?.cancel();
+    _reconnectSettle = Timer(_reconnectSettleWindow, () {
+      _reconnectSettleActive = false;
+    });
+  }
+
+  /// #1072: emit a terminal AUTO-reply (DA/DSR/CPR answer, focus/mouse report),
+  /// dropped while the reconnect-settle window is active. User keystrokes/text/
+  /// paste never route through here — they call [_emitOutput] directly.
+  void _emitAutoReply(Uint8List bytes) {
+    if (_reconnectSettleActive) return;
+    _emitOutput(bytes);
+  }
+
   void _emitOutput(Uint8List bytes) => onOutput?.call(bytes);
 
   bool _extendSelection(LogicalKeyboardKey arrowKey) {
@@ -1856,7 +1887,7 @@ class TerminalControllerImpl extends TerminalController
 
     if (terminal.modeGet(const TerminalMode.focusEvent())) {
       final event = focused ? FocusEvent.gained : FocusEvent.lost;
-      _emitOutput(utf8.encode(event.encode()));
+      _emitAutoReply(utf8.encode(event.encode()));
     }
 
     notifyListeners();
@@ -2027,7 +2058,7 @@ class TerminalControllerImpl extends TerminalController
     // listener is attached.
     terminal.onWritePty = (bytes) {
       onTerminalReply?.call(bytes);
-      _emitOutput(bytes);
+      _emitAutoReply(bytes);
     };
     terminal.onBell = () => onBell?.call();
     terminal.onTitleChanged = () => onTitleChanged?.call();

@@ -2618,6 +2618,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// emits a tick). Cancelled on dispose.
   StreamSubscription<void>? _shellReadySub;
 
+  /// #1072: whether we've seen a `shellReady` tick yet. The FIRST tick is the
+  /// initial connect (capability detection is legitimate there); every SUBSEQUENT
+  /// tick is a reconnect/revive boundary where we arm the controller's
+  /// reconnect-settle window to drop stale auto-replies.
+  bool _shellReadySeen = false;
+
   /// #702: pending delayed re-sync timers from the post-shellReady burst, tracked
   /// so dispose cancels them and a gone widget is never re-synced.
   final List<Timer> _resyncTimers = <Timer>[];
@@ -2858,6 +2864,17 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       // not the pre-shellReady default that gets dropped. Re-fires on reconnect.
       _shellReadySub = proxy.shellReady.listen((_) {
         if (!mounted) return;
+        // #1072: a shellReady RE-FIRE (not the first tick) is the reconnect/
+        // revive boundary. Arm the terminal's reconnect-settle window so its
+        // AUTO-replies (DA/DSR/CPR answers, focus + mouse reports) are DROPPED
+        // while tmux is mid-reattach and not consuming them — otherwise its tty
+        // echoes them as literal input at the idle prompt (the recurring `?62c`
+        // DA leak and stray `[<..M` mouse codes). First connect is untouched so
+        // legitimate capability detection there is answered.
+        if (_shellReadySeen) {
+          controller.beginReconnectSettle();
+        }
+        _shellReadySeen = true;
         // #1014: a shellReady tick is the REVIVE boundary — the terminal
         // instance survived the reconnect, so re-sync its synthesized-input-
         // gating DEC modes (stale tmux mouse mode kept the SGR path firing

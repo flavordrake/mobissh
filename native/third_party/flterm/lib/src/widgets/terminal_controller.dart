@@ -88,6 +88,16 @@ abstract class TerminalController extends ChangeNotifier
   /// instead of performing selection. Hold Shift to bypass.
   MouseTracking get mouseTracking;
 
+  /// #1072: arm the reconnect-settle window. While active, terminal AUTO-replies
+  /// (DA/DSR/CPR answers, focus + mouse reports) are DROPPED rather than written
+  /// to the PTY — on a revive the remote (tmux) is mid-reattach and does not
+  /// consume these write-backs, so its tty echoes them as literal input at the
+  /// idle prompt (the recurring `?62c` DA leak and stray `[<..M` mouse codes).
+  /// User keystrokes/text/paste are never gated. Armed by the app at the
+  /// reconnect boundary (`shellReady` re-fire), NOT first connect — time-bounded
+  /// so initial capability detection and a relaunched TUI's live queries answer.
+  void beginReconnectSettle();
+
   /// Working directory reported by the shell (OSC 7). Empty if unset.
   String get pwd;
 
