@@ -68,6 +68,10 @@ Containers reach each other via Docker DNS names, NOT `localhost` port mapping.
   - `tests/emulator/sshd-fixture.js` handles lifecycle, network join, and key permissions
 - Personal use over Tailscale (WireGuard mesh) -- bridge auth and SSRF handled at network layer
 
+### Native app builds
+- **Android APK**: `scripts/ship-native.sh` (build + publish to `native.html`), local on fd-dev.
+- **macOS app**: built on matts-macbook-air (only Xcode host), published to `native.html` from fd-dev. Kick off with `scripts/dispatch-mac-build.sh`; full pipeline in `native/MAC-BUILD.md`. iOS device builds are out of scope (signing-gated).
+
 ## Backlog -- GitHub Issues
 All backlog items are filed as issues in this repo. Use `gh issue list` for current state.
 Use `/delegate` to scan, classify, and dispatch bot-ready issues.

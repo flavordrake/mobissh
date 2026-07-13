@@ -140,6 +140,13 @@ NOTES_HTML="$(extract_field "$NOTES_JSON" verifyHtml)"
 [ -n "$NOTES_HTML" ] || NOTES_HTML='<ul><li>(curate user-facing notes in native-release-notes.md)</li></ul>'
 CHANGELOG_HTML="$(extract_field "$NOTES_JSON" changelogHtml)"
 
+# Optional macOS download block (#1026). Rendered from native-dist/macos-latest.json
+# by the shared renderer — empty until the first mac ship, so this is a no-op on
+# an Android-only repo. Regenerating the page here always reflects the CURRENT
+# published macOS build (the JSON is the source of truth), so an APK ship never
+# drops a previously-published macOS download.
+MACOS_HTML="$("${REPO_ROOT}/scripts/render-macos-slot.sh" || true)"
+
 cat > "$OUT" <<HTMLEOF
 <!DOCTYPE html>
 <html lang="en">
@@ -164,6 +171,9 @@ cat > "$OUT" <<HTMLEOF
     padding: 18px 20px; border-radius: 14px; margin: 0 0 12px;
   }
   .install:active { background: #2ea043; }
+  .install.macos { background: #30363d; border: 1px solid #444c56; }
+  .install.macos:active { background: #3c444d; }
+  .macos-dl { margin: 0 0 4px; }
   .meta {
     background: #161b22; border: 1px solid #30363d; border-radius: 12px;
     padding: 14px 16px; margin: 18px 0;
@@ -227,6 +237,12 @@ cat > "$OUT" <<HTMLEOF
     </dd>
     <dt>Commit</dt><dd>${GIT_HASH}</dd>
   </dl>
+
+  <!--MACOS-START-->
+  <section class="macos-dl">
+${MACOS_HTML}
+  </section>
+  <!--MACOS-END-->
 
   <h2>What to verify — ${NOTES_HEADING}</h2>
 ${NOTES_HTML}

@@ -88,7 +88,13 @@ function isNativeDistArtifact(baseName) {
     baseName === 'native.html' ||
     baseName === 'native-time.js' ||
     baseName === 'native-feedback.js' ||
+    baseName === 'macos-latest.json' ||
     /^mobissh-native(-[\w.+-]+)?\.apk$/.test(baseName) ||
+    // #1026: macOS desktop app bundle — the stable `mobissh-native-macos.zip`
+    // alias + the versioned `mobissh-native-macos-<version>-<stamp>.zip`, built
+    // on the Mac (scripts/mac/build-native-macos.sh) and published here by
+    // scripts/publish-native-macos.sh. Unsigned bundle, no private key inside.
+    /^mobissh-native-macos(-[\w.+-]+)?\.zip$/.test(baseName) ||
     // #966: signed Play Store App Bundle(s) — the stable `mobissh-release.aab`
     // alias + the versioned `mobissh-<version>-<stamp>.aab` (build-release-aab.sh).
     // Served so the owner can pull the bundle for a Play upload; the AAB carries
