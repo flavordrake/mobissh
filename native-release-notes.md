@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+147 (2026-07-13) — no stray `?62c` typed at your prompt on tmux/session resume
+- **Returning to a tmux or terminal session no longer types junk at your prompt** — the stray `?62c` (and printed mouse codes) came from the terminal auto-answering the remote's capability probes while tmux was mid-reattach and not listening, so the shell echoed the answers as input. On reconnect those automatic replies are now briefly held back until the remote is ready; your keystrokes are never affected. (#1072)
+
 ## v0.1.10+143 (2026-07-12) — highlights no longer accumulate; back to the simple, correct model
 - **Detection highlights don't pile up anymore** on a repainting screen — when a link/path is overwritten by new text, its highlight disappears immediately instead of leaving a stale band behind. This rolls the detection back to the original simple model (rebuild from what's on screen each frame), keeping only the behind-the-glyphs paint so text stays full-brightness. (#1069)
 
