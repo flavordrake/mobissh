@@ -77,6 +77,10 @@ clear_stale() {
 #    it with DISPLAY=:0. glxinfo's renderer string is the hardware-GL verdict.
 start_xorg() {
   log "EMU_GPU=host → starting headless Xorg :0 on the iGPU (/dev/dri/card1)"
+  # Restart-safety: a stale /tmp/.X0-lock survives `docker restart` in the writable
+  # layer (recreate wipes /tmp, restart does not). Xorg then refuses :0 and the
+  # `-gpu host` renderer can't init — which read as a SwiftShader/crash. Clear it.
+  rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
   Xorg :0 -noreset -config /etc/X11/xorg-headless.conf -logfile /tmp/xorg.log vt1 &
   XORG_PID=$!
   export DISPLAY=:0
