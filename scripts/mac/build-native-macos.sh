@@ -55,9 +55,33 @@ HOST="$(hostname -s)"
 echo "+ BUILT macOS ${VERSION} (${STAMP}) commit ${COMMIT}"
 echo "+ staged: ${ZIP}"
 echo "+ sha256: ${SHA}"
+
+# Deliver to fd-dev by PUSH (a laptop shouldn't expose inbound sshd, so fd-dev
+# can't pull — verified 07-13). FDDEV_DEST is an rsync/ssh target for fd-dev's
+# ~/mobissh-native-dist/. Unset it to skip the push and hand off manually.
+FDDEV_DEST="${FDDEV_DEST:-dev@fd-dev:mobissh-native-dist/}"
+REMOTE=""
+if [ -n "$FDDEV_DEST" ]; then
+  echo "> pushing to ${FDDEV_DEST}"
+  if rsync -az -e ssh "$ZIP" "$FDDEV_DEST"; then
+    REMOTE="~/mobissh-native-dist/$(basename "$ZIP")"    # fd-dev-local path
+    echo "+ pushed: ${FDDEV_DEST}$(basename "$ZIP")"
+  else
+    echo "! push failed — hand off manually (see below)" >&2
+  fi
+fi
+
 echo
-echo "Relay to fd-dev on the bus so it can pull + publish:"
-echo "  hub send fd-dev-IT \"done: macOS build staged\" \"from ${HOST}:${ZIP} version ${VERSION} stamp ${STAMP} commit ${COMMIT} sha256 ${SHA}\""
-echo
-echo "fd-dev then publishes:"
-echo "  scripts/publish-native-macos.sh --from ${HOST}:${ZIP} --version ${VERSION} --stamp ${STAMP} --commit ${COMMIT} --sha256 ${SHA}"
+if [ -n "$REMOTE" ]; then
+  # Pushed: fd-dev publishes from its LOCAL copy (no pull needed).
+  echo "Relay to fd-dev on the bus:"
+  echo "  hub send fd-dev-IT \"done: macOS build staged on fd-dev\" \"from ${REMOTE} version ${VERSION} stamp ${STAMP} commit ${COMMIT} sha256 ${SHA}\""
+  echo "fd-dev then publishes:"
+  echo "  scripts/publish-native-macos.sh --from ${REMOTE} --version ${VERSION} --stamp ${STAMP} --commit ${COMMIT} --sha256 ${SHA}"
+else
+  # No push: fd-dev pulls (needs Remote Login/sshd on this Mac).
+  echo "Relay to fd-dev on the bus:"
+  echo "  hub send fd-dev-IT \"done: macOS build staged\" \"from ${HOST}:${ZIP} version ${VERSION} stamp ${STAMP} commit ${COMMIT} sha256 ${SHA}\""
+  echo "fd-dev then publishes (rsync-pull needs sshd on this Mac):"
+  echo "  scripts/publish-native-macos.sh --from ${HOST}:${ZIP} --version ${VERSION} --stamp ${STAMP} --commit ${COMMIT} --sha256 ${SHA}"
+fi

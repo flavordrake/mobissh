@@ -17,7 +17,7 @@ HUB="$(command -v hub || echo "$HOME/.local/bin/hub")"
 
 MAC="${1:-matts-macbook-air-it}"
 
-BODY="Pull latest flavordrake/mobissh main, then run scripts/mac/build-native-macos.sh (needs Xcode + Flutter, see scripts/mac/README.md). It builds+zips the macOS .app and prints a one-line reply. Relay that line back to me so I pull + publish to native.html: hub send fd-dev-IT \"done: macOS build staged\" \"from <host>:<zip> version <v> stamp <s> commit <c> sha256 <h>\"."
+BODY="Pull latest flavordrake/mobissh main, then run scripts/mac/build-native-macos.sh (needs Xcode + Flutter, see scripts/mac/README.md). It builds+zips the macOS .app and pushes it to my ~/mobissh-native-dist/, then prints a one-line reply. Relay that line back so I publish to native.html: hub send fd-dev-IT \"done: macOS build staged on fd-dev\" \"from ~/mobissh-native-dist/<zip> version <v> stamp <s> commit <c> sha256 <h>\"."
 
 "$HUB" send "$MAC" "DIRECTIVE: build+stage macOS app for native.html" "$BODY"
 echo "+ dispatched macOS build to ${MAC}. Watch: hub inbox"

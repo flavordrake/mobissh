@@ -21,22 +21,28 @@ Publishing means landing the artifact in fd-dev's persistent bind-mounted
 | Step | Host | Script |
 |------|------|--------|
 | 1. Dispatch the build | fd-dev | `scripts/dispatch-mac-build.sh` → bus DIRECTIVE to `matts-macbook-air-it` |
-| 2. Build + zip + stage | Mac | `scripts/mac/build-native-macos.sh` → `~/mobissh-native-dist/mobissh-native-macos-<ver>-<stamp>.zip` |
-| 3. Relay result | Mac | `hub send fd-dev-IT "done: …" "from <host>:<zip> version … stamp … commit … sha256 …"` |
-| 4. Pull + publish | fd-dev | `scripts/publish-native-macos.sh --from <host:zip> --version … --stamp … --commit … --sha256 …` |
+| 2. Build + zip + **push** | Mac | `scripts/mac/build-native-macos.sh` → builds, then rsync-pushes the zip to fd-dev's `~/mobissh-native-dist/` |
+| 3. Relay result | Mac | `hub send fd-dev-IT "done: …" "from ~/mobissh-native-dist/<zip> version … stamp … commit … sha256 …"` |
+| 4. Publish | fd-dev | `scripts/publish-native-macos.sh --from ~/mobissh-native-dist/<zip> --version … --stamp … --commit … --sha256 …` |
 
-Step 4 rsync-pulls the zip over the tailnet, verifies the sha256, lands it in
-`native-dist/` under a stable alias (`mobissh-native-macos.zip`) + a versioned
-permalink, writes `macos-latest.json`, and refreshes the macOS slot on
-`native.html`.
+The Mac **pushes** (step 2) rather than fd-dev pulling: a laptop shouldn't expose
+inbound sshd, so the pull direction doesn't work. The push target is
+`FDDEV_DEST` (default `dev@fd-dev:mobissh-native-dist/`). Step 4 then takes an
+already-local `--from` path, verifies the sha256, lands the zip in `native-dist/`
+under a stable alias (`mobissh-native-macos.zip`) + a versioned permalink, writes
+`macos-latest.json`, and refreshes the macOS slot on `native.html`.
+
+`publish-native-macos.sh` also accepts a `host:path` `--from` (rsync-pull) as a
+fallback, but that needs Remote Login enabled on the Mac.
 
 ## Kick one off locally
 
 ```sh
 scripts/dispatch-mac-build.sh          # sends the build directive to the Mac
 hub inbox                              # watch for the Mac's `done:` reply
-# then paste the publish command the reply carries:
-scripts/publish-native-macos.sh --from matts-macbook-air:/Users/…/…zip \
+# then paste the publish command the reply carries (the Mac has already pushed
+# the zip to fd-dev, so --from is a local path):
+scripts/publish-native-macos.sh --from ~/mobissh-native-dist/mobissh-native-macos-…zip \
   --version 0.1.10+NN --stamp 20260713T… --commit <hash> --sha256 <hex>
 ```
 
