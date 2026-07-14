@@ -150,10 +150,23 @@ cmd_logs() {
   docker logs --tail "${TAIL:-80}" "$CONTAINER"
 }
 
+# RETIRED 2026-07-14: the local mobissh-emulator is decommissioned. The shared
+# Android emulator graduated to the homelab as CT113 `android-emulator` (owned by
+# raserver-home-it, hardware GL). Starting a local emulator here would re-grab the
+# pve iGPU DRM master and fight CT113 — so ensure/restart/wipe HARD-REFUSE. Tests
+# must target CT113's adb endpoint. status/logs stay usable for any stragglers.
+# (Set EMU_ALLOW_LOCAL=1 only to deliberately override — expect iGPU contention.)
+guard_retired() {
+  [ "${EMU_ALLOW_LOCAL:-}" = "1" ] && return 0
+  err "mobissh-emulator is RETIRED — the shared emulator is CT113 android-emulator (raserver-home-it)."
+  err "Repoint tests at CT113's adb endpoint. Override (contends the iGPU): EMU_ALLOW_LOCAL=1."
+  exit 2
+}
+
 case "${1:-}" in
-  ensure)  cmd_ensure ;;
-  restart) cmd_restart ;;
-  wipe)    cmd_wipe ;;
+  ensure)  guard_retired; cmd_ensure ;;
+  restart) guard_retired; cmd_restart ;;
+  wipe)    guard_retired; cmd_wipe ;;
   status)  cmd_status ;;
   logs)    cmd_logs ;;
   *)
