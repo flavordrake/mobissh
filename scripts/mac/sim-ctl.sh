@@ -58,8 +58,11 @@ booted_udid() {
 create_device() {
   # Latest iPhone devicetype + latest available iOS runtime.
   local devtype runtime
-  devtype="$(xcrun simctl list devicetypes | grep -E 'iPhone' \
-    | sed -E 's/.*\((com\.apple\.CoreSimulator\.SimDeviceType\.[^)]*)\).*/\1/' | tail -n1)"
+  # Newest iPhone by model NUMBER (devicetypes list is newest-FIRST in Xcode 26,
+  # so tail picked iPhone-6s-Plus → incompatible with a current runtime, err 403).
+  devtype="$(xcrun simctl list devicetypes | grep -E 'iPhone[- ][0-9]' \
+    | sed -E 's/.*\((com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-([0-9]+)[^)]*)\).*/\2 \1/' \
+    | sort -rn | head -n1 | cut -d' ' -f2-)"
   runtime="$(xcrun simctl list runtimes | grep -E '^iOS .* - com\.apple' \
     | sed -E 's/.*(com\.apple\.CoreSimulator\.SimRuntime\.[A-Za-z0-9.-]+).*/\1/' | tail -n1)"
   if [ -z "$devtype" ] || [ -z "$runtime" ]; then
