@@ -46,6 +46,9 @@ node -e '
     <dt>Commit</dt><dd>${esc(m.commit || "")}</dd>
     <dt>SHA-256</dt><dd>${esc(m.sha256 || "")}</dd>
   </dl>
-  <p class="note">Unzip and drag <strong>MobiSSH.app</strong> to Applications. Unsigned build — on first launch right-click the app → <strong>Open</strong> to get past Gatekeeper.</p>
+  <p class="note">Unzip and drag <strong>MobiSSH.app</strong> to Applications. This is an ad-hoc signed build, so macOS quarantines it on download — macOS 15+ no longer offers a right-click → Open bypass or an <em>Open Anyway</em> button. Clear the quarantine flag once, then launch normally:</p>
+  <pre class="cmd"><code>xattr -dr com.apple.quarantine /Applications/MobiSSH.app</code></pre>
+  <p class="note">If it still reports the app as damaged, the ad-hoc signature did not survive the download; re-sign it locally:</p>
+  <pre class="cmd"><code>codesign --force --deep --sign - /Applications/MobiSSH.app</code></pre>
 `);
 ' "$JSON"

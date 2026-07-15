@@ -174,6 +174,17 @@ cat > "$OUT" <<HTMLEOF
   .install.macos { background: #30363d; border: 1px solid #444c56; }
   .install.macos:active { background: #3c444d; }
   .macos-dl { margin: 0 0 4px; }
+  /* .note is styled as a single trailing footnote; inside the macOS slot it
+     repeats around the Gatekeeper commands, so drop the leading rule there. */
+  .macos-dl .note { margin-top: 14px; border-top: none; padding-top: 0; }
+  .cmd {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 10px 12px; margin: 8px 0; overflow-x: auto;
+  }
+  .cmd code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.82rem; white-space: pre; user-select: all;
+  }
   .meta {
     background: #161b22; border: 1px solid #30363d; border-radius: 12px;
     padding: 14px 16px; margin: 18px 0;
