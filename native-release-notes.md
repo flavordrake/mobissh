@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+149 (2026-07-16) — import a profile by pasting an SSH config entry
+- **New "SSH config" tab in the profile editor** — paste a `Host` block from your `~/.ssh/config` and it fills in the host, port, and user for you. If the block names an `IdentityFile`, the key section lets you reuse a key you've already stored or paste a new one. Works for both new connections and editing an existing profile.
+
 ## v0.1.10+148 (2026-07-16) — pick a default terminal font in Settings
 - **Settings → Terminal now has a "Default terminal font"** — choose the face new sessions open with, from the bundled monospace fonts. A per-session font override (session menu) still wins for that session, and Reset settings restores the default.
 

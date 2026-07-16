@@ -17,11 +17,18 @@
 //
 // The editor is a modal route (full page) so it works on small screens with
 // the keyboard up; tests can also pump it directly.
+//
+// Two tabs (profile-import goal): "Details" is the field form; "SSH config"
+// accepts a pasted `~/.ssh/config` Host block, parses it (ssh_config_parser),
+// and populates the Details fields — for quickly importing/updating a host. If
+// the block names an IdentityFile the Details key area offers a stored key to
+// reuse or a pasted secret (the file path itself can't be read from a phone).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../ssh/ssh_config_parser.dart';
 import '../state/profiles_providers.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
@@ -29,6 +36,11 @@ import 'color_picker_sheet.dart';
 import 'top_toast.dart';
 
 enum _AuthKind { password, key }
+
+/// Where a key-auth profile's private key comes from: a freshly [pasted] PEM,
+/// or a [stored] key already in the vault (reused by its keyVaultId, no
+/// re-paste). Default [pasted] preserves the pre-import editor behavior.
+enum _KeySource { pasted, stored }
 
 /// Outcome of the profile editor (#583). The editor is now the SINGLE entry for
 /// both editing a saved profile AND creating a new / ad-hoc connection — the
@@ -93,7 +105,9 @@ class ProfileEditor extends ConsumerStatefulWidget {
   ConsumerState<ProfileEditor> createState() => _ProfileEditorState();
 }
 
-class _ProfileEditorState extends ConsumerState<ProfileEditor> {
+class _ProfileEditorState extends ConsumerState<ProfileEditor>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
   late final TextEditingController _titleCtrl;
   late final TextEditingController _hostCtrl;
   late final TextEditingController _portCtrl;
@@ -101,6 +115,20 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
   late final TextEditingController _initialCommandCtrl;
   late final TextEditingController _defaultPathCtrl;
   late final TextEditingController _colorCtrl;
+
+  /// Paste buffer for the "SSH config" tab.
+  final _sshConfigCtrl = TextEditingController();
+
+  /// Key source for key auth (profile-import goal). [_KeySource.stored] reuses
+  /// [_selectedStoredKeyVaultId] without re-pasting; [_KeySource.pasted] uses
+  /// the PEM field. Defaults to pasted (unchanged editor behavior).
+  _KeySource _keySource = _KeySource.pasted;
+  String? _selectedStoredKeyVaultId;
+
+  /// The IdentityFile path from an imported config, shown as a hint in the key
+  /// area (the phone can't read the file — it's guidance for which key to pick
+  /// or paste). Null unless a parsed entry referenced one.
+  String? _pendingIdentityFile;
 
   /// Selected theme = a PWA `ThemeName` key from [terminalPalettes] (#613). The
   /// editor shows the palette LABEL but stores the KEY into [SavedProfile.theme]
@@ -121,6 +149,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 2, vsync: this);
     final p = widget.profile;
     _originalIdentityKey = p.identityKey;
     _titleCtrl = TextEditingController(text: p.title);
@@ -150,6 +179,8 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
 
   @override
   void dispose() {
+    _tabs.dispose();
+    _sshConfigCtrl.dispose();
     _titleCtrl.dispose();
     _hostCtrl.dispose();
     _portCtrl.dispose();
@@ -217,8 +248,20 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
     final key = _keyCtrl.text;
     final passphrase = _passphraseCtrl.text;
 
+    // Reusing an existing stored key (profile-import goal): point this profile
+    // at the chosen key's vault id, writing NO new secret. Wins over the paste
+    // path so the PEM field being blank doesn't matter.
+    final reuseStoredKey = _authKind == _AuthKind.key &&
+        _keySource == _KeySource.stored &&
+        _selectedStoredKeyVaultId != null;
+    if (reuseStoredKey) {
+      keyVaultId = _selectedStoredKeyVaultId;
+    }
+
     try {
-      if (_authKind == _AuthKind.password && pw.isNotEmpty) {
+      if (reuseStoredKey) {
+        // No secret to write — the stored key already exists in the vault.
+      } else if (_authKind == _AuthKind.password && pw.isNotEmpty) {
         vaultId ??= 'profile-$newIdentity';
         await secrets.write(vaultId, <String, Object?>{
           'password': pw,
@@ -311,6 +354,17 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
               onPressed: _busy ? null : _delete,
             ),
         ],
+        // Two-tab box (profile-import goal): the field form vs a paste-an-ssh-
+        // config surface. The shared action footer (Save / Save&connect) lives
+        // outside the tabs so it applies to whichever tab filled the fields.
+        bottom: TabBar(
+          key: const Key('profile-editor-tabs'),
+          controller: _tabs,
+          tabs: const [
+            Tab(key: Key('profile-editor-tab-details'), text: 'Details'),
+            Tab(key: Key('profile-editor-tab-sshconfig'), text: 'SSH config'),
+          ],
+        ),
       ),
       // Fixed action footer (#594). Floats above the keyboard via the
       // viewInsets padding so Save & Save&connect are always reachable with the
@@ -324,7 +378,25 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
         onSave: _busy ? null : _save,
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
+        child: TabBarView(
+          controller: _tabs,
+          children: [
+            _buildDetailsTab(context, keyboardInset, isKey),
+            _buildSshConfigTab(context, keyboardInset),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The "Details" tab — the field form. Extracted from [build] unchanged so
+  /// the two-tab restructure is a wrap, not a rewrite.
+  Widget _buildDetailsTab(
+    BuildContext context,
+    double keyboardInset,
+    bool isKey,
+  ) {
+    return SingleChildScrollView(
           // Bottom padding clears the keyboard AND the fixed action footer so
           // the last field can scroll into the keyboard-free area.
           padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + keyboardInset + 120),
@@ -402,30 +474,8 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
                   autocorrect: false,
                   enableSuggestions: false,
                 )
-              else ...[
-                TextField(
-                  key: const Key('profile-editor-key'),
-                  controller: _keyCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Private key (PEM)',
-                    hintText: '(stored encrypted — leave blank to keep)',
-                  ),
-                  maxLines: 4,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  key: const Key('profile-editor-passphrase'),
-                  controller: _passphraseCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Key passphrase (optional)',
-                  ),
-                  obscureText: true,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                ),
-              ],
+              else
+                ..._buildKeyAuthFields(context),
               const SizedBox(height: 12),
               TextField(
                 key: const Key('profile-editor-initial-command'),
@@ -491,9 +541,216 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor> {
               _ColorSection(controller: _colorCtrl),
             ],
           ),
+        );
+  }
+
+  /// Sentinel value for the "Paste a new key…" option in the key-source
+  /// dropdown (a DropdownButton needs a non-null value per item).
+  static const String _pasteKeySentinel = '__paste_new_key__';
+
+  /// The key-auth fields: an optional "Key source" dropdown to reuse a stored
+  /// key, an IdentityFile hint from an imported config, and either a
+  /// stored-key note (reuse) or the PEM + passphrase paste fields.
+  List<Widget> _buildKeyAuthFields(BuildContext context) {
+    final storedKeys =
+        ref.watch(storedKeysProvider).asData?.value ?? const <StoredKeyRef>[];
+    return [
+      if (storedKeys.isNotEmpty) ...[
+        InputDecorator(
+          decoration: const InputDecoration(
+            labelText: 'Key source',
+            border: OutlineInputBorder(),
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              key: const Key('profile-editor-key-source'),
+              isExpanded: true,
+              value: _keySource == _KeySource.stored
+                  ? _selectedStoredKeyVaultId
+                  : _pasteKeySentinel,
+              items: [
+                const DropdownMenuItem<String>(
+                  value: _pasteKeySentinel,
+                  child: Text('Paste a new key…'),
+                ),
+                for (final k in storedKeys)
+                  DropdownMenuItem<String>(
+                    value: k.keyVaultId,
+                    child: Text('Stored: ${k.label}'),
+                  ),
+              ],
+              onChanged: (v) => setState(() {
+                if (v == null || v == _pasteKeySentinel) {
+                  _keySource = _KeySource.pasted;
+                  _selectedStoredKeyVaultId = null;
+                } else {
+                  _keySource = _KeySource.stored;
+                  _selectedStoredKeyVaultId = v;
+                }
+              }),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+      if (_pendingIdentityFile != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Config referenced key file: $_pendingIdentityFile\n'
+            "This device can't read that file — pick a stored key above or "
+            'paste its contents below.',
+            key: const Key('profile-editor-identityfile-hint'),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      if (_keySource == _KeySource.stored)
+        ListTile(
+          key: const Key('profile-editor-stored-key-note'),
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.vpn_key),
+          title: const Text('Using a stored key'),
+          subtitle: Text(_storedKeyLabel(storedKeys, _selectedStoredKeyVaultId)),
+        )
+      else ...[
+        TextField(
+          key: const Key('profile-editor-key'),
+          controller: _keyCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Private key (PEM)',
+            hintText: '(stored encrypted — leave blank to keep)',
+          ),
+          maxLines: 4,
+          autocorrect: false,
+          enableSuggestions: false,
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('profile-editor-passphrase'),
+          controller: _passphraseCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Key passphrase (optional)',
+          ),
+          obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+        ),
+      ],
+    ];
+  }
+
+  String _storedKeyLabel(List<StoredKeyRef> keys, String? id) {
+    for (final k in keys) {
+      if (k.keyVaultId == id) return k.label;
+    }
+    return id ?? '';
+  }
+
+  /// The "SSH config" tab — paste a Host block and fill the Details fields.
+  Widget _buildSshConfigTab(BuildContext context, double keyboardInset) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + keyboardInset + 120),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Paste an entry from ~/.ssh/config to fill the Details fields '
+            '(host, port, user). If it names an IdentityFile you can reuse a '
+            'stored key or paste the secret on the Details tab.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('profile-editor-sshconfig-input'),
+            controller: _sshConfigCtrl,
+            decoration: const InputDecoration(
+              labelText: 'SSH config entry',
+              hintText: 'Host prod\n'
+                  '  HostName prod.example.com\n'
+                  '  User deploy\n'
+                  '  IdentityFile ~/.ssh/id_ed25519',
+              border: OutlineInputBorder(),
+              alignLabelWithHint: true,
+            ),
+            maxLines: 8,
+            minLines: 5,
+            autocorrect: false,
+            enableSuggestions: false,
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            key: const Key('profile-editor-sshconfig-apply'),
+            onPressed: _applySshConfig,
+            icon: const Icon(Icons.download_done),
+            label: const Text('Parse & fill Details'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Parse the pasted config and fill Details. One concrete host → apply it;
+  /// several → let the user choose; none → toast.
+  void _applySshConfig() {
+    final entries =
+        parseSshConfig(_sshConfigCtrl.text).where((e) => !e.isWildcard).toList();
+    if (entries.isEmpty) {
+      showTopToast(context, 'No host entry found in that config');
+      return;
+    }
+    if (entries.length == 1) {
+      _applyEntry(entries.single);
+      return;
+    }
+    _chooseAndApplyEntry(entries);
+  }
+
+  Future<void> _chooseAndApplyEntry(List<SshConfigEntry> entries) async {
+    final chosen = await showModalBottomSheet<SshConfigEntry>(
+      context: context,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Choose a host to import'),
+            ),
+            for (final e in entries)
+              ListTile(
+                key: Key('profile-editor-sshconfig-choice-${e.alias}'),
+                leading: const Icon(Icons.dns_outlined),
+                title: Text(e.alias),
+                subtitle: Text(e.effectiveHost),
+                onTap: () => Navigator.of(sheetCtx).pop(e),
+              ),
+          ],
         ),
       ),
     );
+    if (chosen != null) _applyEntry(chosen);
+  }
+
+  /// Fill the Details controllers from a parsed entry, then jump to Details so
+  /// the user can review and save. Only overwrites fields the entry provides;
+  /// an empty Name is auto-filled `user@host`.
+  void _applyEntry(SshConfigEntry e) {
+    setState(() {
+      _hostCtrl.text = e.effectiveHost;
+      if (e.port != null) _portCtrl.text = e.port.toString();
+      if (e.user != null && e.user!.isNotEmpty) _userCtrl.text = e.user!;
+      if (_titleCtrl.text.trim().isEmpty) {
+        final u = _userCtrl.text.trim();
+        _titleCtrl.text = u.isNotEmpty ? '$u@${e.effectiveHost}' : e.alias;
+      }
+      if (e.identityFile != null) {
+        _authKind = _AuthKind.key;
+        _pendingIdentityFile = e.identityFile;
+      }
+    });
+    _tabs.animateTo(0);
+    showTopToast(context, 'Filled from "${e.alias}" — review and save');
   }
 }
 
