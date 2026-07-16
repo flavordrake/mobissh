@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+148 (2026-07-16) — pick a default terminal font in Settings
+- **Settings → Terminal now has a "Default terminal font"** — choose the face new sessions open with, from the bundled monospace fonts. A per-session font override (session menu) still wins for that session, and Reset settings restores the default.
+
 ## v0.1.10+147 (2026-07-13) — no stray `?62c` typed at your prompt on tmux/session resume
 - **Returning to a tmux or terminal session no longer types junk at your prompt** — the stray `?62c` (and printed mouse codes) came from the terminal auto-answering the remote's capability probes while tmux was mid-reattach and not listening, so the shell echoed the answers as input. On reconnect those automatic replies are now briefly held back until the remote is ready; your keystrokes are never affected. (#1072)
 
