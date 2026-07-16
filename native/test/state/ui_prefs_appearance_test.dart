@@ -116,4 +116,44 @@ void main() {
       expect(n.state, terminalThemeDefault);
     });
   });
+
+  group('TerminalFontFamilyNotifier (default font)', () {
+    test('defaults to fontFamilyDefault with no stored value', () async {
+      final n = TerminalFontFamilyNotifier(prefs: SharedPreferences.getInstance());
+      await _settle();
+      expect(n.state, fontFamilyDefault);
+    });
+
+    test('hydrates a stored bundled family', () async {
+      SharedPreferences.setMockInitialValues({fontFamilyPrefKey: 'FiraCode'});
+      final n = TerminalFontFamilyNotifier(prefs: SharedPreferences.getInstance());
+      await _settle();
+      expect(n.state, 'FiraCode');
+    });
+
+    test('hydrate falls back to default for an unknown stored family', () async {
+      SharedPreferences.setMockInitialValues({fontFamilyPrefKey: 'NotABundled'});
+      final n = TerminalFontFamilyNotifier(prefs: SharedPreferences.getInstance());
+      await _settle();
+      expect(n.state, fontFamilyDefault);
+    });
+
+    test('set persists a bundled family', () async {
+      final n = TerminalFontFamilyNotifier(prefs: SharedPreferences.getInstance());
+      await _settle();
+      await n.set('CascadiaCode');
+      expect(n.state, 'CascadiaCode');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(fontFamilyPrefKey), 'CascadiaCode');
+    });
+
+    test('set resolves an unknown family to the default face', () async {
+      final n = TerminalFontFamilyNotifier(prefs: SharedPreferences.getInstance());
+      await _settle();
+      await n.set('NotABundled');
+      expect(n.state, fontFamilyDefault);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(fontFamilyPrefKey), fontFamilyDefault);
+    });
+  });
 }

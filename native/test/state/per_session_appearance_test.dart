@@ -313,5 +313,37 @@ void main() {
         reason: 'a per-session override pins the value against global changes',
       );
     });
+
+    test('an un-customized session tracks a later global font-family change', () {
+      final c = _makeContainer();
+      final a = _add(c, 'host-a');
+      expect(c.read(sessionFontFamilyProvider(a.id)), fontFamilyDefault);
+
+      c.read(fontFamilyProvider.notifier).set('FiraCode');
+      expect(
+        c.read(sessionFontFamilyProvider(a.id)),
+        'FiraCode',
+        reason: 'an un-customized session must reflect the new default font',
+      );
+
+      c.read(sessionAppearanceProvider.notifier).setFontFamily(a.id, 'CascadiaCode');
+      c.read(fontFamilyProvider.notifier).set('RobotoMono');
+      expect(
+        c.read(sessionFontFamilyProvider(a.id)),
+        'CascadiaCode',
+        reason: 'a per-session override pins the value against global changes',
+      );
+    });
+
+    test('a new session inherits the changed global default font', () {
+      final c = _makeContainer();
+      c.read(fontFamilyProvider.notifier).set('CascadiaCode');
+      final a = _add(c, 'host-a');
+      expect(
+        c.read(sessionFontFamilyProvider(a.id)),
+        'CascadiaCode',
+        reason: 'a session opened after the default changed inherits it',
+      );
+    });
   });
 }

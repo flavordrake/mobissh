@@ -45,6 +45,7 @@ class SettingsPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final keepalive = ref.watch(keepaliveEnabledProvider);
     final fontSize = ref.watch(fontSizeProvider);
+    final fontFamily = ref.watch(fontFamilyProvider);
     final controlMode = ref.watch(tmuxControlModeProvider);
     final detection = ref.watch(detectionSettingsProvider);
     // #995: persisted "Not a URL" / "Not a file" reports — listed for review,
@@ -133,6 +134,18 @@ class SettingsPanel extends ConsumerWidget {
             label: fontSize.toStringAsFixed(0),
             onChanged: (v) => ref.read(fontSizeProvider.notifier).set(v),
           ),
+        ),
+        // Default terminal font (companion to #679's per-session picker). Sets
+        // the GLOBAL default face a new/un-customized session inherits; a
+        // per-session override from the session menu still wins for that
+        // session. Tapping opens a bottom-sheet picker of the bundled families.
+        ListTile(
+          key: const ValueKey('default-font-tile'),
+          leading: const Icon(Icons.font_download_outlined),
+          title: const Text('Default terminal font'),
+          subtitle: Text(_fontFamilyLabel(fontFamily)),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _pickDefaultFont(context, ref, fontFamily),
         ),
         // #966: the terminal-engine SELECTOR is retired from the release build.
         // Ghostty (flterm) is the whole product — gutter copy, detection, marks,
@@ -338,6 +351,50 @@ class SettingsPanel extends ConsumerWidget {
     );
   }
 
+  /// The human label for a bundled font-family id, for the default-font row.
+  /// Falls back to the raw id for an unknown value (never blank).
+  String _fontFamilyLabel(String id) {
+    for (final f in terminalFontFamilies) {
+      if (f.id == id) return f.label;
+    }
+    return id;
+  }
+
+  /// Bottom-sheet picker for the GLOBAL default terminal font. Lists the bundled
+  /// families with the current default checked; tapping one persists it via
+  /// [fontFamilyProvider] (new/un-customized sessions then inherit it) and
+  /// closes the sheet.
+  Future<void> _pickDefaultFont(
+    BuildContext context,
+    WidgetRef ref,
+    String current,
+  ) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final f in terminalFontFamilies)
+                ListTile(
+                  key: ValueKey('default-font-option-${f.id}'),
+                  title: Text(f.label),
+                  trailing: f.id == current
+                      ? const Icon(Icons.check)
+                      : null,
+                  onTap: () => Navigator.of(sheetContext).pop(f.id),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked != null) {
+      await ref.read(fontFamilyProvider.notifier).set(picked);
+    }
+  }
+
   /// Subtitle for one detection-exception row (#995): "when · host", dropping
   /// whichever segment is unknown (a record may carry neither).
   String _exceptionSubtitle(DetectionException e) {
@@ -398,9 +455,9 @@ class SettingsPanel extends ConsumerWidget {
         key: const ValueKey('settings-reset-dialog'),
         title: const Text('Reset settings?'),
         content: const Text(
-          'Restore all MobiSSH settings — font size, terminal engine, '
-          'keep-alive, link/path detection, detection lab tuning, and tmux '
-          'control mode — to their defaults. Saved profiles, credentials, '
+          'Restore all MobiSSH settings — font size, default font, terminal '
+          'engine, keep-alive, link/path detection, detection lab tuning, and '
+          'tmux control mode — to their defaults. Saved profiles, credentials, '
           'and detection exceptions are not affected.',
         ),
         actions: [
@@ -419,6 +476,7 @@ class SettingsPanel extends ConsumerWidget {
     if (confirmed != true) return;
 
     await ref.read(fontSizeProvider.notifier).set(fontSizeDefault);
+    await ref.read(fontFamilyProvider.notifier).set(fontFamilyDefault);
     await ref.read(terminalBackendProvider.notifier).set(terminalBackendDefault);
     await ref.read(keepaliveEnabledProvider.notifier).set(keepaliveEnabledDefault);
     await ref.read(tmuxControlModeProvider.notifier).set(tmuxControlModeDefault);

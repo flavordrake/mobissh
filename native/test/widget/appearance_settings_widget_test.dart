@@ -108,6 +108,59 @@ void main() {
     });
   });
 
+  group('SettingsPanel default font', () {
+    testWidgets('row shows the default face label', (tester) async {
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(child: SettingsPanel()),
+            ),
+          ),
+        ),
+      );
+      await _pumpFrames(tester, count: 12);
+
+      final tile = find.byKey(const ValueKey('default-font-tile'));
+      expect(tile, findsOneWidget);
+      // fontFamilyDefault is 'JetBrainsMono' → labelled 'JetBrains Mono'.
+      expect(
+        find.descendant(of: tile, matching: find.text('JetBrains Mono')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('picking a font persists the global default', (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(child: SettingsPanel()),
+            ),
+          ),
+        ),
+      );
+      await _pumpFrames(tester, count: 12);
+
+      await tester.tap(find.byKey(const ValueKey('default-font-tile')));
+      await _pumpFrames(tester, count: 8);
+
+      // The picker sheet lists every bundled family; choose Fira Code.
+      await tester.tap(
+        find.byKey(const ValueKey('default-font-option-FiraCode')),
+      );
+      await _pumpFrames(tester, count: 8);
+
+      expect(container.read(fontFamilyProvider), 'FiraCode');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(fontFamilyPrefKey), 'FiraCode');
+    });
+  });
+
   group('SessionMenu theme cycle', () {
     Widget host(ProviderContainer container) {
       return UncontrolledProviderScope(

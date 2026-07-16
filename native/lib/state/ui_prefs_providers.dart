@@ -190,6 +190,60 @@ String resolveFontFamily(String? id) {
 bool isKnownFontFamily(String? id) =>
     id != null && terminalFontFamilies.any((f) => f.id == id);
 
+/// SharedPreferences key for the GLOBAL default terminal font family (#679's
+/// companion). Font family already had a per-session override but — unlike
+/// theme and font size — no persisted global default a new session could
+/// inherit; a fresh/un-customized session was pinned to the fixed
+/// [fontFamilyDefault]. This key stores the user's chosen default face.
+const String fontFamilyPrefKey = 'mobissh.ui.fontFamily';
+
+/// Persisted GLOBAL default terminal font family — the face a NEW or
+/// un-customized session inherits (mirrors [TerminalThemeNotifier] /
+/// [FontSizeNotifier]). Stored as a bundled family id; both `set` and hydrate
+/// resolve through [resolveFontFamily] so a stale/unknown id can never pin the
+/// default to a missing face. A per-session override (session menu) still wins
+/// over this default for that one session.
+class TerminalFontFamilyNotifier extends StateNotifier<String> {
+  TerminalFontFamilyNotifier({Future<SharedPreferences>? prefs})
+    : _prefs = prefs ?? SharedPreferences.getInstance(),
+      super(fontFamilyDefault) {
+    _hydrate();
+  }
+
+  final Future<SharedPreferences> _prefs;
+
+  Future<void> _hydrate() async {
+    try {
+      final prefs = await _prefs;
+      final stored = prefs.getString(fontFamilyPrefKey);
+      if (stored != null) {
+        final resolved = resolveFontFamily(stored);
+        if (resolved != state) state = resolved;
+      }
+    } catch (_) {
+      // best-effort; keep default if prefs unavailable (tests).
+    }
+  }
+
+  /// Set the default font family, resolving an unknown id to
+  /// [fontFamilyDefault] before persisting. Persists best-effort.
+  Future<void> set(String family) async {
+    final resolved = resolveFontFamily(family);
+    state = resolved;
+    try {
+      final prefs = await _prefs;
+      await prefs.setString(fontFamilyPrefKey, resolved);
+    } catch (_) {
+      // best-effort persistence
+    }
+  }
+}
+
+final fontFamilyProvider =
+    StateNotifierProvider<TerminalFontFamilyNotifier, String>((ref) {
+      return TerminalFontFamilyNotifier();
+    });
+
 // ── Terminal theme palettes (#552) ────────────────────────────────────────
 
 /// A named terminal palette: a label for the UI + the xterm `TerminalTheme`.
@@ -889,6 +943,7 @@ class SessionAppearanceNotifier
   SessionAppearance get _default => SessionAppearance(
     themeIndex: ref.read(terminalThemeProvider),
     fontSize: ref.read(fontSizeProvider),
+    fontFamily: ref.read(fontFamilyProvider),
   );
 
   /// Read a session's appearance, falling back to the current default for a
@@ -1012,18 +1067,20 @@ final sessionColorProvider = Provider.family<Color?, String>((ref, sessionId) {
       .color;
 });
 
-/// Per-session terminal font family (#679). Falls back to [fontFamilyDefault]
-/// for an un-customized session. Seeded on connect from the profile; mutated by
-/// the session-menu picker. Rebuilds when the session's appearance entry
-/// changes — touching one session leaves siblings' families untouched (the
-/// per-session isolation #679 requires). Unlike theme/font size there is no
-/// global default notifier to track: the family default is the fixed bundled
-/// face, so no `watch` of a global provider is needed.
+/// Per-session terminal font family (#679). Falls back to the current GLOBAL
+/// default ([fontFamilyProvider]) for an un-customized session, and tracks that
+/// default until the session is customized (#616) — same rationale as
+/// [sessionThemeProvider]/[sessionFontSizeProvider]. Seeded on connect from the
+/// profile; mutated by the session-menu picker. Watching [fontFamilyProvider]
+/// makes an un-customized session pick up the default the moment it hydrates /
+/// the owner changes it in Settings. Once the session HAS its own entry, that
+/// entry wins and the global no longer leaks in.
 final sessionFontFamilyProvider = Provider.family<String, String>((
   ref,
   sessionId,
 ) {
   ref.watch(sessionAppearanceProvider);
+  ref.watch(fontFamilyProvider); // rebuild on global-default change (#616)
   return ref
       .read(sessionAppearanceProvider.notifier)
       .appearanceOf(sessionId)
@@ -1085,10 +1142,11 @@ final activeSessionKeybarVisibleProvider = Provider<bool>((ref) {
 });
 
 /// The ACTIVE session's terminal font family (#679) — what the session menu's
-/// font-family picker reflects/changes. Falls back to [fontFamilyDefault] when
-/// no session is active so the picker still renders sensibly.
+/// font-family picker reflects/changes. Falls back to the global default
+/// ([fontFamilyProvider]) when no session is active so the picker still renders
+/// the face a new session would open with.
 final activeSessionFontFamilyProvider = Provider<String>((ref) {
   final activeId = ref.watch(activeSessionIdProvider);
-  if (activeId == null) return fontFamilyDefault;
+  if (activeId == null) return ref.watch(fontFamilyProvider);
   return ref.watch(sessionFontFamilyProvider(activeId));
 });
