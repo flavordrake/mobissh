@@ -72,6 +72,32 @@ class SshConfigEntry {
       'user: $user, identityFile: $identityFile)';
 }
 
+/// Render a profile's ssh-mappable fields as an OpenSSH `~/.ssh/config` Host
+/// block, copy-ready. The inverse of [parseSshConfig] over the directives this
+/// app understands (Host/HostName/Port/User/IdentityFile): feeding the output
+/// back through [parseSshConfig] yields the same fields.
+///
+/// [port] is emitted only when non-default (22) — idiomatic configs omit the
+/// default and the parser restores 22 when `Port` is absent. [user] and
+/// [identityFile] are emitted only when non-empty. Two-space indent matches the
+/// import hint the editor shows.
+String formatSshConfig({
+  required String alias,
+  required String host,
+  int port = 22,
+  String? user,
+  String? identityFile,
+}) {
+  final b = StringBuffer('Host ${alias.trim()}\n');
+  b.write('  HostName ${host.trim()}\n');
+  if (port != 22) b.write('  Port $port\n');
+  final u = user?.trim() ?? '';
+  if (u.isNotEmpty) b.write('  User $u\n');
+  final id = identityFile?.trim() ?? '';
+  if (id.isNotEmpty) b.write('  IdentityFile $id\n');
+  return b.toString();
+}
+
 /// Parse pasted ssh-config [text] into its `Host` stanzas, in file order.
 ///
 /// Directives before the first `Host` line (global defaults in a real config)

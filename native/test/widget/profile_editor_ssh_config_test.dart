@@ -2,6 +2,7 @@
 // config entry to fill Details, and reusing a stored key instead of re-pasting.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -121,6 +122,125 @@ void main() {
         tester.widget<Text>(hint).data,
         contains('~/.ssh/id_ed25519'),
       );
+    });
+
+    testWidgets('exports the current profile as a copy-ready config block', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await _pump(
+        tester,
+        store: ProfilesStore(),
+        secrets: SecretsStore(backend: InMemorySecretsBackend()),
+        profile: SavedProfile(
+          title: 'prod',
+          host: 'prod.example.com',
+          port: 2222,
+          username: 'deploy',
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('profile-editor-tab-sshconfig')));
+      await tester.pumpAndSettle();
+
+      final block = tester.widget<SelectableText>(
+        find.byKey(const Key('profile-editor-sshconfig-export')),
+      );
+      final text = block.data ?? '';
+      expect(text, contains('Host prod'));
+      expect(text, contains('HostName prod.example.com'));
+      expect(text, contains('Port 2222'));
+      expect(text, contains('User deploy'));
+      expect(
+        find.byKey(const Key('profile-editor-sshconfig-copy')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('export reflects live edits to the Details fields', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await _pump(
+        tester,
+        store: ProfilesStore(),
+        secrets: SecretsStore(backend: InMemorySecretsBackend()),
+        profile: blankProfile(),
+        isNew: true,
+      );
+
+      // Blank host → the export shows the placeholder, no block yet.
+      await tester.tap(find.byKey(const Key('profile-editor-tab-sshconfig')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('profile-editor-sshconfig-export-empty')),
+        findsOneWidget,
+      );
+
+      // Fill Details, come back — the block now reflects the entered host/user.
+      await tester.tap(find.byKey(const Key('profile-editor-tab-details')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('profile-editor-host')),
+        'db.example.com',
+      );
+      await tester.enterText(
+        find.byKey(const Key('profile-editor-username')),
+        'root',
+      );
+      await tester.tap(find.byKey(const Key('profile-editor-tab-sshconfig')));
+      await tester.pumpAndSettle();
+
+      final text = tester
+              .widget<SelectableText>(
+                find.byKey(const Key('profile-editor-sshconfig-export')),
+              )
+              .data ??
+          '';
+      expect(text, contains('HostName db.example.com'));
+      expect(text, contains('User root'));
+    });
+
+    testWidgets('Copy writes the config block to the clipboard', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        );
+      });
+
+      await _pump(
+        tester,
+        store: ProfilesStore(),
+        secrets: SecretsStore(backend: InMemorySecretsBackend()),
+        profile: SavedProfile(
+          title: 'prod',
+          host: 'prod.example.com',
+          port: 2222,
+          username: 'deploy',
+        ),
+      );
+      await tester.tap(find.byKey(const Key('profile-editor-tab-sshconfig')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('profile-editor-sshconfig-copy')));
+      await tester.pumpAndSettle();
+
+      expect(copied, isNotNull);
+      expect(copied, contains('Host prod'));
+      expect(copied, contains('HostName prod.example.com'));
     });
 
     testWidgets('empty/no-host paste shows a message, fills nothing', (

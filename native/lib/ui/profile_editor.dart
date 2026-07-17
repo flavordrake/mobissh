@@ -25,6 +25,7 @@
 // reuse or a pasted secret (the file path itself can't be read from a phone).
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
@@ -647,13 +648,32 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     return id ?? '';
   }
 
-  /// The "SSH config" tab — paste a Host block and fill the Details fields.
+  /// The "SSH config" tab — two directions. Top: the CURRENT profile rendered
+  /// as a copy-ready `~/.ssh/config` Host block (export). Bottom: paste a block
+  /// to fill the Details fields (import).
   Widget _buildSshConfigTab(BuildContext context, double keyboardInset) {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + keyboardInset + 120),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Text(
+            'This profile as an SSH config entry',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          // Live: rebuild the block as the Details fields change so the export
+          // always reflects the current settings. authType/IdentityFile changes
+          // arrive via parent setState (which recreates this builder).
+          ListenableBuilder(
+            listenable: Listenable.merge(
+              [_titleCtrl, _hostCtrl, _portCtrl, _userCtrl],
+            ),
+            builder: (context, _) => _buildSshConfigExport(context),
+          ),
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 16),
           Text(
             'Paste an entry from ~/.ssh/config to fill the Details fields '
             '(host, port, user). If it names an IdentityFile you can reuse a '
@@ -688,6 +708,81 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         ],
       ),
     );
+  }
+
+  /// The export block: the current Details fields as a copy-ready ssh-config
+  /// Host stanza, plus a Copy button. Empty until a host is entered (an empty
+  /// host makes the block useless — round-trips to nothing).
+  Widget _buildSshConfigExport(BuildContext context) {
+    final host = _hostCtrl.text.trim();
+    if (host.isEmpty) {
+      return Text(
+        'Add a host on the Details tab to generate a config entry.',
+        key: const Key('profile-editor-sshconfig-export-empty'),
+        style: Theme.of(context).textTheme.bodyMedium,
+      );
+    }
+    final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
+    // IdentityFile is a hint only — emit it when key auth and a config named a
+    // path (the phone never stores a file path; keys live in the vault).
+    final identityFile =
+        _authKind == _AuthKind.key ? _pendingIdentityFile : null;
+    final block = formatSshConfig(
+      alias: _configAlias(_titleCtrl.text, host),
+      host: host,
+      port: port,
+      user: _userCtrl.text,
+      identityFile: identityFile,
+    );
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+          ),
+          child: SelectableText(
+            block,
+            key: const Key('profile-editor-sshconfig-export'),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontFamily: 'monospace',
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerRight,
+          child: OutlinedButton.icon(
+            key: const Key('profile-editor-sshconfig-copy'),
+            onPressed: () => _copySshConfig(block),
+            icon: const Icon(Icons.copy, size: 18),
+            label: const Text('Copy'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The `Host` alias for the generated config: the profile Name when it's a
+  /// single clean token (usable as `ssh <alias>`), else the hostname. A name
+  /// like `deploy@prod` or one with spaces isn't a valid alias, so fall back.
+  String _configAlias(String title, String host) {
+    final t = title.trim();
+    if (t.isNotEmpty && !t.contains(RegExp(r'\s')) && !t.contains('@')) {
+      return t;
+    }
+    return host;
+  }
+
+  Future<void> _copySshConfig(String block) async {
+    await Clipboard.setData(ClipboardData(text: block));
+    if (!mounted) return;
+    showTopToast(context, 'Copied SSH config entry');
   }
 
   /// Parse the pasted config and fill Details. One concrete host → apply it;

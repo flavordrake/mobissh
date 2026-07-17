@@ -107,4 +107,65 @@ Host prod
       expect(parseSshConfig('\n\n# only a comment\n'), isEmpty);
     });
   });
+
+  group('formatSshConfig', () {
+    test('renders a full stanza', () {
+      final block = formatSshConfig(
+        alias: 'prod',
+        host: 'prod.example.com',
+        port: 2222,
+        user: 'deploy',
+        identityFile: '~/.ssh/id_ed25519',
+      );
+      expect(
+        block,
+        'Host prod\n'
+        '  HostName prod.example.com\n'
+        '  Port 2222\n'
+        '  User deploy\n'
+        '  IdentityFile ~/.ssh/id_ed25519\n',
+      );
+    });
+
+    test('omits the default port, empty user, and absent IdentityFile', () {
+      final block = formatSshConfig(alias: 'box', host: 'box.example.com');
+      expect(block, 'Host box\n  HostName box.example.com\n');
+    });
+
+    test('omits User when only whitespace', () {
+      final block = formatSshConfig(
+        alias: 'box',
+        host: 'box.example.com',
+        user: '   ',
+      );
+      expect(block.contains('User'), isFalse);
+    });
+
+    test('round-trips through parseSshConfig', () {
+      final block = formatSshConfig(
+        alias: 'prod',
+        host: 'prod.example.com',
+        port: 2222,
+        user: 'deploy',
+        identityFile: '~/.ssh/id_ed25519',
+      );
+      final e = parseSshConfig(block).single;
+      expect(e.alias, 'prod');
+      expect(e.effectiveHost, 'prod.example.com');
+      expect(e.port, 2222);
+      expect(e.user, 'deploy');
+      expect(e.identityFile, '~/.ssh/id_ed25519');
+    });
+
+    test('default-port round-trip restores 22 (Port omitted → parser null)', () {
+      final block = formatSshConfig(
+        alias: 'box',
+        host: 'box.example.com',
+        user: 'me',
+      );
+      final e = parseSshConfig(block).single;
+      expect(e.port, isNull); // absent Port; the editor defaults it to 22
+      expect(e.user, 'me');
+    });
+  });
 }
