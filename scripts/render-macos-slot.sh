@@ -46,10 +46,9 @@ node -e '
     <dt>Commit</dt><dd>${esc(m.commit || "")}</dd>
     <dt>SHA-256</dt><dd>${esc(m.sha256 || "")}</dd>
   </dl>
-  <p class="note">Unzip to get <strong>mobissh.app</strong>. This is an ad-hoc signed build, so macOS quarantines it on download — and macOS 15+ no longer offers a right-click → Open bypass or an <em>Open Anyway</em> button, so you must clear the quarantine flag once from Terminal. In Terminal type the line below (with a trailing space), then <strong>drag mobissh.app onto the Terminal window</strong> so it fills in the path, and press Return:</p>
+  <p class="note">Unzip to get <strong>mobissh.app</strong>. This is an ad-hoc signed build, so macOS quarantines it on download — and macOS 15+ no longer offers a right-click → Open bypass or an <em>Open Anyway</em> button, so clear the quarantine flag once from Terminal. Type the line below (with a trailing space), then <strong>drag mobissh.app onto the Terminal window</strong> so it fills in the path, and press Return, then double-click the app:</p>
   <pre class="cmd"><code>xattr -dr com.apple.quarantine </code></pre>
-  <p class="note">Then double-click the app. If it still reports the app as damaged, the ad-hoc signature did not survive the download — re-sign it locally the same way (type the line, drag the app on, Return):</p>
-  <pre class="cmd"><code>codesign --force --deep --sign - </code></pre>
+  <p class="note"><strong>Do not run <code>codesign</code> on the app.</strong> It is sandboxed and needs its signed network entitlement to open SSH connections; re-signing strips that entitlement, and the app then launches but no connection will ever succeed. If <code>xattr</code> alone does not get you past Gatekeeper, do not work around it with codesign — that path needs proper notarization (tracked in #1079).</p>
   <p class="note">If the app is named <strong>mobissh 2</strong>, an older copy is already on your Mac — trash the old one once the new build opens.</p>
 `);
 ' "$JSON"
