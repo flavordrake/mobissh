@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+150 (2026-07-17) — copy a profile as an SSH config entry
+- **The profile editor's "SSH config" tab now shows the current profile as a copy-ready `~/.ssh/config` entry** — Host, HostName, Port, and User (plus an IdentityFile hint when the profile came from an imported config), in a selectable block with a Copy button. It updates live as you edit the Details fields. The paste-to-import direction is still there below it.
+
 ## v0.1.10+149 (2026-07-16) — import a profile by pasting an SSH config entry
 - **New "SSH config" tab in the profile editor** — paste a `Host` block from your `~/.ssh/config` and it fills in the host, port, and user for you. If the block names an `IdentityFile`, the key section lets you reuse a key you've already stored or paste a new one. Works for both new connections and editing an existing profile.
 
