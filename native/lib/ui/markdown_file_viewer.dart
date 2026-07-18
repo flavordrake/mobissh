@@ -28,6 +28,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/clipboard.dart';
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
 import '../services/viewer_file_actions.dart';
@@ -35,6 +36,7 @@ import 'file_browser_screen.dart';
 import 'file_viewer_actions.dart';
 import 'mermaid_diagram_view.dart';
 import 'sftp_markdown_image.dart';
+import 'top_toast.dart';
 
 /// Opens a markdown link [href] in the system browser (externalApplication).
 /// Mirrors the terminal URL handler idiom. Injected as a typedef so widget
@@ -123,12 +125,30 @@ class _MarkdownFileViewerScreenState
     setState(() => _raw = !_raw);
   }
 
+  /// #460: copy the WHOLE raw markdown source to the clipboard in one tap
+  /// (independent of rendered/raw view mode). Routes through the hardened
+  /// labeled-clip helper (#845) and toasts on success.
+  Future<void> _copyAll() async {
+    final text = _content;
+    if (text == null || text.isEmpty) return;
+    final ok = await copyToClipboard(text);
+    if (ok && mounted) showTopToast(context, 'Copied');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
         actions: [
+          // #460: one-tap "Copy all" of the whole raw source (only once loaded).
+          if (_phase == _Phase.ready)
+            IconButton(
+              key: const Key('markdown-viewer-copy-all'),
+              tooltip: 'Copy all',
+              icon: const Icon(Icons.copy_all),
+              onPressed: () => unawaited(_copyAll()),
+            ),
           // #1038: Download + Share from any open preview.
           FileViewerActions(
             source: RemoteFileSource(
