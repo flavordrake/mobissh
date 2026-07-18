@@ -15,11 +15,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/clipboard.dart';
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
 import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
 import 'file_viewer_actions.dart';
+import 'top_toast.dart';
 
 /// Full-screen read-only preview route for a single remote text [entry] on
 /// [sessionId].
@@ -84,12 +86,29 @@ class _TextFileViewerScreenState extends ConsumerState<TextFileViewerScreen> {
     }
   }
 
+  /// #460: copy the WHOLE file to the clipboard in one tap. Routes through the
+  /// hardened labeled-clip helper (#845) and toasts on success.
+  Future<void> _copyAll() async {
+    final text = _content;
+    if (text == null || text.isEmpty) return;
+    final ok = await copyToClipboard(text);
+    if (ok && mounted) showTopToast(context, 'Copied');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
         actions: [
+          // #460: one-tap "Copy all" of the whole file (only once loaded).
+          if (_phase == _Phase.ready)
+            IconButton(
+              key: const Key('text-viewer-copy-all'),
+              tooltip: 'Copy all',
+              icon: const Icon(Icons.copy_all),
+              onPressed: () => unawaited(_copyAll()),
+            ),
           // #1038: Download + Share from any open preview.
           FileViewerActions(
             source: RemoteFileSource(
