@@ -18,6 +18,7 @@
 import 'package:flutter/material.dart';
 
 import '../storage/favorites_store.dart';
+import '../util/favorites_prefix.dart';
 
 /// Opens the favorites sheet for [profileKey]. Tapping a favorite pops the sheet
 /// then calls [onNavigate] with its path; long-press removes it; "Clear all"
@@ -36,6 +37,18 @@ Future<void> showFavoritesMenu(
     builder: (sheetContext) {
       return StatefulBuilder(
         builder: (ctx, setSheetState) {
+          // Collapse the shared path prefix of UNLABELED favorites (#493) so
+          // the divergent leaf is scannable. Labeled favorites keep their
+          // label (they fall through to f.display below).
+          final unlabeledPaths = [
+            for (final f in favs)
+              if (f.label == null || f.label!.isEmpty) f.path,
+          ];
+          final collapsed = collapsePrefix(unlabeledPaths);
+          final collapsedByPath = {
+            for (var i = 0; i < unlabeledPaths.length; i++)
+              unlabeledPaths[i]: collapsed[i],
+          };
           return SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -74,7 +87,7 @@ Future<void> showFavoritesMenu(
                             key: Key('favorite-item-${f.path}'),
                             leading: const Icon(Icons.folder_outlined),
                             title: Text(
-                              f.display,
+                              collapsedByPath[f.path] ?? f.display,
                               overflow: TextOverflow.ellipsis,
                             ),
                             subtitle: (f.label != null && f.label!.isNotEmpty)
