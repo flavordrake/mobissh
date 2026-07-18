@@ -250,6 +250,81 @@ void main() {
       expect(result.errors, hasLength(1));
       expect(result.errors.first, contains('Unsupported export version'));
     });
+
+    // #961 (regression guard): a key-auth profile imported via the plain
+    // (no-vault) path must retain authType='key' + keyVaultId, not silently
+    // become password-only. Mirrors the existing theme/color upsert test but
+    // for the auth-TYPE + key reference. Device report showed
+    // `withAuthType=0 withKeyVaultId=0` after import — this pins the fix.
+    test('key-auth profile imported into a fresh store keeps authType/keyVaultId '
+        '(#961)', () async {
+      final store = ProfilesStore();
+      const keyAuthExport = '''
+{
+  "version": 1,
+  "profiles": [
+    {
+      "title": "Key Box",
+      "host": "key.example",
+      "port": 22,
+      "username": "me",
+      "authType": "key",
+      "vaultId": "v-key",
+      "keyVaultId": "k-key"
+    }
+  ]
+}
+''';
+      final result = await store.importFromJson(keyAuthExport);
+      expect(result.added, 1);
+      expect(result.errors, isEmpty);
+
+      final loaded = await store.load();
+      expect(loaded, hasLength(1));
+      expect(loaded.single.authType, 'key');
+      expect(loaded.single.vaultId, 'v-key');
+      expect(loaded.single.keyVaultId, 'k-key');
+    });
+
+    test('re-import upserts authType/keyVaultId onto an existing identity-only '
+        'profile via the plain path (#961)', () async {
+      // The device-confirmed shape: an older identity-only profile already
+      // exists; re-importing the same identity with key auth must UPGRADE it
+      // in place (not leave it password-only).
+      final store = ProfilesStore();
+      await store.save(<SavedProfile>[
+        SavedProfile(
+          title: 'Old Box', host: 'key.example', port: 22, username: 'me',
+        ),
+      ]);
+      const keyAuthExport = '''
+{
+  "version": 1,
+  "profiles": [
+    {
+      "title": "Key Box (re-export)",
+      "host": "key.example",
+      "port": 22,
+      "username": "me",
+      "authType": "key",
+      "vaultId": "v-key",
+      "keyVaultId": "k-key"
+    }
+  ]
+}
+''';
+      final result = await store.importFromJson(keyAuthExport);
+      expect(result.added, 0, reason: 'identity already existed');
+      expect(result.updated, 1, reason: 'upserted in place');
+
+      final loaded = await store.load();
+      expect(loaded, hasLength(1));
+      final upserted = loaded.single;
+      expect(upserted.title, 'Old Box', reason: 'user title not clobbered');
+      expect(upserted.authType, 'key');
+      expect(upserted.vaultId, 'v-key');
+      expect(upserted.keyVaultId, 'k-key');
+    });
   });
 
   group('ProfilesStore.importFromJson — robustness', () {
