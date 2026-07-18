@@ -364,6 +364,27 @@ class SshSessionProxy {
     );
   }
 
+  /// Request a STREAMING download over SFTP (#976) of the remote file at
+  /// [remotePath] to the LOCAL staging file at [localPath]. The task streams the
+  /// file straight to disk task-side; [SftpDownloadProgressEvent]s and the
+  /// terminal [SftpDownloadDoneEvent] (or [SftpErrorEvent]) arrive on
+  /// [sftpEvents] keyed by [requestId]. Large files never cross the IPC — the
+  /// mirror of [sftpUploadFile] and the fix for the large-file force-quit.
+  void sftpDownloadFile({
+    required String requestId,
+    required String remotePath,
+    required String localPath,
+  }) {
+    gateway.send(
+      SftpDownloadFileCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        remotePath: remotePath,
+        localPath: localPath,
+      ).toJson(),
+    );
+  }
+
   /// Request a WHOLE-FILE upload over SFTP (#892). [bytes] are written to the
   /// remote file at [path] (write|create|truncate). The terminal
   /// [SftpUploadDoneEvent] (or [SftpErrorEvent]) arrives on [sftpEvents] keyed
@@ -599,6 +620,7 @@ class SshSessionProxy {
       case SftpListingEvent():
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():
+      case SftpDownloadProgressEvent():
       case SftpUploadDoneEvent():
       case SftpUploadProgressEvent():
       case SftpStatResultEvent():

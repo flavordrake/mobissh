@@ -123,6 +123,21 @@ abstract class SftpSession {
     int chunkSize,
   });
 
+  /// STREAMING download of the remote file at [remotePath] to the LOCAL file at
+  /// [localPath] (#976). The mirror of [uploadFile]: the task reads the remote
+  /// file chunk-by-chunk and writes each straight to the local staging file
+  /// (never the whole file in memory), reporting only (done, total) via
+  /// [onProgress] — the bytes never cross the isolate IPC (unlike [download],
+  /// which hands every chunk back to the UI). [total] is resolved up front via
+  /// stat (0 when the server omits the size) so the UI can render a determinate
+  /// bar. Returns the total bytes written. Reuses `~`/relative resolution.
+  Future<int> downloadFile(
+    String remotePath,
+    String localPath, {
+    required void Function(int done, int total) onProgress,
+    int chunkSize,
+  });
+
   /// Release the underlying SFTP channel.
   Future<void> close();
 }
@@ -292,6 +307,38 @@ class DartSshSftpSession implements SftpSession {
       await _client.rename(partPath, resolved);
     }
     return total;
+  }
+
+  @override
+  Future<int> downloadFile(
+    String remotePath,
+    String localPath, {
+    required void Function(int done, int total) onProgress,
+    int chunkSize = 64 * 1024,
+  }) async {
+    final resolved = await _resolve(remotePath);
+    // Resolve the size up front for a determinate bar; a null size (server
+    // omitted it) reports as 0 total — the UI falls back to an indeterminate
+    // spinner but progress still ticks by `done`.
+    final attr = await _client.stat(resolved);
+    final total = attr.size ?? 0;
+    final file = await _client.open(resolved);
+    // openWrite streams to disk incrementally — the whole file is never held in
+    // memory and never returned to the caller (bytes stay task-side).
+    final sink = File(localPath).openWrite();
+    var done = 0;
+    try {
+      onProgress(done, total);
+      await for (final chunk in file.read(chunkSize: chunkSize)) {
+        sink.add(chunk);
+        done += chunk.length;
+        onProgress(done, total);
+      }
+    } finally {
+      await file.close();
+      await sink.close();
+    }
+    return done;
   }
 
   @override

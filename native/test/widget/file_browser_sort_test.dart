@@ -59,6 +59,17 @@ class _ScriptedSftpSession implements SftpSession {
   }
 
   @override
+  Future<int> downloadFile(
+    String remotePath,
+    String localPath, {
+    required void Function(int done, int total) onProgress,
+    int chunkSize = 64 * 1024,
+  }) async {
+    onProgress(0, 0);
+    return 0;
+  }
+
+  @override
   Future<void> close() async {}
 }
 

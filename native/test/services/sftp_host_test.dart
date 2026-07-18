@@ -6,6 +6,7 @@
 // surface as SftpErrorEvent without tearing the session down.
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -52,6 +53,12 @@ class FakeSftpSession implements SftpSession {
   bool closed = false;
   String? lastListedPath;
   String? lastDownloadedPath;
+
+  /// Records the streaming file-download call (#976): the remote + local paths.
+  /// The fake writes [fileBytes] to the local staging path in TWO chunks — the
+  /// bytes are written to DISK task-side, never returned across the gateway.
+  String? lastDownloadFileRemote;
+  String? lastDownloadFileLocal;
 
   /// #990: when set, [sizeOf] (the stat seam the host's sftpStat handler uses)
   /// succeeds ONLY for paths in this set and throws for anything else —
@@ -105,6 +112,35 @@ class FakeSftpSession implements SftpSession {
       }
     }
     return all.length;
+  }
+
+  @override
+  Future<int> downloadFile(
+    String remotePath,
+    String localPath, {
+    required void Function(int done, int total) onProgress,
+    int chunkSize = 64 * 1024,
+  }) async {
+    lastDownloadFileRemote = remotePath;
+    lastDownloadFileLocal = localPath;
+    if (throwOnDownload) throw Exception('boom-download');
+    // Stream the bytes to the staging file in two chunks (task-side), emitting
+    // a monotonic 0 → mid → total progress sequence. Mirrors the real
+    // DartSshSftpSession.downloadFile: the file is written to DISK here and only
+    // (done, total) counters are handed back — the bytes never leave this side.
+    final all = Uint8List.fromList(fileBytes);
+    final total = all.length;
+    final sink = File(localPath).openWrite();
+    onProgress(0, total);
+    if (total > 0) {
+      final mid = (total / 2).ceil();
+      sink.add(Uint8List.sublistView(all, 0, mid));
+      onProgress(mid, total);
+      if (mid < total) sink.add(Uint8List.sublistView(all, mid));
+    }
+    onProgress(total, total);
+    await sink.close();
+    return total;
   }
 
   @override
@@ -219,6 +255,81 @@ void main() {
     expect(chunks.first.totalBytes, 10); // size resolved up front
     expect(fake.lastDownloadedPath, '/a.bin');
 
+    await sub.cancel();
+  });
+
+  test(
+      'sftpDownloadFile streams to a staging file + emits progress, ZERO file '
+      'bytes cross the gateway (#976 Slice A)', () async {
+    // A "large" file: big enough that had bytes crossed (base64) the total wire
+    // traffic would dwarf the handful of tiny progress envelopes.
+    final big = List<int>.generate(512 * 1024, (i) => i & 0xff);
+    final fake = FakeSftpSession(fileBytes: big);
+    final ctx = await setUpConnected('sid-dlf', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    final tmp = await Directory.systemTemp.createTemp('mobissh_dlf_');
+    addTearDown(() => tmp.delete(recursive: true));
+    final localPath = '${tmp.path}/staged.bin';
+
+    // Capture EVERY raw task→UI envelope so we can prove no file bytes crossed.
+    final rawFromTask = <Map<String, dynamic>>[];
+    final rawSub = ctx.pair.uiSide.incoming.listen(rawFromTask.add);
+
+    final progress = <SftpDownloadProgressEvent>[];
+    final chunks = <SftpDownloadChunkEvent>[];
+    SftpDownloadDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpDownloadProgressEvent) progress.add(e);
+      if (e is SftpDownloadChunkEvent) chunks.add(e);
+      if (e is SftpDownloadDoneEvent) done = e;
+    });
+
+    ctx.proxy.sftpDownloadFile(
+      requestId: 'sid-dlf#0',
+      remotePath: '~/videos/big.mp4',
+      localPath: localPath,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    // Progress-only path: NO chunk events at all.
+    expect(chunks, isEmpty,
+        reason: 'the new path must never ship SftpDownloadChunkEvent');
+    // Monotonic progress, keyed by request id, ending exactly at total.
+    expect(progress, isNotEmpty);
+    expect(progress.every((p) => p.requestId == 'sid-dlf#0'), isTrue);
+    expect(progress.every((p) => p.totalBytes == big.length), isTrue);
+    final dones = progress.map((p) => p.done).toList();
+    for (var i = 1; i < dones.length; i++) {
+      expect(dones[i] >= dones[i - 1], isTrue, reason: 'progress must be monotonic');
+    }
+    expect(dones.last, big.length);
+    // Terminal done event, keyed by request id.
+    expect(done, isNotNull);
+    expect(done!.requestId, 'sid-dlf#0');
+    expect(done!.totalBytes, big.length);
+
+    // The staging file was written task-side with the FULL bytes.
+    final staged = await File(localPath).readAsBytes();
+    expect(staged.length, big.length);
+    expect(staged, big);
+    expect(fake.lastDownloadFileRemote, '~/videos/big.mp4');
+    expect(fake.lastDownloadFileLocal, localPath);
+
+    // KEY assertion: ZERO file bytes crossed the gateway. Every task→UI envelope
+    // is a tiny control message — none carries a 'bytes' field, and the TOTAL
+    // serialized size is a small constant, independent of the 512KB file. The
+    // retired chunk path would have base64'd ~700KB across here.
+    final totalWire =
+        rawFromTask.fold<int>(0, (a, m) => a + jsonEncode(m).length);
+    expect(rawFromTask.any((m) => m.containsKey('bytes')), isFalse,
+        reason: 'no task→UI envelope may carry file bytes');
+    expect(totalWire, lessThan(4096),
+        reason: 'progress-only wire traffic must stay tiny vs the 512KB file');
+
+    await rawSub.cancel();
     await sub.cancel();
   });
 

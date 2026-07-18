@@ -383,6 +383,8 @@ class SessionHost {
         _handleSftpList(cmd);
       case SftpDownloadCommand():
         _handleSftpDownload(cmd);
+      case SftpDownloadFileCommand():
+        _handleSftpDownloadFile(cmd);
       case SftpUploadCommand():
         _handleSftpUpload(cmd);
       case SftpUploadFileCommand():
@@ -1727,6 +1729,49 @@ class SessionHost {
       );
     } catch (e) {
       ctrace('task.host', 'sftp download FAILED path=${cmd.path} — $e');
+      _emitSftpError(cmd.sessionId, cmd.requestId, 'Download failed: $e');
+    }
+  }
+
+  /// #976: STREAMING download — the mirror of [_handleSftpUploadFile]. The task
+  /// streams the remote file straight to the local staging path and emits ONLY
+  /// lightweight [SftpDownloadProgressEvent]s (received/total) + a terminal
+  /// [SftpDownloadDoneEvent]. The file bytes never cross the gateway (contrast
+  /// [_handleSftpDownload], which base64s every chunk across) — the fix for the
+  /// large-file force-quit. Leaves the chunk path untouched (Slice C retires it).
+  Future<void> _handleSftpDownloadFile(SftpDownloadFileCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      final written = await sftp.downloadFile(
+        cmd.remotePath,
+        cmd.localPath,
+        onProgress: (done, total) {
+          if (_disposed) return;
+          _gateway.send(
+            SftpDownloadProgressEvent(
+              sessionId: cmd.sessionId,
+              requestId: cmd.requestId,
+              done: done,
+              totalBytes: total,
+            ).toJson(),
+          );
+        },
+      );
+      if (_disposed) return;
+      _gateway.send(
+        SftpDownloadDoneEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          totalBytes: written,
+        ).toJson(),
+      );
+    } catch (e) {
+      ctrace('task.host',
+          'sftp downloadFile FAILED remote=${cmd.remotePath} — $e');
       _emitSftpError(cmd.sessionId, cmd.requestId, 'Download failed: $e');
     }
   }
