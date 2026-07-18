@@ -191,6 +191,7 @@ import '../state/custom_patterns_providers.dart';
 import '../state/detection_exceptions_providers.dart';
 import '../state/detection_providers.dart';
 import '../state/detection_style_providers.dart';
+import '../state/input_mode_reset_provider.dart';
 import '../storage/custom_patterns_store.dart';
 import '../storage/detection_styles_store.dart' show DetectionStyles;
 import '../state/lifecycle_providers.dart';
@@ -2881,15 +2882,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // into the revived plain shell as literal [<65;...M text). Runs FIRST:
         // shellReady precedes the new shell's output on the shared IPC stream,
         // so a still-alive TUI's re-emitted DECSET re-enables the modes right
-        // after. See [ghosttyInputModeResetSequence].
-        final staleTracking = controller.mouseTracking;
-        controller.write(
-          Uint8List.fromList(ghosttyInputModeResetSequence.codeUnits),
-        );
-        ctrace(
-          'ui.modes1014',
-          'shellReady: input-mode reset (mouse was ${staleTracking.name})',
-        );
+        // after — which is exactly why the keybar Reset key exists as a manual,
+        // on-demand escape hatch (see [_resetInputModes]).
+        _resetInputModes('shellReady');
         // #717: a shellReady tick is a fresh connect (re-fires on reconnect), so
         // reset the per-connect focus latch and re-focus this connect. flterm is
         // autofocus:false, so without this the terminal stays unfocused and its
@@ -3194,6 +3189,29 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     final next = controller.mouseTracking;
     if (next == _mouseTracking) return;
     if (mounted) setState(() => _mouseTracking = next);
+  }
+
+  /// Clear stuck terminal INPUT modes locally (#1014 + the keybar Reset key).
+  /// Writes the DECRST reset sequence into the controller — LOCAL only (DECRST
+  /// produces no reply, so nothing reaches the remote) — so a stuck
+  /// mouse-reporting mode stops synthesising SGR reports from taps. The
+  /// controller.write flips `mouseTracking` off, which [_onControllerChanged] →
+  /// [_syncMouseTracking] mirrors into `_mouseTracking`, so the tap path stops
+  /// emitting codes immediately. Called on the shellReady revive boundary AND
+  /// on demand from the keybar Reset key: a still-alive TUI can re-enable modes
+  /// right after the auto-reset, so the manual escape hatch is what actually
+  /// unsticks a bare prompt without a reconnect.
+  void _resetInputModes(String reason) {
+    final controller = _controller;
+    if (controller == null) return;
+    final staleTracking = controller.mouseTracking;
+    controller.write(
+      Uint8List.fromList(ghosttyInputModeResetSequence.codeUnits),
+    );
+    ctrace(
+      'ui.modes1014',
+      '$reason: input-mode reset (mouse was ${staleTracking.name})',
+    );
   }
 
   SshSessionProxy? _resolveProxy() {
@@ -4410,6 +4428,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     ref.listen<String?>(activeSessionIdProvider, (prev, next) {
       _isActiveView = next == widget.sessionId; // #971 telemetry gate
       _onActiveSessionChanged(prev, next);
+    });
+    // Keybar Reset key: a bumped counter for THIS session runs the local
+    // input-mode reset (clears stuck mouse reporting so taps stop echoing SGR
+    // codes) — no reconnect, no bytes to the remote.
+    ref.listen<Map<String, int>>(inputModeResetProvider, (prev, next) {
+      final before = prev?[widget.sessionId] ?? 0;
+      final after = next[widget.sessionId] ?? 0;
+      if (after != before) _resetInputModes('keybar-reset');
     });
     // #971: current active/visible state for the repaint-telemetry gate. Set on
     // every build (a session switch rebuilds the IndexedStack children).

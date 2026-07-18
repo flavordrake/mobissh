@@ -81,6 +81,24 @@ void main() {
       }
     });
 
+    test('includes the out-of-band Reset input key before the ctrl group', () {
+      final reset = kDefaultKeybarKeys.firstWhere(
+        (k) => k.id == 'keyResetInput',
+        orElse: () => throw StateError('keyResetInput missing from the bar'),
+      );
+      // Out-of-band: no byte reaches the remote (like Paste); shown as an icon.
+      expect(reset.sequence, isEmpty);
+      expect(reset.icon, isNotNull);
+      expect(reset.isModifier, isFalse);
+      // Must sit before the tail ctrl group (not interspersed among them).
+      final ids = kDefaultKeybarKeys.map((k) => k.id).toList();
+      expect(
+        ids.indexOf('keyResetInput'),
+        lessThan(ids.indexOf('keyCtrlC')),
+        reason: 'Reset input must precede the grouped ^C/^Z/^B/^D block',
+      );
+    });
+
     test('default set includes BOTH Home and End (#615)', () {
       // #615: Home and End must be on the DEFAULT bar so they're reachable
       // without scrolling once the keys are shrunk to fit a phone width.

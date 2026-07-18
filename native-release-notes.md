@@ -10,6 +10,9 @@ gen-apk-install-page.sh staleness check).
 ## v0.1.10+150 (2026-07-17) — copy a profile as an SSH config entry
 - **The profile editor's "SSH config" tab now shows the current profile as a copy-ready `~/.ssh/config` entry** — Host, HostName, Port, and User (plus an IdentityFile hint when the profile came from an imported config), in a selectable block with a Copy button. It updates live as you edit the Details fields. The paste-to-import direction is still there below it.
 
+## v0.1.10+151 (2026-07-18) — "Reset input" key to unstick a broken terminal
+- **New Reset key on the keybar** (the ↻ icon, before ^C). When taps start printing mouse codes like `0;19;13M` at the prompt — a stuck mouse-reporting mode that reconnecting couldn't clear — tap Reset once to turn it off locally and get taps working again. No reconnect, nothing sent to the server. **Please device-test:** reproduce the stuck-mouse state on your host, then confirm Reset recovers it (couldn't validate end-to-end on the emulator — it kept dying on the build host).
+
 ## v0.1.10+149 (2026-07-16) — import a profile by pasting an SSH config entry
 - **New "SSH config" tab in the profile editor** — paste a `Host` block from your `~/.ssh/config` and it fills in the host, port, and user for you. If the block names an `IdentityFile`, the key section lets you reuse a key you've already stored or paste a new one. Works for both new connections and editing an existing profile.
 

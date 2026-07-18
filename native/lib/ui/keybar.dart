@@ -24,6 +24,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../state/ctrl_modifier_provider.dart';
+import '../state/input_mode_reset_provider.dart';
 import '../state/sessions.dart';
 
 /// Bottom-chrome sizing. These are the single source of truth for the button
@@ -291,6 +292,15 @@ const List<KeybarKey> kDefaultKeybarKeys = [
     sequence: '', // handled out-of-band
     icon: Icons.content_paste,
   ),
+  // One-shot "unstick the terminal" key: clears stuck input modes (mouse
+  // reporting) LOCALLY so taps stop echoing SGR garbage at the prompt. Handled
+  // out-of-band via inputModeResetProvider — emits no byte to the remote.
+  KeybarKey(
+    id: 'keyResetInput',
+    label: 'Reset input',
+    sequence: '', // handled out-of-band
+    icon: Icons.restart_alt,
+  ),
   // --- fixed control combos grouped LAST (owner-mandated, do not intersperse) ---
   // The one-tap ^C/^Z/^B/^D interrupts stay grouped at the END. The sticky Ctrl
   // MODIFIER moved to the FRONT (right after Esc) per #703 — only the modifier
@@ -420,6 +430,17 @@ class _KeybarState extends ConsumerState<Keybar> {
     if (k.id == 'keyPaste') {
       ctrl.disarm();
       _paste(terminal);
+      return;
+    }
+
+    // Reset input modes: a LOCAL one-shot to clear stuck mouse reporting so taps
+    // stop echoing SGR codes. Signals the active session's terminal view via
+    // inputModeResetProvider — no byte reaches the remote. Clear any armed Ctrl.
+    if (k.id == 'keyResetInput') {
+      ctrl.disarm();
+      ref
+          .read(inputModeResetProvider.notifier)
+          .requestReset(widget.activeEntry.id);
       return;
     }
 
