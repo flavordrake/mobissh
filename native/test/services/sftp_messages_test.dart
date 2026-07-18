@@ -95,6 +95,22 @@ void main() {
       expect(restored.path, '~/.ssh/config');
       expect(restored.bytes, bytes);
     });
+
+    test('SftpDownloadFileCommand preserves request id + remote/local paths',
+        () {
+      const cmd = SftpDownloadFileCommand(
+        sessionId: 'sid',
+        requestId: 'sid#dl0',
+        remotePath: '~/videos/big.mp4',
+        localPath: '/data/local/tmp/staged.mp4',
+      );
+      final restored =
+          SshTaskCommand.fromJson(cmd.toJson()) as SftpDownloadFileCommand;
+      expect(restored.sessionId, 'sid');
+      expect(restored.requestId, 'sid#dl0');
+      expect(restored.remotePath, '~/videos/big.mp4');
+      expect(restored.localPath, '/data/local/tmp/staged.mp4');
+    });
   });
 
   group('SFTP event round-trip', () {
@@ -142,6 +158,21 @@ void main() {
       final restored =
           SshTaskEvent.fromJson(ev.toJson()) as SftpDownloadDoneEvent;
       expect(restored.totalBytes, 123456);
+    });
+
+    test('SftpDownloadProgressEvent preserves done + totalBytes + request id',
+        () {
+      const ev = SftpDownloadProgressEvent(
+        sessionId: 'sid',
+        requestId: 'sid#dl0',
+        done: 65536,
+        totalBytes: 524288,
+      );
+      final restored =
+          SshTaskEvent.fromJson(ev.toJson()) as SftpDownloadProgressEvent;
+      expect(restored.requestId, 'sid#dl0');
+      expect(restored.done, 65536);
+      expect(restored.totalBytes, 524288);
     });
 
     test('SftpUploadDoneEvent preserves totalBytes + request id', () {

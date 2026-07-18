@@ -62,6 +62,14 @@ enum SshTaskCommandKind {
   /// Download a single remote file; the task streams chunks back.
   sftpDownload,
 
+  /// STREAMING download of a remote file to a LOCAL staging path (#976). The
+  /// mirror of [sftpUploadFile]: the task reads the remote file itself and
+  /// writes it straight to the local staging file, emitting only
+  /// [SftpDownloadProgressEvent]s + a terminal [SftpDownloadDoneEvent]. Unlike
+  /// [sftpDownload] (every chunk's bytes cross the IPC as base64), the file
+  /// never crosses the isolate — the fix for the large-file force-quit.
+  sftpDownloadFile,
+
   /// Upload (whole-file write) a single remote file (#892). The bytes are
   /// carried inline; the task opens the resolved path write|create|truncate and
   /// writes them, then replies with a terminal [SftpUploadDoneEvent].
@@ -180,6 +188,12 @@ enum SshTaskEventKind {
   /// browser renders a determinate bar; resume reports its starting offset via
   /// the first event.
   sftpUploadProgress,
+
+  /// Progress for a streaming file download (#976): bytes received so far +
+  /// total. Mirrors [sftpUploadProgress] — the ONLY thing the streaming
+  /// download path sends across the isolate (the bytes stay task-side). The
+  /// terminal completion reuses [sftpDownloadDone].
+  sftpDownloadProgress,
 
   /// The reply to an [SshTaskCommandKind.sftpStat] probe (#990): whether the
   /// path exists on the connected host. Errors collapse to `exists=false`
@@ -346,6 +360,13 @@ sealed class SshTaskCommand {
           requestId: json['requestId'] as String,
           path: json['path'] as String,
         );
+      case SshTaskCommandKind.sftpDownloadFile:
+        return SftpDownloadFileCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          remotePath: json['remotePath'] as String,
+          localPath: json['localPath'] as String,
+        );
       case SshTaskCommandKind.sftpUpload:
         return SftpUploadCommand(
           sessionId: sessionId,
@@ -457,6 +478,39 @@ class SftpDownloadCommand extends SshTaskCommand {
     'sessionId': sessionId,
     'requestId': requestId,
     'path': path,
+  };
+}
+
+/// UI → task: STREAMING download of the remote file at [remotePath] to the
+/// LOCAL staging file at [localPath] (#976). The task reads the remote file
+/// itself and writes it straight to disk (it shares the app process's
+/// filesystem), emitting [SftpDownloadProgressEvent]s and a terminal
+/// [SftpDownloadDoneEvent] (or [SftpErrorEvent]), all keyed by [requestId]. The
+/// whole file never crosses the isolate IPC — the mirror of [SftpUploadFileCommand]
+/// and the fix for the large-file force-quit (unlike [SftpDownloadCommand],
+/// which streams every chunk's bytes back to the UI).
+class SftpDownloadFileCommand extends SshTaskCommand {
+  const SftpDownloadFileCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.remotePath,
+    required this.localPath,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String remotePath;
+  final String localPath;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpDownloadFile;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'remotePath': remotePath,
+    'localPath': localPath,
   };
 }
 
@@ -1052,6 +1106,13 @@ sealed class SshTaskEvent {
           sent: json['sent'] as int,
           totalBytes: json['totalBytes'] as int,
         );
+      case SshTaskEventKind.sftpDownloadProgress:
+        return SftpDownloadProgressEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          done: json['done'] as int,
+          totalBytes: json['totalBytes'] as int,
+        );
       case SshTaskEventKind.sftpStatResult:
         return SftpStatResultEvent(
           sessionId: sessionId,
@@ -1557,6 +1618,37 @@ class SftpUploadProgressEvent extends SshTaskEvent {
     'sessionId': sessionId,
     'requestId': requestId,
     'sent': sent,
+    'totalBytes': totalBytes,
+  };
+}
+
+/// Task → UI: progress for a STREAMING file download (#976). [done] is the
+/// bytes received + written to the local staging file so far; [totalBytes] is
+/// the remote file size (0 when the server omitted it). Mirrors
+/// [SftpUploadProgressEvent] — the ONLY event the streaming download path emits
+/// while transferring (the bytes stay task-side); completion reuses
+/// [SftpDownloadDoneEvent].
+class SftpDownloadProgressEvent extends SshTaskEvent {
+  const SftpDownloadProgressEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.done,
+    required this.totalBytes,
+  }) : super(sessionId);
+
+  final String requestId;
+  final int done;
+  final int totalBytes;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpDownloadProgress;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'done': done,
     'totalBytes': totalBytes,
   };
 }
