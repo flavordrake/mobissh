@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+155 (2026-07-19) — SSH key library: manage keys, attach to profiles
+- **New Settings → SSH keys** — a key library independent of any profile. Import a private key with a name; rename or delete it; then attach it to one or more profiles from the profile editor's key picker ("Library: <name>"). One key can back many profiles. Private keys stay in the encrypted vault — only names/metadata are shown. (In-app key **generation** and **deploy/ssh-copy-id** are the next steps.) **Device-test:** create a key, attach it to a profile, connect. (#1088)
+
 ## v0.1.10+154 (2026-07-19) — mouse wheel scrolls the terminal (desktop mode)
 - **A connected mouse's scroll wheel now scrolls the terminal** — in Android desktop mode / DeX / with a mouse, the wheel was doing nothing (touch swipe worked, wheel didn't). It now scrolls scrollback at a shell, and drives tmux/less/vim scrolling on their screens, just like a swipe. **Please device-test with a mouse** (direction included — tell me if up/down feels inverted).
 
