@@ -855,6 +855,7 @@ class SessionAppearance {
     this.fontFamily = fontFamilyDefault,
     this.color,
     this.keybarVisible = keybarVisibleDefault,
+    this.keybarVisibleExplicit = false,
   });
 
   final int themeIndex;
@@ -877,7 +878,21 @@ class SessionAppearance {
   /// global: hiding it on one session leaves every sibling session's keybar
   /// untouched. Defaults to [keybarVisibleDefault] (true) so a fresh session
   /// shows the keybar (PWA parity — no behavior change for a new session).
+  ///
+  /// This is the STORED value. The value the UI actually renders is derived by
+  /// [resolveKeybarVisible], which — for a session the user has NOT explicitly
+  /// toggled ([keybarVisibleExplicit] false) — hides the keybar by default on a
+  /// large-landscape surface (#1086) while keeping it visible on a phone.
   final bool keybarVisible;
+
+  /// Whether the user has EXPLICITLY chosen this session's keybar visibility
+  /// (#1086). A fresh session is `false` (no choice made), so its rendered
+  /// keybar follows the layout default: shown on a phone, hidden in
+  /// large-landscape. Once the user flips the keybar toggle this becomes `true`
+  /// and [keybarVisible] is honoured verbatim regardless of layout — an explicit
+  /// choice wins. A separate flag (rather than a nullable [keybarVisible]) keeps
+  /// `copyWith` free of the null-means-"leave unchanged" ambiguity.
+  final bool keybarVisibleExplicit;
 
   SessionAppearance copyWith({
     int? themeIndex,
@@ -885,6 +900,7 @@ class SessionAppearance {
     String? fontFamily,
     Color? color,
     bool? keybarVisible,
+    bool? keybarVisibleExplicit,
   }) {
     return SessionAppearance(
       themeIndex: themeIndex ?? this.themeIndex,
@@ -892,6 +908,8 @@ class SessionAppearance {
       fontFamily: fontFamily ?? this.fontFamily,
       color: color ?? this.color,
       keybarVisible: keybarVisible ?? this.keybarVisible,
+      keybarVisibleExplicit:
+          keybarVisibleExplicit ?? this.keybarVisibleExplicit,
     );
   }
 
@@ -902,12 +920,38 @@ class SessionAppearance {
       other.fontSize == fontSize &&
       other.fontFamily == fontFamily &&
       other.color == color &&
-      other.keybarVisible == keybarVisible;
+      other.keybarVisible == keybarVisible &&
+      other.keybarVisibleExplicit == keybarVisibleExplicit;
 
   @override
-  int get hashCode =>
-      Object.hash(themeIndex, fontSize, fontFamily, color, keybarVisible);
+  int get hashCode => Object.hash(
+    themeIndex,
+    fontSize,
+    fontFamily,
+    color,
+    keybarVisible,
+    keybarVisibleExplicit,
+  );
 }
+
+/// Resolve the keybar visibility the UI should RENDER for a session (#1086),
+/// from its stored [visible] flag, whether the user made an [explicit] choice,
+/// and whether the surface is [largeLandscape].
+///
+/// - Explicit user choice always wins ([visible] verbatim) — a hardware-keyboard
+///   user who showed the keybar on a tablet keeps it; one who hid it on a phone
+///   keeps it hidden.
+/// - Otherwise the keybar is HIDDEN by default in large-landscape (a hardware
+///   keyboard is assumed on wide/desktop screens) and shown (per
+///   [keybarVisibleDefault]) on a phone.
+///
+/// Pure so it is unit-testable and callable at each layout site with a
+/// `largeLandscape` derived from `MediaQuery.sizeOf(context)`.
+bool resolveKeybarVisible({
+  required bool visible,
+  required bool explicit,
+  required bool largeLandscape,
+}) => explicit ? visible : (largeLandscape ? false : keybarVisibleDefault);
 
 /// Parse a PWA-style profile color hex (#653) into a [Color]. Accepts
 /// `#RRGGBB`, `#AARRGGBB`, or those forms without a leading `#`. Returns null
@@ -1005,8 +1049,19 @@ class SessionAppearanceNotifier
   /// Set [sessionId]'s keybar visibility (#573). Affects only this session —
   /// sibling sessions never change (the per-session isolation the issue is
   /// about). Mirrors [setTheme]/[setFontSize].
+  ///
+  /// #1086: this records an EXPLICIT user choice
+  /// ([SessionAppearance.keybarVisibleExplicit] → true), so the keybar is
+  /// henceforth honoured verbatim regardless of layout — the large-landscape
+  /// hide-by-default no longer applies to a session the user has toggled.
   void setKeybarVisible(String sessionId, bool visible) {
-    _put(sessionId, appearanceOf(sessionId).copyWith(keybarVisible: visible));
+    _put(
+      sessionId,
+      appearanceOf(sessionId).copyWith(
+        keybarVisible: visible,
+        keybarVisibleExplicit: true,
+      ),
+    );
   }
 
   /// Flip [sessionId]'s keybar visibility (#573). Reads the session's CURRENT
@@ -1105,6 +1160,22 @@ final sessionKeybarVisibleProvider = Provider.family<bool, String>((
       .keybarVisible;
 });
 
+/// Per-session "did the user EXPLICITLY choose the keybar visibility?" flag
+/// (#1086). Companion to [sessionKeybarVisibleProvider]: the layout site pairs
+/// the two through [resolveKeybarVisible] so a session the user has NOT toggled
+/// hides the keybar by default in large-landscape, while an explicit choice is
+/// honoured verbatim. Rebuilds when the session's appearance entry changes.
+final sessionKeybarVisibleExplicitProvider = Provider.family<bool, String>((
+  ref,
+  sessionId,
+) {
+  ref.watch(sessionAppearanceProvider);
+  return ref
+      .read(sessionAppearanceProvider.notifier)
+      .appearanceOf(sessionId)
+      .keybarVisibleExplicit;
+});
+
 /// The [NamedTerminalTheme] for a given session, guarding a stale index.
 final sessionTerminalThemeProvider =
     Provider.family<NamedTerminalTheme, String>((ref, sessionId) {
@@ -1139,6 +1210,16 @@ final activeSessionKeybarVisibleProvider = Provider<bool>((ref) {
   final activeId = ref.watch(activeSessionIdProvider);
   if (activeId == null) return keybarVisibleDefault;
   return ref.watch(sessionKeybarVisibleProvider(activeId));
+});
+
+/// The ACTIVE session's explicit-keybar-choice flag (#1086) — pairs with
+/// [activeSessionKeybarVisibleProvider] so the session menu can resolve the
+/// EFFECTIVE keybar state (via [resolveKeybarVisible]) for its toggle. Falls
+/// back to `false` (no explicit choice) when no session is active.
+final activeSessionKeybarVisibleExplicitProvider = Provider<bool>((ref) {
+  final activeId = ref.watch(activeSessionIdProvider);
+  if (activeId == null) return false;
+  return ref.watch(sessionKeybarVisibleExplicitProvider(activeId));
 });
 
 /// The ACTIVE session's terminal font family (#679) — what the session menu's

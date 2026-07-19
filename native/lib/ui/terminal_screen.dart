@@ -39,6 +39,7 @@ import '../state/terminal_backend.dart';
 import '../state/terminal_providers.dart';
 import '../state/ui_prefs_providers.dart';
 import '../terminal/url_hit_test.dart';
+import '../util/large_landscape.dart';
 import 'compose_bar.dart';
 import 'ghostty_terminal_view.dart';
 import 'keybar.dart';
@@ -158,8 +159,16 @@ class TerminalScreen extends ConsumerWidget {
     // Switching sessions re-watches the new active id, so each session shows
     // its own keybar state; toggling one never affects another. The compose
     // bar's bottomReserve (below) consumes the same active-session value.
-    final keybarVisible = ref.watch(
-      sessionKeybarVisibleProvider(activeEntry.id),
+    //
+    // #1086: the STORED flag + the explicit-choice flag resolve (via
+    // resolveKeybarVisible) to the value we actually render. On a large-landscape
+    // surface a hardware keyboard is assumed, so a session the user hasn't
+    // explicitly toggled hides the keybar by default; an explicit choice wins.
+    final largeLandscape = isLargeLandscape(MediaQuery.sizeOf(context));
+    final keybarVisible = resolveKeybarVisible(
+      visible: ref.watch(sessionKeybarVisibleProvider(activeEntry.id)),
+      explicit: ref.watch(sessionKeybarVisibleExplicitProvider(activeEntry.id)),
+      largeLandscape: largeLandscape,
     );
 
     // #653: resolve the active session's swatch color. Prefer the profile's
@@ -185,6 +194,34 @@ class TerminalScreen extends ConsumerWidget {
     // keyboard COVERING the session bar (P0). #610 made the compose bar dock to
     // FIXED margins (it no longer chases the keyboard inset), so that override
     // is unnecessary AND harmful — removed. The bar now floats over the keyboard.
+    // #566/#1086: the slim session bar — the thumb-reachable trigger for the
+    // session menu (tap the label area) + a compose toggle at the right edge,
+    // with a horizontal swipe across it switching sessions (#568). On a phone it
+    // sits at the BOTTOM (below the keybar) so the menu sheet rises from
+    // immediately above the affordance that summoned it. In large-landscape
+    // (#1086) it moves to the TOP as a regular top menu (a hardware keyboard +
+    // desktop-style chrome is assumed), and the terminal reclaims the bottom
+    // space. Built once here so the swipe/compose wiring is identical either way.
+    final sessionBar = _SessionBar(
+      label: activeEntry.label,
+      sessionCount: entries.length,
+      swatchColor: swatchColor,
+      // Swipe left → next session, swipe right → previous, wrapping
+      // around the session ring (#568). No-op with a single session.
+      onSwipe: (delta) {
+        if (entries.length < 2) return;
+        final from = activeIndex < 0 ? 0 : activeIndex;
+        final count = entries.length;
+        final target = (from + delta) % count;
+        final nextIndex = target < 0 ? target + count : target;
+        ref.read(sessionsProvider.notifier).setActive(entries[nextIndex].id);
+        HapticFeedback.lightImpact();
+      },
+      composeOn: composeBarVisible,
+      onToggleCompose: () =>
+          ref.read(composeBarVisibleProvider.notifier).toggle(),
+    );
+
     return Scaffold(
       body: SafeArea(
         child: Stack(
@@ -192,6 +229,8 @@ class TerminalScreen extends ConsumerWidget {
             // The terminal + chrome column.
             Column(
               children: [
+                // #1086: session controls at the TOP in large-landscape.
+                if (largeLandscape) sessionBar,
                 Expanded(
                   child: IndexedStack(
                     index: activeIndex < 0 ? 0 : activeIndex,
@@ -205,32 +244,9 @@ class TerminalScreen extends ConsumerWidget {
                   ),
                 ),
                 if (keybarVisible) Keybar(activeEntry: activeEntry),
-                // Bottom session bar (#566): the thumb-reachable trigger for the
-                // session menu (tap the label area) + a disconnect affordance at the
-                // right edge. Sits below the keybar so the menu sheet rises from
-                // immediately above the affordance that summoned it. The label tap
-                // target leaves a clean seam for swipe-to-switch (#568).
-                _SessionBar(
-                  label: activeEntry.label,
-                  sessionCount: entries.length,
-                  swatchColor: swatchColor,
-                  // Swipe left → next session, swipe right → previous, wrapping
-                  // around the session ring (#568). No-op with a single session.
-                  onSwipe: (delta) {
-                    if (entries.length < 2) return;
-                    final from = activeIndex < 0 ? 0 : activeIndex;
-                    final count = entries.length;
-                    final target = (from + delta) % count;
-                    final nextIndex = target < 0 ? target + count : target;
-                    ref
-                        .read(sessionsProvider.notifier)
-                        .setActive(entries[nextIndex].id);
-                    HapticFeedback.lightImpact();
-                  },
-                  composeOn: composeBarVisible,
-                  onToggleCompose: () =>
-                      ref.read(composeBarVisibleProvider.notifier).toggle(),
-                ),
+                // #1086: on a phone the session bar stays at the BOTTOM, below
+                // the keybar (unchanged phone layout).
+                if (!largeLandscape) sessionBar,
               ],
             ),
             // Floating compose bar (#604): overlays the terminal as a draggable
@@ -249,9 +265,12 @@ class TerminalScreen extends ConsumerWidget {
                 // the session bar (#610). Heights are centralized constants
                 // (#615): kSessionBarReserve (session bar) + kKeybarReserve
                 // (keybar, only when visible). Update those — not magic numbers
-                // here — when the chrome height changes.
+                // here — when the chrome height changes. #1086: in large-landscape
+                // the session bar moved to the TOP, so it no longer reserves any
+                // bottom space.
                 bottomReserve:
-                    kSessionBarReserve + (keybarVisible ? kKeybarReserve : 0),
+                    (largeLandscape ? 0 : kSessionBarReserve) +
+                    (keybarVisible ? kKeybarReserve : 0),
                 onClose: () =>
                     ref.read(composeBarVisibleProvider.notifier).set(false),
               ),
