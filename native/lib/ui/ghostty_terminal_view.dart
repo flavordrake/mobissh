@@ -631,6 +631,22 @@ bool ghosttyShouldRefreshOnLifecycle(
   return prev != AppLifecycleState.resumed;
 }
 
+/// #1085: whether the window went through a real WINDOWING transition between
+/// two builds — desktop-mode entry, rotation, or a freeform resize — as opposed
+/// to no change or first layout. A soft keyboard changes `viewInsets`, NOT
+/// `MediaQuery.size`, so ANY size delta here is a genuine window change. Returns
+/// false when [prev] is null (first layout, nothing to transition from) and when
+/// the change is sub-pixel jitter (< [epsilon] on both axes). On the true
+/// boundary we arm the auto-reply settle so the terminal's re-probed DA/DSR/
+/// mouse replies don't leak as `?62c` at the prompt (the #1072 family — un-gated
+/// on config-changes because no shellReady fires there).
+bool ghosttyWindowChangedMaterially(Size? prev, Size next,
+    {double epsilon = 1.0}) {
+  if (prev == null) return false;
+  return (prev.width - next.width).abs() >= epsilon ||
+      (prev.height - next.height).abs() >= epsilon;
+}
+
 /// Whether the terminal should be FOCUSED on first connect (#717).
 ///
 /// On the ghostty backend flterm's [TerminalView] is built `autofocus: false`,
@@ -2645,6 +2661,14 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// the resume burst single-shot.
   AppLifecycleState? _lastLifecycle;
 
+  /// #1085: the last window size seen in build, to detect a WINDOWING transition
+  /// (desktop-mode entry, rotation, freeform resize) vs a keyboard toggle. A
+  /// soft keyboard changes `viewInsets`, NOT `MediaQuery.size`, so any size delta
+  /// here is a real window change — the boundary on which we arm the auto-reply
+  /// settle so a re-probed DA/DSR/mouse reply doesn't leak as `?62c` (the #1072
+  /// family, un-gated on config-changes because no shellReady fires there).
+  Size? _lastWindowSize;
+
   /// #717: whether THIS connect has already focused the terminal. flterm's
   /// `TerminalView` is `autofocus: false`, so on first connect the terminal is
   /// unfocused and flterm scroll/interaction is inert until a tap raises the
@@ -4535,6 +4559,21 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       palette: palette.theme,
     );
     final devicePixelRatio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
+    // #1085: detect a windowing transition (desktop-mode entry, rotation,
+    // freeform resize). Reading MediaQuery.sizeOf here makes this build depend on
+    // the window size, so it re-runs on a real resize (a soft keyboard changes
+    // viewInsets, not size, so it never trips this). On the transition, arm the
+    // auto-reply settle (post-frame — don't mutate controller state mid-build) so
+    // the terminal's re-probed DA/DSR/mouse replies don't leak as `?62c` at the
+    // prompt. Complements the #1072 shellReady/reconnect arm, which config-change
+    // transitions bypass (no shellReady fires).
+    final windowSize = MediaQuery.sizeOf(context);
+    if (ghosttyWindowChangedMaterially(_lastWindowSize, windowSize)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _controller?.beginReconnectSettle();
+      });
+    }
+    _lastWindowSize = windowSize;
     final cellSize = ghosttyMeasureCellSize(
       fontSize: theme.fontSize,
       fontFamily: theme.fontFamily,

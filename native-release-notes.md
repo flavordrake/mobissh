@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+152 (2026-07-19) — no `?62c` junk when entering Android desktop mode
+- **Moving MobiSSH into Android desktop mode no longer types `?62c` (or stray codes) at your prompt.** The terminal answers capability probes during the desktop-mode transition; those replies were leaking as input because the earlier fix only covered reconnects, not the desktop-mode/window-resize transition. Now the same brief hold applies on any real window change (desktop-mode entry, rotation, freeform resize). (#1085; the crash itself is a transition bug — a clean desktop-mode window works fine.)
+
 ## v0.1.10+150 (2026-07-17) — copy a profile as an SSH config entry
 - **The profile editor's "SSH config" tab now shows the current profile as a copy-ready `~/.ssh/config` entry** — Host, HostName, Port, and User (plus an IdentityFile hint when the profile came from an imported config), in a selectable block with a Copy button. It updates live as you edit the Details fields. The paste-to-import direction is still there below it.
 
