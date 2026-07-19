@@ -186,6 +186,11 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     } else {
       _authKind = _AuthKind.password;
     }
+    // Unify the key picker with pre-existing per-profile keys (#1088): adopt any
+    // profile key not yet in the library so the Library/Stored sources converge
+    // (a given vault id appears once, library label). Idempotent; the
+    // savedKeysProvider watch in _keySourceOptions rebuilds after it invalidates.
+    ref.read(keysManagerProvider).adoptFromProfiles();
   }
 
   @override
@@ -279,12 +284,17 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
           if (passphrase.isNotEmpty) 'passphrase': passphrase,
         });
       } else if (_authKind == _AuthKind.key && key.isNotEmpty) {
-        keyVaultId ??= 'profile-key-$newIdentity';
-        // PWA canonical key entry shape: {data: <PEM>, passphrase?}.
-        await secrets.write(keyVaultId, <String, Object?>{
-          'data': key,
-          if (passphrase.isNotEmpty) 'passphrase': passphrase,
-        });
+        // A freshly pasted key becomes a first-class LIBRARY key (#1088) so it's
+        // manageable from the Keys screen — not a one-off `profile-key-…` blob.
+        // The manager writes the PEM to the vault; we point this profile at the
+        // returned library vault id. Named from the profile so it reads well in
+        // the Keys screen.
+        final libraryKey = await ref.read(keysManagerProvider).importFromPem(
+              name: '${_emptyToNull(_titleCtrl.text) ?? host} key',
+              pem: key,
+              passphrase: passphrase.isEmpty ? null : passphrase,
+            );
+        keyVaultId = libraryKey.vaultId;
       } else if (_authKind == _AuthKind.key &&
           passphrase.isNotEmpty &&
           keyVaultId != null) {

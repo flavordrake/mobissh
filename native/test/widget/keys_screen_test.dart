@@ -157,6 +157,44 @@ void main() {
     expect(await secrets.read(key.vaultId), isNull);
   });
 
+  testWidgets('opening the screen adopts a profile key into the library (#1088)',
+      (tester) async {
+    // A profile carries a per-profile key, but the library is EMPTY — the two
+    // aren't unified yet. Opening the Keys screen must adopt it so it lists.
+    final keysStore = KeysStore();
+    final secrets = SecretsStore(backend: InMemorySecretsBackend());
+    const vaultId = 'profile-key-fd:22:me';
+    await secrets.write(vaultId, <String, Object?>{'data': 'x'});
+    final profilesStore = ProfilesStore();
+    await profilesStore.save(<SavedProfile>[
+      SavedProfile(
+        title: 'fd-dev',
+        host: 'fd',
+        port: 22,
+        username: 'me',
+        authType: 'key',
+        keyVaultId: vaultId,
+      ),
+    ]);
+
+    // Before opening, the library holds nothing.
+    expect(await keysStore.load(), isEmpty);
+
+    await _pump(
+      tester,
+      keysStore: keysStore,
+      secrets: secrets,
+      profilesStore: profilesStore,
+    );
+
+    // The adopted key is listed by the profile's name.
+    expect(find.text('fd-dev'), findsOneWidget);
+    final lib = await keysStore.load();
+    expect(lib.map((k) => k.name), ['fd-dev']);
+    // Adopted IN PLACE — points at the original vault id, no re-keying.
+    expect(lib.single.vaultId, vaultId);
+  });
+
   testWidgets('Delete warns when a profile references the key', (tester) async {
     final keysStore = KeysStore();
     final secrets = SecretsStore(backend: InMemorySecretsBackend());
