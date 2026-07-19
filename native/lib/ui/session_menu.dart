@@ -33,6 +33,7 @@ import '../state/profiles_providers.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart' show ProfilesStore;
+import '../util/large_landscape.dart';
 import 'detection_lab_screen.dart';
 import 'favorites_menu_sheet.dart';
 import 'file_browser_screen.dart';
@@ -289,7 +290,17 @@ class SessionMenu extends ConsumerWidget {
     // rows read and mutate the ACTIVE session only. With no active session
     // (empty list) these resolve to the default so the rows still render
     // sensibly.
-    final keybarVisible = ref.watch(activeSessionKeybarVisibleProvider);
+    //
+    // #1086: the keybar toggle reflects and flips the EFFECTIVE (rendered) state,
+    // not the raw stored flag — in large-landscape an un-toggled session's keybar
+    // is hidden by default, so the toggle must show "hidden" and flip to shown.
+    // Resolution happens here (the notifier has no BuildContext to read the
+    // layout from).
+    final keybarVisible = resolveKeybarVisible(
+      visible: ref.watch(activeSessionKeybarVisibleProvider),
+      explicit: ref.watch(activeSessionKeybarVisibleExplicitProvider),
+      largeLandscape: isLargeLandscape(MediaQuery.sizeOf(context)),
+    );
     final activeId = sessions.activeId;
     final palette = ref.watch(activeSessionThemeProvider);
     final fontFamily = ref.watch(activeSessionFontFamilyProvider);
@@ -606,9 +617,12 @@ class _SessionControlsRow extends ConsumerWidget {
             icon: keybarVisible ? Icons.keyboard : Icons.keyboard_outlined,
             selected: keybarVisible,
             enabled: hasActive,
+            // #1086: flip the EFFECTIVE (rendered) value. setKeybarVisible marks
+            // the choice explicit, so the large-landscape hide-by-default no
+            // longer applies to this session — the user's choice is honoured.
             onTap: () => ref
                 .read(sessionAppearanceProvider.notifier)
-                .toggleKeybarVisible(activeId!),
+                .setKeybarVisible(activeId!, !keybarVisible),
           ),
           // 5. Disconnect the ACTIVE session (#607). Fully closes (disconnect +
           // dispose + REMOVE the entry) so a re-connect restarts the service

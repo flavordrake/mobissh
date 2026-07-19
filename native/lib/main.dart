@@ -23,6 +23,7 @@ import 'ui/connect_form.dart';
 import 'ui/feedback_overlay.dart';
 import 'ui/settings_screen.dart';
 import 'ui/terminal_screen.dart';
+import 'util/large_landscape.dart';
 
 void main() {
   // CrashReporter.runGuarded wraps the entire app in a zone that captures
@@ -413,39 +414,74 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
             onPressed: () => Navigator.of(context).maybePop(),
           )
         : null;
+
+    // #643: NO SingleChildScrollView — the chooser fills the body so its profile
+    // list expands and scrolls internally. IndexedStack gives ConnectForm a
+    // bounded height (its Expanded needs that) and keeps each destination's
+    // state alive across tab switches. Shared by both layouts below.
+    final destinations = IndexedStack(
+      index: _index,
+      children: const [ConnectForm(), SettingsScreen()],
+    );
+
+    // #1086: large-landscape (tablet / desktop-mode / connected display) presents
+    // the two destinations as a regular top-of-side menu — here a Material
+    // NavigationRail down the leading edge — instead of the phone bottom nav, so
+    // the wide layout reads as desktop chrome. Phone/portrait keeps the bottom
+    // NavigationBar unchanged.
+    final largeLandscape = isLargeLandscape(MediaQuery.sizeOf(context));
+
     return Scaffold(
       appBar: AppBar(leading: leading, title: Text(_titles[_index])),
       body: SafeArea(
-        child: IndexedStack(
-          index: _index,
-          children: const [
-            // #643: NO SingleChildScrollView — the chooser fills the body so
-            // its profile list expands and scrolls internally. IndexedStack
-            // gives ConnectForm a bounded height (its Expanded needs that).
-            ConnectForm(),
-            SettingsScreen(),
-          ],
-        ),
+        child: largeLandscape
+            ? Row(
+                children: [
+                  NavigationRail(
+                    key: const Key('home-side-nav'),
+                    selectedIndex: _index,
+                    onDestinationSelected: (i) => setState(() => _index = i),
+                    labelType: NavigationRailLabelType.all,
+                    destinations: const [
+                      NavigationRailDestination(
+                        icon: Icon(Icons.dns_outlined),
+                        selectedIcon: Icon(Icons.dns),
+                        label: Text('Profiles'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.settings_outlined),
+                        selectedIcon: Icon(Icons.settings),
+                        label: Text('Settings'),
+                      ),
+                    ],
+                  ),
+                  const VerticalDivider(width: 1, thickness: 1),
+                  Expanded(child: destinations),
+                ],
+              )
+            : destinations,
       ),
-      bottomNavigationBar: NavigationBar(
-        key: const Key('home-bottom-nav'),
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            key: Key('home-nav-profiles'),
-            icon: Icon(Icons.dns_outlined),
-            selectedIcon: Icon(Icons.dns),
-            label: 'Profiles',
-          ),
-          NavigationDestination(
-            key: Key('home-nav-settings'),
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
-      ),
+      bottomNavigationBar: largeLandscape
+          ? null
+          : NavigationBar(
+              key: const Key('home-bottom-nav'),
+              selectedIndex: _index,
+              onDestinationSelected: (i) => setState(() => _index = i),
+              destinations: const [
+                NavigationDestination(
+                  key: Key('home-nav-profiles'),
+                  icon: Icon(Icons.dns_outlined),
+                  selectedIcon: Icon(Icons.dns),
+                  label: 'Profiles',
+                ),
+                NavigationDestination(
+                  key: Key('home-nav-settings'),
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: 'Settings',
+                ),
+              ],
+            ),
     );
   }
 }
