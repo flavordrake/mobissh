@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+154 (2026-07-19) — mouse wheel scrolls the terminal (desktop mode)
+- **A connected mouse's scroll wheel now scrolls the terminal** — in Android desktop mode / DeX / with a mouse, the wheel was doing nothing (touch swipe worked, wheel didn't). It now scrolls scrollback at a shell, and drives tmux/less/vim scrolling on their screens, just like a swipe. **Please device-test with a mouse** (direction included — tell me if up/down feels inverted).
+
 ## v0.1.10+153 (2026-07-19) — large-landscape layout (desktop mode / tablets)
 - **On wide landscape screens (tablet, Android desktop mode / freeform, DeX), MobiSSH now uses a desktop-style layout:** the session controls move to the top, the home Profiles/Settings nav moves to a side rail, and the on-screen keybar is hidden by default (a hardware keyboard is assumed — you can still turn it back on from the session menu, and that choice sticks). Your phone portrait layout is unchanged. Kicks in at ~840dp wide + landscape. **Please device-test on a real large screen** — the build-host emulator is down, so this shipped on widget tests + your validation.
 

@@ -66,6 +66,11 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
       onPointerDown: tracked ? _handleTrackedDown : null,
       onPointerMove: tracked ? _handleTrackedMove : null,
       onPointerUp: tracked ? _handleTrackedUp : null,
+      // Mouse WHEEL (desktop mode / DeX / connected mouse). Touch scroll flows
+      // through the raw gesture drag, but a wheel is a PointerSignal — with no
+      // handler here it was dropped entirely, so wheel scroll did nothing on
+      // desktop mode. Handle it as the mouse equivalent of a swipe.
+      onPointerSignal: _handlePointerSignal,
       child: TerminalRawGestureDetector(
         onSingleTapDown: _handleSingleTapDown,
         onDoubleTapDown: _handleDoubleTapDown,
@@ -247,6 +252,34 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
       pixelX: position.dx,
       pixelY: position.dy,
     ));
+  }
+
+  /// Mouse-wheel handler (desktop mode / connected mouse). A wheel notch is the
+  /// mouse equivalent of a swipe: convert the pixel delta to a line count and
+  /// route it exactly like the controller's [handleScroll]. On the ALTERNATE
+  /// screen with mouse tracking (tmux, less) that emits SGR wheel reports; on
+  /// the PRIMARY screen [handleScroll] no-ops, so we scroll the local scrollback
+  /// view via the scroll controller (mirroring the touch scroll path). Negative
+  /// dy (wheel up) scrolls BACK into history.
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final dy = event.scrollDelta.dy;
+    if (dy == 0) return;
+
+    final cellHeight = widget.metrics.cellHeight;
+    var lines = cellHeight > 0 ? (dy / cellHeight).round() : 0;
+    if (lines == 0) lines = dy < 0 ? -1 : 1; // at least one line per notch
+    _binding.handleScroll(lines);
+
+    final scrollController = widget.scrollController;
+    if (scrollController != null && scrollController.hasClients) {
+      final position = scrollController.position;
+      final target = (position.pixels + dy).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if (target != position.pixels) scrollController.jumpTo(target);
+    }
   }
 
   void _startAutoScroll(int delta) {
