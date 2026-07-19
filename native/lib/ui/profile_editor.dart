@@ -30,8 +30,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../ssh/ssh_config_parser.dart';
+import '../state/keys_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/ui_prefs_providers.dart';
+import '../storage/keys_store.dart';
 import '../storage/profiles_store.dart';
 import 'color_picker_sheet.dart';
 import 'top_toast.dart';
@@ -42,6 +44,14 @@ enum _AuthKind { password, key }
 /// or a [stored] key already in the vault (reused by its keyVaultId, no
 /// re-paste). Default [pasted] preserves the pre-import editor behavior.
 enum _KeySource { pasted, stored }
+
+/// One selectable entry in the "Key source" dropdown: the vault id to reuse and
+/// the display label (`Library: <name>` or `Stored: <profile title>`).
+class _KeyOption {
+  const _KeyOption({required this.vaultId, required this.label});
+  final String vaultId;
+  final String label;
+}
 
 /// Outcome of the profile editor (#583). The editor is now the SINGLE entry for
 /// both editing a saved profile AND creating a new / ad-hoc connection — the
@@ -553,10 +563,9 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   /// key, an IdentityFile hint from an imported config, and either a
   /// stored-key note (reuse) or the PEM + passphrase paste fields.
   List<Widget> _buildKeyAuthFields(BuildContext context) {
-    final storedKeys =
-        ref.watch(storedKeysProvider).asData?.value ?? const <StoredKeyRef>[];
+    final keyOptions = _keySourceOptions();
     return [
-      if (storedKeys.isNotEmpty) ...[
+      if (keyOptions.isNotEmpty) ...[
         InputDecorator(
           decoration: const InputDecoration(
             labelText: 'Key source',
@@ -575,10 +584,10 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
                   value: _pasteKeySentinel,
                   child: Text('Paste a new key…'),
                 ),
-                for (final k in storedKeys)
+                for (final o in keyOptions)
                   DropdownMenuItem<String>(
-                    value: k.keyVaultId,
-                    child: Text('Stored: ${k.label}'),
+                    value: o.vaultId,
+                    child: Text(o.label),
                   ),
               ],
               onChanged: (v) => setState(() {
@@ -612,7 +621,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.vpn_key),
           title: const Text('Using a stored key'),
-          subtitle: Text(_storedKeyLabel(storedKeys, _selectedStoredKeyVaultId)),
+          subtitle: Text(_storedKeyLabel(keyOptions, _selectedStoredKeyVaultId)),
         )
       else ...[
         TextField(
@@ -641,9 +650,35 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     ];
   }
 
-  String _storedKeyLabel(List<StoredKeyRef> keys, String? id) {
-    for (final k in keys) {
-      if (k.keyVaultId == id) return k.label;
+  /// The selectable "Key source" entries: the named library keys
+  /// ([savedKeysProvider], #1088) plus any keys already attached to other
+  /// profiles ([storedKeysProvider]). Deduped by vault id — a library key that a
+  /// profile already uses appears once (library label wins) — so picking one
+  /// points this profile's `keyVaultId` at that shared vault id, writing no new
+  /// secret. The `_persist` reuse path is unchanged.
+  List<_KeyOption> _keySourceOptions() {
+    final out = <_KeyOption>[];
+    final seen = <String>{};
+    final libraryKeys =
+        ref.watch(savedKeysProvider).asData?.value ?? const <SavedKey>[];
+    for (final k in libraryKeys) {
+      if (seen.add(k.vaultId)) {
+        out.add(_KeyOption(vaultId: k.vaultId, label: 'Library: ${k.name}'));
+      }
+    }
+    final storedKeys =
+        ref.watch(storedKeysProvider).asData?.value ?? const <StoredKeyRef>[];
+    for (final k in storedKeys) {
+      if (seen.add(k.keyVaultId)) {
+        out.add(_KeyOption(vaultId: k.keyVaultId, label: 'Stored: ${k.label}'));
+      }
+    }
+    return out;
+  }
+
+  String _storedKeyLabel(List<_KeyOption> options, String? id) {
+    for (final o in options) {
+      if (o.vaultId == id) return o.label;
     }
     return id ?? '';
   }

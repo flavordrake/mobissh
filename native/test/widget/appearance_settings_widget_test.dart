@@ -95,8 +95,11 @@ void main() {
 
       await _pumpFrames(tester, count: 12);
 
-      // Drag the slider thumb to the far right (max).
+      // Drag the slider thumb to the far right (max). Scroll it into view first
+      // — the panel grows as sections are added, so don't assume a fixed offset.
       final slider = find.byKey(const ValueKey('font-size-slider'));
+      await tester.ensureVisible(slider);
+      await _pumpFrames(tester);
       await tester.drag(slider, const Offset(500, 0));
       await _pumpFrames(tester);
 
@@ -146,6 +149,9 @@ void main() {
       );
       await _pumpFrames(tester, count: 12);
 
+      // Scroll the row into view first — the panel grows as sections are added.
+      await tester.ensureVisible(find.byKey(const ValueKey('default-font-tile')));
+      await _pumpFrames(tester);
       await tester.tap(find.byKey(const ValueKey('default-font-tile')));
       await _pumpFrames(tester, count: 8);
 

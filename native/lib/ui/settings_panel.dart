@@ -29,6 +29,7 @@ import '../storage/detection_exceptions_store.dart';
 import '../util/relative_time.dart';
 import 'detection_lab_screen.dart';
 import 'feedback_overlay.dart' show VersionResolver, resolveBuildVersion;
+import 'keys_screen.dart';
 import 'settings_subheader.dart';
 import 'top_toast.dart';
 
@@ -83,6 +84,21 @@ class SettingsPanel extends ConsumerWidget {
                   : null,
             );
           },
+        ),
+        const SettingsSubheader('Keys'),
+        // #1088: the SSH key library — named, reusable keys managed independently
+        // of any profile. Import here, then attach to one or more profiles from
+        // the profile editor's key-source picker. Its own route (a manager, not a
+        // settings toggle). Monochrome outlined icon.
+        ListTile(
+          key: const ValueKey('ssh-keys-tile'),
+          leading: const Icon(Icons.vpn_key_outlined),
+          title: const Text('SSH keys'),
+          subtitle: const Text(
+            'Manage named private keys you can attach to profiles.',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => showKeysScreen(context),
         ),
         const SettingsSubheader('Background'),
         SwitchListTile(
