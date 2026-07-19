@@ -23,11 +23,26 @@ Future<void> showKeysScreen(BuildContext context) {
   );
 }
 
-class KeysScreen extends ConsumerWidget {
+class KeysScreen extends ConsumerStatefulWidget {
   const KeysScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<KeysScreen> createState() => _KeysScreenState();
+}
+
+class _KeysScreenState extends ConsumerState<KeysScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Unify the library with pre-existing per-profile keys (#1088): adopt any
+    // profile key not yet in the library so it shows here by name. Idempotent
+    // and a no-op when there's nothing to adopt; the savedKeysProvider watch
+    // below picks up the newly-adopted rows after it invalidates.
+    ref.read(keysManagerProvider).adoptFromProfiles();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final keysAsync = ref.watch(savedKeysProvider);
     return Scaffold(
       key: const ValueKey('keys-screen'),

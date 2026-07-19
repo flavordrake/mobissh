@@ -93,4 +93,72 @@ void main() {
       expect((await backend.readAll()).length, blobsBefore);
     },
   );
+
+  testWidgets(
+    'pasting a NEW key + Save creates a library key; profile points at it (#1088)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final keysStore = KeysStore();
+      final backend = InMemorySecretsBackend();
+      final secrets = SecretsStore(backend: backend);
+      final store = ProfilesStore();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            profilesStoreProvider.overrideWithValue(store),
+            secretsStoreProvider.overrideWithValue(secrets),
+            keysStoreProvider.overrideWithValue(keysStore),
+          ],
+          child: MaterialApp(
+            home: ProfileEditor(profile: blankProfile(), isNew: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('profile-editor-title')),
+        'prod box',
+      );
+      await tester.enterText(
+        find.byKey(const Key('profile-editor-host')),
+        'prod.example',
+      );
+      await tester.enterText(
+        find.byKey(const Key('profile-editor-username')),
+        'deploy',
+      );
+      await tester.tap(find.text('Key'));
+      await tester.pumpAndSettle();
+
+      // Paste a NEW key into the PEM field (default pasted source).
+      const pem = '-----BEGIN OPENSSH PRIVATE KEY-----\nnewkey\n-----END-----';
+      await tester.enterText(find.byKey(const Key('profile-editor-key')), pem);
+      await tester.tap(find.byKey(const Key('profile-editor-save')));
+      await tester.pumpAndSettle();
+
+      // A library key was created (manageable from the Keys screen).
+      final lib = await keysStore.load();
+      expect(lib.length, 1);
+      final libraryKey = lib.single;
+      expect(libraryKey.name, 'prod box key');
+
+      // The profile points at that library key's vault id.
+      final saved =
+          (await store.load()).firstWhere((p) => p.host == 'prod.example');
+      expect(saved.authType, 'key');
+      expect(saved.keyVaultId, libraryKey.vaultId);
+
+      // The PEM lives in the vault under that id — NOT a one-off profile-key blob.
+      final blob = await secrets.read(libraryKey.vaultId);
+      expect(blob?['data'], pem);
+      expect(saved.keyVaultId, isNot(startsWith('profile-key-')));
+    },
+  );
 }

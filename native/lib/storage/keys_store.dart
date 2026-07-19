@@ -25,7 +25,6 @@ const String keysPrefsKey = 'mobissh.keys.v1';
 /// key bytes live in the vault under [vaultId].
 @immutable
 class SavedKey {
-  // ignore: prefer_initializing_formals
   const SavedKey({
     required this.id,
     required this.name,
@@ -34,7 +33,9 @@ class SavedKey {
     this.publicKey,
     this.fingerprint,
     this.createdAtMs = 0,
-  }) : _vaultId = vaultId;
+    // Deliberately a plain param, not an initializing formal: the nullable
+    // `vaultId` feeds the getter's `key-<id>` default (see [vaultId]).
+  }) : _vaultId = vaultId; // ignore: prefer_initializing_formals
 
   /// Explicit vault id override. Null for a natively-created library key (whose
   /// material lives at `key-<id>`); SET when a pre-existing per-profile key was

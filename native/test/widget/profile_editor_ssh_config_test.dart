@@ -312,10 +312,13 @@ void main() {
         await tester.tap(find.text('Key'));
         await tester.pumpAndSettle();
 
-        // The key-source dropdown lists the stored key; pick it.
+        // The key-source dropdown lists the key; pick it. Opening the editor
+        // adopts the pre-existing per-profile key into the library (#1088), so
+        // it now shows under the unified "Library:" label — pointing at the SAME
+        // vault id in place (no re-keying, no new secret).
         await tester.tap(find.byKey(const Key('profile-editor-key-source')));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Stored: deploy@existing').last);
+        await tester.tap(find.text('Library: deploy@existing').last);
         await tester.pumpAndSettle();
 
         // The stored-key note replaces the PEM field.
