@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+156 (2026-07-19) — key library + profile keys unified
+- **Your existing per-profile keys now show up in the SSH keys library.** Open Settings → SSH keys and the keys already on your profiles (e.g. fd-dev, NV-dev) appear as managed keys — adopted in place, no re-keying. The profile editor's key picker is unified (one entry per key). And pasting a **new** key in the profile editor now adds it to the library too, so a key is managed from both places. (#1088)
+
 ## v0.1.10+155 (2026-07-19) — SSH key library: manage keys, attach to profiles
 - **New Settings → SSH keys** — a key library independent of any profile. Import a private key with a name; rename or delete it; then attach it to one or more profiles from the profile editor's key picker ("Library: <name>"). One key can back many profiles. Private keys stay in the encrypted vault — only names/metadata are shown. (In-app key **generation** and **deploy/ssh-copy-id** are the next steps.) **Device-test:** create a key, attach it to a profile, connect. (#1088)
 
