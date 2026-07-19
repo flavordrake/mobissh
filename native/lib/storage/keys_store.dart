@@ -25,14 +25,22 @@ const String keysPrefsKey = 'mobissh.keys.v1';
 /// key bytes live in the vault under [vaultId].
 @immutable
 class SavedKey {
+  // ignore: prefer_initializing_formals
   const SavedKey({
     required this.id,
     required this.name,
+    String? vaultId,
     this.algorithm,
     this.publicKey,
     this.fingerprint,
     this.createdAtMs = 0,
-  });
+  }) : _vaultId = vaultId;
+
+  /// Explicit vault id override. Null for a natively-created library key (whose
+  /// material lives at `key-<id>`); SET when a pre-existing per-profile key was
+  /// ADOPTED into the library in place (its material stays at the original
+  /// `profile-key-<identity>` id — no re-keying, no vault movement, #1088).
+  final String? _vaultId;
 
   /// Stable identity (minted once at creation). Also keys the vault entry.
   final String id;
@@ -55,12 +63,17 @@ class SavedKey {
   final int createdAtMs;
 
   /// Vault id holding this key's PRIVATE material. A profile attaches by setting
-  /// its `keyVaultId` to this.
-  String get vaultId => keyVaultIdFor(id);
+  /// its `keyVaultId` to this. Defaults to `key-<id>` for a natively-created key;
+  /// an adopted per-profile key keeps its original vault id (see [_vaultId]).
+  String get vaultId => _vaultId ?? keyVaultIdFor(id);
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        // Persist the vault id ONLY when it's an explicit override (adopted key)
+        // — a native key derives `key-<id>` on read, so omitting keeps old
+        // metadata forward-compatible.
+        if (_vaultId != null) 'vaultId': _vaultId,
         if (algorithm != null) 'algorithm': algorithm,
         if (publicKey != null) 'publicKey': publicKey,
         if (fingerprint != null) 'fingerprint': fingerprint,
@@ -78,6 +91,7 @@ class SavedKey {
     return SavedKey(
       id: id,
       name: name,
+      vaultId: json['vaultId'] is String ? json['vaultId'] as String : null,
       algorithm: json['algorithm'] is String ? json['algorithm'] as String : null,
       publicKey: json['publicKey'] is String ? json['publicKey'] as String : null,
       fingerprint:
@@ -95,6 +109,8 @@ class SavedKey {
       SavedKey(
         id: id,
         name: name ?? this.name,
+        // vaultId is immutable identity — always preserved, never a copyWith arg.
+        vaultId: _vaultId,
         algorithm: algorithm ?? this.algorithm,
         publicKey: publicKey ?? this.publicKey,
         fingerprint: fingerprint ?? this.fingerprint,
@@ -106,14 +122,15 @@ class SavedKey {
       other is SavedKey &&
       other.id == id &&
       other.name == name &&
+      other.vaultId == vaultId &&
       other.algorithm == algorithm &&
       other.publicKey == publicKey &&
       other.fingerprint == fingerprint &&
       other.createdAtMs == createdAtMs;
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, algorithm, publicKey, fingerprint, createdAtMs);
+  int get hashCode => Object.hash(
+      id, name, vaultId, algorithm, publicKey, fingerprint, createdAtMs);
 }
 
 /// Persists the key-library METADATA list. Private key bytes are the vault's

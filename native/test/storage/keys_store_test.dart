@@ -45,6 +45,25 @@ void main() {
       expect(k.toJson().keys, isNot(contains('data')));
       expect(k.toJson().keys, isNot(contains('passphrase')));
     });
+
+    test('vaultId defaults to key-<id> and is omitted from JSON', () {
+      const k = SavedKey(id: 'k1', name: 'n');
+      expect(k.vaultId, 'key-k1');
+      expect(k.toJson().containsKey('vaultId'), isFalse);
+      // A metadata blob without vaultId reads back as the derived default.
+      expect(SavedKey.fromJson(<String, dynamic>{'id': 'k1', 'name': 'n'}).vaultId,
+          'key-k1');
+    });
+
+    test('an adopted key keeps its explicit vaultId across JSON', () {
+      const k = SavedKey(id: 'k1', name: 'fd-dev', vaultId: 'profile-key-fd:22:me');
+      expect(k.vaultId, 'profile-key-fd:22:me');
+      final back = SavedKey.fromJson(k.toJson());
+      expect(back.vaultId, 'profile-key-fd:22:me');
+      expect(back, k);
+      // copyWith preserves the adopted vault id.
+      expect(k.copyWith(name: 'renamed').vaultId, 'profile-key-fd:22:me');
+    });
   });
 
   group('KeysStore', () {

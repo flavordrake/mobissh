@@ -72,6 +72,36 @@ class KeysManager {
     _ref.invalidate(savedKeysProvider);
   }
 
+  /// Adopt pre-existing per-profile keys into the library (#1088): for each
+  /// distinct `keyVaultId` referenced by a saved profile that isn't already a
+  /// library key, create a [SavedKey] pointing at that SAME vault id IN PLACE —
+  /// no re-keying, no vault movement, the private material stays put. Named from
+  /// the owning profile's title. Idempotent (dedups against existing library
+  /// vault ids and within the run), so it's safe to call on every Keys-screen /
+  /// picker open. Returns how many keys were newly adopted.
+  Future<int> adoptFromProfiles() async {
+    final profiles = await _ref.read(profilesStoreProvider).load();
+    final store = _ref.read(keysStoreProvider);
+    final known = (await store.load()).map((k) => k.vaultId).toSet();
+    final seen = <String>{};
+    final ts = _now();
+    var adopted = 0;
+    for (final p in profiles) {
+      final vid = p.keyVaultId;
+      if (vid == null || vid.isEmpty) continue;
+      if (known.contains(vid) || !seen.add(vid)) continue;
+      await store.upsert(SavedKey(
+        id: 'k${ts.microsecondsSinceEpoch}_$adopted',
+        name: p.title.trim().isEmpty ? vid : p.title.trim(),
+        vaultId: vid,
+        createdAtMs: ts.millisecondsSinceEpoch,
+      ));
+      adopted++;
+    }
+    if (adopted > 0) _ref.invalidate(savedKeysProvider);
+    return adopted;
+  }
+
   /// Delete a library key — removes BOTH the vault blob and the metadata. The
   /// caller is responsible for warning when profiles still reference it (their
   /// `keyVaultId` will dangle until re-attached).

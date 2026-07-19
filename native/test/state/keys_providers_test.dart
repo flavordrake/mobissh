@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/state/keys_providers.dart';
 import 'package:mobissh/state/profiles_providers.dart';
+import 'package:mobissh/storage/profiles_store.dart';
 import 'package:mobissh/storage/secrets_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -67,5 +68,94 @@ void main() {
     expect(key.name, 'Imported key');
     await mgr.rename(key.id, '   ');
     expect((await c.read(keysStoreProvider).load()).single.name, 'Imported key');
+  });
+
+  group('adoptFromProfiles (#1088 migration)', () {
+    Future<ProviderContainer> withProfiles(List<SavedProfile> profiles) async {
+      final store = ProfilesStore();
+      await store.save(profiles);
+      final c = ProviderContainer(overrides: [
+        secretsStoreProvider
+            .overrideWithValue(SecretsStore(backend: InMemorySecretsBackend())),
+        profilesStoreProvider.overrideWithValue(store),
+      ]);
+      addTearDown(c.dispose);
+      return c;
+    }
+
+    test('adopts each distinct profile key IN PLACE, named from the profile',
+        () async {
+      final c = await withProfiles([
+        SavedProfile(
+          title: 'fd-dev',
+          host: 'fd',
+          port: 22,
+          username: 'me',
+          authType: 'key',
+          keyVaultId: 'profile-key-fd:22:me',
+        ),
+        SavedProfile(
+          title: 'NV-dev',
+          host: 'nv',
+          port: 22,
+          username: 'me',
+          authType: 'key',
+          keyVaultId: 'profile-key-nv:22:me',
+        ),
+        SavedProfile(
+          title: 'pw',
+          host: 'p',
+          port: 22,
+          username: 'me',
+          authType: 'password',
+        ),
+      ]);
+      final adopted = await c.read(keysManagerProvider).adoptFromProfiles();
+      expect(adopted, 2);
+      final lib = await c.read(keysStoreProvider).load();
+      expect(lib.map((k) => k.name), containsAll(['fd-dev', 'NV-dev']));
+      // Adopted keys point at the ORIGINAL vault ids — no re-keying.
+      expect(lib.map((k) => k.vaultId),
+          containsAll(['profile-key-fd:22:me', 'profile-key-nv:22:me']));
+    });
+
+    test('is idempotent — a second run adopts nothing', () async {
+      final c = await withProfiles([
+        SavedProfile(
+          title: 'fd-dev',
+          host: 'fd',
+          port: 22,
+          username: 'me',
+          authType: 'key',
+          keyVaultId: 'profile-key-fd:22:me',
+        ),
+      ]);
+      final mgr = c.read(keysManagerProvider);
+      expect(await mgr.adoptFromProfiles(), 1);
+      expect(await mgr.adoptFromProfiles(), 0);
+      expect((await c.read(keysStoreProvider).load()).length, 1);
+    });
+
+    test('two profiles sharing one key adopt it once', () async {
+      final c = await withProfiles([
+        SavedProfile(
+          title: 'a',
+          host: 'a',
+          port: 22,
+          username: 'me',
+          authType: 'key',
+          keyVaultId: 'profile-key-shared',
+        ),
+        SavedProfile(
+          title: 'b',
+          host: 'b',
+          port: 22,
+          username: 'me',
+          authType: 'key',
+          keyVaultId: 'profile-key-shared',
+        ),
+      ]);
+      expect(await c.read(keysManagerProvider).adoptFromProfiles(), 1);
+    });
   });
 }
