@@ -7,6 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+153 (2026-07-19) — large-landscape layout (desktop mode / tablets)
+- **On wide landscape screens (tablet, Android desktop mode / freeform, DeX), MobiSSH now uses a desktop-style layout:** the session controls move to the top, the home Profiles/Settings nav moves to a side rail, and the on-screen keybar is hidden by default (a hardware keyboard is assumed — you can still turn it back on from the session menu, and that choice sticks). Your phone portrait layout is unchanged. Kicks in at ~840dp wide + landscape. **Please device-test on a real large screen** — the build-host emulator is down, so this shipped on widget tests + your validation.
+
 ## v0.1.10+152 (2026-07-19) — no `?62c` junk when entering Android desktop mode
 - **Moving MobiSSH into Android desktop mode no longer types `?62c` (or stray codes) at your prompt.** The terminal answers capability probes during the desktop-mode transition; those replies were leaking as input because the earlier fix only covered reconnects, not the desktop-mode/window-resize transition. Now the same brief hold applies on any real window change (desktop-mode entry, rotation, freeform resize). (#1085; the crash itself is a transition bug — a clean desktop-mode window works fine.)
 
