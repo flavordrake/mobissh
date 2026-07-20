@@ -48,15 +48,32 @@ import 'session_state_dot.dart';
 /// stays up (#585).
 ///
 /// [bottomReserve] is the height (logical px) of the session bar that summoned
-/// the menu. The panel floats ABOVE that reserved strip so its last row (Files)
-/// never lands on top of the trigger — the owner hit "tap to dismiss lands on
-/// Files" because the panel overlapped the bar (2026-06-01). The full-screen
-/// tap barrier still covers the bar, so a tap on the (now-uncovered) trigger
-/// dismisses the menu: same touch target opens AND closes it.
-Future<void> showSessionMenu(BuildContext context, {double bottomReserve = 0}) {
+/// the menu (phone layout). The panel floats ABOVE that reserved strip so its
+/// last row (Files) never lands on top of the trigger — the owner hit "tap to
+/// dismiss lands on Files" because the panel overlapped the bar (2026-06-01).
+/// The full-screen tap barrier still covers the bar, so a tap on the (now-
+/// uncovered) trigger dismisses the menu: same touch target opens AND closes it.
+///
+/// [topReserve] (#1086, owner 2026-07-20) is the mirror for the TABLET layout:
+/// the session bar is a compact strip at the TOP, so the menu drops DOWN from it
+/// as a left-anchored, width-capped dropdown ("menu should extend from the menu
+/// bar") instead of rising from the bottom. Pass at most one of the two; when
+/// [topReserve] > 0 it wins.
+/// #1086: width of the tablet top-drop session menu. The menu's action-button
+/// row needs ~400dp to lay out without overflow (it fills the phone bottom bar
+/// full-width); 440 clears that with margin while staying a clear dropdown on a
+/// wide tablet surface rather than a full-width sheet.
+const double kTabletSessionMenuWidth = 440.0;
+
+Future<void> showSessionMenu(
+  BuildContext context, {
+  double bottomReserve = 0,
+  double topReserve = 0,
+}) {
   final overlay = Overlay.of(context);
   final completer = Completer<void>();
   late OverlayEntry entry;
+  final anchorTop = topReserve > 0;
 
   void close() {
     if (entry.mounted) entry.remove();
@@ -70,6 +87,24 @@ Future<void> showSessionMenu(BuildContext context, {double bottomReserve = 0}) {
       // bar's trigger uncovered so tapping it again dismisses (via the barrier).
       final keyboardInset = MediaQuery.of(ctx).viewInsets.bottom;
       final liftAboveBar = keyboardInset > 0 ? keyboardInset : bottomReserve;
+      // TABLET: a left-anchored dropdown that hugs the top strip — bottom-
+      // rounded (top flush against the bar), width-capped so it reads as a
+      // desktop-style menu rather than a full-width sheet.
+      final panel = FocusScope(
+        // canRequestFocus:false guarantees the menu (and its tappable rows)
+        // never steal focus from the terminal's editable — the keyboard stays
+        // up. Taps still work; toggles/switches don't need focus.
+        canRequestFocus: false,
+        child: Material(
+          color: Theme.of(ctx).colorScheme.surface,
+          elevation: 8,
+          borderRadius: anchorTop
+              ? const BorderRadius.vertical(bottom: Radius.circular(16))
+              : const BorderRadius.vertical(top: Radius.circular(16)),
+          clipBehavior: Clip.antiAlias,
+          child: SessionMenu(onClose: close),
+        ),
+      );
       return Stack(
         children: [
           // Outside-tap barrier. A plain GestureDetector does NOT request
@@ -83,26 +118,19 @@ Future<void> showSessionMenu(BuildContext context, {double bottomReserve = 0}) {
               child: const ColoredBox(color: Color(0x66000000)),
             ),
           ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: liftAboveBar,
-            // canRequestFocus:false guarantees the menu (and its tappable rows)
-            // never steal focus from the terminal's editable — the keyboard
-            // stays up. Taps still work; toggles/switches don't need focus.
-            child: FocusScope(
-              canRequestFocus: false,
-              child: Material(
-                color: Theme.of(ctx).colorScheme.surface,
-                elevation: 8,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
+          if (anchorTop)
+            Positioned(
+              left: 0,
+              top: topReserve,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: kTabletSessionMenuWidth,
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: SessionMenu(onClose: close),
+                child: panel,
               ),
-            ),
-          ),
+            )
+          else
+            Positioned(left: 0, right: 0, bottom: liftAboveBar, child: panel),
         ],
       );
     },

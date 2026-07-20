@@ -7,6 +7,12 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+157 (2026-07-20) — tablet layout: menu drops from the top bar
+- **The desktop-style layout is now tablet-only.** It kicks in on an actual tablet or a wide desktop-web window — a phone held in landscape keeps the normal phone chrome. (#1086)
+- **On a tablet the session menu drops DOWN from the top bar** instead of appearing at the bottom, so it extends from the control you tapped. (#1086)
+- **The session bar shrinks to a compact indicator in the top-left** rather than a full-width strip. (#1086)
+- **Device-test (tablet / desktop-mode / desktop web):** open the session menu — it should drop from the top-left; the session bar should be a small top-left cluster; a phone in landscape should look unchanged. (#1086)
+
 ## v0.1.10+156 (2026-07-19) — key library + profile keys unified
 - **Your existing per-profile keys now show up in the SSH keys library.** Open Settings → SSH keys and the keys already on your profiles (e.g. fd-dev, NV-dev) appear as managed keys — adopted in place, no re-keying. The profile editor's key picker is unified (one entry per key). And pasting a **new** key in the profile editor now adds it to the library too, so a key is managed from both places. (#1088)
 

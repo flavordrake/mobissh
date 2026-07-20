@@ -26,6 +26,7 @@ import 'package:mobissh/state/ui_prefs_providers.dart';
 import 'package:mobissh/storage/profiles_store.dart';
 import 'package:mobissh/storage/secrets_store.dart';
 import 'package:mobissh/ui/keybar.dart';
+import 'package:mobissh/ui/session_menu.dart';
 import 'package:mobissh/ui/terminal_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -202,6 +203,52 @@ void main() {
         );
       },
     );
+  });
+
+  group('session menu anchor (#1086, owner 2026-07-20)', () {
+    testWidgets('tablet: menu drops DOWN from the top strip, width-capped', (
+      tester,
+    ) async {
+      await _mountTerminal(tester, _kLargeLandscape);
+
+      await tester.tap(find.byKey(const Key('session-bar-open-menu')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(SessionMenu), findsOneWidget);
+      final menuRect = tester.getRect(find.byType(SessionMenu));
+      // Drops from the top strip, not the bottom: its top sits in the upper
+      // quarter of the 800px-tall surface ("menu should extend from the menu
+      // bar").
+      expect(
+        menuRect.top,
+        lessThan(200),
+        reason: 'tablet menu anchors just under the top bar, not the bottom',
+      );
+      // Left-anchored dropdown, not a full-width sheet (well under the 1280px
+      // tablet width).
+      expect(menuRect.left, lessThan(1));
+      expect(menuRect.width, lessThanOrEqualTo(kTabletSessionMenuWidth));
+    });
+
+    testWidgets('phone: menu rises from the BOTTOM, full-width', (tester) async {
+      await _mountTerminal(tester, _kPhone);
+
+      await tester.tap(find.byKey(const Key('session-bar-open-menu')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(SessionMenu), findsOneWidget);
+      final menuRect = tester.getRect(find.byType(SessionMenu));
+      // Bottom-anchored: its bottom edge is at/near the screen bottom (above
+      // the bar), and it spans the full 400px width.
+      expect(
+        menuRect.bottom,
+        greaterThan(600),
+        reason: 'phone menu stays bottom-anchored',
+      );
+      expect(menuRect.width, greaterThan(360));
+    });
   });
 
   group('home navigation (Slice D)', () {

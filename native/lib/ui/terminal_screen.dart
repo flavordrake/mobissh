@@ -203,6 +203,10 @@ class TerminalScreen extends ConsumerWidget {
     // desktop-style chrome is assumed), and the terminal reclaims the bottom
     // space. Built once here so the swipe/compose wiring is identical either way.
     final sessionBar = _SessionBar(
+      // #1086: on a tablet the bar is a COMPACT top-left indicator that drops
+      // its menu DOWN from the top strip; on a phone it's the full-width
+      // centered bottom bar. Same instance either way (only one `if` renders it).
+      compact: largeLandscape,
       label: activeEntry.label,
       sessionCount: entries.length,
       swatchColor: swatchColor,
@@ -292,6 +296,7 @@ class TerminalScreen extends ConsumerWidget {
 /// session menu.
 class _SessionBar extends StatefulWidget {
   const _SessionBar({
+    required this.compact,
     required this.label,
     required this.sessionCount,
     required this.swatchColor,
@@ -299,6 +304,12 @@ class _SessionBar extends StatefulWidget {
     required this.composeOn,
     required this.onToggleCompose,
   });
+
+  /// #1086: tablet/large-landscape mode. When true the bar renders as a compact
+  /// left-aligned cluster in the TOP menu strip and its session menu drops DOWN
+  /// from the strip; when false it's the full-width centered phone bottom bar
+  /// whose menu rises from the bottom.
+  final bool compact;
 
   final String label;
   final int sessionCount;
@@ -353,7 +364,101 @@ class _SessionBarState extends State<_SessionBar> {
         // moving right (positive dx) goes to the previous one.
         widget.onSwipe(_dragDx < 0 ? 1 : -1);
       },
-      child: _buildBar(context, theme),
+      child: widget.compact
+          ? _buildCompactBar(context, theme)
+          : _buildBar(context, theme),
+    );
+  }
+
+  /// Open the session menu from this bar. On a phone (bottom bar) the panel
+  /// rises ABOVE the bar; on a tablet (compact top strip) it drops DOWN from the
+  /// strip (owner 2026-07-20: "menu should extend from the menu bar"). Suppresses
+  /// the tap that fires at the tail of a swipe so swipe-to-switch (#568) doesn't
+  /// also pop the menu. `context` is the _SessionBar element, so `context.size`
+  /// is the bar's own height.
+  void _openMenu(BuildContext context) {
+    if (_swipeOccurred) {
+      _swipeOccurred = false;
+      return;
+    }
+    final barExtent = context.size?.height ?? 0;
+    if (widget.compact) {
+      showSessionMenu(context, topReserve: barExtent);
+    } else {
+      showSessionMenu(context, bottomReserve: barExtent);
+    }
+  }
+
+  /// #607: compose-bar toggle at the bar's right edge (replaced disconnect,
+  /// which moved into the session menu). Shared by both bar layouts.
+  Widget _composeToggle(ThemeData theme) {
+    return IconButton(
+      key: const Key('session-bar-compose-toggle'),
+      tooltip: widget.composeOn ? 'Hide compose bar' : 'Compose (swipe / voice)',
+      isSelected: widget.composeOn,
+      color: widget.composeOn ? theme.colorScheme.primary : null,
+      // #615: tighter visual density so the IconButton's default 48px tap box
+      // doesn't set the bar height; row padding drives it.
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 28),
+      padding: EdgeInsets.zero,
+      icon: const Icon(Icons.edit_note_outlined, size: 18),
+      onPressed: widget.onToggleCompose,
+    );
+  }
+
+  /// #1086: the compact TABLET bar — a left-aligned cluster (menu + count +
+  /// swatch + label) in the top menu strip, with the compose toggle at the right
+  /// edge. Unlike the phone bar there is no centered-title overlay: the label
+  /// sits inline next to the menu affordance, anchored top-left ("session bar
+  /// shrinks to top left", owner 2026-07-20). Same test keys as the phone bar.
+  Widget _buildCompactBar(BuildContext context, ThemeData theme) {
+    return Material(
+      key: const Key('session-bar'),
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Row(
+        children: [
+          Flexible(
+            child: InkWell(
+              key: const Key('session-bar-open-menu'),
+              onTap: () => _openMenu(context),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 5,
+                ),
+                child: Row(
+                  key: const Key('session-menu-button'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _MenuIconWithCount(count: widget.sessionCount),
+                    const SizedBox(width: 12),
+                    Container(
+                      key: const Key('session-bar-swatch'),
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: widget.swatchColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        widget.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const Spacer(),
+          _composeToggle(theme),
+        ],
+      ),
     );
   }
 
@@ -387,24 +492,7 @@ class _SessionBarState extends State<_SessionBar> {
                   // menu` is the screenshot/test-addressable name for the menu
                   // affordance.
                   key: const Key('session-bar-open-menu'),
-                  onTap: () {
-                    // Suppress the tap that fires at the tail of a swipe so a
-                    // swipe-to-switch doesn't also pop the session menu (#568).
-                    if (_swipeOccurred) {
-                      _swipeOccurred = false;
-                      return;
-                    }
-                    // Pass the bar's own height so the menu panel floats ABOVE
-                    // the bar (not over it) — the last menu row no longer lands
-                    // on the trigger, and a second tap on the trigger dismisses
-                    // via the overlay barrier (owner 2026-06-01). `context` here
-                    // is the _SessionBar element, so `context.size` is the bar's
-                    // height.
-                    showSessionMenu(
-                      context,
-                      bottomReserve: context.size?.height ?? 0,
-                    );
-                  },
+                  onTap: () => _openMenu(context),
                   child: Padding(
                     // #615: vertical padding trimmed (was 8) to shrink the bar
                     // ~25%. Pairs with the smaller compose toggle icon below.
@@ -428,21 +516,7 @@ class _SessionBarState extends State<_SessionBar> {
               ),
               // #607: compose-bar toggle replaces the disconnect button.
               // Reflects on/off; disconnect now lives in the session menu.
-              IconButton(
-                key: const Key('session-bar-compose-toggle'),
-                tooltip: widget.composeOn
-                    ? 'Hide compose bar'
-                    : 'Compose (swipe / voice)',
-                isSelected: widget.composeOn,
-                color: widget.composeOn ? theme.colorScheme.primary : null,
-                // #615: tighter visual density so the IconButton's default 48px
-                // tap box doesn't set the bar height; row padding drives it.
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 28),
-                padding: EdgeInsets.zero,
-                icon: const Icon(Icons.edit_note_outlined, size: 18),
-                onPressed: widget.onToggleCompose,
-              ),
+              _composeToggle(theme),
             ],
           ),
           // Centered title layer (#651) + profile color swatch tag (#653).
