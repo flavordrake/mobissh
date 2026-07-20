@@ -7,6 +7,10 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.10+158 (2026-07-20) — tablet home: no wasted top band
+- **The tablet home no longer has an empty white band across the top.** With the side menu, the full-width top bar was redundant — it's gone; the side menu now runs the full height and the back-to-session arrow moved onto it. (#1086)
+- **Device-test (tablet / desktop web):** open the app on a tablet in landscape — the top of the Profiles/Settings screen should start at the content, with no blank strip above the side menu. (#1086)
+
 ## v0.1.10+157 (2026-07-20) — tablet layout: menu drops from the top bar
 - **The desktop-style layout is now tablet-only.** It kicks in on an actual tablet or a wide desktop-web window — a phone held in landscape keeps the normal phone chrome. (#1086)
 - **On a tablet the session menu drops DOWN from the top bar** instead of appearing at the bottom, so it extends from the control you tapped. (#1086)

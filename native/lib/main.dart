@@ -432,13 +432,25 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
     final largeLandscape = isLargeLandscape(MediaQuery.sizeOf(context));
 
     return Scaffold(
-      appBar: AppBar(leading: leading, title: Text(_titles[_index])),
+      // #1086 (owner 2026-07-20): a tablet with a side NavigationRail must NOT
+      // also carry a full-width top AppBar — it left an "unnecessary white blank
+      // at the top" (the bar spanned the whole width for just a title while the
+      // rail owned navigation). Drop the AppBar in large-landscape; the rail runs
+      // full height and carries the back-to-session control in its own leading
+      // slot. The selected rail destination already states which screen you're
+      // on, so the redundant page title goes away. Phone keeps its AppBar.
+      appBar: largeLandscape
+          ? null
+          : AppBar(leading: leading, title: Text(_titles[_index])),
       body: SafeArea(
         child: largeLandscape
             ? Row(
                 children: [
                   NavigationRail(
                     key: const Key('home-side-nav'),
+                    // Back-to-session arrow when pushed over a live session
+                    // (#721); null on the cold-start root. Was the AppBar leading.
+                    leading: leading,
                     selectedIndex: _index,
                     onDestinationSelected: (i) => setState(() => _index = i),
                     labelType: NavigationRailLabelType.all,

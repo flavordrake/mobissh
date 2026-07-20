@@ -262,6 +262,8 @@ void main() {
 
       expect(find.byKey(const Key('home-bottom-nav')), findsOneWidget);
       expect(find.byKey(const Key('home-side-nav')), findsNothing);
+      // Phone keeps its top AppBar.
+      expect(find.byType(AppBar), findsOneWidget);
     });
 
     testWidgets('large-landscape: side NavigationRail, no bottom bar', (
@@ -283,6 +285,13 @@ void main() {
         find.byKey(const Key('home-bottom-nav')),
         findsNothing,
         reason: 'the bottom nav is gone in large-landscape',
+      );
+      // #1086 (owner 2026-07-20): no full-width top AppBar on a tablet — it was
+      // an "unnecessary white blank at the top" above the side rail.
+      expect(
+        find.byType(AppBar),
+        findsNothing,
+        reason: 'large-landscape drops the AppBar; the rail runs full height',
       );
     });
   });
