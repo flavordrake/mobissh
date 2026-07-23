@@ -18,11 +18,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/image_detect.dart';
 import '../services/pdf_detect.dart';
 import '../services/session_messages.dart';
 import '../services/text_file_detect.dart';
 import 'file_browser_screen.dart';
 import 'html_file_viewer.dart';
+import 'image_file_viewer.dart';
 import 'markdown_file_viewer.dart';
 import 'text_file_viewer.dart';
 
@@ -63,8 +65,9 @@ class FileViewerRegistry {
 
 /// The active viewer registry. Defaults to the PDF viewer (#557, routed through
 /// the existing [pdfTapInterceptorProvider] so its null-override / spy seam is
-/// preserved), the markdown viewer (#854), and the text/code viewer (#776).
-/// Tests can override this to add, remove, or stub viewers.
+/// preserved), the markdown viewer (#854), the HTML viewer (#1037), the image
+/// viewer (#1093), and the text/code viewer (#776). Tests can override this to
+/// add, remove, or stub viewers.
 ///
 /// ORDER MATTERS — first match wins. The markdown viewer is registered BEFORE
 /// the generic text viewer so a `.md` / `.markdown` file (which `isTextEntry`
@@ -108,6 +111,22 @@ final fileViewerRegistryProvider = Provider<FileViewerRegistry>((ref) {
             settings: const RouteSettings(name: kFileBrowserRouteName),
             builder: (_) =>
                 HtmlFileViewerScreen(sessionId: sessionId, entry: entry),
+          ),
+        );
+      },
+    ),
+    // Image (#1093): raster image (png/jpg/gif/webp/…) rendered in a WebView
+    // with pinch-zoom, bytes fetched over SFTP. Not text/markdown/html, so its
+    // position relative to the text viewer is immaterial — placed here as the
+    // last binary-preview tier before the text fallback. Animated GIF animates.
+    FileViewer(
+      matches: (entry, {mime}) => isImageEntry(entry, mime: mime),
+      open: (context, sessionId, entry) {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            settings: const RouteSettings(name: kFileBrowserRouteName),
+            builder: (_) =>
+                ImageFileViewerScreen(sessionId: sessionId, entry: entry),
           ),
         );
       },

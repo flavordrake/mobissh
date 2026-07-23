@@ -40,6 +40,7 @@ import 'package:mobissh/ui/file_browser_screen.dart';
 import 'package:mobissh/ui/file_viewer_registry.dart';
 import 'package:mobissh/ui/fill_media_viewer.dart';
 import 'package:mobissh/ui/html_file_viewer.dart';
+import 'package:mobissh/ui/image_file_viewer.dart';
 import 'package:mobissh/ui/markdown_file_viewer.dart';
 import 'package:mobissh/ui/mermaid_diagram_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -235,12 +236,14 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     htmlWebViewBuilder = (uri, onBlocked) => const Text('stub-html-webview');
+    imageWebViewBuilder = (html) => const Text('stub-image-webview');
     mermaidWebViewBuilder = (source) => const Text('stub-mermaid');
     mermaidFillBuilder = (source) => const Text('stub-mermaid-fill');
   });
 
   tearDown(() {
     htmlWebViewBuilder = defaultHtmlWebViewBuilderForTest;
+    imageWebViewBuilder = defaultImageWebViewBuilderForTest;
     mermaidWebViewBuilder = defaultMermaidWebViewBuilderForTest;
     mermaidFillBuilder = defaultMermaidFillBuilderForTest;
   });
@@ -249,8 +252,15 @@ void main() {
     'DRIFT GUARD: every registered viewer renders Download + Share',
     (tester) async {
       // One fixture per registered viewer, in registry terms:
-      //   PDF (#557), markdown (#854), HTML (#1037), text/code (#776).
-      const fixtures = ['report.pdf', 'notes.md', 'page.html', 'script.txt'];
+      //   PDF (#557), markdown (#854), HTML (#1037), image (#1093),
+      //   text/code (#776).
+      const fixtures = [
+        'report.pdf',
+        'notes.md',
+        'page.html',
+        'photo.png',
+        'script.txt',
+      ];
 
       for (final name in fixtures) {
         final spy = _SpyActionService();
