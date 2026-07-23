@@ -5,6 +5,7 @@
 // Verifies the host emits the right request-id-scoped events and that errors
 // surface as SftpErrorEvent without tearing the session down.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -620,6 +621,99 @@ void main() {
 
     expect(err, isNotNull);
     expect(err!.message, contains('not connected'));
+
+    await sub.cancel();
+  });
+
+  test('concurrent SFTP ops share ONE subsystem open (#1092 dedupe)', () async {
+    // Regression for the poison-the-session bug: a first open that STALLS left
+    // `sftp` null, so every later op fired ANOTHER parallel open. The in-flight
+    // guard must collapse concurrent ops onto a single open.
+    var openCount = 0;
+    final gate = Completer<void>();
+    final fake = FakeSftpSession(entries: const [
+      SftpEntry(name: 'a', path: '/a', isDirectory: false, size: 1),
+    ]);
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+    final host = SessionHost(
+      gateway: pair.taskSide,
+      controllerFactory: _stubControllerFactory,
+      sftpOpener: (_) async {
+        openCount++;
+        await gate.future; // hold the open until BOTH ops are queued
+        return fake;
+      },
+      snapshotInterval: const Duration(hours: 1),
+    );
+    addTearDown(host.dispose);
+    final proxy = SshSessionProxy(sessionId: 'sid-dedupe', gateway: pair.uiSide);
+    addTearDown(proxy.dispose);
+    proxy.connect(const SshConnectParams(
+      host: 'h',
+      port: 22,
+      username: 'u',
+      auth: SshAuth.password('p'),
+    ));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    final events = <SshTaskEvent>[];
+    final sub = proxy.sftpEvents.listen(events.add);
+
+    // Fire two listings back-to-back, before the first open resolves.
+    proxy.sftpList(requestId: 'sid-dedupe#0', path: '/');
+    proxy.sftpList(requestId: 'sid-dedupe#1', path: '/');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    gate.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(openCount, 1, reason: 'concurrent ops must share one open');
+    final listings = events.whereType<SftpListingEvent>().toList();
+    expect(
+      listings.map((e) => e.requestId),
+      containsAll(<String>['sid-dedupe#0', 'sid-dedupe#1']),
+    );
+
+    await sub.cancel();
+  });
+
+  test('a stalled subsystem open times out into an SftpError (#1092)',
+      () async {
+    // The core fix: without a bound, a subsystem open that never completes left
+    // the browser spinning forever. It must surface a real error instead.
+    final never = Completer<SftpSession?>(); // deliberately never completes
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+    final host = SessionHost(
+      gateway: pair.taskSide,
+      controllerFactory: _stubControllerFactory,
+      sftpOpener: (_) => never.future,
+      sftpOpenTimeout: const Duration(milliseconds: 40),
+      snapshotInterval: const Duration(hours: 1),
+    );
+    addTearDown(host.dispose);
+    final proxy =
+        SshSessionProxy(sessionId: 'sid-timeout', gateway: pair.uiSide);
+    addTearDown(proxy.dispose);
+    proxy.connect(const SshConnectParams(
+      host: 'h',
+      port: 22,
+      username: 'u',
+      auth: SshAuth.password('p'),
+    ));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    SftpErrorEvent? err;
+    final sub = proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+    });
+
+    proxy.sftpList(requestId: 'sid-timeout#0', path: '/');
+    await Future<void>.delayed(const Duration(milliseconds: 140));
+
+    expect(err, isNotNull, reason: 'open must not hang forever');
+    expect(err!.requestId, 'sid-timeout#0');
+    expect(err!.message.toLowerCase(), contains('busy'));
 
     await sub.cancel();
   });

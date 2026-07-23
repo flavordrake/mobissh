@@ -80,6 +80,11 @@ String friendlySftpListError(Object error, String path) {
         return 'Permission denied: $path';
     }
   }
+  // #1092: the SFTP subsystem open timed out (a stalled channel on a busy
+  // connection). Say so — a bare "Couldn't open" reads like a bad path.
+  if (error is TimeoutException) {
+    return "SFTP didn't respond — the connection may be busy. Try again.";
+  }
   return "Couldn't open $path";
 }
 

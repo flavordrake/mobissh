@@ -101,6 +101,7 @@ class SessionHost {
     this.resumeProbeTimeout = const Duration(seconds: 2),
     this.resumeStaleThreshold = const Duration(seconds: 20),
     this.resumeNudgeWindow = const Duration(seconds: 2),
+    this.sftpOpenTimeout = const Duration(seconds: 20),
     int Function()? nowMs,
     AttentionNotifier? attentionNotifier,
     this.replayWindow = kAttentionReplayWindow,
@@ -187,6 +188,13 @@ class SessionHost {
   /// arrive (#759). Bounded so the resume decision resolves quickly. If no fresh
   /// bytes arrive in this window the session is declared STALE → reconnect.
   final Duration resumeNudgeWindow;
+
+  /// How long to wait for the SFTP subsystem channel to open before giving up
+  /// (#1092). Injectable so tests can drive the timeout deterministically; see
+  /// [_openSftp] for why the open is bounded (an unbounded wait was a P0
+  /// forever-spinner). Default is generous so a slow-but-working server isn't
+  /// cut off.
+  final Duration sftpOpenTimeout;
 
   /// Injectable monotonic-ish clock (ms since epoch). Real production uses
   /// `DateTime.now()`; tests inject a controllable clock so the staleness gate
@@ -1641,9 +1649,43 @@ class SessionHost {
     final hosted = _sessions[sessionId];
     if (hosted == null) return null;
     if (hosted.sftp != null) return hosted.sftp;
+    // Dedupe concurrent opens (#1092): without this, a first open that STALLS
+    // leaves `sftp` null, so every subsequent op (path-detection stat, list, …)
+    // fires ANOTHER parallel subsystem-open on the same busy connection,
+    // stacking stalled channels. Concurrent callers share one in-flight open.
+    final inflight = hosted.sftpOpening;
+    if (inflight != null) return inflight;
+    final future = _openSftp(sessionId, hosted);
+    hosted.sftpOpening = future;
+    try {
+      return await future;
+    } finally {
+      hosted.sftpOpening = null;
+    }
+  }
+
+  /// The actual open, run once per in-flight burst (see [_ensureSftp]). Bounds
+  /// the subsystem-open with [_sftpOpenTimeout] and traces START/OK/FAILED with
+  /// elapsed ms so a device report pinpoints WHY the open stalls (#1092). A
+  /// [TimeoutException]/error propagates to the command handler, which emits a
+  /// real [SftpErrorEvent] instead of leaving the browser spinning.
+  Future<SftpSession?> _openSftp(String sessionId, _HostedSession hosted) async {
     final opener = _sftpOpener ?? _defaultSftpOpener;
-    final session = await opener(sessionId);
-    // Re-check: an interleaved open could have set it; the controller may also
+    final sw = Stopwatch()..start();
+    ctrace('task.host', 'sftp open START sid=$sessionId');
+    final SftpSession? session;
+    try {
+      session = await opener(sessionId).timeout(sftpOpenTimeout);
+    } catch (e) {
+      ctrace('task.host',
+          'sftp open FAILED sid=$sessionId after ${sw.elapsedMilliseconds}ms — $e');
+      rethrow;
+    }
+    ctrace(
+        'task.host',
+        'sftp open OK sid=$sessionId in ${sw.elapsedMilliseconds}ms'
+            '${session == null ? ' (no client)' : ''}');
+    // Re-check: an interleaved op could have set it; the controller may also
     // have been torn down while we awaited. Prefer the already-cached one.
     if (hosted.sftp != null) {
       if (session != null) await session.close();
@@ -2343,6 +2385,11 @@ class _HostedSession {
   /// Opened on the first list/download command, reused after, closed on
   /// teardown. Null until the first SFTP op.
   SftpSession? sftp;
+
+  /// In-flight [sftp] open (#1092), shared by concurrent ops so a stalled
+  /// subsystem-open isn't multiplied into many parallel stalled channel-opens.
+  /// Cleared when the open completes or fails. Null when no open is running.
+  Future<SftpSession?>? sftpOpening;
 
   /// #1047: DESIRED ssh -L forwards, keyed by localPort. Configs survive a
   /// connection drop (the re-arm-on-reconnect contract) and die only with the
