@@ -302,6 +302,20 @@ void main() {
       );
       await _pumpFrames(tester);
       expect(find.byKey(const Key('active-sessions-group')), findsOneWidget);
+
+      // #959: the batch settles on the per-session state TRANSITIONS and then
+      // shows a summary toast — land both so neither outlives the test. The
+      // batch resolves through the REAL event loop (the in-memory gateway
+      // escapes the fake-async clock), hence the runAsync tick.
+      for (final e in entries) {
+        _pushState(wired.pair, e, SshSessionState.connected);
+      }
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      await _pumpFrames(tester);
+      expect(find.text('Reconnected 2 sessions'), findsOneWidget);
+      await _pumpFrames(tester, count: 80);
     },
   );
 

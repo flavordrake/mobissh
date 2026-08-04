@@ -157,6 +157,25 @@ SshSessionController _defaultControllerFactory() => SshSessionController();
 final sshSessionControllerFactoryProvider =
     Provider<SshSessionControllerFactory>((ref) => _defaultControllerFactory);
 
+/// Outcome of one "Reconnect all" batch (#959).
+///
+/// Both lists hold session ids. Membership is decided by the session's own
+/// state TRANSITION after the reconnect was dispatched — not by whether the
+/// dispatch returned — so a session that started reconnecting and then died is
+/// correctly reported as failed. See [SessionsNotifier.reconnectAll].
+class ReconnectAllResult {
+  const ReconnectAllResult({required this.reconnected, required this.failed});
+
+  /// Sessions that reached `connected`.
+  final List<String> reconnected;
+
+  /// Sessions that ended in a terminal drop, never settled, or could not be
+  /// dispatched at all.
+  final List<String> failed;
+
+  int get total => reconnected.length + failed.length;
+}
+
 /// Owns the multi-session collection. Mutations are synchronous; SSH connect
 /// runs against the per-entry proxy after `addOrActivate` returns.
 class SessionsNotifier extends Notifier<SessionsState> {
@@ -311,8 +330,102 @@ class SessionsNotifier extends Notifier<SessionsState> {
     }
     final e = entry;
     if (e == null) return;
-    unawaited(ref.read(keepaliveServiceStarterProvider)());
+    // #959: the keepalive start is the one place `reconnect` could throw
+    // SYNCHRONOUSLY (a provider build / starter that blows up). Unguarded, that
+    // throw escaped this method AND the caller's "Reconnect all" for-loop, so
+    // every session after the failing one was silently skipped. It is a
+    // best-effort prelude — the revive below is what actually matters.
+    try {
+      unawaited(ref.read(keepaliveServiceStarterProvider)());
+    } catch (_) {
+      // Service start failed; the revive still runs (and reports its own state).
+    }
     unawaited(_reviveFromProfile(e));
+  }
+
+  /// Reconnect every session in [ids] INDEPENDENTLY and report what actually
+  /// happened (#959).
+  ///
+  /// The plain fire-and-forget loop the "Reconnect all" affordances used had two
+  /// defects: one session's throw aborted the rest, and nothing observed the
+  /// outcome, so a batch where one machine refused to come back looked exactly
+  /// like a batch where every machine came back.
+  ///
+  /// This is an ADDITIVE seam over [reconnect] — the single-session callers keep
+  /// the unchanged fire-and-forget `void` contract. Per session it:
+  ///   1. subscribes to the proxy's state stream BEFORE dispatching, so a fast
+  ///      settle can't be missed;
+  ///   2. dispatches through [reconnect] inside a try/catch (isolation);
+  ///   3. resolves on the next TERMINAL TRANSITION — `connected` is a success,
+  ///      `failed`/`disconnected` is a failure. A reconnect that merely STARTS
+  ///      is not a reconnect that succeeded, so the outcome is read off the
+  ///      state stream, never off the return of the call.
+  /// A session that never settles within [settleTimeout] counts as failed —
+  /// that is the "one machine hangs the whole set" case the owner reported.
+  /// Unknown ids count as failed (the session vanished mid-batch).
+  Future<ReconnectAllResult> reconnectAll(
+    Iterable<String> ids, {
+    Duration settleTimeout = const Duration(seconds: 45),
+  }) async {
+    // Dispatch every session first (each `_reconnectAndSettle` runs
+    // synchronously up to its first await), THEN await the outcomes — so the
+    // batch is genuinely concurrent, not a serial chain.
+    final pending = <String, Future<bool>>{
+      for (final id in ids) id: _reconnectAndSettle(id, settleTimeout),
+    };
+    final reconnected = <String>[];
+    final failed = <String>[];
+    for (final entry in pending.entries) {
+      if (await entry.value) {
+        reconnected.add(entry.key);
+      } else {
+        failed.add(entry.key);
+      }
+    }
+    return ReconnectAllResult(reconnected: reconnected, failed: failed);
+  }
+
+  /// Reconnect [id] and resolve true once it reaches `connected`, false on a
+  /// terminal drop or [timeout]. See [reconnectAll].
+  Future<bool> _reconnectAndSettle(String id, Duration timeout) async {
+    SessionEntry? entry;
+    for (final e in state.entries) {
+      if (e.id == id) {
+        entry = e;
+        break;
+      }
+    }
+    final target = entry;
+    if (target == null) return false;
+    final settled = Completer<bool>();
+    void resolve(bool ok) {
+      if (!settled.isCompleted) settled.complete(ok);
+    }
+
+    // Consumer before the signal: subscribe BEFORE dispatching so a session that
+    // settles immediately still reports its outcome.
+    final sub = target.proxy.stream.listen((data) {
+      if (data.state == SshSessionState.connected) {
+        resolve(true);
+      } else if (data.state == SshSessionState.failed ||
+          data.state == SshSessionState.disconnected) {
+        resolve(false);
+      }
+      // connecting / authenticating / awaitingHostKey / softDisconnected /
+      // reconnecting / idle are in-flight — keep waiting.
+    });
+    try {
+      reconnect(id);
+    } catch (_) {
+      // ISOLATION: one session's dispatch failure is that session's failure,
+      // never the batch's.
+      resolve(false);
+    }
+    try {
+      return await settled.future.timeout(timeout, onTimeout: () => false);
+    } finally {
+      await sub.cancel();
+    }
   }
 
   /// #916: reconnect every LIVE session so it re-enters with the current

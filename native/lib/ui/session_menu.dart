@@ -39,6 +39,7 @@ import 'favorites_menu_sheet.dart';
 import 'file_browser_screen.dart';
 import 'port_forwards_sheet.dart';
 import 'session_state_dot.dart';
+import 'top_toast.dart';
 
 /// Opens the session menu as a NON-MODAL overlay anchored to the bottom, above
 /// the keyboard. Returns once dismissed (outside tap or an action closes it).
@@ -1263,16 +1264,20 @@ class _ReconnectAllRowState extends ConsumerState<_ReconnectAllRow> {
         label: Text(
           dropped.length == 1 ? 'Reconnect' : 'Reconnect all (${dropped.length})',
         ),
-        onPressed: () {
+        onPressed: () async {
           // Route through the notifier so the foreground task isolate is
           // (re)started before each reconnect command — see
-          // SessionsNotifier.reconnect (#817). Each reconnect is fire-and-forget
-          // (_reviveFromProfile), so one session that won't connect can't block
-          // the others.
+          // SessionsNotifier.reconnect (#817). #959: `reconnectAll` isolates
+          // each session (one that throws can no longer abort the loop and
+          // silently skip the rest) and reports the batch OUTCOME, observed
+          // from each session's state transitions.
           final notifier = ref.read(sessionsProvider.notifier);
-          for (final e in dropped) {
-            notifier.reconnect(e.id);
-          }
+          // Resolve the ROOT overlay before awaiting: the menu may be dismissed
+          // while the batch is in flight, and the verdict must still surface.
+          final overlay = Overlay.maybeOf(context, rootOverlay: true);
+          // Dispatch is synchronous up to reconnectAll's first await, so every
+          // reconnect is already in flight when setActive runs below.
+          final batch = notifier.reconnectAll([for (final e in dropped) e.id]);
           // Owner request: don't leave the user parked on a session that won't
           // connect ("reconnect many hangs when one doesn't connect — should
           // focus first session"). FOCUS the first session immediately so they
@@ -1280,6 +1285,9 @@ class _ReconnectAllRowState extends ConsumerState<_ReconnectAllRow> {
           if (widget.entries.isNotEmpty) {
             notifier.setActive(widget.entries.first.id);
           }
+          final result = await batch;
+          if (overlay == null || !overlay.mounted) return;
+          showTopToastInOverlay(overlay, reconnectAllSummary(result));
         },
       ),
     );
