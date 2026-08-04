@@ -214,13 +214,32 @@ void main() {
       );
       expect(navback, isTrue, reason: 'quick-nav did not return to the root dir');
 
-      // 3) LONG-PRESS the favorite → removed (gone from the list).
+      // 3) SECOND open — now standing ON the favorite (cwd == favorite after the
+      // quick-nav). Regression for #948: the menu must reopen NON-EMPTY here (it
+      // used to render `favorites-empty`, so long-press-remove found 0 widgets).
       await tester.longPress(find.byKey(const Key('file-browser-star')));
-      await _pumpUntil(
+      final reopened = await _pumpUntil(
         tester,
         () => find.byKey(const Key('favorites-list')).evaluate().isNotEmpty,
         maxSlices: 20,
       );
+      expect(
+        reopened,
+        isTrue,
+        reason: '#948: second open (cwd IS the favorite) showed favorites-empty',
+      );
+      expect(
+        find.byKey(const Key('favorites-empty')),
+        findsNothing,
+        reason: '#948: favorites-empty on reopen while standing on the favorite',
+      );
+      expect(
+        find.byKey(Key('favorite-item-$root')),
+        findsOneWidget,
+        reason: '#948: favorite missing from the reopened menu',
+      );
+
+      // LONG-PRESS the favorite → removed (gone from the list).
       await tester.longPress(find.byKey(Key('favorite-item-$root')));
       final removedFromList = await _pumpUntil(
         tester,
