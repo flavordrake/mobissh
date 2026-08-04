@@ -104,10 +104,12 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('forward-local-port')), '8888');
     await tester.pump();
-    // Blank remote host still resolves to the default in the live preview.
+    // Blank remote host still resolves to the default in the live preview, and
+    // the remote PORT now mirrors the local one (#1094) — the preview reports
+    // the mapping that would actually be committed.
     expect(
       _text(tester, const Key('forward-preview')),
-      '8888  →  127.0.0.1:·',
+      '8888  →  127.0.0.1:8888',
     );
 
     await tester.enterText(
