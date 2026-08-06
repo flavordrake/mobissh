@@ -262,6 +262,60 @@ void main() {
     h.dispose();
   });
 
+  // Regression for #948: reopening the favorites menu while the CURRENT dir is
+  // itself the favorite (right after a quick-nav to it) must still list it.
+  // Sequence mirrors the device repro: favorite `/`, descend into `/docs`,
+  // long-press star → menu → tap favorite `/` (quick-nav back), long-press star
+  // AGAIN (now standing on `/`) → the menu must be NON-EMPTY and removal works.
+  testWidgets('reopen menu while standing ON the favorite still lists it (#948)', (
+    tester,
+  ) async {
+    final h = await _mount(tester);
+
+    // 1) Descend into `/docs` and favorite it (the favorite is a subdir, as in
+    //    the device repro — the quick-nav lands the cwd ON the favorite).
+    await tester.tap(find.byKey(const Key('file-entry-docs')));
+    await _pump(tester);
+    expect(find.text('/docs'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('file-browser-star')));
+    await _pump(tester);
+    expect(_starIcon(Icons.star), findsOneWidget);
+    expect(await FavoritesStore().isFavorite(_profileKey, '/docs'), isTrue);
+
+    // 2) Navigate up to `/` so cwd differs from the favorite.
+    await tester.tap(find.byKey(const Key('file-browser-up')));
+    await _pump(tester);
+    expect(find.byKey(const Key('file-entry-a.bin')), findsOneWidget);
+
+    // 3) First open (cwd != favorite): menu lists `/docs`, tap it → quick-nav.
+    await tester.longPress(find.byKey(const Key('file-browser-star')));
+    await _pump(tester);
+    expect(find.byKey(const Key('favorite-item-/docs')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('favorite-item-/docs')));
+    await _pump(tester);
+    expect(find.byKey(const Key('file-entry-inner.bin')), findsOneWidget);
+    // Back at `/docs`, standing ON the favorite → filled star.
+    expect(_starIcon(Icons.star), findsOneWidget);
+
+    // 4) Second open (cwd IS the favorite): the menu must NOT be empty.
+    await tester.longPress(find.byKey(const Key('file-browser-star')));
+    await _pump(tester);
+    expect(
+      find.byKey(const Key('favorites-empty')),
+      findsNothing,
+      reason: 'second open showed favorites-empty while standing on the favorite',
+    );
+    expect(find.byKey(const Key('favorite-item-/docs')), findsOneWidget);
+
+    // 5) Removal now succeeds.
+    await tester.longPress(find.byKey(const Key('favorite-item-/docs')));
+    await _pump(tester);
+    expect(find.byKey(const Key('favorite-item-/docs')), findsNothing);
+    expect(await FavoritesStore().isFavorite(_profileKey, '/docs'), isFalse);
+
+    h.dispose();
+  });
+
   testWidgets('clear all empties the favorites set', (tester) async {
     await FavoritesStore().add(_profileKey, '/docs');
     await FavoritesStore().add(_profileKey, '/a');

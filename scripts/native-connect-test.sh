@@ -71,6 +71,12 @@ ADB_MODE="${ADB_MODE:-connect}"
 # loopback bind and cannot be re-listened without colliding with it).
 EMU_CONTAINER_NAME="${EMU_CONTAINER_NAME:-mobissh-emulator}"
 EMU_ADBD_ENDPOINT="${EMU_ADBD_ENDPOINT:-${EMU_CONTAINER_NAME}:5556}"
+# #1098: the shared emulator graduated to CT113 `android-emulator` and is an
+# ON-DEMAND, flock-LEASED device — it is idle-stopped until a lease boots it, so
+# there is nothing on fd-dev to `ensure`. When an outer lease holder already
+# booted the device and handed us its adb endpoint (scripts/with-fleet-emulator.sh),
+# set EMU_ENSURE=0: we skip the local ensure and go straight to `adb connect`.
+EMU_ENSURE="${EMU_ENSURE:-1}"
 
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
@@ -118,10 +124,14 @@ trap cleanup EXIT
 
 # 1. Bring up the emulator (container or legacy) and resolve its adb device id.
 if [[ "$EMU_CONTAINER" == "1" ]]; then
-  log "using DEDICATED emulator container ($EMU_CONTAINER_NAME), ADB_MODE=$ADB_MODE"
-  if ! "${REPO_ROOT}/scripts/emu-container-ctl.sh" ensure; then
-    err "emu-container-ctl ensure failed — see: scripts/emu-container-ctl.sh logs"
-    exit 2
+  if [[ "$EMU_ENSURE" == "1" ]]; then
+    log "using DEDICATED emulator container ($EMU_CONTAINER_NAME), ADB_MODE=$ADB_MODE"
+    if ! "${REPO_ROOT}/scripts/emu-container-ctl.sh" ensure; then
+      err "emu-container-ctl ensure failed — see: scripts/emu-container-ctl.sh logs"
+      exit 2
+    fi
+  else
+    log "using LEASED fleet emulator at ${EMU_ADBD_ENDPOINT} (EMU_ENSURE=0), ADB_MODE=$ADB_MODE"
   fi
   if [[ "$ADB_MODE" == "remote" ]]; then
     # flutter/adb talk to the container's adb server; the test-sshd bridge is the
