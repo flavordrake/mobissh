@@ -29,6 +29,7 @@ import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
 import 'session_state_dot.dart';
+import 'top_toast.dart';
 
 typedef ProfileSelectCallback = void Function(SavedProfile profile);
 typedef RecentSelectCallback = void Function(RecentSessionEntry entry);
@@ -405,11 +406,18 @@ class _ActiveReconnectAllRowState
               ? 'Reconnect'
               : 'Reconnect all (${dropped.length})',
         ),
-        onPressed: () {
+        onPressed: () async {
+          // #959: same batch seam as the in-menu row — per-session isolation
+          // plus a summary so a set where ONE machine refuses to come back is
+          // distinguishable from a clean one. The root overlay is resolved
+          // BEFORE the await so the verdict survives a route change.
           final notifier = ref.read(sessionsProvider.notifier);
-          for (final e in dropped) {
-            notifier.reconnect(e.id);
-          }
+          final overlay = Overlay.maybeOf(context, rootOverlay: true);
+          final result = await notifier.reconnectAll(
+            [for (final e in dropped) e.id],
+          );
+          if (overlay == null || !overlay.mounted) return;
+          showTopToastInOverlay(overlay, reconnectAllSummary(result));
         },
       ),
     );

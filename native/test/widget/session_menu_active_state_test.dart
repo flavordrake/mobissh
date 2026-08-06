@@ -25,6 +25,7 @@ import 'package:mobissh/services/session_messages.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/ssh/ssh_session.dart';
+import 'package:mobissh/state/keepalive_providers.dart';
 import 'package:mobissh/state/session_host_providers.dart';
 import 'package:mobissh/state/sessions.dart';
 import 'package:mobissh/ui/session_menu.dart';
@@ -54,6 +55,21 @@ Future<void> _pumpFrames(WidgetTester tester, {int count = 8}) async {
     await tester.pump(const Duration(milliseconds: 50));
   }
 }
+
+/// Let a "Reconnect all" batch (#959) settle. The batch resolves through the
+/// REAL event loop (the in-memory gateway + SharedPreferences replies escape
+/// `testWidgets`' fake-async clock), so `pump` alone never drains it — give it
+/// one real tick, then pump the result into the tree.
+Future<void> _settleBatch(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  });
+  await _pumpFrames(tester, count: 4);
+}
+
+/// Pump past the batch-summary toast's auto-dismiss (#959) so neither its
+/// 2s timer nor its exit animation outlives the test.
+Future<void> _drainToast(WidgetTester tester) => _pumpFrames(tester, count: 80);
 
 SessionEntry _add(ProviderContainer c, String host) {
   return c.read(sessionsProvider.notifier).addOrActivate(
@@ -102,10 +118,16 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  ({ProviderContainer container, InMemoryGatewayPair pair}) make() {
+  ({ProviderContainer container, InMemoryGatewayPair pair}) make({
+    KeepaliveStarter? starter,
+  }) {
     final pair = InMemoryGatewayPair();
     final container = ProviderContainer(
-      overrides: [taskSshGatewayProvider.overrideWithValue(pair.uiSide)],
+      overrides: [
+        taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+        if (starter != null)
+          keepaliveServiceStarterProvider.overrideWithValue(starter),
+      ],
     );
     addTearDown(() async {
       await pair.dispose();
@@ -459,6 +481,13 @@ void main() {
           a.id,
           reason: 'reconnect-all focuses the first session',
         );
+
+        // #959: the batch settles on the per-session state TRANSITIONS, so let
+        // both land before the test ends (else the settle timeout outlives it).
+        _drive(w.pair, a, SshSessionState.connected);
+        _drive(w.pair, b, SshSessionState.connected);
+        await _settleBatch(tester);
+        await _drainToast(tester);
       },
     );
 
@@ -504,6 +533,170 @@ void main() {
           find.byKey(Key('session-menu-reconnect-${a.id}')),
           findsOneWidget,
         );
+
+        // #959: settle b so the batch's timeout doesn't outlive the test.
+        _drive(w.pair, b, SshSessionState.connected);
+        await _settleBatch(tester);
+        await _drainToast(tester);
+      },
+    );
+  });
+
+  // #959 — "Reconnect all" must not fail SILENTLY when one session in the set
+  // fails. Two distinct defects: (a) a synchronous throw from one session's
+  // reconnect aborted the plain `for` loop, silently SKIPPING every session
+  // after it; (b) the batch reported no outcome at all, so the user could not
+  // tell what succeeded. Outcomes are asserted from the per-session state
+  // TRANSITIONS (feedback_test_state_transitions_not_states), never from the
+  // return of the dispatch call.
+  group('Reconnect all — batch isolation + honest outcome (#959)', () {
+    testWidgets(
+      'one session throwing on reconnect does NOT skip the rest of the batch',
+      (tester) async {
+        // The keepalive starter is the one SYNCHRONOUS throw site inside
+        // SessionsNotifier.reconnect. Arm it to blow up on the 2nd session of
+        // the batch only: before the fix that throw escaped reconnect(), escaped
+        // the row's for-loop, and session C never dispatched at all.
+        var armed = false;
+        var armedCalls = 0;
+        final w = make(
+          starter: () {
+            if (armed) {
+              armedCalls += 1;
+              if (armedCalls == 2) {
+                throw StateError('keepalive start failed for this session');
+              }
+            }
+            return Future<void>.value();
+          },
+        );
+        final a = _add(w.container, 'host-a');
+        final b = _add(w.container, 'host-b');
+        final c = _add(w.container, 'host-c');
+
+        final commands = <Map<String, dynamic>>[];
+        final sub = w.pair.taskSide.incoming.listen(commands.add);
+        addTearDown(sub.cancel);
+
+        await tester.pumpWidget(_host(container: w.container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
+
+        for (final e in [a, b, c]) {
+          _drive(w.pair, e, SshSessionState.disconnected);
+        }
+        await _pumpFrames(tester);
+
+        armed = true;
+        await tester.tap(find.byKey(const Key('session-menu-reconnect-all')));
+        await _pumpFrames(tester);
+
+        final reconnects = commands
+            .where((cmd) => cmd['kind'] == SshTaskCommandKind.reconnect.name)
+            .map((cmd) => cmd['sessionId'] as String)
+            .toSet();
+        expect(
+          reconnects,
+          {a.id, b.id, c.id},
+          reason:
+              'every session reconnects independently — one failure must not '
+              'abort or mask the others',
+        );
+
+        // Settle the batch (b genuinely fails) and let the toast expire.
+        _drive(w.pair, a, SshSessionState.connected);
+        _drive(w.pair, b, SshSessionState.failed, error: 'auth failed');
+        _drive(w.pair, c, SshSessionState.connected);
+        await _settleBatch(tester);
+        await _drainToast(tester);
+      },
+    );
+
+    testWidgets(
+      'batch summarises the outcome and the failed row keeps its reason',
+      (tester) async {
+        final w = make();
+        final a = _add(w.container, 'host-a');
+        final b = _add(w.container, 'host-b');
+        final c = _add(w.container, 'host-c');
+
+        await tester.pumpWidget(_host(container: w.container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
+
+        for (final e in [a, b, c]) {
+          _drive(w.pair, e, SshSessionState.disconnected);
+        }
+        await _pumpFrames(tester);
+
+        await tester.tap(find.byKey(const Key('session-menu-reconnect-all')));
+        await _pumpFrames(tester);
+
+        // No verdict while the batch is still in flight.
+        expect(find.byKey(const Key('top-toast')), findsNothing);
+
+        // B fails, A and C come back.
+        _drive(w.pair, a, SshSessionState.connected);
+        _drive(w.pair, b, SshSessionState.failed, error: 'auth failed');
+        _drive(w.pair, c, SshSessionState.connected);
+        await _settleBatch(tester);
+
+        expect(
+          find.byKey(const Key('top-toast')),
+          findsOneWidget,
+          reason: 'the batch outcome must be surfaced, not silent',
+        );
+        expect(find.text('Reconnected 2, 1 failed'), findsOneWidget);
+
+        // And the per-row signal still carries WHICH one failed + why.
+        expect(_dotColor(tester, b), isNot(_dotColor(tester, a)));
+        expect(find.text('auth failed'), findsOneWidget);
+
+        await _drainToast(tester);
+      },
+    );
+
+    testWidgets(
+      'batch skips ⊗-excluded and connected sessions (#817 preserved)',
+      (tester) async {
+        final w = make();
+        final a = _add(w.container, 'host-a');
+        final b = _add(w.container, 'host-b');
+        final c = _add(w.container, 'host-c');
+
+        final commands = <Map<String, dynamic>>[];
+        final sub = w.pair.taskSide.incoming.listen(commands.add);
+        addTearDown(sub.cancel);
+
+        await tester.pumpWidget(_host(container: w.container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
+
+        // a stays CONNECTED, b + c are dropped; c is ⊗-excluded.
+        _drive(w.pair, a, SshSessionState.connected);
+        _drive(w.pair, b, SshSessionState.disconnected);
+        _drive(w.pair, c, SshSessionState.disconnected);
+        await _pumpFrames(tester);
+        await tester.tap(
+          find.byKey(Key('session-menu-exclude-reconnect-${c.id}')),
+        );
+        await _pumpFrames(tester);
+
+        await tester.tap(find.byKey(const Key('session-menu-reconnect-all')));
+        await _pumpFrames(tester);
+
+        final reconnects = commands
+            .where((cmd) => cmd['kind'] == SshTaskCommandKind.reconnect.name)
+            .map((cmd) => cmd['sessionId'] as String)
+            .toSet();
+        expect(reconnects, {b.id});
+
+        _drive(w.pair, b, SshSessionState.connected);
+        await _settleBatch(tester);
+
+        // The summary counts only the sessions the batch actually touched.
+        expect(find.text('Reconnected 1 session'), findsOneWidget);
+        await _drainToast(tester);
       },
     );
   });

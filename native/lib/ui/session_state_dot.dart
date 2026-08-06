@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../ssh/ssh_session.dart';
+import '../state/sessions.dart';
 
 /// True when [state] is a drop the user can manually reconnect from (#817).
 /// A live/connecting session is excluded — it's already healthy or trying.
@@ -20,6 +21,26 @@ bool sessionCanReconnect(SshSessionState state) {
       state == SshSessionState.reconnecting ||
       state == SshSessionState.failed ||
       state == SshSessionState.disconnected;
+}
+
+/// One-line verdict for a "Reconnect all" batch (#959), shared by BOTH
+/// surfaces (the in-session menu row and the Connect-view Active Sessions row)
+/// so the wording can't drift between them. The per-row dot/subtitle says WHICH
+/// session failed; this says the batch is done and how it went — without it a
+/// batch where one machine refused to come back was indistinguishable from a
+/// clean one.
+String reconnectAllSummary(ReconnectAllResult result) {
+  final ok = result.reconnected.length;
+  final bad = result.failed.length;
+  if (bad == 0) {
+    return ok == 1 ? 'Reconnected 1 session' : 'Reconnected $ok sessions';
+  }
+  if (ok == 0) {
+    return bad == 1
+        ? 'Reconnect failed for 1 session'
+        : 'Reconnect failed for $bad sessions';
+  }
+  return 'Reconnected $ok, $bad failed';
 }
 
 /// State-driven status dot for a session (#817). The COLOR encodes the
