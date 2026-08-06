@@ -40,6 +40,55 @@ import 'top_toast.dart';
 // (tests) keep working unchanged.
 export '../services/sftp_download.dart' show downloadSinkFactoryProvider;
 
+/// Files at or above this size (#976) prompt a confirm dialog before download —
+/// large transfers are the ones that saturated the UI isolate and force-quit
+/// the app. Discoverable/tunable in one place. Default 50 MB.
+const int kLargeDownloadThresholdBytes = 50 * 1024 * 1024;
+
+/// Coalesces the task's frequent download-progress events into bounded UI
+/// rebuilds (#976). The old chunk path did one `setState` per chunk; the
+/// streaming path can emit progress just as often, so throttle: emit at most
+/// once per [minInterval] OR when progress advances by [minFraction] of the
+/// total, and always the terminal 100%. Pure + deterministic (the caller passes
+/// elapsed time) so it's unit-testable without a clock.
+class DownloadProgressThrottle {
+  DownloadProgressThrottle({
+    this.minInterval = const Duration(milliseconds: 100),
+    this.minFraction = 0.01,
+  });
+
+  final Duration minInterval;
+  final double minFraction;
+
+  Duration? _lastAt;
+  int _lastDone = 0;
+
+  /// Whether a progress update of [done]/[total] bytes at elapsed [now] warrants
+  /// a rebuild. The first update and the terminal (done >= total) always emit.
+  bool shouldEmit(int done, int total, Duration now) {
+    if (total > 0 && done >= total) {
+      _lastAt = now;
+      _lastDone = done;
+      return true;
+    }
+    final last = _lastAt;
+    if (last == null) {
+      _lastAt = now;
+      _lastDone = done;
+      return true;
+    }
+    final byTime = now - last >= minInterval;
+    final byFraction =
+        total > 0 && (done - _lastDone) >= (total * minFraction);
+    if (byTime || byFraction) {
+      _lastAt = now;
+      _lastDone = done;
+      return true;
+    }
+    return false;
+  }
+}
+
 /// Picks a single LOCAL file to upload (#960). Returns its on-device path +
 /// display name, or null when the user cancels. The task isolate reads the path
 /// and streams it chunk-by-chunk, so we ask for the path only (withData:false) —
@@ -214,8 +263,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   String? _downloadRequestId;
   int _downloadReceived = 0;
   int? _downloadTotal;
-  FileDownloadSink? _downloadSink;
+  FileDownloadTarget? _downloadTarget;
   String? _downloadName;
+
+  /// Coalesces the task's frequent progress events into bounded rebuilds (#976)
+  /// so we don't `setState` per event. Non-null only during a download.
+  DownloadProgressThrottle? _downloadThrottle;
+  Stopwatch? _downloadStopwatch;
 
   /// In-flight chunked upload (#960), null when idle. One at a time. The bytes
   /// are streamed task-side; the UI only tracks progress by request id.
@@ -223,12 +277,6 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   String? _uploadName;
   int _uploadSent = 0;
   int _uploadTotal = 0;
-
-  /// Serializes sink writes so a `done` event flushes only after every chunk
-  /// write has completed. Chunks can arrive reordered over the gateway (#591);
-  /// the sink writes each at its byte offset so order doesn't affect the bytes,
-  /// but chaining keeps `finish` strictly after the last write.
-  Future<void> _downloadWrites = Future<void>.value();
 
   bool _attached = false;
 
@@ -280,8 +328,8 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   @override
   void dispose() {
     _sub?.cancel();
-    // Abort any partial download so we don't leak a half-written file.
-    unawaited(_downloadSink?.abort());
+    // Abort any partial download so we don't leak a half-written staging file.
+    unawaited(_downloadTarget?.abort());
     super.dispose();
   }
 
@@ -310,9 +358,9 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
           _loading = false;
           _error = null;
         });
-      case SftpDownloadChunkEvent():
+      case SftpDownloadProgressEvent():
         if (event.requestId != _downloadRequestId) return;
-        _onChunk(event);
+        _onDownloadProgress(event);
       case SftpDownloadDoneEvent():
         if (event.requestId != _downloadRequestId) return;
         unawaited(_onDownloadDone(event));
@@ -349,40 +397,41 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     _list(_path);
   }
 
-  void _onChunk(SftpDownloadChunkEvent event) {
-    final sink = _downloadSink;
-    if (sink == null) return;
-    final bytes = event.bytes;
-    final offset = event.offset;
-    // Write at the chunk's byte offset (#591). Chain writes so `done` only
-    // flushes after they all complete.
-    _downloadWrites = _downloadWrites.then((_) => sink.addChunk(bytes, offset));
+  /// Progress for the task-side streaming download (#976). The bytes stayed
+  /// task-side; this only advances the bar. Throttled so a fast transfer's
+  /// stream of progress events doesn't `setState` per event (the UI-isolate
+  /// saturation that used to force-quit the app).
+  void _onDownloadProgress(SftpDownloadProgressEvent event) {
+    final throttle = _downloadThrottle;
+    final elapsed = _downloadStopwatch?.elapsed ?? Duration.zero;
+    if (throttle != null &&
+        !throttle.shouldEmit(event.done, event.totalBytes, elapsed)) {
+      return;
+    }
     if (!mounted) return;
     setState(() {
-      _downloadReceived += bytes.length;
-      _downloadTotal = event.totalBytes;
+      _downloadReceived = event.done;
+      if (event.totalBytes > 0) _downloadTotal = event.totalBytes;
     });
   }
 
   Future<void> _onDownloadDone(SftpDownloadDoneEvent event) async {
-    final sink = _downloadSink;
+    final target = _downloadTarget;
     final name = _downloadName ?? 'file';
-    _downloadSink = null;
+    _downloadTarget = null;
+    _downloadThrottle = null;
+    _downloadStopwatch?.stop();
+    _downloadStopwatch = null;
+    // The task already wrote the whole file to the staging path; publish it into
+    // the user-visible Downloads collection and report where it landed.
     String? location;
-    var failed = false;
-    if (sink != null) {
+    if (target != null) {
       try {
-        await _downloadWrites; // drain all chunk writes first
-        location = await sink.finish(expectedTotal: event.totalBytes);
-      } catch (e) {
-        // Length mismatch / write failure → the file is corrupt. Clean up and
-        // report failure rather than claiming a successful download (#591).
-        failed = true;
-        await sink.abort();
+        location = await target.publish();
+      } catch (_) {
         location = null;
       }
     }
-    _downloadWrites = Future<void>.value();
     if (!mounted) return;
     setState(() {
       _downloadRequestId = null;
@@ -390,14 +439,33 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       _downloadTotal = null;
       _downloadName = null;
     });
-    if (failed) {
-      _snack('Download failed: $name was incomplete');
-      return;
-    }
     final msg = location != null
         ? 'Downloaded $name → $location'
         : 'Downloaded $name';
     _snack(msg);
+  }
+
+  /// Cancel an in-flight download (#976). Stops tracking the request (later
+  /// progress/done events no longer match the request id) and deletes the
+  /// partial staging file. There is no task-side mid-stream cancel command to
+  /// reuse today — the task keeps streaming to the staging file, which
+  /// [FileDownloadTarget.abort] removes; a task-side cancel is a follow-up.
+  Future<void> _cancelDownload() async {
+    final target = _downloadTarget;
+    _downloadTarget = null;
+    _downloadThrottle = null;
+    _downloadStopwatch?.stop();
+    _downloadStopwatch = null;
+    if (mounted) {
+      setState(() {
+        _downloadRequestId = null;
+        _downloadReceived = 0;
+        _downloadTotal = null;
+        _downloadName = null;
+      });
+    }
+    await target?.abort();
+    _snack('Download cancelled');
   }
 
   void _onSftpError(SftpErrorEvent event) {
@@ -412,8 +480,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       return;
     }
     if (event.requestId == _downloadRequestId) {
-      unawaited(_downloadSink?.abort());
-      _downloadSink = null;
+      unawaited(_downloadTarget?.abort());
+      _downloadTarget = null;
+      _downloadThrottle = null;
+      _downloadStopwatch?.stop();
+      _downloadStopwatch = null;
       if (!mounted) return;
       setState(() {
         _downloadRequestId = null;
@@ -499,27 +570,70 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       _snack('A download is already in progress');
       return;
     }
+    // Size gate (#976): large transfers are the ones that used to hang the app —
+    // confirm before starting.
+    final size = entry.size;
+    if (size != null && size >= kLargeDownloadThresholdBytes) {
+      final proceed = await _confirmLargeDownload(entry.name, size);
+      if (!proceed || !mounted) return;
+    }
     final reqId = _nextRequestId();
-    final factory = ref.read(downloadSinkFactoryProvider);
-    FileDownloadSink sink;
+    final factory = ref.read(downloadTargetFactoryProvider);
+    FileDownloadTarget target;
     try {
-      sink = await factory(entry.name);
+      target = await factory(entry.name);
     } catch (e) {
       _snack('Could not start download: $e');
       return;
     }
     if (!mounted) {
-      await sink.abort();
+      await target.abort();
       return;
     }
+    _downloadThrottle = DownloadProgressThrottle();
+    _downloadStopwatch = Stopwatch()..start();
     setState(() {
       _downloadRequestId = reqId;
-      _downloadSink = sink;
+      _downloadTarget = target;
       _downloadName = entry.name;
       _downloadReceived = 0;
       _downloadTotal = entry.size;
     });
-    proxy.sftpDownload(requestId: reqId, path: entry.path);
+    // Task-side streaming download (#976): the task reads the remote file and
+    // writes it straight to `target.localPath` on disk, emitting only
+    // lightweight progress events. The file bytes NEVER cross the isolate — the
+    // fix for the large-file force-quit (contrast the old sftpDownload chunk
+    // firehose).
+    proxy.sftpDownloadFile(
+      requestId: reqId,
+      remotePath: entry.path,
+      localPath: target.localPath,
+    );
+  }
+
+  /// Confirm before downloading a large file (#976). Returns true to proceed.
+  Future<bool> _confirmLargeDownload(String name, int size) async {
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        key: const Key('large-download-confirm'),
+        title: const Text('Download large file?'),
+        content: Text('$name is ${formatSize(size)}. Download it?'),
+        actions: [
+          TextButton(
+            key: const Key('large-download-cancel'),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const Key('large-download-confirm-ok'),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Download'),
+          ),
+        ],
+      ),
+    );
+    return proceed ?? false;
   }
 
   void _goUp() {
@@ -930,6 +1044,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
               name: _downloadName ?? '',
               received: _downloadReceived,
               total: _downloadTotal,
+              onCancel: _cancelDownload,
             ),
           if (_uploadRequestId != null)
             _UploadProgress(
@@ -1102,27 +1217,41 @@ class _DownloadProgress extends StatelessWidget {
     required this.name,
     required this.received,
     required this.total,
+    required this.onCancel,
   });
 
   final String name;
   final int received;
   final int? total;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
     final t = total;
     final value = (t != null && t > 0) ? (received / t).clamp(0.0, 1.0) : null;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
+      child: Row(
         children: [
-          Text(
-            'Downloading $name…',
-            style: Theme.of(context).textTheme.bodySmall,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Downloading $name…',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 4),
+                LinearProgressIndicator(value: value),
+              ],
+            ),
           ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(value: value),
+          IconButton(
+            key: const Key('file-browser-download-cancel'),
+            tooltip: 'Cancel download',
+            icon: const Icon(Icons.close),
+            onPressed: onCancel,
+          ),
         ],
       ),
     );
