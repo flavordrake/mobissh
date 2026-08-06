@@ -25,11 +25,32 @@ fi
 
 log() { echo "> [subset] $*"; }
 
+# MUST mirror native-integration-suite.sh's needs_second_bridge(): these tests
+# open a SECOND distinct host:port tuple on-device (two real sessions), and
+# native-connect-test.sh only wires that bridge when BRIDGE_PORT2 is exported.
+# Without it the 2nd session has nowhere to connect and the test fails for a
+# HARNESS reason that looks exactly like a product regression ("both sessions
+# did not reach connected"). Keep this in sync with the suite.
+needs_second_bridge() {
+  case "$1" in
+    *multi_session_lifecycle_test.dart) return 0 ;;
+    *sftp_browse_smoke_test.dart) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 passed=()
 failed=()
 for t in "$@"; do
   log "=== running $t ==="
-  if "${REPO_ROOT}/scripts/native-connect-test.sh" "$t"; then
+  if needs_second_bridge "$t"; then
+    log "(enabling 2nd bridge port 2223 for multi-session)"
+    if BRIDGE_PORT2="2223" "${REPO_ROOT}/scripts/native-connect-test.sh" "$t"; then
+      passed+=("$t"); log "PASS $t"
+    else
+      failed+=("$t"); log "FAIL $t"
+    fi
+  elif "${REPO_ROOT}/scripts/native-connect-test.sh" "$t"; then
     passed+=("$t")
     log "PASS $t"
   else
