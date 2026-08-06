@@ -79,44 +79,39 @@ class _ScriptedSftpSession implements SftpSession {
     required void Function(int done, int total) onProgress,
     int chunkSize = 64 * 1024,
   }) async {
-    onProgress(0, 0);
-    return 0;
+    // Mirror the real task-side stream: report progress by byte count without
+    // ever handing the bytes back across the isolate.
+    final total = _fileBytes.length;
+    onProgress(0, total);
+    onProgress(total, total);
+    return total;
   }
 
   @override
   Future<void> close() async {}
 }
 
-/// In-memory sink so the download path runs without a real filesystem. Honors
-/// the chunk byte offset (#591) by writing into an offset-indexed buffer, so it
-/// faithfully mirrors the real [OffsetFileSink] semantics.
-class _MemSink implements FileDownloadSink {
-  final List<int> _buf = <int>[];
-  bool finished = false;
-  int? finishExpectedTotal;
+/// Fake task-side download destination: no filesystem, no platform channel.
+/// [publish] records that the finished staging file was handed off (#976).
+class _FakeTarget implements FileDownloadTarget {
+  _FakeTarget(this.localPath);
 
   @override
-  Future<void> addChunk(Uint8List bytes, int offset) async {
-    final end = offset + bytes.length;
-    while (_buf.length < end) {
-      _buf.add(0);
-    }
-    for (var i = 0; i < bytes.length; i++) {
-      _buf[offset + i] = bytes[i];
-    }
-  }
+  final String localPath;
 
-  Uint8List toBytes() => Uint8List.fromList(_buf);
+  bool published = false;
+  bool aborted = false;
 
   @override
-  Future<String> finish({int? expectedTotal}) async {
-    finished = true;
-    finishExpectedTotal = expectedTotal;
-    return '/test/Download/captured';
+  Future<String> publish() async {
+    published = true;
+    return '/test/Download/${localPath.split('/').last}';
   }
 
   @override
-  Future<void> abort() async {}
+  Future<void> abort() async {
+    aborted = true;
+  }
 }
 
 Future<void> _pump(WidgetTester tester, {int count = 10}) async {
@@ -163,11 +158,13 @@ void main() {
       snapshotInterval: const Duration(hours: 1),
     );
 
-    final memSink = _MemSink();
+    final target = _FakeTarget('/tmp/mobissh_test/a.bin');
     final container = ProviderContainer(
       overrides: [
         taskSshGatewayProvider.overrideWithValue(pair.uiSide),
-        downloadSinkFactoryProvider.overrideWithValue((name) async => memSink),
+        downloadTargetFactoryProvider.overrideWithValue(
+          (name) async => target,
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -210,12 +207,12 @@ void main() {
     await _pump(tester);
     expect(find.byKey(const Key('file-entry-a.bin')), findsOneWidget);
 
-    // Tap the file → download runs through the injected sink.
+    // Tap the file → download runs through the task-side streaming path (#976):
+    // the finished staging file is published, bytes never crossing the isolate.
     await tester.tap(find.byKey(const Key('file-entry-a.bin')));
     await _pump(tester);
 
-    expect(memSink.finished, isTrue);
-    expect(memSink.toBytes(), Uint8List.fromList(fileBytes));
+    expect(target.published, isTrue);
     // Success snackbar.
     expect(find.textContaining('Downloaded a.bin'), findsOneWidget);
 

@@ -86,25 +86,20 @@ class _ScriptedSftpSession implements SftpSession {
   Future<void> close() async {}
 }
 
-class _MemSink implements FileDownloadSink {
-  final List<int> _buf = <int>[];
-  bool finished = false;
+/// Fake task-side download destination (#976): no filesystem, no platform
+/// channel. Records that the finished staging file was published.
+class _FakeTarget implements FileDownloadTarget {
+  _FakeTarget(this.localPath);
 
   @override
-  Future<void> addChunk(Uint8List bytes, int offset) async {
-    final end = offset + bytes.length;
-    while (_buf.length < end) {
-      _buf.add(0);
-    }
-    for (var i = 0; i < bytes.length; i++) {
-      _buf[offset + i] = bytes[i];
-    }
-  }
+  final String localPath;
+
+  bool published = false;
 
   @override
-  Future<String> finish({int? expectedTotal}) async {
-    finished = true;
-    return '/test/Download/captured';
+  Future<String> publish() async {
+    published = true;
+    return '/test/Download/${localPath.split('/').last}';
   }
 
   @override
@@ -325,7 +320,7 @@ void main() {
   testWidgets('tapping an unknown binary falls through to download', (
     tester,
   ) async {
-    final memSink = _MemSink();
+    final target = _FakeTarget('/tmp/mobissh_test/app.bin');
     final bytes = List<int>.generate(8, (i) => i + 1);
     final w = _wire(
       tester,
@@ -341,7 +336,9 @@ void main() {
       },
       fileBytes: bytes,
       overrides: [
-        downloadSinkFactoryProvider.overrideWithValue((name) async => memSink),
+        downloadTargetFactoryProvider.overrideWithValue(
+          (name) async => target,
+        ),
       ],
     );
 
@@ -359,7 +356,7 @@ void main() {
     // No viewer; download path ran.
     expect(find.byType(TextFileViewerScreen), findsNothing);
     expect(find.byType(PdfViewerScreen), findsNothing);
-    expect(memSink.finished, isTrue);
+    expect(target.published, isTrue);
     expect(find.textContaining('Downloaded app.bin'), findsOneWidget);
 
     w.host.disposeSyncForTest();

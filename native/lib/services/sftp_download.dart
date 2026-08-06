@@ -163,7 +163,7 @@ class AppDownloadsSink implements FileDownloadSink {
     String fileName, {
     DownloadsPublisher? publisher,
   }) async {
-    final dir = await _resolveStagingDir();
+    final dir = await resolveDownloadStagingDir();
     return createInDir(dir, fileName, publisher: publisher);
   }
 
@@ -174,7 +174,7 @@ class AppDownloadsSink implements FileDownloadSink {
     String fileName, {
     DownloadsPublisher? publisher,
   }) async {
-    final safeName = _sanitize(fileName);
+    final safeName = sanitizeDownloadName(fileName);
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
@@ -185,29 +185,6 @@ class AppDownloadsSink implements FileDownloadSink {
       safeName,
       publisher ?? platformPublishToDownloads,
     );
-  }
-
-  /// App-private staging directory for in-flight downloads. Not user-visible;
-  /// the file is moved into public Downloads on [finish].
-  static Future<Directory> _resolveStagingDir() async {
-    Directory base;
-    try {
-      base =
-          await getApplicationSupportDirectory();
-    } catch (_) {
-      base = await getApplicationDocumentsDirectory();
-    }
-    final dir = Directory('${base.path}/mobissh_downloads');
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-    return dir;
-  }
-
-  /// Strip path separators so a remote basename can't escape the target dir.
-  static String _sanitize(String name) {
-    final base = name.split('/').last.split('\\').last;
-    return base.isEmpty ? 'download' : base;
   }
 
   @override
@@ -283,4 +260,145 @@ class TempFileSink implements FileDownloadSink {
 
   @override
   Future<void> abort() => _inner.abort();
+}
+
+/// App-private staging directory for in-flight downloads. Not user-visible; the
+/// finished file is moved into public Downloads on publish. Shared by
+/// [AppDownloadsSink] (chunk assembly) and [AppDownloadTarget] (task-side
+/// stream, #976).
+Future<Directory> resolveDownloadStagingDir() async {
+  Directory base;
+  try {
+    base = await getApplicationSupportDirectory();
+  } catch (_) {
+    base = await getApplicationDocumentsDirectory();
+  }
+  final dir = Directory('${base.path}/mobissh_downloads');
+  if (!await dir.exists()) {
+    await dir.create(recursive: true);
+  }
+  return dir;
+}
+
+/// Strip path separators so a remote basename can't escape the target dir.
+String sanitizeDownloadName(String name) {
+  final base = name.split('/').last.split('\\').last;
+  return base.isEmpty ? 'download' : base;
+}
+
+/// A TASK-SIDE download destination (#976). The task streams the remote file
+/// straight to [localPath] on disk (the whole file NEVER crosses the isolate —
+/// the fix for the large-file force-quit); the UI resolves the path up front,
+/// and on the terminal done event calls [publish] to move the finished file
+/// into the user-visible Downloads collection. [abort] deletes the partial file
+/// on error/cancel. Contrast [FileDownloadSink], which assembles chunks that
+/// each cross the isolate on the UI isolate.
+abstract class FileDownloadTarget {
+  /// Local staging path the task writes the downloaded file to.
+  String get localPath;
+
+  /// Publish the finished staging file into public Downloads; returns a display
+  /// location. Falls back to the staging path if publishing is unavailable, so a
+  /// completed download is never lost.
+  Future<String> publish();
+
+  /// Delete the (partial) staging file after an error or user cancel.
+  Future<void> abort();
+}
+
+/// Resolves the [FileDownloadTarget] for a task-side download (#976). Injected
+/// into the browser so widget tests substitute a fake (no filesystem, no
+/// platform channel). Production stages into app-private storage, then
+/// publishes to Downloads.
+typedef DownloadTargetFactory =
+    Future<FileDownloadTarget> Function(String fileName);
+
+/// Production factory: an [AppDownloadTarget] staging into app-scoped storage.
+Future<FileDownloadTarget> defaultDownloadTargetFactory(
+  String fileName,
+) async {
+  return AppDownloadTarget.create(fileName);
+}
+
+/// Resolves the destination for task-side downloads. Overridden in widget/
+/// emulator tests to avoid the real filesystem + platform channel. Mirror of
+/// [downloadSinkFactoryProvider] for the streaming path.
+final downloadTargetFactoryProvider = Provider<DownloadTargetFactory>(
+  (ref) => defaultDownloadTargetFactory,
+);
+
+/// Production [FileDownloadTarget]: the task streams the remote file into an
+/// app-private staging file; [publish] hands it to [platformPublishToDownloads].
+/// Mirrors [AppDownloadsSink] minus the UI-side chunk assembly (that now happens
+/// task-side in `sftp.downloadFile`).
+class AppDownloadTarget implements FileDownloadTarget {
+  AppDownloadTarget._(this._file, this._fileName, this._publish);
+
+  final File _file;
+  final String _fileName;
+  final DownloadsPublisher _publish;
+
+  @override
+  String get localPath => _file.path;
+
+  static Future<AppDownloadTarget> create(
+    String fileName, {
+    DownloadsPublisher? publisher,
+  }) async {
+    final dir = await resolveDownloadStagingDir();
+    return createInDir(dir, fileName, publisher: publisher);
+  }
+
+  /// Test seam: stage into an explicit [dir] so the publish/cleanup/fallback
+  /// contract is verifiable without path_provider.
+  static Future<AppDownloadTarget> createInDir(
+    Directory dir,
+    String fileName, {
+    DownloadsPublisher? publisher,
+  }) async {
+    final safeName = sanitizeDownloadName(fileName);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    final file = File('${dir.path}/$safeName');
+    // Clear any stale partial from a prior attempt so the task's openWrite
+    // starts on a clean file.
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      /* best-effort */
+    }
+    return AppDownloadTarget._(
+      file,
+      safeName,
+      publisher ?? platformPublishToDownloads,
+    );
+  }
+
+  @override
+  Future<String> publish() async {
+    try {
+      final location = await _publish(_file.path, _fileName, null);
+      // Published into public Downloads — drop the staging copy.
+      try {
+        if (await _file.exists()) await _file.delete();
+      } catch (_) {
+        /* best-effort cleanup */
+      }
+      return location;
+    } catch (_) {
+      // Publishing unavailable/failed: keep the completed staging file so the
+      // download isn't lost, and report its path.
+      return _file.path;
+    }
+  }
+
+  @override
+  Future<void> abort() async {
+    try {
+      if (await _file.exists()) await _file.delete();
+    } catch (_) {
+      /* ignore */
+    }
+  }
 }
