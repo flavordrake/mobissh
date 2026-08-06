@@ -20,15 +20,19 @@
 // confirming completion with a sentinel echo before browsing. This keeps the
 // seed in-fixture and reuses the existing bridge, per feedback_reuse_pwa_infra.
 //
-// Download bytes are asserted by overriding `downloadSinkFactoryProvider` with
-// an in-memory capturing sink — proving the file round-trips, not merely that a
-// download "fired".
+// Download bytes are asserted by overriding the download seams with capturing
+// fakes — proving the file round-trips, not merely that a download "fired".
+// Since #976 the BROWSER download runs task-side (`downloadTargetFactoryProvider`,
+// bytes never cross the isolate); `downloadSinkFactoryProvider` still backs the
+// streaming/viewer path. Both are overridden — capturing only the sink made this
+// test report "file download never completed" when the product was fine.
 
 @Tags(['integration'])
 library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -89,6 +93,53 @@ class _SinkRegistry {
     final sink = _CapturingSink();
     sinks[fileName] = sink;
     return sink;
+  }
+}
+
+/// Capturing [FileDownloadTarget] for the TASK-SIDE download path (#976).
+///
+/// The browser download no longer assembles chunks UI-side, so the old
+/// [FileDownloadSink] seam is never touched by it — a test that only overrides
+/// [downloadSinkFactoryProvider] silently observes nothing and reports "file
+/// download never completed" as if the product broke. The task streams the file
+/// to [localPath] on device, so we stage into a real temp file and read it back
+/// when the UI publishes.
+class _CapturingTarget implements FileDownloadTarget {
+  _CapturingTarget(this._file);
+
+  final File _file;
+  bool finished = false;
+  Uint8List bytes = Uint8List(0);
+
+  @override
+  String get localPath => _file.path;
+
+  @override
+  Future<String> publish() async {
+    if (await _file.exists()) {
+      bytes = await _file.readAsBytes();
+    }
+    finished = true;
+    return _file.path;
+  }
+
+  @override
+  Future<void> abort() async {
+    if (await _file.exists()) {
+      await _file.delete();
+    }
+  }
+}
+
+/// Per-file capture registry for the task-side download target.
+class _TargetRegistry {
+  final Map<String, _CapturingTarget> targets = <String, _CapturingTarget>{};
+
+  Future<FileDownloadTarget> factory(String fileName) async {
+    final dir = await Directory.systemTemp.createTemp('sftp_browse_dl_');
+    final target = _CapturingTarget(File('${dir.path}/$fileName'));
+    targets[fileName] = target;
+    return target;
   }
 }
 
@@ -280,9 +331,14 @@ void main() {
       FlutterForegroundTask.initCommunicationPort();
 
       final registry = _SinkRegistry();
+      final targets = _TargetRegistry();
       final container = ProviderContainer(
         overrides: [
           downloadSinkFactoryProvider.overrideWithValue(registry.factory),
+          // #976 repointed the BROWSER download onto the task-side target seam
+          // (bytes never cross the isolate), so the sink above is no longer the
+          // observation point for this case — override both.
+          downloadTargetFactoryProvider.overrideWithValue(targets.factory),
           // #782: tapping a `.txt` entry now routes to the in-app text VIEWER
           // (#776), which streams the file through its own fetcher — NOT the
           // download sink this test captures. That bypassed the capturing sink,
@@ -370,13 +426,15 @@ void main() {
       expect(ascended, isTrue, reason: 'ascend did not return to parent');
 
       // 5) Tap the small text file → download fires → captured bytes == seed.
+      // Observed on the TASK-SIDE target seam (#976): the task streams the file
+      // to the target's localPath and the UI publishes on the terminal event.
       await tester.tap(find.byKey(const Key('file-entry-$fileName')));
       final downloaded = await _pumpUntil(
         tester,
-        () => registry.sinks[fileName]?.finished == true,
+        () => targets.targets[fileName]?.finished == true,
       );
       expect(downloaded, isTrue, reason: 'file download never completed');
-      final got = registry.sinks[fileName]!.bytes;
+      final got = targets.targets[fileName]!.bytes;
       expect(
         utf8.decode(got, allowMalformed: true),
         content,
