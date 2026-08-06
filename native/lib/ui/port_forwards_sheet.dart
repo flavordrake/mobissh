@@ -10,6 +10,11 @@
 // Presented via showModalBottomSheet on the app Navigator (the session-menu
 // overlay closes FIRST — its barrier sits above pushed routes, #664 idiom).
 //
+// Add form (#1094): the remote port MIRRORS the local port as a real controller
+// value until the user types their own, so the common `8080 → 8080` case is
+// actually committed. Port fields carry no numeric hintText — a grey number
+// inside an empty field is indistinguishable from a filled-in one.
+//
 // Security (.claude/rules/security.md): forwards bind 127.0.0.1 ONLY; the
 // sheet states that so the surface is honest about scope. No -R in v1.
 
@@ -99,6 +104,17 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
   final _remotePortCtrl = TextEditingController();
   String? _formError;
 
+  /// True once the user has typed their own remote port. While false the remote
+  /// port MIRRORS the local port (#1094) — the common case `8080 → 8080` is then
+  /// genuinely committed, not a hint that merely looks committed. A deliberate
+  /// `8080 → 80` is never clobbered by a later local-port edit.
+  bool _remotePortEdited = false;
+
+  /// Reentrancy guard: the mirror writes `_remotePortCtrl`, which fires that
+  /// controller's own listener. Without this the mirror would read as a user
+  /// edit and pin the field after one keystroke.
+  bool _mirroringRemotePort = false;
+
   @override
   void initState() {
     super.initState();
@@ -109,9 +125,9 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
     });
     // Live effect preview (#1054): rebuild the `L → host:R` line as the user
     // types so the concrete mapping + direction stay in front of them.
-    _localPortCtrl.addListener(_onFieldChanged);
+    _localPortCtrl.addListener(_onLocalPortChanged);
     _remoteHostCtrl.addListener(_onFieldChanged);
-    _remotePortCtrl.addListener(_onFieldChanged);
+    _remotePortCtrl.addListener(_onRemotePortChanged);
     // Hydrate: the task replays the authoritative table.
     widget.entry.proxy.forwardList();
     unawaited(_loadDefaults());
@@ -120,6 +136,29 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
   void _onFieldChanged() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  /// Mirror the local port into the remote port (#1094) unless the user has
+  /// pinned their own. Clearing the local port clears the mirror too, so no
+  /// stale value is stranded in a field the user can no longer see the origin of.
+  void _onLocalPortChanged() {
+    if (!_remotePortEdited && _remotePortCtrl.text != _localPortCtrl.text) {
+      _mirroringRemotePort = true;
+      _remotePortCtrl.text = _localPortCtrl.text;
+      _mirroringRemotePort = false;
+    }
+    _onFieldChanged();
+  }
+
+  /// A user edit pins the remote port; wiping it back to empty hands the field
+  /// to the mirror again. Deliberately does NOT refill on the spot — refilling
+  /// the instant the field empties corrupts backspace-then-retype on a soft
+  /// keyboard (`80` → `8` → `` → refilled `8080`, then the new digits append).
+  void _onRemotePortChanged() {
+    if (!_mirroringRemotePort) {
+      _remotePortEdited = _remotePortCtrl.text.trim().isNotEmpty;
+    }
+    _onFieldChanged();
   }
 
   @override
@@ -214,6 +253,9 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
       remoteHost: remoteHost,
       remotePort: remotePort,
     );
+    // Reset the pin FIRST so clearing the local port also clears the mirror and
+    // the next entry mirrors again.
+    _remotePortEdited = false;
     _localPortCtrl.clear();
     _remotePortCtrl.clear();
   }
@@ -408,8 +450,10 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
+                    // No numeric hint (#1094): a grey `8888` sitting inside an
+                    // EMPTY field reads as a committed value. The label +
+                    // helper + live preview carry the meaning instead.
                     labelText: 'Local',
-                    hintText: '8888',
                     helperText: 'phone',
                     isDense: true,
                   ),
@@ -446,8 +490,9 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
+                    // The #1094 trap itself: this hint was read as an
+                    // auto-filled value while the controller was empty.
                     labelText: 'Remote',
-                    hintText: '8250',
                     helperText: 'on server',
                     isDense: true,
                   ),
