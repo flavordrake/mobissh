@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-native-explorer-dx-detection-arc-201358/` — native file-explorer (upload/sort/mtime/context-menu/favorites), settings reorg, DX (arm64 split, Content-Length, ntfy), and the GUTTER pivot that escapes the URL/path detection repaint saga. Durable learnings in memory.
+> **Active TRACE**: `.traces/trace-fleet-emulator-gate-restore-003808/` — restoring the #589 integration gate after the emulator graduated to CT113 (on-demand flock lease), landing #976/#959 under a documented gate exception, and the failure-attribution lessons (#1101 still open). Prior arc: `.traces/trace-native-explorer-dx-detection-arc-201358/` (native file-explorer, settings reorg, DX, GUTTER pivot). Durable learnings in memory.
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
