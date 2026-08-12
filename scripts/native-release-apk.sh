@@ -108,7 +108,11 @@ echo "  ${SERVE_HOST}/native.html"
 echo "+ stable apk:  ${SERVE_HOST}/${STABLE}"
 echo "+ this build:  ${SERVE_HOST}/${STAMPED}"
 
-# ntfy push (best-effort; no-op until ~/.mobissh/ntfy.env is set) — one-tap download.
-# Lead with the version; body is the timestamped artifact (informative, not obvious).
-NTFY_VERSION="$(grep -E '^version:' "${NATIVE_DIR}/pubspec.yaml" | awk '{print $2}' || true)"
-"${REPO_ROOT}/scripts/notify-ntfy.sh" "MobiSSH ${NTFY_VERSION}" "${SERVE_HOST}/${STAMPED}" "${STAMPED}"
+# Announce on the fleet bus. ntfy is RETIRED for operator alerts (fleet ONE-BUS
+# RULE: Matrix only) and its push had been silently no-opping — two builds
+# shipped with nobody told before it was caught (#1104). notify-build.sh fails
+# LOUD + non-zero rather than "skipping", so an unannounced build is impossible
+# to miss. The artifact URLs are already printed above, so nothing is lost if
+# this step is the thing that fails.
+BUILD_VERSION="$(grep -E '^version:' "${NATIVE_DIR}/pubspec.yaml" | awk '{print $2}')"
+"${REPO_ROOT}/scripts/notify-build.sh" "${BUILD_VERSION}" "${SERVE_HOST}/${STAMPED}"

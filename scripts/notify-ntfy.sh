@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
-# scripts/notify-ntfy.sh — push a "build ready" (or any release/test cycle)
-# notification with a one-tap open action. BEST-EFFORT: always exits 0; never
-# fails a build.
+# scripts/notify-ntfy.sh — RETIRED 2026-08-12. DO NOT USE. Use notify-build.sh.
+#
+# ntfy is retired for operator alerts under the fleet's pinned ONE-BUS RULE
+# ("Matrix is the ONLY comms system for notification + direction"). The bridge
+# no longer resolves, so this script's best-effort design turned into a silent
+# failure: it printed "skipping" and exited 0, and two native builds shipped
+# with nobody told before the owner asked "did you make a build or not?" (#1104).
+#
+# It refuses to run rather than being quietly re-adopted — a best-effort
+# notifier is exactly the wrong shape for the one step whose only job is to be
+# heard. Everything below is kept for reference until the bug-report worker's
+# own ntfy usage is retired too.
+if [[ "${MOBISSH_ALLOW_RETIRED_NTFY:-0}" != "1" ]]; then
+  echo "! notify-ntfy.sh is RETIRED (ntfy is not the operator path — see #1104)." >&2
+  echo "! Use: scripts/notify-build.sh <version> <url> [extra-line...]" >&2
+  exit 2
+fi
+
+# --- original implementation below (unreachable without the override) ---
+# push a "build ready" (or any release/test cycle) notification with a one-tap
+# open action. BEST-EFFORT: always exits 0; never fails a build.
 #
 # Usage: scripts/notify-ntfy.sh "<title>" "<click/open URL>" ["<body>"] ["<stage>"]
 #   stage defaults to "build-ready" (e.g. build-ready | test-ready | release).
