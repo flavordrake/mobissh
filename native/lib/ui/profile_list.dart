@@ -177,21 +177,52 @@ class ProfileList extends ConsumerWidget {
             return _RecentTile(entry: r, onTap: () => onTapRecent(r));
           },
         ),
-        if (recents.length >= 2)
-          Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 4),
-            child: OutlinedButton.icon(
-              key: const Key('reconnect-all-recent'),
-              icon: const Icon(Icons.restart_alt, size: 18),
-              label: const Text('Reconnect All'),
-              onPressed: onReconnectAll == null
-                  ? null
-                  : () => onReconnectAll!(List<RecentSessionEntry>.from(recents)),
-            ),
+        // Action row: Reconnect All (only meaningful with 2+) on the left,
+        // Clear flush RIGHT. Clear shows whenever the group renders — the group
+        // itself only builds on a non-empty list, so there is always something
+        // to clear even when Reconnect All is absent.
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 4),
+          child: Row(
+            children: [
+              if (recents.length >= 2)
+                OutlinedButton.icon(
+                  key: const Key('reconnect-all-recent'),
+                  icon: const Icon(Icons.restart_alt, size: 18),
+                  label: const Text('Reconnect All'),
+                  onPressed: onReconnectAll == null
+                      ? null
+                      : () =>
+                            onReconnectAll!(List<RecentSessionEntry>.from(recents)),
+                ),
+              const Spacer(),
+              TextButton.icon(
+                key: const Key('recent-sessions-clear'),
+                // Monochrome Material glyph, no emoji (project rule). Small +
+                // text-weight so it reads as secondary to Reconnect All.
+                icon: const Icon(Icons.clear_all, size: 18),
+                label: const Text('Clear'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                onPressed: () => unawaited(_clearRecents(ref)),
+              ),
+            ],
           ),
+        ),
         const Divider(height: 1),
       ],
     );
+  }
+
+  /// Clear the stored recents, then invalidate so the watcher re-fetches and
+  /// the group self-hides (it already returns null on an empty list). No
+  /// confirm dialog: recents are a convenience cache, not user data — every
+  /// entry is re-created by connecting, and saved profiles are untouched.
+  Future<void> _clearRecents(WidgetRef ref) async {
+    await ref.read(recentSessionsStoreProvider).clear();
+    ref.invalidate(recentSessionsProvider);
   }
 
   /// Build the Active Sessions group (#821 Slice 3), or null when there are no

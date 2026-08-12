@@ -164,6 +164,14 @@ class RecentSessionsStore {
     }
   }
 
+  /// Drop every recent entry. Removes the key outright rather than writing an
+  /// empty list, so [load] takes its absent-key path (same result, no stale
+  /// blob left behind).
+  Future<void> clear() async {
+    final prefs = await _ensure();
+    await prefs.remove(recentSessionsPrefsKey);
+  }
+
   Future<void> _write(List<RecentSessionEntry> list) async {
     final prefs = await _ensure();
     final encoded = jsonEncode(list.map((e) => e.toJson()).toList());

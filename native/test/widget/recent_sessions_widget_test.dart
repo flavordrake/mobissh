@@ -192,4 +192,51 @@ void main() {
 
     expect(find.text('Recent Sessions'), findsNothing);
   });
+
+  testWidgets('Clear wipes the recents and the group self-hides', (
+    tester,
+  ) async {
+    final recentStore = RecentSessionsStore();
+    await _seedRecents(recentStore, [_entry('a.example'), _entry('b.example')]);
+
+    await tester.pumpWidget(
+      _harness(recentStore: recentStore, profilesStore: ProfilesStore()),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Recent Sessions'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('recent-sessions-clear')));
+    await tester.pumpAndSettle();
+
+    // Group self-hides (it returns null on an empty list) …
+    expect(find.text('Recent Sessions'), findsNothing);
+    // … and the wipe is PERSISTED, not just a UI reset.
+    expect(await recentStore.load(), isEmpty);
+  });
+
+  testWidgets('Clear leaves saved profiles untouched', (tester) async {
+    final recentStore = RecentSessionsStore();
+    await _seedRecents(recentStore, [_entry('a.example')]);
+    final profilesStore = ProfilesStore();
+    await profilesStore.upsert(
+      SavedProfile(
+        title: 'me@kept.example',
+        host: 'kept.example',
+        port: 22,
+        username: 'me',
+      ),
+    );
+
+    await tester.pumpWidget(
+      _harness(recentStore: recentStore, profilesStore: profilesStore),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('recent-sessions-clear')));
+    await tester.pumpAndSettle();
+
+    // Recents are a convenience cache; saved profiles are user data.
+    expect(await recentStore.load(), isEmpty);
+    expect((await profilesStore.load()).length, 1);
+  });
 }
