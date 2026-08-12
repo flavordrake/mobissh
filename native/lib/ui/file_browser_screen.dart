@@ -254,6 +254,14 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   /// star's filled/outline state; refreshed after every favorites mutation.
   Set<String> _favoritePaths = const {};
 
+  /// Directories visited before [_path], most recent last (#1102). The back
+  /// gesture walks THIS, not the parent chain — "previous" is where you came
+  /// FROM (a favorite quick-nav returns you to where you were, not to the
+  /// favorite's parent). Per-browser-instance, so per-session isolation holds
+  /// without any global state. Empty ⇒ back leaves the browser (the old
+  /// behaviour: one route above the terminal, #740).
+  final List<String> _history = [];
+
   /// Monotonic counter → request id, so a late listing for a directory we've
   /// already navigated away from is dropped.
   int _seq = 0;
@@ -335,11 +343,26 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
 
   String _nextRequestId() => '${widget.sessionId}#${_seq++}';
 
-  void _list(String path) {
+  /// List [path]. EVERY directory change funnels through here (descend, up,
+  /// favorite quick-nav, post-upload refresh), so this is where the back
+  /// history (#1102) is recorded. [recordHistory] is false only for
+  /// history-driven navigation — re-pushing there would loop back and forth.
+  void _list(String path, {bool recordHistory = true}) {
     final proxy = _proxy;
     if (proxy == null) return;
     final reqId = _nextRequestId();
+    final from = _path;
     setState(() {
+      if (recordHistory && path != from) {
+        // Navigating back to the directory we just came from (the up-arrow
+        // after descending) CONSUMES that history entry instead of growing the
+        // stack — otherwise back would bounce forward into the dir we just left.
+        if (_history.isNotEmpty && _history.last == path) {
+          _history.removeLast();
+        } else {
+          _history.add(from);
+        }
+      }
       _path = path;
       _loading = true;
       _error = null;
@@ -645,6 +668,16 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     _list(parent);
   }
 
+  /// Back gesture (#1102): navigate to the PREVIOUSLY-VISITED directory. Only
+  /// fires while [_history] is non-empty (otherwise `canPop` lets the real pop
+  /// through and back leaves the browser, as before). Distinct from the
+  /// up-arrow, which goes to the PARENT.
+  void _backToPreviousDirectory() {
+    if (_history.isEmpty) return;
+    final previous = _history.removeLast();
+    _list(previous, recordHistory: false);
+  }
+
   /// #740: return to THIS session's terminal — make the browsed session active
   /// (so the terminal screen's IndexedStack shows the right one in a
   /// multi-session setup) and dismiss back to it. Browsing happens in-place
@@ -890,171 +923,185 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     final swatchColor =
         ref.watch(sessionColorProvider(widget.sessionId)) ??
         ref.watch(sessionTerminalThemeProvider(widget.sessionId)).theme.cursor;
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          key: const Key('file-browser-back-to-terminal'),
-          tooltip: 'Back to terminal',
-          icon: const Icon(Icons.terminal),
-          onPressed: _backToTerminal,
-        ),
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              key: const Key('file-browser-swatch'),
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                color: swatchColor,
-                shape: BoxShape.circle,
+    // #1102: back walks the directory history. `canPop` mirrors the history so
+    // the platform (predictive back included) knows whether this route really
+    // pops; with history left, the pop is intercepted and consumed here. The
+    // explicit close affordances still collapse straight out — they go through
+    // Navigator.pop/popUntil, which bypasses PopScope by design.
+    return PopScope(
+      canPop: _history.isEmpty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _backToPreviousDirectory();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            key: const Key('file-browser-back-to-terminal'),
+            tooltip: 'Back to terminal',
+            icon: const Icon(Icons.terminal),
+            onPressed: _backToTerminal,
+          ),
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                key: const Key('file-browser-swatch'),
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: swatchColor,
+                  shape: BoxShape.circle,
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                label,
-                key: const Key('file-browser-title'),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          // Sort menu (#951): radio-style key (Name/Modified/Size/Type) + a
-          // direction toggle. Per-profile, persisted. Disabled (no profile) for
-          // an ad-hoc session. Monochrome glyph.
-          PopupMenuButton<String>(
-            key: const Key('file-browser-sort-button'),
-            icon: const Icon(Icons.sort),
-            tooltip: 'Sort',
-            enabled: profileKey != null,
-            onSelected: (value) {
-              if (profileKey == null) return;
-              final notifier = ref.read(filesSortProvider(profileKey).notifier);
-              switch (value) {
-                case 'name':
-                  notifier.setKey(FilesSortKey.name);
-                case 'modified':
-                  notifier.setKey(FilesSortKey.modified);
-                case 'size':
-                  notifier.setKey(FilesSortKey.size);
-                case 'type':
-                  notifier.setKey(FilesSortKey.type);
-                case 'dir':
-                  notifier.toggleDirection();
-              }
-            },
-            itemBuilder: (context) => [
-              CheckedPopupMenuItem<String>(
-                key: const Key('sort-key-name'),
-                value: 'name',
-                checked: sortPref.key == FilesSortKey.name,
-                child: const Text('Name'),
-              ),
-              CheckedPopupMenuItem<String>(
-                key: const Key('sort-key-modified'),
-                value: 'modified',
-                checked: sortPref.key == FilesSortKey.modified,
-                child: const Text('Modified'),
-              ),
-              CheckedPopupMenuItem<String>(
-                key: const Key('sort-key-size'),
-                value: 'size',
-                checked: sortPref.key == FilesSortKey.size,
-                child: const Text('Size'),
-              ),
-              CheckedPopupMenuItem<String>(
-                key: const Key('sort-key-type'),
-                value: 'type',
-                checked: sortPref.key == FilesSortKey.type,
-                child: const Text('Type'),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem<String>(
-                key: const Key('sort-dir-toggle'),
-                value: 'dir',
-                child: Row(
-                  children: [
-                    Icon(
-                      sortPref.ascending
-                          ? Icons.arrow_upward
-                          : Icons.arrow_downward,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(sortPref.ascending ? 'Ascending' : 'Descending'),
-                  ],
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  key: const Key('file-browser-title'),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
-          // Upload a local file INTO the current directory (#960). Disabled
-          // while an upload is in flight (one at a time). Monochrome glyph.
-          IconButton(
-            key: const Key('file-browser-upload'),
-            tooltip: 'Upload a file here',
-            icon: const Icon(Icons.upload_file),
-            onPressed: _uploadRequestId != null ? null : _pickAndUpload,
-          ),
-          // Favorites star (#632): TAP toggles favoriting the current path for
-          // this profile; LONG-PRESS opens the unified favorites menu. Built on
-          // a single InkResponse so both gestures are owned by ONE recognizer
-          // set — an IconButton's `tooltip` wraps it in a Tooltip that would eat
-          // the long-press, so we don't use IconButton here. Accessibility is
-          // preserved via the Semantics label.
-          Semantics(
-            button: true,
-            label: _currentFavorited
-                ? 'Unfavorite this folder'
-                : 'Favorite this folder',
-            child: InkResponse(
-              key: const Key('file-browser-star'),
-              radius: 24,
-              onTap: _toggleStar,
-              onLongPress: _openFavoritesMenu,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Icon(
-                  _currentFavorited ? Icons.star : Icons.star_border,
+          actions: [
+            // Sort menu (#951): radio-style key (Name/Modified/Size/Type) + a
+            // direction toggle. Per-profile, persisted. Disabled (no profile) for
+            // an ad-hoc session. Monochrome glyph.
+            PopupMenuButton<String>(
+              key: const Key('file-browser-sort-button'),
+              icon: const Icon(Icons.sort),
+              tooltip: 'Sort',
+              enabled: profileKey != null,
+              onSelected: (value) {
+                if (profileKey == null) return;
+                final notifier = ref.read(
+                  filesSortProvider(profileKey).notifier,
+                );
+                switch (value) {
+                  case 'name':
+                    notifier.setKey(FilesSortKey.name);
+                  case 'modified':
+                    notifier.setKey(FilesSortKey.modified);
+                  case 'size':
+                    notifier.setKey(FilesSortKey.size);
+                  case 'type':
+                    notifier.setKey(FilesSortKey.type);
+                  case 'dir':
+                    notifier.toggleDirection();
+                }
+              },
+              itemBuilder: (context) => [
+                CheckedPopupMenuItem<String>(
+                  key: const Key('sort-key-name'),
+                  value: 'name',
+                  checked: sortPref.key == FilesSortKey.name,
+                  child: const Text('Name'),
+                ),
+                CheckedPopupMenuItem<String>(
+                  key: const Key('sort-key-modified'),
+                  value: 'modified',
+                  checked: sortPref.key == FilesSortKey.modified,
+                  child: const Text('Modified'),
+                ),
+                CheckedPopupMenuItem<String>(
+                  key: const Key('sort-key-size'),
+                  value: 'size',
+                  checked: sortPref.key == FilesSortKey.size,
+                  child: const Text('Size'),
+                ),
+                CheckedPopupMenuItem<String>(
+                  key: const Key('sort-key-type'),
+                  value: 'type',
+                  checked: sortPref.key == FilesSortKey.type,
+                  child: const Text('Type'),
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem<String>(
+                  key: const Key('sort-dir-toggle'),
+                  value: 'dir',
+                  child: Row(
+                    children: [
+                      Icon(
+                        sortPref.ascending
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(sortPref.ascending ? 'Ascending' : 'Descending'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            // Upload a local file INTO the current directory (#960). Disabled
+            // while an upload is in flight (one at a time). Monochrome glyph.
+            IconButton(
+              key: const Key('file-browser-upload'),
+              tooltip: 'Upload a file here',
+              icon: const Icon(Icons.upload_file),
+              onPressed: _uploadRequestId != null ? null : _pickAndUpload,
+            ),
+            // Favorites star (#632): TAP toggles favoriting the current path for
+            // this profile; LONG-PRESS opens the unified favorites menu. Built on
+            // a single InkResponse so both gestures are owned by ONE recognizer
+            // set — an IconButton's `tooltip` wraps it in a Tooltip that would eat
+            // the long-press, so we don't use IconButton here. Accessibility is
+            // preserved via the Semantics label.
+            Semantics(
+              button: true,
+              label: _currentFavorited
+                  ? 'Unfavorite this folder'
+                  : 'Favorite this folder',
+              child: InkResponse(
+                key: const Key('file-browser-star'),
+                radius: 24,
+                onTap: _toggleStar,
+                onLongPress: _openFavoritesMenu,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Icon(
+                    _currentFavorited ? Icons.star : Icons.star_border,
+                  ),
                 ),
               ),
             ),
-          ),
-          IconButton(
-            key: const Key('file-browser-close-to-terminal'),
-            tooltip: 'Close — back to terminal',
-            icon: const Icon(Icons.close),
-            onPressed: _backToTerminal,
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
-          child: _PathBar(
-            path: _path,
-            canGoUp: _path != '/' && _path.isNotEmpty,
-            onUp: _goUp,
+            IconButton(
+              key: const Key('file-browser-close-to-terminal'),
+              tooltip: 'Close — back to terminal',
+              icon: const Icon(Icons.close),
+              onPressed: _backToTerminal,
+            ),
+          ],
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(48),
+            child: _PathBar(
+              path: _path,
+              canGoUp: _path != '/' && _path.isNotEmpty,
+              onUp: _goUp,
+            ),
           ),
         ),
-      ),
-      body: Column(
-        children: [
-          if (downloading)
-            _DownloadProgress(
-              key: const Key('file-browser-download-progress'),
-              name: _downloadName ?? '',
-              received: _downloadReceived,
-              total: _downloadTotal,
-              onCancel: _cancelDownload,
-            ),
-          if (_uploadRequestId != null)
-            _UploadProgress(
-              key: const Key('file-browser-upload-progress'),
-              name: _uploadName ?? '',
-              sent: _uploadSent,
-              total: _uploadTotal,
-            ),
-          Expanded(child: _buildBody(sortEntries(_entries, sortPref))),
-        ],
+        body: Column(
+          children: [
+            if (downloading)
+              _DownloadProgress(
+                key: const Key('file-browser-download-progress'),
+                name: _downloadName ?? '',
+                received: _downloadReceived,
+                total: _downloadTotal,
+                onCancel: _cancelDownload,
+              ),
+            if (_uploadRequestId != null)
+              _UploadProgress(
+                key: const Key('file-browser-upload-progress'),
+                name: _uploadName ?? '',
+                sent: _uploadSent,
+                total: _uploadTotal,
+              ),
+            Expanded(child: _buildBody(sortEntries(_entries, sortPref))),
+          ],
+        ),
       ),
     );
   }
