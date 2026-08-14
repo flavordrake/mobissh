@@ -52,26 +52,42 @@ if [ ! -f "$MSG_FILE" ]; then
   exit 2
 fi
 
-# Auto-bump the build number (version: X.Y.Z+N → +N+1) so a ship can never go
-# out self-reporting the previous version (happened on +56: pubspec was passed
-# but never edited, so the binary reported +55). If pubspec.yaml already has an
-# UNCOMMITTED version change (a deliberate manual bump, e.g. a minor-version
-# jump), respect it and skip the auto-bump.
+# Bump the build number (version: X.Y.Z+N → +N+1) so a ship can never go out
+# self-reporting the previous version (happened on +56: pubspec was passed but
+# never edited, so the binary reported +55).
+#
+# The SEMVER and the BUILD NUMBER are INDEPENDENT. This used to skip the bump
+# whenever pubspec was dirty, on the theory that a dirty file meant a deliberate
+# manual bump. But every release hand-edits the semver, which dirties the file,
+# which silently froze the build number: v0.1.11 shipped as +162, reusing the
+# Android versionCode already spent by 0.1.10+162, while the commit message
+# claimed +163. versionCode must STRICTLY INCREASE for Play (#966), and a repeat
+# makes in-place upgrade ambiguous for sideloads.
+#
+# So: respect a manual BUILD edit, always bump when only the semver moved.
+# The decision lives in scripts/lib/next-build-version.sh so it can be tested
+# without running a build (scripts/test-next-build-version.sh).
 PUBSPEC="native/pubspec.yaml"
-if git diff --quiet HEAD -- "$PUBSPEC"; then
-  CUR_VERSION="$(grep -E '^version:' "$PUBSPEC" | head -1 | awk '{print $2}')"
-  BASE="${CUR_VERSION%+*}"
-  BUILD="${CUR_VERSION##*+}"
-  if [[ "$CUR_VERSION" == *+* && "$BUILD" =~ ^[0-9]+$ ]]; then
-    NEW_VERSION="${BASE}+$((BUILD + 1))"
-    sed -i "s/^version: .*/version: ${NEW_VERSION}/" "$PUBSPEC"
-    echo "> auto-bumped version: ${CUR_VERSION} → ${NEW_VERSION}"
-  else
-    echo "! ship-native: cannot parse build number in '${CUR_VERSION}' — bump manually" >&2
-    exit 2
-  fi
+source "$(dirname "$0")/lib/next-build-version.sh"
+read_version() { grep -E '^version:' | head -1 | awk '{print $2}'; }
+
+CUR_VERSION="$(read_version < "$PUBSPEC")"
+HEAD_VERSION="$(git show "HEAD:${PUBSPEC}" | read_version)"
+
+if ! NEW_VERSION="$(next_build_version "$CUR_VERSION" "$HEAD_VERSION")"; then
+  echo "! ship-native: refusing to ship — versionCode must strictly increase (Play, #966)." >&2
+  exit 2
+fi
+
+if [[ "$NEW_VERSION" == "$CUR_VERSION" ]]; then
+  echo "> respecting manual build number: ${CUR_VERSION}"
 else
-  echo "> pubspec.yaml already modified (manual bump) — keeping it as-is"
+  sed -i "s/^version: .*/version: ${NEW_VERSION}/" "$PUBSPEC"
+  if [[ "${CUR_VERSION%+*}" != "${HEAD_VERSION%+*}" ]]; then
+    echo "> semver manually bumped to ${CUR_VERSION%+*}; build auto-bumped: ${HEAD_VERSION} → ${NEW_VERSION}"
+  else
+    echo "> auto-bumped version: ${CUR_VERSION} → ${NEW_VERSION}"
+  fi
 fi
 
 if [ "${#PATHS[@]}" -gt 0 ]; then
