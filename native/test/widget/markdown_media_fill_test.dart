@@ -198,6 +198,36 @@ void main() {
     host.disposeSyncForTest();
   });
 
+  testWidgets(
+    'http(s) image is never fetched and renders an inert placeholder (#1107 sibling)',
+    (tester) async {
+      // An untrusted remote .md that references an attacker-chosen absolute URL
+      // must NOT trigger any outbound request on view (no beacon). We render an
+      // inert "external image (not loaded)" affordance and make no fetch.
+      final fetcher = _FakeImageFetcher(bytes: _png);
+      final host = await _open(
+        tester,
+        markdown: '![tracker](http://attacker.example/x.png)\n',
+        imageFetcher: fetcher,
+      );
+
+      // The inert affordance is shown...
+      expect(find.byKey(const Key('markdown-image-external')), findsOneWidget);
+      // ...and NO inline image / fill-viewer image was created.
+      expect(find.byKey(const Key('markdown-inline-image')), findsNothing);
+      // No Image widget backed by a NetworkImage (the beacon vector) exists.
+      expect(
+        find.byWidgetPredicate((w) => w is Image && w.image is NetworkImage),
+        findsNothing,
+      );
+      // The SFTP fetcher was never asked to fetch the remote URL either.
+      expect(fetcher.requestedPath, isNull);
+      expect(tester.takeException(), isNull);
+
+      host.disposeSyncForTest();
+    },
+  );
+
   testWidgets('broken image falls back to a placeholder without throwing', (
     tester,
   ) async {
