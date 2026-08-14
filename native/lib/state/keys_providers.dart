@@ -105,9 +105,24 @@ class KeysManager {
   /// Delete a library key — removes BOTH the vault blob and the metadata. The
   /// caller is responsible for warning when profiles still reference it (their
   /// `keyVaultId` will dangle until re-attached).
+  ///
+  /// Resolves the vault id the same way the write path does (`key.vaultId`,
+  /// #1109c): an ADOPTED key's material lives at the profile's original
+  /// `keyVaultId`, NOT the `key-<id>` default — deleting the default would be a
+  /// silent no-op that leaks the private key and leaves the profile still
+  /// authenticating. Falls back to `keyVaultIdFor(id)` for a metadata-only stray
+  /// with no matching [SavedKey].
   Future<void> delete(String id) async {
-    await _ref.read(secretsStoreProvider).delete(keyVaultIdFor(id));
-    await _ref.read(keysStoreProvider).remove(id);
+    final store = _ref.read(keysStoreProvider);
+    String vaultId = keyVaultIdFor(id);
+    for (final k in await store.load()) {
+      if (k.id == id) {
+        vaultId = k.vaultId;
+        break;
+      }
+    }
+    await _ref.read(secretsStoreProvider).delete(vaultId);
+    await store.remove(id);
     _ref.invalidate(savedKeysProvider);
   }
 }
