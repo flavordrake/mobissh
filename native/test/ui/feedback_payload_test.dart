@@ -9,6 +9,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:mobissh/diagnostics/diagnostics_config.dart';
 import 'package:mobissh/ui/feedback_overlay.dart';
 
 void main() {
@@ -210,8 +211,8 @@ void main() {
     );
 
     test(
-      'attaches byteTrace / scrollTrace / grid when present, omits when empty '
-      '(#790)',
+      'attaches scrollTrace / grid when present, omits when empty (#790); '
+      'byteTrace is gated off by default (#1109-A)',
       () {
         final withTrace = buildFeedbackPayload(
           comment: 'scroll stuck',
@@ -226,15 +227,17 @@ void main() {
           ],
           grid: const {'cols': 80, 'rows': 24},
         );
-        final bytes = withTrace['byteTrace'] as List;
-        expect(bytes, hasLength(2));
-        expect((bytes.first as Map)['b64'], 'aGVsbG8=');
+        // #1109-A: byteTrace is RAW terminal output — gated behind the
+        // compile-time kRawContentDiagnosticsEnabled (false under `flutter
+        // test`), so it is OMITTED even though a non-empty value was supplied.
+        expect(withTrace.containsKey('byteTrace'), isFalse);
+        // scrollTrace / grid are STRUCTURAL — they still flow in every build.
         final scroll = withTrace['scrollTrace'] as List;
         expect(scroll, hasLength(2));
         expect((scroll.last as Map)['offset'], 120);
         expect(withTrace['grid'], {'cols': 80, 'rows': 24});
 
-        // No trace → all three fields omitted (no empty-array / null noise).
+        // No trace → the structural fields are omitted (no empty-array noise).
         final without = buildFeedbackPayload(comment: 'x', version: '[v]');
         expect(without.containsKey('byteTrace'), isFalse);
         expect(without.containsKey('scrollTrace'), isFalse);
@@ -263,15 +266,18 @@ void main() {
           includeTraces: traces,
         );
 
-    test('defaults include everything (report quality preserved)', () {
+    test('defaults include everything EXCEPT the raw byteTrace (#1109-A)', () {
       final p = full();
       for (final k in const [
         'screenshot', 'frames', 'connectLog', 'gestureLog', 'lifecycleLog',
-        'byteTrace', 'scrollTrace', 'sentSgrTrace', 'grid',
+        'scrollTrace', 'sentSgrTrace', 'grid',
         'termReplyTrace', 'termReplyTraceEventCount', 'detectionGeom',
       ]) {
         expect(p.containsKey(k), isTrue, reason: '$k present by default');
       }
+      // #1109-A: byteTrace is raw output — gated off by default (compile-time
+      // false under `flutter test`) even with the include-traces toggle on.
+      expect(p.containsKey('byteTrace'), isFalse);
       // #1072: the count mirrors the trace length.
       expect(p['termReplyTraceEventCount'], 1);
     });
@@ -280,8 +286,8 @@ void main() {
       final p = full(images: false);
       expect(p.containsKey('screenshot'), isFalse);
       expect(p.containsKey('frames'), isFalse);
-      // Traces + the note remain.
-      expect(p.containsKey('byteTrace'), isTrue);
+      // Structural traces + the note remain.
+      expect(p.containsKey('scrollTrace'), isTrue);
       expect(p.containsKey('connectLog'), isTrue);
       expect(p['comment'], 'note');
     });
@@ -309,6 +315,49 @@ void main() {
       expect(p.containsKey('connectLog'), isFalse);
       expect(p['comment'], 'note');
       expect(p['version'], '[v]');
+    });
+  });
+
+  // #1109-A: the raw-content gate. Under `flutter test` (no --dart-define)
+  // kRawContentDiagnosticsEnabled is compile-time false, so a public release
+  // build's payload NEVER carries the raw byteTrace even when a non-empty value
+  // is supplied — proving raw terminal output is dropped by the gate, not merely
+  // scrubbed. Structural traces are unaffected.
+  group('raw-content gate (#1109-A)', () {
+    test('drops byteTrace even when a non-empty value is injected', () {
+      final p = buildFeedbackPayload(
+        comment: 'x',
+        version: '[v]',
+        byteTrace: const [
+          {'tMs': 0, 'b64': 'c2VjcmV0'}, // "secret"
+        ],
+      );
+      expect(p.containsKey('byteTrace'), isFalse);
+    });
+
+    test('the flag defaults to false (fail-closed for release builds)', () {
+      expect(kRawContentDiagnosticsEnabled, isFalse);
+    });
+
+    test('structural traces still flow while byteTrace is gated off', () {
+      final p = buildFeedbackPayload(
+        comment: 'x',
+        version: '[v]',
+        byteTrace: const [
+          {'tMs': 0, 'b64': 'c2VjcmV0'},
+        ],
+        scrollTrace: const [
+          {'tMs': 0, 'offset': 0},
+        ],
+        sentSgrTrace: const [
+          {'tMs': 0, 'b64': 'zzz'},
+        ],
+        grid: const {'cols': 80, 'rows': 24},
+      );
+      expect(p.containsKey('byteTrace'), isFalse);
+      expect(p.containsKey('scrollTrace'), isTrue);
+      expect(p.containsKey('sentSgrTrace'), isTrue);
+      expect(p.containsKey('grid'), isTrue);
     });
   });
 
