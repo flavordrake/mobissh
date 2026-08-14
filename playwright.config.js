@@ -46,6 +46,10 @@ module.exports = defineConfig({
     timeout: 15_000,
     env: {
       PORT: '8081',
+      // #484: the feedback routes now require the X-MobiSSH-Key shared secret.
+      // Give the headless server a known key so the bug-report contract test can
+      // authenticate (see tests/bug-report-comment.spec.js).
+      MOBISSH_FEEDBACK_KEY: 'headless-feedback-key',
     },
   },
 

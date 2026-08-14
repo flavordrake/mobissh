@@ -174,6 +174,8 @@ import 'package:xterm/xterm.dart' as xterm;
 
 import '../diagnostics/connect_trace.dart' show clifecycle, ctrace;
 import '../diagnostics/detection_geom.dart';
+import '../diagnostics/diagnostics_config.dart'
+    show kRawContentDiagnosticsEnabled;
 import '../diagnostics/feedback_bundle.dart' show scrubSecrets;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/paint_stats.dart';
@@ -2802,7 +2804,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
           // Terminal, so the recorder captures EXACTLY the input that produced
           // the rendered (possibly buggy) state. Allocation-light: the recorder
           // keeps the reference + a timestamp; no copy/encode here.
-          _byteRecorder.recordBytes(bytes);
+          // #1109-A: raw terminal output can carry displayed secrets, so the
+          // capture is compiled out of public release builds (fail-closed). The
+          // paint-stats counters below are structural and always run.
+          if (kRawContentDiagnosticsEnabled) _byteRecorder.recordBytes(bytes);
           // Paint replay harness: count the chunk at the write seam BEFORE the
           // write, so bytesIn reflects what was DELIVERED even if write throws.
           _paintStats.bytesInChunks++;
@@ -4061,15 +4066,19 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     final controller = _controller;
     if (controller == null) return;
     final text = controller.visibleRowsText(topViewRow, bottomViewRow);
-    final firstLine = text.split('\n').firstWhere(
-      (l) => l.trim().isNotEmpty,
-      orElse: () => '',
-    );
-    ctrace(
-      'gutter-copy',
-      'view=[$topViewRow..$bottomViewRow] rows=${controller.scrollbar.visible} '
-      'first="${firstLine.length > 40 ? firstLine.substring(0, 40) : firstLine}"',
-    );
+    // #1109-A: this logs a slice of the user's on-screen selection (raw content).
+    // Gate it out of public release builds — it can carry displayed secrets.
+    if (kRawContentDiagnosticsEnabled) {
+      final firstLine = text.split('\n').firstWhere(
+        (l) => l.trim().isNotEmpty,
+        orElse: () => '',
+      );
+      ctrace(
+        'gutter-copy',
+        'view=[$topViewRow..$bottomViewRow] rows=${controller.scrollbar.visible} '
+        'first="${firstLine.length > 40 ? firstLine.substring(0, 40) : firstLine}"',
+      );
+    }
     if (text.trim().isEmpty) {
       if (mounted) showTopToast(context, 'Nothing to copy on those lines');
       return;
@@ -4080,11 +4089,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // smart-copy massager. The rendered layout — TUI forced-whitespace margins,
     // bullets, box-drawing, alignment padding — CANNOT be recovered from the raw
     // byte-trace (pre-render bytes + escapes), so this is the only faithful
-    // source. Newlines/backslashes escaped to keep it one trace line; the
-    // feedback bundle scrubs secrets before anything leaves the device. The
+    // source. Newlines/backslashes escaped to keep it one trace line. The
     // connect-log ring IS the "recent stack" of the last selections.
-    final escaped = text.replaceAll(r'\', r'\\').replaceAll('\n', r'\n');
-    ctrace('grossselect', 'rows=$rowCount cols=$_cols text="$escaped"');
+    // #1109-A: this is the user's VERBATIM on-screen selection — the best-effort
+    // scrubber cannot be trusted with it, so it is compiled out of public
+    // release builds (fail-closed) rather than relied on to redact.
+    if (kRawContentDiagnosticsEnabled) {
+      final escaped = text.replaceAll(r'\', r'\\').replaceAll('\n', r'\n');
+      ctrace('grossselect', 'rows=$rowCount cols=$_cols text="$escaped"');
+    }
     final ok = await copyToClipboard(text);
     if (!mounted) return;
     showTopToast(
