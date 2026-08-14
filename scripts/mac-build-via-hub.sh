@@ -62,29 +62,48 @@ fi
 # duplicate by construction (reported to #fleet; varying --ttl does not help).
 # Use ONLY when a token was genuinely granted for this purpose; it is not a way
 # around a DENIAL.
+# The token is ENFORCED at point-of-use: the Mac's shim rejects a build without
+# RELAYGENT_CAPTOKEN ("DENY: build access requires a capability token"). It was
+# advisory when this script was first written and is not any more — so we must
+# both obtain it AND pass it into the remote environment.
+#
+# CAPTOKEN=<token> reuses a grant obtained out-of-band. Needed because `hub
+# acquire` is duplicate-suppressed within a time window, so a re-acquire shortly
+# after a previous identical request is rejected even though the grant is
+# legitimate (reported to #fleet). It is NOT a way around a denial — without a
+# valid token the Mac refuses the build regardless.
 TOKEN_FILE="${MOBISSH_TMPDIR}/mac-build-token"
-if [[ "${SKIP_ACQUIRE:-0}" == "1" ]]; then
-  log "SKIP_ACQUIRE=1 — proceeding on a grant already obtained this session"
+if [[ -n "${CAPTOKEN:-}" ]]; then
+  log "using a capability token supplied via CAPTOKEN"
+  printf '%s' "$CAPTOKEN" > "$TOKEN_FILE"
 else
   log "acquiring build token from ${MAC_HANDLE}"
   if ! hub acquire "$MAC_HANDLE" "$MAC_OFFER" > "$TOKEN_FILE"; then
     err "acquire failed — the Mac may be asleep/away, OR the request was"
-    err "duplicate-suppressed (see #fleet). Per host@raserver: say so in #fleet"
+    err "duplicate-suppressed within the dedupe window (see #fleet). Retry later,"
+    err "or pass a grant via CAPTOKEN=<token>. Per host@raserver: say so in #fleet"
     err "rather than retrying hard. (Infra errors here are raserver's.)"
     exit 1
   fi
   log "token acquired (~5min TTL)"
 fi
+TOKEN="$(cat "$TOKEN_FILE")"
+if [[ -z "$TOKEN" ]]; then
+  err "empty capability token — refusing to attempt a build that will be DENYed"
+  exit 1
+fi
 
 # 3. Build on the Mac. Single remote script: pull, then build with an explicit
 # PATH. Keep it one invocation so a dropped connection can't leave a half-build.
 log "building on ${MAC_SSH} (repo ${MAC_REPO})"
-REMOTE_CMD="set -euo pipefail
-export PATH=${MAC_BREW_BIN}:\$PATH
-export STAGE_DIR=${MAC_STAGE}
-cd ${MAC_REPO}
-git pull --ff-only
-scripts/mac/build-native-macos.sh"
+# The token must PREFIX the command, exactly as the shim's own DENY message shows
+# (`ssh ... "RELAYGENT_CAPTOKEN=$TOK <build cmd>"`). A forced command inspects the
+# command STRING, so an `export RELAYGENT_CAPTOKEN=...` inside the script body is
+# invisible to it and still gets DENYed — the assignment has to be the first thing
+# on the line. Single quotes around the inner script are safe: it contains none,
+# and $PATH must expand REMOTELY, not here.
+REMOTE_SCRIPT="set -euo pipefail; export PATH=${MAC_BREW_BIN}:\$PATH; export STAGE_DIR=${MAC_STAGE}; cd ${MAC_REPO}; git pull --ff-only; scripts/mac/build-native-macos.sh"
+REMOTE_CMD="RELAYGENT_CAPTOKEN=${TOKEN} bash -c '${REMOTE_SCRIPT}'"
 
 if ! ssh -o BatchMode=yes "$MAC_SSH" "$REMOTE_CMD"; then
   err "remote build FAILED — see the output above"
@@ -96,16 +115,33 @@ if [[ "$PULL" -eq 0 ]]; then
   exit 0
 fi
 
-# 4. Pull the newest zip back. The Mac now accepts inbound ssh, so fd-dev pulls
-# (the old pipeline had the Mac push because Remote Login was off).
-log "pulling the newest artifact back to ${LOCAL_STAGE}"
-mkdir -p "$LOCAL_STAGE"
-NEWEST="$(ssh -o BatchMode=yes "$MAC_SSH" "ls -t ${MAC_STAGE}/mobissh-native-macos-*.zip | head -1")"
-if [[ -z "$NEWEST" ]]; then
-  err "no staged zip found in ${MAC_STAGE}"
-  exit 1
+# 4. Locate the artifact. The Mac's own build script PUSHES to fd-dev when
+# FDDEV_DEST is set, so in the normal case it has already arrived and there is
+# nothing to pull — two delivery paths for one file, which is how you eventually
+# publish a half-written artifact. Prefer the pushed copy.
+#
+# Pulling is also gated: the capability shim applies to EVERY ssh command on this
+# host, not just the build, so a bare `ls` over ssh is DENYed without the token
+# prefix (that is what made this step exit 77 while the build itself succeeded).
+PUSHED_DIR="${PUSHED_DIR:-$HOME/mobissh-native-dist}"
+NEWEST_LOCAL="$(ls -t "${PUSHED_DIR}"/mobissh-native-macos-*.zip 2>/dev/null | head -1 || true)"
+
+if [[ -n "$NEWEST_LOCAL" ]]; then
+  log "artifact already delivered by the Mac's push: ${NEWEST_LOCAL}"
+  ARTIFACT="$NEWEST_LOCAL"
+else
+  log "no pushed artifact — pulling from ${MAC_SSH}"
+  mkdir -p "$LOCAL_STAGE"
+  NEWEST="$(ssh -o BatchMode=yes "$MAC_SSH" "RELAYGENT_CAPTOKEN=${TOKEN} ls -t ${MAC_STAGE}/mobissh-native-macos-*.zip | head -1")"
+  if [[ -z "$NEWEST" ]]; then
+    err "no staged zip found in ${MAC_STAGE}"
+    exit 1
+  fi
+  scp -o BatchMode=yes "${MAC_SSH}:${NEWEST}" "$LOCAL_STAGE/"
+  ARTIFACT="${LOCAL_STAGE}/$(basename "$NEWEST")"
+  log "pulled: ${ARTIFACT}"
 fi
-scp -o BatchMode=yes "${MAC_SSH}:${NEWEST}" "$LOCAL_STAGE/"
-log "pulled: ${LOCAL_STAGE}/$(basename "$NEWEST")"
+
 echo
-log "next: scripts/publish-native-macos.sh --from ${LOCAL_STAGE}/$(basename "$NEWEST") --version --stamp --commit --sha256"
+log "next: scripts/publish-native-macos.sh --from ${ARTIFACT} --version --stamp --commit --sha256"
+log "(the build output above prints the exact --version/--stamp/--commit/--sha256 to use)"
