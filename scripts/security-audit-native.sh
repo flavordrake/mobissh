@@ -92,8 +92,22 @@ else
 fi
 
 if command -v codex >/dev/null 2>&1; then
-  log "running codex (timeout 300s)"
-  timeout 300 codex exec "$FULL" > "${DIR}/codex-audit.md" 2> "${DIR}/codex-audit.stderr.log" || true
+  # Pin the model EXPLICITLY so the artifact records what produced it, even though
+  # it is currently also the config default — a report whose author is implicit is
+  # not evidence. read-only is the least privilege that still allows an audit: it
+  # must read the tree, never write it. `-a never` keeps it non-interactive.
+  CODEX_MODEL="${CODEX_MODEL:-gpt-5.6-sol}"
+  log "running codex (model ${CODEX_MODEL}, sandbox read-only, timeout 900s)"
+  # -o writes ONLY the final message to the report. Capturing stdout instead gave
+  # a 1.1MB file of streaming/model-refresh telemetry with the actual answer
+  # buried at the bottom. exec is non-interactive by design — there is no
+  # approval flag to pass.
+  timeout 900 codex exec \
+      --model "$CODEX_MODEL" \
+      --sandbox read-only \
+      --cd "$REPO_ROOT" \
+      -o "${DIR}/codex-audit.md" \
+      "$FULL" > "${DIR}/codex-audit.stdout.log" 2> "${DIR}/codex-audit.stderr.log" || true
   if audited "${DIR}/codex-audit.md"; then
     log "codex: done -> ${DIR}/codex-audit.md"
     RAN_OK=$((RAN_OK + 1))
