@@ -916,7 +916,14 @@ class SshSessionController {
     if (pending == null || completer == null || completer.isCompleted) {
       return;
     }
-    _hostKeyStore.trust(pending.host, pending.port, pending.fingerprint);
+    // Compare-and-set: the ordinary accept path can only trust an UNKNOWN host
+    // (#1108). A changed key never reaches a pending prompt (the verify path
+    // fails it closed), so this is the belt-and-suspenders second layer.
+    _hostKeyStore.trustIfUnknown(
+      pending.host,
+      pending.port,
+      pending.fingerprint,
+    );
     _emit(
       _data.copyWith(
         state: SshSessionState.authenticating,
@@ -1146,9 +1153,47 @@ class SshSessionController {
     // reflects previously-accepted fingerprints (#565). This method stays
     // synchronous in its emit timing — it must reach `awaitingHostKey` in the
     // same turn so the connecting-phase timer is cancelled (#542).
-    if (_hostKeyStore.isTrusted(params.host, params.port, hex)) {
-      _emit(_data.copyWith(state: SshSessionState.authenticating));
-      return true;
+    //
+    // #1108: classify the offered key. A CHANGED key (mismatch) or an unreadable
+    // trust store must NOT get the ordinary trust-on-first-use prompt — both
+    // fail CLOSED. Only `unknown` (genuine first contact) prompts.
+    final status = _hostKeyStore.status(params.host, params.port, hex);
+    switch (status) {
+      case HostKeyStatus.match:
+        _emit(_data.copyWith(state: SshSessionState.authenticating));
+        return true;
+      case HostKeyStatus.mismatch:
+        // The stored fingerprint is the MITM evidence — surface BOTH it and the
+        // offered key, and do NOT overwrite it. Re-trusting a rotated key is a
+        // separate, deliberate forget + re-trust action, never this prompt.
+        final stored = _hostKeyStore.trustedFingerprint(
+          params.host,
+          params.port,
+        );
+        _emit(
+          _data.copyWith(
+            state: SshSessionState.failed,
+            error:
+                'HOST KEY CHANGED for ${params.host}:${params.port} — possible '
+                'man-in-the-middle. Stored: $stored  Offered: $hex. Connection '
+                'refused. Forget the old key to re-trust.',
+          ),
+        );
+        return false;
+      case HostKeyStatus.storeUnavailable:
+        // Trust couldn't be read — refuse rather than fall through to a prompt
+        // that could trust a key we can't check against history (fail closed).
+        _emit(
+          _data.copyWith(
+            state: SshSessionState.failed,
+            error:
+                'Host key trust store unavailable — refusing to connect to '
+                '${params.host}:${params.port}.',
+          ),
+        );
+        return false;
+      case HostKeyStatus.unknown:
+        break;
     }
 
     final completer = Completer<bool>();

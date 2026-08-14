@@ -22,6 +22,27 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// bump to fix cache issues).
 const String hostKeysPrefsKey = 'mobissh.hostkeys.v1';
 
+/// Classification of an offered host key against stored trust (#1108).
+///
+/// The old boolean [HostKeyStore.isTrusted] collapsed [unknown] and [mismatch]
+/// into a single `false`, so a CHANGED key (the MITM signal) was shown the same
+/// trust-on-first-use prompt as a brand-new host. This enum keeps them distinct
+/// and adds [storeUnavailable] so an unreadable store fails CLOSED instead of
+/// masquerading as a fresh host.
+enum HostKeyStatus {
+  /// No entry for `host:port` — genuine first contact (TOFU prompt).
+  unknown,
+
+  /// Stored fingerprint equals the offered one — proceed silently.
+  match,
+
+  /// An entry exists but the offered fingerprint DIFFERS — refuse by default.
+  mismatch,
+
+  /// Trust could not be loaded (corrupt/unavailable storage) — fail closed.
+  storeUnavailable,
+}
+
 /// Pluggable persistence backend for trusted host fingerprints.
 ///
 /// The map is keyed by `"host:port"` → fingerprint hex. Production uses
@@ -35,7 +56,8 @@ abstract class HostKeyBackend {
 }
 
 /// Production backend: a JSON map under [hostKeysPrefsKey] in
-/// shared_preferences. Corrupt data falls back to an empty map (no crash).
+/// shared_preferences. Corrupt data THROWS so the store can fail closed (#1108)
+/// rather than silently degrade a known trust map to empty.
 class SharedPrefsHostKeyBackend implements HostKeyBackend {
   SharedPrefsHostKeyBackend({SharedPreferences? prefs}) : _prefs = prefs;
 
@@ -50,17 +72,20 @@ class SharedPrefsHostKeyBackend implements HostKeyBackend {
     final prefs = await _ensure();
     final raw = prefs.getString(hostKeysPrefsKey);
     if (raw == null || raw.isEmpty) return <String, String>{};
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return <String, String>{};
-      final out = <String, String>{};
-      decoded.forEach((k, v) {
-        if (k is String && v is String) out[k] = v;
-      });
-      return out;
-    } on FormatException {
-      return <String, String>{};
+    // Corrupt data THROWS (jsonDecode's FormatException, or the not-a-Map guard)
+    // rather than degrading to an empty map: an empty map would downgrade every
+    // KNOWN host to "unknown" and re-open the accept prompt (fails open).
+    // [HostKeyStore._hydrate] catches the throw and marks the store UNAVAILABLE
+    // so the verify path fails CLOSED (#1108).
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      throw const FormatException('host key store: not a JSON object');
     }
+    final out = <String, String>{};
+    decoded.forEach((k, v) {
+      if (k is String && v is String) out[k] = v;
+    });
+    return out;
   }
 
   @override
@@ -112,6 +137,16 @@ class HostKeyStore {
   late final Future<void> _ready;
   bool _hydrated = false;
 
+  /// False once hydration failed to read the backend (corrupt/unavailable
+  /// storage). Drives [status] → [HostKeyStatus.storeUnavailable] so the verify
+  /// path fails CLOSED instead of treating known hosts as unknown (#1108).
+  bool _storeAvailable = true;
+
+  /// Serializes persistence so fire-and-forget writes can't complete OUT OF
+  /// ORDER (#1108) — a forgotten entry must not be resurrected by a slower
+  /// earlier write, nor a trust lost.
+  Future<void> _writeChain = Future<void>.value();
+
   /// Resolves once persisted trust has been loaded into the in-memory map.
   /// Idempotent to await repeatedly. The verify path awaits this ONLY when
   /// [isHydrated] is still false, so the common (already-loaded) path stays
@@ -128,10 +163,13 @@ class HostKeyStore {
     try {
       loaded = await _backend.loadAll();
     } catch (_) {
-      // Backend unavailable (e.g. no platform channel in a unit test, or a
-      // transient storage error). Degrade to an empty trust map rather than
-      // throwing on the verify path — worst case the user re-confirms once.
-      loaded = const <String, String>{};
+      // Backend unavailable (no platform channel, a transient storage error, or
+      // CORRUPT data). Mark the store unavailable so the verify path fails
+      // CLOSED (#1108) — degrading to an empty map would turn KNOWN hosts into
+      // "unknown" and re-open the accept prompt (fails open).
+      _storeAvailable = false;
+      _hydrated = true;
+      return;
     }
     // Don't clobber any trust decisions that landed between ctor and hydrate
     // completion — in-memory writes win, hydration only fills gaps.
@@ -140,13 +178,13 @@ class HostKeyStore {
   }
 
   void _persist() {
-    // Fire-and-forget snapshot of the full map. saveAll is overwrite semantics
-    // so concurrent calls converge on the latest in-memory state. Swallow
-    // backend errors so a failed write never crashes the verify path.
-    unawaited(
-      _backend
-          .saveAll(Map<String, String>.from(_trusted))
-          .catchError((Object _) {}),
+    // Snapshot the map at call time and queue the write behind any in-flight
+    // one, so serialized saves land in call order (#1108). saveAll is overwrite
+    // semantics; the last-queued snapshot wins. Backend errors are swallowed so
+    // a failed write never crashes the verify path.
+    final snapshot = Map<String, String>.from(_trusted);
+    _writeChain = _writeChain.then(
+      (_) => _backend.saveAll(snapshot).catchError((Object _) {}),
     );
   }
 
@@ -159,6 +197,29 @@ class HostKeyStore {
 
   /// Returns the trusted fingerprint for `host:port`, or null if none.
   String? trustedFingerprint(String host, int port) => _trusted['$host:$port'];
+
+  /// Classify [fingerprint] for `host:port` (#1108). Distinguishes first contact
+  /// ([HostKeyStatus.unknown]) from a CHANGED key ([HostKeyStatus.mismatch]) —
+  /// the two the boolean [isTrusted] collapsed — and reports
+  /// [HostKeyStatus.storeUnavailable] when trust couldn't be loaded, so the
+  /// verify path can fail CLOSED instead of prompting.
+  HostKeyStatus status(String host, int port, String fingerprint) {
+    if (!_storeAvailable) return HostKeyStatus.storeUnavailable;
+    final stored = _trusted['$host:$port'];
+    if (stored == null) return HostKeyStatus.unknown;
+    return stored == fingerprint ? HostKeyStatus.match : HostKeyStatus.mismatch;
+  }
+
+  /// Trust [fingerprint] for `host:port` ONLY when the host is currently UNKNOWN
+  /// (compare-and-set). Returns whether it trusted. The ordinary accept prompt
+  /// calls this so a CHANGED key can NEVER be trusted through it (#1108) —
+  /// re-trusting a rotated key requires the deliberate [forget] + [trust]
+  /// affordance. Refuses while the store is unavailable (fail closed).
+  bool trustIfUnknown(String host, int port, String fingerprint) {
+    if (status(host, port, fingerprint) != HostKeyStatus.unknown) return false;
+    trust(host, port, fingerprint);
+    return true;
+  }
 
   /// Persist a trust decision. Overwrites any prior entry. Updates the
   /// in-memory map synchronously and schedules an async backend write.
