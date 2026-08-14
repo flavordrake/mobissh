@@ -15,6 +15,12 @@ public/app.js
 public/modules/*.js
 # Native APKs — built by flutter, placed in public/ for container deploy, not checked in
 public/*.apk
+# macOS app bundles + Play AAB + the macOS publish manifest — same deal: build
+# output staged in public/ for serving, never source. Untracked-but-unignored
+# left ~70MB of zips one `git add -A` away from the history.
+public/*.zip
+public/*.aab
+public/macos-latest.json
 # Generated APK install landing page (regenerated every release by gen-apk-install-page.sh)
 public/native.html
 # Persistent native distribution dir (#700) — bind-mounted into prod; holds the
