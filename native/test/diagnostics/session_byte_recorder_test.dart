@@ -353,15 +353,39 @@ void main() {
       expect(snap, hasLength(3), reason: 'only the newest 3 survive the cap');
     });
 
-    test('scrubs credential-looking bytes at snapshot', () {
+    // #1109-A: the ring is constrained to a strict DA/DSR/CPR/XTVERSION
+    // allowlist. A generic OSC / hook / other reply — which could carry
+    // remote-supplied content verbatim — is DROPPED, never recorded.
+    test('drops non-allowlisted replies (generic OSC / other)', () {
       final rec = SessionByteRecorder();
+      // OSC carrying a secret-looking title — must NOT be recorded at all.
       rec.recordTermReply(
         Uint8List.fromList(utf8.encode('\x1b]0;token=SECRET123\x1b\\')),
       );
-      final decoded =
-          utf8.decode(base64Decode(rec.snapshotTermReplyTrace().single['b64'] as String));
-      expect(decoded, isNot(contains('SECRET123')));
-      expect(decoded, contains('[REDACTED]'));
+      // Arbitrary non-escape bytes — dropped.
+      rec.recordTermReply(Uint8List.fromList(utf8.encode('plain output')));
+      expect(rec.snapshotTermReplyTrace(), isEmpty);
+    });
+
+    test('records the allowlisted device replies (DA/CPR/DSR/XTVERSION)', () {
+      final rec = SessionByteRecorder();
+      rec.recordTermReply(Uint8List.fromList(utf8.encode('\x1b[?62c'))); // DA1
+      rec.recordTermReply(Uint8List.fromList(utf8.encode('\x1b[>1;95;0c'))); // DA2
+      rec.recordTermReply(Uint8List.fromList(utf8.encode('\x1b[8;24;80R'))); // CPR
+      rec.recordTermReply(Uint8List.fromList(utf8.encode('\x1b[0n'))); // DSR
+      rec.recordTermReply(Uint8List.fromList(utf8.encode('\x1bP>|xterm\x1b\\'))); // XTVERSION
+      expect(rec.snapshotTermReplyTrace(), hasLength(5));
+    });
+
+    test('isAllowedTermReply accepts device replies, rejects OSC/other', () {
+      Uint8List b(String s) => Uint8List.fromList(utf8.encode(s));
+      expect(isAllowedTermReply(b('\x1b[?62c')), isTrue); // DA1
+      expect(isAllowedTermReply(b('\x1b[>1;95;0c')), isTrue); // DA2
+      expect(isAllowedTermReply(b('\x1b[8;24;80R')), isTrue); // CPR
+      expect(isAllowedTermReply(b('\x1b[0n')), isTrue); // DSR
+      expect(isAllowedTermReply(b('\x1bP>|xterm\x1b\\')), isTrue); // XTVERSION
+      expect(isAllowedTermReply(b('\x1b]0;title\x1b\\')), isFalse); // OSC
+      expect(isAllowedTermReply(b('plain')), isFalse); // other
     });
 
     test('active registry routes the term-reply snapshot to the active session',

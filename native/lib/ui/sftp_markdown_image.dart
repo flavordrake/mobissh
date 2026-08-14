@@ -8,8 +8,11 @@
 //   - relative / absolute SFTP path → fetched as BYTES over the SAME SFTP
 //     session that fetched the .md (via [sftpImageFetcherProvider]); relative
 //     paths resolve against the .md's directory ([resolveSftpImagePath]),
-//   - explicit `http(s)://` URL → `Image.network` (the only allowed network
-//     fetch),
+//   - explicit `http(s)://` URL → NEVER fetched. An untrusted remote `.md`
+//     that references an attacker-chosen image URL would otherwise beacon out
+//     (revealing the viewer's IP + a "document opened" event) the moment the
+//     document is viewed (#1107 sibling). We render an inert "external image
+//     (not loaded)" affordance instead — no network request is ever made.
 //   - anything else / broken / missing / oversized → a graceful placeholder,
 //     never a crash.
 //
@@ -54,13 +57,11 @@ class SftpMarkdownImage extends ConsumerStatefulWidget {
   ConsumerState<SftpMarkdownImage> createState() => _SftpMarkdownImageState();
 }
 
-enum _ImgPhase { loading, ready, broken }
+enum _ImgPhase { loading, ready, broken, external }
 
 class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
   _ImgPhase _phase = _ImgPhase.loading;
   Uint8List? _bytes;
-  bool _isNetwork = false;
-  String? _networkUrl;
   bool _started = false;
 
   /// Basename of the resolved remote image path — names the Download/Share
@@ -82,12 +83,10 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
     final raw = widget.uri.toString();
     final lower = raw.toLowerCase();
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
-      // Explicit absolute network URL — the only allowed network fetch.
-      setState(() {
-        _isNetwork = true;
-        _networkUrl = raw;
-        _phase = _ImgPhase.ready;
-      });
+      // Explicit absolute network URL — NEVER fetched. Loading it would beacon
+      // out to an attacker-chosen origin on view (#1107 sibling). Show an inert
+      // "external image (not loaded)" affordance; make no request.
+      setState(() => _phase = _ImgPhase.external);
       return;
     }
     final path = resolveSftpImagePath(widget.mdPath, raw);
@@ -121,16 +120,7 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
     // via the InteractiveViewer (#949).
     final Widget full;
     ViewerFileSource? source;
-    if (_isNetwork && _networkUrl != null) {
-      // Network-URL image: a web resource, not a file we hold — no
-      // Download/Share source (#1038 caveat).
-      full = Image.network(
-        _networkUrl!,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.medium,
-        errorBuilder: (_, _, _) => _fillBroken(),
-      );
-    } else if (_bytes != null) {
+    if (_bytes != null) {
       full = Image.memory(
         _bytes!,
         fit: BoxFit.contain,
@@ -176,26 +166,19 @@ class _SftpMarkdownImageState extends ConsumerState<SftpMarkdownImage> {
         );
       case _ImgPhase.broken:
         return _Placeholder(alt: widget.alt);
+      case _ImgPhase.external:
+        return _ExternalPlaceholder(alt: widget.alt);
       case _ImgPhase.ready:
         return _buildInline(context);
     }
   }
 
   Widget _buildInline(BuildContext context) {
-    final Widget image;
-    if (_isNetwork && _networkUrl != null) {
-      image = Image.network(
-        _networkUrl!,
-        fit: BoxFit.contain,
-        errorBuilder: (_, _, _) => _Placeholder(alt: widget.alt),
-      );
-    } else {
-      image = Image.memory(
-        _bytes!,
-        fit: BoxFit.contain,
-        errorBuilder: (_, _, _) => _Placeholder(alt: widget.alt),
-      );
-    }
+    final Widget image = Image.memory(
+      _bytes!,
+      fit: BoxFit.contain,
+      errorBuilder: (_, _, _) => _Placeholder(alt: widget.alt),
+    );
     // A raw [Listener] — NOT a GestureDetector — drives tap-to-fill. The viewer
     // renders the markdown with `selectable: true`, so this inline image is a
     // WidgetSpan child inside a SelectableText.rich. A child tap GestureDetector
@@ -267,6 +250,47 @@ class _Placeholder extends StatelessWidget {
           Flexible(
             child: Text(
               caption,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Inert affordance for an `http(s)://` image reference in an untrusted remote
+/// `.md`. We deliberately do NOT fetch it — a remote fetch would beacon the
+/// viewer's IP + a view event to an attacker-chosen origin (#1107 sibling). The
+/// caption names the external source without loading it.
+class _ExternalPlaceholder extends StatelessWidget {
+  const _ExternalPlaceholder({this.alt});
+
+  final String? alt;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final label = (alt != null && alt!.trim().isNotEmpty)
+        ? '${alt!.trim()} — external image (not loaded)'
+        : 'External image (not loaded)';
+    return Container(
+      key: const Key('markdown-image-external'),
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.cloud_off_outlined, size: 18, color: scheme.outline),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodySmall,
             ),

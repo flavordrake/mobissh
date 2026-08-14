@@ -123,6 +123,12 @@ dependencies:
   # flutter_markdown_plus; declared directly for depend_on_referenced_packages.
   markdown: ^7.3.1
 
+  # Spec-compliant HTML parsing for the hardened HTML viewer's inliner (#1107):
+  # extract + neutralize assets from ADVERSARIAL markup (a regex can't), so the
+  # remote page renders fully self-contained (data: URIs, no origin, no egress).
+  # Already resolved transitively via markdown; declared directly for use.
+  html: ^0.15.5
+
   # Pick a local file to UPLOAD over SFTP (#960). file_selector (official,
   # flutter.dev) over file_picker: file_picker 8.x/11.x fought the toolchain
   # (AAR compileSdk clash, then a Kotlin-plugin symbol the Java registrant
@@ -236,6 +242,7 @@ flutter:
   # scripts/vendor-mermaid.sh — NO network is touched at build or runtime.
   assets:
     - assets/mermaid/mermaid_host.html
+    - assets/mermaid/mermaid_boot.js
     - assets/mermaid/mermaid.min.js
 
   # To add assets to your application, add an assets section, like this:

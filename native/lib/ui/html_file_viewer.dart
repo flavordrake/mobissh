@@ -1,67 +1,83 @@
-// In-app rendered HTML viewer (#1037, epic #944).
+// In-app rendered HTML viewer (#1037, hardened #1107).
 //
 // Opened from the SFTP file browser when a `.html` / `.htm` file is tapped
 // (via the [fileViewerRegistryProvider], routed BEFORE the generic monospace
-// text viewer). Instead of showing raw source, the page is RENDERED in a
-// WebView that loads `http://127.0.0.1:<port>/<name>.html` from a per-viewer
-// [HtmlLoopbackServer]: relative references inside the page (linked CSS,
-// images, scripts — including nested dirs) resolve against the file's REMOTE
-// directory, fetched over the session's SFTP on demand. See
-// html_loopback_server.dart for the full security posture (127.0.0.1-only,
-// random port, serves only the opened tree, viewer-scoped lifetime).
+// text viewer). Instead of showing raw source, the page is RENDERED — but as a
+// single self-contained document, NOT off a live server.
 //
-// Navigation policy (v1, simple): same-loopback-origin loads are allowed;
-// ANY other navigation (external links, other schemes) is blocked with a
-// toast. JS is enabled — wireframes / self-contained pages need it.
+// SECURITY (#1107, Approach A): the document + every asset it references is
+// fetched over the session's SFTP and folded into ONE string by [buildSafeHtml]
+// — active content stripped, assets inlined as `data:` URIs, a
+// `default-src 'none'` meta-CSP prepended. That string is handed to a
+// JS-DISABLED WebView via `loadHtmlString` (null baseUrl → opaque origin). There
+// is no origin, no socket, no network egress: a hostile `.html` can no longer
+// read `~/.ssh/id_rsa` same-origin and POST it out (the old loopback server that
+// served the whole opened subtree with no auth is gone). The only capability
+// lost is running the page's own JS — read / copy / act need none.
 //
-// Pinch-zoom + pan are the WebView's own (#949 selfZooming shape): the
-// surface is full-bleed and NEVER wrapped in an InteractiveViewer (an
-// InteractiveViewer cannot drive a PlatformView — they fight). Dark pages
-// render as the page dictates — no forced theming.
+// Links: real navigations are blocked and handed to [htmlLinkOpener], which
+// launches the system browser (externalApplication — same idiom as the terminal
+// and markdown URL handlers). Only the initial in-memory/data load is allowed.
 //
-// The app bar's "view source" pushes the EXISTING monospace text viewer for
-// the same entry (read-only), so the raw-source escape hatch is one tap away.
+// Pinch-zoom + pan are the WebView's own (#949 selfZooming shape): the surface
+// is full-bleed and NEVER wrapped in an InteractiveViewer (an InteractiveViewer
+// cannot drive a PlatformView — they fight). The app bar's "view source" pushes
+// the EXISTING monospace text viewer for the same entry (read-only).
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../services/html_loopback_server.dart';
+import '../services/html_inliner.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_image_fetcher.dart';
+import '../services/text_file_fetcher.dart';
 import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
 import 'file_viewer_actions.dart';
 import 'text_file_viewer.dart';
-import 'top_toast.dart';
 
-/// Builds the live render surface for the loopback [uri]. Swapped out in
+/// Opens a blocked in-page navigation [url] in the system browser
+/// (externalApplication). Injected as a mutable seam (mirrors
+/// [htmlWebViewBuilder]) so widget tests spy on launches without a platform
+/// channel.
+typedef HtmlLinkOpener = Future<void> Function(String url);
+
+Future<void> _defaultOpenHtmlLink(String url) async {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return;
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+/// Seam: production launches the system browser; tests override this to a spy.
+HtmlLinkOpener htmlLinkOpener = _defaultOpenHtmlLink;
+
+/// Test-only handle to the production opener, so a test can restore
+/// [htmlLinkOpener] after overriding it.
+@visibleForTesting
+HtmlLinkOpener get defaultHtmlLinkOpenerForTest => _defaultOpenHtmlLink;
+
+/// Builds the render surface for the self-contained [safeHtml]. Swapped out in
 /// widget tests (no platform WebView there) via [htmlWebViewBuilder] — the
 /// public [HtmlFileViewerScreen] type stays stable so routing assertions hold.
-/// [onBlocked] is invoked with the URL of any blocked (non-loopback)
-/// navigation.
+/// [onLink] receives the URL of any blocked (real) navigation.
 typedef HtmlWebViewBuilder =
-    Widget Function(Uri uri, void Function(String url) onBlocked);
+    Widget Function(String safeHtml, HtmlLinkOpener onLink);
 
-Widget _defaultHtmlWebView(Uri uri, void Function(String url) onBlocked) =>
-    _HtmlWebView(uri: uri, onBlocked: onBlocked);
+Widget _defaultHtmlWebView(String safeHtml, HtmlLinkOpener onLink) =>
+    _HtmlWebView(safeHtml: safeHtml, onLink: onLink);
 
-/// Seam: production builds a real WebView; tests override this to a stub so
-/// the screen mounts without a platform channel.
+/// Seam: production builds a real WebView; tests override this to a stub so the
+/// screen mounts without a platform channel.
 HtmlWebViewBuilder htmlWebViewBuilder = _defaultHtmlWebView;
 
 /// Test-only handle to the production builder, so a test can restore
 /// [htmlWebViewBuilder] after overriding it with a stub.
 @visibleForTesting
 HtmlWebViewBuilder get defaultHtmlWebViewBuilderForTest => _defaultHtmlWebView;
-
-/// Test-only handle to the screen's live loopback server (the most recently
-/// started one), so integration tests can probe the resolver end-to-end
-/// (asset 200s, escape 404s) without reaching into private state.
-@visibleForTesting
-HtmlLoopbackServer? debugLastHtmlLoopbackServer;
 
 /// Full-screen rendered HTML route for a single remote [entry] on [sessionId].
 class HtmlFileViewerScreen extends ConsumerStatefulWidget {
@@ -79,13 +95,12 @@ class HtmlFileViewerScreen extends ConsumerStatefulWidget {
       _HtmlFileViewerScreenState();
 }
 
-enum _Phase { starting, ready, error }
+enum _Phase { building, ready, error }
 
 class _HtmlFileViewerScreenState extends ConsumerState<HtmlFileViewerScreen> {
-  _Phase _phase = _Phase.starting;
+  _Phase _phase = _Phase.building;
   String? _errorMessage;
-  HtmlLoopbackServer? _server;
-  Uri? _uri;
+  String? _safeHtml;
   bool _started = false;
 
   @override
@@ -97,52 +112,31 @@ class _HtmlFileViewerScreenState extends ConsumerState<HtmlFileViewerScreen> {
   }
 
   Future<void> _start() async {
-    // The loopback server's byte source is the session's SFTP image fetcher —
-    // raw bytes, no binary-reject, per-asset cap — the same seam the markdown
-    // viewer's inline images use (#946). Reads happen on demand per request.
-    final fetcher = ref.read(sftpImageFetcherProvider);
-    final server = HtmlLoopbackServer(
-      rootDir: dirnamePosix(widget.entry.path),
-      fetch: (remotePath) => fetcher.fetch(widget.sessionId, remotePath),
-    );
+    // The document is fetched as text; its assets over the SFTP image fetcher
+    // (raw bytes, per-asset cap) — the same seams the text and markdown viewers
+    // use. Everything is inlined into one self-contained document.
+    final textFetcher = ref.read(textFileFetcherProvider);
+    final assetFetcher = ref.read(sftpImageFetcherProvider);
     try {
-      await server.start();
+      final source = await textFetcher.fetch(widget.sessionId, widget.entry);
+      final safe = await buildSafeHtml(
+        source: source,
+        docRemotePath: widget.entry.path,
+        fetchAsset: (remotePath) =>
+            assetFetcher.fetch(widget.sessionId, remotePath),
+      );
+      if (!mounted) return;
+      setState(() {
+        _safeHtml = safe;
+        _phase = _Phase.ready;
+      });
     } catch (e) {
-      if (!mounted) {
-        unawaited(server.close());
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _phase = _Phase.error;
         _errorMessage = e.toString();
       });
-      return;
     }
-    if (!mounted) {
-      unawaited(server.close());
-      return;
-    }
-    _server = server;
-    debugLastHtmlLoopbackServer = server;
-    setState(() {
-      _uri = server.uriFor(widget.entry.name);
-      _phase = _Phase.ready;
-    });
-  }
-
-  @override
-  void dispose() {
-    // Viewer-scoped lifetime: the loopback port closes with the route.
-    unawaited(_server?.close());
-    if (identical(debugLastHtmlLoopbackServer, _server)) {
-      debugLastHtmlLoopbackServer = null;
-    }
-    super.dispose();
-  }
-
-  void _onBlocked(String url) {
-    if (!mounted) return;
-    showTopToast(context, 'Blocked external link');
   }
 
   void _openSource() {
@@ -194,7 +188,7 @@ class _HtmlFileViewerScreenState extends ConsumerState<HtmlFileViewerScreen> {
 
   Widget _buildBody() {
     switch (_phase) {
-      case _Phase.starting:
+      case _Phase.building:
         return const Center(
           key: Key('html-viewer-loading'),
           child: CircularProgressIndicator(),
@@ -214,19 +208,20 @@ class _HtmlFileViewerScreenState extends ConsumerState<HtmlFileViewerScreen> {
         // Full-bleed; the WebView owns zoom/pan (#949 selfZooming shape).
         return SizedBox.expand(
           key: const Key('html-webview-surface'),
-          child: htmlWebViewBuilder(_uri!, _onBlocked),
+          child: htmlWebViewBuilder(_safeHtml!, htmlLinkOpener),
         );
     }
   }
 }
 
-/// The real WebView-backed renderer: JS on, zoom on, navigation locked to the
-/// loopback origin.
+/// The real WebView-backed renderer: JS OFF, zoom on, no origin. Only the
+/// initial in-memory (`loadHtmlString`) load is allowed; every real navigation
+/// is blocked and handed to [onLink] for the system browser.
 class _HtmlWebView extends StatefulWidget {
-  const _HtmlWebView({required this.uri, required this.onBlocked});
+  const _HtmlWebView({required this.safeHtml, required this.onLink});
 
-  final Uri uri;
-  final void Function(String url) onBlocked;
+  final String safeHtml;
+  final HtmlLinkOpener onLink;
 
   @override
   State<_HtmlWebView> createState() => _HtmlWebViewState();
@@ -238,27 +233,27 @@ class _HtmlWebViewState extends State<_HtmlWebView> {
   @override
   void initState() {
     super.initState();
-    final origin = 'http://${widget.uri.host}:${widget.uri.port}/';
     _controller = WebViewController()
-      // JS enabled: wireframes / self-contained pages need it. The page can
-      // only reach the loopback tree (navigation locked below; the server
-      // itself only resolves under the opened directory).
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setJavaScriptMode(JavaScriptMode.disabled)
       ..enableZoom(true)
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
-            // v1 policy: same-loopback-origin only; everything else blocked
-            // with a toast (no system-browser handoff yet).
-            if (request.url.startsWith(origin)) {
+            final url = request.url;
+            // The initial `loadHtmlString` document loads as about:blank / a
+            // data: URL — allow only that; hand every real navigation to the
+            // system browser.
+            if (url == 'about:blank' ||
+                url.startsWith('about:') ||
+                url.startsWith('data:')) {
               return NavigationDecision.navigate;
             }
-            widget.onBlocked(request.url);
+            unawaited(widget.onLink(url));
             return NavigationDecision.prevent;
           },
         ),
       )
-      ..loadRequest(widget.uri);
+      ..loadHtmlString(widget.safeHtml);
   }
 
   @override

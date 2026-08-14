@@ -32,7 +32,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
-import 'html_loopback_server.dart' show contentTypeForName;
+import 'content_types.dart' show contentTypeForName;
 import 'session_messages.dart';
 import 'sftp_download.dart';
 
@@ -67,9 +67,9 @@ class BytesFileSource extends ViewerFileSource {
 }
 
 /// Plain (parameter-free) mime type for sharing [name] by extension. Delegates
-/// to the loopback server's content-type table (single source of truth) with
-/// the `; charset=…` parameter stripped — Android share intents want a bare
-/// type. `.mmd` (mermaid source) shares as text; unknown → octet-stream.
+/// to the shared content-type table (single source of truth) with the
+/// `; charset=…` parameter stripped — Android share intents want a bare type.
+/// `.mmd` (mermaid source) shares as text; unknown → octet-stream.
 String viewerShareMimeType(String name) {
   final dot = name.lastIndexOf('.');
   final ext = (dot <= 0 || dot == name.length - 1)

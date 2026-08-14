@@ -14,6 +14,21 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <!--
+      Strict CSP is the egress block (#1107 sibling). Diagram source can come
+      from untrusted content; mermaid's own securityLevel:'strict' sanitizes
+      labels but enforces NO network policy on its own. default-src/connect-src
+      'none' + img/font restricted to data:/self mean a mermaid-label injection
+      can never beacon out. script-src 'self' runs our BUNDLED mermaid.min.js +
+      mermaid_boot.js (both local assets) — the inline boot block was moved to
+      mermaid_boot.js so no 'unsafe-inline' is needed for scripts. style-src
+      keeps 'unsafe-inline' for the inline <style> and mermaid's generated SVG
+      styling.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline' 'self'; img-src data:; font-src data: 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=8.0, user-scalable=yes"
@@ -53,56 +68,8 @@
   </head>
   <body>
     <div id="diagram"></div>
-    <script>
-      function post(payload) {
-        try {
-          if (window.MermaidChannel && window.MermaidChannel.postMessage) {
-            window.MermaidChannel.postMessage(JSON.stringify(payload));
-          }
-        } catch (e) {
-          /* channel not attached (e.g. preview) — ignore */
-        }
-      }
-
-      var mermaidReady = false;
-      try {
-        if (window.mermaid) {
-          window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
-          mermaidReady = true;
-        }
-      } catch (e) {
-        post({ type: 'error', message: 'mermaid init failed: ' + e });
-      }
-
-      function reportSize() {
-        var el = document.getElementById('diagram');
-        var h = Math.ceil(el.getBoundingClientRect().height);
-        if (h > 0) post({ type: 'size', height: h });
-      }
-
-      // Called from Dart with the raw fenced-block source.
-      window.renderMermaid = function (source) {
-        var target = document.getElementById('diagram');
-        if (!mermaidReady || !window.mermaid) {
-          post({ type: 'error', message: 'mermaid unavailable' });
-          return;
-        }
-        try {
-          window.mermaid
-            .render('mermaidGraph', source)
-            .then(function (result) {
-              target.innerHTML = result.svg;
-              reportSize();
-              // Re-measure after layout settles (fonts/labels).
-              setTimeout(reportSize, 60);
-            })
-            .catch(function (err) {
-              post({ type: 'error', message: String(err && err.message ? err.message : err) });
-            });
-        } catch (err) {
-          post({ type: 'error', message: String(err && err.message ? err.message : err) });
-        }
-      };
-    </script>
+    <!-- Boot logic externalized so a strict `script-src 'self'` (no
+         'unsafe-inline') still runs it. -->
+    <script src="mermaid_boot.js"></script>
   </body>
 </html>
