@@ -245,6 +245,89 @@ void main() {
       },
     );
 
+    test(
+      'verify on a CHANGED host key fails closed (mismatch → failed, NOT '
+      'awaitingHostKey) and preserves the stored fingerprint — #1108',
+      () async {
+        const params = SshConnectParams(
+          host: 'known.example',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        );
+        // Host is already trusted with a DIFFERENT fingerprint (0xAA,0xBB).
+        final backend = InMemoryHostKeyBackend(<String, String>{
+          'known.example:22': 'aabb',
+        });
+        final store = HostKeyStore(backend: backend);
+        await store.ready;
+
+        final controller = SshSessionController(hostKeyStore: store);
+        final transitions = <SshSessionState>[];
+        final sub = controller.stream.listen((d) => transitions.add(d.state));
+
+        // Server now offers hex of [0xDE,0xAD,0xBE,0xEF] = 'deadbeef'.
+        final ok = await controller.verifyHostKeyForTest(
+          params,
+          'ssh-ed25519',
+          Uint8List.fromList(<int>[0xDE, 0xAD, 0xBE, 0xEF]),
+        );
+
+        expect(ok, isFalse, reason: 'a changed key must be rejected, not prompted');
+        expect(controller.data.state, SshSessionState.failed);
+        expect(
+          transitions,
+          isNot(contains(SshSessionState.awaitingHostKey)),
+          reason: 'a changed key must NOT get the ordinary accept prompt',
+        );
+        expect(controller.data.pendingHostKey, isNull);
+        // Error surfaces BOTH the stored and the offered fingerprint.
+        expect(controller.data.error, contains('aabb'));
+        expect(controller.data.error, contains('deadbeef'));
+        // The MITM evidence (originally-trusted fp) is not overwritten.
+        expect(store.trustedFingerprint('known.example', 22), 'aabb');
+
+        await sub.cancel();
+        await controller.dispose();
+      },
+    );
+
+    test(
+      'verify with an UNAVAILABLE store fails closed (→ failed, NOT '
+      'awaitingHostKey/unknown) — #1108',
+      () async {
+        const params = SshConnectParams(
+          host: 'any.example',
+          port: 22,
+          username: 'u',
+          auth: SshAuth.password('p'),
+        );
+        final store = HostKeyStore(backend: _ThrowingBackend());
+        await store.ready;
+
+        final controller = SshSessionController(hostKeyStore: store);
+        final transitions = <SshSessionState>[];
+        final sub = controller.stream.listen((d) => transitions.add(d.state));
+
+        final ok = await controller.verifyHostKeyForTest(
+          params,
+          'ssh-ed25519',
+          Uint8List.fromList(<int>[0x01, 0x02]),
+        );
+
+        expect(ok, isFalse, reason: 'unavailable store must fail closed');
+        expect(controller.data.state, SshSessionState.failed);
+        expect(
+          transitions,
+          isNot(contains(SshSessionState.awaitingHostKey)),
+          reason: 'unavailable store must NOT fall through to the TOFU prompt',
+        );
+
+        await sub.cancel();
+        await controller.dispose();
+      },
+    );
+
     test('SshSessionData.copyWith respects clear flags', () {
       const data = SshSessionData(
         state: SshSessionState.failed,
@@ -515,4 +598,15 @@ void main() {
       await c.dispose();
     });
   });
+}
+
+/// A host-key backend whose [loadAll] always throws — simulates unavailable
+/// storage so the store must fail closed (storeUnavailable) — #1108.
+class _ThrowingBackend implements HostKeyBackend {
+  @override
+  Future<Map<String, String>> loadAll() async =>
+      throw StateError('backend unavailable');
+
+  @override
+  Future<void> saveAll(Map<String, String> map) async {}
 }

@@ -119,14 +119,148 @@ void main() {
       },
     );
 
-    test('corrupt persisted JSON falls back to empty (no crash)', () async {
+    test('corrupt persisted JSON marks the store UNAVAILABLE (fail closed, '
+        'no crash) — #1108', () async {
+      // Regression: corrupt data used to silently fall back to an EMPTY map,
+      // which downgrades every KNOWN host to "unknown" and re-opens the TOFU
+      // accept prompt (fails open). It must fail CLOSED instead.
       SharedPreferences.setMockInitialValues(<String, Object>{
         hostKeysPrefsKey: 'not-json{{{',
       });
       final store = HostKeyStore(backend: SharedPrefsHostKeyBackend());
       await store.ready;
-      expect(store.length, 0);
-      expect(store.isTrusted('anything', 22, 'x'), isFalse);
+      expect(
+        store.status('anything', 22, 'x'),
+        HostKeyStatus.storeUnavailable,
+        reason: 'corrupt store must not masquerade as a fresh/unknown host',
+      );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // #1108: a CHANGED host key must be distinguishable from first contact, and
+  // must NEVER be trustable through the ordinary accept path.
+  // -------------------------------------------------------------------------
+  group('HostKeyStore status + trustIfUnknown (#1108)', () {
+    test('status: no entry → unknown', () {
+      final store = HostKeyStore(backend: InMemoryHostKeyBackend());
+      expect(store.status('new.host', 22, 'aabb'), HostKeyStatus.unknown);
+    });
+
+    test('status: same fingerprint → match', () async {
+      final store = HostKeyStore(
+        backend: InMemoryHostKeyBackend(<String, String>{'h:22': 'aabb'}),
+      );
+      await store.ready;
+      expect(store.status('h', 22, 'aabb'), HostKeyStatus.match);
+    });
+
+    test('status: DIFFERENT fingerprint → mismatch (NOT unknown)', () async {
+      final store = HostKeyStore(
+        backend: InMemoryHostKeyBackend(<String, String>{'h:22': 'aabb'}),
+      );
+      await store.ready;
+      final s = store.status('h', 22, 'deadbeef');
+      expect(s, HostKeyStatus.mismatch);
+      expect(s, isNot(HostKeyStatus.unknown));
+    });
+
+    test('trustIfUnknown trusts an unknown host and returns true', () async {
+      final store = HostKeyStore(backend: InMemoryHostKeyBackend());
+      await store.ready;
+      expect(store.trustIfUnknown('h', 22, 'aabb'), isTrue);
+      expect(store.status('h', 22, 'aabb'), HostKeyStatus.match);
+    });
+
+    test('trustIfUnknown REJECTS a changed key (compare-and-set) and PRESERVES '
+        'the stored fingerprint — the MITM evidence survives', () async {
+      final store = HostKeyStore(
+        backend: InMemoryHostKeyBackend(<String, String>{'h:22': 'aabb'}),
+      );
+      await store.ready;
+      // The ordinary accept path cannot overwrite a differing key.
+      expect(store.trustIfUnknown('h', 22, 'deadbeef'), isFalse);
+      // The originally-trusted fingerprint is untouched.
+      expect(store.trustedFingerprint('h', 22), 'aabb');
+      expect(store.status('h', 22, 'deadbeef'), HostKeyStatus.mismatch);
+    });
+
+    test('re-trusting a changed key requires an EXPLICIT forget + trust',
+        () async {
+      final store = HostKeyStore(
+        backend: InMemoryHostKeyBackend(<String, String>{'h:22': 'aabb'}),
+      );
+      await store.ready;
+      // Ordinary path refuses.
+      expect(store.trustIfUnknown('h', 22, 'deadbeef'), isFalse);
+      // Deliberate re-trust affordance: forget, then trust.
+      store.forget('h', 22);
+      expect(store.status('h', 22, 'deadbeef'), HostKeyStatus.unknown);
+      expect(store.trustIfUnknown('h', 22, 'deadbeef'), isTrue);
+      expect(store.status('h', 22, 'deadbeef'), HostKeyStatus.match);
+    });
+
+    test('store unavailable → status storeUnavailable; a previously-known host '
+        'is NOT downgraded to unknown (fail closed)', () async {
+      final store = HostKeyStore(backend: _ThrowingBackend());
+      await store.ready;
+      expect(store.status('known.host', 22, 'aabb'),
+          HostKeyStatus.storeUnavailable);
+      // And the ordinary accept path cannot trust while unavailable.
+      expect(store.trustIfUnknown('known.host', 22, 'aabb'), isFalse);
+    });
+
+    test('concurrent trust then forget writes are serialized — a forgotten '
+        'entry is not resurrected by an out-of-order write', () async {
+      // The first save (trust) resolves SLOWER than the second (forget). With
+      // fire-and-forget writes the slow trust would land LAST and resurrect the
+      // entry; a serialized write chain preserves call order.
+      final backend = _DelayedReorderBackend(<Duration>[
+        const Duration(milliseconds: 60),
+        const Duration(milliseconds: 10),
+      ]);
+      final store = HostKeyStore(backend: backend);
+      await store.ready;
+      store.trust('h', 22, 'aabb');
+      store.forget('h', 22);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(backend.store, isEmpty,
+          reason: 'forget must win — writes serialize in call order');
+    });
+  });
+}
+
+/// A backend whose [loadAll] always throws — simulates unavailable/corrupt
+/// storage so the store must fail closed (storeUnavailable) rather than empty.
+class _ThrowingBackend implements HostKeyBackend {
+  @override
+  Future<Map<String, String>> loadAll() async =>
+      throw StateError('backend unavailable');
+
+  @override
+  Future<void> saveAll(Map<String, String> map) async {}
+}
+
+/// A backend whose saves resolve after per-call delays (in call order). The
+/// stored map reflects whichever save COMPLETES last, so a non-serialized
+/// writer with a slow-then-fast delay pair resurrects the first write.
+class _DelayedReorderBackend implements HostKeyBackend {
+  _DelayedReorderBackend(this.delays);
+
+  final List<Duration> delays;
+  final Map<String, String> store = <String, String>{};
+  int _i = 0;
+
+  @override
+  Future<Map<String, String>> loadAll() async => Map<String, String>.from(store);
+
+  @override
+  Future<void> saveAll(Map<String, String> map) async {
+    final d = _i < delays.length ? delays[_i] : Duration.zero;
+    _i++;
+    await Future<void>.delayed(d);
+    store
+      ..clear()
+      ..addAll(map);
+  }
 }
