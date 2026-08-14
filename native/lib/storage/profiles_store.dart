@@ -619,39 +619,102 @@ class ProfilesStore {
 
     for (final entry in parsed.profileEntries) {
       try {
-        final profile = SavedProfile.fromJson(entry);
-        if (profile.authType != null) withAuthType++;
-        if (profile.vaultId != null) withVault++;
-        if (profile.keyVaultId != null) withKeyVaultId++;
+        final raw = SavedProfile.fromJson(entry);
 
-        final existingIndex = byIdentity[profile.identityKey];
+        // #1106: a credential handle from imported JSON is trustworthy ONLY if
+        // the secret it names actually travelled WITH this import (present in
+        // the just-decrypted vault). Vault ids are predictable
+        // (`profile-<host>:<port>:<username>`), so an unbacked handle can name
+        // some OTHER host's stored secret — connect would then authenticate to
+        // the attacker's host with the victim's password/key. The plain
+        // no-vault path has an empty [decryptedVault], so every handle is
+        // dropped there; only a password-decrypted backup envelope carries
+        // trusted handles.
+        final String? safeVaultId =
+            (raw.vaultId != null && decryptedVault.containsKey(raw.vaultId))
+                ? raw.vaultId
+                : null;
+        final String? safeKeyVaultId = (raw.keyVaultId != null &&
+                decryptedVault.containsKey(raw.keyVaultId))
+            ? raw.keyVaultId
+            : null;
+        final bool importBroughtSecret =
+            safeVaultId != null || safeKeyVaultId != null;
+        if (safeVaultId != null) withVault++;
+        if (safeKeyVaultId != null) withKeyVaultId++;
+
+        final existingIndex = byIdentity[raw.identityKey];
         if (existingIndex != null) {
           // #547: re-import over a (possibly stale identity-only) profile is an
-          // UPSERT, not a skip. Refresh the auth/vault references and visual
-          // identity so a pre-#510 profile gains the data it was missing.
-          // Preserve the user's existing title — import never clobbers it.
+          // UPSERT, not a skip — refresh the non-secret visual/endpoint
+          // identity. Preserve the user's existing title.
+          //
+          // #1106: NEVER let an untrusted import overwrite an existing local
+          // profile's credential bundle (authType/vaultId/keyVaultId) or its
+          // auto-run config (initialCommand/forwards). Binding a handle from
+          // untrusted JSON would rebind the profile to an arbitrary stored
+          // secret (the theft vector); flipping authType would connect it in a
+          // mode pointing at that rebound secret. Only a genuine backup restore
+          // (the secret travelled with the import, so the handle is backed by
+          // the decrypted vault) may adopt the import's validated bundle in
+          // place. Auto-run config is never installed by import. Only the
+          // non-secret display/endpoint metadata is refreshed.
           final prior = existing[existingIndex];
+          final String? mergedAuthType;
+          final String? mergedVaultId;
+          final String? mergedKeyVaultId;
+          if (importBroughtSecret) {
+            mergedAuthType = raw.authType;
+            mergedVaultId = safeVaultId;
+            mergedKeyVaultId = safeKeyVaultId;
+          } else {
+            mergedAuthType = prior.authType;
+            mergedVaultId = prior.vaultId;
+            mergedKeyVaultId = prior.keyVaultId;
+          }
+          if (mergedAuthType != null) withAuthType++;
           existing[existingIndex] = SavedProfile(
             title: prior.title,
             host: prior.host,
             port: prior.port,
             username: prior.username,
-            theme: profile.theme,
-            fontSize: profile.fontSize,
-            fontFamily: profile.fontFamily,
-            color: profile.color,
-            authType: profile.authType,
-            vaultId: profile.vaultId,
-            keyVaultId: profile.keyVaultId,
-            initialCommand: profile.initialCommand,
-            defaultPath: profile.defaultPath,
-            forwards: profile.forwards,
+            theme: raw.theme,
+            fontSize: raw.fontSize,
+            fontFamily: raw.fontFamily,
+            color: raw.color,
+            authType: mergedAuthType,
+            vaultId: mergedVaultId,
+            keyVaultId: mergedKeyVaultId,
+            initialCommand: prior.initialCommand,
+            defaultPath: raw.defaultPath,
+            forwards: prior.forwards,
           );
           updated++;
           continue;
         }
-        existing.add(profile);
-        byIdentity[profile.identityKey] = existing.length - 1;
+        // #1106: a NEW identity arrives credential-less unless a trusted secret
+        // travelled with it, and never carries imported auto-run config. It
+        // keeps its descriptive authType so a key profile prompts for its key
+        // on first connect rather than silently downgrading to password (#961).
+        if (raw.authType != null) withAuthType++;
+        final safe = SavedProfile(
+          title: raw.title,
+          host: raw.host,
+          port: raw.port,
+          username: raw.username,
+          theme: raw.theme,
+          fontSize: raw.fontSize,
+          fontFamily: raw.fontFamily,
+          color: raw.color,
+          authType: raw.authType,
+          vaultId: safeVaultId,
+          keyVaultId: safeKeyVaultId,
+          initialCommand: null,
+          defaultPath: raw.defaultPath,
+          forwards: const [],
+        );
+        existing.add(safe);
+        byIdentity[safe.identityKey] = existing.length - 1;
         added++;
       } on FormatException catch (e) {
         errors.add(e.message);

@@ -1,24 +1,30 @@
-// Widget test: a re-import upsert that CHANGES authType is reflected on the
-// next profile tap — no stale password mode (#595, the #547 follow-up).
+// Widget test: a plain (no-vault) re-import upsert must NOT rebind an existing
+// local profile's credentials (#1106 supersedes the old #595/#547 behavior).
 //
-// Headless reproduction of the on-device bug found by the #589 integration
-// gate (import_upsert_diversity_test.dart): a STALE profile is re-imported with
-// a CHANGED authType. #547 made the LIST refresh after an upsert; the remaining
-// gap is the per-profile authType used by the connect path. If the upserted
-// profile still carries the OLD authType, tapping it connects in the OLD mode.
-// We seed the stale profile as authType=password WITH a usable password secret,
-// then re-import it as authType=key — so a stale authType connects in PASSWORD
-// mode and a refreshed one connects in KEY mode. (Seeding the password secret
-// is what makes this a strict authType test: the keyVaultId-inference fallback
-// only fires when authType is null, so it cannot mask a stale `password`.)
+// History: #595 (a #547 follow-up) wanted a plain re-import to REBIND an
+// existing profile's authType + keyVaultId so the next tap connected in the new
+// mode. #1106 found that exact behavior is a credential-theft vector: vault ids
+// are predictable, so a crafted plain import naming another host's stored
+// secret (or, on a collision, rebinding the profile to an arbitrary stored
+// secret) authenticates with a credential the importer never possessed. The
+// fix: a plain import can only refresh NON-SECRET metadata on a collision; the
+// credential bundle (authType/vaultId/keyVaultId) and auto-run config are
+// FROZEN. Rebinding a real credential now requires the profile editor or an
+// encrypted backup that carries the secret.
+//
+// We seed the profile as authType=password WITH a usable password secret, then
+// plain-re-import it as authType=key naming an EXISTING local key secret. The
+// secure contract: the upsert leaves the credential bundle untouched, so the
+// next tap still connects in PASSWORD mode (the frozen secret) — it does NOT
+// pick up the injected key.
 //
 // Observable contract (no inline connect form exists post-#583): tapping a
 // profile routes through `_connectFromProfile`, which resolves the profile's
 // authType + vault credentials and dispatches `proxy.connect`. The connect
 // command crosses the in-memory gateway as a JSON payload carrying
 // `auth: {type: 'key'|'password', ...}`. We capture that payload on the task
-// side and assert `auth.type == 'key'` after the upsert — the direct proof the
-// fresh authType reached the connect path.
+// side and assert `auth.type == 'password'` after the upsert — proof the
+// injected key never reached the connect path.
 
 import 'dart:convert';
 
@@ -58,16 +64,13 @@ void main() {
   });
 
   testWidgets(
-    're-import upsert to KEY auth: next tap connects with auth.type=key (#595)',
+    'plain re-import does NOT rebind an existing profile to an injected key; '
+    'next tap still connects in PASSWORD mode (#1106, supersedes #595)',
     (tester) async {
-      // 1. Pre-seed the store with a STALE PASSWORD profile that ALSO has a
-      //    usable password secret. This is deliberately the hardest case: if
-      //    the list serves the stale object, `_connectFromProfile` sees
-      //    authType=password + a usable password and connects in PASSWORD mode
-      //    — the bug. Seeding a password secret here means a stale authType
-      //    cannot be masked by the keyVaultId-inference fallback (which only
-      //    fires when authType is null). The ONLY thing that flips the connect
-      //    to KEY mode is the upsert refreshing the per-profile authType.
+      // 1. Pre-seed the store with a PASSWORD profile that has a usable
+      //    password secret. A plain re-import naming a key handle must NOT flip
+      //    it to key mode (that is the #1106 injection). The next tap must keep
+      //    connecting with the frozen password credential.
       const pwVaultId = 'v-box';
       const keyVaultId = 'k-box';
       final secrets = SecretsStore(backend: InMemorySecretsBackend());
@@ -118,9 +121,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // 3. Re-import the SAME identity, now KEY auth, through the real dialog.
-      //    Plain (no-vault) envelope → single-stage submit. This upserts the
-      //    stale profile (added=0, updated=1) — the #547 follow-up case.
+      // 3. Re-import the SAME identity, now KEY auth naming an existing local
+      //    key secret, through the real dialog. Plain (no-vault) envelope →
+      //    single-stage submit. This upserts the profile (added=0, updated=1)
+      //    but must leave its credential bundle frozen (#1106).
       final envelope = jsonEncode(<String, Object?>{
         'version': 1,
         'profiles': <Map<String, dynamic>>[
@@ -150,18 +154,27 @@ void main() {
       await tester.tap(find.byKey(const Key('import-profiles-submit')));
       await tester.pumpAndSettle();
 
-      // The store now holds the upserted KEY profile.
+      // The store still holds the ORIGINAL password bundle — the plain import
+      // could not rebind it (#1106). The injected key handle was dropped.
       final loaded = await store.load();
       expect(
         loaded.single.authType,
-        'key',
-        reason: 'store must hold the upserted authType=key',
+        'password',
+        reason: 'plain import must NOT flip authType on a collision (#1106)',
+      );
+      expect(
+        loaded.single.keyVaultId,
+        isNull,
+        reason: 'plain import must NOT bind the injected keyVaultId (#1106)',
+      );
+      expect(
+        loaded.single.vaultId,
+        pwVaultId,
+        reason: 'the original credential handle is preserved (#1106)',
       );
 
-      // 4. Tap the formerly-stale profile. With a fresh authType it must
-      //    connect in KEY mode. The bug: a stale authType (null/password)
-      //    routes to password mode (or the no-creds editor fallback), so the
-      //    connect command's auth.type is NOT 'key'.
+      // 4. Tap the profile. With its bundle frozen it connects in PASSWORD
+      //    mode using the original secret — never the injected key.
       await tester.tap(
         find.byKey(const Key('profile-tile-box.example:2222:testuser')),
       );
@@ -170,21 +183,18 @@ void main() {
       expect(
         connectCommands,
         isNotEmpty,
-        reason:
-            'tapping the upserted profile must dispatch a connect — a '
-            'stale authType=null with no usable creds opens the editor '
-            'instead of connecting',
+        reason: 'the profile keeps a usable password credential, so tapping '
+            'it dispatches a connect',
       );
       final auth = Map<String, dynamic>.from(
         connectCommands.last['auth'] as Map,
       );
       expect(
         auth['type'],
-        'key',
+        'password',
         reason:
-            'connect must use KEY auth after the upsert changed '
-            'authType from null → key (the #547 follow-up bug: stale '
-            'per-profile authType applied in password mode)',
+            'connect must stay in PASSWORD mode — the plain import could not '
+            'rebind the profile to the injected key (#1106)',
       );
     },
   );
