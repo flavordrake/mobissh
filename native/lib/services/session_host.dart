@@ -24,6 +24,8 @@ import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../diagnostics/diagnostics_config.dart'
+    show kRawContentDiagnosticsEnabled;
 import '../terminal/tmux_control_channel.dart';
 import '../terminal/tmux_control_mode_flag.dart';
 import '../ssh/da2_responder.dart';
@@ -2045,12 +2047,17 @@ class SessionHost {
     try {
       final signals = hosted.attentionScanner.feed(bytes);
       for (final sig in signals) {
-        // Slice 1: durable lifecycle log (kept).
-        clifecycle(
-          'attention',
-          '${sig.kind.name} ${sig.text == null ? '(no text)' : '"${sig.text}"'} '
-              '(session $sessionId)',
-        );
+        // Slice 1: durable lifecycle log (kept). #1109-A: `sig.text` is the
+        // arbitrary OSC 9/777 / hook-line message text extracted from REMOTE
+        // output — raw content that can carry secrets. Keep the structural
+        // signal KIND (and text length) in every build, but gate the verbatim
+        // text out of public release builds (fail-closed).
+        final textPart = sig.text == null
+            ? '(no text)'
+            : (kRawContentDiagnosticsEnabled
+                  ? '"${sig.text}"'
+                  : '(text len=${sig.text!.length})');
+        clifecycle('attention', '${sig.kind.name} $textPart (session $sessionId)');
         // Slice 2: post an attention notification, unless suppressed because
         // the user is already looking at this session (#847) or the signal
         // arrived inside the (re)connect replay window (#851).

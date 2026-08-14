@@ -31,6 +31,12 @@ const MAX_CRASH_BYTES = 1024 * 1024;
 const MAX_GESTURE_LOG_BYTES = 1024 * 1024;
 // Frame-burst guard for bug-report repro recordings.
 const MAX_FRAMES = 120;
+// Per-decoded-image cap (#484): a screenshot/frame whose DECODED bytes exceed
+// this is skipped, bounding per-file disk even when the encoded request body
+// slipped under the front-door byte cap. Read per-call so tests can toggle it.
+function maxImageDecodedBytes() {
+  return parseInt(process.env.MOBISSH_FEEDBACK_IMAGE_MAX_BYTES || '', 10) || 4 * 1024 * 1024;
+}
 // Server-side backstop caps for replay traces (client already bounds the rings).
 const MAX_BYTE_EVENTS = 8192;
 const MAX_SCROLL_EVENTS = 8192;
@@ -51,11 +57,25 @@ function stampNow() {
 
 /**
  * Buffer a request body, optionally enforcing a byte cap. Resolves with the
- * body as a utf8 string. Rejects with err.code === 'TOO_LARGE' (after
- * destroying the request) when the cap is exceeded — the caller answers 413.
+ * body as a utf8 string. Rejects with err.code === 'TOO_LARGE' when the cap is
+ * exceeded — the caller answers 413 (with Connection: close). readBody does NOT
+ * destroy the socket itself: destroying it before the caller writes the 413
+ * truncates the response into a client-side "socket hang up" (#484).
+ *
+ * A declared Content-Length over the cap is rejected up front, so an oversized
+ * request is refused WITHOUT buffering (or later base64-decoding) the body.
  */
 function readBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
+    const tooLarge = () => {
+      const err = new Error(`body exceeds ${maxBytes} bytes`);
+      err.code = 'TOO_LARGE';
+      return err;
+    };
+    if (maxBytes) {
+      const declared = parseInt(req.headers['content-length'] || '', 10);
+      if (Number.isFinite(declared) && declared > maxBytes) { reject(tooLarge()); return; }
+    }
     const chunks = [];
     let total = 0;
     let aborted = false;
@@ -65,10 +85,7 @@ function readBody(req, maxBytes) {
       total += buf.length;
       if (maxBytes && total > maxBytes) {
         aborted = true;
-        try { req.destroy(); } catch (_) {}
-        const err = new Error(`body exceeds ${maxBytes} bytes`);
-        err.code = 'TOO_LARGE';
-        reject(err);
+        reject(tooLarge());
         return;
       }
       chunks.push(buf);
@@ -196,12 +213,18 @@ function saveBugReport(data, reportDir) {
   fs.mkdirSync(reportDir, { recursive: true });
 
   // Save screenshot
+  const imageCap = maxImageDecodedBytes();
   let screenshotFile = '';
   if (screenshot) {
     const imgData = screenshot.replace(/^data:image\/\w+;base64,/, '');
-    screenshotFile = `${ts}-bug-report.png`;
-    fs.writeFileSync(path.join(reportDir, screenshotFile), Buffer.from(imgData, 'base64'));
-    console.log(`[bug-report] screenshot: ${screenshotFile}`);
+    const buf = Buffer.from(imgData, 'base64');
+    if (buf.length > imageCap) {
+      console.warn(`[bug-report] screenshot skipped: decoded ${buf.length}B exceeds ${imageCap}B cap`);
+    } else {
+      screenshotFile = `${ts}-bug-report.png`;
+      fs.writeFileSync(path.join(reportDir, screenshotFile), buf);
+      console.log(`[bug-report] screenshot: ${screenshotFile}`);
+    }
   }
 
   // #repro: a recorded burst of frames (in-app 10s "video"). Save each as a
@@ -215,8 +238,10 @@ function saveBugReport(data, reportDir) {
       const f = frames[i];
       if (typeof f !== 'string' || !f) continue;
       const fData = f.replace(/^data:image\/\w+;base64,/, '');
+      const fbuf = Buffer.from(fData, 'base64');
+      if (fbuf.length > imageCap) continue; // #484: skip an oversized frame
       const name = `${ts}-bug-report.frame-${String(i + 1).padStart(3, '0')}.png`;
-      fs.writeFileSync(path.join(reportDir, name), Buffer.from(fData, 'base64'));
+      fs.writeFileSync(path.join(reportDir, name), fbuf);
       frameCount++;
     }
     framesPattern = `${ts}-bug-report.frame-%03d.png`;

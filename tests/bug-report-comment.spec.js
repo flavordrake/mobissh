@@ -22,6 +22,11 @@ const { test, expect } = require('./fixtures.js');
 const BASE_URL = (process.env.BASE_URL || 'http://localhost:8081').replace(/\/?$/, '/');
 const UPLOADS_DIR = path.join(__dirname, '..', 'test-results', 'uploads');
 
+// #484: the feedback routes now require the X-MobiSSH-Key shared secret. Must
+// match playwright.config.js webServer env (or the external server's key).
+const FEEDBACK_KEY = process.env.MOBISSH_FEEDBACK_KEY || 'headless-feedback-key';
+const AUTH_HEADERS = { 'X-MobiSSH-Key': FEEDBACK_KEY };
+
 // A multi-line note whose later lines the old web form would have lost when it
 // sliced the first line to ~80 chars for the title.
 function bigNote(marker) {
@@ -50,6 +55,7 @@ test.describe('POST /api/bug-report — full comment persistence (#661)', () => 
     const comment = bigNote(marker);
 
     const res = await request.post(BASE_URL + 'api/bug-report', {
+      headers: AUTH_HEADERS,
       data: {
         title: `[1.0.0+9 deadbee] First line ${marker}`,
         comment,
@@ -75,6 +81,7 @@ test.describe('POST /api/bug-report — full comment persistence (#661)', () => 
     const truncatedTitle = `[1.0.0] ${fullText.split('\n')[0].slice(0, 80)}`;
 
     const res = await request.post(BASE_URL + 'api/bug-report', {
+      headers: AUTH_HEADERS,
       data: {
         title: truncatedTitle,
         logs: fullText,
@@ -91,5 +98,29 @@ test.describe('POST /api/bug-report — full comment persistence (#661)', () => 
     expect(meta.comment).toContain(`${marker}-END`);
     // The title is still the (truncated) web-form title — back-compatible.
     expect(meta.title).toBe(truncatedTitle);
+  });
+});
+
+test.describe('POST /api/bug-report — auth is mandatory (#484)', () => {
+  test('a request WITHOUT the X-MobiSSH-Key header is rejected and writes nothing', async ({ request }) => {
+    const marker = `m484noauth-${Date.now()}`;
+    const res = await request.post(BASE_URL + 'api/bug-report', {
+      data: { title: `unauth ${marker}`, comment: `should not persist ${marker}`, logs: marker },
+    });
+    // 401 (key configured, header missing) or 503 (key not configured) — never accepted.
+    expect(res.ok()).toBe(false);
+    expect([401, 403, 503]).toContain(res.status());
+    // Nothing carrying the marker was written to disk.
+    expect(findReportContaining(marker)).toBeNull();
+  });
+
+  test('a request with a WRONG X-MobiSSH-Key is rejected', async ({ request }) => {
+    const marker = `m484badauth-${Date.now()}`;
+    const res = await request.post(BASE_URL + 'api/bug-report', {
+      headers: { 'X-MobiSSH-Key': 'not-the-key' },
+      data: { title: `bad ${marker}`, comment: marker, logs: marker },
+    });
+    expect(res.status()).toBe(401);
+    expect(findReportContaining(marker)).toBeNull();
   });
 });

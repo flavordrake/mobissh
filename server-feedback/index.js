@@ -29,6 +29,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const store = require('../server/feedback-store');
+const guard = require('../server/feedback-guard');
 
 const PORT = process.env.PORT || 8082;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -57,14 +58,24 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && store.FEEDBACK_ROUTES.includes(req.url)) {
     const route = req.url;
-    const maxBytes = route === '/api/native-crash' ? store.MAX_CRASH_BYTES : 0;
+    // #484: same shared guard as the prod front door — auth + per-IP rate limit
+    // BEFORE buffering so neither door is an unauthenticated/unbounded bypass.
+    const rej = guard.preflight(req);
+    if (rej) {
+      res.writeHead(rej.status, { 'Content-Type': 'application/json' });
+      res.end(rej.body);
+      return;
+    }
+    const maxBytes = route === '/api/native-crash' ? store.MAX_CRASH_BYTES : guard.maxFeedbackBytes();
     let body;
     try {
       body = await store.readBody(req, maxBytes);
     } catch (err) {
       if (err.code === 'TOO_LARGE') {
-        res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end('{"error":"crash report exceeds 1MB"}');
+        // Connection: close so the unread oversized body is discarded and the
+        // 413 reaches the client cleanly (no socket-hang-up race) (#484).
+        res.writeHead(413, { 'Content-Type': 'application/json', 'Connection': 'close' });
+        res.end('{"error":"request body too large"}');
       }
       return;
     }

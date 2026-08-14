@@ -23,11 +23,16 @@
 //   - The scroll ring stores `{tMs, offset}` bounded by event count + age. Grid
 //     `{cols, rows}` tracks the latest viewport (updated on resize).
 //
-// SECURITY (rules/security.md / #553 contract): the byte stream is terminal
-// OUTPUT and MAY contain secrets (an echoed token, a sudo prompt echo). The
-// snapshot decodes each chunk, runs it through [scrubSecrets] (shared with the
-// feedback bundle), and re-encodes — so credential-looking lines NEVER leave the
-// device. Scrubbing at snapshot (cold path) keeps the hot path allocation-light.
+// SECURITY (rules/security.md / #553 / #1109-A): the byte ring is terminal
+// OUTPUT and MAY contain secrets (an echoed token, a sudo prompt echo). A
+// best-effort [scrubSecrets] pass at snapshot time is defense-in-depth ONLY — it
+// is NOT relied on as the security boundary. The real boundary is the
+// [kRawContentDiagnosticsEnabled] gate at the call sites (#1109-A): in public
+// release builds `recordBytes` is never called and `byteTrace` is never
+// assembled, so the raw ring stays empty and is tree-shaken out. The term-reply
+// ring is additionally constrained to a strict DA/DSR/CPR/XTVERSION allowlist
+// ([isAllowedTermReply]) so it never records arbitrary OSC / other payloads.
+// Scrubbing at snapshot (cold path) keeps the hot path allocation-light.
 
 import 'dart:collection';
 import 'dart:convert';
@@ -136,6 +141,28 @@ String termReplyKind(Uint8List chunk) {
   return 'other';
 }
 
+/// #1109-A: true iff [chunk] is a terminal AUTO-REPLY the term-reply ring is
+/// ALLOWED to record — a strict allowlist so it never captures arbitrary OSC /
+/// hook / other payloads verbatim (which could embed remote-supplied content).
+/// Only the shape of a genuine device reply passes:
+///   - DA1  `ESC [ ?` …            (primary device attributes)
+///   - DA2  `ESC [ >` …            (secondary device attributes)
+///   - CPR/DSR `ESC [` … `R` / `n` (cursor position / device status)
+///   - XTVERSION `ESC P` …         (DCS version reply)
+/// A generic OSC (`ESC ]`) or anything else is rejected. Pure + allocation-free.
+bool isAllowedTermReply(Uint8List chunk) {
+  if (chunk.length < 2 || chunk[0] != 0x1b) return false;
+  // XTVERSION / other DCS reply: ESC P.
+  if (chunk[1] == 0x50) return true;
+  // CSI replies only: ESC [ … (excludes OSC `ESC ]` and everything else).
+  if (chunk[1] != 0x5b) return false;
+  if (chunk.length >= 3 && (chunk[2] == 0x3f || chunk[2] == 0x3e)) {
+    return true; // DA1 (ESC [ ?) / DA2 (ESC [ >)
+  }
+  final last = chunk[chunk.length - 1];
+  return last == 0x52 || last == 0x6e; // CPR (R) / DSR (n)
+}
+
 /// A bounded, backward-looking recorder of the raw bytes written to ONE
 /// session's terminal plus its scroll-offset events. See the file header.
 class SessionByteRecorder {
@@ -241,6 +268,10 @@ class SessionByteRecorder {
   /// path at snapshot). Same eviction discipline as the sent-SGR ring.
   void recordTermReply(Uint8List chunk) {
     if (chunk.isEmpty) return;
+    // #1109-A: only record genuine device replies (DA/DSR/CPR/XTVERSION). A
+    // generic OSC / hook / other chunk — which could carry remote-supplied
+    // content — is dropped here so it never enters the ring verbatim.
+    if (!isAllowedTermReply(chunk)) return;
     final t = _nowMs();
     _termReply.add(_ByteEvent(t, chunk));
     final ageFloor = t - maxAge.inMilliseconds;

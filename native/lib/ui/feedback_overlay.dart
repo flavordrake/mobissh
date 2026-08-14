@@ -30,6 +30,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/diagnostics/detection_geom.dart'
     show activeDetectionGeomSnapshot;
+import 'package:mobissh/diagnostics/diagnostics_config.dart'
+    show kRawContentDiagnosticsEnabled;
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
 import 'package:mobissh/diagnostics/paint_stats.dart'
     show activePaintStatsSnapshot;
@@ -179,11 +181,16 @@ Map<String, Object?> buildFeedbackPayload({
     // Terminal ({tMs,b64}); scrollTrace = scroll-offset events ({tMs,offset});
     // grid = the active session's viewport {cols,rows}. The server (#790)
     // persists these as `${ts}-bug-report.byte-trace.json` so the captured trace
-    // can be replayed (#791) to reproduce a scrollback-render bug. The byte
-    // stream is ALREADY scrubbed by SessionByteRecorder.snapshotByteTrace() at
-    // snapshot time (rules/security.md). Omitted entirely when no session is
-    // active (no empty-array / null noise).
-    if (includeTraces && byteTrace.isNotEmpty) 'byteTrace': byteTrace,
+    // can be replayed (#791) to reproduce a scrollback-render bug.
+    //
+    // #1109-A: byteTrace is RAW terminal output — it can carry displayed secrets
+    // the snapshot-time scrubber cannot reliably catch. It is therefore gated
+    // behind [kRawContentDiagnosticsEnabled] (compile-time false in public
+    // release builds → this field, and the capture that feeds it, are tree-shaken
+    // out; nothing raw leaves the device). scrollTrace/grid below are structural
+    // (offsets / dimensions) and ride in every build. Omitted when empty.
+    if (kRawContentDiagnosticsEnabled && includeTraces && byteTrace.isNotEmpty)
+      'byteTrace': byteTrace,
     if (includeTraces && scrollTrace.isNotEmpty) 'scrollTrace': scrollTrace,
     // #793: the synthesized mouse/wheel SGR reports the app SENT
     // (sentSgrTrace: [{tMs,b64}]). In tmux mouse mode the scroll is wheel-SGR
@@ -444,8 +451,11 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       lifecycleLog: lifecycleLog,
       controlModeTrace: controlModeTrace,
       // #790: backward-looking — snapshot NOW so the trace covers the bug just
-      // reproduced during the burst.
-      byteTrace: activeByteTraceSnapshot(),
+      // reproduced during the burst. #1109-A: raw output — only fetched when raw
+      // diagnostics are compiled in (else the snapshot call is tree-shaken out).
+      byteTrace: kRawContentDiagnosticsEnabled
+          ? activeByteTraceSnapshot()
+          : const <Map<String, Object?>>[],
       scrollTrace: activeScrollTraceSnapshot(),
       sentSgrTrace: activeSentSgrTraceSnapshot(),
       termReplyTrace: activeTermReplyTraceSnapshot(),
@@ -489,8 +499,11 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     final controlModeTrace = controlModeLogSnapshot();
     // #790: snapshot the byte/scroll recorder at the EXACT moment of tap — it's
     // backward-looking, so the rings hold the input + scroll that produced the
-    // current (buggy) frame the owner is reporting.
-    final byteTrace = activeByteTraceSnapshot();
+    // current (buggy) frame the owner is reporting. #1109-A: byteTrace is raw
+    // output — only fetched when raw diagnostics are compiled in.
+    final byteTrace = kRawContentDiagnosticsEnabled
+        ? activeByteTraceSnapshot()
+        : const <Map<String, Object?>>[];
     final scrollTrace = activeScrollTraceSnapshot();
     final sentSgrTrace = activeSentSgrTraceSnapshot();
     // #1072: snapshot the terminal auto-reply ring + the detection-wash geometry

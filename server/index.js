@@ -64,6 +64,7 @@ const { isOriginAllowed } = require('./origin');
 const TRACE_TRANSFER = process.env.MOBISSH_TRACE_TRANSFER === '1' || true; // default on for data gathering
 const { rewriteManifest } = require('./manifest');
 const feedbackStore = require('./feedback-store');
+const feedbackGuard = require('./feedback-guard');
 
 const PORT = process.env.PORT || 8081;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -235,15 +236,21 @@ const FEEDBACK_PROXY_TIMEOUT_MS = parseInt(process.env.FEEDBACK_PROXY_TIMEOUT_MS
  * rather than piped so a transport failure can still fall back to local
  * handling with the full body. Service HTTP responses (4xx/5xx included) are
  * relayed verbatim; only transport errors (DNS/connect/timeout) reject.
+ *
+ * #484: forward the X-MobiSSH-Key the client already authenticated with, so the
+ * downstream feedback service (which runs the SAME shared guard) accepts the
+ * relayed request. Prod and the service share MOBISSH_FEEDBACK_KEY in the deploy.
  */
-function proxyFeedbackBody(serviceUrl, route, body, contentType) {
+function proxyFeedbackBody(serviceUrl, route, body, contentType, authKey) {
   return new Promise((resolve, reject) => {
+    const headers = {
+      'Content-Type': contentType || 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    };
+    if (authKey) headers['X-MobiSSH-Key'] = authKey;
     const proxyReq = http.request(new URL(serviceUrl + route), {
       method: 'POST',
-      headers: {
-        'Content-Type': contentType || 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
+      headers,
       timeout: FEEDBACK_PROXY_TIMEOUT_MS,
     }, (proxyRes) => {
       let out = '';
@@ -258,14 +265,26 @@ function proxyFeedbackBody(serviceUrl, route, body, contentType) {
 
 async function handleFeedbackUpload(req, res) {
   const route = req.url;
-  const maxBytes = route === '/api/native-crash' ? feedbackStore.MAX_CRASH_BYTES : 0;
+  // #484: auth + per-IP rate limit BEFORE buffering, so an unauthenticated or
+  // over-quota caller can never buffer/decode an attacker-sized body.
+  const rej = feedbackGuard.preflight(req);
+  if (rej) {
+    res.writeHead(rej.status, { 'Content-Type': 'application/json' });
+    res.end(rej.body);
+    return;
+  }
+  const maxBytes = route === '/api/native-crash'
+    ? feedbackStore.MAX_CRASH_BYTES
+    : feedbackGuard.maxFeedbackBytes();
   let body;
   try {
     body = await feedbackStore.readBody(req, maxBytes);
   } catch (err) {
     if (err.code === 'TOO_LARGE') {
-      res.writeHead(413, { 'Content-Type': 'application/json' });
-      res.end('{"error":"crash report exceeds 1MB"}');
+      // Connection: close so the unread oversized body is discarded and the
+      // 413 reaches the client cleanly (no socket-hang-up race) (#484).
+      res.writeHead(413, { 'Content-Type': 'application/json', 'Connection': 'close' });
+      res.end('{"error":"request body too large"}');
     }
     return;
   }
@@ -275,7 +294,7 @@ async function handleFeedbackUpload(req, res) {
   const serviceUrl = (process.env.FEEDBACK_SERVICE_URL || '').replace(/\/+$/, '');
   if (serviceUrl) {
     try {
-      const relayed = await proxyFeedbackBody(serviceUrl, route, body, req.headers['content-type']);
+      const relayed = await proxyFeedbackBody(serviceUrl, route, body, req.headers['content-type'], req.headers['x-mobissh-key']);
       console.log(`[feedback-proxy] ${route} -> ${serviceUrl} (${relayed.status})`);
       res.writeHead(relayed.status, { 'Content-Type': 'application/json' });
       res.end(relayed.body);
