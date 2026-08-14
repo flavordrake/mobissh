@@ -1,13 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- #1037: the rendered HTML viewer loads http://127.0.0.1:<port> from the
-     per-viewer SFTP loopback resolver (services/html_loopback_server.dart).
-     Android blocks ALL cleartext HTTP by default (targetSdk 28+), including
-     loopback, so without this the WebView shows ERR_CLEARTEXT_NOT_PERMITTED.
-     Cleartext is permitted for 127.0.0.1 ONLY — traffic that never leaves the
-     device; everything else stays cleartext-blocked (explicit base-config). -->
+<!-- #1107: the hardened HTML viewer renders a single self-contained document
+     via loadHtmlString (no loopback server, no origin, no network). With the
+     127.0.0.1 loopback resolver gone there is no cleartext exception to make:
+     ALL cleartext HTTP stays blocked (targetSdk 28+ default), for every host. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">127.0.0.1</domain>
-    </domain-config>
 </network-security-config>

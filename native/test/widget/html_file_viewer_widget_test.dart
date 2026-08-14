@@ -1,18 +1,21 @@
-// Widget tests for the rendered HTML viewer + its registry routing (#1037).
+// Widget tests for the rendered HTML viewer + its registry routing (#1037,
+// hardened #1107).
 //
 // Assert:
 //   - tapping a `.html` / `.htm` entry in the file browser routes to
 //     [HtmlFileViewerScreen] (via the registry, ordered BEFORE the generic
 //     text viewer — first match wins), NOT the text viewer and NOT download,
-//   - the screen starts its loopback resolver and hands the stubbed WebView a
-//     127.0.0.1 URI pointing at the opened file,
-//   - the app bar's "view source" pushes the EXISTING monospace text viewer,
-//   - disposing the route closes the loopback port.
+//   - the screen hands the stubbed WebView a SELF-CONTAINED safe document: the
+//     meta-CSP is present and active content (`<script>`) is stripped (#1107),
+//   - a blocked in-page navigation opens in the system browser via the injected
+//     [htmlLinkOpener],
+//   - the app bar's "view source" pushes the EXISTING monospace text viewer and
+//     the close-to-terminal action is present.
 //
 // Mirrors markdown_file_viewer_widget_test.dart's wiring (InMemoryGatewayPair
-// + FileBrowserScreen + injected fetchers). The platform WebView is stubbed
-// via [htmlWebViewBuilder] — widget tests have no platform channel; the real
-// HTTP surface is covered by the unit tests and the emulator test.
+// + FileBrowserScreen + injected fetchers). The platform WebView is stubbed via
+// [htmlWebViewBuilder]; real Blink CSP + JS-off enforcement is covered on the
+// emulator/device (headless can't prove engine behavior).
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -36,6 +39,9 @@ import 'package:mobissh/ui/html_file_viewer.dart';
 import 'package:mobissh/ui/markdown_file_viewer.dart';
 import 'package:mobissh/ui/text_file_viewer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+const _htmlSource =
+    '<html><head></head><body><script>alert(1)</script><p>hi</p></body></html>';
 
 SshSessionController _stubControllerFactory() {
   return SshSessionController(
@@ -130,7 +136,7 @@ Future<void> _pump(WidgetTester tester, {int count = 12}) async {
     overrides: [
       taskSshGatewayProvider.overrideWithValue(pair.uiSide),
       textFileFetcherProvider.overrideWithValue(
-        _CannedTextFetcher('<html><body>hi</body></html>'),
+        _CannedTextFetcher(_htmlSource),
       ),
       sftpImageFetcherProvider.overrideWithValue(_CannedByteFetcher()),
     ],
@@ -152,19 +158,26 @@ Future<void> _pump(WidgetTester tester, {int count = 12}) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  final loadedUris = <Uri>[];
+  final safeHtmls = <String>[];
+  final onLinks = <HtmlLinkOpener>[];
+  final launched = <String>[];
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    loadedUris.clear();
-    htmlWebViewBuilder = (uri, onBlocked) {
-      loadedUris.add(uri);
+    safeHtmls.clear();
+    onLinks.clear();
+    launched.clear();
+    htmlWebViewBuilder = (safeHtml, onLink) {
+      safeHtmls.add(safeHtml);
+      onLinks.add(onLink);
       return const Text('stub-html-webview');
     };
+    htmlLinkOpener = (url) async => launched.add(url);
   });
 
   tearDown(() {
     htmlWebViewBuilder = defaultHtmlWebViewBuilderForTest;
+    htmlLinkOpener = defaultHtmlLinkOpenerForTest;
   });
 
   Future<SessionHost> openHtml(WidgetTester tester, String name) async {
@@ -204,23 +217,38 @@ void main() {
     host.disposeSyncForTest();
   });
 
-  testWidgets('the WebView is handed a loopback URI for the opened file', (
+  testWidgets('the WebView is handed a self-contained safe document', (
     tester,
   ) async {
     final host = await openHtml(tester, 'wireframes.html');
     expect(find.text('stub-html-webview'), findsOneWidget);
-    expect(loadedUris, hasLength(1));
-    final uri = loadedUris.single;
-    expect(uri.scheme, 'http');
-    expect(uri.host, '127.0.0.1');
-    expect(uri.port, greaterThan(0));
-    expect(uri.pathSegments, ['wireframes.html']);
+    expect(safeHtmls, hasLength(1));
+    final safe = safeHtmls.single;
+    // #1107: meta-CSP present, active content stripped.
+    expect(safe, contains('Content-Security-Policy'));
+    expect(safe, contains("default-src 'none'"));
+    expect(safe, isNot(contains('<script')));
+    expect(safe, contains('hi'));
+    host.disposeSyncForTest();
+  });
+
+  testWidgets('a blocked in-page link opens in the system browser', (
+    tester,
+  ) async {
+    final host = await openHtml(tester, 'wireframes.html');
+    expect(onLinks, hasLength(1));
+    await onLinks.single('https://example.com');
+    expect(launched, ['https://example.com']);
     host.disposeSyncForTest();
   });
 
   testWidgets('view-source pushes the existing text viewer', (tester) async {
     final host = await openHtml(tester, 'wireframes.html');
     expect(find.byKey(const Key('html-view-source')), findsOneWidget);
+    expect(
+      find.byKey(const Key('html-viewer-close-to-terminal')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const Key('html-view-source')));
     await _pump(tester);
@@ -233,24 +261,6 @@ void main() {
     tester.state<NavigatorState>(find.byType(Navigator)).pop();
     await _pump(tester);
     expect(find.byType(HtmlFileViewerScreen), findsOneWidget);
-    host.disposeSyncForTest();
-  });
-
-  testWidgets('closing the viewer route shuts the loopback server down', (
-    tester,
-  ) async {
-    final host = await openHtml(tester, 'wireframes.html');
-    expect(debugLastHtmlLoopbackServer, isNotNull);
-    final server = debugLastHtmlLoopbackServer!;
-    expect(server.port, isNotNull);
-
-    tester.state<NavigatorState>(find.byType(Navigator)).pop();
-    await _pump(tester);
-    await tester.pump(const Duration(seconds: 1));
-    await _pump(tester);
-    expect(find.byType(HtmlFileViewerScreen), findsNothing);
-    expect(server.port, isNull, reason: 'loopback port must close on dispose');
-    expect(debugLastHtmlLoopbackServer, isNull);
     host.disposeSyncForTest();
   });
 }
