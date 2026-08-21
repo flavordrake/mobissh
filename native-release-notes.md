@@ -9,6 +9,8 @@ gen-apk-install-page.sh staleness check).
 
 ## v0.1.12-rc.3 (2026-08-21) — phone-migration credential recovery + security batch
 - **After moving to a new phone, tapping a saved profile now recovers instead of doing nothing.** Your profiles restore across a migration but the encrypted credential can't be read on the new device — the app now opens the profile editor with a clear, persistent banner asking you to re-enter it, then connects. (#1118) **Device-test:** install over your migrated state, tap a restored profile, re-enter the password/key in the editor, Save & connect.
+- **Key profiles now show WHICH key they use.** The profile editor opens a key-auth profile on its attached key ("Library: <name>") instead of a blank "Paste a new key…" box. (#1121)
+- **Restore a key once, heal every profile.** Settings → SSH keys → row menu → **Re-enter key**: paste the private key for a surviving named entry (key names survive a phone migration; the encrypted material doesn't) and every profile attached to that key works again. (#1121) **Device-test:** re-enter one shared key, then connect from two profiles that use it.
 - **Remote HTML files now open in a locked-down, script-free viewer** — a hostile `.html` in your files can no longer read or exfiltrate anything. (#1107)
 - **Importing profiles can no longer smuggle in another host's stored credential**, an auto-run command, or port-forwards. (#1106)
 - **A changed SSH host key is now flagged as changed, not treated as a brand-new host** — the app refuses and shows both fingerprints rather than silently re-trusting. (#1108) **Device-test:** connect to a host whose key you've changed and confirm you get a warning.
