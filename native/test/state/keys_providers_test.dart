@@ -10,6 +10,8 @@ import 'package:mobissh/storage/profiles_store.dart';
 import 'package:mobissh/storage/secrets_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/test_keys.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues(<String, Object>{}));
@@ -275,6 +277,119 @@ void main() {
       final c = makeContainer(secrets);
       await c.read(keysManagerProvider).delete('does-not-exist');
       expect(await c.read(keysStoreProvider).load(), isEmpty);
+    });
+  });
+
+  group('public key derivation at write time (#1122)', () {
+    test('importFromPem populates publicKey/fingerprint/algorithm; metadata '
+        'still carries no private material', () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      final key = await c
+          .read(keysManagerProvider)
+          .importFromPem(name: 'derived', pem: kTestEd25519Pem);
+
+      expect(key.publicKey, kTestEd25519PublicLine);
+      expect(key.fingerprint, kTestEd25519Fingerprint);
+      expect(key.algorithm, 'ed25519');
+
+      final stored = (await c.read(keysStoreProvider).load()).single;
+      expect(stored.publicKey, kTestEd25519PublicLine);
+      expect(stored.fingerprint, kTestEd25519Fingerprint);
+      expect(stored.algorithm, 'ed25519');
+      // SECURITY: the metadata JSON must never contain private material — the
+      // public line is fine, the PEM body is not.
+      final json = stored.toJson().toString();
+      expect(json, isNot(contains('PRIVATE')));
+      expect(json, isNot(contains('b3BlbnNzaC1rZXktdjE')));
+    });
+
+    test('unparseable PEM: import still succeeds, fields stay null', () async {
+      final c = makeContainer(SecretsStore(backend: InMemorySecretsBackend()));
+      final key = await c
+          .read(keysManagerProvider)
+          .importFromPem(name: 'opaque', pem: 'not a key');
+      expect(key.publicKey, isNull);
+      expect(key.fingerprint, isNull);
+      expect(key.algorithm, isNull);
+    });
+
+    test('encrypted PEM without a usable passphrase: import succeeds, '
+        'fields stay null', () async {
+      final c = makeContainer(SecretsStore(backend: InMemorySecretsBackend()));
+      final key = await c.read(keysManagerProvider).importFromPem(
+          name: 'locked', pem: kTestEncryptedPem, passphrase: 'wrong');
+      expect(key.publicKey, isNull);
+      expect(key.fingerprint, isNull);
+    });
+
+    test('reenterPem backfills the fingerprint of an existing key', () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      final mgr = c.read(keysManagerProvider);
+      // Imported pre-#1122 style: opaque PEM, no derived fields.
+      final key = await mgr.importFromPem(name: 'migrated', pem: 'opaque');
+      expect(key.fingerprint, isNull);
+
+      await mgr.reenterPem(key.id, pem: kTestEd25519Pem);
+
+      final stored = (await c.read(keysStoreProvider).load()).single;
+      expect(stored.id, key.id);
+      expect(stored.publicKey, kTestEd25519PublicLine);
+      expect(stored.fingerprint, kTestEd25519Fingerprint);
+      expect(stored.algorithm, 'ed25519');
+    });
+
+    test('restorePemAt updates the SavedKey matching an OVERRIDE vault id '
+        '(adopted key)', () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      const adoptedVaultId = 'profile-key-fd:22:me';
+      await c.read(keysStoreProvider).upsert(const SavedKey(
+            id: 'kAdopted',
+            name: 'fd-dev',
+            vaultId: adoptedVaultId,
+          ));
+
+      await c
+          .read(keysManagerProvider)
+          .restorePemAt(adoptedVaultId, pem: kTestEd25519Pem);
+
+      expect((await secrets.read(adoptedVaultId))?['data'], kTestEd25519Pem);
+      final stored = (await c.read(keysStoreProvider).load()).single;
+      expect(stored.fingerprint, kTestEd25519Fingerprint);
+      expect(stored.publicKey, kTestEd25519PublicLine);
+    });
+
+    test('restorePemAt with an unknown vault id restores the vault entry '
+        'without touching metadata', () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      // Pre-adoption: the profile's vault id has no library entry yet.
+      await c
+          .read(keysManagerProvider)
+          .restorePemAt('profile-key-orphan', pem: kTestEd25519Pem);
+
+      expect((await secrets.read('profile-key-orphan'))?['data'],
+          kTestEd25519Pem);
+      expect(await c.read(keysStoreProvider).load(), isEmpty);
+    });
+
+    test('restorePemAt with an unparseable PEM keeps the existing metadata '
+        'untouched (never blocks the restore)', () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      final mgr = c.read(keysManagerProvider);
+      final key =
+          await mgr.importFromPem(name: 'derived', pem: kTestEd25519Pem);
+      expect(key.fingerprint, kTestEd25519Fingerprint);
+
+      await mgr.restorePemAt(key.vaultId, pem: 'garbage');
+
+      expect((await secrets.read(key.vaultId))?['data'], 'garbage');
+      final stored = (await c.read(keysStoreProvider).load()).single;
+      expect(stored.fingerprint, kTestEd25519Fingerprint,
+          reason: 'derivation failure must not clobber known metadata');
     });
   });
 }
