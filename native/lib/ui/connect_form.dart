@@ -432,11 +432,26 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // No stored secret — open the editor so the user can enter credentials.
       // Matches the PWA "not saved on this browser" branch. NOT a silent
       // failure. The editor's "Save & connect" then routes back here.
+      //
+      // #1118: a vault reference with NOTHING readable is the phone-migration
+      // signature (blob restored, Keystore master key not) — say so instead
+      // of the generic copy. SecretsStore.read maps the decrypt throw to null.
+      final vaultReferenced =
+          (profile.vaultId != null && profile.vaultId!.isNotEmpty) ||
+              (profile.keyVaultId != null && profile.keyVaultId!.isNotEmpty);
+      final unreadableVault = vaultReferenced && creds.isEmpty;
       ctrace(
         'ui.chooser',
-        'connectFromProfile ${profile.host}: no stored creds → editor',
+        'connectFromProfile ${profile.host}: no usable creds '
+        '(unreadableVault=$unreadableVault) → editor',
       );
-      showTopToast(context, 'No saved credentials — enter them to connect.');
+      showTopToast(
+        context,
+        unreadableVault
+            ? "Saved credential couldn't be read on this device "
+                '(phone migration?) — re-enter it to connect.'
+            : 'No saved credentials — enter them to connect.',
+      );
       await _editProfile(profile);
       return;
     }

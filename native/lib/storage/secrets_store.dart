@@ -90,9 +90,20 @@ class SecretsStore {
     return _backend.write(_keyFor(vaultId), jsonEncode(secret));
   }
 
-  /// Read the secret payload for [vaultId], or null if not stored.
+  /// Read the secret payload for [vaultId], or null if not stored OR not
+  /// readable. Callers treat read() as "null if absent" — a raw platform
+  /// throw must never escape here.
   Future<Map<String, Object?>?> read(String vaultId) async {
-    final raw = await _backend.read(_keyFor(vaultId));
+    final String? raw;
+    try {
+      raw = await _backend.read(_keyFor(vaultId));
+    } on Exception {
+      // #1118: after a phone migration Android restores the encrypted blobs
+      // but not the Keystore master key, so every decrypting read throws a
+      // PlatformException. Unreadable behaves like absent; the connect path's
+      // no-creds fallback handles recovery. Do NOT delete the blob here.
+      return null;
+    }
     if (raw == null || raw.isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
@@ -111,7 +122,14 @@ class SecretsStore {
   /// List all currently-stored vaultIds. Used by the biometric gate to know
   /// whether any unlock is required at app start.
   Future<Set<String>> listVaultIds() async {
-    final all = await _backend.readAll();
+    final Map<String, String> all;
+    try {
+      all = await _backend.readAll();
+    } on Exception {
+      // #1118: poisoned store post-migration (see read()) — the app-start /
+      // biometric-gate path must not crash on it.
+      return <String>{};
+    }
     final out = <String>{};
     for (final key in all.keys) {
       if (key.startsWith(kSecretsKeyPrefix)) {
