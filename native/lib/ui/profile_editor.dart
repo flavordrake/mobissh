@@ -202,6 +202,16 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     } else {
       _authKind = _AuthKind.password;
     }
+    // Preselect the profile's OWN attached key (#1121). Before this the key
+    // source always opened on "Paste a new key…" with a blank PEM box, so
+    // nothing identified WHICH stored key the profile used — worst during
+    // phone-migration recovery, where that identity decides what to re-enter.
+    if (_authKind == _AuthKind.key &&
+        p.keyVaultId != null &&
+        p.keyVaultId!.isNotEmpty) {
+      _keySource = _KeySource.stored;
+      _selectedStoredKeyVaultId = p.keyVaultId;
+    }
     // Unify the key picker with pre-existing per-profile keys (#1088): adopt any
     // profile key not yet in the library so the Library/Stored sources converge
     // (a given vault id appears once, library label). Idempotent; the
@@ -739,6 +749,13 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
       if (seen.add(k.keyVaultId)) {
         out.add(_KeyOption(vaultId: k.keyVaultId, label: 'Stored: ${k.label}'));
       }
+    }
+    // The profile's own attached key is ALWAYS an option (#1121): the dropdown
+    // preselects it in initState, and its value must be among the items even
+    // before adoptFromProfiles lands it in the library (races the first build).
+    final own = widget.profile.keyVaultId;
+    if (own != null && own.isNotEmpty && seen.add(own)) {
+      out.add(_KeyOption(vaultId: own, label: "This profile's stored key"));
     }
     return out;
   }

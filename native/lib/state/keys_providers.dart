@@ -54,6 +54,36 @@ class KeysManager {
     return key;
   }
 
+  /// Re-enter the PRIVATE material for an EXISTING library key, writing to the
+  /// key's SAME vault id — so every profile attached via that `keyVaultId`
+  /// heals at once, no re-attaching. The phone-migration recovery path (#1121):
+  /// key METADATA survives an Android migration in SharedPreferences, but the
+  /// Keystore-encrypted material does not; this restores it in place, where
+  /// [importFromPem] would mint a NEW key the profiles don't point at.
+  /// Payload shape matches [importFromPem] / `loadProfileCredentials`
+  /// (`{data, passphrase?}`). Throws [ArgumentError] for an unknown id.
+  Future<void> reenterPem(
+    String id, {
+    required String pem,
+    String? passphrase,
+  }) async {
+    SavedKey? existing;
+    for (final k in await _ref.read(keysStoreProvider).load()) {
+      if (k.id == id) {
+        existing = k;
+        break;
+      }
+    }
+    if (existing == null) {
+      throw ArgumentError.value(id, 'id', 'unknown library key');
+    }
+    await _ref.read(secretsStoreProvider).write(existing.vaultId, <String, Object?>{
+      'data': pem,
+      if (passphrase != null && passphrase.isNotEmpty) 'passphrase': passphrase,
+    });
+    _ref.invalidate(savedKeysProvider);
+  }
+
   /// Rename a library key (metadata only). No-op for an unknown id or a
   /// whitespace-only name.
   Future<void> rename(String id, String name) async {

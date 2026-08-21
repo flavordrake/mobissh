@@ -95,6 +95,111 @@ void main() {
   );
 
   testWidgets(
+    'opening a key profile PRESELECTS its attached key — stored note, not '
+    'blank paste (#1121)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // The key exists in the library (adopted, override vault id) — as after
+      // a phone migration, where metadata survives but the vault does not.
+      final keysStore = KeysStore();
+      const vaultId = 'profile-key-vault.example:22:fam';
+      await keysStore.upsert(const SavedKey(
+        id: 'kFam',
+        name: 'family vault',
+        vaultId: vaultId,
+        createdAtMs: 1,
+      ));
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            profilesStoreProvider.overrideWithValue(ProfilesStore()),
+            secretsStoreProvider.overrideWithValue(
+              SecretsStore(backend: InMemorySecretsBackend()),
+            ),
+            keysStoreProvider.overrideWithValue(keysStore),
+          ],
+          child: MaterialApp(
+            home: ProfileEditor(
+              profile: SavedProfile(
+                title: 'family vault',
+                host: 'vault.example',
+                port: 22,
+                username: 'fam',
+                authType: 'key',
+                keyVaultId: vaultId,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Key auth is selected AND the profile's own key is preselected: the
+      // stored-key note identifies it by its library name; no blank PEM box.
+      expect(
+        find.byKey(const Key('profile-editor-stored-key-note')),
+        findsOneWidget,
+        reason: 'the editor must open on the attached key, not "paste a new key"',
+      );
+      // The label shows in the dropdown AND the note subtitle — at least once.
+      expect(find.text('Library: family vault'), findsWidgets);
+      expect(find.byKey(const Key('profile-editor-key')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'key profile preselects its key even BEFORE library adoption (#1121)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // EMPTY library: adoptFromProfiles hasn't run/landed yet. The profile's
+      // own keyVaultId must still be a valid, selected dropdown option (a
+      // DropdownButton value absent from its items is a construction error).
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            profilesStoreProvider.overrideWithValue(ProfilesStore()),
+            secretsStoreProvider.overrideWithValue(
+              SecretsStore(backend: InMemorySecretsBackend()),
+            ),
+            keysStoreProvider.overrideWithValue(KeysStore()),
+          ],
+          child: MaterialApp(
+            home: ProfileEditor(
+              profile: SavedProfile(
+                title: 'lone',
+                host: 'lone.example',
+                port: 22,
+                username: 'me',
+                authType: 'key',
+                keyVaultId: 'profile-key-lone.example:22:me',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('profile-editor-stored-key-note')),
+        findsOneWidget,
+      );
+      expect(find.text("This profile's stored key"), findsWidgets);
+      expect(find.byKey(const Key('profile-editor-key')), findsNothing);
+    },
+  );
+
+  testWidgets(
     'pasting a NEW key + Save creates a library key; profile points at it (#1088)',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{});

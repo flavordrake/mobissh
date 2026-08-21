@@ -62,6 +62,57 @@ void main() {
     expect(await c.read(keysStoreProvider).load(), isEmpty);
   });
 
+  group('reenterPem (#1121 migration recovery)', () {
+    test('restores material under the SAME vault id, no new key minted',
+        () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      final mgr = c.read(keysManagerProvider);
+      final key = await mgr.importFromPem(name: 'family vault', pem: 'old-pem');
+      // Simulate the post-migration state: metadata survives, vault entry gone.
+      await secrets.delete(key.vaultId);
+      expect(await secrets.read(key.vaultId), isNull);
+
+      await mgr.reenterPem(key.id, pem: 'new-pem', passphrase: 'pp');
+
+      final restored = await secrets.read(key.vaultId);
+      expect(restored?['data'], 'new-pem');
+      expect(restored?['passphrase'], 'pp');
+      // Same single metadata entry — identity kept, nothing minted.
+      final list = await c.read(keysStoreProvider).load();
+      expect(list.map((k) => k.id), [key.id]);
+      expect(list.single.name, 'family vault');
+    });
+
+    test("adopted key restores at its OVERRIDE vault id, not key-<id> (#1109c class)",
+        () async {
+      final secrets = SecretsStore(backend: InMemorySecretsBackend());
+      final c = makeContainer(secrets);
+      // An adopted per-profile key: material lives at the profile's original
+      // vault id, not the key-<id> default.
+      const adoptedVaultId = 'profile-key-fd:22:me';
+      await c.read(keysStoreProvider).upsert(const SavedKey(
+            id: 'kAdopted',
+            name: 'fd-dev',
+            vaultId: adoptedVaultId,
+          ));
+
+      await c.read(keysManagerProvider).reenterPem('kAdopted', pem: 'pem2');
+
+      expect((await secrets.read(adoptedVaultId))?['data'], 'pem2');
+      expect(await secrets.read(keyVaultIdFor('kAdopted')), isNull,
+          reason: 'must write the override vault id the profiles point at');
+    });
+
+    test('unknown id throws (never silently writes a stray blob)', () async {
+      final c = makeContainer(SecretsStore(backend: InMemorySecretsBackend()));
+      expect(
+        () => c.read(keysManagerProvider).reenterPem('nope', pem: 'x'),
+        throwsArgumentError,
+      );
+    });
+  });
+
   test('empty name falls back; rename ignores a blank name', () async {
     final c = makeContainer(SecretsStore(backend: InMemorySecretsBackend()));
     final mgr = c.read(keysManagerProvider);
