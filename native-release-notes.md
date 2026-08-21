@@ -7,6 +7,13 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.12-rc.3 (2026-08-21) — phone-migration credential recovery + security batch
+- **After moving to a new phone, tapping a saved profile now recovers instead of doing nothing.** Your profiles restore across a migration but the encrypted credential can't be read on the new device — the app now opens the profile editor with a clear, persistent banner asking you to re-enter it, then connects. (#1118) **Device-test:** install over your migrated state, tap a restored profile, re-enter the password/key in the editor, Save & connect.
+- **Remote HTML files now open in a locked-down, script-free viewer** — a hostile `.html` in your files can no longer read or exfiltrate anything. (#1107)
+- **Importing profiles can no longer smuggle in another host's stored credential**, an auto-run command, or port-forwards. (#1106)
+- **A changed SSH host key is now flagged as changed, not treated as a brand-new host** — the app refuses and shows both fingerprints rather than silently re-trusting. (#1108) **Device-test:** connect to a host whose key you've changed and confirm you get a warning.
+- **Bug reports no longer include raw terminal output** in public builds. (#1109)
+
 ## v0.1.10+158 (2026-07-20) — tablet home: no wasted top band
 - **The tablet home no longer has an empty white band across the top.** With the side menu, the full-width top bar was redundant — it's gone; the side menu now runs the full height and the back-to-session arrow moved onto it. (#1086)
 - **Device-test (tablet / desktop web):** open the app on a tablet in landscape — the top of the Profiles/Settings screen should start at the content, with no blank strip above the side menu. (#1086)
