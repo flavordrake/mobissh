@@ -200,6 +200,70 @@ void main() {
   );
 
   testWidgets(
+    'stored-key note Re-enter restores material at the SAME vault id (#1121)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      tester.view.physicalSize = const Size(1000, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // Post-migration state: profile + library metadata survive, vault empty.
+      final keysStore = KeysStore();
+      const vaultId = 'profile-key-vault.example:22:fam';
+      await keysStore.upsert(const SavedKey(
+        id: 'kFam',
+        name: 'family vault',
+        vaultId: vaultId,
+        createdAtMs: 1,
+      ));
+      final backend = InMemorySecretsBackend();
+      final secrets = SecretsStore(backend: backend);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            profilesStoreProvider.overrideWithValue(ProfilesStore()),
+            secretsStoreProvider.overrideWithValue(secrets),
+            keysStoreProvider.overrideWithValue(keysStore),
+          ],
+          child: MaterialApp(
+            home: ProfileEditor(
+              profile: SavedProfile(
+                title: 'family vault',
+                host: 'vault.example',
+                port: 22,
+                username: 'fam',
+                authType: 'key',
+                keyVaultId: vaultId,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The fill-in affordance lives ON the stored-key note — the migration
+      // banner lands the user here, not in Settings → SSH keys.
+      await tester.tap(
+        find.byKey(const Key('profile-editor-stored-key-reenter')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('keys-reenter-pem')),
+        '-----BEGIN OPENSSH PRIVATE KEY-----\nrestored\n-----END-----',
+      );
+      await tester.tap(find.byKey(const Key('keys-reenter-save')));
+      await tester.pumpAndSettle();
+
+      final entry = await secrets.read(vaultId);
+      expect(entry?['data'], contains('restored'),
+          reason: 'material restored under the SAME vault id the profile '
+              '(and any sibling profiles) point at');
+    },
+  );
+
+  testWidgets(
     'pasting a NEW key + Save creates a library key; profile points at it (#1088)',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{});

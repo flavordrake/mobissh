@@ -77,7 +77,19 @@ class KeysManager {
     if (existing == null) {
       throw ArgumentError.value(id, 'id', 'unknown library key');
     }
-    await _ref.read(secretsStoreProvider).write(existing.vaultId, <String, Object?>{
+    await restorePemAt(existing.vaultId, pem: pem, passphrase: passphrase);
+  }
+
+  /// Vault-id-level restore backing [reenterPem]. Also called directly by the
+  /// profile editor's stored-key note (#1121): the editor holds the profile's
+  /// `keyVaultId`, which may not have a library entry yet (adoption races the
+  /// first build) — the vault id alone is enough to restore in place.
+  Future<void> restorePemAt(
+    String vaultId, {
+    required String pem,
+    String? passphrase,
+  }) async {
+    await _ref.read(secretsStoreProvider).write(vaultId, <String, Object?>{
       'data': pem,
       if (passphrase != null && passphrase.isNotEmpty) 'passphrase': passphrase,
     });

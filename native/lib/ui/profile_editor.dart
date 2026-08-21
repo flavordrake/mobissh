@@ -36,6 +36,7 @@ import '../state/ui_prefs_providers.dart';
 import '../storage/keys_store.dart';
 import '../storage/profiles_store.dart';
 import 'color_picker_sheet.dart';
+import 'reenter_key_dialog.dart';
 import 'top_toast.dart';
 
 enum _AuthKind { password, key }
@@ -699,6 +700,17 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
           leading: const Icon(Icons.vpn_key),
           title: const Text('Using a stored key'),
           subtitle: Text(_storedKeyLabel(keyOptions, _selectedStoredKeyVaultId)),
+          // Fill THIS key's material back in, right here (#1121): the
+          // migration banner lands the user in this editor, and without this
+          // the stored-key note was a dead end — restoring required knowing
+          // to back out to Settings → SSH keys.
+          trailing: TextButton(
+            key: const Key('profile-editor-stored-key-reenter'),
+            onPressed: () => _reenterStoredKey(
+              _storedKeyLabel(keyOptions, _selectedStoredKeyVaultId),
+            ),
+            child: const Text('Re-enter'),
+          ),
         )
       else ...[
         TextField(
@@ -758,6 +770,23 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
       out.add(_KeyOption(vaultId: own, label: "This profile's stored key"));
     }
     return out;
+  }
+
+  /// Restore the selected stored key's private material in place (#1121):
+  /// paste dialog → vault write at the SAME vault id, healing every profile
+  /// attached to that key. Uses the vault id directly (not a library id) so it
+  /// also works before adoptFromProfiles lands the key in the library.
+  Future<void> _reenterStoredKey(String label) async {
+    final vaultId = _selectedStoredKeyVaultId;
+    if (vaultId == null) return;
+    final input = await showReenterKeyDialog(context, name: label);
+    if (input == null || !mounted) return;
+    await ref.read(keysManagerProvider).restorePemAt(
+          vaultId,
+          pem: input.pem,
+          passphrase: input.passphrase,
+        );
+    if (mounted) showTopToast(context, 'Key restored');
   }
 
   String _storedKeyLabel(List<_KeyOption> options, String? id) {
