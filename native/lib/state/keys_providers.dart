@@ -6,6 +6,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ssh/public_key_info.dart';
 import '../storage/keys_store.dart';
 import 'profiles_providers.dart'; // secretsStoreProvider
 
@@ -39,10 +40,16 @@ class KeysManager {
   }) async {
     final ts = _now();
     final id = 'k${ts.microsecondsSinceEpoch}';
+    // Best-effort identity derivation (#1122): the public line + fingerprint
+    // survive a phone migration in metadata and let the user match this entry
+    // against authorized_keys. Null (unparseable PEM) never blocks the import.
+    final info = derivePublicKeyInfo(pem, passphrase: passphrase);
     final key = SavedKey(
       id: id,
       name: name.trim().isEmpty ? 'Imported key' : name.trim(),
-      algorithm: algorithm,
+      algorithm: info?.algorithm ?? algorithm,
+      publicKey: info?.publicKeyLine,
+      fingerprint: info?.fingerprint,
       createdAtMs: ts.millisecondsSinceEpoch,
     );
     await _ref.read(secretsStoreProvider).write(key.vaultId, <String, Object?>{
@@ -93,6 +100,23 @@ class KeysManager {
       'data': pem,
       if (passphrase != null && passphrase.isNotEmpty) 'passphrase': passphrase,
     });
+    // Refresh the derived identity on the matching library entry (#1122). If
+    // no SavedKey points at this vault id (pre-adoption restore) or the PEM
+    // doesn't parse, skip silently — the restore itself already succeeded.
+    final info = derivePublicKeyInfo(pem, passphrase: passphrase);
+    if (info != null) {
+      final store = _ref.read(keysStoreProvider);
+      for (final k in await store.load()) {
+        if (k.vaultId == vaultId) {
+          await store.upsert(k.copyWith(
+            algorithm: info.algorithm,
+            publicKey: info.publicKeyLine,
+            fingerprint: info.fingerprint,
+          ));
+          break;
+        }
+      }
+    }
     _ref.invalidate(savedKeysProvider);
   }
 

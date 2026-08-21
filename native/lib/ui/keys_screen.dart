@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/clipboard.dart';
 import '../state/keys_providers.dart';
 import '../state/profiles_providers.dart';
 import '../storage/keys_store.dart';
@@ -118,10 +119,16 @@ class _KeyRow extends ConsumerWidget {
       if (savedKey.fingerprint != null && savedKey.fingerprint!.isNotEmpty)
         savedKey.fingerprint!,
     ];
+    final publicKey = savedKey.publicKey;
     return ListTile(
       leading: const Icon(Icons.vpn_key_outlined),
       title: Text(savedKey.name),
       subtitle: subtitleParts.isEmpty ? null : Text(subtitleParts.join(' · ')),
+      // Tap shows the full OpenSSH public line (#1122) — NON-secret, used to
+      // match this entry against authorized_keys. No-op when unknown.
+      onTap: publicKey == null || publicKey.isEmpty
+          ? null
+          : () => _showPublicKey(context, publicKey),
       trailing: PopupMenuButton<String>(
         key: ValueKey('keys-row-menu-${savedKey.id}'),
         onSelected: (v) {
@@ -140,6 +147,39 @@ class _KeyRow extends ConsumerWidget {
           // is unreadable — re-entering here heals every attached profile.
           PopupMenuItem<String>(value: 'reenter', child: Text('Re-enter key')),
           PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showPublicKey(BuildContext context, String publicKey) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('keys-pubkey-dialog'),
+        title: Text(savedKey.name),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            publicKey,
+            style: Theme.of(ctx).textTheme.bodySmall,
+          ),
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('keys-pubkey-copy'),
+            onPressed: () async {
+              // Copy the public line ONLY — it is non-secret by definition.
+              await copyToClipboard(publicKey);
+              if (ctx.mounted) Navigator.of(ctx).pop();
+              // Toast on the ROW's context — the dialog's is gone post-pop.
+              if (context.mounted) showTopToast(context, 'Public key copied');
+            },
+            child: const Text('Copy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );
