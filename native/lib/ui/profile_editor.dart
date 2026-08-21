@@ -75,12 +75,13 @@ class ProfileEditorResult {
 /// user backed out without saving.
 Future<ProfileEditorResult?> showProfileEditor(
   BuildContext context,
-  SavedProfile profile,
-) {
+  SavedProfile profile, {
+  String? notice,
+}) {
   return Navigator.of(context).push<ProfileEditorResult>(
     MaterialPageRoute<ProfileEditorResult>(
       fullscreenDialog: true,
-      builder: (_) => ProfileEditor(profile: profile),
+      builder: (_) => ProfileEditor(profile: profile, notice: notice),
     ),
   );
 }
@@ -104,13 +105,24 @@ Future<ProfileEditorResult?> showProfileEditorForNew(BuildContext context) {
 }
 
 class ProfileEditor extends ConsumerStatefulWidget {
-  const ProfileEditor({super.key, required this.profile, this.isNew = false});
+  const ProfileEditor({
+    super.key,
+    required this.profile,
+    this.isNew = false,
+    this.notice,
+  });
 
   final SavedProfile profile;
 
   /// When true the editor renders in CREATE mode: blank starting fields, no
   /// delete action, "Edit profile" → "New connection" title (#583).
   final bool isNew;
+
+  /// Optional persistent banner shown at the top of the Details tab. Used for
+  /// guidance the user must READ and act on — e.g. the #1118 phone-migration
+  /// "re-enter the credential" prompt — which a transient toast dropped before
+  /// it could be read (owner-reported on rc.2). Dismissible.
+  final String? notice;
 
   @override
   ConsumerState<ProfileEditor> createState() => _ProfileEditorState();
@@ -153,6 +165,9 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   late _AuthKind _authKind;
   bool _busy = false;
 
+  /// Live copy of [ProfileEditor.notice] so the banner can be dismissed.
+  String? _notice;
+
   /// The identity key the editor opened on. Carried so a host/port/username
   /// edit replaces the original entry rather than creating a duplicate.
   late final String _originalIdentityKey;
@@ -160,6 +175,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   @override
   void initState() {
     super.initState();
+    _notice = widget.notice;
     _tabs = TabController(length: 2, vsync: this);
     final p = widget.profile;
     _originalIdentityKey = p.identityKey;
@@ -410,6 +426,43 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     );
   }
 
+  /// Persistent, dismissible banner at the top of the Details form. Replaces
+  /// the transient toast for guidance the user must read and act on (#1118
+  /// phone-migration re-entry prompt) — the toast vanished before it could be
+  /// read (owner-reported on rc.2).
+  Widget _buildNotice(BuildContext context, String text) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const Key('profile-editor-notice'),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 20, color: scheme.onErrorContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: scheme.onErrorContainer),
+            ),
+          ),
+          IconButton(
+            key: const Key('profile-editor-notice-dismiss'),
+            icon: const Icon(Icons.close, size: 18),
+            color: scheme.onErrorContainer,
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Dismiss',
+            onPressed: () => setState(() => _notice = null),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// The "Details" tab — the field form. Extracted from [build] unchanged so
   /// the two-tab restructure is a wrap, not a rewrite.
   Widget _buildDetailsTab(
@@ -424,6 +477,10 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (_notice != null) ...[
+                _buildNotice(context, _notice!),
+                const SizedBox(height: 12),
+              ],
               TextField(
                 key: const Key('profile-editor-title'),
                 controller: _titleCtrl,

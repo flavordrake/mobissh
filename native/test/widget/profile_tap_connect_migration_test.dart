@@ -63,8 +63,8 @@ void main() {
   });
 
   testWidgets(
-    'tapping a profile with an unreadable vault opens the editor + migration '
-    'toast (not a silent no-op)',
+    'tapping a profile with an unreadable vault opens the editor + persistent migration '
+    'banner (not a silent no-op)',
     (tester) async {
       final store = ProfilesStore();
       final secrets = SecretsStore(backend: _ThrowingSecretsBackend());
@@ -124,6 +124,13 @@ void main() {
       );
       // Migration signature (vault referenced but nothing readable) gets a
       // clearer message than the generic "No saved credentials".
+      expect(find.textContaining("couldn't be read"), findsOneWidget);
+      // The guidance lives in a PERSISTENT editor banner, not a transient toast
+      // (owner-reported on rc.2: the toast vanished before it could be read).
+      expect(find.byKey(const Key('profile-editor-notice')), findsOneWidget);
+      // Still there after a long settle — a toast would have auto-dismissed.
+      await _pumpFrames(tester, count: 120);
+      expect(find.byKey(const Key('profile-editor-notice')), findsOneWidget);
       expect(find.textContaining("couldn't be read"), findsOneWidget);
     },
   );

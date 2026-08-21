@@ -445,14 +445,15 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         'connectFromProfile ${profile.host}: no usable creds '
         '(unreadableVault=$unreadableVault) → editor',
       );
-      showTopToast(
-        context,
-        unreadableVault
-            ? "Saved credential couldn't be read on this device "
-                '(phone migration?) — re-enter it to connect.'
-            : 'No saved credentials — enter them to connect.',
-      );
-      await _editProfile(profile);
+      // Guidance the user must READ and act on (re-enter the credential) goes
+      // in a PERSISTENT editor banner, not a toast — the toast dropped before
+      // it could be read (owner-reported on rc.2, #1118).
+      final notice = unreadableVault
+          ? "Saved credential couldn't be read on this device "
+              '(phone migration?) — re-enter it below to connect.'
+          : 'No saved credentials for this profile — enter them below to '
+              'connect.';
+      await _editProfile(profile, notice: notice);
       return;
     }
 
@@ -530,8 +531,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// #579 edit pencil / #583 no-creds fallback. Open the full profile editor;
   /// on save, refresh the saved-profile list, and if the user chose "Save &
   /// connect", route through the shared connect path.
-  Future<void> _editProfile(SavedProfile profile) async {
-    final result = await showProfileEditor(context, profile);
+  Future<void> _editProfile(SavedProfile profile, {String? notice}) async {
+    final result = await showProfileEditor(context, profile, notice: notice);
     if (!mounted || result == null) return;
     if (result.saved) {
       ref.invalidate(savedProfilesProvider);
