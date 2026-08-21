@@ -47,6 +47,17 @@ done
 NATIVE_DIR="${REPO_ROOT}/native"
 TOTAL_GATES=$(( 2 + WITH_ACCEPTANCE + WITH_INTEGRATION ))
 
+# Gate 0 (sub-second, pure bash): the version-bump rules that decide a published
+# Android versionCode (docs/VERSIONING.md). Previously ran in NO gate, so a
+# versioning regression had zero CI backstop.
+echo "> Gate 0/${TOTAL_GATES}: next-build-version rules..."
+if "${REPO_ROOT}/scripts/test-next-build-version.sh"; then
+  echo "+ version rules: pass"
+else
+  echo "! version rules: FAIL"
+  exit 1
+fi
+
 echo "> Gate 1/${TOTAL_GATES}: flutter analyze..."
 if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" analyze; then
   echo "+ analyze: pass"

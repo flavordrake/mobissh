@@ -18,6 +18,11 @@
 #
 # Gate FIRST (scripts/native-fast-gate.sh) — this script does NOT gate.
 # Prints the timestamped install URL on success (via native-release-apk.sh).
+#
+# Versioning: pubspec version is `x.y.z[-STAGE]+B` per docs/VERSIONING.md.
+# This script auto-bumps B (a GLOBAL, never-resetting ordinal == Android
+# versionCode) via lib/next-build-version.sh; STAGE transitions (-dev → -rc.N
+# → final) are the operator's manual semver edit before shipping.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."

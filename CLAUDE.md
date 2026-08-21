@@ -69,6 +69,7 @@ Containers reach each other via Docker DNS names, NOT `localhost` port mapping.
 - Personal use over Tailscale (WireGuard mesh) -- bridge auth and SSRF handled at network layer
 
 ### Native app builds
+- **Versioning**: `x.y.z[-STAGE]+B` per `docs/VERSIONING.md` — B is a global never-resetting build ordinal (== Android versionCode); stages flow `-dev` → `-rc.N` → final.
 - **Android APK**: `scripts/ship-native.sh` (build + publish to `native.html`), local on fd-dev.
 - **macOS app**: built on matts-macbook-air (only Xcode host), published to `native.html` from fd-dev. Kick off with `scripts/dispatch-mac-build.sh`; full pipeline in `native/MAC-BUILD.md`. iOS device builds are out of scope (signing-gated).
 

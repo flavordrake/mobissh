@@ -62,6 +62,20 @@ expect_reject "rejects a non-numeric build number" \
 expect "semver + build both edited respects the build" \
   "0.2.0+200" "0.1.11+162" "0.2.0+200"
 
+# 7. Pre-release stages (docs/VERSIONING.md) ride in the base untouched, and B
+#    stays globally monotonic across every stage transition. These lock the
+#    lifecycle in as contract, not accident.
+expect "rc build within a candidate lineage bumps the build" \
+  "0.1.12-rc.1+166" "0.1.12-rc.1+166" "0.1.12-rc.1+167"
+expect "rc promotion (rc.1 → rc.2) still bumps the build" \
+  "0.1.12-rc.2+167" "0.1.12-rc.1+167" "0.1.12-rc.2+168"
+expect "final promotion (rc.N → release) still bumps the build" \
+  "0.1.12+167" "0.1.12-rc.3+167" "0.1.12+168"
+expect "next dev cycle continues the global counter" \
+  "0.1.13-dev+168" "0.1.12+168" "0.1.13-dev+169"
+expect_reject "refuses a per-version build reset (B never resets)" \
+  "0.1.13-dev+1" "0.1.12-rc.3+167"
+
 echo
 echo "> next-build-version: ${PASS} passed, ${FAIL} failed"
 [[ "$FAIL" -eq 0 ]]

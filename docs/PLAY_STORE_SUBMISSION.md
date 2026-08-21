@@ -3,7 +3,7 @@
 Step-by-step for a Google Play submission, with copy-paste answers and every URL we've provisioned.
 
 - **Package:** `com.flavordrake.mobissh`
-- **Version:** 0.1.10 (versionCode 103) · **Target API:** 35
+- **Version:** 0.1.10 (versionCode 103) at prep time — current scheme and lifecycle in `docs/VERSIONING.md` · **Target API:** 35
 - **Prepared:** 2026-07-02
 
 Legend: **[ready]** already provisioned · **[paste]** copy the value · **[you]** needs your input or an asset.
@@ -169,7 +169,7 @@ First internal test build. Real terminal with copy, SFTP file browser, backgroun
 1. Confirm every **App content** item shows a green check (privacy policy, data safety, ads, rating, target audience, FGS declaration).
 2. Internal rollout is instant — install via the tester opt-in link Play gives you.
 3. When graphics + the reviewer SSH account are ready → **Promote release → Production** (or Closed testing) → submit for review.
-4. Next build: bump `pubspec +N` before re-running `build-release-aab.sh` — Play requires a higher versionCode each upload.
+4. Next build: the pubspec `+B` build ordinal must advance before re-running `build-release-aab.sh` — Play requires a higher versionCode each upload (`ship-native.sh` auto-bumps it; see `docs/VERSIONING.md`).
 
 ## What's left, at a glance
 
