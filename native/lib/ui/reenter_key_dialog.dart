@@ -7,6 +7,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'revealable_field.dart';
 import 'top_toast.dart';
 
 /// The values collected by [ReenterKeyDialog].
@@ -95,15 +96,10 @@ class _ReenterKeyDialogState extends State<ReenterKeyDialog> {
               enableSuggestions: false,
             ),
             const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('keys-reenter-passphrase'),
+            RevealableTextField(
+              fieldKeyName: 'keys-reenter-passphrase',
               controller: _passphraseCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Passphrase (optional)',
-              ),
-              obscureText: true,
-              autocorrect: false,
-              enableSuggestions: false,
+              labelText: 'Passphrase (optional)',
             ),
           ],
         ),

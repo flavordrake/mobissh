@@ -37,6 +37,7 @@ import '../storage/keys_store.dart';
 import '../storage/profiles_store.dart';
 import 'color_picker_sheet.dart';
 import 'reenter_key_dialog.dart';
+import 'revealable_field.dart';
 import 'top_toast.dart';
 
 enum _AuthKind { password, key }
@@ -552,16 +553,11 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
               ),
               const SizedBox(height: 8),
               if (!isKey)
-                TextField(
-                  key: const Key('profile-editor-password'),
+                RevealableTextField(
+                  fieldKeyName: 'profile-editor-password',
                   controller: _passwordCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                    hintText: '(stored encrypted — leave blank to keep)',
-                  ),
-                  obscureText: true,
-                  autocorrect: false,
-                  enableSuggestions: false,
+                  labelText: 'Password',
+                  hintText: '(stored encrypted — leave blank to keep)',
                 )
               else
                 ..._buildKeyAuthFields(context),
@@ -725,15 +721,10 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
           enableSuggestions: false,
         ),
         const SizedBox(height: 8),
-        TextField(
-          key: const Key('profile-editor-passphrase'),
+        RevealableTextField(
+          fieldKeyName: 'profile-editor-passphrase',
           controller: _passphraseCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Key passphrase (optional)',
-          ),
-          obscureText: true,
-          autocorrect: false,
-          enableSuggestions: false,
+          labelText: 'Key passphrase (optional)',
         ),
       ],
     ];

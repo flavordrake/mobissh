@@ -37,6 +37,7 @@ import '../state/profiles_providers.dart';
 import '../storage/backup.dart';
 import '../storage/backup_restore.dart';
 import '../storage/profiles_store.dart';
+import 'revealable_field.dart';
 
 /// Seam for the v2 envelope decrypt so widget tests can run it directly with
 /// permissive KDF bounds — the production default wraps the strict-bounds
@@ -422,20 +423,14 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
                     : 'Legacy encrypted profile export — enter its master '
                         'password.'),
                 const SizedBox(height: 12),
-                TextField(
-                  key: const Key('import-profiles-password'),
+                RevealableTextField(
+                  fieldKeyName: 'import-profiles-password',
                   controller: _passwordCtrl,
-                  obscureText: true,
-                  autocorrect: false,
-                  enableSuggestions: false,
                   onSubmitted: (_) {
                     if (_canSubmit()) _submit();
                   },
-                  decoration: InputDecoration(
-                    labelText:
-                        inBackupStage ? 'Passphrase' : 'Master password',
-                    border: const OutlineInputBorder(),
-                  ),
+                  labelText: inBackupStage ? 'Passphrase' : 'Master password',
+                  border: const OutlineInputBorder(),
                 ),
                 if (inBackupStage) ...[
                   const SizedBox(height: 4),

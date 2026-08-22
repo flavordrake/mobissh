@@ -16,6 +16,7 @@ import '../state/keys_providers.dart';
 import '../state/profiles_providers.dart';
 import '../storage/keys_store.dart';
 import 'reenter_key_dialog.dart';
+import 'revealable_field.dart';
 import 'top_toast.dart';
 
 /// Push the key-library manager as a route.
@@ -327,15 +328,10 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
               enableSuggestions: false,
             ),
             const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('keys-add-passphrase'),
+            RevealableTextField(
+              fieldKeyName: 'keys-add-passphrase',
               controller: _passphraseCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Passphrase (optional)',
-              ),
-              obscureText: true,
-              autocorrect: false,
-              enableSuggestions: false,
+              labelText: 'Passphrase (optional)',
             ),
           ],
         ),

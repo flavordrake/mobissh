@@ -34,6 +34,7 @@ import '../storage/favorites_store.dart';
 import '../storage/keys_store.dart';
 import '../storage/profiles_store.dart';
 import '../storage/secrets_store.dart';
+import 'revealable_field.dart';
 
 /// Builds the plaintext payload once the passphrase is confirmed.
 typedef BackupPayloadBuilder = Future<BackupPayloadResult> Function();
@@ -257,25 +258,18 @@ class _ExportBackupDialogState extends State<ExportBackupDialog> {
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
-            TextField(
-              key: const Key('export-backup-passphrase'),
+            RevealableTextField(
+              fieldKeyName: 'export-backup-passphrase',
               controller: _passCtrl,
-              obscureText: true,
               enabled: !_busy,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(labelText: 'Passphrase'),
+              labelText: 'Passphrase',
             ),
             const SizedBox(height: 8),
-            TextField(
-              key: const Key('export-backup-confirm'),
+            RevealableTextField(
+              fieldKeyName: 'export-backup-confirm',
               controller: _confirmCtrl,
-              obscureText: true,
               enabled: !_busy,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration:
-                  const InputDecoration(labelText: 'Confirm passphrase'),
+              labelText: 'Confirm passphrase',
             ),
             if (_error != null) ...[
               const SizedBox(height: 8),
