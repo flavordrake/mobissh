@@ -7,6 +7,11 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
+## v0.1.12-rc.3 (2026-08-22) — encrypted backup: export + import everything
+- **One encrypted file now carries your whole setup.** New **Export** button next to New/Import on the Connect screen: set a passphrase (12+ characters), save a `.mobissh` file anywhere. It contains ALL profiles, passwords, SSH keys, host-key trust, favorites, detection setup and settings — fully encrypted, nothing readable in the file. (#1124)
+- **Import that file on a new phone and you're done.** Import → pick the file → passphrase → everything restores, credentials included — no more per-key re-entry after a migration. Auto-run commands and port forwards only restore if you tick a checkbox (safety default). (#1125) **Device-test:** export on one device, import on another (or after a clear-data), connect to a key-auth and a password-auth host.
+- The import dialog also still accepts old PWA backup files ("Import backup").
+
 ## v0.1.12-rc.3 (2026-08-21) — phone-migration credential recovery + security batch
 - **After moving to a new phone, tapping a saved profile now recovers instead of doing nothing.** Your profiles restore across a migration but the encrypted credential can't be read on the new device — the app now opens the profile editor with a clear, persistent banner asking you to re-enter it, then connects. (#1118) **Device-test:** install over your migrated state, tap a restored profile, re-enter the password/key in the editor, Save & connect.
 - **Key profiles now show WHICH key they use.** The profile editor opens a key-auth profile on its attached key ("Library: <name>") instead of a blank "Paste a new key…" box. (#1121)
