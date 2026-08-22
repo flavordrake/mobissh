@@ -254,6 +254,49 @@ void main() {
     expect(result.error, isNotNull);
     expect(result.error, contains('2'));
     expect(result.unreadableSecretCount, 2);
+    // #1129: the abort NAMES the culprits so the user knows what to re-enter
+    // — profile title for a profile-owned entry, key name for a library key.
+    expect(result.error, contains('One'),
+        reason: "profile 'One' owns vault-a");
+    expect(result.error, contains('Two'),
+        reason: "profile 'Two' references key-lib1");
+    expect(result.affected, hasLength(2));
+    // Labels are never secret material.
+    expect(result.error, isNot(contains('CANARY')));
+  });
+
+  test('abort with many culprits caps the named list (#1129)', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final prefs = await SharedPreferences.getInstance();
+    final profiles = ProfilesStore(prefs: prefs);
+    // 8 profiles, all with unreadable password entries.
+    await profiles.save(<SavedProfile>[
+      for (var i = 0; i < 8; i++)
+        SavedProfile(
+          title: 'P$i',
+          host: 'h$i.example',
+          port: 22,
+          username: 'u',
+          authType: 'password',
+          vaultId: 'vault-$i',
+        ),
+    ]);
+    final result = await buildBackupPayload(
+      profiles: profiles,
+      keys: KeysStore(prefs: prefs),
+      secrets: SecretsStore(backend: InMemorySecretsBackend()),
+      hostKeys: InMemoryHostKeyBackend({}),
+      recents: RecentSessionsStore(prefs: prefs),
+      favorites: FavoritesStore(prefs: prefs),
+      detectionExceptions: DetectionExceptionsStore(prefs: prefs),
+      customPatterns: CustomPatternsStore(prefs: prefs),
+      detectionStyles: DetectionStylesStore(prefs: prefs),
+      prefs: prefs,
+      appVersion: 'test+1',
+    );
+    expect(result.unreadableSecretCount, 8);
+    expect(result.affected, hasLength(8));
+    expect(result.error, contains('…and 2 more'));
   });
 
   test('round trip: build → encrypt → decrypt → per-section equality',

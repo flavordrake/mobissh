@@ -66,11 +66,13 @@ class BackupPayloadResult {
     required this.profileCount,
     required this.keyCount,
   })  : error = null,
-        unreadableSecretCount = 0;
+        unreadableSecretCount = 0,
+        affected = const <String>[];
 
   const BackupPayloadResult.failure({
     required String this.error,
     required this.unreadableSecretCount,
+    this.affected = const <String>[],
   })  : payload = null,
         profileCount = 0,
         keyCount = 0;
@@ -83,6 +85,10 @@ class BackupPayloadResult {
 
   /// How many REFERENCED vault ids could not be read (abort case).
   final int unreadableSecretCount;
+
+  /// Display labels for the unreadable entries (#1129) — profile titles /
+  /// identities / key names, NEVER secret material. Empty on success.
+  final List<String> affected;
 
   /// Exported profile / key counts (success toast: "N profiles, M keys").
   final int profileCount;
@@ -124,23 +130,47 @@ Future<BackupPayloadResult> buildBackupPayload({
   }
 
   final secretsOut = <String, Object?>{};
-  var unreadable = 0;
+  final unreadableIds = <String>[];
   for (final vaultId in referenced.toList()..sort()) {
     final secret = await secrets.read(vaultId);
     if (secret == null) {
       // Absent OR undecryptable (#1118 maps both to null) — either way a
-      // profile/key points at material we cannot export. Count and abort.
-      unreadable++;
+      // profile/key points at material we cannot export. Collect and abort.
+      unreadableIds.add(vaultId);
       continue;
     }
     secretsOut[vaultId] = secret;
   }
-  if (unreadable > 0) {
+  if (unreadableIds.isNotEmpty) {
+    // Name the culprits (#1129): a bare count leaves the user hunting through
+    // every profile for the poisoned entries. Labels are NON-secret (titles /
+    // identities / key names). Owner label wins: profile(s) first, then a
+    // library key's name, raw vault id as last resort.
+    final affected = <String>[];
+    for (final vaultId in unreadableIds) {
+      final owners = <String>[];
+      for (final p in profileList) {
+        if (p.vaultId == vaultId || p.keyVaultId == vaultId) {
+          owners.add(p.title.trim().isEmpty ? p.identityKey : p.title.trim());
+        }
+      }
+      for (final k in keyList) {
+        if (k.vaultId == vaultId && owners.isEmpty) {
+          owners.add('key "${k.name}"');
+        }
+      }
+      affected.add(owners.isEmpty ? vaultId : owners.join(', '));
+    }
+    final n = unreadableIds.length;
+    const cap = 6;
+    final shown = affected.take(cap).join('; ');
+    final more = n > cap ? '; …and ${n - cap} more' : '';
     return BackupPayloadResult.failure(
-      error: '$unreadable stored secret${unreadable == 1 ? '' : 's'} could '
-          'not be read — backup not created. Re-enter the affected '
+      error: '$n stored secret${n == 1 ? '' : 's'} could not be read — '
+          'backup not created. Affected: $shown$more. Re-enter these '
           'credentials, then export again.',
-      unreadableSecretCount: unreadable,
+      unreadableSecretCount: n,
+      affected: affected,
     );
   }
 

@@ -20,6 +20,9 @@ services:
       # cutover is an explicit `container-ctl.sh restart` after
       # `feedback-ctl.sh start` (see docs/feedback-service.md).
       FEEDBACK_SERVICE_URL: "${FEEDBACK_SERVICE_URL-http://mobissh-feedback:8082}"
+      # #1115 fail-closed upload auth: container-ctl.sh exports this from
+      # ~/.mobissh/feedback.env. Unset ⇒ the guard 503s all uploads.
+      MOBISSH_FEEDBACK_KEY: "${MOBISSH_FEEDBACK_KEY:-}"
     volumes:
       - tailscale-state:/var/lib/tailscale
       - /var/lib/docker/volumes/dev_workspace/_data/mobissh/test-results/uploads:/app/test-results/uploads

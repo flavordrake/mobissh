@@ -25,6 +25,15 @@ COMPOSE_FILE="docker-compose.feedback.yml"
 CONTAINER="mobissh-feedback"
 HEALTH_TIMEOUT=30
 
+# #1115 fail-closed upload auth: same key file the APK builds bake the client
+# key from (~/.mobissh/feedback.env) so both front doors accept the same key.
+FEEDBACK_ENV="${HOME}/.mobissh/feedback.env"
+if [ -f "$FEEDBACK_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$FEEDBACK_ENV"
+  export MOBISSH_FEEDBACK_KEY="${FEEDBACK_KEY:-}"
+fi
+
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
 ok()  { echo "+ $*"; }

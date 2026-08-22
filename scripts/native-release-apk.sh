@@ -62,8 +62,26 @@ BUILD_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
 
+# Feedback upload auth (#484/#1115): bake the shared X-MobiSSH-Key into the
+# build so bug reports keep working once prod fails closed. Same source the
+# AAB build uses (~/.mobissh/feedback.env, FEEDBACK_KEY=...). LOUD when
+# missing — a keyless build files no reports against a keyed server.
+DEFINES=()
+FEEDBACK_ENV="${HOME}/.mobissh/feedback.env"
+if [ -z "${FEEDBACK_KEY:-}" ] && [ -f "$FEEDBACK_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$FEEDBACK_ENV"
+fi
+if [ -n "${FEEDBACK_KEY:-}" ]; then
+  DEFINES+=("--dart-define=MOBISSH_FEEDBACK_KEY=${FEEDBACK_KEY}")
+  log "feedback key: set (${#FEEDBACK_KEY} chars)"
+else
+  err "WARNING: no FEEDBACK_KEY (${FEEDBACK_ENV} missing) — bug reports from"
+  err "  this build will be REJECTED once prod enforces upload auth (#1115)."
+fi
+
 log "building native release APK (this can take a few minutes)..."
-if ! "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" build apk --release --split-per-abi; then
+if ! "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" build apk --release --split-per-abi ${DEFINES[@]+"${DEFINES[@]}"}; then
   err "flutter build apk --release --split-per-abi failed"
   exit 2
 fi
