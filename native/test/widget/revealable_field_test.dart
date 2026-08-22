@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:mobissh/storage/backup_payload.dart';
 import 'package:mobissh/ui/export_backup_dialog.dart';
 import 'package:mobissh/ui/revealable_field.dart';
 
@@ -47,10 +48,21 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(body: ExportBackupDialog()),
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: ExportBackupDialog(
+          // Clean fake preflight so the passphrase stage renders (the
+          // production preflight needs platform channels).
+          preflight: () async => const BackupPreflight(
+            profileCount: 1,
+            keyCount: 0,
+            readableSecretCount: 1,
+            unreadableLabels: <String>[],
+          ),
+        ),
+      ),
     ));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('export-backup-passphrase-reveal')),
         findsOneWidget);

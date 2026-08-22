@@ -65,6 +65,7 @@ class BackupPayloadResult {
     required Map<String, Object?> this.payload,
     required this.profileCount,
     required this.keyCount,
+    this.omittedLabels = const <String>[],
   })  : error = null,
         unreadableSecretCount = 0,
         affected = const <String>[];
@@ -75,7 +76,8 @@ class BackupPayloadResult {
     this.affected = const <String>[],
   })  : payload = null,
         profileCount = 0,
-        keyCount = 0;
+        keyCount = 0,
+        omittedLabels = const <String>[];
 
   /// The plaintext payload to encrypt, or null when the export was aborted.
   final Map<String, Object?>? payload;
@@ -89,6 +91,10 @@ class BackupPayloadResult {
   /// Display labels for the unreadable entries (#1129) — profile titles /
   /// identities / key names, NEVER secret material. Empty on success.
   final List<String> affected;
+
+  /// Labels of entries SKIPPED by an allowMissing export (partial backup).
+  /// Empty for a complete backup.
+  final List<String> omittedLabels;
 
   /// Exported profile / key counts (success toast: "N profiles, M keys").
   final int profileCount;
@@ -112,6 +118,11 @@ Future<BackupPayloadResult> buildBackupPayload({
   required SharedPreferences prefs,
   required String appVersion,
   DateTime Function()? now,
+  // Owner-directed partial export: when true, unreadable referenced secrets
+  // are SKIPPED instead of aborting; the payload carries an `omissions`
+  // manifest (inside the ciphertext) so the import side knows what's missing
+  // and the affected profiles keep their credential identity for re-entry.
+  bool allowMissing = false,
 }) async {
   final profileList = await profiles.load();
   final keyList = await keys.load();
@@ -141,26 +152,11 @@ Future<BackupPayloadResult> buildBackupPayload({
     }
     secretsOut[vaultId] = secret;
   }
-  if (unreadableIds.isNotEmpty) {
+  final affected = _labelsFor(unreadableIds, profileList, keyList);
+  if (unreadableIds.isNotEmpty && !allowMissing) {
     // Name the culprits (#1129): a bare count leaves the user hunting through
     // every profile for the poisoned entries. Labels are NON-secret (titles /
-    // identities / key names). Owner label wins: profile(s) first, then a
-    // library key's name, raw vault id as last resort.
-    final affected = <String>[];
-    for (final vaultId in unreadableIds) {
-      final owners = <String>[];
-      for (final p in profileList) {
-        if (p.vaultId == vaultId || p.keyVaultId == vaultId) {
-          owners.add(p.title.trim().isEmpty ? p.identityKey : p.title.trim());
-        }
-      }
-      for (final k in keyList) {
-        if (k.vaultId == vaultId && owners.isEmpty) {
-          owners.add('key "${k.name}"');
-        }
-      }
-      affected.add(owners.isEmpty ? vaultId : owners.join(', '));
-    }
+    // identities / key names).
     final n = unreadableIds.length;
     const cap = 6;
     final shown = affected.take(cap).join('; ');
@@ -221,10 +217,101 @@ Future<BackupPayloadResult> buildBackupPayload({
       for (final e in styles.byPattern.entries) e.key: e.value.toJson(),
     },
     'settings': settingsOut,
+    // Partial-export manifest (inside the ciphertext): which referenced vault
+    // ids were unreadable and skipped, with their non-secret owner labels.
+    // The import side uses this to preserve credential IDENTITY (a profile
+    // keeps its handle for the re-enter flow) without any material.
+    if (unreadableIds.isNotEmpty)
+      'omissions': [
+        for (var i = 0; i < unreadableIds.length; i++)
+          {'vaultId': unreadableIds[i], 'label': affected[i]},
+      ],
   };
   return BackupPayloadResult.success(
     payload: payload,
     profileCount: profileList.length,
     keyCount: keyList.length,
+    omittedLabels: affected,
+  );
+}
+
+/// Non-secret owner labels for vault ids (#1129): profile title/identity
+/// first, a library key's name when no profile owns it, raw id last resort.
+List<String> _labelsFor(
+  List<String> vaultIds,
+  List<SavedProfile> profileList,
+  List<SavedKey> keyList,
+) {
+  final out = <String>[];
+  for (final vaultId in vaultIds) {
+    final owners = <String>[];
+    for (final p in profileList) {
+      if (p.vaultId == vaultId || p.keyVaultId == vaultId) {
+        owners.add(p.title.trim().isEmpty ? p.identityKey : p.title.trim());
+      }
+    }
+    for (final k in keyList) {
+      if (k.vaultId == vaultId && owners.isEmpty) {
+        owners.add('key "${k.name}"');
+      }
+    }
+    out.add(owners.isEmpty ? vaultId : owners.join(', '));
+  }
+  return out;
+}
+
+/// Readability preflight for the export dialog (owner-directed: never ask for
+/// a passphrase before knowing the export can be built). Reads each referenced
+/// vault id ONLY to classify it readable/unreadable — values are discarded
+/// immediately; nothing is retained while the dialog is open.
+class BackupPreflight {
+  const BackupPreflight({
+    required this.profileCount,
+    required this.keyCount,
+    required this.readableSecretCount,
+    required this.unreadableLabels,
+  });
+  final int profileCount;
+  final int keyCount;
+  final int readableSecretCount;
+
+  /// Non-secret owner labels of unreadable referenced entries (empty = clean).
+  final List<String> unreadableLabels;
+
+  bool get clean => unreadableLabels.isEmpty;
+}
+
+Future<BackupPreflight> preflightBackup({
+  required ProfilesStore profiles,
+  required KeysStore keys,
+  required SecretsStore secrets,
+}) async {
+  final profileList = await profiles.load();
+  final keyList = await keys.load();
+  final referenced = <String>{};
+  for (final p in profileList) {
+    final v = p.vaultId;
+    if (v != null && v.isNotEmpty) referenced.add(v);
+    final kv = p.keyVaultId;
+    if (kv != null && kv.isNotEmpty) referenced.add(kv);
+  }
+  for (final k in keyList) {
+    referenced.add(k.vaultId);
+  }
+  final unreadable = <String>[];
+  var readable = 0;
+  for (final vaultId in referenced.toList()..sort()) {
+    // Value discarded on the spot — classification only.
+    if (await secrets.read(vaultId) == null) {
+      unreadable.add(vaultId);
+    } else {
+      readable++;
+    }
+  }
+  return BackupPreflight(
+    profileCount: profileList.length,
+    keyCount: keyList.length,
+    readableSecretCount: readable,
+    unreadableLabels: _labelsFor(unreadable, profileList, keyList),
   );
 }

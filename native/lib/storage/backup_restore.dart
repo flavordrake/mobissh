@@ -202,8 +202,25 @@ Future<ImportResult> applyBackupPayload(
   final patternsRaw = asList('customPatterns');
   final stylesRaw = asMap('detectionStyles');
   final settingsRaw = asMap('settings');
+  final omissionsRaw = asList('omissions');
   if (sectionErrors.isNotEmpty) {
     return ImportResult(errors: sectionErrors);
+  }
+
+  // Partial-backup omissions manifest: vault ids the EXPORT skipped as
+  // unreadable. A NEW profile referencing one keeps its handle — preserving
+  // credential IDENTITY for the re-enter flow (which key, which entry) —
+  // but ONLY when nothing exists locally at that vault id. If local material
+  // exists, the handle is dropped: honoring it would point the imported
+  // profile at ANOTHER credential, the exact #1106 theft vector.
+  final omittedIds = <String>{
+    if (omissionsRaw != null)
+      for (final e in omissionsRaw)
+        if (e is Map && e['vaultId'] is String) e['vaultId'] as String,
+  };
+  final omittedSafeIds = <String>{};
+  for (final id in omittedIds) {
+    if (await secrets.read(id) == null) omittedSafeIds.add(id);
   }
 
   final entryErrors = <String>[];
@@ -339,24 +356,36 @@ Future<ImportResult> applyBackupPayload(
       continue;
     }
 
-    final String? safeVaultId =
-        (raw.vaultId != null && hasPasswordSecret(raw.vaultId!))
-            ? raw.vaultId
-            : null;
-    String? safeKeyVaultId =
-        (raw.keyVaultId != null && hasKeySecret(raw.keyVaultId!))
-            ? raw.keyVaultId
-            : null;
-    if (safeVaultId != null) {
+    // Handle survives when a type-correct secret travelled (#1106), OR when
+    // the export explicitly OMITTED it and nothing exists locally at that id
+    // (partial backup — identity preserved for re-entry, nothing to steal).
+    final String? safeVaultId = (raw.vaultId != null &&
+            (hasPasswordSecret(raw.vaultId!) ||
+                omittedSafeIds.contains(raw.vaultId)))
+        ? raw.vaultId
+        : null;
+    String? safeKeyVaultId = (raw.keyVaultId != null &&
+            (hasKeySecret(raw.keyVaultId!) ||
+                omittedSafeIds.contains(raw.keyVaultId)))
+        ? raw.keyVaultId
+        : null;
+    // Omitted handles have NO material — nothing to stage; the handle alone
+    // is kept for identity. They also must not count as "brought a secret":
+    // on an existing-profile merge a dead handle must never replace a
+    // working local one.
+    if (safeVaultId != null && hasPasswordSecret(safeVaultId)) {
       stagedSecretWrites[safeVaultId] = secretEntry(safeVaultId)!;
     }
-    if (safeKeyVaultId != null) {
+    if (safeKeyVaultId != null && hasKeySecret(safeKeyVaultId)) {
       final material = secretEntry(safeKeyVaultId)!;
       final rewritten = keyVaultRewrites[safeKeyVaultId] ?? safeKeyVaultId;
       stagedSecretWrites[rewritten] = material;
       safeKeyVaultId = rewritten;
     }
-    final importBroughtSecret = safeVaultId != null || safeKeyVaultId != null;
+    final importBroughtSecret =
+        (safeVaultId != null && hasPasswordSecret(safeVaultId)) ||
+            (safeKeyVaultId != null &&
+                stagedSecretWrites.containsKey(safeKeyVaultId));
 
     final existingIndex = byIdentity[raw.identityKey];
     if (existingIndex != null) {

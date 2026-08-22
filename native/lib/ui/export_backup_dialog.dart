@@ -37,7 +37,14 @@ import '../storage/secrets_store.dart';
 import 'revealable_field.dart';
 
 /// Builds the plaintext payload once the passphrase is confirmed.
-typedef BackupPayloadBuilder = Future<BackupPayloadResult> Function();
+/// [allowMissing] is the user's explicit "export anyway without the
+/// unreadable entries" opt-in (partial backup with an omissions manifest).
+typedef BackupPayloadBuilder = Future<BackupPayloadResult> Function(
+    {bool allowMissing});
+
+/// Readability preflight run when the dialog OPENS (owner-directed: never ask
+/// for a passphrase before knowing the export can be built).
+typedef BackupPreflightRunner = Future<BackupPreflight> Function();
 
 /// Encrypts [payload] under [passphrase] into envelope JSON.
 typedef BackupEncryptor = Future<String> Function(
@@ -88,7 +95,8 @@ String backupFileName(DateTime now) {
 /// Production payload builder: real stores over the shared prefs instance,
 /// app version from package_info (best-effort — an unresolvable version must
 /// never block a credential backup).
-Future<BackupPayloadResult> productionBackupPayload() async {
+Future<BackupPayloadResult> productionBackupPayload(
+    {bool allowMissing = false}) async {
   final prefs = await SharedPreferences.getInstance();
   var appVersion = '';
   try {
@@ -109,6 +117,17 @@ Future<BackupPayloadResult> productionBackupPayload() async {
     detectionStyles: DetectionStylesStore(prefs: prefs),
     prefs: prefs,
     appVersion: appVersion,
+    allowMissing: allowMissing,
+  );
+}
+
+/// Production preflight: classification only, values discarded on read.
+Future<BackupPreflight> productionBackupPreflight() async {
+  final prefs = await SharedPreferences.getInstance();
+  return preflightBackup(
+    profiles: ProfilesStore(prefs: prefs),
+    keys: KeysStore(prefs: prefs),
+    secrets: SecretsStore(),
   );
 }
 
@@ -126,6 +145,7 @@ Future<String> isolateBackupEncryptor(
 Future<bool?> showExportBackupDialog(
   BuildContext context, {
   BackupPayloadBuilder payloadBuilder = productionBackupPayload,
+  BackupPreflightRunner preflight = productionBackupPreflight,
   BackupEncryptor encryptor = isolateBackupEncryptor,
   BackupSaveAdapter saveAdapter = const MethodChannelBackupSaveAdapter(),
 }) {
@@ -133,6 +153,7 @@ Future<bool?> showExportBackupDialog(
     context: context,
     builder: (_) => ExportBackupDialog(
       payloadBuilder: payloadBuilder,
+      preflight: preflight,
       encryptor: encryptor,
       saveAdapter: saveAdapter,
     ),
@@ -143,12 +164,14 @@ class ExportBackupDialog extends StatefulWidget {
   const ExportBackupDialog({
     super.key,
     this.payloadBuilder = productionBackupPayload,
+    this.preflight = productionBackupPreflight,
     this.encryptor = isolateBackupEncryptor,
     this.saveAdapter = const MethodChannelBackupSaveAdapter(),
     this.now,
   });
 
   final BackupPayloadBuilder payloadBuilder;
+  final BackupPreflightRunner preflight;
   final BackupEncryptor encryptor;
   final BackupSaveAdapter saveAdapter;
 
@@ -164,6 +187,39 @@ class _ExportBackupDialogState extends State<ExportBackupDialog> {
   final _confirmCtrl = TextEditingController();
   String? _error;
   bool _busy = false;
+
+  /// Readability preflight, run on OPEN (owner-directed: never ask for a
+  /// passphrase before knowing the export can be built). Null while running.
+  BackupPreflight? _preflight;
+  bool _preflightFailed = false;
+
+  /// The explicit "export anyway without the unreadable entries" opt-in.
+  bool _skipUnreadable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _runPreflight();
+  }
+
+  Future<void> _runPreflight() async {
+    try {
+      final p = await widget.preflight();
+      if (!mounted) return;
+      setState(() => _preflight = p);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _preflightFailed = true);
+    }
+  }
+
+  /// Passphrase entry unlocks only when the export is known buildable: clean
+  /// preflight, or unreadables explicitly skipped.
+  bool get _ready {
+    final p = _preflight;
+    if (p == null) return false;
+    return p.clean || _skipUnreadable;
+  }
 
   @override
   void dispose() {
@@ -189,8 +245,9 @@ class _ExportBackupDialogState extends State<ExportBackupDialog> {
     });
     try {
       // Plaintext is gathered ONLY now, after the passphrase is confirmed,
-      // and handed straight to the encryptor.
-      final result = await widget.payloadBuilder();
+      // and handed straight to the encryptor. allowMissing carries the
+      // user's explicit skip-unreadable opt-in from the preflight stage.
+      final result = await widget.payloadBuilder(allowMissing: _skipUnreadable);
       final payload = result.payload;
       if (payload == null) {
         if (!mounted) return;
@@ -214,11 +271,13 @@ class _ExportBackupDialogState extends State<ExportBackupDialog> {
       }
       final messenger = ScaffoldMessenger.maybeOf(context);
       Navigator.of(context).pop(true);
+      final skipped = result.omittedLabels.length;
       messenger?.showSnackBar(
         SnackBar(
           content: Text(
             'Backup saved (${result.profileCount} profiles, '
-            '${result.keyCount} keys)',
+            '${result.keyCount} keys'
+            '${skipped > 0 ? '; $skipped credential${skipped == 1 ? '' : 's'} skipped' : ''})',
           ),
         ),
       );
@@ -242,6 +301,7 @@ class _ExportBackupDialogState extends State<ExportBackupDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final p = _preflight;
     return AlertDialog(
       key: const Key('export-backup-dialog'),
       title: const Text('Export encrypted backup'),
@@ -258,19 +318,76 @@ class _ExportBackupDialogState extends State<ExportBackupDialog> {
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
-            RevealableTextField(
-              fieldKeyName: 'export-backup-passphrase',
-              controller: _passCtrl,
-              enabled: !_busy,
-              labelText: 'Passphrase',
-            ),
-            const SizedBox(height: 8),
-            RevealableTextField(
-              fieldKeyName: 'export-backup-confirm',
-              controller: _confirmCtrl,
-              enabled: !_busy,
-              labelText: 'Confirm passphrase',
-            ),
+            // ── Preflight stage: know the export is buildable BEFORE asking
+            //    for a passphrase (owner-directed). ─────────────────────────
+            if (_preflightFailed)
+              Text(
+                'Could not check stored credentials — try again.',
+                key: const Key('export-backup-preflight-error'),
+                style: TextStyle(color: theme.colorScheme.error),
+              )
+            else if (p == null)
+              const Row(
+                key: Key('export-backup-preflight-running'),
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 12),
+                  Text('Checking stored credentials…'),
+                ],
+              )
+            else if (p.clean)
+              Text(
+                'Ready: ${p.profileCount} profiles, ${p.keyCount} keys, '
+                '${p.readableSecretCount} stored credentials.',
+                key: const Key('export-backup-preflight-ok'),
+                style: theme.textTheme.bodySmall,
+              )
+            else ...[
+              Text(
+                '${p.unreadableLabels.length} stored '
+                'credential${p.unreadableLabels.length == 1 ? '' : 's'} '
+                "can't be read: ${p.unreadableLabels.take(6).join('; ')}"
+                '${p.unreadableLabels.length > 6 ? '; …and ${p.unreadableLabels.length - 6} more' : ''}. '
+                'Re-enter them first for a complete backup, or export '
+                'without them.',
+                key: const Key('export-backup-preflight-unreadable'),
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+              CheckboxListTile(
+                key: const Key('export-skip-unreadable'),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: _skipUnreadable,
+                onChanged: _busy
+                    ? null
+                    : (v) => setState(() => _skipUnreadable = v ?? false),
+                title: const Text(
+                  'Export anyway without these — the affected profiles will '
+                  'need their credentials re-entered after import',
+                ),
+              ),
+            ],
+            // ── Passphrase stage: only once the export is known buildable. ──
+            if (_ready) ...[
+              const SizedBox(height: 12),
+              RevealableTextField(
+                fieldKeyName: 'export-backup-passphrase',
+                controller: _passCtrl,
+                enabled: !_busy,
+                labelText: 'Passphrase',
+              ),
+              const SizedBox(height: 8),
+              RevealableTextField(
+                fieldKeyName: 'export-backup-confirm',
+                controller: _confirmCtrl,
+                enabled: !_busy,
+                labelText: 'Confirm passphrase',
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -289,7 +406,7 @@ class _ExportBackupDialogState extends State<ExportBackupDialog> {
         ),
         FilledButton(
           key: const Key('export-backup-submit'),
-          onPressed: _busy ? null : _submit,
+          onPressed: (_busy || !_ready) ? null : _submit,
           child: Text(_busy ? 'Exporting…' : 'Export'),
         ),
       ],

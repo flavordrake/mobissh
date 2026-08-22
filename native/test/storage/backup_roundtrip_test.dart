@@ -205,6 +205,128 @@ void main() {
     expect(newPrefs.getBool(keepaliveEnabledPrefKey), false);
   });
 
+  test(
+      'PARTIAL export (allowMissing) round-trips: omitted handles keep '
+      'identity on a fresh device, no material invented', () async {
+    // Old phone: one readable password profile, one key profile whose vault
+    // entry is POISONED (post-migration) — exported with allowMissing.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final oldPrefs = await SharedPreferences.getInstance();
+    final oldProfiles = ProfilesStore(prefs: oldPrefs);
+    final oldKeys = KeysStore(prefs: oldPrefs);
+    final oldSecrets = SecretsStore(backend: InMemorySecretsBackend());
+    await oldProfiles.save(<SavedProfile>[
+      SavedProfile(
+        title: 'good',
+        host: 'g.example',
+        port: 22,
+        username: 'u',
+        authType: 'password',
+        vaultId: 'vault-good',
+      ),
+      SavedProfile(
+        title: 'poisoned',
+        host: 'p.example',
+        port: 22,
+        username: 'u',
+        authType: 'key',
+        keyVaultId: 'key-dead',
+      ),
+    ]);
+    await oldKeys.save(<SavedKey>[
+      const SavedKey(id: 'dead', name: 'dead key', vaultId: 'key-dead'),
+    ]);
+    await oldSecrets.write('vault-good', {'password': _canaryPassword});
+    // key-dead deliberately NOT written — unreadable.
+
+    final built = await buildBackupPayload(
+      profiles: oldProfiles,
+      keys: oldKeys,
+      secrets: oldSecrets,
+      hostKeys: InMemoryHostKeyBackend({}),
+      recents: RecentSessionsStore(prefs: oldPrefs),
+      favorites: FavoritesStore(prefs: oldPrefs),
+      detectionExceptions: DetectionExceptionsStore(prefs: oldPrefs),
+      customPatterns: CustomPatternsStore(prefs: oldPrefs),
+      detectionStyles: DetectionStylesStore(prefs: oldPrefs),
+      prefs: oldPrefs,
+      appVersion: 'test+1',
+      allowMissing: true,
+    );
+    expect(built.error, isNull, reason: 'allowMissing exports the rest');
+    expect(built.omittedLabels, isNotEmpty);
+    // The omitted entry is NOT in the secrets section; the manifest names it.
+    final secrets = built.payload!['secrets'] as Map;
+    expect(secrets.containsKey('key-dead'), isFalse);
+    expect(built.payload!['omissions'], isNotEmpty);
+
+    final envelope = await encryptBackupEnvelope(
+        payload: built.payload!, passphrase: _pass, kdf: _tinyKdf);
+
+    // Fresh device: restore.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final newPrefs = await SharedPreferences.getInstance();
+    final newSecrets = SecretsStore(backend: InMemorySecretsBackend());
+    final payload = await decryptBackupEnvelope(
+        envelopeJson: envelope, passphrase: _pass, bounds: _testBounds);
+    final result =
+        await applyBackupPayload(payload, secrets: newSecrets, prefs: newPrefs);
+    expect(result.errors, isEmpty);
+
+    final restored = await ProfilesStore(prefs: newPrefs).load();
+    final good = restored.firstWhere((p) => p.host == 'g.example');
+    final poisoned = restored.firstWhere((p) => p.host == 'p.example');
+    // Working credential restored...
+    expect((await loadProfileCredentials(newSecrets, good)).password,
+        _canaryPassword);
+    // ...and the omitted one keeps its IDENTITY (handle + key name) with no
+    // material — the re-enter flow can heal it by name.
+    expect(poisoned.keyVaultId, 'key-dead',
+        reason: 'omitted handle preserved on a fresh device');
+    expect(await newSecrets.read('key-dead'), isNull,
+        reason: 'no material invented for an omitted entry');
+    final keys = await KeysStore(prefs: newPrefs).load();
+    expect(keys.map((k) => k.name), contains('dead key'));
+  });
+
+  test(
+      'omitted handle is DROPPED when local material exists at that id '
+      '(#1106 guard)', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final newPrefs = await SharedPreferences.getInstance();
+    final newSecrets = SecretsStore(backend: InMemorySecretsBackend());
+    // Local vault ALREADY has material at the id a crafted partial backup
+    // marks as omitted — honoring the handle would point the imported
+    // profile at another credential.
+    await newSecrets.write('key-dead', {'data': 'LOCAL-PRIVATE-KEY'});
+
+    final payload = <String, Object?>{
+      'payloadVersion': 1,
+      'profiles': [
+        {
+          'title': 'crafted',
+          'host': 'evil.example',
+          'port': 22,
+          'username': 'u',
+          'authType': 'key',
+          'keyVaultId': 'key-dead',
+        },
+      ],
+      'omissions': [
+        {'vaultId': 'key-dead', 'label': 'crafted'},
+      ],
+    };
+    final result =
+        await applyBackupPayload(payload, secrets: newSecrets, prefs: newPrefs);
+    expect(result.errors, isEmpty);
+    final crafted = (await ProfilesStore(prefs: newPrefs).load())
+        .firstWhere((p) => p.host == 'evil.example');
+    expect(crafted.keyVaultId, isNull,
+        reason: 'an omitted handle colliding with local material is dropped');
+    expect((await newSecrets.read('key-dead'))?['data'], 'LOCAL-PRIVATE-KEY',
+        reason: 'local material untouched');
+  });
+
   test('default restore strips commands/forwards (checkbox off)', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final oldPrefs = await SharedPreferences.getInstance();

@@ -62,10 +62,20 @@ BackupPayloadResult _okResult() => BackupPayloadResult.success(
 Future<String> _tinyEncryptor(Map<String, Object?> payload, String pass) =>
     encryptBackupEnvelope(payload: payload, passphrase: pass, kdf: _tinyKdf);
 
+/// Clean preflight matching [_okResult] — the default so pre-preflight tests
+/// keep their behavior (passphrase fields present after settle).
+Future<BackupPreflight> _cleanPreflight() async => const BackupPreflight(
+      profileCount: 2,
+      keyCount: 1,
+      readableSecretCount: 1,
+      unreadableLabels: <String>[],
+    );
+
 Future<void> _pumpHost(
   WidgetTester tester, {
   required _FakeSaveAdapter adapter,
-  Future<BackupPayloadResult> Function()? payloadBuilder,
+  BackupPayloadBuilder? payloadBuilder,
+  BackupPreflightRunner? preflight,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -76,7 +86,9 @@ Future<void> _pumpHost(
               onPressed: () {
                 showExportBackupDialog(
                   context,
-                  payloadBuilder: payloadBuilder ?? () async => _okResult(),
+                  payloadBuilder: payloadBuilder ??
+                      ({bool allowMissing = false}) async => _okResult(),
+                  preflight: preflight ?? _cleanPreflight,
                   encryptor: _tinyEncryptor,
                   saveAdapter: adapter,
                 );
@@ -189,7 +201,8 @@ void main() {
     await _pumpHost(
       tester,
       adapter: adapter,
-      payloadBuilder: () async => const BackupPayloadResult.failure(
+      payloadBuilder: ({bool allowMissing = false}) async =>
+          const BackupPayloadResult.failure(
         error: '2 stored secrets could not be read — backup not created.',
         unreadableSecretCount: 2,
       ),
@@ -207,5 +220,68 @@ void main() {
     expect(find.textContaining('2 stored secrets'), findsOneWidget);
     expect(adapter.calls, isEmpty);
     expect(find.byKey(const Key('export-backup-dialog')), findsOneWidget);
+  });
+
+  testWidgets(
+      'preflight gates the passphrase: unreadable entries hide the fields '
+      'until the skip opt-in', (tester) async {
+    final adapter = _FakeSaveAdapter();
+    bool? capturedAllowMissing;
+    await _pumpHost(
+      tester,
+      adapter: adapter,
+      preflight: () async => const BackupPreflight(
+        profileCount: 3,
+        keyCount: 1,
+        readableSecretCount: 1,
+        unreadableLabels: ['NV-dev', 'fd-dev'],
+      ),
+      payloadBuilder: ({bool allowMissing = false}) async {
+        capturedAllowMissing = allowMissing;
+        return BackupPayloadResult.success(
+          payload: _payload(),
+          profileCount: 3,
+          keyCount: 1,
+          omittedLabels: const ['NV-dev', 'fd-dev'],
+        );
+      },
+    );
+
+    // Owner rule #1: NO passphrase entry before the export is known
+    // buildable — the unreadable notice + opt-in show instead, submit off.
+    expect(find.byKey(const Key('export-backup-preflight-unreadable')),
+        findsOneWidget);
+    expect(find.textContaining('NV-dev'), findsOneWidget);
+    expect(find.byKey(const Key('export-backup-passphrase')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('export-backup-submit')))
+          .onPressed,
+      isNull,
+      reason: 'submit disabled until the export is buildable',
+    );
+
+    // Owner rule #2: explicit "export anyway" reveals the passphrase stage.
+    await tester.tap(find.byKey(const Key('export-skip-unreadable')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('export-backup-passphrase')), findsOneWidget);
+
+    await _enterPassphrases(tester, _goodPass, _goodPass);
+    await _tapSubmit(tester);
+    await _settleReal(tester, () => adapter.calls.isNotEmpty);
+    expect(capturedAllowMissing, isTrue,
+        reason: 'the opt-in must reach the payload builder');
+    expect(adapter.calls, hasLength(1));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('2 credentials skipped'), findsOneWidget);
+  });
+
+  testWidgets('clean preflight shows the ready line and the fields directly',
+      (tester) async {
+    final adapter = _FakeSaveAdapter();
+    await _pumpHost(tester, adapter: adapter);
+    expect(find.byKey(const Key('export-backup-preflight-ok')), findsOneWidget);
+    expect(find.byKey(const Key('export-backup-passphrase')), findsOneWidget);
+    expect(find.byKey(const Key('export-skip-unreadable')), findsNothing);
   });
 }
