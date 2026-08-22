@@ -1,4 +1,5 @@
-// "Import from PWA" dialog (#501, vault decrypt for #510, file picker for #529).
+// "Import backup" dialog (#501, vault decrypt for #510, file picker for #529,
+// v2 encrypted backups for #1125).
 //
 // Primary affordance: "Choose backup file…" → opens Android Storage Access
 // Framework via a custom MethodChannel (`mobissh/storage_picker`). The file's
@@ -13,9 +14,12 @@
 //
 // Two-stage flow:
 //   1. User picks file OR pastes JSON. Submit triggers a sync parse.
-//   2. If the parsed envelope carries `vault.encrypted`+`vault.meta`, an
-//      additional password field appears (same dialog). Submit then
-//      decrypts + persists.
+//   2a. v1 vault envelope (`vault.encrypted`+`vault.meta`) → master-password
+//       prompt; submit decrypts + persists (legacy path, unchanged).
+//   2b. v2 encrypted backup (#1125) → passphrase prompt + the default-OFF
+//       "restore auto-run commands and port forwards" checkbox; submit
+//       decrypts (Isolate.run — Argon2id is CPU-heavy) and applies via
+//       `applyBackupPayload`.
 //   3. Plain envelope (no vault) → single Submit path.
 //
 // On success: returns the [ImportResult] so the caller can show a snackbar.
@@ -23,13 +27,36 @@
 // in-dialog without closing, so the user can fix the input and retry.
 
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/profiles_providers.dart';
+import '../storage/backup.dart';
+import '../storage/backup_restore.dart';
 import '../storage/profiles_store.dart';
+
+/// Seam for the v2 envelope decrypt so widget tests can run it directly with
+/// permissive KDF bounds — the production default wraps the strict-bounds
+/// decrypt in [Isolate.run] (Argon2id at 19 MiB must not jank the UI thread).
+typedef BackupEnvelopeDecryptor = Future<Map<String, Object?>> Function(
+  String envelopeJson,
+  String passphrase,
+);
+
+Future<Map<String, Object?>> _isolateBackupDecrypt(
+  String envelopeJson,
+  String passphrase,
+) {
+  return Isolate.run(
+    () => decryptBackupEnvelope(
+      envelopeJson: envelopeJson,
+      passphrase: passphrase,
+    ),
+  );
+}
 
 /// Plain-data result of a file pick. Decoupled from the platform so the
 /// widget test can inject a fake without binding to MethodChannel.
@@ -86,10 +113,15 @@ class ImportProfilesDialog extends ConsumerStatefulWidget {
   const ImportProfilesDialog({
     super.key,
     this.pickerAdapter = const MethodChannelFilePickerAdapter(),
+    this.backupDecryptor = _isolateBackupDecrypt,
   });
 
   /// Adapter used to open the storage picker. Tests pass a fake.
   final FilePickerAdapter pickerAdapter;
+
+  /// v2 envelope decrypt seam (#1125). Tests pass a direct call with
+  /// permissive KDF bounds; production keeps the Isolate.run default.
+  final BackupEnvelopeDecryptor backupDecryptor;
 
   @override
   ConsumerState<ImportProfilesDialog> createState() =>
@@ -108,9 +140,17 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
   String? _pickedFileName;
   String? _pickedSummary;
 
-  // Stage 2: a parsed envelope carrying a vault. When non-null, the
+  // Stage 2 (v1): a parsed envelope carrying a vault. When non-null, the
   // password field is rendered and Submit applies with the password.
   ParsedImport? _pendingVault;
+
+  // Stage 2 (v2, #1125): a parsed encrypted-backup envelope. When non-null,
+  // the passphrase field + the restore-commands checkbox are rendered and
+  // Submit decrypts + applies the full backup.
+  ParsedImport? _pendingBackup;
+
+  // #1125: default-OFF opt-in for restoring initialCommand + port forwards.
+  bool _restoreCommands = false;
 
   @override
   void initState() {
@@ -187,6 +227,8 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
   /// detection as `parseImport` so a wrong file is spotted before submit.
   String _summarize(String text) {
     final parsed = ProfilesStore.parseImport(text);
+    // #1125: nothing about a v2 backup is readable pre-decrypt by design.
+    if (parsed.isEncryptedBackup) return 'Encrypted MobiSSH backup';
     if (parsed.profileEntries.isEmpty && parsed.errors.isNotEmpty) {
       return parsed.errors.first;
     }
@@ -203,6 +245,52 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
 
     final store = ref.read(profilesStoreProvider);
     final secrets = ref.read(secretsStoreProvider);
+
+    // Stage 2 (v2, #1125): decrypt the backup envelope with the passphrase,
+    // then stage+apply the whole payload. ONE generic error for wrong
+    // passphrase / tamper (no oracle).
+    if (_pendingBackup != null) {
+      final Map<String, Object?> payload;
+      try {
+        payload = await widget.backupDecryptor(
+          _pendingBackup!.envelopeJson!,
+          _passwordCtrl.text,
+        );
+      } on BackupException catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = e.message;
+        });
+        return;
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = kBackupGenericError;
+        });
+        return;
+      }
+      if (!mounted) return;
+      final result = await applyBackupPayload(
+        payload,
+        secrets: secrets,
+        restoreCommands: _restoreCommands,
+      );
+      if (!mounted) return;
+      if (result.added == 0 && result.updated == 0 && result.errors.isNotEmpty) {
+        setState(() {
+          _busy = false;
+          _error = result.errors.first;
+        });
+        return;
+      }
+      if (result.added > 0 || result.updated > 0) {
+        ref.invalidate(savedProfilesProvider);
+      }
+      Navigator.of(context).pop(result);
+      return;
+    }
 
     // Stage 2: already have a vault parse; this submit carries the password.
     if (_pendingVault != null) {
@@ -227,9 +315,17 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
       return;
     }
 
-    // Stage 1: parse the pasted/loaded JSON. If it carries a vault, switch
-    // the dialog into stage 2 (password prompt) without persisting anything.
+    // Stage 1: parse the pasted/loaded JSON. If it carries a vault or is a
+    // v2 encrypted backup, switch the dialog into stage 2 (password /
+    // passphrase prompt) without persisting anything.
     final parsed = ProfilesStore.parseImport(_jsonCtrl.text);
+    if (parsed.isEncryptedBackup) {
+      setState(() {
+        _busy = false;
+        _pendingBackup = parsed;
+      });
+      return;
+    }
     if (parsed.hasVault) {
       setState(() {
         _busy = false;
@@ -256,7 +352,7 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
 
   bool _canSubmit() {
     if (_busy) return false;
-    if (_pendingVault != null) {
+    if (_pendingVault != null || _pendingBackup != null) {
       return _passwordCtrl.text.isNotEmpty;
     }
     return _jsonCtrl.text.trim().isNotEmpty;
@@ -264,12 +360,13 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final inVaultStage = _pendingVault != null;
+    final inBackupStage = _pendingBackup != null;
+    final inVaultStage = _pendingVault != null || inBackupStage;
     return AlertDialog(
       key: const Key('import-profiles-dialog'),
-      title: Text(inVaultStage
-          ? 'Unlock encrypted vault'
-          : 'Import profiles'),
+      // #1125: one title for every stage/format — the dialog still accepts v1
+      // files, with no legacy-product wording.
+      title: const Text('Import backup'),
       content: SizedBox(
         width: 500,
         child: SingleChildScrollView(
@@ -320,10 +417,10 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
                   ],
                 ),
               ] else ...[
-                const Text(
-                  'This backup is encrypted — enter its password to restore '
-                  'the saved credentials.',
-                ),
+                Text(inBackupStage
+                    ? 'Encrypted MobiSSH backup — enter its passphrase.'
+                    : 'Legacy encrypted profile export — enter its master '
+                        'password.'),
                 const SizedBox(height: 12),
                 TextField(
                   key: const Key('import-profiles-password'),
@@ -334,11 +431,31 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
                   onSubmitted: (_) {
                     if (_canSubmit()) _submit();
                   },
-                  decoration: const InputDecoration(
-                    labelText: 'Master password',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText:
+                        inBackupStage ? 'Passphrase' : 'Master password',
+                    border: const OutlineInputBorder(),
                   ),
                 ),
+                if (inBackupStage) ...[
+                  const SizedBox(height: 4),
+                  // #1125: auto-run commands + port forwards are an execution
+                  // vector — restored only on explicit opt-in, default OFF.
+                  CheckboxListTile(
+                    key: const Key('import-restore-commands'),
+                    value: _restoreCommands,
+                    onChanged: _busy
+                        ? null
+                        : (v) =>
+                            setState(() => _restoreCommands = v ?? false),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Also restore auto-run commands and port forwards '
+                      '(only for backups you created)',
+                    ),
+                  ),
+                ],
               ],
               if (_error != null) ...[
                 const SizedBox(height: 8),
