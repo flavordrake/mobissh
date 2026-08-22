@@ -17,6 +17,13 @@ docs
 memory
 native
 native-dist
+# #1077: versioned build artifacts mirrored into public/ (8+ GB) must never
+# enter the build context — the live copies are served from the native-dist
+# bind mount, not the image. A full daemon disk killed the #1115 deploy.
+public/mobissh-native-*.apk
+public/mobissh-native.apk
+public/mobissh-native-macos*.zip
+public/*.aab
 playwright*.config.*
 browserstack.yml
 hooks

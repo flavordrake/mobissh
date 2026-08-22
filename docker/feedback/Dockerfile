@@ -5,8 +5,12 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# No npm dependencies — plain node:http. Copy only the two source pieces.
+# No npm dependencies — plain node:http. Copy only the shared source pieces.
 COPY server/feedback-store.js ./server/feedback-store.js
+# #1115: the shared fail-closed upload guard — required by server-feedback
+# since the security batch; its absence crash-looped the first post-#1115
+# rebuild (silent until deploy).
+COPY server/feedback-guard.js ./server/feedback-guard.js
 COPY server-feedback/index.js ./server-feedback/index.js
 COPY server-feedback/package.json ./server-feedback/package.json
 
