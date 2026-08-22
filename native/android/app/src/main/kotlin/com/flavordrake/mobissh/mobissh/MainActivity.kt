@@ -55,6 +55,14 @@ class MainActivity : FlutterActivity() {
     private val pickerChannel = "mobissh/storage_picker"
     private val pickerRequestCode = 0xC0DE
 
+    // ── SAF create-document save (#1124 — encrypted backup export). Mirrors
+    // the picker above with ACTION_CREATE_DOCUMENT: Dart hands us the file
+    // bytes (always CIPHERTEXT — the envelope JSON) + a suggested name, the
+    // user picks the destination, and we write the bytes to the returned URI.
+    private var pendingCreateResult: MethodChannel.Result? = null
+    private var pendingCreateBytes: ByteArray? = null
+    private val createRequestCode = 0xC0DF
+
     // ── Hardened clipboard write (#845). Flutter's `Clipboard.setData` builds a
     // `ClipData` with an EMPTY label, which doesn't reliably reach Gboard's
     // clipboard HISTORY. This channel writes a LABELED plain-text clip so the
@@ -311,12 +319,65 @@ class MainActivity : FlutterActivity() {
                         )
                     }
                 }
+                "createDocumentBytes" -> {
+                    if (pendingCreateResult != null) {
+                        result.error("ALREADY_OPEN", "create-document already in flight", null)
+                        return@setMethodCallHandler
+                    }
+                    val name = call.argument<String>("name")
+                    val bytes = call.argument<ByteArray>("bytes")
+                    if (name.isNullOrEmpty() || bytes == null) {
+                        result.error("BAD_ARGS", "name and bytes required", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingCreateResult = result
+                    pendingCreateBytes = bytes
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/octet-stream"
+                        putExtra(Intent.EXTRA_TITLE, name)
+                    }
+                    try {
+                        startActivityForResult(intent, createRequestCode)
+                    } catch (err: Throwable) {
+                        pendingCreateResult = null
+                        pendingCreateBytes = null
+                        result.error(
+                            "NO_PICKER",
+                            "Storage picker unavailable: ${err.message}",
+                            null,
+                        )
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == createRequestCode) {
+            val pending = pendingCreateResult
+            val bytes = pendingCreateBytes
+            pendingCreateResult = null
+            pendingCreateBytes = null
+            val uri: Uri? = data?.data
+            if (resultCode != Activity.RESULT_OK || uri == null || bytes == null) {
+                pending?.success(false) // user cancelled
+                return
+            }
+            try {
+                // "wt" truncates in case the user overwrote an existing file —
+                // otherwise a shorter envelope would leave stale trailing bytes.
+                val out = contentResolver.openOutputStream(uri, "wt")
+                    ?: throw IllegalStateException("could not open output stream")
+                out.use { it.write(bytes) }
+                pending?.success(true)
+            } catch (err: Throwable) {
+                Log.w(tag, "createDocumentBytes write failed", err)
+                pending?.error("WRITE_FAILED", err.message, uri.toString())
+            }
+            return
+        }
         if (requestCode == pickerRequestCode) {
             val pending = pendingPickerResult
             pendingPickerResult = null
