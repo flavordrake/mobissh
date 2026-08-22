@@ -37,6 +37,7 @@ import '../state/sessions.dart';
 import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
+import 'export_backup_dialog.dart';
 import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_editor.dart';
@@ -171,32 +172,35 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             ),
           ),
           const SizedBox(height: 4),
-          // #672: "New" + "Import" share ONE horizontal row (two Expanded
-          // buttons side by side) instead of being stacked on separate lines,
-          // reclaiming vertical space for the profile list. "New" opens the
-          // editor in create mode (the ad-hoc / new-connection entry now that
-          // the inline form is gone, #583). "Import" pulls profiles from the
-          // PWA — the "from PWA" suffix is an implementation detail, dropped
-          // from the label. Settings + Diagnostics live on the home bottom nav
-          // (#611 Part A), not here.
-          Row(
+          // #672: the actions share one compact strip instead of being
+          // stacked on separate lines, reclaiming vertical space for the
+          // profile list. #1124 adds "Export" (encrypted backup) as a third
+          // action and swaps the Row for a Wrap so all three stay tappable on
+          // narrow (320dp) phones — buttons flow to a second run instead of
+          // overflowing. "New" opens the editor in create mode (#583);
+          // "Import" pulls profiles from the PWA. Settings + Diagnostics live
+          // on the home bottom nav (#611 Part A), not here.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Expanded(
-                child: FilledButton.icon(
-                  key: const Key('new-connection'),
-                  onPressed: _busy ? null : _newConnection,
-                  icon: const Icon(Icons.add),
-                  label: Text(_busy ? 'Connecting…' : 'New connection'),
-                ),
+              FilledButton.icon(
+                key: const Key('new-connection'),
+                onPressed: _busy ? null : _newConnection,
+                icon: const Icon(Icons.add),
+                label: Text(_busy ? 'Connecting…' : 'New connection'),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  key: const Key('open-import-profiles-dialog'),
-                  onPressed: _openImportDialog,
-                  icon: const Icon(Icons.download_outlined),
-                  label: const Text('Import'),
-                ),
+              OutlinedButton.icon(
+                key: const Key('open-import-profiles-dialog'),
+                onPressed: _openImportDialog,
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Import'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('open-export-backup-dialog'),
+                onPressed: _openExportDialog,
+                icon: const Icon(Icons.upload_outlined),
+                label: const Text('Export'),
               ),
             ],
           ),
@@ -557,6 +561,13 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         ? 'Imported ${parts.join(', ')}'
         : 'No profiles imported.';
     showTopToast(context, msg);
+  }
+
+  /// "Export" affordance (#1124) → the encrypted-backup export dialog. The
+  /// dialog owns the whole flow (passphrase, gather, encrypt, SAF save) and
+  /// its own success toast.
+  Future<void> _openExportDialog() async {
+    await showExportBackupDialog(context);
   }
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {
