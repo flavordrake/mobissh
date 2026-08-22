@@ -265,6 +265,113 @@ void main() {
     expect(result.error, isNot(contains('CANARY')));
   });
 
+  test(
+      'OWNER REGRESSION: a profile that CONNECTS is never flagged — a stale '
+      'second slot is vestigial, stripped from export, not blocking',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final prefs = await SharedPreferences.getInstance();
+    final profiles = ProfilesStore(prefs: prefs);
+    final secrets = SecretsStore(backend: InMemorySecretsBackend());
+    await profiles.save(<SavedProfile>[
+      // NV-dev shape: key-auth, working re-entered key, STALE password slot.
+      SavedProfile(
+        title: 'NV-dev',
+        host: 'nv.example',
+        port: 22,
+        username: 'vscode',
+        authType: 'key',
+        keyVaultId: 'key-nv',
+        vaultId: 'profile-nv.example:22:vscode', // stale — no blob
+      ),
+      // Inverse shape: password-auth working, stale key slot.
+      SavedProfile(
+        title: 'fd-dev',
+        host: 'fd.example',
+        port: 22,
+        username: 'dev',
+        authType: 'password',
+        vaultId: 'vault-fd',
+        keyVaultId: 'key-stale-fd', // stale — no blob
+      ),
+    ]);
+    await secrets.write('key-nv', {'data': 'WORKING-PEM'});
+    await secrets.write('vault-fd', {'password': 'working-pw'});
+
+    // Preflight: CLEAN — both profiles connect, so nothing blocks.
+    final pf = await preflightBackup(
+        profiles: profiles,
+        keys: KeysStore(prefs: prefs),
+        secrets: secrets);
+    expect(pf.unreadableLabels, isEmpty,
+        reason: 'connectable profiles must never be flagged unexportable');
+
+    // Full export succeeds WITHOUT allowMissing.
+    final result = await buildBackupPayload(
+      profiles: profiles,
+      keys: KeysStore(prefs: prefs),
+      secrets: secrets,
+      hostKeys: InMemoryHostKeyBackend({}),
+      recents: RecentSessionsStore(prefs: prefs),
+      favorites: FavoritesStore(prefs: prefs),
+      detectionExceptions: DetectionExceptionsStore(prefs: prefs),
+      customPatterns: CustomPatternsStore(prefs: prefs),
+      detectionStyles: DetectionStylesStore(prefs: prefs),
+      prefs: prefs,
+      appVersion: 'test+1',
+    );
+    expect(result.error, isNull);
+    final payload = result.payload!;
+    // Working material exported; stale slots stripped from the entries.
+    final secretsOut = payload['secrets'] as Map;
+    expect(secretsOut.keys.toSet(), {'key-nv', 'vault-fd'});
+    final exportedProfiles = (payload['profiles'] as List).cast<Map>();
+    final nv = exportedProfiles.firstWhere((p) => p['host'] == 'nv.example');
+    final fd = exportedProfiles.firstWhere((p) => p['host'] == 'fd.example');
+    expect(nv['keyVaultId'], 'key-nv');
+    expect(nv.containsKey('vaultId'), isFalse,
+        reason: 'stale password slot stripped');
+    expect(fd['vaultId'], 'vault-fd');
+    expect(fd.containsKey('keyVaultId'), isFalse,
+        reason: 'stale key slot stripped');
+  });
+
+  test('dead library key: metadata-only export with omission, never blocks',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final prefs = await SharedPreferences.getInstance();
+    final keys = KeysStore(prefs: prefs);
+    await keys.save(<SavedKey>[
+      const SavedKey(id: 'ghost', name: 'old laptop', vaultId: 'key-ghost'),
+    ]);
+    final secrets = SecretsStore(backend: InMemorySecretsBackend());
+
+    final pf = await preflightBackup(
+        profiles: ProfilesStore(prefs: prefs), keys: keys, secrets: secrets);
+    expect(pf.unreadableLabels, isEmpty,
+        reason: 'nothing readable to lose — a dead key must not gate export');
+
+    final result = await buildBackupPayload(
+      profiles: ProfilesStore(prefs: prefs),
+      keys: keys,
+      secrets: secrets,
+      hostKeys: InMemoryHostKeyBackend({}),
+      recents: RecentSessionsStore(prefs: prefs),
+      favorites: FavoritesStore(prefs: prefs),
+      detectionExceptions: DetectionExceptionsStore(prefs: prefs),
+      customPatterns: CustomPatternsStore(prefs: prefs),
+      detectionStyles: DetectionStylesStore(prefs: prefs),
+      prefs: prefs,
+      appVersion: 'test+1',
+    );
+    expect(result.error, isNull);
+    // Metadata travels; the omissions manifest records the missing material.
+    expect((result.payload!['keys'] as List), hasLength(1));
+    final omissions = (result.payload!['omissions'] as List).cast<Map>();
+    expect(omissions.single['vaultId'], 'key-ghost');
+    expect(omissions.single['label'], contains('old laptop'));
+  });
+
   test('abort with many culprits caps the named list (#1129)', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final prefs = await SharedPreferences.getInstance();

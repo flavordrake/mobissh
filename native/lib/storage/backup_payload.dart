@@ -127,46 +127,22 @@ Future<BackupPayloadResult> buildBackupPayload({
   final profileList = await profiles.load();
   final keyList = await keys.load();
 
-  // Referenced vault ids: exported profiles' vaultId/keyVaultId + every
-  // library key's vault id. Sorted for a deterministic payload.
-  final referenced = <String>{};
-  for (final p in profileList) {
-    final v = p.vaultId;
-    if (v != null && v.isNotEmpty) referenced.add(v);
-    final kv = p.keyVaultId;
-    if (kv != null && kv.isNotEmpty) referenced.add(kv);
-  }
-  for (final k in keyList) {
-    referenced.add(k.vaultId);
-  }
-
-  final secretsOut = <String, Object?>{};
-  final unreadableIds = <String>[];
-  for (final vaultId in referenced.toList()..sort()) {
-    final secret = await secrets.read(vaultId);
-    if (secret == null) {
-      // Absent OR undecryptable (#1118 maps both to null) — either way a
-      // profile/key points at material we cannot export. Collect and abort.
-      unreadableIds.add(vaultId);
-      continue;
-    }
-    secretsOut[vaultId] = secret;
-  }
-  final affected = _labelsFor(unreadableIds, profileList, keyList);
-  if (unreadableIds.isNotEmpty && !allowMissing) {
+  final cls = await _classifySecrets(profileList, keyList, secrets);
+  final secretsOut = <String, Object?>{...cls.readable};
+  if (cls.blockingIds.isNotEmpty && !allowMissing) {
     // Name the culprits (#1129): a bare count leaves the user hunting through
     // every profile for the poisoned entries. Labels are NON-secret (titles /
     // identities / key names).
-    final n = unreadableIds.length;
+    final n = cls.blockingIds.length;
     const cap = 6;
-    final shown = affected.take(cap).join('; ');
+    final shown = cls.blockingLabels.take(cap).join('; ');
     final more = n > cap ? '; …and ${n - cap} more' : '';
     return BackupPayloadResult.failure(
       error: '$n stored secret${n == 1 ? '' : 's'} could not be read — '
           'backup not created. Affected: $shown$more. Re-enter these '
           'credentials, then export again.',
       unreadableSecretCount: n,
-      affected: affected,
+      affected: cls.blockingLabels,
     );
   }
 
@@ -201,7 +177,16 @@ Future<BackupPayloadResult> buildBackupPayload({
     'payloadVersion': kBackupPayloadVersion,
     'createdAt': (now?.call() ?? DateTime.now().toUtc()).toIso8601String(),
     'appVersion': appVersion,
-    'profiles': profileList.map((p) => p.toJson()).toList(),
+    // Vestigial handles (a stale slot the profile's auth doesn't use — e.g.
+    // an old password vaultId on a now-key-auth profile) are STRIPPED from
+    // the export: connect ignores them locally, and carrying a dead
+    // reference into a restore would only resurrect confusion.
+    'profiles': profileList.map((p) {
+      final json = p.toJson();
+      if (cls.vestigialIds.contains(p.vaultId)) json.remove('vaultId');
+      if (cls.vestigialIds.contains(p.keyVaultId)) json.remove('keyVaultId');
+      return json;
+    }).toList(),
     'keys': keyList.map((k) => k.toJson()).toList(),
     'secrets': secretsOut,
     'hostKeys': hostKeyMap,
@@ -217,21 +202,24 @@ Future<BackupPayloadResult> buildBackupPayload({
       for (final e in styles.byPattern.entries) e.key: e.value.toJson(),
     },
     'settings': settingsOut,
-    // Partial-export manifest (inside the ciphertext): which referenced vault
-    // ids were unreadable and skipped, with their non-secret owner labels.
+    // Partial-export manifest (inside the ciphertext): unreadable ids whose
+    // absence MATTERS — connect-blocking profile credentials the user chose
+    // to skip, plus library keys whose material is gone (metadata-only).
     // The import side uses this to preserve credential IDENTITY (a profile
     // keeps its handle for the re-enter flow) without any material.
-    if (unreadableIds.isNotEmpty)
+    if (cls.blockingIds.isNotEmpty || cls.deadKeyIds.isNotEmpty)
       'omissions': [
-        for (var i = 0; i < unreadableIds.length; i++)
-          {'vaultId': unreadableIds[i], 'label': affected[i]},
+        for (var i = 0; i < cls.blockingIds.length; i++)
+          {'vaultId': cls.blockingIds[i], 'label': cls.blockingLabels[i]},
+        for (var i = 0; i < cls.deadKeyIds.length; i++)
+          {'vaultId': cls.deadKeyIds[i], 'label': cls.deadKeyLabels[i]},
       ],
   };
   return BackupPayloadResult.success(
     payload: payload,
     profileCount: profileList.length,
     keyCount: keyList.length,
-    omittedLabels: affected,
+    omittedLabels: cls.blockingLabels,
   );
 }
 
@@ -258,6 +246,110 @@ List<String> _labelsFor(
     out.add(owners.isEmpty ? vaultId : owners.join(', '));
   }
   return out;
+}
+
+/// Shared readability classification — mirrors CONNECT semantics (the
+/// connect form's auth-kind resolution + loadProfileCredentials' shape
+/// contract). Owner-reported bug: profiles that connected fine were flagged
+/// unexportable because a STALE second slot (e.g. an old password vaultId on
+/// a now-key-auth profile) read null. A profile is exportable when the slot
+/// its auth actually uses is readable:
+/// - blocking:  the profile could not connect either — genuinely unreadable.
+/// - vestigial: a dead slot connect ignores — stripped from the export.
+/// - dead key:  a library key with metadata but no material — exported as
+///   metadata + an omissions entry; never blocks (there is nothing readable
+///   to lose, and any profile that NEEDS it is caught as blocking).
+class _SecretClassification {
+  const _SecretClassification({
+    required this.readable,
+    required this.blockingIds,
+    required this.blockingLabels,
+    required this.vestigialIds,
+    required this.deadKeyIds,
+    required this.deadKeyLabels,
+  });
+  final Map<String, Map<String, Object?>> readable;
+  final List<String> blockingIds;
+  final List<String> blockingLabels;
+  final Set<String> vestigialIds;
+  final List<String> deadKeyIds;
+  final List<String> deadKeyLabels;
+}
+
+Future<_SecretClassification> _classifySecrets(
+  List<SavedProfile> profileList,
+  List<SavedKey> keyList,
+  SecretsStore secrets,
+) async {
+  final referenced = <String>{};
+  for (final p in profileList) {
+    final v = p.vaultId;
+    if (v != null && v.isNotEmpty) referenced.add(v);
+    final kv = p.keyVaultId;
+    if (kv != null && kv.isNotEmpty) referenced.add(kv);
+  }
+  for (final k in keyList) {
+    referenced.add(k.vaultId);
+  }
+  // Sorted read for a deterministic payload/section order.
+  final readable = <String, Map<String, Object?>>{};
+  for (final id in referenced.toList()..sort()) {
+    final v = await secrets.read(id);
+    if (v != null) readable[id] = v;
+  }
+
+  bool passwordUsable(String? id) =>
+      id != null && readable[id]?['password'] is String;
+  bool keyUsableAt(String? id) {
+    final e = id == null ? null : readable[id];
+    return e != null && (e['data'] is String || e['privateKey'] is String);
+  }
+
+  final blockingIds = <String>[];
+  final vestigial = <String>{};
+  for (final p in profileList) {
+    final v = (p.vaultId == null || p.vaultId!.isEmpty) ? null : p.vaultId;
+    final kv =
+        (p.keyVaultId == null || p.keyVaultId!.isEmpty) ? null : p.keyVaultId;
+    if (v == null && kv == null) continue; // no creds saved — nothing to check
+    // Mirrors _connectFromProfile: explicit authType wins; otherwise a key
+    // reference implies key auth.
+    final wantsKey =
+        p.authType == 'key' || (p.authType != 'password' && kv != null);
+    final usable = wantsKey
+        // Legacy vaultId entries may carry a privateKey (loadProfileCredentials
+        // pass 1) — accept either slot for key auth, like connect does.
+        ? (keyUsableAt(kv) || keyUsableAt(v))
+        : passwordUsable(v);
+    for (final id in [v, kv]) {
+      if (id == null || readable.containsKey(id)) continue;
+      if (usable) {
+        vestigial.add(id);
+      } else if (!blockingIds.contains(id)) {
+        blockingIds.add(id);
+      }
+    }
+  }
+  // A handle another profile genuinely NEEDS is blocking, never vestigial.
+  vestigial.removeWhere(blockingIds.contains);
+
+  final deadKeyIds = <String>[];
+  for (final k in keyList) {
+    if (!readable.containsKey(k.vaultId) &&
+        !blockingIds.contains(k.vaultId) &&
+        !deadKeyIds.contains(k.vaultId)) {
+      deadKeyIds.add(k.vaultId);
+    }
+  }
+
+  return _SecretClassification(
+    readable: readable,
+    blockingIds: blockingIds,
+    blockingLabels: _labelsFor(blockingIds, profileList, keyList),
+    vestigialIds: vestigial,
+    deadKeyIds: deadKeyIds,
+    deadKeyLabels: _labelsFor(deadKeyIds, const [], keyList),
+  );
 }
 
 /// Readability preflight for the export dialog (owner-directed: never ask for
@@ -288,30 +380,15 @@ Future<BackupPreflight> preflightBackup({
 }) async {
   final profileList = await profiles.load();
   final keyList = await keys.load();
-  final referenced = <String>{};
-  for (final p in profileList) {
-    final v = p.vaultId;
-    if (v != null && v.isNotEmpty) referenced.add(v);
-    final kv = p.keyVaultId;
-    if (kv != null && kv.isNotEmpty) referenced.add(kv);
-  }
-  for (final k in keyList) {
-    referenced.add(k.vaultId);
-  }
-  final unreadable = <String>[];
-  var readable = 0;
-  for (final vaultId in referenced.toList()..sort()) {
-    // Value discarded on the spot — classification only.
-    if (await secrets.read(vaultId) == null) {
-      unreadable.add(vaultId);
-    } else {
-      readable++;
-    }
-  }
+  // Same classification the export uses (connect-mirroring): only
+  // CONNECT-BLOCKING unreadables surface; vestigial slots and metadata-only
+  // library keys never gate the passphrase. Values are discarded with the
+  // classification — nothing retained while the dialog is open.
+  final cls = await _classifySecrets(profileList, keyList, secrets);
   return BackupPreflight(
     profileCount: profileList.length,
     keyCount: keyList.length,
-    readableSecretCount: readable,
-    unreadableLabels: _labelsFor(unreadable, profileList, keyList),
+    readableSecretCount: cls.readable.length,
+    unreadableLabels: cls.blockingLabels,
   );
 }
