@@ -199,7 +199,7 @@ void main() {
 
     // The import flow opened.
     expect(find.byKey(const Key('import-profiles-dialog')), findsOneWidget);
-    expect(find.text('Import profiles'), findsOneWidget);
+    expect(find.text('Import backup'), findsOneWidget);
 
     // Cancel to tear down the route cleanly.
     await tester.tap(find.byKey(const Key('import-profiles-cancel')));

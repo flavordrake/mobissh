@@ -18,6 +18,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../diagnostics/connect_trace.dart';
+import 'backup.dart';
 import 'secrets_store.dart';
 import 'vault.dart';
 
@@ -389,11 +390,34 @@ class ImportResult {
     this.updated = 0,
     this.skipped = 0,
     this.errors = const [],
+    this.keysImported = 0,
+    this.pinsAdded = 0,
+    this.pinsConflicting = 0,
+    this.settingsApplied = 0,
+    this.settingsSkipped = 0,
   });
   final int added;
   final int updated;
   final int skipped;
   final List<String> errors;
+
+  // #1125 encrypted-backup restore counts (additive — always 0 for the v1
+  // profile-import paths, so existing callers/tests are unaffected).
+
+  /// Library keys upserted or cloned from the backup.
+  final int keysImported;
+
+  /// Host-key pins added (add-absent-only).
+  final int pinsAdded;
+
+  /// Host-key pins that conflicted with a local pin and were KEPT local.
+  final int pinsConflicting;
+
+  /// Allowlisted settings applied.
+  final int settingsApplied;
+
+  /// Allowlisted settings skipped for an invalid value/type.
+  final int settingsSkipped;
 }
 
 /// Outcome of a sync envelope-shape scan. The UI uses this to decide whether
@@ -404,6 +428,8 @@ class ParsedImport {
     this.vaultEncryptedJson,
     this.vaultMetaJson,
     this.errors = const [],
+    this.isEncryptedBackup = false,
+    this.envelopeJson,
   });
 
   /// Raw profile maps as decoded from the envelope. Validation happens at
@@ -419,6 +445,16 @@ class ParsedImport {
   /// Parse-time errors (non-JSON, wrong shape). When non-empty and there are
   /// no profiles either, the UI surfaces these in an inline error.
   final List<String> errors;
+
+  /// True when the input is a v2 encrypted-backup envelope (#1125). The
+  /// caller prompts for the backup passphrase, decrypts [envelopeJson] via
+  /// `decryptBackupEnvelope`, and applies with `applyBackupPayload`
+  /// (backup_restore.dart) — NOT [ProfilesStore.applyParsedImport].
+  final bool isEncryptedBackup;
+
+  /// The raw envelope JSON when [isEncryptedBackup]; null otherwise. Carried
+  /// verbatim so decrypt-at-password-submit re-parses the exact bytes.
+  final String? envelopeJson;
 
   /// True when this envelope carries an encrypted vault — caller must prompt
   /// for the master password before [ProfilesStore.applyParsedImport].
@@ -486,6 +522,14 @@ class ProfilesStore {
   /// fields, or a non-empty `errors` list explaining why the input was
   /// unusable. Never throws on bad input — the UI relies on the errors list.
   static ParsedImport parseImport(String json) {
+    // #1125: cap BEFORE any JSON work — a hostile multi-MB file must not get
+    // to allocate a parse tree (mirrors decryptBackupEnvelope's own cap).
+    if (json.length > kBackupMaxEnvelopeBytes) {
+      return ParsedImport(
+        profileEntries: const [],
+        errors: ['File is too large to be a MobiSSH backup.'],
+      );
+    }
     final dynamic decoded;
     try {
       decoded = jsonDecode(json);
@@ -506,6 +550,29 @@ class ProfilesStore {
         errors: [
           'Wrong file shape — expected an export envelope or profile array.',
         ],
+      );
+    }
+
+    // #1125: v2 encrypted-backup envelope. Recognized by its `format` field —
+    // and then required to be the EXACT outer schema. An object that mixes v1
+    // markers (profiles/vault) with the v2 format field, adds extra fields, or
+    // drops one is rejected outright rather than guessed at.
+    if (decoded['format'] == kBackupFormat) {
+      const allowed = {'format', 'version', 'kdf', 'cipher', 'ciphertext'};
+      final keys = decoded.keys.whereType<String>().toSet();
+      final exact = keys.length == decoded.length &&
+          keys.length == allowed.length &&
+          keys.containsAll(allowed);
+      if (!exact || !looksLikeBackupEnvelope(Map<String, dynamic>.from(decoded))) {
+        return ParsedImport(
+          profileEntries: const [],
+          errors: ['Not a valid MobiSSH backup file.'],
+        );
+      }
+      return ParsedImport(
+        profileEntries: const [],
+        isEncryptedBackup: true,
+        envelopeJson: json,
       );
     }
 
