@@ -106,7 +106,7 @@ class ProfileList extends ConsumerWidget {
           profilesSection = const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
             child: Text(
-              'No saved profiles. Import from PWA to skip retyping.',
+              'No saved profiles yet. Create a connection, or import a backup.',
               key: Key('profile-list-empty'),
               style: TextStyle(color: Colors.grey),
             ),

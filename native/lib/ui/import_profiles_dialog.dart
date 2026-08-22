@@ -269,7 +269,7 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
       key: const Key('import-profiles-dialog'),
       title: Text(inVaultStage
           ? 'Unlock encrypted vault'
-          : 'Import profiles from PWA'),
+          : 'Import profiles'),
       content: SizedBox(
         width: 500,
         child: SingleChildScrollView(
@@ -321,8 +321,8 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
                 ),
               ] else ...[
                 const Text(
-                  'This backup is encrypted. Enter the master password you set '
-                  'in the PWA to decrypt the saved credentials.',
+                  'This backup is encrypted — enter its password to restore '
+                  'the saved credentials.',
                 ),
                 const SizedBox(height: 12),
                 TextField(
