@@ -23,6 +23,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../state/compose_sink_provider.dart';
 import '../state/ctrl_modifier_provider.dart';
 import '../state/input_mode_reset_provider.dart';
 import '../state/sessions.dart';
@@ -115,6 +116,7 @@ class KeybarKey {
     this.icon,
     this.iconSize = kKeybarIconSize,
     this.isModifier = false,
+    this.isCharacter = false,
   });
 
   final String id;
@@ -134,6 +136,52 @@ class KeybarKey {
   /// rather than emitting [sequence]. Modifier keys carry no literal byte; the
   /// transform is applied to the NEXT key. See [CtrlModifier] / [ctrlTransform].
   final bool isModifier;
+
+  /// This key types a PRINTABLE character (#1131). While the compose bar (IME
+  /// preview) is open, these insert into the compose buffer instead of going to
+  /// the terminal; everything else — nav keys, Esc, ^C/^Z/^B/^D, Tab — keeps
+  /// its terminal-bound behavior.
+  ///
+  /// Set EXPLICITLY, never inferred from [sequence]: Esc and the control keys
+  /// carry sequences too, and Tab's `\t` is a shell-completion trigger rather
+  /// than text the owner wants staged in the buffer.
+  final bool isCharacter;
+}
+
+/// Where a keybar key's bytes land (#1131).
+enum KeybarRoute {
+  /// Straight to the session terminal — the historical behaviour.
+  terminal,
+
+  /// Inserted at the caret in the compose bar's buffer (IME preview).
+  composeInsert,
+
+  /// Sends the staged compose text + Enter, like the bar's ⏎ action.
+  composeSubmit,
+}
+
+/// Decide where [key] goes. PURE so the routing contract is unit-testable —
+/// the keybar widget's tap path hangs the headless harness on Material ripple
+/// (same reason [ctrlTransform] is a free function; see keybar_test.dart).
+///
+/// Rules (owner-specified, #1131):
+/// - Compose bar closed ⇒ everything goes to the terminal (unchanged).
+/// - An ARMED Ctrl always means "control byte to the terminal" — the owner
+///   armed it deliberately, so it outranks compose routing.
+/// - Character keys ([KeybarKey.isCharacter]) insert into the buffer.
+/// - Enter submits the buffer ONLY when it holds text; with an empty buffer it
+///   stays a bare `\r` so a plain Enter never changes meaning.
+/// - Everything else — nav keys, Esc, ^C/^Z/^B/^D, Tab — stays terminal-bound.
+KeybarRoute resolveKeybarRoute({
+  required KeybarKey key,
+  required bool composeOpen,
+  required bool composeHasText,
+  required bool ctrlArmed,
+}) {
+  if (!composeOpen || ctrlArmed) return KeybarRoute.terminal;
+  if (key.isCharacter) return KeybarRoute.composeInsert;
+  if (key.id == 'keyEnter' && composeHasText) return KeybarRoute.composeSubmit;
+  return KeybarRoute.terminal;
 }
 
 /// Transform a keybar [sequence] as if Ctrl were held (#694), mirroring the
@@ -209,9 +257,9 @@ const List<KeybarKey> kDefaultKeybarKeys = [
   // (isModifier). The FIXED ^C/^Z/^B/^D quick combos stay grouped at the END.
   KeybarKey(id: 'keyCtrl', label: 'Ctrl', sequence: '', isModifier: true),
   KeybarKey(id: 'keyTab', label: '↹', sequence: '\t'),
-  KeybarKey(id: 'keySlash', label: '/', sequence: '/'),
-  KeybarKey(id: 'keyDash', label: '-', sequence: '-'),
-  KeybarKey(id: 'keyPipe', label: '|', sequence: '|'),
+  KeybarKey(id: 'keySlash', label: '/', sequence: '/', isCharacter: true),
+  KeybarKey(id: 'keyDash', label: '-', sequence: '-', isCharacter: true),
+  KeybarKey(id: 'keyPipe', label: '|', sequence: '|', isCharacter: true),
   // #823: the four arrows use SOLID/FILLED directional glyphs (Icons.arrow_*)
   // rather than the thin `keyboard_arrow_*` chevrons the owner found hard to
   // read and differentiate on-device. They render at the larger
@@ -444,6 +492,26 @@ class _KeybarState extends ConsumerState<Keybar> {
       return;
     }
 
+    // #1131: while the IME preview is up, CHARACTER keys belong in the compose
+    // buffer — sending them to the terminal split the owner's input across two
+    // destinations mid-compose. Nav/control keys stay terminal-bound.
+    final sink = ref.read(composeSinkProvider);
+    switch (resolveKeybarRoute(
+      key: k,
+      composeOpen: sink != null,
+      composeHasText: sink?.hasText() ?? false,
+      ctrlArmed: ref.read(ctrlModifierProvider),
+    )) {
+      case KeybarRoute.composeInsert:
+        sink!.insertText(k.sequence);
+        return;
+      case KeybarRoute.composeSubmit:
+        sink!.submit();
+        return;
+      case KeybarRoute.terminal:
+        break;
+    }
+
     // Apply the (possibly armed) one-shot Ctrl transform and send. `consume`
     // reads + clears the shared modifier (so the keybar highlight clears and the
     // terminal path won't also see it); the byte transform mirrors #694.
@@ -463,6 +531,21 @@ class _KeybarState extends ConsumerState<Keybar> {
   void _onRepeatTick(KeybarKey k) {
     final terminal = widget.activeEntry.terminal;
     final ctrl = ref.read(ctrlModifierProvider.notifier);
+    // #1131: same compose routing as the tap path — only nav keys are
+    // repeat-eligible today, but the two paths must never disagree about where
+    // a key's bytes land (#732 shares the send for exactly this reason).
+    final sink = ref.read(composeSinkProvider);
+    if (resolveKeybarRoute(
+          key: k,
+          composeOpen: sink != null,
+          composeHasText: sink?.hasText() ?? false,
+          ctrlArmed: ref.read(ctrlModifierProvider),
+        ) ==
+        KeybarRoute.composeInsert) {
+      sink!.insertText(k.sequence);
+      HapticFeedback.selectionClick();
+      return;
+    }
     final wasArmed = ctrl.consume();
     final bytes = wasArmed ? ctrlTransform(k.sequence) : k.sequence;
     if (bytes.isNotEmpty) terminal.textInput(bytes);

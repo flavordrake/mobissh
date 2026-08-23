@@ -34,6 +34,7 @@ import 'package:xterm/xterm.dart';
 
 import '../services/clipboard.dart';
 import '../state/compose_history_providers.dart';
+import '../state/compose_sink_provider.dart';
 import '../state/lifecycle_providers.dart';
 import '../util/terminal_copy_fixup.dart';
 
@@ -143,6 +144,19 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
     });
+    // #1131: publish the buffer handle so the keybar can route CHARACTER keys
+    // here instead of the terminal. Mount == visible, so a non-null sink IS
+    // "the IME preview is up". Deferred: we mount during the rebuild that
+    // toggled composeBarVisibleProvider.
+    final sinkNotifier = ref.read(composeSinkProvider.notifier);
+    Future.microtask(() {
+      if (!mounted) return;
+      sinkNotifier.state = ComposeSink(
+        insertText: _insertAtCaret,
+        submit: () => _send(trailing: '\r'),
+        hasText: () => _controller.text.isNotEmpty,
+      );
+    });
   }
 
   /// #633: re-focus the compose field across an app-swap. The OS drops soft-
@@ -212,6 +226,14 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     // IME toggle-off, programmatic close, and session switch alike). Done in
     // deactivate (not dispose) so `ref` is still usable.
     _captureBeforeClear();
+    // #1131: retract the buffer handle so the keybar goes back to sending
+    // every key to the terminal. Deferred for the same mid-rebuild reason as
+    // the registration; guarded so a REPLACING bar's sink is never clobbered.
+    final sinkNotifier = ref.read(composeSinkProvider.notifier);
+    final mine = sinkNotifier.state;
+    Future.microtask(() {
+      if (identical(sinkNotifier.state, mine)) sinkNotifier.state = null;
+    });
     super.deactivate();
   }
 
@@ -379,15 +401,23 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
     final pasted = data?.text;
     if (pasted == null || pasted.isEmpty) return;
     if (!mounted) return;
+    _insertAtCaret(pasted);
+  }
+
+  /// Insert [text] at the caret, replacing any selection, then park the caret
+  /// after it. Shared by the paste action and the keybar's character keys
+  /// (#1131) so both land mid-buffer identically.
+  void _insertAtCaret(String text) {
+    if (text.isEmpty) return;
     final value = _controller.value;
     final sel = value.selection;
     // Selection may be invalid (e.g. never focused); fall back to end-insert.
     final start = sel.isValid ? sel.start : value.text.length;
     final end = sel.isValid ? sel.end : value.text.length;
-    final newText = value.text.replaceRange(start, end, pasted);
+    final newText = value.text.replaceRange(start, end, text);
     _controller.value = TextEditingValue(
       text: newText,
-      selection: TextSelection.collapsed(offset: start + pasted.length),
+      selection: TextSelection.collapsed(offset: start + text.length),
     );
     _focusNode.requestFocus();
   }
