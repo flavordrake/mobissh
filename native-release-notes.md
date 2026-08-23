@@ -15,6 +15,7 @@ gen-apk-install-page.sh staleness check).
 - **If export refuses because credentials can't be read, it now names them** (e.g. "Affected: NV-dev; fd-dev") so you know exactly what to re-enter. (#1129)
 - **Export checks readability BEFORE asking for a passphrase** — open Export and it immediately tells you whether everything is exportable ("Ready: N profiles…") or names what isn't. No more typing a passphrase twice for nothing.
 - **Export anyway, minus the broken entries.** When some credentials can't be read, tick "Export anyway without these" — the backup includes everything else and records what was skipped, and after import those profiles keep their key names for easy re-entry.
+- **Port forwards survive backup import.** Persistent forwards restore automatically with the profile (they only activate when you connect); the opt-in checkbox now covers auto-run commands only. **Device-test:** re-import your backup and check the nv-dev forward is back.
 - **Profiles that connect are always exportable.** Export previously flagged profiles carrying a leftover stale credential slot (migration debris) even though they connected fine — it now checks exactly what connecting checks, and quietly drops the dead leftovers from the backup. **Device-test:** open Export — it should now say "Ready: …" and produce a complete backup with no skipping needed.
 
 ## v0.1.12-rc.3 (2026-08-21) — phone-migration credential recovery + security batch
