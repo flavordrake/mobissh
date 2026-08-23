@@ -160,8 +160,11 @@ Future<void> _restorePref(
 /// counts (keysImported/pins/settings) describe the restore; `errors` is
 /// non-empty (with zero writes) for a structurally unusable payload.
 ///
-/// [restoreCommands] gates initialCommand + port forwards — default OFF, the
-/// dialog's "Also restore auto-run commands and port forwards" checkbox.
+/// [restoreCommands] gates initialCommand ONLY — default OFF, the dialog's
+/// "Also restore auto-run commands" checkbox. Port forwards restore
+/// UNCONDITIONALLY (owner-directed): they are connection CONFIG that only
+/// arms when the user connects, not an auto-executing payload like
+/// initialCommand — and losing them broke the round trip in practice.
 Future<ImportResult> applyBackupPayload(
   Map<String, Object?> payload, {
   required SecretsStore secrets,
@@ -405,7 +408,8 @@ Future<ImportResult> applyBackupPayload(
         initialCommand:
             restoreCommands ? raw.initialCommand : prior.initialCommand,
         defaultPath: raw.defaultPath,
-        forwards: restoreCommands ? raw.forwards : prior.forwards,
+        // Forwards are config, import-wins like every other profile field.
+        forwards: raw.forwards,
       );
       updated++;
     } else {
@@ -423,7 +427,7 @@ Future<ImportResult> applyBackupPayload(
         keyVaultId: safeKeyVaultId,
         initialCommand: restoreCommands ? raw.initialCommand : null,
         defaultPath: raw.defaultPath,
-        forwards: restoreCommands ? raw.forwards : const [],
+        forwards: raw.forwards,
       );
       mergedProfiles.add(safe);
       byIdentity[safe.identityKey] = mergedProfiles.length - 1;

@@ -491,8 +491,10 @@ void main() {
     });
   });
 
-  group('initialCommand + forwards opt-in', () {
-    test('default OFF strips commands and forwards', () async {
+  group('initialCommand opt-in; forwards unconditional', () {
+    test(
+        'default OFF strips commands but port forwards ALWAYS restore '
+        '(owner: forwards are config, not an auto-run payload)', () async {
       final prefs = await _freshPrefs();
       final secrets = SecretsStore(backend: InMemorySecretsBackend());
       await applyBackupPayload(
@@ -503,7 +505,8 @@ void main() {
       final box = (await ProfilesStore(prefs: prefs).load())
           .firstWhere((p) => p.host == 'h.example');
       expect(box.initialCommand, isNull);
-      expect(box.forwards, isEmpty);
+      expect(box.forwards, hasLength(1),
+          reason: 'a persistent forward must survive export → import');
     });
 
     test('checkbox ON restores commands and forwards on upsert too', () async {

@@ -327,7 +327,7 @@ void main() {
         reason: 'local material untouched');
   });
 
-  test('default restore strips commands/forwards (checkbox off)', () async {
+  test('default restore strips commands but keeps forwards (checkbox off)', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final oldPrefs = await SharedPreferences.getInstance();
     final oldProfiles = ProfilesStore(prefs: oldPrefs);
@@ -377,7 +377,10 @@ void main() {
     final one = (await ProfilesStore(prefs: newPrefs).load()).single;
     expect(one.initialCommand, isNull,
         reason: 'auto-run commands need the explicit checkbox');
-    expect(one.forwards, isEmpty);
+    // Port forwards are connection CONFIG — they survive unconditionally
+    // (owner report: an nv-dev persistent forward was lost on round trip).
+    expect(one.forwards, hasLength(1));
+    expect(one.forwards.single.localPort, 9000);
     // The credential itself still restores.
     expect((await loadProfileCredentials(newSecrets, one)).password,
         _canaryPassword);

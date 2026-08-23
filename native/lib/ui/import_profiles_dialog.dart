@@ -17,7 +17,7 @@
 //   2a. v1 vault envelope (`vault.encrypted`+`vault.meta`) → master-password
 //       prompt; submit decrypts + persists (legacy path, unchanged).
 //   2b. v2 encrypted backup (#1125) → passphrase prompt + the default-OFF
-//       "restore auto-run commands and port forwards" checkbox; submit
+//       "restore auto-run commands" checkbox (forwards always restore); submit
 //       decrypts (Isolate.run — Argon2id is CPU-heavy) and applies via
 //       `applyBackupPayload`.
 //   3. Plain envelope (no vault) → single Submit path.
@@ -150,7 +150,8 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
   // Submit decrypts + applies the full backup.
   ParsedImport? _pendingBackup;
 
-  // #1125: default-OFF opt-in for restoring initialCommand + port forwards.
+  // #1125: default-OFF opt-in for restoring initialCommand (auto-run).
+  // Port forwards restore unconditionally — see backup_restore.dart.
   bool _restoreCommands = false;
 
   @override
@@ -434,8 +435,10 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
                 ),
                 if (inBackupStage) ...[
                   const SizedBox(height: 4),
-                  // #1125: auto-run commands + port forwards are an execution
-                  // vector — restored only on explicit opt-in, default OFF.
+                  // #1125: auto-run commands EXECUTE on connect — restored
+                  // only on explicit opt-in, default OFF. Port forwards are
+                  // connection config and restore unconditionally
+                  // (owner-directed; they only arm when the user connects).
                   CheckboxListTile(
                     key: const Key('import-restore-commands'),
                     value: _restoreCommands,
@@ -446,7 +449,7 @@ class _ImportProfilesDialogState extends ConsumerState<ImportProfilesDialog> {
                     controlAffinity: ListTileControlAffinity.leading,
                     contentPadding: EdgeInsets.zero,
                     title: const Text(
-                      'Also restore auto-run commands and port forwards '
+                      'Also restore auto-run commands '
                       '(only for backups you created)',
                     ),
                   ),
