@@ -6,8 +6,10 @@
 // [FakeSftpSession] and never touch a socket.
 //
 // Scope: list a directory + download one file (chunked) + WHOLE-FILE upload
-// (#892, the foundation for file editing). mkdir, rename, delete, and chunked
-// upload remain deliberately absent — add them here when those land.
+// (#892, the foundation for file editing) + chunked/resumable upload (#960) +
+// streaming download (#976) + CREATE A DIRECTORY (#1133). rename and delete
+// remain deliberately absent — add them HERE when they land, so the write seam
+// stays in one place rather than growing a second path.
 
 import 'dart:async';
 import 'dart:io';
@@ -88,6 +90,29 @@ String friendlySftpListError(Object error, String path) {
   return "Couldn't open $path";
 }
 
+/// Map a raw SFTP mkdir error to a user-facing line (#1133). The SERVER is the
+/// authority on whether a create is legal (a stale listing must never veto a
+/// legitimate one), so its own words are what the user sees: [SftpStatusError]
+/// carries the server's `message`, and the two the owner actually hits get a
+/// path-qualified phrasing. Anything else falls back to the raw message, then
+/// to a generic line — never a bare bool.
+String friendlySftpMkdirError(Object error, String path) {
+  if (error is SftpStatusError) {
+    // 3 = SSH_FX_PERMISSION_DENIED, 11 = SSH_FX_FILE_ALREADY_EXISTS.
+    switch (error.code) {
+      case 3:
+        return 'Permission denied: $path';
+      case 11:
+        return 'Already exists: $path';
+    }
+    if (error.message.isNotEmpty) return '${error.message}: $path';
+  }
+  if (error is TimeoutException) {
+    return "SFTP didn't respond — the connection may be busy. Try again.";
+  }
+  return "Couldn't create $path";
+}
+
 /// Abstraction the [SessionHost] talks to. One per live SSH session, opened
 /// lazily on the first SFTP command and reused for subsequent ones.
 abstract class SftpSession {
@@ -142,6 +167,12 @@ abstract class SftpSession {
     required void Function(int done, int total) onProgress,
     int chunkSize,
   });
+
+  /// CREATE the directory at [path] (#1133). Reuses the same `~`/relative
+  /// resolution as every other op. Deliberately does NOT pre-check existence:
+  /// the server is the authority, and its failure (permission denied / already
+  /// exists) propagates to the caller for the UI to surface.
+  Future<void> mkdir(String path);
 
   /// Release the underlying SFTP channel.
   Future<void> close();
@@ -344,6 +375,11 @@ class DartSshSftpSession implements SftpSession {
       await sink.close();
     }
     return done;
+  }
+
+  @override
+  Future<void> mkdir(String path) async {
+    await _client.mkdir(await _resolve(path));
   }
 
   @override

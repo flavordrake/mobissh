@@ -424,6 +424,21 @@ class SshSessionProxy {
     );
   }
 
+  /// Create the remote directory at [path] over SFTP (#1133). [path] must be
+  /// ABSOLUTE — join the parent directory and the typed name with
+  /// `joinRemotePath` rather than concatenating strings. The terminal
+  /// [SftpMkdirDoneEvent] (or an [SftpErrorEvent] carrying the server's own
+  /// message) arrives on [sftpEvents] keyed by [requestId].
+  void sftpMkdir({required String requestId, required String path}) {
+    gateway.send(
+      SftpMkdirCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        path: path,
+      ).toJson(),
+    );
+  }
+
   /// Probe whether a remote path exists over SFTP (#990). The
   /// [SftpStatResultEvent] arrives on [sftpEvents] keyed by [requestId] —
   /// ALWAYS a result (errors collapse to `exists=false`, fail-open). Used by
@@ -624,8 +639,9 @@ class SshSessionProxy {
       case SftpUploadDoneEvent():
       case SftpUploadProgressEvent():
       case SftpStatResultEvent():
+      case SftpMkdirDoneEvent():
       case SftpErrorEvent():
-        // SFTP results (#559/#892/#960) — forward to the file browser / writer
+        // SFTP results (#559/#892/#960/#1133) — forward to the file browser / writer
         // seam, which match by request id. They never touch the SSH lifecycle.
         if (!_sftpCtrl.isClosed) _sftpCtrl.add(event);
     }

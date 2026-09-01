@@ -98,6 +98,11 @@ class _DlSftp implements SftpSession {
     return 0;
   }
 
+  // #1133 widened the SftpSession seam with mkdir; this fake doesn't
+  // exercise directory creation.
+  @override
+  Future<void> mkdir(String path) async {}
+
   @override
   Future<void> close() async {}
 }

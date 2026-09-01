@@ -39,6 +39,8 @@ class FakeSftpSession implements SftpSession {
     this.throwOnList = false,
     this.throwOnDownload = false,
     this.throwOnUpload = false,
+    this.throwOnMkdir = false,
+    this.mkdirError,
     this.listError,
   });
 
@@ -47,6 +49,12 @@ class FakeSftpSession implements SftpSession {
   final bool throwOnList;
   final bool throwOnDownload;
   final bool throwOnUpload;
+  final bool throwOnMkdir;
+
+  /// #1133: when set, [mkdir] throws THIS instead of the generic boom — used to
+  /// prove the server's own message (permission denied / already exists)
+  /// survives the isolate hop into the UI's error event.
+  final Object? mkdirError;
 
   /// When set, [list] throws this instead of the generic boom (#867: exercise
   /// the SftpStatusError → friendly-message mapping through the host).
@@ -77,6 +85,10 @@ class FakeSftpSession implements SftpSession {
   String? lastUploadLocalPath;
   String? lastUploadRemotePath;
   int uploadFileTotal = 0;
+
+  /// #1133: every directory the host asked us to create, in order — so a test
+  /// can assert EXACTLY one mkdir with the joined absolute path.
+  final List<String> createdDirs = [];
 
   @override
   Future<List<SftpEntry>> list(String path) async {
@@ -165,6 +177,13 @@ class FakeSftpSession implements SftpSession {
     onProgress(0, uploadFileTotal);
     onProgress(uploadFileTotal, uploadFileTotal);
     return uploadFileTotal;
+  }
+
+  @override
+  Future<void> mkdir(String path) async {
+    createdDirs.add(path);
+    if (mkdirError != null) throw mkdirError!;
+    if (throwOnMkdir) throw Exception('boom-mkdir');
   }
 
   @override
@@ -359,6 +378,89 @@ void main() {
     expect(done, isNotNull);
     expect(done!.requestId, 'sid-up#write0');
     expect(done!.totalBytes, payload.length);
+
+    await sub.cancel();
+  });
+
+  test('sftpMkdir creates the joined path then emits a done event (#1133)',
+      () async {
+    final fake = FakeSftpSession();
+    final ctx = await setUpConnected('sid-mk', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpMkdirDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpMkdirDoneEvent) done = e;
+    });
+
+    ctx.proxy.sftpMkdir(
+      requestId: 'sid-mk#mkdir0',
+      path: '/home/u/projects/new folder',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(fake.createdDirs, ['/home/u/projects/new folder']);
+    expect(done, isNotNull);
+    expect(done!.requestId, 'sid-mk#mkdir0');
+    expect(done!.path, '/home/u/projects/new folder');
+
+    await sub.cancel();
+  });
+
+  test('sftpMkdir failure carries the SERVER message, session survives (#1133)',
+      () async {
+    // The two errors the owner actually hits. The message must NOT collapse to
+    // a bool/generic string on its way across the isolate boundary.
+    final fake = FakeSftpSession(
+      mkdirError: SftpStatusError(3, 'Permission denied'),
+    );
+    final ctx = await setUpConnected('sid-mkerr', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpErrorEvent? err;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+    });
+
+    ctx.proxy.sftpMkdir(requestId: 'sid-mkerr#mkdir0', path: '/etc/nope');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(err, isNotNull);
+    expect(err!.requestId, 'sid-mkerr#mkdir0');
+    expect(err!.message, contains('Permission denied'));
+    expect(ctx.host.sessionIds, contains('sid-mkerr'));
+
+    await sub.cancel();
+  });
+
+  test('sftpMkdir on an unhosted session emits not-connected error (#1133)',
+      () async {
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+    final host = SessionHost(
+      gateway: pair.taskSide,
+      controllerFactory: _stubControllerFactory,
+      sftpOpener: (_) async => FakeSftpSession(),
+      snapshotInterval: const Duration(hours: 1),
+    );
+    addTearDown(host.dispose);
+    final proxy = SshSessionProxy(sessionId: 'ghost-mk', gateway: pair.uiSide);
+    addTearDown(proxy.dispose);
+
+    SftpErrorEvent? err;
+    final sub = proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+    });
+
+    proxy.sftpMkdir(requestId: 'ghost-mk#mkdir0', path: '/x/y');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(err, isNotNull);
+    expect(err!.message, contains('not connected'));
 
     await sub.cancel();
   });
