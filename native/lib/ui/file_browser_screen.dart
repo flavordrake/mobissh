@@ -9,8 +9,9 @@
 //   - `.pdf` tap interception (#557): see [_onFileTap]. A file ending in
 //     `.pdf` routes through [pdfTapInterceptor] when one is registered; today
 //     it falls through to download.
-//   - Upload / mkdir / rename / folder download (Slice 2): not here yet. Add
-//     actions to the AppBar + long-press menu and new proxy commands.
+//   - Rename / folder download (Slice 2): not here yet. Add actions to the
+//     AppBar + long-press menu and new proxy commands. Upload (#960) and CREATE
+//     FOLDER (#1133) have landed on that pattern.
 
 import 'dart:async';
 
@@ -21,6 +22,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/clipboard.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_download.dart';
+import '../ssh/sftp_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/favorites_providers.dart';
 import '../state/files_sort_providers.dart';
@@ -105,6 +107,23 @@ Future<({String path, String name})?> _defaultFileUploadPicker() async {
 final fileUploadPickerProvider = Provider<FileUploadPicker>(
   (ref) => _defaultFileUploadPicker,
 );
+
+/// Validate a typed new-folder name (#1133). Returns null when the (trimmed)
+/// name is usable, otherwise the reason it is not — shown inline in the dialog,
+/// where the user can act on it, rather than in a toast that vanishes.
+///
+/// Deliberately does NOT check the current listing for a name collision: the
+/// SERVER is the authority on whether a create is legal, and a stale listing
+/// must never block a legitimate one. "Already exists" comes back as the
+/// server's own error.
+String? validateNewFolderName(String raw) {
+  final name = raw.trim();
+  if (name.isEmpty) return 'Enter a folder name';
+  if (name == '.' || name == '..') return '"$name" is not a folder name';
+  if (name.contains('/')) return "A folder name can't contain '/'";
+  if (name.contains('\u0000')) return "A folder name can't contain NUL";
+  return null;
+}
 
 /// `.pdf` tap interceptor (#557). When non-null, tapping a PDF file invokes
 /// this instead of downloading. Receives the [sessionId] so it can resolve the
@@ -286,6 +305,18 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   int _uploadSent = 0;
   int _uploadTotal = 0;
 
+  /// In-flight mkdir request id (#1133), null when idle. One at a time — the
+  /// toolbar button disables while a create is outstanding.
+  String? _mkdirRequestId;
+  String? _mkdirName;
+
+  /// Path of the just-created folder (#1133). The matching row renders
+  /// `selected` and is scrolled into view once the refreshed listing lands, so
+  /// the result of the create is obvious in a long directory. Cleared on any
+  /// navigation away.
+  String? _highlightPath;
+  final GlobalKey _highlightKey = GlobalKey();
+
   bool _attached = false;
 
   @override
@@ -363,6 +394,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
           _history.add(from);
         }
       }
+      if (path != from) _highlightPath = null;
       _path = path;
       _loading = true;
       _error = null;
@@ -381,6 +413,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
           _loading = false;
           _error = null;
         });
+        _revealHighlighted();
       case SftpDownloadProgressEvent():
         if (event.requestId != _downloadRequestId) return;
         _onDownloadProgress(event);
@@ -398,11 +431,46 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         // Our upload (matched by id); the editor writer's uploads use other ids.
         if (event.requestId != _uploadRequestId) return;
         _onUploadDone();
+      case SftpMkdirDoneEvent():
+        if (event.requestId != _mkdirRequestId) return;
+        _onMkdirDone(event);
       case SftpErrorEvent():
         _onSftpError(event);
       default:
         break;
     }
+  }
+
+  /// #1133: the server created the folder. Refresh the listing (the server is
+  /// the only source of truth for what is there now) and mark the new folder so
+  /// the refreshed list selects + scrolls to it.
+  void _onMkdirDone(SftpMkdirDoneEvent event) {
+    final name = _mkdirName ?? 'folder';
+    setState(() {
+      _mkdirRequestId = null;
+      _mkdirName = null;
+      _highlightPath = event.path;
+    });
+    _snack('Created $name');
+    _list(_path);
+  }
+
+  /// Scroll the highlighted row (#1133) into view once it has been built. Best
+  /// effort: a row far off-screen in a `ListView.builder` has no context yet,
+  /// and the selection styling still marks it when the user scrolls there.
+  void _revealHighlighted() {
+    if (_highlightPath == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _highlightKey.currentContext;
+      if (ctx == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 200),
+          alignment: 0.3,
+        ),
+      );
+    });
   }
 
   void _onUploadDone() {
@@ -529,6 +597,17 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         _uploadTotal = 0;
       });
       _snack('Upload failed: ${event.message}');
+      return;
+    }
+    if (event.requestId == _mkdirRequestId) {
+      // The listing is left exactly as it was — nothing was created, so there
+      // is nothing to refresh, and re-listing would only hide the error.
+      if (!mounted) return;
+      setState(() {
+        _mkdirRequestId = null;
+        _mkdirName = null;
+      });
+      _snack(event.message);
     }
   }
 
@@ -559,6 +638,31 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       localPath: picked.path,
       remotePath: remotePath,
     );
+  }
+
+  /// Ask for a name, then create a folder under [parentPath] (#1133).
+  /// [parentPath] is the CURRENT directory for the toolbar button and for a
+  /// long-pressed file; it is the entry's own path when a DIRECTORY was
+  /// long-pressed. The absolute path is joined with [joinRemotePath] (never
+  /// string concat — the root would double its slash).
+  Future<void> _promptNewFolder(String parentPath) async {
+    if (_mkdirRequestId != null) {
+      _snack('A folder is already being created');
+      return;
+    }
+    final proxy = _proxy;
+    if (proxy == null) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => _NewFolderDialog(parentPath: parentPath),
+    );
+    if (name == null || !mounted) return;
+    final reqId = _nextRequestId();
+    setState(() {
+      _mkdirRequestId = reqId;
+      _mkdirName = name;
+    });
+    proxy.sftpMkdir(requestId: reqId, path: joinRemotePath(parentPath, name));
   }
 
   void _snack(String message) {
@@ -813,6 +917,23 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
                     unawaited(_showEntryDetails(entry));
                   },
                 ),
+                ListTile(
+                  key: const Key('file-context-new-folder'),
+                  leading: const Icon(Icons.create_new_folder_outlined),
+                  title: const Text('New folder'),
+                  // Where it lands is never ambiguous: a DIRECTORY creates
+                  // inside itself, a FILE creates in the directory being listed.
+                  subtitle: Text(
+                    entry.isDirectory ? 'Inside ${entry.path}' : 'In $_path',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    unawaited(
+                      _promptNewFolder(entry.isDirectory ? entry.path : _path),
+                    );
+                  },
+                ),
                 if (!entry.isDirectory)
                   ListTile(
                     key: const Key('file-context-download'),
@@ -1034,6 +1155,16 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
                 ),
               ],
             ),
+            // Create a folder in the current directory (#1133). Disabled
+            // while a create is in flight (one at a time). Monochrome glyph.
+            IconButton(
+              key: const Key('file-browser-new-folder'),
+              tooltip: 'New folder',
+              icon: const Icon(Icons.create_new_folder_outlined),
+              onPressed: _mkdirRequestId != null
+                  ? null
+                  : () => unawaited(_promptNewFolder(_path)),
+            ),
             // Upload a local file INTO the current directory (#960). Disabled
             // while an upload is in flight (one at a time). Monochrome glyph.
             IconButton(
@@ -1133,8 +1264,11 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       itemCount: entries.length,
       itemBuilder: (context, i) {
         final e = entries[i];
+        final highlighted = e.path == _highlightPath;
         return _EntryTile(
+          key: highlighted ? _highlightKey : null,
           entry: e,
+          highlighted: highlighted,
           onTap: () => _onEntryTap(e),
           // Long-press a file/folder entry opens the per-entry context menu
           // (#952) — copy path/name, details, download, add to favorites. This
@@ -1144,6 +1278,93 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
           onLongPress: () => _openEntryContextMenu(e),
         );
       },
+    );
+  }
+}
+
+/// Name-entry dialog for a new folder (#1133). Validation is inline and
+/// PERSISTENT (a toast the user must act on would vanish before they could):
+/// the reason a name was rejected sits under the field until it is fixed. The
+/// dialog pops the TRIMMED name; it never pops an invalid one, so the caller
+/// can send it straight to the server.
+class _NewFolderDialog extends StatefulWidget {
+  const _NewFolderDialog({required this.parentPath});
+
+  final String parentPath;
+
+  @override
+  State<_NewFolderDialog> createState() => _NewFolderDialogState();
+}
+
+class _NewFolderDialogState extends State<_NewFolderDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final raw = _controller.text;
+    final problem = validateNewFolderName(raw);
+    if (problem != null) {
+      setState(() => _error = problem);
+      return;
+    }
+    Navigator.of(context).pop(raw.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      key: const Key('new-folder-dialog'),
+      title: const Text('New folder'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'In ${widget.parentPath}',
+            key: const Key('new-folder-target'),
+            style: Theme.of(context).textTheme.bodySmall,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('new-folder-name-field'),
+            controller: _controller,
+            autofocus: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(labelText: 'Folder name'),
+            onSubmitted: (_) => _submit(),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _error!,
+                key: const Key('new-folder-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const Key('new-folder-cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          key: const Key('new-folder-create'),
+          onPressed: _submit,
+          child: const Text('Create'),
+        ),
+      ],
     );
   }
 }
@@ -1188,14 +1409,20 @@ class _PathBar extends StatelessWidget {
 
 class _EntryTile extends StatelessWidget {
   const _EntryTile({
+    super.key,
     required this.entry,
     required this.onTap,
     this.onLongPress,
+    this.highlighted = false,
   });
 
   final SftpEntry entry;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
+
+  /// The just-created folder (#1133) — rendered with the theme's selected-row
+  /// treatment (no ad-hoc colors) so the result of a create is obvious.
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
@@ -1209,6 +1436,7 @@ class _EntryTile extends StatelessWidget {
       title: Text(entry.name, overflow: TextOverflow.ellipsis),
       subtitle: subtitle == null ? null : Text(subtitle),
       trailing: entry.isDirectory ? const Icon(Icons.chevron_right) : null,
+      selected: highlighted,
       onTap: onTap,
       onLongPress: onLongPress,
     );

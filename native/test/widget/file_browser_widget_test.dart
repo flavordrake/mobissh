@@ -87,6 +87,11 @@ class _ScriptedSftpSession implements SftpSession {
     return total;
   }
 
+  // #1133 widened the SftpSession seam with mkdir; this fake doesn't
+  // exercise directory creation.
+  @override
+  Future<void> mkdir(String path) async {}
+
   @override
   Future<void> close() async {}
 }
@@ -418,6 +423,11 @@ class _ThrowingSftpSession implements SftpSession {
     onProgress(0, 0);
     return 0;
   }
+
+  // #1133 widened the SftpSession seam with mkdir; this fake doesn't
+  // exercise directory creation.
+  @override
+  Future<void> mkdir(String path) async {}
 
   @override
   Future<void> close() async {}

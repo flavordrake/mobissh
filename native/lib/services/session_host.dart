@@ -399,6 +399,8 @@ class SessionHost {
         _handleSftpUpload(cmd);
       case SftpUploadFileCommand():
         _handleSftpUploadFile(cmd);
+      case SftpMkdirCommand():
+        _handleSftpMkdir(cmd);
       case SftpStatCommand():
         _handleSftpStat(cmd);
       case SshControlCommand():
@@ -1875,6 +1877,38 @@ class SessionHost {
     } catch (e) {
       ctrace('task.host', 'sftp uploadFile FAILED remote=${cmd.remotePath} — $e');
       _emitSftpError(cmd.sessionId, cmd.requestId, 'Upload failed: $e');
+    }
+  }
+
+  /// #1133: create ONE remote directory. No pre-check — the server decides
+  /// whether the create is legal, and its own message (permission denied /
+  /// already exists) is what the UI shows, so the text must cross the isolate
+  /// intact rather than collapse into a generic failure.
+  Future<void> _handleSftpMkdir(SftpMkdirCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      await sftp.mkdir(cmd.path);
+      if (_disposed) return;
+      _gateway.send(
+        SftpMkdirDoneEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          path: cmd.path,
+        ).toJson(),
+      );
+    } catch (e) {
+      // Keep the raw error (incl. the SftpStatusError code) in the diagnostic
+      // log; the UI gets the friendly, server-worded line.
+      ctrace('task.host', 'sftp mkdir FAILED path=${cmd.path} — $e');
+      _emitSftpError(
+        cmd.sessionId,
+        cmd.requestId,
+        friendlySftpMkdirError(e, cmd.path),
+      );
     }
   }
 

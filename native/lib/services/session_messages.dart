@@ -83,6 +83,14 @@ enum SshTaskCommandKind {
   /// [SftpUploadProgressEvent]s + a terminal [SftpUploadDoneEvent].
   sftpUploadFile,
 
+  /// CREATE a remote directory (#1133). Carries the ABSOLUTE path to create
+  /// (the UI joins parent + name with `joinRemotePath`, never string concat).
+  /// The task calls `SftpSession.mkdir` and replies with a terminal
+  /// [SftpMkdirDoneEvent], or an [SftpErrorEvent] carrying the SERVER's own
+  /// message (permission denied / already exists) — the UI never pre-checks the
+  /// listing, so a stale listing can't veto a legitimate create.
+  sftpMkdir,
+
   /// Lightweight existence probe for ONE remote path (#990). The task stats
   /// the path over the session's SftpSession and replies with a
   /// [SftpStatResultEvent] (`exists` bool) — ALWAYS a result, never an error
@@ -194,6 +202,10 @@ enum SshTaskEventKind {
   /// download path sends across the isolate (the bytes stay task-side). The
   /// terminal completion reuses [sftpDownloadDone].
   sftpDownloadProgress,
+
+  /// A directory was created (#1133) — echoes the created path + request id so
+  /// the browser can refresh its listing and select the new folder.
+  sftpMkdirDone,
 
   /// The reply to an [SshTaskCommandKind.sftpStat] probe (#990): whether the
   /// path exists on the connected host. Errors collapse to `exists=false`
@@ -380,6 +392,12 @@ sealed class SshTaskCommand {
           requestId: json['requestId'] as String,
           localPath: json['localPath'] as String,
           remotePath: json['remotePath'] as String,
+        );
+      case SshTaskCommandKind.sftpMkdir:
+        return SftpMkdirCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
         );
       case SshTaskCommandKind.sftpStat:
         return SftpStatCommand(
@@ -573,6 +591,34 @@ class SftpUploadFileCommand extends SshTaskCommand {
     'requestId': requestId,
     'localPath': localPath,
     'remotePath': remotePath,
+  };
+}
+
+/// UI → task: CREATE the remote directory at [path] (#1133). [path] is already
+/// ABSOLUTE (the UI joins the parent directory with the typed name via
+/// `joinRemotePath`). The task replies with a terminal [SftpMkdirDoneEvent], or
+/// an [SftpErrorEvent] whose message is the SERVER's — permission denied and
+/// already-exists are the two the owner hits, and both must survive the isolate
+/// hop as text, not collapse to a bool.
+class SftpMkdirCommand extends SshTaskCommand {
+  const SftpMkdirCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpMkdir;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
   };
 }
 
@@ -1113,6 +1159,12 @@ sealed class SshTaskEvent {
           done: json['done'] as int,
           totalBytes: json['totalBytes'] as int,
         );
+      case SshTaskEventKind.sftpMkdirDone:
+        return SftpMkdirDoneEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+        );
       case SshTaskEventKind.sftpStatResult:
         return SftpStatResultEvent(
           sessionId: sessionId,
@@ -1650,6 +1702,32 @@ class SftpDownloadProgressEvent extends SshTaskEvent {
     'requestId': requestId,
     'done': done,
     'totalBytes': totalBytes,
+  };
+}
+
+/// Task → UI: the directory at [path] was created (#1133). Echoes the created
+/// path so the browser can refresh the listing and select the new folder without
+/// holding request state beyond the id. Failure arrives as an [SftpErrorEvent]
+/// instead, carrying the server's message.
+class SftpMkdirDoneEvent extends SshTaskEvent {
+  const SftpMkdirDoneEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpMkdirDone;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
   };
 }
 

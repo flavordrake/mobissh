@@ -68,6 +68,11 @@ class _ScriptedSftpSession implements SftpSession {
     return 0;
   }
 
+  // #1133 widened the SftpSession seam with mkdir; this fake doesn't
+  // exercise directory creation.
+  @override
+  Future<void> mkdir(String path) async {}
+
   @override
   Future<void> close() async {}
 }
@@ -236,6 +241,10 @@ void main() {
     await tester.longPress(find.byKey(const Key('file-entry-a.txt')));
     await _pump(tester);
 
+    // The sheet scrolls (#1133 added a "New folder" item, so the last entries
+    // sit below the modal's 9/16-height fold) — bring it into view first.
+    await tester.ensureVisible(find.byKey(const Key('file-context-favorite')));
+    await _pump(tester);
     await tester.tap(find.byKey(const Key('file-context-favorite')));
     await _pump(tester);
 
