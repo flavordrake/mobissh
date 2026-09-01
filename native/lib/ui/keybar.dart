@@ -466,6 +466,13 @@ class _KeybarState extends ConsumerState<Keybar> {
     final terminal = widget.activeEntry.terminal;
     final ctrl = ref.read(ctrlModifierProvider.notifier);
 
+    // Every keybar tap clicks (owner 2026-09-01: `-` gave no haptic). Fired
+    // BEFORE routing so it doesn't depend on where the bytes land — terminal,
+    // compose buffer (#1131), or nowhere (Ctrl arm, Reset). Same
+    // `selectionClick` as the #732 repeat ticks, the lightest device-validated
+    // one; the OutlinedButton's own tap feedback is sound-only on Android.
+    HapticFeedback.selectionClick();
+
     // The Ctrl modifier key itself: arm/cancel, no byte emitted. `toggle` mirrors
     // #694 (a second Ctrl tap cancels). Reading the provider drives the rebuild.
     if (k.isModifier) {
