@@ -387,8 +387,10 @@ class SessionHost {
       case SshReconnectCommand():
         // #817: user tapped Reconnect on a dropped session row. Force re-enter
         // the reconnect path from held params (no auth re-supply). No-op when
-        // the session isn't hosted (already forgotten) or isn't in a drop state.
-        _sessions[cmd.sessionId]?.controller.reconnectNow();
+        // the session isn't hosted (already forgotten). #1136: every sender is
+        // a user-intent revive (the no-stored-creds fallback of the session
+        // menu's force button included), so a LIVE session is re-attached too.
+        _sessions[cmd.sessionId]?.controller.forceReconnect();
       case SftpListCommand():
         _handleSftpList(cmd);
       case SftpDownloadCommand():
@@ -811,13 +813,35 @@ class SessionHost {
       // routes it to reconnectNow() for a live-but-dropped session or to a fresh
       // connect when the session was lost (e.g. the foreground isolate was torn
       // down on the last-session drop and rebuilt empty).
-      if (_isReconnectableDrop(existing.controller.data.state)) {
+      final state = existing.controller.data.state;
+      if (_isReconnectableDrop(state)) {
         ctrace(
           'task.host',
           'connect sid=${cmd.sessionId} on dropped session → reconnectNow()',
         );
         existing.controller.reconnectNow();
+      } else if (cmd.force && state == SshSessionState.connected) {
+        // #1136: the session menu's "Reconnect (force)" on a LIVE session. The
+        // dedup below used to swallow it (and reconnectNow() excludes
+        // `connected`), so the button did nothing — the owner's mode-resync
+        // attempt after a background auto-reconnect (#881) was a no-op. Apply
+        // the current control-mode bit first so the re-opened shell honours a
+        // toggle flipped since connect (#916 relies on this path too).
+        tmuxControlMode = cmd.controlMode;
+        ctrace(
+          'task.host',
+          'connect sid=${cmd.sessionId} FORCE on connected session '
+          '(controlMode=${cmd.controlMode}) → forceReconnect()',
+        );
+        existing.controller.forceReconnect();
       } else {
+        // Dedup contract: state sync only. Traced so a swallowed connect is
+        // visible in the connect log instead of silently doing nothing.
+        ctrace(
+          'task.host',
+          'connect sid=${cmd.sessionId} already hosted (${state.name}) '
+          '→ state sync only',
+        );
         _emitState(cmd.sessionId, existing.controller);
       }
       return;

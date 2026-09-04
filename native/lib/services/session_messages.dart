@@ -324,6 +324,7 @@ sealed class SshTaskCommand {
           authJson: Map<String, dynamic>.from(json['auth'] as Map),
           title: json['title'] as String?,
           controlMode: json['controlMode'] as bool? ?? false,
+          force: json['force'] as bool? ?? false,
         );
       case SshTaskCommandKind.disconnect:
         return SshDisconnectCommand(sessionId: sessionId);
@@ -658,11 +659,21 @@ class SshConnectCommand extends SshTaskCommand {
     required this.authJson,
     this.title,
     this.controlMode = false,
+    this.force = false,
   }) : super(sessionId);
 
   final String host;
   final int port;
   final String username;
+
+  /// User-forced re-attach of a session that is still CONNECTED (#1136). A
+  /// re-issued connect for an already-hosted session is a DEDUP by contract
+  /// (state sync only — the profile chooser and attention `addOrActivate`
+  /// paths depend on it), so the session menu's "Reconnect (force)" carries
+  /// an explicit bit: the host routes a forced connect on a live session to
+  /// `forceReconnect()` instead of the no-op. Defaults false; only the revive
+  /// path sets it.
+  final bool force;
 
   /// Auth payload, opaque to this module. The task-side router converts it
   /// back to `SshConnectParams.auth`. Keeping it as a map lets us evolve the
@@ -692,6 +703,7 @@ class SshConnectCommand extends SshTaskCommand {
     'auth': authJson,
     if (title != null) 'title': title,
     if (controlMode) 'controlMode': true,
+    if (force) 'force': true,
   };
 }
 

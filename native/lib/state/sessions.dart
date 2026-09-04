@@ -505,6 +505,10 @@ class SessionsNotifier extends Notifier<SessionsState> {
         entry.proxy.reconnect();
         return;
       }
+      // #1136: force — this is the user's Reconnect (or the #916 control-mode
+      // re-enter) and may target a session that is still CONNECTED; without
+      // the bit the host dedups the connect into a state sync and nothing
+      // happens.
       entry.proxy.connect(
         SshConnectParams(
           host: entry.host,
@@ -513,6 +517,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
           auth: auth,
         ),
         title: entry.title,
+        force: true,
       );
       // #1047: re-arm the profile's default port forwards. When the foreground
       // isolate was torn down (last-session drop) the fresh SessionHost has no

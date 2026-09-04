@@ -227,7 +227,16 @@ class SshSessionProxy {
   /// The `Future`-shaped return keeps the proxy drop-in compatible with
   /// `SshSessionController.connect`, so call sites that previously awaited
   /// the controller call continue to compile (#533).
-  Future<void> connect(SshConnectParams params, {String? title}) async {
+  ///
+  /// [force] (#1136): re-attach even if the hosted session is still CONNECTED.
+  /// Without it a connect for a live session is a dedup state-sync (the
+  /// contract the chooser / attention paths rely on); only the user-intent
+  /// revive path passes true.
+  Future<void> connect(
+    SshConnectParams params, {
+    String? title,
+    bool force = false,
+  }) async {
     gateway.send(
       SshConnectCommand(
         sessionId: sessionId,
@@ -240,6 +249,7 @@ class SshSessionProxy {
         // (separate) foreground-task isolate that opens the shell enters `tmux
         // -CC`. A per-isolate global set in the UI never reaches the task host.
         controlMode: tmuxControlMode,
+        force: force,
       ).toJson(),
     );
   }
@@ -253,8 +263,9 @@ class SshSessionProxy {
   /// host maps this to `SshSessionController.reconnectNow()`, which re-enters the
   /// reconnect path from its held params — so NO auth is re-supplied here (creds
   /// live task-side). State updates (`reconnecting` → `connected` / `failed`)
-  /// arrive asynchronously through [stream]. No-op for a healthy session
-  /// (handled controller-side).
+  /// arrive asynchronously through [stream]. On a healthy session the host
+  /// routes it to `forceReconnect()` (#1136) — every caller is a user-intent
+  /// revive, so a live session is torn down and re-attached.
   void reconnect() {
     if (_disposed) return;
     gateway.send(SshReconnectCommand(sessionId: sessionId).toJson());

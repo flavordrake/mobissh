@@ -502,11 +502,22 @@ class SshSessionController {
     // Wire close notification. `handleTransportClosed` classifies the cause
     // and either reconnects (transient socket error) or transitions to the
     // appropriate terminal state.
-    final closedClient = client;
+    _wireTransportClosed(client);
+  }
+
+  /// Route [client]'s `done` future into [handleTransportClosed] — but ONLY
+  /// while it is still the live client (#1136). A client this controller has
+  /// already detached (a user disconnect, [forceReconnect], the reconnect
+  /// timer's `_client = null`) resolves its `done` late; without the identity
+  /// check that stale close would be classified against the NEW connection's
+  /// state — e.g. `reconnecting` → a spurious `disconnected`.
+  void _wireTransportClosed(SSHClient client) {
     unawaited(
-      closedClient.done
-          .then((_) => handleTransportClosed(null))
-          .catchError((e) => handleTransportClosed(e)),
+      client.done.then((_) {
+        if (identical(_client, client)) handleTransportClosed(null);
+      }).catchError((Object e) {
+        if (identical(_client, client)) handleTransportClosed(e);
+      }),
     );
   }
 
@@ -695,6 +706,35 @@ class SshSessionController {
     _lastErrorUnreachable = false;
     clifecycle('task.ssh', 'reconnectNow: user-forced ${state.name} → reconnect');
     _scheduleReconnect(null);
+  }
+
+  /// User-forced reconnect that ALSO works on a LIVE session (#1136, the
+  /// session menu's "Reconnect (force)"). [reconnectNow] deliberately no-ops
+  /// on `connected` (it backs the dropped-row Reconnect), so a forced re-attach
+  /// — the owner's mode-resync escape hatch after a background auto-reconnect
+  /// left the local mouse-tracking state diverged from the remote (#881) — did
+  /// nothing. Here a connected session tears its client down and re-enters the
+  /// normal reconnect path (`reconnecting` → idle → [connect] from the held
+  /// params); the host's state listener drops + re-opens the shell and
+  /// forwards exactly as for a socket drop. Any other state delegates to
+  /// [reconnectNow].
+  void forceReconnect() {
+    if (_data.state != SshSessionState.connected) {
+      reconnectNow();
+      return;
+    }
+    if (_lastParams == null) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectAttempts = 0;
+    _lastErrorUnreachable = false;
+    clifecycle('task.ssh', 'forceReconnect: user-forced connected → reconnect');
+    // Emit `reconnecting` BEFORE the teardown so the transition is observed
+    // from `connected` (the host's drop-shell edge), then close the live
+    // transport. Its `done` resolves against a detached client, which the
+    // identity check in [_wireTransportClosed] ignores.
+    _scheduleReconnect(null);
+    _forceCloseTransport();
   }
 
   Future<void> _defaultLivenessProbe() async {
@@ -1010,9 +1050,14 @@ class SshSessionController {
   /// teardown ordering against the client's `done` future (whose handler,
   /// wired in [connect], must observe `disconnected` — not the pre-#986
   /// bit-set-but-still-connected window) without a real handshake.
+  ///
+  /// [wireDone] also routes the client's `done` through the production
+  /// [_wireTransportClosed] identity guard (#1136) — tests that mirror the
+  /// wiring by hand keep the pre-guard behaviour and leave it false.
   @visibleForTesting
-  void debugAttachClientForTest(SSHClient client) {
+  void debugAttachClientForTest(SSHClient client, {bool wireDone = false}) {
     _client = client;
+    if (wireDone) _wireTransportClosed(client);
   }
 
   /// Drive the host-key verification path directly, bypassing the real SSH

@@ -2141,8 +2141,12 @@ class _GhosttyPointerGestureRouterState
     double dy,
     int? col,
     int? row,
-    String? sgr,
-  ) {
+    String? sgr, {
+    // #881: the inactive overlay lets the pointer FALL THROUGH to flterm; a
+    // trace from that branch must say so, or the log reads as if the overlay
+    // handled a tap it only observed.
+    String handledBy = 'overlay',
+  }) {
     final size = _viewportSize;
     gevent(
       type: type,
@@ -2162,7 +2166,7 @@ class _GhosttyPointerGestureRouterState
       row: row,
       sgr: sgr,
       mouseTracking: widget.mouseTrackingLabel,
-      handledBy: 'overlay',
+      handledBy: handledBy,
     );
   }
 
@@ -2341,6 +2345,19 @@ class _GhosttyPointerGestureRouterState
             widget.onUrlTap(url);
             return;
           }
+          // #881: plain taps here were the ONLY untraced pointer path. A device
+          // report whose mouse tracking had silently diverged to `none` showed
+          // an empty gesture log next to flterm's cursor-key bursts — trace the
+          // passthrough so the next report proves which layer owned the tap.
+          _trace(
+            'tap-passthrough',
+            local.dx,
+            local.dy,
+            urlCol,
+            urlRow,
+            null,
+            handledBy: 'flterm',
+          );
           widget.onTap();
         },
         child: const SizedBox.expand(),
@@ -3217,6 +3234,10 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     if (controller == null) return;
     final next = controller.mouseTracking;
     if (next == _mouseTracking) return;
+    // #881: mode transitions are rare and decisive (they flip the gesture
+    // overlay on/off), so they belong in the DURABLE lifecycle ring — the
+    // connect ring churned them out of the device report that needed them.
+    clifecycle('ui.mouse', 'tracking ${_mouseTracking.name} → ${next.name}');
     if (mounted) setState(() => _mouseTracking = next);
   }
 
@@ -3237,7 +3258,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     controller.write(
       Uint8List.fromList(ghosttyInputModeResetSequence.codeUnits),
     );
-    ctrace(
+    // #881: durable ring, not the connect ring — the reset is the one line that
+    // explains a later `tracking X → none` transition in a device report.
+    clifecycle(
       'ui.modes1014',
       '$reason: input-mode reset (mouse was ${staleTracking.name})',
     );
