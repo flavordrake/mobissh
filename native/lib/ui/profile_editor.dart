@@ -349,6 +349,12 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         initialCommand: _emptyToNull(_initialCommandCtrl.text),
         // #891: optional file-browser starting dir. Trim; empty = SFTP home.
         defaultPath: _defaultPathCtrl.text.trim(),
+        // upsert() replaces the whole entry: carry the fields this editor does
+        // not own (set from the session menu / forwards sheet), or every Save
+        // silently wipes them (owner report 2026-09-04: forwards lost).
+        fontSize: widget.profile.fontSize,
+        fontFamily: widget.profile.fontFamily,
+        forwards: widget.profile.forwards,
       );
 
       await store.upsert(updated, previousIdentityKey: _originalIdentityKey);

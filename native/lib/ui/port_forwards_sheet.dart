@@ -99,6 +99,12 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
   Set<int>? _defaultPorts;
   bool _hasProfile = false;
 
+  /// Add form: also write the new forward to the saved profile so it arms on
+  /// every connect. Defaults ON (owner-directed, 2026-09-04): the per-row star
+  /// was an opt-in nobody found, so forwards "didn't persist". Only shown when
+  /// the session has a saved profile.
+  bool _saveToProfile = true;
+
   final _localPortCtrl = TextEditingController();
   final _remoteHostCtrl = TextEditingController(text: '127.0.0.1');
   final _remotePortCtrl = TextEditingController();
@@ -258,6 +264,39 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
     _remotePortEdited = false;
     _localPortCtrl.clear();
     _remotePortCtrl.clear();
+    if (_hasProfile && _saveToProfile) {
+      unawaited(_persistDefault(
+        ProfileForward(
+          localPort: localPort,
+          remoteHost: remoteHost,
+          remotePort: remotePort,
+        ),
+      ));
+    }
+  }
+
+  /// Write [added] into the profile's stored defaults. Merges by localPort (a
+  /// re-add of the same local port replaces the old target) and keeps every
+  /// other stored default — including ones not in the live table (e.g. a bind
+  /// that failed this session), which the star-toggle's live-table rebuild
+  /// would drop.
+  Future<void> _persistDefault(ProfileForward added) async {
+    final profiles = await widget.store.load();
+    final stored = <ProfileForward>[];
+    for (final p in profiles) {
+      if (p.identityKey == widget.entry.profileKey) {
+        stored.addAll(p.forwards);
+        break;
+      }
+    }
+    final list = <ProfileForward>[
+      for (final f in stored)
+        if (f.localPort != added.localPort) f,
+      added,
+    ];
+    await widget.store.setForwards(widget.entry.profileKey, list);
+    if (!mounted) return;
+    setState(() => _defaultPorts = list.map((f) => f.localPort).toSet());
   }
 
   @override
@@ -510,6 +549,17 @@ class _PortForwardsSheetState extends State<PortForwardsSheet> {
                   color: theme.colorScheme.error,
                 ),
               ),
+            ),
+          if (_hasProfile)
+            CheckboxListTile(
+              key: const Key('forward-save-default'),
+              value: _saveToProfile,
+              onChanged: (v) => setState(() => _saveToProfile = v ?? true),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('Save to profile'),
+              subtitle: const Text('arms on every connect'),
             ),
           const SizedBox(height: 8),
           FilledButton.icon(
