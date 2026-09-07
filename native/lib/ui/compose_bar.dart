@@ -379,9 +379,14 @@ class _ComposeBarState extends ConsumerState<ComposeBar> {
   /// #638: "Fix" pill — collapse terminal soft-wrap artifacts in the staged
   /// text into one clean line (PWA parity with `fixupTerminalCopy`). Used after
   /// pasting a long URL/command that the terminal hard-wrapped with newline +
-  /// indent. Keeps the caret at the end and keeps focus.
+  /// indent. Keeps the caret at the end and keeps focus. The terminal width
+  /// tells soft wraps from newlines the producer wrote (two pasted commands
+  /// must stay two commands — owner report 2026-09-07).
   void _fix() {
-    final cleaned = fixupTerminalCopy(_controller.text);
+    final cleaned = fixupTerminalCopy(
+      _controller.text,
+      cols: widget.terminal.viewWidth,
+    );
     if (cleaned == _controller.text) {
       _focusNode.requestFocus();
       return;
