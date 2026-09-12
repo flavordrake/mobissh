@@ -141,6 +141,13 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   late final TextEditingController _defaultPathCtrl;
   late final TextEditingController _colorCtrl;
 
+  /// Links section (#1140): the `mobissh://connect?name=` alias, the
+  /// per-profile auto-connect trust switch, and the inline alias error
+  /// (duplicate / malformed) surfaced by the last Save attempt.
+  late final TextEditingController _linkAliasCtrl;
+  late bool _linkAutoConnect;
+  String? _linkAliasError;
+
   /// Paste buffer for the "SSH config" tab.
   final _sshConfigCtrl = TextEditingController();
 
@@ -188,6 +195,8 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     _initialCommandCtrl = TextEditingController(text: p.initialCommand ?? '');
     _defaultPathCtrl = TextEditingController(text: p.defaultPath);
     _colorCtrl = TextEditingController(text: p.color ?? '');
+    _linkAliasCtrl = TextEditingController(text: p.linkAlias ?? '');
+    _linkAutoConnect = p.linkAutoConnect;
     // Seed the picker from the profile's stored theme key when it maps to a
     // known palette; otherwise fall back to the default palette's key.
     final known =
@@ -232,6 +241,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     _initialCommandCtrl.dispose();
     _defaultPathCtrl.dispose();
     _colorCtrl.dispose();
+    _linkAliasCtrl.dispose();
     _passwordCtrl.dispose();
     _keyCtrl.dispose();
     _passphraseCtrl.dispose();
@@ -270,9 +280,36 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
       return null;
     }
 
-    setState(() => _busy = true);
-
     final store = ref.read(profilesStoreProvider);
+    final newIdentity = '$host:$port:$username';
+
+    // #1140: validate the link alias BEFORE any vault write so a refused save
+    // leaves both stores untouched. Format per R5; uniqueness per R10 (the
+    // upsert re-checks — this is the inline-error path).
+    final linkAlias = _emptyToNull(_linkAliasCtrl.text);
+    if (linkAlias != null) {
+      if (!SavedProfile.linkAliasPattern.hasMatch(linkAlias)) {
+        setState(() => _linkAliasError = _linkAliasFormatError);
+        return null;
+      }
+      final holder = (await store.load()).where(
+        (p) =>
+            p.linkAlias == linkAlias &&
+            p.identityKey != _originalIdentityKey &&
+            p.identityKey != newIdentity,
+      );
+      if (holder.isNotEmpty) {
+        if (mounted) setState(() => _linkAliasError = _linkAliasTakenError);
+        return null;
+      }
+    }
+    if (!mounted) return null;
+
+    setState(() {
+      _busy = true;
+      _linkAliasError = null;
+    });
+
     final secrets = ref.read(secretsStoreProvider);
     final authType = _authKind == _AuthKind.password ? 'password' : 'key';
 
@@ -282,8 +319,6 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     // same secret rather than orphaning blobs).
     var vaultId = widget.profile.vaultId;
     var keyVaultId = widget.profile.keyVaultId;
-
-    final newIdentity = '$host:$port:$username';
 
     // Decide which credential fields the user actually entered. We NEVER log
     // the values — only whether each is present (length-free here; the connect
@@ -355,9 +390,21 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         fontSize: widget.profile.fontSize,
         fontFamily: widget.profile.fontFamily,
         forwards: widget.profile.forwards,
+        linkAlias: linkAlias,
+        // #1140 R13: auto-connect is trust in a DESTINATION, so an edit of
+        // host/port/username drops it regardless of the switch. Create mode
+        // has no prior identity to bind to — the switch value stands.
+        linkAutoConnect: _linkAutoConnect &&
+            (widget.isNew || newIdentity == _originalIdentityKey),
       );
 
-      await store.upsert(updated, previousIdentityKey: _originalIdentityKey);
+      try {
+        await store.upsert(updated, previousIdentityKey: _originalIdentityKey);
+      } on LinkAliasConflictException {
+        // Raced past the pre-check (another writer) — same inline error.
+        if (mounted) setState(() => _linkAliasError = _linkAliasTakenError);
+        return null;
+      }
       ctrace(
         'ui.editor',
         'saved profile $newIdentity authType=$authType '
@@ -630,6 +677,11 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
               // backing value (same key + controller) so the save path and
               // existing tests are unchanged — presets/picker just write it.
               _ColorSection(controller: _colorCtrl),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              // #1140: deep-link alias + auto-connect trust + copy-ready link.
+              ..._buildLinksSection(context),
             ],
           ),
         );
@@ -638,6 +690,97 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   /// Sentinel value for the "Paste a new key…" option in the key-source
   /// dropdown (a DropdownButton needs a non-null value per item).
   static const String _pasteKeySentinel = '__paste_new_key__';
+
+  /// Inline alias-field errors (#1140). The duplicate string is pinned by the
+  /// editor tests; the format one mirrors R5's grammar in plain words.
+  static const String _linkAliasTakenError =
+      'Alias already used by another profile';
+  static const String _linkAliasFormatError =
+      'Use 1–32 letters, digits, - or _';
+
+  /// The profile's own deep link (#1140): the alias form when an alias is
+  /// typed, else the identity form built from the current fields.
+  String _linkUrl() {
+    final alias = _linkAliasCtrl.text.trim();
+    if (alias.isNotEmpty) {
+      return 'mobissh://connect?name=${Uri.encodeQueryComponent(alias)}';
+    }
+    final host = Uri.encodeQueryComponent(_hostCtrl.text.trim());
+    final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
+    final user = Uri.encodeQueryComponent(_userCtrl.text.trim());
+    return 'mobissh://connect?host=$host&port=$port&user=$user';
+  }
+
+  Future<void> _copyLinkUrl() async {
+    await Clipboard.setData(ClipboardData(text: _linkUrl()));
+    if (!mounted) return;
+    showTopToast(context, 'Copied link');
+  }
+
+  /// The Links section on the Details tab (#1140): alias field, the
+  /// auto-connect trust switch (R12/R13), and the copy-ready link. The link
+  /// text tracks the alias and identity fields live, like the SSH-config
+  /// export block.
+  List<Widget> _buildLinksSection(BuildContext context) {
+    final theme = Theme.of(context);
+    return [
+      Text(
+        'Links',
+        key: const Key('profile-editor-links-section'),
+        style: theme.textTheme.titleMedium,
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        key: const Key('profile-editor-link-alias'),
+        controller: _linkAliasCtrl,
+        decoration: InputDecoration(
+          labelText: 'Link alias (optional)',
+          hintText: 'e.g. home-box',
+          helperText: 'Letters, digits, - and _ only; unique per profile',
+          errorText: _linkAliasError,
+        ),
+        autocorrect: false,
+        enableSuggestions: false,
+        onChanged: (_) {
+          if (_linkAliasError != null) setState(() => _linkAliasError = null);
+        },
+      ),
+      SwitchListTile(
+        key: const Key('profile-editor-link-auto-connect'),
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Always allow links to open this profile'),
+        subtitle: const Text(
+          'Resets when the host, port or username change',
+        ),
+        value: _linkAutoConnect,
+        onChanged: (v) => setState(() => _linkAutoConnect = v),
+      ),
+      ListenableBuilder(
+        listenable: Listenable.merge(
+          [_linkAliasCtrl, _hostCtrl, _portCtrl, _userCtrl],
+        ),
+        builder: (context, _) => Row(
+          children: [
+            Expanded(
+              child: SelectableText(
+                _linkUrl(),
+                key: const Key('profile-editor-link-url'),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            IconButton(
+              key: const Key('profile-editor-link-copy'),
+              icon: const Icon(Icons.copy, size: 18),
+              tooltip: 'Copy link',
+              onPressed: _copyLinkUrl,
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
 
   /// The key-auth fields: an optional "Key source" dropdown to reuse a stored
   /// key, an IdentityFile hint from an imported config, and either a

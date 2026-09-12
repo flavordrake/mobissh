@@ -185,6 +185,9 @@ Future<BackupPayloadResult> buildBackupPayload({
       final json = p.toJson();
       if (cls.vestigialIds.contains(p.vaultId)) json.remove('vaultId');
       if (cls.vestigialIds.contains(p.keyVaultId)) json.remove('keyVaultId');
+      // #1140 R13: linkAutoConnect is destination TRUST bound to this device's
+      // profile, not portable config — never exported (linkAlias travels).
+      json.remove('linkAutoConnect');
       return json;
     }).toList(),
     'keys': keyList.map((k) => k.toJson()).toList(),
