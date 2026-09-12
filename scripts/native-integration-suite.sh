@@ -65,7 +65,13 @@ needs_second_bridge() {
 }
 
 # Emulator guard — the #589 contract: an absent emulator must be LOUD, never a
-# silent pass.
+# silent pass. A LEASED fleet device (with-fleet-emulator.sh exports
+# EMU_ADBD_ENDPOINT + EMU_ENSURE=0) is only in `adb devices` after a connect —
+# native-connect-test.sh does that per test, but this guard runs first.
+if [[ -n "${EMU_ADBD_ENDPOINT:-}" && "${EMU_ENSURE:-1}" == "0" ]]; then
+  log "adb connect ${EMU_ADBD_ENDPOINT} (leased fleet emulator)"
+  adb connect "$EMU_ADBD_ENDPOINT" || true
+fi
 DEVICE="$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1; exit}' || true)"
 if [[ -z "$DEVICE" ]]; then
   if [[ "$ALLOW_NO_EMULATOR" -eq 1 ]]; then
