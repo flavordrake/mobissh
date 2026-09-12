@@ -31,6 +31,7 @@ import '../diagnostics/crash_reporter.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
+import '../state/link_providers.dart';
 import '../state/profiles_providers.dart';
 import '../state/recent_sessions.dart';
 import '../state/sessions.dart';
@@ -66,6 +67,28 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// any that are still armed (session never connected before the chooser
   /// unmounted), avoiding a leaked stream subscription.
   final List<StreamSubscription<SshSessionData>> _recentSaveSubs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    // #1141: a `mobissh://` link handed off while no chooser was mounted (a
+    // terminal was showing) is consumed on mount — see [_takePendingLink].
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _takePendingLink();
+    });
+  }
+
+  /// #1141 one-shot: a matched + authorised link profile connects through the
+  /// SAME `_connectFromProfile` path as a row tap (TOFU listener, missing-creds
+  /// → editor, pop-when-connected all reused). Cleared before connecting so a
+  /// second mounted chooser can't connect it twice.
+  void _takePendingLink() {
+    final profile = ref.read(pendingLinkConnectProvider);
+    if (profile == null) return;
+    ref.read(pendingLinkConnectProvider.notifier).state = null;
+    ctrace('ui.link', 'chooser: connecting linked profile');
+    unawaited(_connectFromProfile(profile));
+  }
 
   @override
   void dispose() {
@@ -146,6 +169,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // proxy. The chooser only handles the host-key prompt (above).
     });
 
+    // #1141: a link hand-off while this chooser is already mounted.
+    ref.listen<SavedProfile?>(pendingLinkConnectProvider, (_, next) {
+      if (next != null && mounted) _takePendingLink();
+    });
+    final linkRejected = ref.watch(linkRejectedProvider);
+
     // #643: the chooser FILLS the screen. The saved-profile list goes in an
     // `Expanded` so it takes all the vertical room above the actions (it
     // scrolls within that full height); the "New" + "Import" action row pins
@@ -160,6 +189,23 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // #1141 R26: one neutral, PERSISTENT notice for a rejected link (a
+          // toast would vanish before it could be read). Dismissed here or by
+          // the next accepted link.
+          if (linkRejected)
+            MaterialBanner(
+              key: const Key('link-rejected-banner'),
+              content: const Text('Link not recognized'),
+              leading: const Icon(Icons.link_off),
+              actions: [
+                TextButton(
+                  key: const Key('link-rejected-dismiss'),
+                  onPressed: () =>
+                      ref.read(linkRejectedProvider.notifier).state = false,
+                  child: const Text('Dismiss'),
+                ),
+              ],
+            ),
           // Saved profiles: tap a row = connect, pencil = edit. Empty-state
           // hint nudges Import when the user has none yet. Expanded so the list
           // uses the available height and scrolls internally (#643).

@@ -135,6 +135,7 @@ dependencies:
   # couldn't resolve). openFile() returns an XFile PATH that the task isolate
   # reads + streams chunk-by-chunk — large files never load into memory.
   file_selector: ^1.0.3
+  app_links: ^7.2.1
 
 dev_dependencies:
   flutter_test:

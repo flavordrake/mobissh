@@ -54,6 +54,15 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- #1117/#1141 (R28): mobissh:// deep links. Separate filter so
+                 the launcher filter stays untouched; singleTop above routes a
+                 warm link through onNewIntent (R19). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="mobissh"/>
+            </intent-filter>
         </activity>
         <!-- flutter_foreground_task service + receiver. WITHOUT this <service>
              element, FlutterForegroundTask.startService() fails with
