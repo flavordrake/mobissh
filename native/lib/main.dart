@@ -153,8 +153,12 @@ class _RootRouterState extends ConsumerState<RootRouter> {
   }
 
   /// #1141 (R18/R19): a `mobissh://` link. Consume a pending record first (a
-  /// process-death survivor), then the cold-start link, then subscribe to
-  /// warm deliveries. Delivery failures are logged, never fatal at boot.
+  /// process-death survivor), then subscribe to the link stream. There is
+  /// deliberately NO `getInitialLink()` call: app_links replays the cold-start
+  /// link on the stream's first listen (Android `initialLinkSent` guard, macOS
+  /// plugin alike), so reading it explicitly delivered every cold-start link
+  /// twice — double confirm dialog, double connect. The stream is the single
+  /// delivery path. Delivery failures are logged, never fatal at boot.
   StreamSubscription<String>? _linkSub;
 
   Future<void> _initLinks() async {
@@ -162,8 +166,6 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     final source = ref.read(linkIntentSourceProvider);
     try {
       await router.consumePending();
-      final initial = await source.initialLink();
-      if (initial != null && mounted) await router.deliver(initial);
       _linkSub = source.links.listen(
         (link) {
           if (mounted) unawaited(router.deliver(link));

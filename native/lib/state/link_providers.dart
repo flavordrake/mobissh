@@ -37,15 +37,16 @@ final pendingLinkConnectProvider = StateProvider<SavedProfile?>((_) => null);
 final linkRejectedProvider = StateProvider<bool>((_) => false);
 
 /// Delivery seam wrapping `app_links` so tests never touch the plugin.
+///
+/// Stream-only on purpose: `stringLinkStream` replays the cold-start link on
+/// first listen, so exposing `getInitialLink` here would let a caller deliver
+/// it twice. Cold and warm links both arrive through [links].
 abstract class LinkIntentSource {
-  Future<String?> initialLink();
   Stream<String> get links;
 }
 
 class AppLinksIntentSource implements LinkIntentSource {
   final AppLinks _links = AppLinks();
-  @override
-  Future<String?> initialLink() => _links.getInitialLinkString();
   @override
   Stream<String> get links => _links.stringLinkStream;
 }
