@@ -27,7 +27,11 @@ if [[ ! -s "$PROMPT_FILE" ]]; then
 fi
 
 echo "> codex review: model=$MODEL prompt=$PROMPT_FILE ($(wc -c < "$PROMPT_FILE") bytes)"
-if ! codex exec --model "$MODEL" --sandbox read-only -o "$OUT_FILE" "$(cat "$PROMPT_FILE")"; then
+# The prompt goes in on stdin (`-`), not as an argument: a single argv string is
+# capped at 128KB (MAX_ARG_STRLEN) and a prompt with sources inlined — required
+# here, since codex's bwrap sandbox cannot read the repo on this host — blew
+# past it with "Argument list too long".
+if ! codex exec --model "$MODEL" --sandbox read-only -o "$OUT_FILE" - < "$PROMPT_FILE"; then
   echo "! codex exec failed — NO REVIEW PERFORMED"
   exit 3
 fi
