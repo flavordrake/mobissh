@@ -94,6 +94,8 @@ class SavedProfile {
     this.initialCommand,
     this.defaultPath = '',
     this.forwards = const [],
+    this.linkAlias,
+    this.linkAutoConnect = false,
   });
 
   final String title;
@@ -154,9 +156,35 @@ class SavedProfile {
   /// schema migration, no key bump per .claude/rules code-style).
   final List<ProfileForward> forwards;
 
+  /// Per-profile deep-link alias (#1140, R5/R10): `mobissh://connect?name=X`
+  /// resolves through this field only — never the display title. Unique
+  /// across profiles ([ProfilesStore.upsert] refuses a duplicate, imports drop
+  /// a colliding one). Absent on legacy profiles; anything failing
+  /// [linkAliasPattern] reads back as null (no key bump).
+  final String? linkAlias;
+
+  /// Destination-trust bit (#1140, R12/R13): a `connect` link opens this
+  /// profile without the confirmation. Default false. Bound to the identity it
+  /// was granted for — the editor resets it on a host/port/user edit, a plain
+  /// import never installs it, and a backup restores it only through the
+  /// explicit auto-run opt-in (same posture as [initialCommand]).
+  final bool linkAutoConnect;
+
   /// Identity key for dedupe / lookup. Matches the PWA's behavior of treating
   /// (host:port:username) as the unique constraint.
   String get identityKey => '$host:$port:$username';
+
+  /// R5 alias grammar: `^[A-Za-z0-9_-]{1,32}$`.
+  static final RegExp linkAliasPattern = RegExp(r'^[A-Za-z0-9_-]{1,32}$');
+
+  /// Validate a raw stored link alias (#1140). Only a String matching
+  /// [linkAliasPattern] survives; anything else (absent, non-String, empty,
+  /// too long, bad characters) yields null — corrupt-resilience per
+  /// .claude/rules, and the schema migration for the absent-field case.
+  static String? _coerceLinkAlias(Object? raw) {
+    if (raw is String && linkAliasPattern.hasMatch(raw)) return raw;
+    return null;
+  }
 
   /// Clamp bounds for [fontSize], mirroring the PWA `FONT_SIZE` constant
   /// (`{ MIN: 8, MAX: 32 }` in src/modules/constants.ts) and the native
@@ -248,6 +276,9 @@ class SavedProfile {
     if (forwards.isNotEmpty) {
       out['forwards'] = forwards.map((f) => f.toJson()).toList();
     }
+    // #1140: omit null / false so legacy profiles stay byte-identical.
+    if (linkAlias != null) out['linkAlias'] = linkAlias;
+    if (linkAutoConnect) out['linkAutoConnect'] = true;
     return out;
   }
 
@@ -315,6 +346,10 @@ class SavedProfile {
 
     final String defaultPath = _coerceDefaultPath(json['defaultPath']);
     final List<ProfileForward> forwards = _coerceForwards(json['forwards']);
+    final String? linkAlias = _coerceLinkAlias(json['linkAlias']);
+    // Non-bool (e.g. "yes", 1) reads as false — a trust bit never widens
+    // through a lenient parse.
+    final bool linkAutoConnect = json['linkAutoConnect'] == true;
 
     return SavedProfile(
       title: title,
@@ -331,6 +366,8 @@ class SavedProfile {
       initialCommand: initialCommand,
       defaultPath: defaultPath,
       forwards: forwards,
+      linkAlias: linkAlias,
+      linkAutoConnect: linkAutoConnect,
     );
   }
 
@@ -343,6 +380,8 @@ class SavedProfile {
     String? theme,
     String? defaultPath,
     List<ProfileForward>? forwards,
+    String? linkAlias,
+    bool? linkAutoConnect,
   }) {
     return SavedProfile(
       title: title ?? this.title,
@@ -359,6 +398,8 @@ class SavedProfile {
       initialCommand: initialCommand,
       defaultPath: defaultPath ?? this.defaultPath,
       forwards: forwards ?? this.forwards,
+      linkAlias: linkAlias ?? this.linkAlias,
+      linkAutoConnect: linkAutoConnect ?? this.linkAutoConnect,
     );
   }
 
@@ -375,6 +416,56 @@ class SavedProfile {
 
   @override
   String toString() => 'SavedProfile($title, $username@$host:$port)';
+}
+
+/// Thrown by [ProfilesStore.upsert] when [alias] is already held by a
+/// DIFFERENT identity (#1140, R10). The store is left untouched.
+class LinkAliasConflictException implements Exception {
+  const LinkAliasConflictException({
+    required this.alias,
+    required this.heldByIdentityKey,
+  });
+
+  final String alias;
+  final String heldByIdentityKey;
+
+  @override
+  String toString() =>
+      'LinkAliasConflictException($alias held by $heldByIdentityKey)';
+}
+
+/// Alias-uniqueness bookkeeping for the two import paths (plain import and
+/// backup restore), R10: a colliding alias is DROPPED, the existing holder
+/// keeps it, and within one import the first entry wins.
+class LinkAliasRegistry {
+  LinkAliasRegistry(Iterable<SavedProfile> existing)
+      : _holder = <String, String>{
+          for (final p in existing)
+            if (p.linkAlias != null) p.linkAlias!: p.identityKey,
+        };
+
+  /// alias → identityKey currently holding it.
+  final Map<String, String> _holder;
+
+  /// Resolve the alias [identityKey] ends up with: [wanted] when present and
+  /// free (or already this identity's own); otherwise [fallback] — the
+  /// identity's prior alias (unique by construction), null for a new one. An
+  /// absent import alias keeps the prior one rather than wiping it: exports
+  /// without the field (PWA, older builds) must not break existing links.
+  /// Records the result so later entries of the same import see it as taken.
+  String? claim({
+    required String identityKey,
+    required String? wanted,
+    String? fallback,
+  }) {
+    final holder = wanted == null ? null : _holder[wanted];
+    final result = wanted != null && (holder == null || holder == identityKey)
+        ? wanted
+        : fallback;
+    if (fallback != null && result != fallback) _holder.remove(fallback);
+    if (result != null) _holder[result] = identityKey;
+    return result;
+  }
 }
 
 /// Result of an import operation. Mirrors the PWA's `ImportResult` shape so
@@ -677,6 +768,8 @@ class ProfilesStore {
     final byIdentity = <String, int>{
       for (var i = 0; i < existing.length; i++) existing[i].identityKey: i,
     };
+    // #1140 R10: link aliases stay unique — a colliding import alias is dropped.
+    final aliases = LinkAliasRegistry(existing);
     final errors = <String>[...parsed.errors];
     int added = 0;
     int updated = 0;
@@ -755,6 +848,13 @@ class ProfilesStore {
             initialCommand: prior.initialCommand,
             defaultPath: raw.defaultPath,
             forwards: prior.forwards,
+            linkAlias: aliases.claim(
+              identityKey: prior.identityKey,
+              wanted: raw.linkAlias,
+              fallback: prior.linkAlias,
+            ),
+            // #1140 R13: destination trust never arrives via import.
+            linkAutoConnect: prior.linkAutoConnect,
           );
           updated++;
           continue;
@@ -779,6 +879,11 @@ class ProfilesStore {
           initialCommand: null,
           defaultPath: raw.defaultPath,
           forwards: const [],
+          linkAlias: aliases.claim(
+            identityKey: raw.identityKey,
+            wanted: raw.linkAlias,
+          ),
+          linkAutoConnect: false,
         );
         existing.add(safe);
         byIdentity[safe.identityKey] = existing.length - 1;
@@ -850,12 +955,29 @@ class ProfilesStore {
   /// — this is the rename case where the editor changed host/port/username.
   /// Otherwise the matching identity is updated in place; a brand-new identity
   /// is appended. Mirrors the import upsert semantics (identity-keyed).
+  ///
+  /// Throws [LinkAliasConflictException] (nothing written) when
+  /// [SavedProfile.linkAlias] is held by an identity other than the one being
+  /// replaced (#1140, R10) — the editor surfaces it inline.
   Future<void> upsert(
     SavedProfile profile, {
     String? previousIdentityKey,
   }) async {
     final list = await load();
     final prevKey = previousIdentityKey ?? profile.identityKey;
+    final alias = profile.linkAlias;
+    if (alias != null) {
+      for (final p in list) {
+        if (p.linkAlias == alias &&
+            p.identityKey != prevKey &&
+            p.identityKey != profile.identityKey) {
+          throw LinkAliasConflictException(
+            alias: alias,
+            heldByIdentityKey: p.identityKey,
+          );
+        }
+      }
+    }
     final idx = list.indexWhere((p) => p.identityKey == prevKey);
     if (idx >= 0) {
       list[idx] = profile;

@@ -160,8 +160,9 @@ Future<void> _restorePref(
 /// counts (keysImported/pins/settings) describe the restore; `errors` is
 /// non-empty (with zero writes) for a structurally unusable payload.
 ///
-/// [restoreCommands] gates initialCommand ONLY — default OFF, the dialog's
-/// "Also restore auto-run commands" checkbox. Port forwards restore
+/// [restoreCommands] gates initialCommand and the `linkAutoConnect` trust bit
+/// (#1140 R13) ONLY — default OFF, the dialog's "Also restore auto-run
+/// commands" checkbox. Port forwards restore
 /// UNCONDITIONALLY (owner-directed): they are connection CONFIG that only
 /// arms when the user connects, not an auto-executing payload like
 /// initialCommand — and losing them broke the round trip in practice.
@@ -346,6 +347,9 @@ Future<ImportResult> applyBackupPayload(
     for (var i = 0; i < mergedProfiles.length; i++)
       mergedProfiles[i].identityKey: i,
   };
+  // #1140 R10: link aliases stay unique — a colliding restored alias is
+  // dropped, the local holder keeps it.
+  final aliases = LinkAliasRegistry(mergedProfiles);
   var added = 0;
   var updated = 0;
 
@@ -410,6 +414,15 @@ Future<ImportResult> applyBackupPayload(
         defaultPath: raw.defaultPath,
         // Forwards are config, import-wins like every other profile field.
         forwards: raw.forwards,
+        linkAlias: aliases.claim(
+          identityKey: prior.identityKey,
+          wanted: raw.linkAlias,
+          fallback: prior.linkAlias,
+        ),
+        // #1140 R13: the trust bit takes the initialCommand posture — only
+        // the explicit auto-run opt-in restores it.
+        linkAutoConnect:
+            restoreCommands ? raw.linkAutoConnect : prior.linkAutoConnect,
       );
       updated++;
     } else {
@@ -428,6 +441,11 @@ Future<ImportResult> applyBackupPayload(
         initialCommand: restoreCommands ? raw.initialCommand : null,
         defaultPath: raw.defaultPath,
         forwards: raw.forwards,
+        linkAlias: aliases.claim(
+          identityKey: raw.identityKey,
+          wanted: raw.linkAlias,
+        ),
+        linkAutoConnect: restoreCommands && raw.linkAutoConnect,
       );
       mergedProfiles.add(safe);
       byIdentity[safe.identityKey] = mergedProfiles.length - 1;
