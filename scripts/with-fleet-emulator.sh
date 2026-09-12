@@ -23,7 +23,9 @@
 #   EMU_LEASE_HOST     ssh target holding the lease (default emu@android-emulator.tailbe5094.ts.net)
 #   EMU_ADB_ENDPOINT   adb endpoint exported to the child (default android-emulator.tailbe5094.ts.net:5556)
 #   EMU_LEASE_WAIT     seconds to wait for a busy lease (default 900)
-#   EMU_LEASE_MAXHOLD  seconds before the lease auto-releases (default 3600)
+#   EMU_LEASE_MAXHOLD  seconds before the lease auto-releases (default 7200 — the
+#                      full 82-test suite runs ~80min; the lease is released the
+#                      moment the command exits, so a long hold costs nothing)
 #   EMU_REPO           repo path on the emulator LXC (default /opt/android-emulator)
 set -euo pipefail
 
@@ -34,7 +36,7 @@ mkdir -p "$MOBISSH_LOGDIR"
 EMU_LEASE_HOST="${EMU_LEASE_HOST:-emu@android-emulator.tailbe5094.ts.net}"
 EMU_ADB_ENDPOINT="${EMU_ADB_ENDPOINT:-android-emulator.tailbe5094.ts.net:5556}"
 EMU_LEASE_WAIT="${EMU_LEASE_WAIT:-900}"
-EMU_LEASE_MAXHOLD="${EMU_LEASE_MAXHOLD:-3600}"
+EMU_LEASE_MAXHOLD="${EMU_LEASE_MAXHOLD:-7200}"
 EMU_REPO="${EMU_REPO:-/opt/android-emulator}"
 LEASE="${EMU_LEASE:-/var/lib/android-emulator/lease}"
 
@@ -113,9 +115,17 @@ export EMU_ENSURE=0
 export ADB_MODE=connect
 export EMU_ADBD_ENDPOINT="$EMU_ADB_ENDPOINT"
 
+hold_start=$(date +%s)
 set +e
 "$@"
 rc=$?
 set -e
-log "command exited rc=${rc} — releasing lease"
+held=$(( $(date +%s) - hold_start ))
+# The remote `sleep MAXHOLD` is the hold: when it ends the flock drops and the
+# device idle-stops under a still-running command. Every test after that fails
+# "no online device" — device LOSS, not a regression (PR C suite, 2026-09-12).
+if (( held >= EMU_LEASE_MAXHOLD )); then
+  err "LEASE EXPIRED MID-RUN: command ran ${held}s >= EMU_LEASE_MAXHOLD=${EMU_LEASE_MAXHOLD}s — results after expiry are device loss, rerun with a longer EMU_LEASE_MAXHOLD"
+fi
+log "command exited rc=${rc} after ${held}s — releasing lease"
 exit "$rc"
