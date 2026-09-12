@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-fleet-emulator-gate-restore-003808/` — restoring the #589 integration gate after the emulator graduated to CT113 (on-demand flock lease), landing #976/#959 under a documented gate exception, and the failure-attribution lessons (#1101 still open). Prior arc: `.traces/trace-native-explorer-dx-detection-arc-201358/` (native file-explorer, settings reorg, DX, GUTTER pivot). Durable learnings in memory.
+> **Active TRACE**: `.traces/trace-deep-link-intents-1117-200922/` — `mobissh://` deep links (#1117) per `docs/deep-link-intents.md`: codex review folded in, PRs A–E as child issues, tmux verb approved, claude verb deferred. Prior arcs: `.traces/trace-fleet-emulator-gate-restore-003808/` (#589 gate restore, fleet emulator lease, failure attribution), `.traces/trace-native-explorer-dx-detection-arc-201358/`. Durable learnings in memory.
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
