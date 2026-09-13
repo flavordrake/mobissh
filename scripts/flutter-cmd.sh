@@ -14,6 +14,7 @@ export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/home/dev/.flutter-config}"
 export PATH="${FLUTTER_HOME}/bin:${PATH}"
 
 mkdir -p "$XDG_CONFIG_HOME"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # resolve before any cd
 
 # Optional --in <dir>: cd to that dir before invoking flutter. Avoids the
 # `cd native && flutter ...` chain pattern in caller scripts.
@@ -23,5 +24,13 @@ if [ "${1:-}" = "--in" ]; then
   shift 2
   cd "$WORKDIR"
 fi
+
+# Every APK/test build writes ~100M+ (2026-09-13: / hit 100% mid-gate). This is
+# the one choke point all builds pass through, so the disk preflight lives here.
+case "${1:-}" in
+  build|test|run|drive)
+    source "${SCRIPT_DIR}/lib/disk-guard.sh"
+    disk_guard "flutter ${1}" ;;
+esac
 
 exec flutter "$@"

@@ -74,6 +74,10 @@ fi
 # without running a build (scripts/test-next-build-version.sh).
 PUBSPEC="native/pubspec.yaml"
 source "$(dirname "$0")/lib/next-build-version.sh"
+# Disk preflight BEFORE the version bump commit: a ship that dies ENOSPC
+# mid-build leaves a bumped pubspec with no artifact (2026-09-13).
+source "$(dirname "$0")/lib/disk-guard.sh"
+disk_guard "ship-native"
 read_version() { grep -E '^version:' | head -1 | awk '{print $2}'; }
 
 CUR_VERSION="$(read_version < "$PUBSPEC")"

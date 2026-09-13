@@ -376,6 +376,11 @@ case "$CMD" in
     if ! git pull --ff-only 2>/dev/null; then echo "warning: ff-only pull failed, local main may be stale" >&2; fi
     git remote prune origin 2>/dev/null || true
 
+    # Step 5: the merged branch's worktree stays (#235) but its native/build +
+    # .dart_tool (up to ~9G) are now regenerable garbage — reclaim them here
+    # instead of at release, when the disk is already full (2026-09-13).
+    "$(dirname "$0")/disk-reclaim.sh" --quiet || echo "warning: disk-reclaim failed (non-fatal)" >&2
+
     echo "+ Integrated: PR #${PR_NUM} -> issue #${ISSUE_NUM} closed" >&2
     ;;
 

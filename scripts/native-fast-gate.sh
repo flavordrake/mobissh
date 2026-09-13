@@ -57,6 +57,14 @@ else
   echo "! version rules: FAIL"
   exit 1
 fi
+# Same gate, same reason: disk-reclaim.sh deletes build output by age/merge
+# rules; a regression there could eat live work or stop freeing the disk.
+if "${REPO_ROOT}/scripts/test-disk-reclaim.sh"; then
+  echo "+ disk-reclaim rules: pass"
+else
+  echo "! disk-reclaim rules: FAIL"
+  exit 1
+fi
 
 echo "> Gate 1/${TOTAL_GATES}: flutter analyze..."
 if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" analyze; then
