@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: `.traces/trace-deep-link-intents-1117-200922/` — `mobissh://` deep links (#1117) per `docs/deep-link-intents.md`: codex review folded in, PRs A–E as child issues, tmux verb approved, claude verb deferred. Prior arcs: `.traces/trace-fleet-emulator-gate-restore-003808/` (#589 gate restore, fleet emulator lease, failure attribution), `.traces/trace-native-explorer-dx-detection-arc-201358/`. Durable learnings in memory.
+> **Active TRACE**: none — last arc `.traces/trace-deep-link-intents-1117-200922/` (`mobissh://` deep links #1117, CLOSED 2026-09-13, shipped 0.1.12-rc.4+184; owner device validation owed; claude verb R24 deferred). Prior arcs: `.traces/trace-fleet-emulator-gate-restore-003808/` (#589 gate restore, fleet emulator lease, failure attribution), `.traces/trace-native-explorer-dx-detection-arc-201358/`. Durable learnings in memory.
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.
