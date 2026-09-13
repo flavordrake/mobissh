@@ -56,7 +56,15 @@
             </intent-filter>
             <!-- #1117/#1141 (R28): mobissh:// deep links. Separate filter so
                  the launcher filter stays untouched; singleTop above routes a
-                 warm link through onNewIntent (R19). -->
+                 warm link through onNewIntent (R19).
+                 #1146: app_links owns delivery — turn OFF the engine's own
+                 handler, which otherwise pushes the raw URI as a Navigator
+                 route on every warm link ("/?host=…" has no generator →
+                 FlutterError in debug, null-check TypeError in release,
+                 recorded as a crash each time). -->
+            <meta-data
+                android:name="flutter_deeplinking_enabled"
+                android:value="false" />
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
