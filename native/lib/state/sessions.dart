@@ -25,6 +25,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../services/link_verb.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
@@ -619,10 +620,18 @@ class InitialCommandRunner {
   /// to the same target each get their own one-shot.
   final Set<String> _fired = <String>{};
 
-  final List<StreamSubscription<void>> _subs = [];
+  /// Still-armed shell-ready listeners, keyed by session id so [cancel] can
+  /// drop every outstanding arm for ONE session (R25, #1149).
+  final Map<String, List<StreamSubscription<void>>> _subs = {};
+
+  /// Times [sendNow] ran per session id. Test seam (#1149 A11).
+  final Map<String, int> _sendNowCounts = {};
 
   /// True once the initial command has fired for [sessionId]. Test seam.
   bool hasFired(String sessionId) => _fired.contains(sessionId);
+
+  /// How many times [sendNow] sent to [sessionId]. Test seam.
+  int sendNowCount(String sessionId) => _sendNowCounts[sessionId] ?? 0;
 
   /// Arm a one-shot: when [proxy] reports the PTY shell is ready (#619), send
   /// `command + "\n"` through its input path. No-op when [command] is empty
@@ -661,16 +670,49 @@ class InitialCommandRunner {
       // One-shot: stop listening so a later reconnect shell re-open (#551)
       // can't re-trigger.
       sub.cancel();
-      _subs.remove(sub);
+      _subs[sessionId]?.remove(sub);
     });
-    _subs.add(sub);
+    _subs.putIfAbsent(sessionId, () => []).add(sub);
+  }
+
+  /// R25 (#1149): drop every still-armed listener for [sessionId] so a link
+  /// verb armed next is the ONE command that connect runs — otherwise a
+  /// connect that never reached shell-ready would leave the profile's
+  /// `initialCommand` arm behind and a later shell-ready would run both.
+  void cancel(String sessionId) {
+    final subs = _subs.remove(sessionId);
+    if (subs == null) return;
+    for (final s in subs) {
+      s.cancel();
+    }
+  }
+
+  /// R23(b) (#1149): send a link verb into an ALREADY-LIVE session, once per
+  /// call, immediately — no shell-ready arm, and deliberately NOT gated by
+  /// [_fired]: the one-shot guard exists to stop the SAME arm re-firing on a
+  /// reconnect re-open, whereas each call here is a separate link the user
+  /// just confirmed in the terminal (`link-verb-run`), and a live session may
+  /// legitimately receive another link later. The guard is the tap.
+  ///
+  /// Takes the typed [LinkVerbCommand] only — never a String — so the raw
+  /// link value has no path into the PTY (R22).
+  void sendNow({
+    required String sessionId,
+    required SshSessionProxy proxy,
+    required LinkVerbCommand command,
+  }) {
+    _sendNowCounts[sessionId] = sendNowCount(sessionId) + 1;
+    ctrace('ui.initcmd', 'sendNow link verb for sid=$sessionId');
+    proxy.sendInput(Uint8List.fromList(utf8.encode('${command.commandLine}\n')));
   }
 
   /// Cancel any still-armed listeners. Fired runners have already self-
   /// cancelled; this cleans up sessions whose shell never opened.
   void dispose() {
-    for (final s in _subs) {
-      s.cancel();
+    for (final subs in _subs.values) {
+      for (final s in subs) {
+        s.cancel();
+      }
     }
     _subs.clear();
   }

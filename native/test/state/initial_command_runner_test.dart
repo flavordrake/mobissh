@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/services/link_verb.dart';
 import 'package:mobissh/services/session_messages.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
 import 'package:mobissh/ssh/ssh_session.dart';
@@ -149,6 +150,81 @@ void main() {
 
       await emitState(SshSessionState.connected);
       expect(sentInputs, isEmpty);
+    });
+
+    // #1149 (PR E of #1117) — the link verb path.
+    group('link verb (R22 / R23b / R25)', () {
+      final verb = TmuxAttach('main');
+
+      test('a verb arm sends ONLY the composed line on shell-ready', () async {
+        final runner = InitialCommandRunner();
+        addTearDown(runner.dispose);
+        runner.arm(sessionId: sid, proxy: proxy, command: verb.commandLine);
+
+        await emitState(SshSessionState.connected);
+        await emitShellReady();
+        expect(sentInputs, ['tmux new-session -A -s main\n']);
+      });
+
+      test('R25: cancel drops the profile arm; the verb arm alone fires',
+          () async {
+        final runner = InitialCommandRunner();
+        addTearDown(runner.dispose);
+        runner.arm(sessionId: sid, proxy: proxy, command: 'htop');
+        runner.arm(sessionId: 'other:22:u:2', proxy: proxy, command: 'ls');
+        runner.cancel(sid);
+        runner.arm(sessionId: sid, proxy: proxy, command: verb.commandLine);
+
+        await emitState(SshSessionState.connected);
+        await emitShellReady();
+        expect(sentInputs, isNot(contains('htop\n')));
+        expect(sentInputs, contains('tmux new-session -A -s main\n'));
+        expect(runner.hasFired(sid), isTrue);
+      });
+
+      test('R23b: sendNow on a LIVE session sends exactly once per call, '
+          'immediately, without arming', () async {
+        await emitState(SshSessionState.connected);
+        await emitShellReady();
+
+        final runner = InitialCommandRunner();
+        addTearDown(runner.dispose);
+        runner.sendNow(sessionId: sid, proxy: proxy, command: verb);
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        expect(sentInputs, ['tmux new-session -A -s main\n']);
+        expect(runner.hasFired(sid), isFalse,
+            reason: 'sendNow is guarded by the tap, not the one-shot');
+
+        // A later shell-ready (reconnect re-open) must NOT re-send: nothing
+        // was armed.
+        await emitShellReady();
+        expect(sentInputs, ['tmux new-session -A -s main\n']);
+
+        // A second link later is a second tap → a second send.
+        runner.sendNow(sessionId: sid, proxy: proxy, command: verb);
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        expect(sentInputs, [
+          'tmux new-session -A -s main\n',
+          'tmux new-session -A -s main\n',
+        ]);
+        expect(runner.sendNowCount(sid), 2);
+      });
+
+      test('sendNow is not blocked by an already-fired one-shot', () async {
+        final runner = InitialCommandRunner();
+        addTearDown(runner.dispose);
+        runner.arm(sessionId: sid, proxy: proxy, command: 'echo hi');
+        await emitState(SshSessionState.connected);
+        await emitShellReady();
+        expect(sentInputs, ['echo hi\n']);
+
+        runner.sendNow(sessionId: sid, proxy: proxy, command: verb);
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        expect(sentInputs, ['echo hi\n', 'tmux new-session -A -s main\n']);
+      });
     });
   });
 }

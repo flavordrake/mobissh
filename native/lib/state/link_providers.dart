@@ -16,6 +16,7 @@ import '../diagnostics/connect_trace.dart';
 import '../main.dart' show ConnectHomePage;
 import '../services/attention_notifier_fln.dart';
 import '../services/connect_link_router.dart';
+import '../services/link_verb.dart';
 import '../services/session_attention_notification.dart';
 import '../ssh/ssh_session.dart';
 import '../storage/profiles_store.dart';
@@ -28,9 +29,18 @@ import 'sessions.dart';
 /// and the pushed home route work from outside the widget tree.
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
+/// The hand-off record: the matched + authorised profile and, for a v1.1 link,
+/// the typed verb to arm INSTEAD of the profile's initialCommand (R25).
+class PendingLinkConnect {
+  const PendingLinkConnect(this.profile, {this.verb});
+  final SavedProfile profile;
+  final LinkVerbCommand? verb;
+}
+
 /// One-shot hand-off: a matched + authorised profile ConnectForm should
 /// connect exactly as a profile-row tap would. ConnectForm clears it on read.
-final pendingLinkConnectProvider = StateProvider<SavedProfile?>((_) => null);
+final pendingLinkConnectProvider =
+    StateProvider<PendingLinkConnect?>((_) => null);
 
 /// Home-screen `Link not recognized` banner (R26). Persistent until dismissed
 /// or the next link.
@@ -60,9 +70,10 @@ final linkPendingStoreProvider =
     Provider<KeyValueStore>((_) => const FftKeyValueStore());
 
 final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
-  Future<void> handOff(SavedProfile profile) async {
+  Future<void> handOff(SavedProfile profile, LinkVerbCommand? verb) async {
     ref.read(linkRejectedProvider.notifier).state = false;
-    ref.read(pendingLinkConnectProvider.notifier).state = profile;
+    ref.read(pendingLinkConnectProvider.notifier).state =
+        PendingLinkConnect(profile, verb: verb);
     // A mounted ConnectForm consumes the hand-off synchronously via its
     // listener; if nothing took it, a terminal is showing — push the home
     // page over it so ConnectForm mounts and consumes on init.
@@ -85,10 +96,27 @@ final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
           LiveSessionRef(id: e.id, profileKey: e.profileKey),
     ],
     setActive: (id) => ref.read(sessionsProvider.notifier).setActive(id),
-    confirm: (profile) async {
+    confirm: (profile, verb) async {
       final ctx = appNavigatorKey.currentContext;
       if (ctx == null) return null;
-      return showLinkConfirmDialog(ctx, profile);
+      return showLinkConfirmDialog(ctx, profile, verb: verb);
+    },
+    confirmSend: (profile, verb) async {
+      final ctx = appNavigatorKey.currentContext;
+      if (ctx == null) return false;
+      return showLinkVerbRunDialog(ctx, profile, verb);
+    },
+    sendVerb: (sessionId, verb) {
+      for (final e in ref.read(sessionsProvider).entries) {
+        if (e.id != sessionId) continue;
+        ref.read(initialCommandRunnerProvider).sendNow(
+              sessionId: e.id,
+              proxy: e.proxy,
+              command: verb,
+            );
+        return;
+      }
+      ctrace('ui.link', 'sendVerb: session gone sid=$sessionId');
     },
     pick: (candidates) async {
       final ctx = appNavigatorKey.currentContext;
@@ -108,7 +136,10 @@ final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
       final result = await showProfileEditor(ctx, draft);
       if (result?.saved ?? false) ref.invalidate(savedProfilesProvider);
       final toConnect = result?.connect;
-      if (toConnect != null) await handOff(toConnect);
+      // No verb on this path: `create` can't carry one (parser), and for an
+      // unmatched `connect` host the editor is the confirmation — it does not
+      // name a command (R16), so "Save & connect" is a plain profile connect.
+      if (toConnect != null) await handOff(toConnect, null);
     },
     reject: () => ref.read(linkRejectedProvider.notifier).state = true,
   );

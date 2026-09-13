@@ -25,10 +25,17 @@
 //   A8    same link while that session is live → session count does not grow,
 //         active id unchanged (R17 focus). Disconnect.
 //   A9b   `claude=x` link → `link-rejected-banner` visible, zero sessions (R26/R27).
+//   A11   `tmux=e1117` link on a fresh session → shell attached to tmux
+//         session e1117 (asserted via `tmux display-message -p '#S'` typed
+//         over the same session, R22/R25). The same link again while live →
+//         no growth, `link-verb-run-dialog`, nothing sent before the tap
+//         (R23b); Run → one sendNow, still attached to e1117 (#1149).
 //
 // NOTE: run via `scripts/native-connect-test.sh integration_test/deep_link_1117_test.dart`.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -46,9 +53,11 @@ import 'package:mobissh/storage/profiles_store.dart';
 
 const _link = 'mobissh://connect?host=127.0.0.1&port=2222&user=testuser';
 const _rejectedLink = 'mobissh://connect?host=127.0.0.1&claude=x';
+const _verbLink = '$_link&tmux=e1117';
 const _identity = '127.0.0.1:2222:testuser';
 const _vaultId = 'deep-link-1142-testuser';
 final _confirmDialog = find.byKey(const Key('link-confirm-dialog'));
+final _runDialog = find.byKey(const Key('link-verb-run-dialog'));
 final _trustPrompt = find.text('Trust + connect');
 
 class _FakeLinkSource implements LinkIntentSource {
@@ -262,5 +271,115 @@ void main() {
     expect(_confirmDialog, findsNothing);
     expect(await _autoConnectOf(container), isTrue,
         reason: 'A9b: rejected link must not touch linkAutoConnect');
+
+    // A11 (R22/R25, #1149): tmux=e1117 on a FRESH session (auto-allowed →
+    // no prompt) arms `tmux new-session -A -s e1117` on shell-ready; the
+    // shell ends up attached to that tmux session.
+    source.controller.add(_verbLink);
+    final verbFresh = await _awaitShell(tester, container);
+    expect(verbFresh.sawConfirm, isFalse,
+        reason: 'A11: auto-allowed profile must not confirm a fresh connect');
+    expect(verbFresh.reachedShell, isTrue,
+        reason: 'A11: verb link connect did not reach shell');
+    final verbEntry = container.read(sessionsProvider).active!;
+    final verbId = verbEntry.id;
+    final out = <int>[];
+    final outSub = verbEntry.proxy.output.listen(out.addAll);
+    addTearDown(outSub.cancel);
+    final runner = container.read(initialCommandRunnerProvider);
+    // The verb fires on shell-ready, BEFORE this listener exists (it attaches
+    // once _awaitShell saw the first bytes), so its echo cannot be asserted
+    // here; the runner seam + the display-message answer below are the proof.
+    expect(runner.hasFired(verbId), isTrue,
+        reason: 'A11: runner did not fire the verb on shell-ready');
+    expect(runner.sendNowCount(verbId), 0,
+        reason: 'A11: a fresh connect must arm, never sendNow');
+    expect(await _tmuxSessionIs(tester, verbEntry, out, 'S', 'e1117'), isTrue,
+        reason: 'A11: shell is not attached to tmux session e1117');
+
+    // A11 (R23b): the SAME verb link while that session is live → focus only,
+    // in-terminal confirmation, NOTHING sent until Run is tapped.
+    final sinceRedeliver = out.length;
+    source.controller.add(_verbLink);
+    var sawRunDialog = false;
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      if (_runDialog.evaluate().isNotEmpty) {
+        sawRunDialog = true;
+        break;
+      }
+    }
+    expect(sawRunDialog, isTrue,
+        reason: 'A11: live session + verb must show link-verb-run-dialog');
+    expect(container.read(sessionsProvider).entries.length, 1,
+        reason: 'A11: warm verb link grew the session count');
+    expect(container.read(sessionsProvider).activeId, verbId,
+        reason: 'A11: warm verb link changed the active session');
+    expect(runner.sendNowCount(verbId), 0,
+        reason: 'A11: verb was sent before the Run tap');
+    expect(
+        utf8
+            .decode(out.sublist(sinceRedeliver), allowMalformed: true)
+            .contains('new-session'),
+        isFalse,
+        reason: 'A11: new-session bytes reached the terminal before the tap');
+
+    // Run → exactly one sendNow; the bytes land in the live PTY (echoed) and
+    // the session is still attached to e1117 (`-A` inside tmux is a no-op).
+    final sinceTap = out.length;
+    await tester.tap(find.byKey(const Key('link-verb-run')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(_runDialog, findsNothing, reason: 'A11: Run did not close the dialog');
+    expect(runner.sendNowCount(verbId), 1,
+        reason: 'A11: Run must send the verb exactly once');
+    expect(await _awaitBytes(tester, out, 'new-session -A -s e1117', sinceTap),
+        isTrue,
+        reason: 'A11: Run did not deliver the verb to the terminal');
+    expect(await _tmuxSessionIs(tester, verbEntry, out, 'T', 'e1117'), isTrue,
+        reason: 'A11: session no longer attached to e1117 after Run');
+    expect(container.read(sessionsProvider).entries.length, 1);
+    await _disconnect(tester);
+    expect(container.read(sessionsProvider).entries, isEmpty);
   });
+}
+
+/// Poll the captured output until `needle` appears at or after `from`.
+Future<bool> _awaitBytes(
+  WidgetTester tester,
+  List<int> out,
+  String needle, [
+  int from = 0,
+]) async {
+  for (var i = 0; i < 40; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+    final text = utf8.decode(out.sublist(from), allowMalformed: true);
+    if (text.contains(needle)) return true;
+  }
+  return false;
+}
+
+/// Ask the remote side which tmux session it is in, through the SAME session
+/// the link connected: types `tmux display-message -p '<tag>=#S='` and waits
+/// for `<tag>=<name>=`. The typed line's own echo reads `<tag>=#S=`, so only
+/// tmux's answer can match. Re-typed a few times: the tmux client may still be
+/// starting when the first line is typed.
+Future<bool> _tmuxSessionIs(
+  WidgetTester tester,
+  SessionEntry entry,
+  List<int> out,
+  String tag,
+  String name,
+) async {
+  for (var attempt = 0; attempt < 3; attempt++) {
+    final from = out.length;
+    entry.proxy.sendInput(Uint8List.fromList(
+      utf8.encode("tmux display-message -p '$tag=#S='\n"),
+    ));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      final text = utf8.decode(out.sublist(from), allowMalformed: true);
+      if (text.contains('$tag=$name=')) return true;
+    }
+  }
+  return false;
 }

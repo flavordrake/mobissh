@@ -66,7 +66,8 @@ final _label = RegExp(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$');
 final _portShape = RegExp(r'^[0-9]{1,5}$');
 final _userShape = RegExp(r'^[A-Za-z0-9._-]{1,64}$');
 final _nameShape = RegExp(r'^[A-Za-z0-9_-]{1,32}$');
-final _tmuxShape = RegExp(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$');
+/// R6 tmux name shape; shared with `link_verb.dart` (R22 re-check).
+final tmuxNameShape = RegExp(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$');
 
 /// Parse a `mobissh://` link per R1–R7. Never throws: any input that is not a
 /// well-formed link yields [ConnectIntentRejected].
@@ -136,7 +137,7 @@ ConnectIntentResult parseConnectIntent(String link) {
 
   final tmux = params['tmux'];
   if (tmux != null) {
-    if (verb == ConnectVerb.create || !_tmuxShape.hasMatch(tmux)) {
+    if (verb == ConnectVerb.create || !tmuxNameShape.hasMatch(tmux)) {
       return _bad('tmux');
     }
   }

@@ -8,12 +8,17 @@
 // profile on the same host with a different user is never touched — and that
 // the R26 banner renders while `linkRejectedProvider` is set.
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:mobissh/services/link_verb.dart';
+import 'package:mobissh/services/session_messages.dart';
 import 'package:mobissh/services/task_ssh_gateway.dart';
+import 'package:mobissh/ssh/ssh_session.dart';
 import 'package:mobissh/state/link_providers.dart';
 import 'package:mobissh/state/profiles_providers.dart';
 import 'package:mobissh/state/session_host_providers.dart';
@@ -35,6 +40,10 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
+  // Input bytes the UI proxies sent to the (fake) task side, decoded.
+  late List<String> sentInputs;
+  late InMemoryGatewayPair pair;
+
   Future<ProviderContainer> pumpChooser(WidgetTester tester) async {
     final store = ProfilesStore();
     final secrets = SecretsStore(backend: InMemorySecretsBackend());
@@ -48,6 +57,7 @@ void main() {
         username: 'alice',
         authType: 'password',
         vaultId: 'vault-a',
+        initialCommand: 'htop',
       ),
       SavedProfile(
         title: 'Bob',
@@ -58,8 +68,15 @@ void main() {
         vaultId: 'vault-b',
       ),
     ]);
-    final pair = InMemoryGatewayPair();
+    pair = InMemoryGatewayPair();
+    sentInputs = [];
+    final taskSub = pair.taskSide.incoming.listen((payload) {
+      if (payload['kind'] == SshTaskCommandKind.input.name) {
+        sentInputs.add(utf8.decode(base64Decode(payload['bytes'] as String)));
+      }
+    });
     addTearDown(() async {
+      await taskSub.cancel();
       await pair.dispose();
     });
     final container = ProviderContainer(
@@ -86,7 +103,8 @@ void main() {
     final profiles = await container.read(profilesStoreProvider).load();
     final alice = profiles.firstWhere((p) => p.username == 'alice');
 
-    container.read(pendingLinkConnectProvider.notifier).state = alice;
+    container.read(pendingLinkConnectProvider.notifier).state =
+        PendingLinkConnect(alice);
     await _pumpFrames(tester, count: 30);
 
     expect(container.read(pendingLinkConnectProvider), isNull,
@@ -97,16 +115,63 @@ void main() {
     expect(entries.single.username, 'alice');
   });
 
+  // Push a task-side event and let the gateway + proxy streams settle.
+  Future<void> emitFromTask(
+      WidgetTester tester, Map<String, dynamic> payload) async {
+    pair.taskSide.send(payload);
+    await _pumpFrames(tester, count: 4);
+  }
+
+  testWidgets('R25: a hand-off with a verb arms ONLY the verb; the profile '
+      'initialCommand is never sent', (tester) async {
+    final container = await pumpChooser(tester);
+    final profiles = await container.read(profilesStoreProvider).load();
+    final alice = profiles.firstWhere((p) => p.username == 'alice');
+    expect(alice.initialCommand, 'htop');
+
+    container.read(pendingLinkConnectProvider.notifier).state =
+        PendingLinkConnect(alice, verb: TmuxAttach('main'));
+    await _pumpFrames(tester, count: 30);
+    final entry = container.read(sessionsProvider).entries.single;
+
+    await emitFromTask(tester,
+        SshStateEvent(sessionId: entry.id, state: SshSessionState.connected.name).toJson());
+    await emitFromTask(tester, SshShellReadyEvent(sessionId: entry.id).toJson());
+    expect(sentInputs, ['tmux new-session -A -s main\n']);
+
+    // A reconnect re-open must not run the profile command either.
+    await emitFromTask(tester, SshShellReadyEvent(sessionId: entry.id).toJson());
+    expect(sentInputs, ['tmux new-session -A -s main\n']);
+    expect(container.read(initialCommandRunnerProvider).hasFired(entry.id),
+        isTrue);
+  });
+
+  testWidgets('no verb → the profile initialCommand runs as before',
+      (tester) async {
+    final container = await pumpChooser(tester);
+    final profiles = await container.read(profilesStoreProvider).load();
+    final alice = profiles.firstWhere((p) => p.username == 'alice');
+    container.read(pendingLinkConnectProvider.notifier).state =
+        PendingLinkConnect(alice);
+    await _pumpFrames(tester, count: 30);
+    final entry = container.read(sessionsProvider).entries.single;
+    await emitFromTask(tester,
+        SshStateEvent(sessionId: entry.id, state: SshSessionState.connected.name).toJson());
+    await emitFromTask(tester, SshShellReadyEvent(sessionId: entry.id).toJson());
+    expect(sentInputs, ['htop\n']);
+  });
+
   testWidgets('a hand-off with no stored creds opens the editor, no session',
       (tester) async {
     final container = await pumpChooser(tester);
-    container.read(pendingLinkConnectProvider.notifier).state = SavedProfile(
+    container.read(pendingLinkConnectProvider.notifier).state =
+        PendingLinkConnect(SavedProfile(
       title: 'Bare',
       host: 'bare.example',
       port: 22,
       username: 'nobody',
       authType: 'password',
-    );
+    ));
     await _pumpFrames(tester, count: 30);
     expect(container.read(sessionsProvider).entries, isEmpty);
     expect(find.text('Bare'), findsWidgets);
