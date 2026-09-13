@@ -7,19 +7,31 @@
 # intent. This script covers the OS half with the real intent filter:
 #   COLD  force-stop, `am start -a VIEW -d <link>` → no FATAL/ANR, mobissh on
 #         top, a redacted `ui.link` ctrace line (never the raw link), screenshot.
-#   WARM  app foregrounded, `am start` again → same assertions, second screenshot.
-#   A10   R20 probe: launch the link FROM a stub caller task (Settings), press
-#         Back, report which activity is on top. Reported, NOT gated — it is a
-#         design input for whether `return=<uri>` is needed.
+#   WARM  app foregrounded, `am start` a DIFFERENT link (verb `create`, same
+#         identity) → same assertions, second screenshot. Different on purpose:
+#         ctrace collapses a consecutive identical `[ui.link] pending set …`
+#         line into ` (×N)` with no second logcat print, so an identical warm
+#         link is invisible in logcat even though it was delivered.
+#   A10   R20 probe: launch the link FROM a stub caller task (Settings), then
+#         press Back until mobissh is no longer the resumed activity (bounded)
+#         and report how many presses that took and what is on top. Reported,
+#         NOT gated — it is a design input for whether `return=<uri>` is
+#         needed. Caveat: on a fresh install the link opens the pre-filled
+#         profile editor (route=create), so the FIRST Back pops that in-app
+#         route; and `am start` from the shell always carries
+#         FLAG_ACTIVITY_NEW_TASK, so with `taskAffinity=""` mobissh lands in
+#         its own task, not the caller's — a real caller app's startActivity()
+#         without the flag would differ.
 #
-# Usage: scripts/deep-link-acceptance.sh [--apk PATH] [--link URI] [--device SERIAL] [--keep]
+# Usage: scripts/deep-link-acceptance.sh [--apk PATH] [--link URI] [--warm-link URI] [--device SERIAL] [--keep]
 #   --apk PATH     APK to install (default: native/build/app/outputs/flutter-apk/app-debug.apk)
 #                  Must be an APP build (`flutter-cmd.sh --in native build apk --debug`).
 #                  The app-debug.apk left behind by `flutter test integration_test/…`
 #                  has the TEST as its Dart entrypoint and never leaves the splash
 #                  when launched by `am start` (observed: 60s+ on the splash, no
 #                  `[CONNECT]` line in logcat).
-#   --link URI     link to deliver (default: mobissh://connect?host=127.0.0.1&port=2222&user=testuser)
+#   --link URI     link to deliver cold + a10 (default: mobissh://connect?host=127.0.0.1&port=2222&user=testuser)
+#   --warm-link URI  link to deliver warm (default: mobissh://create?host=127.0.0.1&port=2222&user=testuser&name=warm)
 #   --device       adb serial (default: EMU_ADBD_ENDPOINT in connect mode, else first online device)
 #   --keep         leave the app installed
 #
@@ -38,6 +50,7 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 APK="${REPO_ROOT}/native/build/app/outputs/flutter-apk/app-debug.apk"
 LINK="mobissh://connect?host=127.0.0.1&port=2222&user=testuser"
+WARM_LINK="mobissh://create?host=127.0.0.1&port=2222&user=testuser&name=warm"
 DEVICE=""
 KEEP=0
 PACKAGE="com.flavordrake.mobissh"
@@ -47,14 +60,16 @@ EMU_CONTAINER_NAME="${EMU_CONTAINER_NAME:-mobissh-emulator}"
 EMU_ADBD_ENDPOINT="${EMU_ADBD_ENDPOINT:-${EMU_CONTAINER_NAME}:5556}"
 STUB_CALLER="com.android.settings/.Settings"
 LINK_WAIT_SECS="${LINK_WAIT_SECS:-60}"
+LINK_SETTLE_SECS="${LINK_SETTLE_SECS:-3}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apk) APK="$2"; shift 2 ;;
     --link) LINK="$2"; shift 2 ;;
+    --warm-link) WARM_LINK="$2"; shift 2 ;;
     --device) DEVICE="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) echo "! unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -91,6 +106,7 @@ ADB=(adb -s "$DEVICE")
 log "device: $DEVICE"
 log "apk:    $APK"
 log "link:   $LINK"
+log "warm:   $WARM_LINK"
 
 if "${ADB[@]}" shell pm list packages | tr -d '\r' | grep -q "^package:${PACKAGE}$"; then
   log "uninstalling prior install..."
@@ -111,27 +127,56 @@ top_activity() {
 # has not run yet), so poll for the router's ctrace line instead of a fixed
 # sleep. $1 = phase label, $2 = logcat dump path (left holding the last dump).
 # A FATAL/ANR ends the wait early; the caller's assertions read the dump.
+# Once the line is seen, wait LINK_SETTLE_SECS more and dump AGAIN: the
+# router logs its line ~35ms after the intent, but a Dart error raised by the
+# same intent (observed: the engine's built-in deep-link pushRouteInformation
+# on warm delivery) is recorded ~50ms after it — a dump taken on first sight
+# of the line misses it, and the next phase's `logcat -c` erases it.
 wait_for_link_line() {
   local phase="$1" dump="$2" waited=0
   while true; do
     "${ADB[@]}" logcat -d > "$dump"
-    if grep -F '[ui.link]' "$dump" >/dev/null; then break; fi
+    if grep -F '[ui.link]' "$dump" >/dev/null; then
+      sleep "$LINK_SETTLE_SECS"
+      "${ADB[@]}" logcat -d > "$dump"
+      break
+    fi
     if grep -E "FATAL EXCEPTION.*${PACKAGE}|ANR in ${PACKAGE}" "$dump" >/dev/null; then break; fi
     if (( waited >= LINK_WAIT_SECS )); then break; fi
     sleep 2
     waited=$((waited + 2))
   done
-  log "[$phase] settled after ${waited}s"
+  log "[$phase] settled after ${waited}s (+${LINK_SETTLE_SECS}s settle)"
+}
+
+# A Dart exception during delivery is not a FATAL (CrashReporter's zone
+# swallows it and writes `[CrashReporter] crash recorded: <path>`), but the
+# link is lost with it. Pull every crash file the phase recorded out of the
+# debuggable app's sandbox (run-as), keep it beside the logcat, print the
+# error + head of its stack, and fail the phase. $1 = phase label.
+pull_dart_crashes() {
+  local phase="$1" path name dest
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    name="$(basename "$path")"
+    dest="${ARTIFACTS_DIR}/${phase}-${TS}-${name}"
+    "${ADB[@]}" shell run-as "$PACKAGE" cat "${path#/data/user/0/${PACKAGE}/}" \
+      | tr -d '\r' > "$dest" || true
+    echo "! [$phase] Dart crash recorded during delivery: $dest"
+    head -c 2500 "$dest"
+    echo
+    FAILED=1
+  done < <(sed -n 's/.*\[CrashReporter\] crash recorded: \([^ ]*\).*/\1/p' "$LOGCAT_FILE.$phase")
 }
 
 # One delivery phase: send the VIEW intent, wait, then assert crash-free,
-# foregrounded, and a redacted ui.link line. $1 = phase label.
+# foregrounded, and a redacted ui.link line. $1 = phase label, $2 = link.
 deliver_and_check() {
-  local phase="$1"
+  local phase="$1" link="$2"
   local shot="${ARTIFACTS_DIR}/${phase}-${TS}.png"
   "${ADB[@]}" logcat -c
-  log "[$phase] am start -a android.intent.action.VIEW -d '$LINK'"
-  "${ADB[@]}" shell am start -a android.intent.action.VIEW -d "'$LINK'" \
+  log "[$phase] am start -a android.intent.action.VIEW -d '$link'"
+  "${ADB[@]}" shell am start -a android.intent.action.VIEW -d "'$link'" \
     || { echo "! [$phase] am start failed (no activity handles mobissh://?)"; FAILED=1; return; }
   wait_for_link_line "$phase" "$LOGCAT_FILE.$phase"
   "${ADB[@]}" exec-out screencap -p > "$shot" || true
@@ -144,6 +189,7 @@ deliver_and_check() {
   else
     log "[$phase] no FATAL/ANR"
   fi
+  pull_dart_crashes "$phase"
 
   local front
   front="$(top_activity)"
@@ -163,7 +209,7 @@ deliver_and_check() {
   else
     log "[$phase] ui.link lines:"
     printf '%s\n' "$lines" | sed 's/^/    /'
-    if printf '%s\n' "$lines" | grep -F -- "$LINK" >/dev/null; then
+    if printf '%s\n' "$lines" | grep -F -- "$link" >/dev/null; then
       echo "! [$phase] ui.link line contains the RAW link text (R27 redaction violated)"
       FAILED=1
     else
@@ -176,14 +222,20 @@ deliver_and_check() {
 # it as the initial link.
 "${ADB[@]}" shell am force-stop "$PACKAGE"
 sleep 1
-deliver_and_check cold
+deliver_and_check cold "$LINK"
 
-# WARM: mobissh is foregrounded from the cold phase; deliver again (onNewIntent).
-deliver_and_check warm
+# WARM: mobissh is foregrounded from the cold phase; deliver a DIFFERENT link
+# (onNewIntent). See the header: an identical link is collapsed by ctrace into
+# ` (×N)` on the cold line and never reaches logcat as a second line.
+deliver_and_check warm "$WARM_LINK"
 
-# A10 / R20: link launched FROM a stub caller task, then Back. `am start` from
-# the shell has no caller task, so foreground Settings first; the VIEW intent
-# then lands on top of that task the way a caller app's launch would.
+# A10 / R20: link launched FROM a stub caller task, then Back until mobissh is
+# no longer resumed (max A10_MAX_BACKS presses). `am start` from the shell has
+# no caller task, so foreground Settings first. Each Back that still leaves
+# mobissh on top popped an in-app route (fresh install: the pre-filled editor
+# from route=create, then the chooser); the press that finally leaves the app
+# is the R20 measurement. Reported, not gated.
+A10_MAX_BACKS="${A10_MAX_BACKS:-3}"
 log "[a10] stub caller: $STUB_CALLER"
 "${ADB[@]}" shell am force-stop "$PACKAGE"
 "${ADB[@]}" shell am start -n "$STUB_CALLER" >/dev/null 2>&1 || log "[a10] could not start $STUB_CALLER"
@@ -193,14 +245,23 @@ sleep 3
 wait_for_link_line a10 "$LOGCAT_FILE.a10"
 log "[a10] top after link: $(top_activity)"
 "${ADB[@]}" exec-out screencap -p > "${ARTIFACTS_DIR}/a10-before-back-${TS}.png" || true
-"${ADB[@]}" shell input keyevent KEYCODE_BACK
-sleep 3
-A10_TOP="$(top_activity)"
-"${ADB[@]}" exec-out screencap -p > "${ARTIFACTS_DIR}/a10-after-back-${TS}.png" || true
-log "[a10] top after Back: ${A10_TOP:-<none>}"
+A10_BACKS=0
+A10_TOP=""
+while (( A10_BACKS < A10_MAX_BACKS )); do
+  "${ADB[@]}" shell input keyevent KEYCODE_BACK
+  A10_BACKS=$((A10_BACKS + 1))
+  sleep 3
+  A10_TOP="$(top_activity)"
+  "${ADB[@]}" exec-out screencap -p > "${ARTIFACTS_DIR}/a10-after-back${A10_BACKS}-${TS}.png" || true
+  log "[a10] top after Back #${A10_BACKS}: ${A10_TOP:-<none>}"
+  case "$A10_TOP" in
+    *"$PACKAGE"*) ;;
+    *) break ;;
+  esac
+done
 case "$A10_TOP" in
-  *com.android.settings*) echo "A10: returned-to-caller=YES (top: $A10_TOP)" ;;
-  *) echo "A10: returned-to-caller=NO (top: ${A10_TOP:-<none>})" ;;
+  *com.android.settings*) echo "A10: returned-to-caller=YES (backs=${A10_BACKS}, top: $A10_TOP)" ;;
+  *) echo "A10: returned-to-caller=NO (backs=${A10_BACKS}, top: ${A10_TOP:-<none>})" ;;
 esac
 
 if [[ "$KEEP" -eq 0 ]]; then
