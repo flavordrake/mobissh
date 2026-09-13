@@ -23,7 +23,9 @@
 #   EMU_LEASE_HOST     ssh target holding the lease (default emu@android-emulator.tailbe5094.ts.net)
 #   EMU_ADB_ENDPOINT   adb endpoint exported to the child (default android-emulator.tailbe5094.ts.net:5556)
 #   EMU_LEASE_WAIT     seconds to wait for a busy lease (default 900)
-#   EMU_LEASE_MAXHOLD  seconds before the lease auto-releases (default 3600)
+#   EMU_LEASE_MAXHOLD  seconds before the lease auto-releases (default 7200 — the
+#                      full 82-test suite runs ~80min; the lease is released the
+#                      moment the command exits, so a long hold costs nothing)
 #   EMU_REPO           repo path on the emulator LXC (default /opt/android-emulator)
 set -euo pipefail
 
@@ -34,7 +36,7 @@ mkdir -p "$MOBISSH_LOGDIR"
 EMU_LEASE_HOST="${EMU_LEASE_HOST:-emu@android-emulator.tailbe5094.ts.net}"
 EMU_ADB_ENDPOINT="${EMU_ADB_ENDPOINT:-android-emulator.tailbe5094.ts.net:5556}"
 EMU_LEASE_WAIT="${EMU_LEASE_WAIT:-900}"
-EMU_LEASE_MAXHOLD="${EMU_LEASE_MAXHOLD:-3600}"
+EMU_LEASE_MAXHOLD="${EMU_LEASE_MAXHOLD:-7200}"
 EMU_REPO="${EMU_REPO:-/opt/android-emulator}"
 LEASE="${EMU_LEASE:-/var/lib/android-emulator/lease}"
 
@@ -82,21 +84,51 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "acquiring lease on ${EMU_LEASE_HOST} (wait <= ${EMU_LEASE_WAIT}s; cold boot ~135s)…"
+# Who is waiting: the hub identity this host enrolled as (the same one the
+# capability token was minted for), so a fleet peer reading the log can tell
+# whose run is queued.
+hub_cfg="${AGENTHUB_CONFIG:-$HOME/.agenthub/config.toml}"
+waiter="$(awk -F'"' '/^identity/ {i=$2} /^host/ {h=$2} END {if (i!="") print i "@" h}' "$hub_cfg" 2>/dev/null || true)"
+waiter="${waiter:-$(whoami)@$(hostname)}"
+wait_start=$(date +%s)
+log "${waiter} acquiring lease on ${EMU_LEASE_HOST} for: $* (queue wait <= ${EMU_LEASE_WAIT}s, then cold boot ~135s; hold <= ${EMU_LEASE_MAXHOLD}s)…"
 state=""
+partial=""
+phase="queued"   # queued = flock not yet ours (a peer holds it); booting = remote ensure is printing
+granted_at=""
 # Everything the remote ensure prints (docker build/boot progress) lands in the
 # lease log — the 2026-09-12 "no space left on device" export failure was
 # invisible while ensure ran silent.
 lease_log="${MOBISSH_LOGDIR}/fleet-emulator-lease.log"
 : > "$lease_log"
-while IFS= read -r line; do
-  line="${line//$'\r'/}"
-  case "$line" in
-    READY)         state="ready"; break ;;
-    ENSURE_FAILED) state="ensure_failed"; break ;;
-    *)             printf '%s\n' "$line" >> "$lease_log" ;;
-  esac
-done < "$sentinel"
+exec {sentinel_fd}< "$sentinel"
+while true; do
+  if IFS= read -r -t 30 -u "$sentinel_fd" line; then
+    line="${partial}${line//$'\r'/}"; partial=""
+    if [[ "$phase" == "queued" ]]; then
+      phase="booting"; granted_at=$(date +%s)
+      log "lease GRANTED after $((granted_at - wait_start))s queued — remote ensure/boot running (progress: ${lease_log})"
+    fi
+    case "$line" in
+      READY)         state="ready"; break ;;
+      ENSURE_FAILED) state="ensure_failed"; break ;;
+      *)             printf '%s\n' "$line" >> "$lease_log" ;;
+    esac
+  else
+    rc=$?
+    (( rc > 128 )) || break   # EOF: the ssh holder exited (flock -w timeout, DENY, or ssh failure)
+    partial+="$line"          # a timed-out read keeps the bytes it already consumed
+    now=$(date +%s)
+    if [[ "$phase" == "queued" ]]; then
+      # The shim exposes no holder identity; the flock simply blocks until the
+      # current holder's command exits or its hold expires.
+      log "${waiter} still QUEUED for the emu lease on ${EMU_LEASE_HOST} — $((now - wait_start))s of ${EMU_LEASE_WAIT}s max; another holder's run must finish first"
+    else
+      log "${waiter} holds the lease; device ensure/boot running for $((now - granted_at))s (cold boot ~135s; tail ${lease_log})"
+    fi
+  fi
+done
+exec {sentinel_fd}<&-
 
 if [[ "$state" != "ready" ]]; then
   err "lease NOT acquired: ${state:-timeout or ssh failure} (remote ensure output: ${lease_log})"
@@ -104,7 +136,7 @@ if [[ "$state" != "ready" ]]; then
   exit 1
 fi
 
-log "lease held + device booted → adb endpoint ${EMU_ADB_ENDPOINT}"
+log "lease held + device booted after $(( $(date +%s) - wait_start ))s total ($((granted_at - wait_start))s queued) → adb endpoint ${EMU_ADB_ENDPOINT}"
 
 # Hand the leased device to the consumer scripts: connect-mode against the
 # leased endpoint, and SKIP the retired container's ensure (#1098).
@@ -113,9 +145,17 @@ export EMU_ENSURE=0
 export ADB_MODE=connect
 export EMU_ADBD_ENDPOINT="$EMU_ADB_ENDPOINT"
 
+hold_start=$(date +%s)
 set +e
 "$@"
 rc=$?
 set -e
-log "command exited rc=${rc} — releasing lease"
+held=$(( $(date +%s) - hold_start ))
+# The remote `sleep MAXHOLD` is the hold: when it ends the flock drops and the
+# device idle-stops under a still-running command. Every test after that fails
+# "no online device" — device LOSS, not a regression (PR C suite, 2026-09-12).
+if (( held >= EMU_LEASE_MAXHOLD )); then
+  err "LEASE EXPIRED MID-RUN: command ran ${held}s >= EMU_LEASE_MAXHOLD=${EMU_LEASE_MAXHOLD}s — results after expiry are device loss, rerun with a longer EMU_LEASE_MAXHOLD"
+fi
+log "command exited rc=${rc} after ${held}s — releasing lease"
 exit "$rc"
