@@ -17,6 +17,7 @@ import 'state/attention_providers.dart';
 import 'state/connection_providers.dart';
 import 'state/keepalive_providers.dart';
 import 'state/lifecycle_providers.dart';
+import 'state/link_providers.dart';
 import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
 import 'ui/connect_form.dart';
@@ -53,8 +54,9 @@ class MobisshApp extends StatelessWidget {
   // mounted ABOVE the Navigator via `builder:`, so it can't resolve a
   // Navigator/ScaffoldMessenger from its own context — it shows its sheet +
   // confirmation through these keys instead (the "just blinks" fix).
-  static final GlobalKey<NavigatorState> _navigatorKey =
-      GlobalKey<NavigatorState>();
+  // #1141: shared with link_providers so link dialogs / the pushed home route
+  // can navigate from outside the tree.
+  static final GlobalKey<NavigatorState> _navigatorKey = appNavigatorKey;
   static final GlobalKey<ScaffoldMessengerState> _messengerKey =
       GlobalKey<ScaffoldMessengerState>();
 
@@ -146,6 +148,39 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     }
     if (!mounted) return;
     await ref.read(attentionFocusRouterProvider).consumePending();
+    if (!mounted) return;
+    await _initLinks();
+  }
+
+  /// #1141 (R18/R19): a `mobissh://` link. Consume a pending record first (a
+  /// process-death survivor), then subscribe to the link stream. There is
+  /// deliberately NO `getInitialLink()` call: app_links replays the cold-start
+  /// link on the stream's first listen (Android `initialLinkSent` guard, macOS
+  /// plugin alike), so reading it explicitly delivered every cold-start link
+  /// twice — double confirm dialog, double connect. The stream is the single
+  /// delivery path. Delivery failures are logged, never fatal at boot.
+  StreamSubscription<String>? _linkSub;
+
+  Future<void> _initLinks() async {
+    final router = ref.read(connectLinkRouterProvider);
+    final source = ref.read(linkIntentSourceProvider);
+    try {
+      await router.consumePending();
+      _linkSub = source.links.listen(
+        (link) {
+          if (mounted) unawaited(router.deliver(link));
+        },
+        onError: (Object e) => ctrace('ui.link', 'stream error: $e'),
+      );
+    } catch (e) {
+      ctrace('ui.link', 'init failed: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _linkSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -266,6 +301,8 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // the originating session and, if it parses a `(win N)` hint and that
         // session is a tmux client, select that window.
         unawaited(ref.read(attentionFocusRouterProvider).consumePending());
+        // #1141 R18: a link recorded before a process death / pause.
+        unawaited(ref.read(connectLinkRouterProvider).consumePending());
         setState(() {});
       }
     });
