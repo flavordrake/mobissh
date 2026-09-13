@@ -27,7 +27,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
-
+import '../services/link_verb.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
@@ -83,11 +83,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// → editor, pop-when-connected all reused). Cleared before connecting so a
   /// second mounted chooser can't connect it twice.
   void _takePendingLink() {
-    final profile = ref.read(pendingLinkConnectProvider);
-    if (profile == null) return;
+    final pending = ref.read(pendingLinkConnectProvider);
+    if (pending == null) return;
     ref.read(pendingLinkConnectProvider.notifier).state = null;
-    ctrace('ui.link', 'chooser: connecting linked profile');
-    unawaited(_connectFromProfile(profile));
+    ctrace('ui.link',
+        'chooser: connecting linked profile verb=${pending.verb != null}');
+    unawaited(_connectFromProfile(pending.profile, verb: pending.verb));
   }
 
   @override
@@ -170,7 +171,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     });
 
     // #1141: a link hand-off while this chooser is already mounted.
-    ref.listen<SavedProfile?>(pendingLinkConnectProvider, (_, next) {
+    ref.listen<PendingLinkConnect?>(pendingLinkConnectProvider, (_, next) {
       if (next != null && mounted) _takePendingLink();
     });
     final linkRejected = ref.watch(linkRejectedProvider);
@@ -279,6 +280,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     SshConnectParams params, {
     String? title,
     required String initialCommand,
+    LinkVerbCommand? verb,
     String? themeName,
     double? fontSize,
     String? fontFamily,
@@ -357,13 +359,21 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       // Arm the run-on-connect command (#558) BEFORE dispatching connect, so
       // the one-shot listener is attached before the task side can emit
       // `connected`. No-op when the field is empty.
-      ref
-          .read(initialCommandRunnerProvider)
-          .arm(
-            sessionId: entry.id,
-            proxy: entry.proxy,
-            command: initialCommand,
-          );
+      //
+      // #1149 R25: a link verb is the ONE command this connect runs — the
+      // profile's initialCommand is not armed, and any arm still outstanding
+      // for this entry (a connect that never reached shell-ready) is dropped
+      // first so a reconnect can't run both.
+      final runner = ref.read(initialCommandRunnerProvider);
+      if (verb != null) {
+        runner.cancel(entry.id);
+        ctrace('ui.link', 'arming link verb for ${entry.id}');
+      }
+      runner.arm(
+        sessionId: entry.id,
+        proxy: entry.proxy,
+        command: verb?.commandLine ?? initialCommand,
+      );
       // Recent Sessions quick-connect (#796, PWA #385): persist this identity
       // to the recents list when the session reaches `connected` — NOT on
       // dispatch (a failed connect must not pollute recents) and NOT for the
@@ -460,7 +470,11 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// fall back to opening the profile editor (edit mode for this profile) so
   /// the user can add the missing credential — NOT a silent no-op, and no
   /// dangling reference to the removed inline form (#583).
-  Future<void> _connectFromProfile(SavedProfile profile) async {
+  ///
+  /// [verb] (#1149): a `mobissh://` link's typed command, armed in place of
+  /// the profile's initialCommand (R25). Only the link hand-off sets it.
+  Future<void> _connectFromProfile(SavedProfile profile,
+      {LinkVerbCommand? verb}) async {
     final secrets = ref.read(secretsStoreProvider);
     final creds = await loadProfileCredentials(secrets, profile);
     if (!mounted) return;
@@ -533,6 +547,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       params,
       title: profile.title,
       initialCommand: profile.initialCommand ?? '',
+      verb: verb,
       themeName: profile.theme,
       fontSize: profile.fontSize,
       fontFamily: profile.fontFamily,

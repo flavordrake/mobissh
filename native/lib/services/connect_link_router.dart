@@ -14,14 +14,21 @@
 //                     `_connectFromProfile`, which owns the TOFU listener —
 //                     R15 — and the missing-creds → editor fallback — R13a).
 //
-// The router has no PTY / secrets / host-key seam by construction: a link can
-// only ever confirm, persist `linkAutoConnect` (from the explicit "Always
-// allow" answer), focus, connect-through-the-profile-path, or open the editor.
+// The router has no secrets / host-key seam by construction: a link can only
+// ever confirm, persist `linkAutoConnect` (from the explicit "Always allow"
+// answer), focus, connect-through-the-profile-path, or open the editor.
+//
+// #1149 (PR E): the `tmux=<name>` verb rides the hand-off as a TYPED
+// [LinkVerbCommand] (R22) — a fresh connect arms it on shell-ready in place of
+// the profile's initialCommand (R25); a LIVE session of the same identity is
+// focused and then ALWAYS asked in the terminal (`confirmSend`, R23 option b,
+// regardless of linkAutoConnect) before the verb goes to the send seam.
 
 import 'dart:convert';
 
 import '../storage/profiles_store.dart';
 import 'connect_intent.dart';
+import 'link_verb.dart';
 import 'session_attention_notification.dart';
 
 /// The user's answer to the R12 confirmation. `null` = cancelled.
@@ -97,10 +104,16 @@ class ConnectLinkRouter {
     required Future<List<SavedProfile>> Function() loadProfiles,
     required Iterable<LiveSessionRef> Function() liveSessions,
     required void Function(String sessionId) setActive,
-    required Future<LinkConfirmChoice?> Function(SavedProfile profile) confirm,
+    required Future<LinkConfirmChoice?> Function(
+            SavedProfile profile, LinkVerbCommand? verb)
+        confirm,
+    required Future<bool> Function(SavedProfile profile, LinkVerbCommand verb)
+        confirmSend,
     required Future<SavedProfile?> Function(List<SavedProfile> candidates) pick,
     required Future<void> Function(SavedProfile profile) persistAutoConnect,
-    required Future<void> Function(SavedProfile profile) connectProfile,
+    required Future<void> Function(SavedProfile profile, LinkVerbCommand? verb)
+        connectProfile,
+    required void Function(String sessionId, LinkVerbCommand verb) sendVerb,
     required Future<void> Function(SavedProfile draft) openCreate,
     required void Function() reject,
     void Function(String where, String msg)? log,
@@ -109,9 +122,11 @@ class ConnectLinkRouter {
         _liveSessions = liveSessions,
         _setActive = setActive,
         _confirm = confirm,
+        _confirmSend = confirmSend,
         _pick = pick,
         _persistAutoConnect = persistAutoConnect,
         _connectProfile = connectProfile,
+        _sendVerb = sendVerb,
         _openCreate = openCreate,
         _reject = reject,
         _log = log;
@@ -121,10 +136,13 @@ class ConnectLinkRouter {
   final Future<List<SavedProfile>> Function() _loadProfiles;
   final Iterable<LiveSessionRef> Function() _liveSessions;
   final void Function(String sessionId) _setActive;
-  final Future<LinkConfirmChoice?> Function(SavedProfile) _confirm;
+  final Future<LinkConfirmChoice?> Function(SavedProfile, LinkVerbCommand?)
+      _confirm;
+  final Future<bool> Function(SavedProfile, LinkVerbCommand) _confirmSend;
   final Future<SavedProfile?> Function(List<SavedProfile>) _pick;
   final Future<void> Function(SavedProfile) _persistAutoConnect;
-  final Future<void> Function(SavedProfile) _connectProfile;
+  final Future<void> Function(SavedProfile, LinkVerbCommand?) _connectProfile;
+  final void Function(String, LinkVerbCommand) _sendVerb;
   final Future<void> Function(SavedProfile) _openCreate;
   final void Function() _reject;
   final void Function(String where, String msg)? _log;
@@ -144,6 +162,8 @@ class ConnectLinkRouter {
   Future<void> consumePending() async {
     final request = await _bridge.takePending();
     if (request == null) return;
+    // R22: the verb is typed here, from the validated token, and nowhere else.
+    final verb = LinkVerbCommand.fromRequest(request);
     final profiles = await _loadProfiles();
     final match = matchConnectRequest(
       request,
@@ -165,7 +185,7 @@ class ConnectLinkRouter {
           return;
         }
         // R14: a picker result always confirms.
-        await _confirmThenProceed(picked, force: true);
+        await _confirmThenProceed(picked, verb: verb, force: true);
       case NoMatch():
         // R9 zero / R14: pre-fill the editor, never persist, never connect.
         await _openCreate(SavedProfile(
@@ -181,16 +201,18 @@ class ConnectLinkRouter {
         // of duplicating it; R13: linkAutoConnect skips the prompt on connect.
         await _confirmThenProceed(
           profile,
+          verb: verb,
           force: request.verb == ConnectVerb.create,
         );
     }
   }
 
   Future<void> _confirmThenProceed(SavedProfile profile,
-      {required bool force}) async {
+      {required LinkVerbCommand? verb, required bool force}) async {
     var authorised = profile;
     if (force || !profile.linkAutoConnect) {
-      final choice = await _confirm(profile);
+      // R16: the confirmation names the command a verb will run.
+      final choice = await _confirm(profile, verb);
       if (choice == null) {
         _log?.call('ui.link', 'confirm cancelled');
         return;
@@ -206,11 +228,22 @@ class ConnectLinkRouter {
       if (s.profileKey == authorised.identityKey) {
         _setActive(s.id);
         _log?.call('ui.link', 'route=focused sid=${s.id}');
+        if (verb == null) return;
+        // R23 option (b): the bytes would land wherever the live PTY's
+        // foreground is (an editor, a password prompt, a nested ssh), and
+        // linkAutoConnect only vouched for the destination — so the send is
+        // ALWAYS confirmed in the terminal, and only the tap sends.
+        if (await _confirmSend(authorised, verb)) {
+          _log?.call('ui.link', 'verb sent sid=${s.id}');
+          _sendVerb(s.id, verb);
+        } else {
+          _log?.call('ui.link', 'verb cancelled sid=${s.id}');
+        }
         return;
       }
     }
-    _log?.call('ui.link', 'route=connect');
-    await _connectProfile(authorised);
+    _log?.call('ui.link', 'route=connect${verb == null ? '' : ' verb'}');
+    await _connectProfile(authorised, verb);
   }
 
   /// R26/R27: one neutral banner + one redacted line. Nothing else.

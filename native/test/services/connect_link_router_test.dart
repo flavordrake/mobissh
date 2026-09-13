@@ -10,25 +10,33 @@
 //      identity; the session count never grows on focus.
 // R18: the pending record round-trips through "process death" (a fresh
 //      router over the same store consumes it exactly once).
-// R22 (deferred to PR E): `tmux` rides the pending record untouched and the
-//      router has no PTY seam to send it through.
+// R22/R23b/R25 (PR E, #1149): the verb is a typed command built from the
+//      validated token; a fresh connect carries it through the connect seam,
+//      a live same-identity session ALWAYS asks (`confirmSend`) before the
+//      router hands it to the send seam — regardless of linkAutoConnect.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/services/connect_intent.dart';
 import 'package:mobissh/services/connect_link_router.dart';
+import 'package:mobissh/services/link_verb.dart';
 import 'package:mobissh/services/session_attention_notification.dart';
 import 'package:mobissh/storage/profiles_store.dart';
 
 class _Spy {
   final List<String> log = [];
   final List<SavedProfile> confirmed = [];
+  final List<LinkVerbCommand?> confirmedVerbs = [];
   final List<SavedProfile> persisted = [];
   final List<SavedProfile> connected = [];
+  final List<LinkVerbCommand?> connectedVerbs = [];
   final List<SavedProfile> created = [];
   final List<List<SavedProfile>> picked = [];
   final List<String> activated = [];
+  final List<String> confirmSends = [];
+  final List<String> sent = [];
   int rejections = 0;
   LinkConfirmChoice? confirmAnswer = LinkConfirmChoice.once;
+  bool confirmSendAnswer = true;
   SavedProfile? pickAnswer;
   List<LiveSessionRef> live = const [];
   List<SavedProfile> profiles = const [];
@@ -38,9 +46,14 @@ class _Spy {
         loadProfiles: () async => profiles,
         liveSessions: () => live,
         setActive: activated.add,
-        confirm: (p) async {
+        confirm: (p, verb) async {
           confirmed.add(p);
+          confirmedVerbs.add(verb);
           return confirmAnswer;
+        },
+        confirmSend: (p, verb) async {
+          confirmSends.add(verb.commandLine);
+          return confirmSendAnswer;
         },
         pick: (c) async {
           picked.add(c);
@@ -53,7 +66,11 @@ class _Spy {
               q.identityKey == p.identityKey ? p : q,
           ];
         },
-        connectProfile: (p) async => connected.add(p),
+        connectProfile: (p, verb) async {
+          connected.add(p);
+          connectedVerbs.add(verb);
+        },
+        sendVerb: (sid, verb) => sent.add('$sid ${verb.commandLine}'),
         openCreate: (p) async => created.add(p),
         reject: () => rejections++,
         log: (where, msg) => log.add('$where: $msg'),
@@ -256,6 +273,91 @@ void main() {
       await router.consumePending();
       expect(spy.connected.single.identityKey, _alice.identityKey);
       expect(spy.log.join('\n'), isNot(contains('work')));
+    });
+  });
+
+  group('R22/R23b/R25 tmux verb (#1149)', () {
+    const verbLink =
+        'mobissh://connect?host=box.example&user=alice&tmux=main';
+    const cmd = 'tmux new-session -A -s main';
+
+    test('fresh connect + verb + linkAutoConnect → no dialog, hand-off '
+        'carries the typed verb', () async {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true), _bob];
+      await router.deliver(verbLink);
+      expect(spy.confirmed, isEmpty);
+      expect(spy.confirmSends, isEmpty);
+      expect(spy.sent, isEmpty);
+      expect(spy.connected.single.identityKey, _alice.identityKey);
+      expect(spy.connectedVerbs.single, isA<TmuxAttach>());
+      expect(spy.connectedVerbs.single!.commandLine, cmd);
+    });
+
+    test('fresh connect + verb without linkAutoConnect → R12 confirmation '
+        'names the command (R16)', () async {
+      await router.deliver(verbLink);
+      expect(spy.confirmed.single.identityKey, _alice.identityKey);
+      expect(spy.confirmedVerbs.single!.commandLine, cmd);
+      expect(spy.connectedVerbs.single!.commandLine, cmd);
+    });
+
+    test('no verb → hand-off carries null; R12 dialog gets no command',
+        () async {
+      await router.deliver('mobissh://connect?host=box.example&user=alice');
+      expect(spy.confirmedVerbs.single, isNull);
+      expect(spy.connectedVerbs.single, isNull);
+    });
+
+    test('live same-identity session + verb → confirmSend names the '
+        'command; Run sends once; linkAutoConnect does NOT skip it',
+        () async {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true), _bob];
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      await router.deliver(verbLink);
+      expect(spy.activated, ['alice-sid']);
+      expect(spy.confirmed, isEmpty, reason: 'R13: auto-allowed, no R12');
+      expect(spy.confirmSends, [cmd], reason: 'R23b: always asks when live');
+      expect(spy.sent, ['alice-sid $cmd']);
+      expect(spy.connected, isEmpty, reason: 'R17: focus, never reconnect');
+    });
+
+    test('live session + verb → Cancel sends nothing', () async {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true), _bob];
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.confirmSendAnswer = false;
+      await router.deliver(verbLink);
+      expect(spy.activated, ['alice-sid']);
+      expect(spy.confirmSends, [cmd]);
+      expect(spy.sent, isEmpty);
+      expect(spy.connected, isEmpty);
+    });
+
+    test('live session WITHOUT a verb → focus only, no confirmSend',
+        () async {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true), _bob];
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      await router.deliver('mobissh://connect?host=box.example&user=alice');
+      expect(spy.activated, ['alice-sid']);
+      expect(spy.confirmSends, isEmpty);
+      expect(spy.sent, isEmpty);
+    });
+
+    test('a live session of ANOTHER identity never receives the verb',
+        () async {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true), _bob];
+      spy.live = [
+        LiveSessionRef(id: 'bob-sid', profileKey: _bob.identityKey),
+      ];
+      await router.deliver(verbLink);
+      expect(spy.confirmSends, isEmpty);
+      expect(spy.sent, isEmpty);
+      expect(spy.connectedVerbs.single!.commandLine, cmd);
     });
   });
 }
