@@ -29,8 +29,15 @@ native-dist/
 test-data/
 .claude/worktrees/
 .claude/settings.local.json
-test-history/
+# test-history/: recordings/screenshots stay local (LFS clone failures, efeda3c).
+# Only the coverage .md reports are committed (#1152); raw lcov is multi-MB, local only.
+test-history/*
+!test-history/coverage/
+test-history/coverage/**/*.lcov
+test-history/coverage/**/*.info
 .traces/
+# vitest --coverage output (scripts/ts-coverage.sh); native/coverage/ is ignored in native/.gitignore
+/coverage/
 
 # lsmcp cache
 .lsmcp/cache
