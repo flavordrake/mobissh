@@ -60,6 +60,27 @@ const int detectionSettingsSchemaVersion = 1;
 /// → zero scan/decoration), preserving the user's stored prefs.
 const bool kDetectionDisabled971 = false;
 
+/// GLOBAL link-highlight intensity (#1154, R7): saturation + alpha of the wash
+/// and the gutter's visual noise. Medium is the shipped identity.
+enum DetectionIntensity { low, medium, high }
+
+/// Which edge the gutter layers sit on (#1154, R7; geometry lands in #1155).
+enum GutterSide { left, right }
+
+/// Overlay the last column (today) or reserve a dedicated column (#1155).
+enum GutterMode { overlay, column }
+
+/// The pattern-relevant projection of [DetectionSettings] (#1154, R10): the
+/// terminal view's re-register listener selects on THIS so a visual-only
+/// change (intensity / side / mode) never clears + rescans the patterns.
+typedef DetectionPatternProjection = ({
+  bool enabled,
+  bool url,
+  bool path,
+  bool command,
+  bool relpath,
+});
+
 class DetectionSettings {
   const DetectionSettings({
     this.schemaVersion = detectionSettingsSchemaVersion,
@@ -68,6 +89,9 @@ class DetectionSettings {
     this.path = true,
     this.command = true,
     this.relpath = true,
+    this.intensity = DetectionIntensity.medium,
+    this.gutterSide = GutterSide.right,
+    this.gutterMode = GutterMode.overlay,
   });
 
   /// The schema version this instance was built from (defaults to current).
@@ -92,6 +116,25 @@ class DetectionSettings {
   /// absolute path passes the #990 SFTP-stat verification — turning the
   /// pattern on changes nothing visible for a token that doesn't resolve.
   final bool relpath;
+
+  /// Global wash/gutter intensity level (#1154). Default medium = no change.
+  final DetectionIntensity intensity;
+
+  /// Gutter edge (#1154). Default right = today's layout.
+  final GutterSide gutterSide;
+
+  /// Gutter overlay vs dedicated column (#1154). Default overlay = today.
+  final GutterMode gutterMode;
+
+  /// The fields that decide WHICH patterns are registered (R10). Two settings
+  /// that differ only by an option field project equal.
+  DetectionPatternProjection get patternProjection => (
+    enabled: enabled,
+    url: url,
+    path: path,
+    command: command,
+    relpath: relpath,
+  );
 
   /// Whether the URL patterns should be registered (master AND url), UNLESS the
   /// #971 kill switch has force-disabled detection (see [kDetectionDisabled971]).
@@ -121,6 +164,9 @@ class DetectionSettings {
     bool? path,
     bool? command,
     bool? relpath,
+    DetectionIntensity? intensity,
+    GutterSide? gutterSide,
+    GutterMode? gutterMode,
   }) {
     return DetectionSettings(
       schemaVersion: detectionSettingsSchemaVersion,
@@ -129,6 +175,9 @@ class DetectionSettings {
       path: path ?? this.path,
       command: command ?? this.command,
       relpath: relpath ?? this.relpath,
+      intensity: intensity ?? this.intensity,
+      gutterSide: gutterSide ?? this.gutterSide,
+      gutterMode: gutterMode ?? this.gutterMode,
     );
   }
 
@@ -141,6 +190,9 @@ class DetectionSettings {
     'path': path,
     'command': command,
     'relpath': relpath,
+    'intensity': intensity.name,
+    'gutterSide': gutterSide.name,
+    'gutterMode': gutterMode.name,
   });
 
   /// Parse a stored JSON string, FIELD-BY-FIELD with a per-field default
@@ -158,6 +210,17 @@ class DetectionSettings {
         return v is bool ? v : fallback;
       }
 
+      // Enum fields store the NAME; an unknown / non-string / null value falls
+      // back to that field's default only (#1154 R8, same rule as the bools).
+      T enumField<T extends Enum>(String key, List<T> values, T fallback) {
+        final v = decoded[key];
+        if (v is! String) return fallback;
+        for (final e in values) {
+          if (e.name == v) return e;
+        }
+        return fallback;
+      }
+
       // The version is informational here (the shape is back-compatible field
       // reads), but we record it so a future migration can branch on it.
       final v = decoded['v'];
@@ -171,6 +234,14 @@ class DetectionSettings {
         command: field('command', def.command),
         // Absent in pre-#1036 stored values → defaults TRUE (additive).
         relpath: field('relpath', def.relpath),
+        // Absent in pre-#1154 stored values → medium / right / overlay.
+        intensity: enumField(
+          'intensity',
+          DetectionIntensity.values,
+          def.intensity,
+        ),
+        gutterSide: enumField('gutterSide', GutterSide.values, def.gutterSide),
+        gutterMode: enumField('gutterMode', GutterMode.values, def.gutterMode),
       );
     } catch (_) {
       // Corrupt / non-JSON value → safe all-true default (no silent disable).
@@ -186,16 +257,30 @@ class DetectionSettings {
       other.url == url &&
       other.path == path &&
       other.command == command &&
-      other.relpath == relpath;
+      other.relpath == relpath &&
+      other.intensity == intensity &&
+      other.gutterSide == gutterSide &&
+      other.gutterMode == gutterMode;
 
   @override
-  int get hashCode =>
-      Object.hash(schemaVersion, enabled, url, path, command, relpath);
+  int get hashCode => Object.hash(
+    schemaVersion,
+    enabled,
+    url,
+    path,
+    command,
+    relpath,
+    intensity,
+    gutterSide,
+    gutterMode,
+  );
 
   @override
   String toString() =>
       'DetectionSettings(v:$schemaVersion, enabled:$enabled, url:$url, '
-      'path:$path, command:$command, relpath:$relpath)';
+      'path:$path, command:$command, relpath:$relpath, '
+      'intensity:${intensity.name}, gutterSide:${gutterSide.name}, '
+      'gutterMode:${gutterMode.name})';
 }
 
 /// Persisted GLOBAL detection settings (#888 Part A). Synchronous default
@@ -259,6 +344,24 @@ class DetectionSettingsNotifier extends StateNotifier<DetectionSettings> {
   /// Toggle RELATIVE-path detection (#1036).
   Future<void> setRelpath(bool value) async {
     state = state.copyWith(relpath: value);
+    await _persist();
+  }
+
+  /// Set the global link-highlight intensity level (#1154).
+  Future<void> setIntensity(DetectionIntensity value) async {
+    state = state.copyWith(intensity: value);
+    await _persist();
+  }
+
+  /// Set the gutter edge (#1154; geometry follows in #1155).
+  Future<void> setGutterSide(GutterSide value) async {
+    state = state.copyWith(gutterSide: value);
+    await _persist();
+  }
+
+  /// Set the gutter mode (#1154; geometry follows in #1155).
+  Future<void> setGutterMode(GutterMode value) async {
+    state = state.copyWith(gutterMode: value);
     await _persist();
   }
 }

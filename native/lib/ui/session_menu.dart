@@ -305,6 +305,99 @@ void _showPickerSheet({
   );
 }
 
+/// Link highlight OPTIONS sheet (#1154, R1/R2): master switch, global
+/// intensity level and a Detection Lab tile. Every control LIVE-applies
+/// through [DetectionSettingsNotifier] (no Save). Shown on the app's real
+/// Navigator ([navigatorContext], the #664 idiom — the session menu is
+/// closed first so its barrier can't trap the sheet). Gutter side / mode
+/// controls land in #1155 once they have a geometric effect.
+void _showLinkHighlightSheet({required BuildContext navigatorContext}) {
+  showModalBottomSheet<void>(
+    context: navigatorContext,
+    showDragHandle: true,
+    builder: (ctx) {
+      final theme = Theme.of(ctx);
+      return SafeArea(
+        child: Consumer(
+          builder: (context, ref, _) {
+            final settings = ref.watch(detectionSettingsProvider);
+            final notifier = ref.read(detectionSettingsProvider.notifier);
+            return Column(
+              key: const Key('link-highlight-menu'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                  child: Text(
+                    'Link highlight',
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ),
+                SwitchListTile(
+                  key: const Key('link-highlight-enabled'),
+                  dense: true,
+                  title: const Text('Enabled'),
+                  value: settings.enabled,
+                  onChanged: notifier.setEnabled,
+                ),
+                // R5: configurable while off — takes effect the moment
+                // detection is on.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                  child: SegmentedButton<DetectionIntensity>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: DetectionIntensity.low,
+                        label: Text(
+                          'Low',
+                          key: Key('link-highlight-intensity-low'),
+                        ),
+                      ),
+                      ButtonSegment(
+                        value: DetectionIntensity.medium,
+                        label: Text(
+                          'Medium',
+                          key: Key('link-highlight-intensity-medium'),
+                        ),
+                      ),
+                      ButtonSegment(
+                        value: DetectionIntensity.high,
+                        label: Text(
+                          'High',
+                          key: Key('link-highlight-intensity-high'),
+                        ),
+                      ),
+                    ],
+                    selected: {settings.intensity},
+                    onSelectionChanged: (v) => notifier.setIntensity(v.first),
+                  ),
+                ),
+                ListTile(
+                  key: const Key('link-highlight-lab'),
+                  dense: true,
+                  leading: const Icon(Icons.tune),
+                  title: const Text('Detection Lab…'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    Navigator.of(navigatorContext).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const DetectionLabScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    },
+  );
+}
+
 class SessionMenu extends ConsumerWidget {
   const SessionMenu({super.key, required this.onClose});
 
@@ -618,9 +711,14 @@ class _SessionControlsRow extends ConsumerWidget {
             ),
             selected: detectionOn,
             enabled: !detectionKilled,
-            onTap: () => ref
-                .read(detectionSettingsProvider.notifier)
-                .setEnabled(!detectionOn),
+            // #1154 R1: a tap opens the link-highlight OPTIONS sheet (no
+            // longer flips `enabled`). Same #664 idiom: capture the app
+            // navigator, close the menu, THEN show the sheet on it.
+            onTap: () {
+              final navContext = Navigator.of(context).context;
+              onClose();
+              _showLinkHighlightSheet(navigatorContext: navContext);
+            },
             // #1031 review change 7: the lab's most frequent job ("this
             // highlight looks wrong") is noticed IN the terminal — long-press
             // jumps straight to the Detection lab, no Settings scroll. Same

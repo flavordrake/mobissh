@@ -37,6 +37,7 @@ import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 
 import '../services/clipboard.dart';
+import '../state/detection_providers.dart' show DetectionIntensity;
 import '../storage/custom_patterns_store.dart' show isCustomPatternId;
 import '../util/file_url.dart';
 import 'path_action_overlay.dart';
@@ -66,6 +67,49 @@ const IconData kGutterIncompleteIcon = Icons.more_horiz;
 /// one more static const (a bolder shade via [chipColor]) with zero paint-code
 /// rework.
 @immutable
+/// The gutter's "visual noise" per the GLOBAL intensity level (#1154 R13):
+/// the translucent strip hint and the chip drop shadow. Chip accent, colour
+/// and opacity are NOT part of it (chips stay identical at every level).
+/// Resolved once from the level and consumed by BOTH the live gutter and the
+/// Detection Lab chip preview (R22) so the two render the same thing.
+@immutable
+class GutterNoise {
+  const GutterNoise({required this.stripHintAlpha, required this.chipShadow});
+
+  /// Alpha of the strip's accent-coloured hint fill.
+  final double stripHintAlpha;
+
+  /// Alpha of the chip's black drop shadow; null = no shadow.
+  final double? chipShadow;
+
+  /// The shipped values (#989 chip shadow 0.35, strip hint 0.06).
+  static const GutterNoise medium = GutterNoise(
+    stripHintAlpha: 0.06,
+    chipShadow: 0.35,
+  );
+
+  static GutterNoise forIntensity(DetectionIntensity level) => switch (level) {
+    DetectionIntensity.low => const GutterNoise(
+      stripHintAlpha: 0.0,
+      chipShadow: null,
+    ),
+    DetectionIntensity.medium => medium,
+    DetectionIntensity.high => const GutterNoise(
+      stripHintAlpha: 0.10,
+      chipShadow: 0.35,
+    ),
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is GutterNoise &&
+      other.stripHintAlpha == stripHintAlpha &&
+      other.chipShadow == chipShadow;
+
+  @override
+  int get hashCode => Object.hash(stripHintAlpha, chipShadow);
+}
+
 class GutterMarkStyle {
   const GutterMarkStyle({
     required this.chipSize,
@@ -613,6 +657,7 @@ class GhosttyGutterLayer extends StatelessWidget {
     this.verifiedStyle = GutterMarkStyle.bold,
     this.verificationListenable,
     this.chipAccentOf,
+    this.noise = GutterNoise.medium,
   });
 
   /// The SAME controller handed to the flterm `TerminalView`.
@@ -667,6 +712,10 @@ class GhosttyGutterLayer extends StatelessWidget {
   /// (url+osc8 share a family color naturally); a mixed-accent multi-match row
   /// keeps the neutral [color] — no single override applies to it.
   final Color Function(String patternId)? chipAccentOf;
+
+  /// #1154: strip hint + chip shadow per the global intensity level. Defaults
+  /// to the shipped medium values (zero visual change).
+  final GutterNoise noise;
 
   /// The chip accent for one row's [anchors] under the seam rule above.
   Color _rowAccent(List<StructuredAnchor> anchors) {
@@ -725,7 +774,9 @@ class GhosttyGutterLayer extends StatelessWidget {
               right: 0,
               width: stripWidth,
               child: IgnorePointer(
-                child: ColoredBox(color: color.withValues(alpha: 0.06)),
+                child: ColoredBox(
+                  color: color.withValues(alpha: noise.stripHintAlpha),
+                ),
               ),
             ),
             for (final entry in byRow.entries)
@@ -750,6 +801,7 @@ class GhosttyGutterLayer extends StatelessWidget {
                       ? verifiedStyle
                       : style,
                   stripWidth: stripWidth,
+                  noise: noise,
                 ),
               ),
           ],
@@ -774,6 +826,7 @@ class _GutterMark extends StatefulWidget {
     required this.color,
     required this.style,
     required this.stripWidth,
+    required this.noise,
   });
 
   /// #993: consulted at tap time — while the painted offset is still moving a
@@ -785,6 +838,7 @@ class _GutterMark extends StatefulWidget {
   final Color color;
   final GutterMarkStyle style;
   final double stripWidth;
+  final GutterNoise noise;
 
   @override
   State<_GutterMark> createState() => _GutterMarkState();
@@ -853,6 +907,7 @@ class _GutterMarkState extends State<_GutterMark> {
                       ? kGutterIncompleteIcon
                       : (single?.icon ?? Icons.adjust)),
               count: multi ? widget.anchors.length : null,
+              noise: widget.noise,
             ),
           ),
         ),
@@ -874,6 +929,7 @@ class GutterMarkChip extends StatelessWidget {
     required this.accent,
     this.icon,
     this.count,
+    this.noise = GutterNoise.medium,
   }) : assert(icon != null || count != null, 'provide an icon or a count');
 
   /// Sizing + colour derivation ([GutterMarkStyle.normal] / [.bold]).
@@ -888,9 +944,13 @@ class GutterMarkChip extends StatelessWidget {
   /// Multi-match count badge (null for a single-pattern glyph chip).
   final int? count;
 
+  /// #1154: drop-shadow presence/alpha per the global intensity level.
+  final GutterNoise noise;
+
   @override
   Widget build(BuildContext context) {
     final chipFill = style.chipColor(accent);
+    final shadow = noise.chipShadow;
     final onChip = style.onChipColor(accent);
     return Container(
       width: style.chipSize,
@@ -904,13 +964,15 @@ class GutterMarkChip extends StatelessWidget {
         border: style.ringWidth > 0
             ? Border.all(color: onChip, width: style.ringWidth)
             : null,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 3,
-            offset: const Offset(0, 1),
-          ),
-        ],
+        boxShadow: shadow == null
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: shadow),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ],
       ),
       child: count != null
           ? Text(

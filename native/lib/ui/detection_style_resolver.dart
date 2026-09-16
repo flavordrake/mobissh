@@ -21,6 +21,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../state/detection_providers.dart' show DetectionIntensity;
 import '../storage/detection_styles_store.dart';
 import 'ghostty_terminal_decorators.dart';
 
@@ -128,6 +129,7 @@ class DetectionStyleResolver {
     this.styles = DetectionStyles.empty,
     required this.accent,
     required this.backgroundBrightness,
+    this.intensity = DetectionIntensity.medium,
   });
 
   /// The stored per-pattern overrides (empty = shipped defaults everywhere).
@@ -141,6 +143,10 @@ class DetectionStyleResolver {
   /// theme brightness (#1000).
   final Brightness backgroundBrightness;
 
+  /// The GLOBAL intensity level (#1154 R11), composed over the shipped
+  /// derivation BEFORE the per-pattern Lab multiplier. Medium is the identity.
+  final DetectionIntensity intensity;
+
   /// The effective color + alpha for [patternId] in the given state.
   /// [verified] selects the ACTIVE (verified, #990) state; the runtime only
   /// passes true where that state actually exists (paths today — see
@@ -151,26 +157,53 @@ class DetectionStyleResolver {
   }) {
     final style = styles.of(patternId);
     final hue = detectionColorFromHex(style?.colorHex) ?? accent;
-    final intensity = verified
+    final labIntensity = verified
         ? style?.activeIntensity
         : style?.inactiveIntensity;
     // The default path is BIT-IDENTICAL to the shipped derivation: no
-    // multiply, no re-clamp — ghosttyBubbleWashColor as-is.
-    final base = ghosttyBubbleWashColor(
-      hue,
-      verified: verified,
-      backgroundBrightness: backgroundBrightness,
-    );
-    final washColor = intensity == null
+    // multiply, no re-clamp — ghosttyBubbleWashColor as-is. The level (#1154)
+    // is applied to the wash ONLY (R13: the chip keeps the raw hue), before
+    // the Lab multiplier. Medium skips the HSL round-trip entirely so the
+    // override hue stays bit-exact (8-bit HSL quantisation would drift it).
+    final base = intensity == DetectionIntensity.medium
+        ? ghosttyBubbleWashColor(
+            hue,
+            verified: verified,
+            backgroundBrightness: backgroundBrightness,
+          )
+        : _levelled(
+            ghosttyBubbleWashColor(
+              _saturated(hue, intensity),
+              verified: verified,
+              backgroundBrightness: backgroundBrightness,
+            ),
+            intensity,
+          );
+    final washColor = labIntensity == null
         ? base
         : base.withValues(
             alpha: (base.a *
-                    intensity.clamp(
+                    labIntensity.clamp(
                       kDetectionIntensityMin,
                       kDetectionIntensityMax,
                     ))
                 .clamp(0.0, 1.0),
           );
     return ResolvedDetectionStyle(washColor: washColor, chipAccent: hue);
+  }
+
+  /// R11 saturation factor: low ×0.6, high ×1.25 (clamped to 1.0).
+  static Color _saturated(Color hue, DetectionIntensity level) {
+    final hsl = HSLColor.fromColor(hue);
+    final factor = level == DetectionIntensity.low ? 0.6 : 1.25;
+    return hsl
+        .withSaturation((hsl.saturation * factor).clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  /// R11 alpha factor: low ×0.6, high ×1.35 (clamped to 1.0).
+  static Color _levelled(Color wash, DetectionIntensity level) {
+    final factor = level == DetectionIntensity.low ? 0.6 : 1.35;
+    return wash.withValues(alpha: (wash.a * factor).clamp(0.0, 1.0));
   }
 }
