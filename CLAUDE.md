@@ -1,6 +1,6 @@
 # MobiSSH -- Claude Code Context
 
-> **Active TRACE**: none — last arc `.traces/trace-deep-link-intents-1117-200922/` (`mobissh://` deep links #1117, CLOSED 2026-09-13, shipped 0.1.12-rc.4+184; owner device validation owed; claude verb R24 deferred). Prior arcs: `.traces/trace-fleet-emulator-gate-restore-003808/` (#589 gate restore, fleet emulator lease, failure attribution), `.traces/trace-native-explorer-dx-detection-arc-201358/`. Durable learnings in memory.
+> **Active TRACE**: `.traces/trace-link-highlight-options-222819/` — link highlight options #1153 (spec `docs/link-highlight-options.md`; slice 1 #1154 intensity+sheet MERGED 2026-09-16; slice 2 #1155 gutter side + column mode IN PROGRESS, device). Side arcs: coverage tooling #1152 merged (Phase 2 assessment → backfill issues pending); deep-link emulator gap #1151 merged. Prior arcs: `.traces/trace-deep-link-intents-1117-200922/` (#1117, shipped +184; owner device validation owed; claude verb R24 deferred), `.traces/trace-fleet-emulator-gate-restore-003808/`. Durable learnings in memory.
 
 ## Command Hygiene (read this first)
 - **One script per Bash call.** No `&&` chains, no `;` sequences, no compound commands.

@@ -411,6 +411,7 @@ TDD_ANALYSIS: <bug-fix|feature|refactor> / <full|smoketest|exploratory>
 
 ## Rules
 
+- NEVER end your turn on a pending gate, test run, or Monitor. "Waiting for the gate task" is not a result — a stopped agent is never re-invoked by its own background job. Run gates in the foreground (long timeout) or Read the task's output file until it reports, then finish through to `DEVELOP_RESULT`.
 - NEVER force-push. Always merge from main, never rebase.
 - NEVER skip tests or use --no-verify.
 - NEVER modify files outside the stated scope without explaining why.
