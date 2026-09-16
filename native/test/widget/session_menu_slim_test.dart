@@ -342,6 +342,174 @@ void main() {
         expect(find.byType(DetectionLabScreen), findsOneWidget);
         expect(container.read(detectionSettingsProvider).enabled, isTrue);
       });
+
+      // #1155 (Slice 2 of #1153): the sheet gains the gutter SIDE and gutter
+      // MODE segmented controls (R2 remainder). Each writes ONLY its field
+      // through the notifier (live-apply); the selected segment reflects the
+      // provider state the moment the sheet opens.
+      group('#1155 gutter side + mode controls (R2)', () {
+        testWidgets('R2: the sheet carries the four side/mode segment keys '
+            'with their labels', (tester) async {
+          if (kDetectionDisabled971) return; // R4: sheet unreachable
+          final container = _makeContainer();
+          _add(container, 'host-a');
+          await tester.pumpWidget(_host(container: container));
+          await openSheet(tester);
+
+          expect(find.byKey(const Key('link-highlight-menu')), findsOneWidget);
+          expect(
+            find.byKey(const Key('link-highlight-side-left')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const Key('link-highlight-side-right')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const Key('link-highlight-mode-overlay')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const Key('link-highlight-mode-column')),
+            findsOneWidget,
+          );
+          expect(find.text('Left'), findsOneWidget);
+          expect(find.text('Right'), findsOneWidget);
+          expect(find.text('Overlay last column'), findsOneWidget);
+          expect(find.text('Dedicated column'), findsOneWidget);
+          // Slice 1's controls are still there.
+          expect(find.byKey(const Key('link-highlight-enabled')), findsOneWidget);
+          expect(find.byKey(const Key('link-highlight-lab')), findsOneWidget);
+        });
+
+        testWidgets('R2: link-highlight-side-left writes gutterSide == left; '
+            'intensity and enabled are unchanged; -right restores', (
+          tester,
+        ) async {
+          if (kDetectionDisabled971) return; // R4: sheet unreachable
+          final container = _makeContainer();
+          _add(container, 'host-a');
+          await tester.pumpWidget(_host(container: container));
+          await openSheet(tester);
+
+          final before = container.read(detectionSettingsProvider);
+          expect(before.gutterSide, GutterSide.right);
+
+          await tester.tap(find.byKey(const Key('link-highlight-side-left')));
+          await _pumpFrames(tester);
+          var s = container.read(detectionSettingsProvider);
+          expect(s.gutterSide, GutterSide.left);
+          expect(s.intensity, before.intensity, reason: 'intensity untouched');
+          expect(s.enabled, before.enabled, reason: 'enabled untouched');
+          expect(s.gutterMode, before.gutterMode, reason: 'mode untouched');
+          expect(s.url, before.url);
+          expect(s.path, before.path);
+          expect(s.command, before.command);
+          // Live-apply: the sheet stays open.
+          expect(find.byKey(const Key('link-highlight-menu')), findsOneWidget);
+
+          await tester.tap(find.byKey(const Key('link-highlight-side-right')));
+          await _pumpFrames(tester);
+          s = container.read(detectionSettingsProvider);
+          expect(s.gutterSide, GutterSide.right);
+          expect(s.gutterMode, before.gutterMode);
+        });
+
+        testWidgets('R2: link-highlight-mode-column writes gutterMode == '
+            'column; side/intensity/enabled unchanged; -overlay restores', (
+          tester,
+        ) async {
+          if (kDetectionDisabled971) return; // R4: sheet unreachable
+          final container = _makeContainer();
+          _add(container, 'host-a');
+          await tester.pumpWidget(_host(container: container));
+          await openSheet(tester);
+
+          final before = container.read(detectionSettingsProvider);
+          expect(before.gutterMode, GutterMode.overlay);
+
+          await tester.tap(find.byKey(const Key('link-highlight-mode-column')));
+          await _pumpFrames(tester);
+          var s = container.read(detectionSettingsProvider);
+          expect(s.gutterMode, GutterMode.column);
+          expect(s.gutterSide, before.gutterSide, reason: 'side untouched');
+          expect(s.intensity, before.intensity, reason: 'intensity untouched');
+          expect(s.enabled, before.enabled, reason: 'enabled untouched');
+          expect(find.byKey(const Key('link-highlight-menu')), findsOneWidget);
+
+          await tester.tap(find.byKey(const Key('link-highlight-mode-overlay')));
+          await _pumpFrames(tester);
+          s = container.read(detectionSettingsProvider);
+          expect(s.gutterMode, GutterMode.overlay);
+          expect(s.gutterSide, before.gutterSide);
+        });
+
+        testWidgets('R2: the selected segments reflect the provider state on '
+            'open (left + column pre-set → those segments selected)', (
+          tester,
+        ) async {
+          if (kDetectionDisabled971) return; // R4: sheet unreachable
+          final container = _makeContainer();
+          _add(container, 'host-a');
+          final notifier = container.read(detectionSettingsProvider.notifier);
+          await notifier.setGutterSide(GutterSide.left);
+          await notifier.setGutterMode(GutterMode.column);
+          await tester.pumpWidget(_host(container: container));
+          await openSheet(tester);
+
+          final sideControl = tester.widget<SegmentedButton<GutterSide>>(
+            find.byType(SegmentedButton<GutterSide>),
+          );
+          expect(sideControl.selected, {GutterSide.left});
+          final modeControl = tester.widget<SegmentedButton<GutterMode>>(
+            find.byType(SegmentedButton<GutterMode>),
+          );
+          expect(modeControl.selected, {GutterMode.column});
+          // And the defaults case: a fresh container opens on right/overlay.
+          final fresh = _makeContainer();
+          _add(fresh, 'host-b');
+          await tester.pumpWidget(_host(container: fresh));
+          await openSheet(tester);
+          expect(
+            tester
+                .widget<SegmentedButton<GutterSide>>(
+                  find.byType(SegmentedButton<GutterSide>),
+                )
+                .selected,
+            {GutterSide.right},
+          );
+          expect(
+            tester
+                .widget<SegmentedButton<GutterMode>>(
+                  find.byType(SegmentedButton<GutterMode>),
+                )
+                .selected,
+            {GutterMode.overlay},
+          );
+        });
+
+        testWidgets('R5: side/mode controls work while detection is OFF', (
+          tester,
+        ) async {
+          if (kDetectionDisabled971) return; // R4: sheet unreachable
+          final container = _makeContainer();
+          _add(container, 'host-a');
+          await container
+              .read(detectionSettingsProvider.notifier)
+              .setEnabled(false);
+          await tester.pumpWidget(_host(container: container));
+          await openSheet(tester);
+
+          await tester.tap(find.byKey(const Key('link-highlight-side-left')));
+          await _pumpFrames(tester);
+          await tester.tap(find.byKey(const Key('link-highlight-mode-column')));
+          await _pumpFrames(tester);
+          final s = container.read(detectionSettingsProvider);
+          expect(s.gutterSide, GutterSide.left);
+          expect(s.gutterMode, GutterMode.column);
+          expect(s.enabled, isFalse, reason: 'configuring never flips enabled');
+        });
+      });
     });
 
     testWidgets('#1031 review change 7: long-pressing the detection glyph '

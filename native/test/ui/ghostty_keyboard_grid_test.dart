@@ -15,6 +15,8 @@
 // status bar stays at the visible bottom and the #719 status-tap lands on it.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/state/detection_providers.dart';
+import 'package:mobissh/ui/ghostty_gutter_layer.dart';
 import 'package:mobissh/ui/ghostty_terminal_view.dart';
 
 void main() {
@@ -117,6 +119,54 @@ void main() {
       );
       expect(cols, 1);
       expect(rows, 1);
+    });
+  });
+
+  // #1155 (R19/R20): the keyboard-aware grid reads the ONE gutter geometry.
+  // On the #922 device box, dedicated-column mode must shrink the PTY cols by
+  // exactly floor(innerW/cellW) - floor((innerW-28)/cellW) and leave the
+  // keyboard-tracked rows alone; overlay (either side) is today's grid.
+  group('#1155 ghosttyGridForBox with a gutter geometry (R19)', () {
+    const cellW = 9.1;
+    const cellH = 17.4;
+    const boxW = 527.1;
+    const boxH = 597.5; // keyboard UP
+    const innerW = boxW - 2 * kGhosttyTerminalPadding;
+
+    test('overlay (left or right) == today\'s 57 cols x 33 rows', () {
+      for (final side in GutterSide.values) {
+        final g = GhosttyGutterGeometry(side: side, mode: GutterMode.overlay);
+        expect(
+          ghosttyGridForBox(
+            boxWidth: boxW,
+            boxHeight: boxH,
+            cellWidth: cellW,
+            cellHeight: cellH,
+            geometry: g,
+          ),
+          (57, 33),
+          reason: '$side overlay',
+        );
+      }
+    });
+
+    test('column (left or right) shrinks cols by the strip delta, rows stay 33',
+        () {
+      final delta = (innerW / cellW).floor() -
+          ((innerW - kGutterStripWidth) / cellW).floor();
+      expect(delta, greaterThanOrEqualTo(1));
+      for (final side in GutterSide.values) {
+        final g = GhosttyGutterGeometry(side: side, mode: GutterMode.column);
+        final (cols, rows) = ghosttyGridForBox(
+          boxWidth: boxW,
+          boxHeight: boxH,
+          cellWidth: cellW,
+          cellHeight: cellH,
+          geometry: g,
+        );
+        expect(cols, 57 - delta, reason: '$side column cols');
+        expect(rows, 33, reason: '$side column rows (keyboard-aware, unchanged)');
+      }
     });
   });
 }
