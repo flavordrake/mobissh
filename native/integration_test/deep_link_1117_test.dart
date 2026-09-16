@@ -30,6 +30,18 @@
 //         over the same session, R22/R25). The same link again while live →
 //         no growth, `link-verb-run-dialog`, nothing sent before the tap
 //         (R23b); Run → one sendNow, still attached to e1117 (#1149).
+//   A12   (#1151, R8/R10) `connect?name=<alias>` on the aliased profile routes
+//         exactly like the host form (auto-allowed → no dialog → shell, the
+//         session IS that identity). An unknown alias is the generic error
+//         (R10: `link-rejected-banner`, no editor, zero sessions).
+//   A13   (#1151, R9/R14) a second profile on the same host:port + a link
+//         with no `user=` → `link-picker-dialog` listing exactly those two;
+//         picking testuser ALWAYS confirms (R14) → Connect once → shell of
+//         THAT identity, count 0→1. The same link with `user=testuser` → no
+//         picker.
+//   A14   (#1151, R9/R14) `create?host=…&port=…&user=…&name=…` → the profile
+//         editor mounted with title/host/port/user prefilled, nothing saved
+//         until Save (store length unchanged), zero sessions.
 //
 // NOTE: run via `scripts/native-connect-test.sh integration_test/deep_link_1117_test.dart`.
 
@@ -56,8 +68,20 @@ const _rejectedLink = 'mobissh://connect?host=127.0.0.1&claude=x';
 const _verbLink = '$_link&tmux=e1117';
 const _identity = '127.0.0.1:2222:testuser';
 const _vaultId = 'deep-link-1142-testuser';
+// #1151: alias + ambiguity fixtures. `other1151` is NOT an account on
+// test-sshd — it only has to be MATCHED and listed; testuser is the one picked.
+const _alias = 'e1151';
+const _aliasLink = 'mobissh://connect?name=$_alias';
+const _aliasMissLink = 'mobissh://connect?name=nope1151';
+const _hostOnlyLink = 'mobissh://connect?host=127.0.0.1&port=2222';
+const _otherIdentity = '127.0.0.1:2222:other1151';
+const _createLink =
+    'mobissh://create?host=h.example&port=2222&user=u&name=Label';
 final _confirmDialog = find.byKey(const Key('link-confirm-dialog'));
 final _runDialog = find.byKey(const Key('link-verb-run-dialog'));
+final _pickerDialog = find.byKey(const Key('link-picker-dialog'));
+final _rejectedBanner = find.byKey(const Key('link-rejected-banner'));
+final _editorHost = find.byKey(const Key('profile-editor-host'));
 final _trustPrompt = find.text('Trust + connect');
 
 class _FakeLinkSource implements LinkIntentSource {
@@ -67,9 +91,11 @@ class _FakeLinkSource implements LinkIntentSource {
 }
 
 /// Poll until the terminal mounts AND the shell streams bytes. Records whether
-/// the R12 confirm dialog and the TOFU prompt were seen on the way; taps the
-/// requested one when asked.
-Future<({bool reachedShell, bool sawConfirm, bool sawTrust})> _awaitShell(
+/// the R12 confirm dialog, the TOFU prompt and the R9 picker were seen on the
+/// way; taps the requested one when asked (the picker is only ever recorded —
+/// a test that expects it drives it itself).
+Future<({bool reachedShell, bool sawConfirm, bool sawTrust, bool sawPicker})>
+    _awaitShell(
   WidgetTester tester,
   ProviderContainer container, {
   bool tapConnectOnce = false,
@@ -78,8 +104,10 @@ Future<({bool reachedShell, bool sawConfirm, bool sawTrust})> _awaitShell(
   var connected = false;
   var sawConfirm = false;
   var sawTrust = false;
+  var sawPicker = false;
   for (var i = 0; i < 60; i++) {
     await tester.pump(const Duration(milliseconds: 500));
+    if (_pickerDialog.evaluate().isNotEmpty) sawPicker = true;
     if (_confirmDialog.evaluate().isNotEmpty) {
       sawConfirm = true;
       if (tapConnectOnce) {
@@ -100,11 +128,21 @@ Future<({bool reachedShell, bool sawConfirm, bool sawTrust})> _awaitShell(
     }
   }
   if (!connected) {
-    return (reachedShell: false, sawConfirm: sawConfirm, sawTrust: sawTrust);
+    return (
+      reachedShell: false,
+      sawConfirm: sawConfirm,
+      sawTrust: sawTrust,
+      sawPicker: sawPicker,
+    );
   }
   final entry = container.read(sessionsProvider).active;
   if (entry == null) {
-    return (reachedShell: false, sawConfirm: sawConfirm, sawTrust: sawTrust);
+    return (
+      reachedShell: false,
+      sawConfirm: sawConfirm,
+      sawTrust: sawTrust,
+      sawPicker: sawPicker,
+    );
   }
   final out = <int>[];
   final sub = entry.proxy.output.listen(out.addAll);
@@ -117,8 +155,25 @@ Future<({bool reachedShell, bool sawConfirm, bool sawTrust})> _awaitShell(
     }
   }
   await sub.cancel();
-  return (reachedShell: gotBytes, sawConfirm: sawConfirm, sawTrust: sawTrust);
+  return (
+    reachedShell: gotBytes,
+    sawConfirm: sawConfirm,
+    sawTrust: sawTrust,
+    sawPicker: sawPicker,
+  );
 }
+
+/// Poll until [finder] matches (or give up after ~10s).
+Future<bool> _awaitVisible(WidgetTester tester, Finder finder) async {
+  for (var i = 0; i < 20; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+    if (finder.evaluate().isNotEmpty) return true;
+  }
+  return false;
+}
+
+String _editorText(WidgetTester tester, String keyName) =>
+    tester.widget<TextField>(find.byKey(Key(keyName))).controller!.text;
 
 /// Session menu → Disconnect → wait for the chooser (#607 menu placement).
 Future<void> _disconnect(WidgetTester tester) async {
@@ -339,6 +394,134 @@ void main() {
         reason: 'A11: session no longer attached to e1117 after Run');
     expect(container.read(sessionsProvider).entries.length, 1);
     await _disconnect(tester);
+    expect(container.read(sessionsProvider).entries, isEmpty);
+
+    // A12 (#1151, R8/R10): `connect?name=<alias>` on the (auto-allowed)
+    // aliased profile routes exactly like the host form — no dialog, no TOFU,
+    // shell, and the session IS that identity.
+    final store = container.read(profilesStoreProvider);
+    final aliased = (await store.load()).firstWhere(
+      (p) => p.identityKey == _identity,
+    );
+    await store.upsert(aliased.copyWith(linkAlias: _alias));
+    container.invalidate(savedProfilesProvider);
+    expect(await _autoConnectOf(container), isTrue,
+        reason: 'A12 precondition: profile must still be auto-allowed');
+    source.controller.add(_aliasLink);
+    final byAlias = await _awaitShell(tester, container);
+    expect(byAlias.sawPicker, isFalse, reason: 'A12: alias must not pick');
+    expect(byAlias.sawConfirm, isFalse,
+        reason: 'A12: auto-allowed alias must not show the confirm dialog');
+    expect(byAlias.sawTrust, isFalse, reason: 'A12: trusted host re-prompted TOFU');
+    expect(byAlias.reachedShell, isTrue,
+        reason: 'A12: alias link connect did not reach shell');
+    expect(container.read(sessionsProvider).entries.length, 1,
+        reason: 'A12: alias link must open exactly one session');
+    expect(container.read(sessionsProvider).active!.profileKey, _identity,
+        reason: 'A12: alias resolved to a different identity');
+    await _disconnect(tester);
+    expect(container.read(sessionsProvider).entries, isEmpty);
+
+    // A12 (R10): an unknown alias is the generic error — banner, no editor,
+    // nothing created. (The banner was cleared by the hand-off above.)
+    expect(_rejectedBanner, findsNothing,
+        reason: 'A12 precondition: banner must be clear before the miss');
+    source.controller.add(_aliasMissLink);
+    expect(await _awaitVisible(tester, _rejectedBanner), isTrue,
+        reason: 'A12: unknown alias must show link-rejected-banner (R10)');
+    expect(_editorHost, findsNothing,
+        reason: 'A12: unknown alias must not open the editor');
+    expect(_pickerDialog, findsNothing);
+    expect(_confirmDialog, findsNothing);
+    expect(container.read(sessionsProvider).entries, isEmpty,
+        reason: 'A12: unknown alias created a session');
+
+    // A13 (#1151, R9/R14): a SECOND profile on the same host:port makes a
+    // link with no `user=` ambiguous → picker listing exactly those two.
+    await store.upsert(SavedProfile(
+      title: 'other-1151',
+      host: '127.0.0.1',
+      port: 2222,
+      username: 'other1151',
+      authType: 'password',
+    ));
+    container.invalidate(savedProfilesProvider);
+    final profilesBefore = (await store.load()).length;
+    expect(profilesBefore, 2);
+    source.controller.add(_hostOnlyLink);
+    expect(await _awaitVisible(tester, _pickerDialog), isTrue,
+        reason: 'A13: host-only link with two matches must show the picker');
+    expect(find.byKey(const Key('link-pick-$_identity')), findsOneWidget,
+        reason: 'A13: picker must list the testuser profile');
+    expect(find.byKey(const Key('link-pick-$_otherIdentity')), findsOneWidget,
+        reason: 'A13: picker must list the other1151 profile');
+    expect(
+        find.descendant(
+            of: _pickerDialog, matching: find.byType(SimpleDialogOption)),
+        findsNWidgets(2),
+        reason: 'A13: picker must list the R9 candidates and nothing else');
+    expect(container.read(sessionsProvider).entries, isEmpty,
+        reason: 'A13: nothing may connect while the picker is open');
+    expect(_confirmDialog, findsNothing,
+        reason: 'A13: confirm must wait for the pick');
+    await tester.tap(find.byKey(const Key('link-pick-$_identity')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(_pickerDialog, findsNothing, reason: 'A13: pick did not close picker');
+    // R14: a picker result ALWAYS confirms, even though testuser is
+    // auto-allowed; Connect once → shell of THAT identity.
+    final picked = await _awaitShell(tester, container, tapConnectOnce: true);
+    expect(picked.sawConfirm, isTrue,
+        reason: 'A13: a picker result must confirm (R14)');
+    expect(picked.sawTrust, isFalse, reason: 'A13: trusted host re-prompted TOFU');
+    expect(picked.reachedShell, isTrue,
+        reason: 'A13: picked profile did not reach shell');
+    expect(container.read(sessionsProvider).entries.length, 1,
+        reason: 'A13: the pick must open exactly one session');
+    expect(container.read(sessionsProvider).active!.username, 'testuser',
+        reason: 'A13: the pick connected the wrong profile');
+    expect(container.read(sessionsProvider).active!.profileKey, _identity);
+    await _disconnect(tester);
+    expect(container.read(sessionsProvider).entries, isEmpty);
+
+    // A13: `user=testuser` disambiguates — no picker, straight through.
+    source.controller.add(_link);
+    final byUser = await _awaitShell(tester, container);
+    expect(byUser.sawPicker, isFalse,
+        reason: 'A13: link with user= must not show the picker');
+    expect(byUser.sawConfirm, isFalse,
+        reason: 'A13: auto-allowed profile must not confirm');
+    expect(byUser.reachedShell, isTrue,
+        reason: 'A13: user= link did not reach shell');
+    expect(container.read(sessionsProvider).entries.length, 1);
+    expect(container.read(sessionsProvider).active!.profileKey, _identity);
+    await _disconnect(tester);
+    expect(container.read(sessionsProvider).entries, isEmpty);
+
+    // A14 (#1151, R9/R14): `create` for an unsaved host opens the editor
+    // prefilled from the link; nothing is saved until Save, nothing connects.
+    expect(_editorHost, findsNothing);
+    source.controller.add(_createLink);
+    expect(await _awaitVisible(tester, _editorHost), isTrue,
+        reason: 'A14: create link must mount the profile editor');
+    expect(_editorText(tester, 'profile-editor-host'), 'h.example',
+        reason: 'A14: host not prefilled');
+    expect(_editorText(tester, 'profile-editor-port'), '2222',
+        reason: 'A14: port not prefilled');
+    expect(_editorText(tester, 'profile-editor-username'), 'u',
+        reason: 'A14: username not prefilled');
+    expect(_editorText(tester, 'profile-editor-title'), 'Label',
+        reason: 'A14: name not prefilled as the title');
+    expect(_confirmDialog, findsNothing, reason: 'A14: create never confirms');
+    expect(container.read(sessionsProvider).entries, isEmpty,
+        reason: 'A14: create link connected');
+    expect((await store.load()).length, profilesBefore,
+        reason: 'A14: create link persisted before Save');
+    // Back out without saving: still nothing persisted.
+    await tester.tap(find.byType(CloseButton));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(_editorHost, findsNothing, reason: 'A14: editor did not close');
+    expect((await store.load()).length, profilesBefore,
+        reason: 'A14: backing out of the editor persisted a profile');
     expect(container.read(sessionsProvider).entries, isEmpty);
   });
 }
