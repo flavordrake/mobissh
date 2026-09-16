@@ -59,14 +59,6 @@ const double kGutterStripWidth = 28.0;
 /// is more than the copy will carry").
 const IconData kGutterIncompleteIcon = Icons.more_horiz;
 
-/// Sizing + colour derivation for the gutter detection mark chip (#989).
-///
-/// The mark is a FILLED opaque chip behind a bigger glyph so it reads as a
-/// physical, tappable button against terminal text in both themes — not a
-/// faint 14px glyph. Kept as a value type so #990's VERIFIED-path variant is
-/// one more static const (a bolder shade via [chipColor]) with zero paint-code
-/// rework.
-@immutable
 /// The gutter's "visual noise" per the GLOBAL intensity level (#1154 R13):
 /// the translucent strip hint and the chip drop shadow. Chip accent, colour
 /// and opacity are NOT part of it (chips stay identical at every level).
@@ -110,6 +102,14 @@ class GutterNoise {
   int get hashCode => Object.hash(stripHintAlpha, chipShadow);
 }
 
+/// Sizing + colour derivation for the gutter detection mark chip (#989).
+///
+/// The mark is a FILLED opaque chip behind a bigger glyph so it reads as a
+/// physical, tappable button against terminal text in both themes — not a
+/// faint 14px glyph. Kept as a value type so #990's VERIFIED-path variant is
+/// one more static const (a bolder shade via [chipColor]) with zero paint-code
+/// rework.
+@immutable
 class GutterMarkStyle {
   const GutterMarkStyle({
     required this.chipSize,
