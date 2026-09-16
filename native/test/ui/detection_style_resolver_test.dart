@@ -12,6 +12,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/storage/detection_styles_store.dart';
 import 'package:mobissh/ui/detection_style_resolver.dart';
 import 'package:mobissh/ui/ghostty_gutter_layer.dart';
@@ -28,18 +29,26 @@ void main() {
     kGhosttyCommandPatternId,
   ];
 
-  DetectionStyleResolver emptyResolver(Brightness brightness) =>
+  // #1154: the resolver takes the GLOBAL intensity level (R11); medium is the
+  // identity, so the golden test below is parameterised on it.
+  DetectionStyleResolver emptyResolver(
+    Brightness brightness, {
+    DetectionIntensity intensity = DetectionIntensity.medium,
+  }) =>
       DetectionStyleResolver(
         styles: DetectionStyles.empty,
         accent: accent,
         backgroundBrightness: brightness,
+        intensity: intensity,
       );
 
   group('GOLDEN EQUALITY: empty store == today\'s constants', () {
     test('the wash color matches ghosttyBubbleWashColor exactly for every '
-        'built-in pattern × state × luminance', () {
+        'built-in pattern × state × luminance at intensity MEDIUM (R11 '
+        'identity)', () {
       for (final brightness in Brightness.values) {
-        final resolver = emptyResolver(brightness);
+        final resolver =
+            emptyResolver(brightness, intensity: DetectionIntensity.medium);
         for (final id in builtinIds) {
           for (final verified in [false, true]) {
             final resolved = resolver.resolveStyle(id, verified: verified);
@@ -52,6 +61,27 @@ void main() {
               ),
               reason: 'no-override wash must be bit-identical for $id '
                   '(verified=$verified, $brightness)',
+            );
+          }
+        }
+      }
+    });
+
+    test('R11: the resolver DEFAULTS to medium — a constructor without an '
+        'intensity arg is bit-identical to the explicit medium one', () {
+      for (final brightness in Brightness.values) {
+        final implicit = DetectionStyleResolver(
+          styles: DetectionStyles.empty,
+          accent: accent,
+          backgroundBrightness: brightness,
+        );
+        expect(implicit.intensity, DetectionIntensity.medium);
+        for (final id in builtinIds) {
+          for (final verified in [false, true]) {
+            expect(
+              implicit.resolveStyle(id, verified: verified),
+              emptyResolver(brightness, intensity: DetectionIntensity.medium)
+                  .resolveStyle(id, verified: verified),
             );
           }
         }
@@ -223,6 +253,323 @@ void main() {
         ),
         reason: 'a zero multiplier must not make the wash vanish — the band '
             'floor keeps every stored value visible (IA review change 6)',
+      );
+    });
+  });
+
+  // #1154 (Slice 1 of #1153) — the GLOBAL intensity level composes over the
+  // shipped derivation BEFORE the per-pattern Lab multiplier (R11): low =
+  // HSL saturation ×0.6 + alpha ×0.6; medium = identity; high = saturation
+  // ×1.25 (clamp 1.0) + alpha ×1.35 (clamp 1.0). Chips are untouched (R13).
+  // The four kGhostty*WashAlpha* constants are NOT edited (R14) — these tests
+  // assert the COMPOSED values per level against them.
+  group('#1154 global intensity level (R11/R12/R13)', () {
+    const levels = DetectionIntensity.values;
+    // relpath is a built-in too (#1036) — it has a verified state.
+    const allBuiltinIds = [...builtinIds, kGhosttyRelPathPatternId];
+
+    double alphaAt(
+      DetectionIntensity level,
+      String id, {
+      required bool verified,
+      required Brightness brightness,
+    }) =>
+        emptyResolver(brightness, intensity: level)
+            .resolveStyle(id, verified: verified)
+            .washColor
+            .a;
+
+    double baseAlpha({required bool verified, required Brightness brightness}) =>
+        ghosttyBubbleWashColor(
+          accent,
+          verified: verified,
+          backgroundBrightness: brightness,
+        ).a;
+
+    test('R11: LOW is base alpha × 0.6 exactly; HIGH is base alpha × 1.35 '
+        'clamped to 1.0 (per pattern × state × luminance)', () {
+      for (final brightness in Brightness.values) {
+        for (final id in allBuiltinIds) {
+          for (final verified in [false, true]) {
+            final base = baseAlpha(verified: verified, brightness: brightness);
+            expect(
+              alphaAt(
+                DetectionIntensity.low,
+                id,
+                verified: verified,
+                brightness: brightness,
+              ),
+              closeTo(base * 0.6, 1e-6),
+              reason: 'low alpha for $id (verified=$verified, $brightness)',
+            );
+            expect(
+              alphaAt(
+                DetectionIntensity.high,
+                id,
+                verified: verified,
+                brightness: brightness,
+              ),
+              closeTo((base * 1.35).clamp(0.0, 1.0), 1e-6),
+              reason: 'high alpha for $id (verified=$verified, $brightness)',
+            );
+          }
+        }
+      }
+    });
+
+    test('R12: alpha(low) < alpha(medium) < alpha(high) for every built-in '
+        'pattern × verified × luminance', () {
+      for (final brightness in Brightness.values) {
+        for (final id in allBuiltinIds) {
+          for (final verified in [false, true]) {
+            final low = alphaAt(
+              DetectionIntensity.low,
+              id,
+              verified: verified,
+              brightness: brightness,
+            );
+            final medium = alphaAt(
+              DetectionIntensity.medium,
+              id,
+              verified: verified,
+              brightness: brightness,
+            );
+            final high = alphaAt(
+              DetectionIntensity.high,
+              id,
+              verified: verified,
+              brightness: brightness,
+            );
+            expect(low, lessThan(medium),
+                reason: '$id verified=$verified $brightness: low < medium');
+            expect(medium, lessThan(high),
+                reason: '$id verified=$verified $brightness: medium < high');
+          }
+        }
+      }
+    });
+
+    test('R12: detected < verified INSIDE each level (the level composes '
+        'before the pair clamp, so it cannot invert the pair)', () {
+      for (final level in levels) {
+        for (final brightness in Brightness.values) {
+          for (final id in allBuiltinIds) {
+            final detected = alphaAt(
+              level,
+              id,
+              verified: false,
+              brightness: brightness,
+            );
+            final verified = alphaAt(
+              level,
+              id,
+              verified: true,
+              brightness: brightness,
+            );
+            expect(detected, lessThan(verified),
+                reason: '$level $id $brightness: detected < verified');
+          }
+        }
+      }
+    });
+
+    test('R11: the LOW alpha stays >= 0.12 and the wash is never transparent '
+        '(the #1074 tracking assertion keys on non-null / visible)', () {
+      for (final brightness in Brightness.values) {
+        for (final id in allBuiltinIds) {
+          for (final verified in [false, true]) {
+            final resolved = emptyResolver(
+              brightness,
+              intensity: DetectionIntensity.low,
+            ).resolveStyle(id, verified: verified);
+            expect(resolved.washColor, isNotNull);
+            expect(
+              resolved.washColor.a,
+              greaterThanOrEqualTo(0.12),
+              reason: 'low floor for $id verified=$verified $brightness',
+            );
+            expect(resolved.washColor.a, greaterThan(0.0));
+          }
+        }
+      }
+    });
+
+    test('R11: HSL saturation orders low < medium <= high, hue preserved, '
+        'and high clamps at 1.0', () {
+      for (final brightness in Brightness.values) {
+        for (final verified in [false, true]) {
+          HSLColor hsl(DetectionIntensity level) => HSLColor.fromColor(
+                emptyResolver(brightness, intensity: level)
+                    .resolveStyle(kGhosttyUrlPatternId, verified: verified)
+                    .washColor,
+              );
+          final low = hsl(DetectionIntensity.low);
+          final medium = hsl(DetectionIntensity.medium);
+          final high = hsl(DetectionIntensity.high);
+          expect(low.saturation, lessThan(medium.saturation),
+              reason: 'low desaturates ($brightness verified=$verified)');
+          expect(medium.saturation, lessThanOrEqualTo(high.saturation),
+              reason: 'high saturates ($brightness verified=$verified)');
+          expect(high.saturation, lessThanOrEqualTo(1.0));
+          // The exact factors on the test accent (S≈0.59, unclamped at high).
+          expect(low.saturation, closeTo(medium.saturation * 0.6, 0.02));
+          expect(
+            high.saturation,
+            closeTo((medium.saturation * 1.25).clamp(0.0, 1.0), 0.02),
+          );
+          // The hue family is the same at every level (one hue for the whole
+          // affordance — only saturation/alpha move).
+          expect(low.hue, closeTo(medium.hue, 1.0));
+          expect(high.hue, closeTo(medium.hue, 1.0));
+        }
+      }
+    });
+
+    test('R11: HIGH saturation clamps to 1.0 on an already-saturated accent '
+        '(no overflow / no wrap)', () {
+      const saturated = Color(0xFFFF0000);
+      final resolved = const DetectionStyleResolver(
+        styles: DetectionStyles.empty,
+        accent: saturated,
+        backgroundBrightness: Brightness.dark,
+        intensity: DetectionIntensity.high,
+      ).resolveStyle(kGhosttyUrlPatternId, verified: false);
+      final hsl = HSLColor.fromColor(resolved.washColor);
+      expect(hsl.saturation, closeTo(1.0, 1e-6));
+      expect(resolved.washColor.a, lessThanOrEqualTo(1.0));
+    });
+
+    test('R11: MEDIUM is the identity even with a colorHex override — the '
+        'override hue is bit-exact (no HSL round-trip on the medium path)', () {
+      const resolver = DetectionStyleResolver(
+        styles: DetectionStyles({'url': DetectionPatternStyle(colorHex: '#33AA55')}),
+        accent: accent,
+        backgroundBrightness: Brightness.dark,
+        intensity: DetectionIntensity.medium,
+      );
+      final resolved = resolver.resolveStyle('url', verified: false);
+      expect(resolved.washColor.toARGB32() & 0x00FFFFFF, 0x0033AA55);
+      expect(
+        resolved.washColor.a,
+        closeTo(kGhosttyBubbleDetectedWashAlphaOnDark, 1e-9),
+      );
+    });
+
+    test('R13: chipAccent == accent and GutterMarkStyle.normal/bold.chipColor '
+        'are IDENTICAL at ALL three levels (chips untouched by intensity)', () {
+      for (final level in levels) {
+        for (final brightness in Brightness.values) {
+          final resolver = emptyResolver(brightness, intensity: level);
+          for (final id in allBuiltinIds) {
+            for (final verified in [false, true]) {
+              final resolved = resolver.resolveStyle(id, verified: verified);
+              expect(resolved.chipAccent, accent,
+                  reason: '$level $id verified=$verified: chip accent');
+              expect(
+                GutterMarkStyle.normal.chipColor(resolved.chipAccent),
+                GutterMarkStyle.normal.chipColor(accent),
+              );
+              expect(
+                GutterMarkStyle.bold.chipColor(resolved.chipAccent),
+                GutterMarkStyle.bold.chipColor(accent),
+              );
+              expect(
+                GutterMarkStyle.normal.chipColor(resolved.chipAccent).a,
+                1.0,
+                reason: 'chip opacity stays 1.0 at $level',
+              );
+            }
+          }
+        }
+      }
+    });
+
+    test('R13: a colorHex override still reaches the chip UNCHANGED at every '
+        'level (the level never touches the chip hue)', () {
+      for (final level in levels) {
+        final resolver = DetectionStyleResolver(
+          styles: const DetectionStyles({
+            'url': DetectionPatternStyle(colorHex: '#33AA55'),
+          }),
+          accent: accent,
+          backgroundBrightness: Brightness.dark,
+          intensity: level,
+        );
+        final resolved = resolver.resolveStyle('url', verified: false);
+        expect(resolved.chipAccent.toARGB32() & 0x00FFFFFF, 0x0033AA55,
+            reason: '$level: chip hue is the raw override');
+      }
+    });
+
+    test('R11/R23: the per-pattern Lab intensity composes ON TOP of the '
+        'level — with activeIntensity 1.5, high >= medium >= low still holds '
+        'and the pair clamp still keeps detected < verified', () {
+      for (final brightness in Brightness.values) {
+        double at(DetectionIntensity level, {required bool verified}) =>
+            DetectionStyleResolver(
+              styles: const DetectionStyles({
+                kGhosttyPathPatternId: DetectionPatternStyle(
+                  inactiveIntensity: 1.5,
+                  activeIntensity: 1.5,
+                ),
+              }),
+              accent: accent,
+              backgroundBrightness: brightness,
+              intensity: level,
+            ).resolveStyle(kGhosttyPathPatternId, verified: verified).washColor.a;
+        for (final verified in [false, true]) {
+          final low = at(DetectionIntensity.low, verified: verified);
+          final medium = at(DetectionIntensity.medium, verified: verified);
+          final high = at(DetectionIntensity.high, verified: verified);
+          expect(high, greaterThanOrEqualTo(medium),
+              reason: 'tuned 1.5 $brightness verified=$verified: high >= medium');
+          expect(medium, greaterThanOrEqualTo(low),
+              reason: 'tuned 1.5 $brightness verified=$verified: medium >= low');
+          expect(high, lessThanOrEqualTo(1.0));
+          // The tuned medium value is the shipped Lab composition, untouched.
+          expect(
+            medium,
+            closeTo(
+              (baseAlpha(verified: verified, brightness: brightness) * 1.5)
+                  .clamp(0.0, 1.0),
+              1e-6,
+            ),
+          );
+          // Low: the level scales the base FIRST, then the Lab multiplier.
+          expect(
+            low,
+            closeTo(
+              (baseAlpha(verified: verified, brightness: brightness) * 0.6 * 1.5)
+                  .clamp(0.0, 1.0),
+              1e-6,
+            ),
+          );
+        }
+        for (final level in levels) {
+          expect(
+            at(level, verified: false),
+            lessThanOrEqualTo(at(level, verified: true)),
+            reason: '$level $brightness: tuned detected <= verified',
+          );
+        }
+      }
+    });
+
+    test('R11: the level is a resolver INPUT — a resolver rebuilt at another '
+        'level resolves a different style (so the wash layer repaints)', () {
+      const medium = DetectionStyleResolver(
+        accent: accent,
+        backgroundBrightness: Brightness.dark,
+      );
+      const low = DetectionStyleResolver(
+        accent: accent,
+        backgroundBrightness: Brightness.dark,
+        intensity: DetectionIntensity.low,
+      );
+      expect(medium.intensity, isNot(low.intensity));
+      expect(
+        medium.resolveStyle(kGhosttyUrlPatternId, verified: false),
+        isNot(equals(low.resolveStyle(kGhosttyUrlPatternId, verified: false))),
       );
     });
   });

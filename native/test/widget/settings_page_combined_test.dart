@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobissh/state/detection_exceptions_providers.dart';
+import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/state/detection_style_providers.dart';
 import 'package:mobissh/state/ui_prefs_providers.dart';
 import 'package:mobissh/ui/detection_lab_screen.dart';
@@ -204,6 +205,41 @@ void main() {
       hasLength(1),
       reason: 'authored exception reports survive every reset (#995 rule)',
     );
+  });
+
+  testWidgets('#1154 R9: Reset settings restores intensity / gutterSide / '
+      'gutterMode to medium / right / overlay alongside the detection fields',
+      (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await _pumpPage(tester, container);
+
+    final notifier = container.read(detectionSettingsProvider.notifier);
+    await notifier.setIntensity(DetectionIntensity.low);
+    await notifier.setGutterSide(GutterSide.left);
+    await notifier.setGutterMode(GutterMode.column);
+    await notifier.setUrl(false);
+    await _pumpFrames(tester);
+    final before = container.read(detectionSettingsProvider);
+    expect(before.intensity, DetectionIntensity.low);
+    expect(before.gutterSide, GutterSide.left);
+    expect(before.gutterMode, GutterMode.column);
+    expect(before.url, isFalse);
+
+    await tester.tap(find.byKey(const ValueKey('settings-reset-button')));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const ValueKey('settings-reset-confirm')));
+    await _pumpFrames(tester);
+
+    final after = container.read(detectionSettingsProvider);
+    expect(after.intensity, DetectionIntensity.medium);
+    expect(after.gutterSide, GutterSide.right);
+    expect(after.gutterMode, GutterMode.overlay);
+    // The pre-existing detection fields still reset with it.
+    expect(after.url, isTrue);
+    expect(after.enabled, isTrue);
+    expect(after, const DetectionSettings(), reason: 'full default after reset');
   });
 
   testWidgets('Reset settings can be cancelled (no change)', (tester) async {

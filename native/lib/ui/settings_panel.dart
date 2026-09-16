@@ -504,6 +504,10 @@ class SettingsPanel extends ConsumerWidget {
     await detectionNotifier.setPath(true);
     await detectionNotifier.setCommand(true);
     await detectionNotifier.setRelpath(true);
+    // #1154 R9: the link-highlight options reset with the detection fields.
+    await detectionNotifier.setIntensity(DetectionIntensity.medium);
+    await detectionNotifier.setGutterSide(GutterSide.right);
+    await detectionNotifier.setGutterMode(GutterMode.overlay);
     // #1031 slice 2: lab styles are TUNED settings → reset with the rest.
     // AUTHORED data survives (detection exceptions here; custom pattern
     // definitions in slice 3) — the IA's one-sentence reset rule.

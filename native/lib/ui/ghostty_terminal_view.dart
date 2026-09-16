@@ -4505,7 +4505,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // highlights cleanly) and re-run registration against the new settings — so
     // turning URL/path detection off removes existing decorations immediately,
     // and turning it back on re-scans the current cells. No restart needed.
-    ref.listen<DetectionSettings>(detectionSettingsProvider, (prev, next) {
+    // #1154 R10: select on the pattern PROJECTION so a visual-only change
+    // (intensity / gutter side / mode) rides the resolver watch below and
+    // never clears + rescans the patterns.
+    ref.listen<DetectionPatternProjection>(
+        detectionSettingsProvider.select((s) => s.patternProjection),
+        (prev, next) {
       if (prev == next) return;
       final c = _controller;
       if (c == null) return;
@@ -4653,6 +4658,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       styles: ref.watch(detectionStylesProvider),
       accent: highlightColor,
       backgroundBrightness: backgroundBrightness,
+      // #1154: the global level is a resolver input (wash) and drives the
+      // gutter noise; selected so only a level change rebuilds here.
+      intensity: ref.watch(
+        detectionSettingsProvider.select((s) => s.intensity),
+      ),
     );
     // #922: wrap in a LayoutBuilder so we read the terminal box's ACTUAL
     // constraints — the height the Scaffold has ALREADY shrunk for the soft
@@ -5024,6 +5034,7 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             chipAccentOf: (patternId) => styleResolver
                 .resolveStyle(patternId, verified: false)
                 .chipAccent,
+            noise: GutterNoise.forIntensity(styleResolver.intensity),
           ),
         ),
         // Selection affordances (bottom-right). #712: shown ONLY while a

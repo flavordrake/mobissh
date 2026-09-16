@@ -49,6 +49,7 @@ class DetectionLabScreen extends ConsumerWidget {
       styles: styles,
       accent: preview.accent,
       backgroundBrightness: preview.brightness,
+      intensity: detection.intensity,
     );
     return Scaffold(
       appBar: AppBar(title: const Text('Detection lab')),
