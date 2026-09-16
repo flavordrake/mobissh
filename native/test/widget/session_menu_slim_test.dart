@@ -176,41 +176,172 @@ void main() {
       expect(find.text('u@host-a:22'), findsNothing);
     });
 
-    testWidgets('detection toggle is present; flips the setting unless killed', (
-      tester,
-    ) async {
-      final container = _makeContainer();
-      _add(container, 'host-a');
-
-      await tester.pumpWidget(_host(container: container));
-      await tester.tap(find.byKey(const Key('open-menu')));
-      await _pumpFrames(tester);
-
-      // The toggle is present in the slim controls row (both states).
-      expect(
-        find.byKey(const Key('session-menu-detection-toggle')),
-        findsOneWidget,
-      );
-      if (kDetectionDisabled971) {
-        // #971 kill switch: the toggle is DISABLED and INERT — tapping it must
-        // NOT flip the stored setting (detection is force-off until fixed).
-        final before = container.read(detectionSettingsProvider).enabled;
-        await tester.tap(
-          find.byKey(const Key('session-menu-detection-toggle')),
-          warnIfMissed: false,
-        );
+    // #1154 (Slice 1 of #1153, owner directive 2026-09-16): the detection
+    // button is no longer a one-tap toggle. Tapping it closes the session menu
+    // (the #664 idiom — the menu barrier sits above pushed routes) and opens
+    // the link-highlight OPTIONS sheet; the sheet's controls LIVE-apply through
+    // DetectionSettingsNotifier. This replaces the former "tap flips enabled"
+    // test (R1).
+    group('#1154 link highlight options sheet', () {
+      Future<void> openSheet(WidgetTester tester) async {
+        await tester.tap(find.byKey(const Key('open-menu')));
         await _pumpFrames(tester);
-        expect(container.read(detectionSettingsProvider).enabled, before,
-            reason: 'kill switch: the detection toggle must be inert');
-      } else {
-        // Detection defaults ON (no regression); tapping flips it OFF globally.
-        expect(container.read(detectionSettingsProvider).enabled, isTrue);
-        await tester.tap(
+        await tester.tap(find.byKey(const Key('session-menu-detection-toggle')));
+        await _pumpFrames(tester);
+      }
+
+      testWidgets('R1: tapping the detection button opens link-highlight-menu, '
+          'does NOT flip enabled, and the session menu is gone first', (
+        tester,
+      ) async {
+        final container = _makeContainer();
+        _add(container, 'host-a');
+
+        await tester.pumpWidget(_host(container: container));
+        await tester.tap(find.byKey(const Key('open-menu')));
+        await _pumpFrames(tester);
+        expect(
           find.byKey(const Key('session-menu-detection-toggle')),
+          findsOneWidget,
         );
+        expect(container.read(detectionSettingsProvider).enabled, isTrue);
+
+        if (kDetectionDisabled971) {
+          // R4: the kill switch keeps the button disabled + inert — no sheet.
+          await tester.tap(
+            find.byKey(const Key('session-menu-detection-toggle')),
+            warnIfMissed: false,
+          );
+          await _pumpFrames(tester);
+          expect(find.byKey(const Key('link-highlight-menu')), findsNothing);
+          expect(container.read(detectionSettingsProvider).enabled, isTrue);
+          return;
+        }
+
+        await tester.tap(find.byKey(const Key('session-menu-detection-toggle')));
+        await _pumpFrames(tester);
+
+        expect(find.byKey(const Key('link-highlight-menu')), findsOneWidget);
+        // #664: the overlay menu must be closed BEFORE the sheet shows, or the
+        // sheet is trapped under the menu's tap barrier.
+        expect(find.byKey(const Key('session-menu')), findsNothing);
+        expect(
+          container.read(detectionSettingsProvider).enabled,
+          isTrue,
+          reason: 'R1: a tap opens the sheet; it no longer toggles enabled',
+        );
+        // The sheet carries the three Slice-1 controls.
+        expect(find.byKey(const Key('link-highlight-enabled')), findsOneWidget);
+        expect(
+          find.byKey(const Key('link-highlight-intensity-low')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('link-highlight-intensity-medium')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('link-highlight-intensity-high')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const Key('link-highlight-lab')), findsOneWidget);
+      });
+
+      testWidgets('R2: the master switch link-highlight-enabled flips enabled '
+          '(live-apply, no Save)', (tester) async {
+        if (kDetectionDisabled971) return; // R4: sheet unreachable
+        final container = _makeContainer();
+        _add(container, 'host-a');
+        await tester.pumpWidget(_host(container: container));
+        await openSheet(tester);
+
+        expect(container.read(detectionSettingsProvider).enabled, isTrue);
+        await tester.tap(find.byKey(const Key('link-highlight-enabled')));
         await _pumpFrames(tester);
         expect(container.read(detectionSettingsProvider).enabled, isFalse);
-      }
+
+        // The sheet stays open (live-apply) and flips back on a second tap.
+        expect(find.byKey(const Key('link-highlight-menu')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('link-highlight-enabled')));
+        await _pumpFrames(tester);
+        expect(container.read(detectionSettingsProvider).enabled, isTrue);
+      });
+
+      testWidgets('R2: each link-highlight-intensity-* segment writes '
+          'intensity and touches nothing else', (tester) async {
+        if (kDetectionDisabled971) return; // R4: sheet unreachable
+        final container = _makeContainer();
+        _add(container, 'host-a');
+        await tester.pumpWidget(_host(container: container));
+        await openSheet(tester);
+
+        expect(
+          container.read(detectionSettingsProvider).intensity,
+          DetectionIntensity.medium,
+        );
+        await tester.tap(find.byKey(const Key('link-highlight-intensity-low')));
+        await _pumpFrames(tester);
+        expect(
+          container.read(detectionSettingsProvider).intensity,
+          DetectionIntensity.low,
+        );
+        await tester.tap(find.byKey(const Key('link-highlight-intensity-high')));
+        await _pumpFrames(tester);
+        expect(
+          container.read(detectionSettingsProvider).intensity,
+          DetectionIntensity.high,
+        );
+        await tester.tap(
+          find.byKey(const Key('link-highlight-intensity-medium')),
+        );
+        await _pumpFrames(tester);
+        expect(
+          container.read(detectionSettingsProvider).intensity,
+          DetectionIntensity.medium,
+        );
+        // Only intensity moved.
+        final s = container.read(detectionSettingsProvider);
+        expect(s.enabled, isTrue);
+        expect(s.url, isTrue);
+        expect(s.path, isTrue);
+        expect(s.gutterSide, GutterSide.right);
+        expect(s.gutterMode, GutterMode.overlay);
+      });
+
+      testWidgets('R5: the intensity control works while detection is OFF '
+          '(configure now, takes effect when on)', (tester) async {
+        if (kDetectionDisabled971) return; // R4: sheet unreachable
+        final container = _makeContainer();
+        _add(container, 'host-a');
+        await container
+            .read(detectionSettingsProvider.notifier)
+            .setEnabled(false);
+        await tester.pumpWidget(_host(container: container));
+        await openSheet(tester);
+
+        expect(container.read(detectionSettingsProvider).enabled, isFalse);
+        await tester.tap(find.byKey(const Key('link-highlight-intensity-low')));
+        await _pumpFrames(tester);
+        expect(
+          container.read(detectionSettingsProvider).intensity,
+          DetectionIntensity.low,
+        );
+        expect(container.read(detectionSettingsProvider).enabled, isFalse);
+      });
+
+      testWidgets('R2: the link-highlight-lab tile opens the Detection lab',
+          (tester) async {
+        if (kDetectionDisabled971) return; // R4: sheet unreachable
+        final container = _makeContainer();
+        _add(container, 'host-a');
+        await tester.pumpWidget(_host(container: container));
+        await openSheet(tester);
+
+        await tester.tap(find.byKey(const Key('link-highlight-lab')));
+        await _pumpFrames(tester);
+        expect(find.byType(DetectionLabScreen), findsOneWidget);
+        expect(container.read(detectionSettingsProvider).enabled, isTrue);
+      });
     });
 
     testWidgets('#1031 review change 7: long-pressing the detection glyph '
