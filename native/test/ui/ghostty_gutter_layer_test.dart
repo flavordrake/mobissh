@@ -15,6 +15,7 @@
 import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/ui/ghostty_gutter_layer.dart';
 import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
 import 'package:mobissh/ui/path_action_overlay.dart';
@@ -730,6 +731,203 @@ void main() {
       await tester.tap(find.byKey(const Key('gutter-item-1-open')));
       await tester.pumpAndSettle();
       expect(openedPath, '/etc/hosts');
+    });
+  });
+
+  // #1154 (Slice 1 of #1153) — "visual noise" of the gutter per the GLOBAL
+  // intensity level (R13): the translucent strip hint and the chip drop
+  // shadow. Chip accent / colour / opacity are NOT touched by the level (the
+  // resolver test pins that side). `GutterNoise` is resolved from the level
+  // once and consumed by BOTH the live gutter and the Lab chip preview (R22).
+  group('#1154 GutterNoise (R13)', () {
+    const accent = Color(0xFF5B9BD5);
+
+    test('forIntensity: strip hint alpha low 0 / medium 0.06 / high 0.10', () {
+      expect(
+        GutterNoise.forIntensity(DetectionIntensity.low).stripHintAlpha,
+        0.0,
+      );
+      expect(
+        GutterNoise.forIntensity(DetectionIntensity.medium).stripHintAlpha,
+        closeTo(0.06, 1e-9),
+      );
+      expect(
+        GutterNoise.forIntensity(DetectionIntensity.high).stripHintAlpha,
+        closeTo(0.10, 1e-9),
+      );
+    });
+
+    test('forIntensity: chip shadow low NONE / medium 0.35 / high 0.35', () {
+      expect(GutterNoise.forIntensity(DetectionIntensity.low).chipShadow, isNull);
+      expect(
+        GutterNoise.forIntensity(DetectionIntensity.medium).chipShadow,
+        closeTo(0.35, 1e-9),
+      );
+      expect(
+        GutterNoise.forIntensity(DetectionIntensity.high).chipShadow,
+        closeTo(0.35, 1e-9),
+      );
+    });
+
+    /// The strip hint is the ONLY [ColoredBox] in the layer (the chips are
+    /// [DecoratedBox]es) — sits under an [IgnorePointer].
+    Color stripColorOf(WidgetTester tester) {
+      final box = tester.widget<ColoredBox>(
+        find.descendant(
+          of: find.byType(GhosttyGutterLayer),
+          matching: find.byType(ColoredBox),
+        ),
+      );
+      return box.color;
+    }
+
+    BoxDecoration chipDecorationOf(WidgetTester tester, int row) {
+      final boxes = tester.widgetList<DecoratedBox>(
+        find.descendant(
+          of: find.byKey(Key('gutter-mark-$row')),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      return boxes
+          .map((b) => b.decoration)
+          .whereType<BoxDecoration>()
+          .firstWhere((d) => d.color != null);
+    }
+
+    Future<_FakeController> pumpNoisyLayer(
+      WidgetTester tester, {
+      GutterNoise? noise,
+    }) async {
+      final controller = _FakeController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: noise == null
+                      ? GhosttyGutterLayer(
+                          controller: controller,
+                          registry: GutterPatternRegistry.standard(
+                            openPath: (_) async => true,
+                          ),
+                          color: accent,
+                          cellHeight: 20,
+                        )
+                      : GhosttyGutterLayer(
+                          controller: controller,
+                          registry: GutterPatternRegistry.standard(
+                            openPath: (_) async => true,
+                          ),
+                          color: accent,
+                          cellHeight: 20,
+                          noise: noise,
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      controller.setAnchors([_urlAnchor('https://example.com', row: 4)]);
+      await tester.pump();
+      return controller;
+    }
+
+    testWidgets('the layer DEFAULTS to medium noise: strip 0.06 + chip shadow '
+        '0.35 (zero visual change when no noise is passed)', (tester) async {
+      await pumpNoisyLayer(tester);
+      expect(stripColorOf(tester).a, closeTo(0.06, 1e-6));
+      final deco = chipDecorationOf(tester, 4);
+      expect(deco.boxShadow, isNotNull);
+      expect(deco.boxShadow, hasLength(1));
+      expect(deco.boxShadow!.single.color.a, closeTo(0.35, 1e-6));
+    });
+
+    testWidgets('the strip hint ColoredBox alpha follows noise.stripHintAlpha '
+        'at every level', (tester) async {
+      for (final level in DetectionIntensity.values) {
+        final noise = GutterNoise.forIntensity(level);
+        await pumpNoisyLayer(tester, noise: noise);
+        expect(
+          stripColorOf(tester).a,
+          closeTo(noise.stripHintAlpha, 1e-6),
+          reason: '$level strip hint alpha',
+        );
+        // The hue under the strip is still the accent (only alpha moves).
+        expect(
+          stripColorOf(tester).toARGB32() & 0x00FFFFFF,
+          accent.toARGB32() & 0x00FFFFFF,
+        );
+      }
+    });
+
+    testWidgets('LOW noise: the chip in the layer has NO boxShadow; medium and '
+        'high have ONE at alpha 0.35; the chip fill stays opaque', (
+      tester,
+    ) async {
+      await pumpNoisyLayer(
+        tester,
+        noise: GutterNoise.forIntensity(DetectionIntensity.low),
+      );
+      final low = chipDecorationOf(tester, 4);
+      expect(low.boxShadow == null || low.boxShadow!.isEmpty, isTrue,
+          reason: 'low: no chip drop shadow');
+      expect(low.color!.a, 1.0, reason: 'chip opacity untouched by the level');
+
+      for (final level in [DetectionIntensity.medium, DetectionIntensity.high]) {
+        await pumpNoisyLayer(tester, noise: GutterNoise.forIntensity(level));
+        final deco = chipDecorationOf(tester, 4);
+        expect(deco.boxShadow, hasLength(1), reason: '$level: one shadow');
+        expect(deco.boxShadow!.single.color.a, closeTo(0.35, 1e-6));
+        expect(deco.color!.a, 1.0);
+        expect(
+          deco.color,
+          GutterMarkStyle.normal.chipColor(accent),
+          reason: '$level: chip colour is the same derivation as today',
+        );
+      }
+    });
+
+    testWidgets('a standalone GutterMarkChip takes noise too (the Lab preview '
+        'seam, R22): low → no shadow, medium → 0.35', (tester) async {
+      Future<BoxDecoration> pumpChip(GutterNoise noise) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Center(
+              child: GutterMarkChip(
+                key: const Key('chip-under-test'),
+                style: GutterMarkStyle.normal,
+                accent: accent,
+                icon: Icons.link,
+                noise: noise,
+              ),
+            ),
+          ),
+        );
+        final box = tester.widget<DecoratedBox>(
+          find.descendant(
+            of: find.byKey(const Key('chip-under-test')),
+            matching: find.byType(DecoratedBox),
+          ),
+        );
+        return box.decoration as BoxDecoration;
+      }
+
+      final low = await pumpChip(GutterNoise.forIntensity(DetectionIntensity.low));
+      expect(low.boxShadow == null || low.boxShadow!.isEmpty, isTrue);
+      expect(low.color, GutterMarkStyle.normal.chipColor(accent));
+
+      final medium =
+          await pumpChip(GutterNoise.forIntensity(DetectionIntensity.medium));
+      expect(medium.boxShadow, hasLength(1));
+      expect(medium.boxShadow!.single.color.a, closeTo(0.35, 1e-6));
+      expect(medium.color, GutterMarkStyle.normal.chipColor(accent));
+
+      final high =
+          await pumpChip(GutterNoise.forIntensity(DetectionIntensity.high));
+      expect(high.boxShadow, hasLength(1));
+      expect(high.boxShadow!.single.color.a, closeTo(0.35, 1e-6));
     });
   });
 }

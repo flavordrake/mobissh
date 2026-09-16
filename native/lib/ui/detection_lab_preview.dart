@@ -397,6 +397,8 @@ class DetectionPreviewLine extends StatelessWidget {
                 style: chipStyle,
                 accent: resolved.chipAccent,
                 icon: spec.icon,
+                // #1154 R22: same noise as the live gutter at this level.
+                noise: GutterNoise.forIntensity(resolver.intensity),
               ),
             ],
           ),
