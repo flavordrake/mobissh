@@ -466,6 +466,14 @@ void main() {
           );
           expect(modeControl.selected, {GutterMode.column});
           // And the defaults case: a fresh container opens on right/overlay.
+          // Tear the first tree down first: re-pumping a same-shaped host
+          // reuses the Navigator, so the open sheet's barrier would swallow
+          // the second open-menu tap.
+          await tester.pumpWidget(const SizedBox.shrink());
+          await _pumpFrames(tester);
+          // The notifier persists to SharedPreferences: a genuinely fresh
+          // container needs fresh (empty) prefs too, or it reads left/column.
+          SharedPreferences.setMockInitialValues({});
           final fresh = _makeContainer();
           _add(fresh, 'host-b');
           await tester.pumpWidget(_host(container: fresh));
