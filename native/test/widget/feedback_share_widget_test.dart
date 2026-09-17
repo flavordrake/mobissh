@@ -58,6 +58,26 @@ void main() {
     }
   }
 
+  /// Pump-and-drain until [ready] returns true or [timeout] (real wall clock)
+  /// elapses, mirroring `_pumpUntil` in pdf_viewer_widget_test.dart.
+  ///
+  /// A FIXED settle count is a load-dependent assertion (#1178): the tap's
+  /// handler awaits real filesystem I/O, so one 100ms real-zone window plus
+  /// eight fake-clock frames is not always enough under host CPU contention —
+  /// the gate went red with the injected share handler still unfired, while
+  /// the test passed in isolation. The happy path exits in a few iterations.
+  Future<void> waitUntil(
+    WidgetTester tester,
+    bool Function() ready, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (!ready() && DateTime.now().isBefore(deadline)) {
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump(const Duration(milliseconds: 30));
+    }
+  }
+
   testWidgets('Share feedback button is present in Diagnostics', (
     tester,
   ) async {
@@ -114,6 +134,9 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       });
       await pumpBounded(tester);
+      // Bounded wait, not a bare sample: `captured` is set by the handler's
+      // real-async work, which lands on its own schedule (#1178).
+      await waitUntil(tester, () => captured != null);
 
       expect(
         captured,
