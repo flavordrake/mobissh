@@ -438,8 +438,9 @@ class MermaidElementBuilder extends MarkdownElementBuilder {
 /// with Retry pinned right where the action is (a toast would vanish before the
 /// user could act on it).
 ///
-/// The field SOFT-WRAPS: unlike [_RawContent] there is no horizontal scroll
-/// view, so a long line folds instead of running off-screen while typing.
+/// The field SOFT-WRAPS, for the same reason [_RawContent] does (#1177):
+/// markdown source is prose, so a long line must fold rather than force a
+/// sideways pan while typing. There is no horizontal scroll view here.
 class _EditContent extends StatelessWidget {
   const _EditContent({
     required this.controller,
@@ -524,8 +525,12 @@ class _EditContent extends StatelessWidget {
   }
 }
 
-/// Raw monospace source — the read-only fallback, identical to the text/code
-/// viewer's presentation so toggling feels seamless.
+/// Raw monospace source — the read-only fallback.
+///
+/// Soft-wraps to the viewport (#1177): markdown source is PROSE, so a single
+/// long paragraph line must fold rather than force a sideways pan. This is the
+/// one deliberate divergence from the text/code viewer, which keeps its
+/// horizontal scroll because code and logs are column-significant.
 class _RawContent extends StatelessWidget {
   const _RawContent({required this.text});
 
@@ -543,13 +548,10 @@ class _RawContent extends StatelessWidget {
       child: SingleChildScrollView(
         primary: true,
         padding: const EdgeInsets.all(12),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: SelectableText(
-            text.isEmpty ? '(empty file)' : text,
-            key: const Key('markdown-viewer-raw'),
-            style: style,
-          ),
+        child: SelectableText(
+          text.isEmpty ? '(empty file)' : text,
+          key: const Key('markdown-viewer-raw'),
+          style: style,
         ),
       ),
     );
