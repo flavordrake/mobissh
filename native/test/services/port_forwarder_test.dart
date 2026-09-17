@@ -66,29 +66,65 @@ class _EchoTunnel implements SSHSocket {
   }
 }
 
+/// Connect to the forward, write [payload], and return whatever comes back
+/// before the peer ends the connection (empty when nothing is echoed).
+///
+/// A connection RESET is an accepted terminal outcome, exactly like a clean
+/// FIN (#1178). The forwarder refuses a channel by `destroy()`ing the accepted
+/// socket, and destroying a socket that still holds unread bytes makes the
+/// kernel answer with an RST — so this side's own write/flush or read can
+/// surface `SocketException: Connection reset by peer (errno 104)` instead of
+/// `onDone` whenever the server wins the race, which it does under host CPU
+/// load. Treating the reset as "the peer ended it, here are the bytes that made
+/// it back" keeps every assertion intact rather than weakening one: the echo
+/// tests still compare the returned bytes to the payload byte-for-byte, so a
+/// reset that truncates a real pipe still fails them.
 Future<Uint8List> _roundTrip(int port, List<int> payload) async {
   final socket = await Socket.connect(InternetAddress.loopbackIPv4, port);
-  socket.add(payload);
-  await socket.flush();
+  // The reset can land on the sink's `done` future as well as on the read
+  // stream; an error future with no listener is an unhandled async error and
+  // fails the test on its own, so give it one.
+  unawaited(() async {
+    try {
+      await socket.done;
+    } catch (_) {
+      // Peer reset — the read side below reports what actually arrived.
+    }
+  }());
   final got = <int>[];
   final completer = Completer<Uint8List>();
+  void finish() {
+    if (!completer.isCompleted) {
+      completer.complete(Uint8List.fromList(got));
+    }
+    socket.destroy();
+  }
+
   late StreamSubscription<Uint8List> sub;
   sub = socket.listen(
     (chunk) {
       got.addAll(chunk);
       if (got.length >= payload.length) {
-        completer.complete(Uint8List.fromList(got));
         sub.cancel();
-        socket.destroy();
+        finish();
       }
     },
-    onDone: () {
-      if (!completer.isCompleted) {
-        completer.complete(Uint8List.fromList(got));
+    onDone: finish,
+    onError: (Object e) {
+      if (e is SocketException) {
+        finish();
+      } else if (!completer.isCompleted) {
+        completer.completeError(e);
       }
-      socket.destroy();
     },
+    cancelOnError: true,
   );
+  socket.add(payload);
+  try {
+    await socket.flush();
+  } on SocketException {
+    // Peer reset us mid-write: the refusal path destroyed its end first.
+  }
   return completer.future.timeout(const Duration(seconds: 5));
 }
 
