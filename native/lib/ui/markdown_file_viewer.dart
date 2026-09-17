@@ -15,10 +15,14 @@
 //     via a single chrome toggle in the AppBar (a monochrome Material glyph, no
 //     emoji).
 //
-// READ-ONLY in this slice (#854 render+toggle). Editable SFTP round-trip is a
-// focused follow-up — it needs a new SFTP WRITE path through the UI↔task IPC
-// (no write/upload seam exists yet). State is per-route (sessionId + entry) —
-// no global viewer state, so multiple sessions don't share preview state.
+//   - EDIT (#859): the source in a soft-wrapping monospace text field, saved
+//     back to the SAME path through the shared [TextFileWriter] seam (the SFTP
+//     write chain from #892). A failed save leaves a PERSISTENT inline error
+//     with Retry (never a vanishing toast) and keeps the buffer; leaving the
+//     route with unsaved edits prompts first (#842 capture-before-clear).
+//
+// State is per-route (sessionId + entry) — no global viewer state, so multiple
+// sessions don't share preview state.
 
 import 'dart:async';
 
@@ -31,6 +35,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/clipboard.dart';
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
+import '../services/text_file_writer.dart';
 import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
 import 'file_viewer_actions.dart';
@@ -85,6 +90,23 @@ class _MarkdownFileViewerScreenState
   /// View mode: rendered (default) vs raw source. Per-route — no global state.
   bool _raw = false;
 
+  /// #859 edit mode. The controller owns the edit buffer, so keystrokes rebuild
+  /// only the Save button (via a [ValueListenableBuilder] on the controller) —
+  /// never the whole document.
+  bool _editing = false;
+  TextEditingController? _controller;
+  bool _saving = false;
+
+  /// Last save failure. Non-null renders the PERSISTENT inline error + Retry;
+  /// a vanishing toast is not acceptable for an action the user must re-take.
+  String? _saveError;
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -125,6 +147,91 @@ class _MarkdownFileViewerScreenState
     setState(() => _raw = !_raw);
   }
 
+  /// True while the edit buffer differs from the last saved/fetched content.
+  bool get _dirty => _editing && (_controller?.text ?? '') != (_content ?? '');
+
+  /// Enter edit mode (seeding the buffer from the fetched source) or leave it —
+  /// leaving with unsaved edits goes through the same confirm prompt as a pop.
+  void _toggleEdit() {
+    if (_editing) {
+      unawaited(_leaveEditor(pop: false));
+      return;
+    }
+    setState(() {
+      (_controller ??= TextEditingController()).text = _content ?? '';
+      _saveError = null;
+      _editing = true;
+    });
+  }
+
+  /// Writes the buffer back to the ORIGINAL path through the shared SFTP write
+  /// seam. No-op when nothing changed. Success adopts the saved text as the
+  /// document and leaves edit mode; failure keeps the buffer and surfaces the
+  /// persistent inline error.
+  Future<void> _save() async {
+    final controller = _controller;
+    if (controller == null || _saving) return;
+    final text = controller.text;
+    if (text == (_content ?? '')) return; // nothing changed → inert
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await ref
+          .read(textFileWriterProvider)
+          .write(widget.sessionId, widget.entry.path, text);
+      if (!mounted) return;
+      setState(() {
+        _content = text;
+        _saving = false;
+        _editing = false;
+      });
+      showTopToast(context, 'Saved');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _saveError = e.toString();
+      });
+    }
+  }
+
+  /// #842 capture-before-clear: never drop an unsaved buffer silently. Returns
+  /// after the editor has been left (or the user chose to keep editing); when
+  /// [pop] the route itself is popped on discard.
+  Future<void> _leaveEditor({required bool pop}) async {
+    final navigator = Navigator.of(context);
+    if (_dirty) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          key: const Key('markdown-viewer-unsaved-dialog'),
+          title: const Text('Unsaved changes'),
+          content: Text('Discard your edits to ${widget.entry.name}?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Keep editing'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Discard'),
+            ),
+          ],
+        ),
+      );
+      if (discard != true) return; // buffer survives untouched
+    }
+    if (!mounted) return;
+    setState(() {
+      _editing = false;
+      _saveError = null;
+      _controller?.text = _content ?? '';
+    });
+    if (pop) navigator.pop();
+  }
+
   /// #460: copy the WHOLE raw markdown source to the clipboard in one tap
   /// (independent of rendered/raw view mode). Routes through the hardened
   /// labeled-clip helper (#845) and toasts on success.
@@ -137,17 +244,46 @@ class _MarkdownFileViewerScreenState
 
   @override
   Widget build(BuildContext context) {
+    // #859/#842: while editing, the route never pops straight out — the pop is
+    // intercepted so an unsaved buffer can be confirmed away first. `canPop`
+    // deliberately tracks edit MODE, not dirtiness, so a keystroke doesn't
+    // rebuild the screen.
+    return PopScope(
+      canPop: !_editing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(_leaveEditor(pop: true));
+      },
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.entry.name, overflow: TextOverflow.ellipsis),
         actions: [
           // #460: one-tap "Copy all" of the whole raw source (only once loaded).
-          if (_phase == _Phase.ready)
+          if (_phase == _Phase.ready && !_editing)
             IconButton(
               key: const Key('markdown-viewer-copy-all'),
               tooltip: 'Copy all',
               icon: const Icon(Icons.copy_all),
               onPressed: () => unawaited(_copyAll()),
+            ),
+          // #859: Save the edit buffer. Rebuilt on every keystroke via the
+          // controller's own listenable — the document is NOT rebuilt.
+          if (_phase == _Phase.ready && _editing && _controller != null)
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _controller!,
+              builder: (context, value, _) => IconButton(
+                key: const Key('markdown-viewer-save'),
+                tooltip: 'Save',
+                icon: const Icon(Icons.save_outlined),
+                onPressed: (_saving || value.text == (_content ?? ''))
+                    ? null
+                    : () => unawaited(_save()),
+              ),
             ),
           // #1038: Download + Share from any open preview.
           FileViewerActions(
@@ -156,7 +292,7 @@ class _MarkdownFileViewerScreenState
               entry: widget.entry,
             ),
           ),
-          if (_phase == _Phase.ready)
+          if (_phase == _Phase.ready && !_editing)
             IconButton(
               key: const Key('markdown-raw-toggle'),
               // Monochrome Material glyph (no emoji): show the "code" glyph to
@@ -165,6 +301,16 @@ class _MarkdownFileViewerScreenState
               icon: Icon(_raw ? Icons.article_outlined : Icons.code),
               tooltip: _raw ? 'Show rendered' : 'Show raw source',
               onPressed: _toggleRaw,
+            ),
+          // #859: the third view mode — edit the source in place.
+          if (_phase == _Phase.ready)
+            IconButton(
+              key: const Key('markdown-edit-toggle'),
+              icon: Icon(
+                _editing ? Icons.edit_off_outlined : Icons.edit_outlined,
+              ),
+              tooltip: _editing ? 'Stop editing' : 'Edit',
+              onPressed: _toggleEdit,
             ),
           // #855: one-tap return to the terminal (collapses the whole
           // browser/viewer stack) — conventional top-right close, rightmost.
@@ -188,6 +334,14 @@ class _MarkdownFileViewerScreenState
         return _ErrorView(message: _errorMessage);
       case _Phase.ready:
         final text = _content ?? '';
+        if (_editing && _controller != null) {
+          return _EditContent(
+            controller: _controller!,
+            saving: _saving,
+            error: _saveError,
+            onRetry: () => unawaited(_save()),
+          );
+        }
         return _raw
             ? _RawContent(text: text)
             : _RenderedContent(
@@ -276,6 +430,98 @@ class MermaidElementBuilder extends MarkdownElementBuilder {
       return null; // not a mermaid fence → default code rendering
     }
     return MermaidDiagramView(source: element.textContent);
+  }
+}
+
+/// Edit mode (#859): the source in a soft-wrapping monospace field that fills
+/// the viewport, plus — when the last save failed — a PERSISTENT inline error
+/// with Retry pinned right where the action is (a toast would vanish before the
+/// user could act on it).
+///
+/// The field SOFT-WRAPS, for the same reason [_RawContent] does (#1177):
+/// markdown source is prose, so a long line must fold rather than force a
+/// sideways pan while typing. There is no horizontal scroll view here.
+class _EditContent extends StatelessWidget {
+  const _EditContent({
+    required this.controller,
+    required this.saving,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final TextEditingController controller;
+  final bool saving;
+  final String? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style =
+        theme.textTheme.bodyMedium?.copyWith(
+          fontFamily: 'monospace',
+          fontFamilyFallback: const ['RobotoMono', 'monospace'],
+        ) ??
+        const TextStyle(fontFamily: 'monospace');
+    final message = error;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (message != null)
+          Container(
+            key: const Key('markdown-viewer-save-error'),
+            color: theme.colorScheme.errorContainer,
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 18,
+                  color: theme.colorScheme.onErrorContainer,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Save failed: $message',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onErrorContainer,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  key: const Key('markdown-viewer-save-retry'),
+                  onPressed: saving ? null : onRetry,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: TextField(
+              key: const Key('markdown-viewer-editor'),
+              controller: controller,
+              // null maxLines + expands: the field grows to the viewport and
+              // scrolls VERTICALLY only — lines soft-wrap, never scroll sideways.
+              maxLines: null,
+              expands: true,
+              textAlignVertical: TextAlignVertical.top,
+              keyboardType: TextInputType.multiline,
+              // Source text: the platform must not "helpfully" rewrite it.
+              autocorrect: false,
+              enableSuggestions: false,
+              style: style,
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isCollapsed: true,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
