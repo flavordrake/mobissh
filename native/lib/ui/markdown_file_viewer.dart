@@ -279,8 +279,12 @@ class MermaidElementBuilder extends MarkdownElementBuilder {
   }
 }
 
-/// Raw monospace source — the read-only fallback, identical to the text/code
-/// viewer's presentation so toggling feels seamless.
+/// Raw monospace source — the read-only fallback.
+///
+/// Soft-wraps to the viewport (#1177): markdown source is PROSE, so a single
+/// long paragraph line must fold rather than force a sideways pan. This is the
+/// one deliberate divergence from the text/code viewer, which keeps its
+/// horizontal scroll because code and logs are column-significant.
 class _RawContent extends StatelessWidget {
   const _RawContent({required this.text});
 
@@ -298,13 +302,10 @@ class _RawContent extends StatelessWidget {
       child: SingleChildScrollView(
         primary: true,
         padding: const EdgeInsets.all(12),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: SelectableText(
-            text.isEmpty ? '(empty file)' : text,
-            key: const Key('markdown-viewer-raw'),
-            style: style,
-          ),
+        child: SelectableText(
+          text.isEmpty ? '(empty file)' : text,
+          key: const Key('markdown-viewer-raw'),
+          style: style,
         ),
       ),
     );
