@@ -67,6 +67,29 @@ void main() {
     }
   }
 
+  /// Pump-and-drain until [ready] returns true or [timeout] (real wall clock)
+  /// elapses, mirroring `_pumpUntil` in pdf_viewer_widget_test.dart.
+  ///
+  /// A FIXED number of settle passes is load-dependent (#1178): `tapWithIo`
+  /// gives the handler three 100ms real-zone windows, and under host CPU
+  /// contention the upload's real-async POST has not reached the mock client
+  /// when the next `expect` samples the counter — the gate went red on a
+  /// healthy main with `Expected: <1> Actual: <0>`. Polling to a generous real
+  /// deadline is load-independent; the happy path exits in a few iterations.
+  Future<void> waitUntil(
+    WidgetTester tester,
+    bool Function() ready, {
+    Duration timeout = const Duration(seconds: 15),
+    required String reason,
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (!ready() && DateTime.now().isBefore(deadline)) {
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump(const Duration(milliseconds: 30));
+    }
+    expect(ready(), isTrue, reason: 'timed out waiting for $reason');
+  }
+
   /// Toasts (#667) arm a 2s Timer + a 220ms fade on the fake clock — drain
   /// them so the test ends without pending timers.
   Future<void> drainToasts(WidgetTester tester) async {
@@ -257,7 +280,14 @@ void main() {
       await pumpSection(tester);
 
       await tapWithIo(tester, const ValueKey('force-upload-button'));
-      expect(posts, 1);
+      // Bounded wait, not a bare sample: the POST is issued by real-async work
+      // the tap kicked off and never completes here (see `release`), so the
+      // counter is the only observable and it lands on its own schedule.
+      await waitUntil(
+        tester,
+        () => posts == 1,
+        reason: 'the first tap to issue its POST (one pending crash)',
+      );
 
       // No in-flight flag in the widget: the button is still tappable.
       final button = tester.widget<OutlinedButton>(
@@ -273,9 +303,16 @@ void main() {
       expect(posts, 1, reason: 'reporter re-entrancy guard: no second POST');
       expect(find.text('Upload already in progress'), findsOneWidget);
 
-      // Release the first upload so it completes and the summary lands.
+      // Release the first upload so it completes and the summary lands. This
+      // one gets a SINGLE settleIo (a third of the slack `tapWithIo` gives),
+      // so it is the most load-sensitive assertion in the file — it failed
+      // under synthetic CPU load with the toast not yet mounted.
       release.complete(http.Response('ok', 200));
-      await settleIo(tester);
+      await waitUntil(
+        tester,
+        () => find.text('Uploaded 1 of 1 (failed: 0)').evaluate().isNotEmpty,
+        reason: 'the released upload to land its summary toast',
+      );
       expect(find.text('Uploaded 1 of 1 (failed: 0)'), findsOneWidget);
       await drainToasts(tester);
     },

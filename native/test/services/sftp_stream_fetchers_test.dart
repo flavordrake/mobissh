@@ -83,12 +83,27 @@ class _Harness {
   String get sid => entry.id;
 
   /// Wait until at least [n] download commands have crossed the gateway.
-  Future<void> awaitRequests(int n) async {
-    for (var i = 0; i < 50 && requests.length < n; i++) {
+  ///
+  /// Bounded by a real wall-clock deadline, not a fixed turn count (#1178):
+  /// a fetch awaits a platform-channel round trip (`getTemporaryDirectory`)
+  /// before it sends, and under host CPU contention all 50 zero-delay turns
+  /// could elapse before that reply landed — the gate went red with
+  /// `Expected: 1 Actual: 0` while the test passed in isolation.
+  ///
+  /// The drain stays `Duration.zero`: widening it to 1ms changed the event-loop
+  /// scheduling enough to invert which of two concurrent fetches sent first,
+  /// breaking the `(f)` seq-ordering assertion. Only the CAP changes here.
+  Future<void> awaitRequests(
+    int n, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (requests.length < n && DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(Duration.zero);
     }
     expect(requests.length, greaterThanOrEqualTo(n),
-        reason: 'expected $n sftpDownload command(s) on the task side');
+        reason: 'timed out waiting for $n sftpDownload command(s) on the '
+            'task side');
   }
 
   /// Task → UI: one download chunk for [requestId] at byte [offset].
