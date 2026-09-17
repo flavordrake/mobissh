@@ -22,14 +22,6 @@ import '../platform/desktop.dart';
 import '../services/session_host.dart';
 import '../services/task_ssh_gateway.dart';
 
-/// In-memory gateway pair used by tests + by the legacy in-process host
-/// resolver below. Disposed when the provider container tears down.
-final gatewayPairProvider = Provider<InMemoryGatewayPair>((ref) {
-  final pair = InMemoryGatewayPair();
-  ref.onDispose(pair.dispose);
-  return pair;
-});
-
 /// UI-side gateway the proxy + UI consumers talk to.
 ///
 /// Two production flavors, selected by [usesInProcessHostProvider]:
@@ -65,19 +57,4 @@ final taskSshGatewayProvider = Provider<TaskSshGateway>((ref) {
   final gateway = FlutterForegroundSshGateway();
   ref.onDispose(gateway.dispose);
   return gateway;
-});
-
-/// Legacy in-process [SessionHost] provider — kept so the widget rebind test
-/// and the existing UI scaffolding continue to resolve a host even when the
-/// production gateway hasn't been swapped in. Production callers should NOT
-/// read this provider; the task isolate constructs its own host via
-/// [KeepaliveTaskHandler].
-///
-/// Tests that want to inspect host state use this provider directly so they
-/// can call `host.ingestOutputForTest(...)` without crossing the gateway.
-final sessionHostProvider = Provider<SessionHost>((ref) {
-  final pair = ref.watch(gatewayPairProvider);
-  final host = SessionHost(gateway: pair.taskSide);
-  ref.onDispose(host.dispose);
-  return host;
 });

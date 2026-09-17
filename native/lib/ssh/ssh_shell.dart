@@ -93,22 +93,6 @@ class _SshSessionTransport implements SshShellTransport {
   }
 }
 
-/// Open a real PTY shell on [client] and return an [SshShellTransport]
-/// wrapping the resulting `dartssh2.SSHSession`.
-///
-/// Initial PTY size is read from the [terminal] model so the remote shell
-/// matches the on-screen viewport from the first byte.
-Future<SshShellTransport> openSshShellTransport(
-  ssh.SSHClient client,
-  Terminal terminal,
-) async {
-  return openSshShellTransportSized(
-    client,
-    width: terminal.viewWidth,
-    height: terminal.viewHeight,
-  );
-}
-
 /// Open a PTY shell with explicit dimensions — for the task isolate, which
 /// hosts the `SSHClient` but has no UI [Terminal] to read size from. The UI's
 /// first resize command (sent on attach) corrects the dims immediately.
