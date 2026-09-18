@@ -37,7 +37,8 @@ import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 
 import '../services/clipboard.dart';
-import '../state/detection_providers.dart' show DetectionIntensity;
+import '../state/detection_providers.dart'
+    show DetectionIntensity, DetectionSettings, GutterMode, GutterSide;
 import '../storage/custom_patterns_store.dart' show isCustomPatternId;
 import '../util/file_url.dart';
 import 'path_action_overlay.dart';
@@ -100,6 +101,72 @@ class GutterNoise {
 
   @override
   int get hashCode => Object.hash(stripHintAlpha, chipShadow);
+}
+
+/// The ONE gutter geometry value every consumer reads (#1155 R20): the grid
+/// math (`ghosttyGridForBox`), the touch→cell map (`ghosttyCellForPosition`),
+/// the flterm `TerminalView` padding (whose `anchorRects` origin the wash
+/// layer + `matchAt` inherit), [GhosttyGutterLayer], `GutterLineSelectLayer`,
+/// the terminal view's `_isGutterCol` and the long-press URL-menu rects.
+/// Drift between any two of them = a bug, so none of them derives the edge or
+/// the inset on its own.
+///
+/// [GutterMode.overlay] is today's behaviour: the strip floats over the last
+/// columns, nothing is reserved. [GutterMode.column] reserves [stripWidth] on
+/// the gutter side — [terminalPadding] is that EXTRA inset (added on top of the
+/// base `kGhosttyTerminalPadding` the view always applies) and [reservedWidth]
+/// is the width the grid loses. The strip is 28dp in BOTH modes (D2).
+@immutable
+class GhosttyGutterGeometry {
+  const GhosttyGutterGeometry({
+    required this.side,
+    required this.mode,
+    this.stripWidth = kGutterStripWidth,
+  });
+
+  /// Right/overlay: the shipped pre-#1155 layout (zero visual change).
+  static const GhosttyGutterGeometry defaults = GhosttyGutterGeometry(
+    side: GutterSide.right,
+    mode: GutterMode.overlay,
+  );
+
+  static GhosttyGutterGeometry fromSettings(DetectionSettings settings) =>
+      GhosttyGutterGeometry(
+        side: settings.gutterSide,
+        mode: settings.gutterMode,
+      );
+
+  final GutterSide side;
+  final GutterMode mode;
+  final double stripWidth;
+
+  bool get isLeft => side == GutterSide.left;
+
+  /// Width the grid gives up to the strip (column mode only).
+  double get reservedWidth => mode == GutterMode.column ? stripWidth : 0.0;
+
+  /// The EXTRA `TerminalView` inset on the gutter side (column mode only).
+  EdgeInsets get terminalPadding => switch (mode) {
+    GutterMode.overlay => EdgeInsets.zero,
+    GutterMode.column =>
+      isLeft
+          ? EdgeInsets.only(left: stripWidth)
+          : EdgeInsets.only(right: stripWidth),
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is GhosttyGutterGeometry &&
+      other.side == side &&
+      other.mode == mode &&
+      other.stripWidth == stripWidth;
+
+  @override
+  int get hashCode => Object.hash(side, mode, stripWidth);
+
+  @override
+  String toString() =>
+      'GhosttyGutterGeometry(${side.name}/${mode.name}, strip=$stripWidth)';
 }
 
 /// Sizing + colour derivation for the gutter detection mark chip (#989).
@@ -658,10 +725,16 @@ class GhosttyGutterLayer extends StatelessWidget {
     this.verificationListenable,
     this.chipAccentOf,
     this.noise = GutterNoise.medium,
+    this.geometry = GhosttyGutterGeometry.defaults,
   });
 
   /// The SAME controller handed to the flterm `TerminalView`.
   final TerminalController controller;
+
+  /// #1155 R15/R20: which edge the strip + marks sit on. Defaults to
+  /// right/overlay (the pre-#1155 layout). The line-select layer takes the
+  /// SAME value so the two never sit on opposite edges.
+  final GhosttyGutterGeometry geometry;
 
   /// Pattern-id → presentation map.
   final GutterPatternRegistry registry;
@@ -763,15 +836,19 @@ class GhosttyGutterLayer extends StatelessWidget {
         final boxHeight = cellHeight > style.minTapExtent
             ? cellHeight
             : style.minTapExtent;
+        // #1155 R15: the strip + marks hug the geometry's edge.
+        final left = geometry.isLeft ? 0.0 : null;
+        final right = geometry.isLeft ? null : 0.0;
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            // Translucent right-edge strip (visual hint only, never absorbs
-            // taps — the marks below it are the hit targets).
+            // Translucent edge strip (visual hint only, never absorbs taps —
+            // the marks below it are the hit targets).
             Positioned(
               top: 0,
               bottom: 0,
-              right: 0,
+              left: left,
+              right: right,
               width: stripWidth,
               child: IgnorePointer(
                 child: ColoredBox(
@@ -781,7 +858,8 @@ class GhosttyGutterLayer extends StatelessWidget {
             ),
             for (final entry in byRow.entries)
               Positioned(
-                right: 0,
+                left: left,
+                right: right,
                 width: boxWidth,
                 top:
                     padding +
@@ -802,6 +880,7 @@ class GhosttyGutterLayer extends StatelessWidget {
                       : style,
                   stripWidth: stripWidth,
                   noise: noise,
+                  alignLeft: geometry.isLeft,
                 ),
               ),
           ],
@@ -827,6 +906,7 @@ class _GutterMark extends StatefulWidget {
     required this.style,
     required this.stripWidth,
     required this.noise,
+    required this.alignLeft,
   });
 
   /// #993: consulted at tap time — while the painted offset is still moving a
@@ -839,6 +919,10 @@ class _GutterMark extends StatefulWidget {
   final GutterMarkStyle style;
   final double stripWidth;
   final GutterNoise noise;
+
+  /// #1155 R15: the chip hugs the LEFT edge of its hit box (a left gutter)
+  /// instead of the right.
+  final bool alignLeft;
 
   @override
   State<_GutterMark> createState() => _GutterMarkState();
@@ -880,6 +964,7 @@ class _GutterMarkState extends State<_GutterMark> {
     final single = widget.registry.forPattern(widget.anchors.first.patternId);
     // Centre the chip inside the visible strip (the hit box is wider).
     final inset = (widget.stripWidth - style.chipSize) / 2;
+    final edgeInset = inset > 0 ? inset : 0.0;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapDown: (_) => _setPressed(true),
@@ -889,9 +974,14 @@ class _GutterMarkState extends State<_GutterMark> {
         _onTap(context, details.globalPosition);
       },
       child: Align(
-        alignment: Alignment.centerRight,
+        // #1155 R15: mirror the chip to the gutter's edge.
+        alignment: widget.alignLeft
+            ? Alignment.centerLeft
+            : Alignment.centerRight,
         child: Padding(
-          padding: EdgeInsets.only(right: inset > 0 ? inset : 0),
+          padding: widget.alignLeft
+              ? EdgeInsets.only(left: edgeInset)
+              : EdgeInsets.only(right: edgeInset),
           child: AnimatedScale(
             scale: _pressed ? 0.85 : 1.0,
             duration: const Duration(milliseconds: 90),
