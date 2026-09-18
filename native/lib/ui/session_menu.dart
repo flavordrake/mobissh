@@ -38,6 +38,7 @@ import 'detection_lab_screen.dart';
 import 'favorites_menu_sheet.dart';
 import 'file_browser_screen.dart';
 import 'port_forwards_sheet.dart';
+import 'session_route_details.dart';
 import 'session_state_dot.dart';
 import 'top_toast.dart';
 
@@ -1118,12 +1119,29 @@ class _SessionRow extends ConsumerWidget {
         ],
       ),
       dense: true,
-      title: Text(
-        entry.label,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-        ),
+      // #1189 (R16): a JUMPED session's title carries the route glyph — an
+      // ICON, not a `via <hop>` text line, because #1155 deliberately slimmed
+      // this menu of subtitles. A direct session's title is unchanged.
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              entry.label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+          if (entry.jumpHops.isNotEmpty)
+            SessionRouteIcon(
+              key: Key('session-route-icon-${entry.id}'),
+              entry: entry,
+              // The menu is an overlay ABOVE routes, so it must close before
+              // the details sheet is pushed (#664 idiom).
+              onBeforeOpen: onClose,
+            ),
+        ],
       ),
       // A short status line under the label for non-connected states (#817) so
       // a dropped session is never an invisible/✕-only tile: "Connecting…",
