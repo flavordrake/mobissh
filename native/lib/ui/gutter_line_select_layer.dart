@@ -17,6 +17,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'ghostty_gutter_layer.dart' show GhosttyGutterGeometry;
+
 /// Default width (logical px) of the right-edge long-press anchor strip.
 const double kGutterSelectStripWidth = 28.0;
 
@@ -32,6 +34,7 @@ class GutterLineSelectLayer extends StatefulWidget {
     required this.onCommitRows,
     this.padding = 4.0,
     this.stripWidth = kGutterSelectStripWidth,
+    this.geometry = GhosttyGutterGeometry.defaults,
   });
 
   final double cellHeight;
@@ -39,6 +42,10 @@ class GutterLineSelectLayer extends StatefulWidget {
   final Color color;
   final double padding;
   final double stripWidth;
+
+  /// #1155 R15: the SAME gutter geometry the chip layer reads, so the capture
+  /// strip sits on the same edge as the marks (left when `isLeft`).
+  final GhosttyGutterGeometry geometry;
 
   /// On release of a long-press-drag: inclusive VIEWPORT row range (top ≤ bottom).
   final void Function(int topViewRow, int bottomViewRow) onCommitRows;
@@ -120,7 +127,8 @@ class _GutterLineSelectLayerState extends State<GutterLineSelectLayer> {
           Positioned(
             top: 0,
             bottom: 0,
-            right: 0,
+            left: widget.geometry.isLeft ? 0 : null,
+            right: widget.geometry.isLeft ? null : 0,
             width: widget.stripWidth,
             child: GestureDetector(
               key: const Key('gutter-line-select'),

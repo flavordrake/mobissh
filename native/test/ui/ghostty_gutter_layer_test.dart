@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobissh/state/detection_providers.dart';
 import 'package:mobissh/ui/ghostty_gutter_layer.dart';
 import 'package:mobissh/ui/ghostty_terminal_decorators.dart';
+import 'package:mobissh/ui/gutter_line_select_layer.dart';
 import 'package:mobissh/ui/path_action_overlay.dart';
 import 'package:mobissh/ui/url_action_overlay.dart';
 
@@ -928,6 +929,240 @@ void main() {
           await pumpChip(GutterNoise.forIntensity(DetectionIntensity.high));
       expect(high.boxShadow, hasLength(1));
       expect(high.boxShadow!.single.color.a, closeTo(0.35, 1e-6));
+    });
+  });
+
+  // #1155 (Slice 2 of #1153) — GUTTER SIDE (R15–R17). The layer takes the ONE
+  // `GhosttyGutterGeometry` value (R20): with a LEFT geometry the strip is
+  // `Positioned(left: 0)` and the chip hugs the left edge; with the default
+  // (right/overlay) everything is exactly today. `GutterLineSelectLayer` takes
+  // the SAME value so both right-edge layers move together (R15) — never on
+  // opposite edges. Gestures keep their keys on the left (R17).
+  group('#1155 gutter side (R15–R17)', () {
+    const accent = Color(0xFF5B9BD5);
+    const left = GhosttyGutterGeometry(
+      side: GutterSide.left,
+      mode: GutterMode.overlay,
+    );
+    const right = GhosttyGutterGeometry(
+      side: GutterSide.right,
+      mode: GutterMode.overlay,
+    );
+    const hostWidth = 300.0;
+
+    /// The strip hint's [Positioned] — the ColoredBox is the only one in the
+    /// layer; its nearest Positioned ancestor is the strip.
+    Positioned stripPositionedOf(WidgetTester tester) {
+      return tester.widget<Positioned>(
+        find
+            .ancestor(
+              of: find.descendant(
+                of: find.byType(GhosttyGutterLayer),
+                matching: find.byType(ColoredBox),
+              ),
+              matching: find.byType(Positioned),
+            )
+            .first,
+      );
+    }
+
+    /// The PAINTED chip's centre x for [row], in host coordinates (the host
+    /// box is at the origin so this is layer-local too).
+    double chipCenterX(WidgetTester tester, int row) => tester
+        .getCenter(
+          find.descendant(
+            of: find.byKey(Key('gutter-mark-$row')),
+            matching: find.byType(GutterMarkChip),
+          ),
+        )
+        .dx;
+
+    Future<_FakeController> pumpSided(
+      WidgetTester tester, {
+      required GhosttyGutterGeometry geometry,
+      void Function(int, int)? onCommitRows,
+    }) async {
+      final controller = _FakeController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: hostWidth,
+              height: 400,
+              child: Stack(
+                children: [
+                  if (onCommitRows != null)
+                    Positioned.fill(
+                      child: GutterLineSelectLayer(
+                        cellHeight: 20,
+                        rows: 20,
+                        color: accent,
+                        onCommitRows: onCommitRows,
+                        geometry: geometry,
+                      ),
+                    ),
+                  Positioned.fill(
+                    child: GhosttyGutterLayer(
+                      controller: controller,
+                      registry: GutterPatternRegistry.standard(
+                        openPath: (_) async => true,
+                      ),
+                      color: accent,
+                      cellHeight: 20,
+                      geometry: geometry,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      controller.setAnchors([_urlAnchor('https://example.com', row: 4)]);
+      await tester.pump();
+      return controller;
+    }
+
+    testWidgets('R15: a LEFT geometry puts the strip at Positioned(left: 0), '
+        'right == null', (tester) async {
+      await pumpSided(tester, geometry: left);
+      final strip = stripPositionedOf(tester);
+      expect(strip.left, 0.0);
+      expect(strip.right, isNull);
+      expect(strip.width, kGutterStripWidth);
+    });
+
+    testWidgets('R15: a RIGHT geometry keeps the strip at Positioned(right: 0),'
+        ' left == null (today)', (tester) async {
+      await pumpSided(tester, geometry: right);
+      final strip = stripPositionedOf(tester);
+      expect(strip.right, 0.0);
+      expect(strip.left, isNull);
+      expect(strip.width, kGutterStripWidth);
+    });
+
+    testWidgets('the layer DEFAULTS to the right/overlay geometry (zero visual '
+        'change when no geometry is passed)', (tester) async {
+      final controller = _FakeController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: hostWidth,
+              height: 400,
+              child: GhosttyGutterLayer(
+                controller: controller,
+                registry: GutterPatternRegistry.standard(
+                  openPath: (_) async => true,
+                ),
+                color: accent,
+                cellHeight: 20,
+              ),
+            ),
+          ),
+        ),
+      );
+      controller.setAnchors([_urlAnchor('https://example.com', row: 4)]);
+      await tester.pump();
+      expect(stripPositionedOf(tester).right, 0.0);
+      expect(chipCenterX(tester, 4), greaterThan(hostWidth - kGutterStripWidth));
+    });
+
+    testWidgets('R15: on the left the chip\'s centre x < stripWidth (mirrored '
+        'Align + inset); on the right it is > width - stripWidth',
+        (tester) async {
+      await pumpSided(tester, geometry: left);
+      expect(chipCenterX(tester, 4), lessThan(kGutterStripWidth));
+      expect(chipCenterX(tester, 4), greaterThan(0));
+
+      await pumpSided(tester, geometry: right);
+      expect(chipCenterX(tester, 4), greaterThan(hostWidth - kGutterStripWidth));
+      expect(chipCenterX(tester, 4), lessThan(hostWidth));
+    });
+
+    testWidgets('R21: the row placement (top) is IDENTICAL on both sides — '
+        'only x mirrors', (tester) async {
+      await pumpSided(tester, geometry: left);
+      final leftRect = tester.getRect(find.byKey(const Key('gutter-mark-4')));
+      await pumpSided(tester, geometry: right);
+      final rightRect = tester.getRect(find.byKey(const Key('gutter-mark-4')));
+      expect(leftRect.top, rightRect.top);
+      expect(leftRect.height, rightRect.height);
+      expect(leftRect.left, 0.0);
+      expect(rightRect.right, hostWidth);
+    });
+
+    testWidgets('R15: BOTH layers built from the SAME left geometry render on '
+        'the LEFT edge (chips + line-select strip together)', (tester) async {
+      await pumpSided(tester, geometry: left, onCommitRows: (_, _) {});
+      // The line-select capture strip hugs the left edge…
+      final select = tester.getRect(find.byKey(const Key('gutter-line-select')));
+      expect(select.left, 0.0);
+      expect(select.width, kGutterStripWidth);
+      // …and so does the chip. Never on opposite edges.
+      expect(chipCenterX(tester, 4), lessThan(kGutterStripWidth));
+      final selectPositioned = tester.widget<Positioned>(
+        find
+            .ancestor(
+              of: find.byKey(const Key('gutter-line-select')),
+              matching: find.byType(Positioned),
+            )
+            .first,
+      );
+      expect(selectPositioned.left, 0.0);
+      expect(selectPositioned.right, isNull);
+    });
+
+    testWidgets('R15: both layers from the same RIGHT geometry stay on the '
+        'right edge', (tester) async {
+      await pumpSided(tester, geometry: right, onCommitRows: (_, _) {});
+      final select = tester.getRect(find.byKey(const Key('gutter-line-select')));
+      expect(select.right, hostWidth);
+      expect(chipCenterX(tester, 4), greaterThan(hostWidth - kGutterStripWidth));
+    });
+
+    // R17: the SAME keys, the SAME menus on the left.
+    testWidgets('R17: tap a single URL mark on a LEFT gutter → the URL action '
+        'overlay (same key, same menu)', (tester) async {
+      final controller = await pumpSided(tester, geometry: left);
+      controller.setAnchors([_urlAnchor('https://example.com', row: 2)]);
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('gutter-mark-2')));
+      await tester.pump();
+      expect(find.byKey(const Key('url-action-menu')), findsOneWidget);
+      expect(find.byKey(const Key('path-action-menu')), findsNothing);
+      debugDismissUrlActions();
+    });
+
+    testWidgets('R17: tap a multi-pattern mark on a LEFT gutter → the list '
+        'sheet with each item', (tester) async {
+      final controller = await pumpSided(tester, geometry: left);
+      controller.setAnchors([
+        _urlAnchor('https://example.com', row: 6),
+        _pathAnchor('/etc/hosts', row: 6),
+      ]);
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('gutter-mark-6')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('gutter-pattern-list')), findsOneWidget);
+      expect(find.byKey(const Key('gutter-item-0')), findsOneWidget);
+      expect(find.byKey(const Key('gutter-item-1')), findsOneWidget);
+    });
+
+    testWidgets('R18/R20: column mode does not move the chip off the strip '
+        '(chips stay row-aligned on the gutter side, R21)', (tester) async {
+      const columnLeft = GhosttyGutterGeometry(
+        side: GutterSide.left,
+        mode: GutterMode.column,
+      );
+      await pumpSided(tester, geometry: columnLeft);
+      expect(chipCenterX(tester, 4), lessThan(kGutterStripWidth));
+      final rect = tester.getRect(find.byKey(const Key('gutter-mark-4')));
+      // Row 4 at cellHeight 20 + padding 4 → the hit box (40 tall) is centred
+      // on the row: top = 4 + 80 - (40 - 20) / 2 = 74.
+      expect(rect.top, 74.0);
     });
   });
 }

@@ -895,15 +895,21 @@ Size ghosttyMeasureCellSize({
 /// Defensive: a zero/degenerate box or cell size yields a 1×1 grid (the same
 /// floor used by [ghosttyCellForPosition]) so a pre-layout frame never sends a
 /// nonsense resize. Pure (no FFI / no widget) → unit-testable headless.
+///
+/// #1155 R19: [geometry] is the ONE gutter geometry; dedicated-column mode
+/// reserves its strip width from the inner width so the PTY loses exactly
+/// `floor(innerW/cellW) - floor((innerW - strip)/cellW)` cols. Rows never
+/// change (the strip is vertical). Default = right/overlay = today's math.
 (int cols, int rows) ghosttyGridForBox({
   required double boxWidth,
   required double boxHeight,
   required double cellWidth,
   required double cellHeight,
   double padding = kGhosttyTerminalPadding,
+  GhosttyGutterGeometry geometry = GhosttyGutterGeometry.defaults,
 }) {
   if (cellWidth <= 0 || cellHeight <= 0) return (1, 1);
-  final innerW = boxWidth - 2 * padding;
+  final innerW = boxWidth - 2 * padding - geometry.reservedWidth;
   final innerH = boxHeight - 2 * padding;
   final cols = (innerW / cellWidth).floor();
   final rows = (innerH / cellHeight).floor();
@@ -931,6 +937,10 @@ Size ghosttyMeasureCellSize({
 /// Viewport-relative (no scrollback offset): the overlay is active only under
 /// mouse tracking, where flterm pins the viewport to the bottom — exactly the
 /// coordinate space tmux mouse mode expects. Pure (no FFI) → unit-testable.
+///
+/// #1155 R20: [geometry]'s extra left inset (a dedicated LEFT column) shifts
+/// col 0's origin exactly as the `TerminalView` padding shifts the painted
+/// glyphs + `anchorRects`, so touch and wash agree in every side×mode.
 (int col, int row) ghosttyCellForPosition({
   required double dx,
   required double dy,
@@ -939,11 +949,12 @@ Size ghosttyMeasureCellSize({
   required int cols,
   required int rows,
   double padding = kGhosttyTerminalPadding,
+  GhosttyGutterGeometry geometry = GhosttyGutterGeometry.defaults,
 }) {
   if (cols <= 0 || rows <= 0 || cellWidth <= 0 || cellHeight <= 0) {
     return (1, 1);
   }
-  final innerDx = dx - padding;
+  final innerDx = dx - padding - geometry.terminalPadding.left;
   final innerDy = dy - padding;
   final col = (innerDx / cellWidth).floor() + 1;
   final row = (innerDy / cellHeight).floor() + 1;
@@ -1786,7 +1797,12 @@ class GhosttyPointerGestureRouter extends StatefulWidget {
     this.onWindowSwitch,
     this.onStatusTap,
     this.onScroll,
+    this.geometry = GhosttyGutterGeometry.defaults,
   });
+
+  /// #1155 R20: the ONE gutter geometry — a dedicated LEFT column insets the
+  /// grid, so the touch→cell map subtracts the same inset.
+  final GhosttyGutterGeometry geometry;
 
   /// #911 Part C: when true (the `tmuxControlMode` flag is ON), window switching
   /// is driven by REAL tmux control commands ([onWindowSwitch]/[onStatusTap])
@@ -2129,6 +2145,7 @@ class _GhosttyPointerGestureRouterState
       // live grid, so a touch can never map to a cell tmux doesn't have.
       cols: _gridCols,
       rows: _gridRows,
+      geometry: widget.geometry,
     );
   }
 
@@ -2541,6 +2558,12 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
   /// on-screen highlight rects with the SAME geometry the router + highlight
   /// painter use — without re-reading the per-session font providers off-build.
   Size _lastCellSize = Size.zero;
+
+  /// #1155 R20: the ONE gutter geometry (side + mode), read from the detection
+  /// settings in [build] and consumed by the grid submit, the TerminalView
+  /// padding, the touch→cell map, `_isGutterCol`, the URL-menu rects and both
+  /// gutter layers — so no consumer derives the edge/inset on its own.
+  GhosttyGutterGeometry _gutterGeometry = GhosttyGutterGeometry.defaults;
 
   /// #918: a key on the flterm [TerminalView] so [_forceTerminalRepaint] can locate
   /// the internal [TerminalRenderBox] via the render tree and force a full repaint
@@ -3908,14 +3931,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     }
   }
 
-  /// #962: whether [col] (1-based viewport col) falls in the right-edge gutter
-  /// strip (~[kGutterSelectStripWidth] px wide), using the live cell width — so
-  /// a long-press there can be left to the gutter line-select, not the terminal.
+  /// #962: whether [col] (1-based viewport col) falls in the gutter strip
+  /// (~[kGutterSelectStripWidth] px wide), using the live cell width — so a
+  /// long-press there can be left to the gutter line-select, not the terminal.
+  /// #1155 R16: mirrors with the gutter side; in dedicated-column mode the
+  /// strip overlaps no text column, so nothing is suppressed (R19).
   bool _isGutterCol(int col) {
     final cw = _lastCellSize.width;
     if (cw <= 0 || _cols <= 0) return false;
+    final geometry = _gutterGeometry;
+    if (geometry.mode == GutterMode.column) return false;
     final gutterCols = (kGutterSelectStripWidth / cw).ceil();
-    return col > _cols - gutterCols;
+    return geometry.isLeft ? col <= gutterCols : col > _cols - gutterCols;
   }
 
   /// #705: begin an flterm LOCAL selection at the long-pressed 1-based VIEWPORT
@@ -4354,7 +4381,11 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       final startCol = range.topCol;
       final endCol = range.bottomCol; // exclusive
       if (endCol <= startCol) continue;
-      final left = kGhosttyTerminalPadding + startCol * cell.width;
+      // #1155 R20: a dedicated LEFT column insets the glyphs by the strip.
+      final left =
+          kGhosttyTerminalPadding +
+          _gutterGeometry.terminalPadding.left +
+          startCol * cell.width;
       final top = kGhosttyTerminalPadding + viewRow * cell.height;
       final width = (endCol - startCol) * cell.width;
       rects.add(
@@ -4625,6 +4656,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     // #734: remember the live cell size so a long-press URL menu can build its
     // highlight rects with the same geometry the router maps touches with.
     _lastCellSize = cellSize;
+    // #1155 R20: the ONE gutter geometry. Selected on (side, mode) so only a
+    // geometric change rebuilds here; the rebuild re-runs the LayoutBuilder
+    // below, whose grid submit resizes the PTY when column mode toggles (R19).
+    final (gutterSide, gutterMode) = ref.watch(
+      detectionSettingsProvider.select((s) => (s.gutterSide, s.gutterMode)),
+    );
+    _gutterGeometry = GhosttyGutterGeometry(side: gutterSide, mode: gutterMode);
     // #971 (test-only): publish the measured cell size so the gesture test can
     // convert a status-bar label column to the exact tap pixel.
     GhosttyTerminalView.debugCellSizes[widget.sessionId] = cellSize;
@@ -4707,6 +4745,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       boxHeight: box.height,
       cellWidth: cellSize.width,
       cellHeight: cellSize.height,
+      // #1155 R19: column mode reserves the strip → fewer cols → a resize.
+      geometry: _gutterGeometry,
     );
     if (cols == _lastSubmittedGridCols && rows == _lastSubmittedGridRows) {
       return;
@@ -4773,7 +4813,15 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // cells + glyphs stay opaque and occlude it. This is the root fix for the
         // #1045 frozen band: the wash tracks live like the gutter, not only when
         // the render box repaints.
-        Positioned.fill(
+        // #1155 R19/R20: the layer is inset by the SAME extra strip padding
+        // the TerminalView gets (flterm resolves `anchorRects` against a zero
+        // origin, i.e. its padded inner box), so a dedicated column shifts the
+        // wash with the glyphs. Zero inset == Positioned.fill (today's layout).
+        Positioned(
+          left: _gutterGeometry.terminalPadding.left,
+          top: 0,
+          right: _gutterGeometry.terminalPadding.right,
+          bottom: 0,
           child: GhosttyWashLayer(
             controller: controller,
             washColorFor: washColorFor,
@@ -4788,8 +4836,13 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             autofocus: false,
             theme: theme,
             // #699: kGhosttyTerminalPadding mirrors this literal — the
-            // touch->cell map subtracts it. Keep them in sync.
-            padding: const EdgeInsets.all(kGhosttyTerminalPadding),
+            // touch->cell map subtracts it. Keep them in sync. #1155 R19: a
+            // dedicated column adds the strip inset on the gutter side; the
+            // wash layer above is inset by the same value and the touch->cell
+            // map subtracts it, so wash, glyphs and `matchAt` agree (R20).
+            padding:
+                const EdgeInsets.all(kGhosttyTerminalPadding) +
+                _gutterGeometry.terminalPadding,
             // #690: share the scroll controller so the overlay below can drive
             // scrollback (→ flterm wheel reports) under remote mouse mode.
             scrollController: _scrollController,
@@ -4829,6 +4882,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             // the cell flterm actually rendered (root-cause fix for the offset).
             cellWidth: cellSize.width,
             cellHeight: cellSize.height,
+            // #1155 R20: the touch→cell map shares the gutter geometry.
+            geometry: _gutterGeometry,
             mouseTrackingLabel: _mouseTracking.name,
             // #693: a tap must FOCUS *and* raise the soft keyboard. flterm's own
             // tap calls only `requestFocus()` (terminal_gesture_detector.dart),
@@ -5003,6 +5058,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
             color: highlightColor,
             padding: kGhosttyTerminalPadding,
             onCommitRows: _onGutterCommitRows,
+            // #1155 R15: same edge as the chips, always.
+            geometry: _gutterGeometry,
           ),
         ),
         // #955: the right-edge GUTTER layer (replaces the inline decorator). The
@@ -5035,6 +5092,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
                 .resolveStyle(patternId, verified: false)
                 .chipAccent,
             noise: GutterNoise.forIntensity(styleResolver.intensity),
+            // #1155 R15: the gutter side (and mode) from the ONE geometry.
+            geometry: _gutterGeometry,
           ),
         ),
         // Selection affordances (bottom-right). #712: shown ONLY while a
