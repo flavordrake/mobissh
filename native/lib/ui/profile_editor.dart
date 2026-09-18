@@ -30,6 +30,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../ssh/jump_host.dart';
+import '../ssh/ssh_config_jump_import.dart';
 import '../ssh/ssh_config_parser.dart';
 import '../state/keys_providers.dart';
 import '../state/profiles_providers.dart';
@@ -200,6 +201,18 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   /// #1183 R14: the selected jump host's `identityKey`, or null for "None".
   /// Seeded from the profile and written straight back on save.
   String? _jumpIdentityKey;
+
+  /// #1184 R18/R19: what the last pasted config could NOT import — an
+  /// unresolved jump host, or a ProxyCommand that is not the legacy
+  /// `ssh -W %h:%p` spelling. Rendered as a PERSISTENT panel under the Jump
+  /// host picker (guidance the user must act on never goes in a toast,
+  /// feedback_actionable_guidance_not_toast); cleared by the next apply.
+  List<String> _importNotes = const <String>[];
+
+  /// #1184 R20: intermediate links an imported chain needs (`ProxyJump a,b`
+  /// also means "b connects through a"). Written on SAVE, not on apply — the
+  /// user may still back out of the editor.
+  List<JumpChainLink> _pendingChainLinks = const <JumpChainLink>[];
 
   @override
   void initState() {
@@ -481,6 +494,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         if (mounted) setState(() => _linkAliasError = _linkAliasTakenError);
         return null;
       }
+      await _writePendingChainLinks(store, updated);
       ctrace(
         'ui.editor',
         'saved profile $newIdentity authType=$authType '
@@ -490,6 +504,33 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
       return updated;
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// #1184 R20: commit the links BETWEEN imported hops. `ProxyJump a,b` means
+  /// the target goes through b and b goes through a — writing only the target's
+  /// link would import a route the config never described.
+  ///
+  /// Re-reads each hop from the store rather than writing the snapshot taken at
+  /// apply time, so an unrelated edit made in between is not clobbered.
+  Future<void> _writePendingChainLinks(
+    ProfilesStore store,
+    SavedProfile saved,
+  ) async {
+    if (_pendingChainLinks.isEmpty) return;
+    final links = _pendingChainLinks;
+    _pendingChainLinks = const <JumpChainLink>[];
+    final current = await store.load();
+    for (final link in links) {
+      // The profile we just wrote already carries its own selection.
+      if (link.hop.identityKey == saved.identityKey) continue;
+      final matches = current.where(
+        (p) => p.identityKey == link.hop.identityKey,
+      );
+      if (matches.isEmpty) continue; // hop deleted since the paste
+      final hop = matches.first;
+      if (hop.jumpIdentityKey == link.jumpIdentityKey) continue;
+      await store.upsert(hop.copyWith(jumpIdentityKey: link.jumpIdentityKey));
     }
   }
 
@@ -715,6 +756,9 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
               const SizedBox(height: 12),
               // #1183 R14: connect THROUGH another saved profile (ProxyJump).
               _buildJumpHostPicker(context),
+              // #1184 R18/R19: what the pasted config could not import, shown
+              // where the fix is — beside the picker.
+              _buildImportNotes(context),
               const SizedBox(height: 12),
               SegmentedButton<_AuthKind>(
                 segments: const [
@@ -850,6 +894,49 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
               ),
           ],
           onChanged: (value) => setState(() => _jumpIdentityKey = value),
+        ),
+      ),
+    );
+  }
+
+  /// #1184 R18/R19: the persistent import-note panel. Empty notes render
+  /// nothing at all (and no key), so the Details tab is unchanged for every
+  /// profile that was not imported from a config with a jump host.
+  Widget _buildImportNotes(BuildContext context) {
+    if (_importNotes.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        key: const Key('profile-editor-import-notes'),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.info_outline,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final note in _importNotes)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(note, style: theme.textTheme.bodySmall),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1253,7 +1340,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
       return;
     }
     if (entries.length == 1) {
-      _applyEntry(entries.single);
+      _applyEntry(entries.single, entries);
       return;
     }
     _chooseAndApplyEntry(entries);
@@ -1282,13 +1369,16 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         ),
       ),
     );
-    if (chosen != null) _applyEntry(chosen);
+    if (chosen != null) _applyEntry(chosen, entries);
   }
 
   /// Fill the Details controllers from a parsed entry, then jump to Details so
   /// the user can review and save. Only overwrites fields the entry provides;
   /// an empty Name is auto-filled `user@host`.
-  void _applyEntry(SshConfigEntry e) {
+  ///
+  /// [all] are the other stanzas from the same paste — a `ProxyJump` alias can
+  /// name one of them (#1184 R18).
+  void _applyEntry(SshConfigEntry e, List<SshConfigEntry> all) {
     setState(() {
       _hostCtrl.text = e.effectiveHost;
       if (e.port != null) _portCtrl.text = e.port.toString();
@@ -1301,9 +1391,47 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         _authKind = _AuthKind.key;
         _pendingIdentityFile = e.identityFile;
       }
+      _applyJumpHosts(e, all);
     });
     _tabs.animateTo(0);
     showTopToast(context, 'Filled from "${e.alias}" — review and save');
+  }
+
+  /// #1184 R18-R20: turn the entry's parsed hops into a jump-host selection.
+  /// Called from inside [_applyEntry]'s setState.
+  ///
+  /// A resolvable chain selects the innermost hop in the picker and queues the
+  /// links between hops for save. Anything that cannot be imported — an
+  /// unresolved hop, a too-deep chain, a ProxyCommand we do not speak — leaves
+  /// the picker ALONE (never a dangling reference) and lands in
+  /// [_importNotes], which the Details tab shows beside the picker.
+  void _applyJumpHosts(SshConfigEntry e, List<SshConfigEntry> all) {
+    final notes = <String>[];
+    if (e.proxyCommandNote != null) notes.add(e.proxyCommandNote!);
+
+    if (e.proxyJump.isNotEmpty) {
+      final profiles =
+          ref.read(savedProfilesProvider).value ?? const <SavedProfile>[];
+      final outcome = resolveImportedJumpHops(
+        // The identity the import is ABOUT — the fields just applied, not the
+        // profile the editor opened on (create mode has no identity yet).
+        target: SavedProfile(
+          title: '',
+          host: _hostCtrl.text.trim(),
+          port: int.tryParse(_portCtrl.text.trim()) ?? 22,
+          username: _userCtrl.text.trim(),
+        ),
+        hops: e.proxyJump,
+        profiles: profiles,
+        entries: all,
+      );
+      notes.addAll(outcome.notes);
+      _pendingChainLinks = outcome.chainLinks;
+      if (outcome.jumpIdentityKey != null) {
+        _jumpIdentityKey = outcome.jumpIdentityKey;
+      }
+    }
+    _importNotes = notes;
   }
 }
 

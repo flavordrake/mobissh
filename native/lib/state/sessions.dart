@@ -51,6 +51,7 @@ class SessionEntry {
     required this.proxy,
     required this.terminal,
     this.title,
+    this.jumpHops = const [],
   });
 
   final String id;
@@ -73,6 +74,14 @@ class SessionEntry {
   /// mirror). When set, it's preferred over `username@host:port` for display
   /// in the AppBar and session menu (#518).
   final String? title;
+
+  /// Jump hops the LIVE transport was built from, OUTERMOST-FIRST (#1183 R7,
+  /// surfaced by #1189). Copied off the [SshConnectParams] this session was
+  /// connected with — NOT re-read from the profile, whose `jumpIdentityKey`
+  /// may have been edited since. Empty = a direct connection. Mutable so a
+  /// revive that re-resolves the chain ([_reviveFromProfile]) keeps the
+  /// displayed route honest about the transport that is actually up.
+  List<SshConnectParams> jumpHops;
 
   /// Dedup key — matches the prefix of [id] before `createdAt`.
   String get profileKey => '$host:$port:$username';
@@ -249,6 +258,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
       proxy: proxy,
       terminal: terminal,
       title: title,
+      jumpHops: params.jumpHops,
     );
     // Bridge proxy PTY output bytes → terminal.write. The subscription lives
     // on the entry so close() can cancel it. Malformed UTF-8 is replaced
@@ -515,17 +525,21 @@ class SessionsNotifier extends Notifier<SessionsState> {
       // DIRECT would route it somewhere the profile never asked for. A chain
       // that can't be resolved throws into the catch below, which degrades to
       // the held-params reconnect rather than a wrong-route connect.
+      final revivedHops = await resolveJumpHopParams(
+        profile: match,
+        all: profiles,
+        secrets: secrets,
+      );
+      // #1189: the route the session is ACTUALLY on is what the route icon
+      // shows, so a revive that re-dials a re-pointed chain updates it too.
+      entry.jumpHops = revivedHops;
       entry.proxy.connect(
         SshConnectParams(
           host: entry.host,
           port: entry.port,
           username: entry.username,
           auth: auth,
-          jumpHops: await resolveJumpHopParams(
-            profile: match,
-            all: profiles,
-            secrets: secrets,
-          ),
+          jumpHops: revivedHops,
         ),
         title: entry.title,
         force: true,

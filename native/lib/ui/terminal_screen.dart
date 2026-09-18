@@ -44,6 +44,7 @@ import 'compose_bar.dart';
 import 'ghostty_terminal_view.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
+import 'session_route_details.dart';
 import 'url_action_overlay.dart';
 
 /// Minimum horizontal travel (logical px) before a drag on the session bar is
@@ -208,6 +209,15 @@ class TerminalScreen extends ConsumerWidget {
       // centered bottom bar. Same instance either way (only one `if` renders it).
       compact: largeLandscape,
       label: activeEntry.label,
+      // #1189 (R16): a routed session's title carries the route glyph; a
+      // direct session gets nothing. The hops come from the LIVE session, not
+      // from the profile's (possibly since-edited) jumpIdentityKey.
+      routeIcon: activeEntry.jumpHops.isEmpty
+          ? null
+          : SessionRouteIcon(
+              key: const Key('session-route-icon'),
+              entry: activeEntry,
+            ),
       sessionCount: entries.length,
       swatchColor: swatchColor,
       // Swipe left → next session, swipe right → previous, wrapping
@@ -303,6 +313,7 @@ class _SessionBar extends StatefulWidget {
     required this.onSwipe,
     required this.composeOn,
     required this.onToggleCompose,
+    this.routeIcon,
   });
 
   /// #1086: tablet/large-landscape mode. When true the bar renders as a compact
@@ -329,6 +340,11 @@ class _SessionBar extends StatefulWidget {
   /// session menu — it's infrequent). [composeOn] drives the icon state.
   final bool composeOn;
   final VoidCallback onToggleCompose;
+
+  /// #1189: the tappable route glyph for a JUMPED session, built by the parent
+  /// from the active entry's live hops. Null for a direct connection — which
+  /// then gains no chrome at all.
+  final Widget? routeIcon;
 
   @override
   State<_SessionBar> createState() => _SessionBarState();
@@ -455,6 +471,8 @@ class _SessionBarState extends State<_SessionBar> {
               ),
             ),
           ),
+          // #1189: outside the menu InkWell so the glyph owns its own tap.
+          if (widget.routeIcon != null) widget.routeIcon!,
           const Spacer(),
           _composeToggle(theme),
         ],
@@ -523,37 +541,48 @@ class _SessionBarState extends State<_SessionBar> {
           // IgnorePointer so the swipe/tap on the bar still reaches the base
           // InkWell. Padded symmetrically so the title centers over the whole
           // bar yet clears both controls.
-          IgnorePointer(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: _titleSideInset),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // #653: profile color swatch — a small filled circle tag
-                  // immediately left of the title. Color resolved by the
-                  // parent (profile color, else theme accent). Mirrors the PWA
-                  // `session-dot`.
-                  Container(
-                    key: const Key('session-bar-swatch'),
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: widget.swatchColor,
-                      shape: BoxShape.circle,
+          // #1189: only the swatch + label are IgnorePointer'd; the route glyph
+          // sits beside them as a real tap target (an IgnorePointer over it
+          // would make the whole affordance dead).
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: _titleSideInset),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: IgnorePointer(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // #653: profile color swatch — a small filled circle
+                        // tag immediately left of the title. Color resolved by
+                        // the parent (profile color, else theme accent).
+                        // Mirrors the PWA `session-dot`.
+                        Container(
+                          key: const Key('session-bar-swatch'),
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: widget.swatchColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            widget.label,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      widget.label,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+                if (widget.routeIcon != null) widget.routeIcon!,
+              ],
             ),
           ),
         ],
