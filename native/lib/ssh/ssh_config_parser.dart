@@ -271,6 +271,7 @@ String formatSshConfig({
   int port = 22,
   String? user,
   String? identityFile,
+  String? proxyJump,
 }) {
   final b = StringBuffer('Host ${alias.trim()}\n');
   b.write('  HostName ${host.trim()}\n');
@@ -279,6 +280,8 @@ String formatSshConfig({
   if (u.isNotEmpty) b.write('  User $u\n');
   final id = identityFile?.trim() ?? '';
   if (id.isNotEmpty) b.write('  IdentityFile $id\n');
+  final jump = proxyJump?.trim() ?? '';
+  if (jump.isNotEmpty) b.write('  ProxyJump $jump\n');
   return b.toString();
 }
 
