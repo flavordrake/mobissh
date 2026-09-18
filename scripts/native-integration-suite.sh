@@ -60,6 +60,12 @@ needs_second_bridge() {
     # #775: the SFTP browser smoke's per-session isolation leg connects a 2nd
     # session on 2223 to prove each browser shows only its own session's cwd.
     *sftp_browse_smoke_test.dart) return 0 ;;
+    # #847: two sessions to the SAME host over 2222 + 2223. Its own header
+    # states the requirement ("Bridge: … with BRIDGE_PORT2=2223"); without it
+    # the 2nd session has nowhere to connect and the test fails with
+    # "both same-host sessions did not reach connected" — a HARNESS gap that
+    # reads exactly like a product regression.
+    *attention_host_suppression_test.dart) return 0 ;;
     *) return 1 ;;
   esac
 }

@@ -35,6 +35,9 @@ needs_second_bridge() {
   case "$1" in
     *multi_session_lifecycle_test.dart) return 0 ;;
     *sftp_browse_smoke_test.dart) return 0 ;;
+    # #847: two sessions to the SAME host over 2222 + 2223 (its header states
+    # the BRIDGE_PORT2=2223 requirement).
+    *attention_host_suppression_test.dart) return 0 ;;
     *) return 1 ;;
   esac
 }
