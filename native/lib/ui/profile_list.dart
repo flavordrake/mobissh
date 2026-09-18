@@ -517,6 +517,12 @@ class _SavedProfilesSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final order = ref.watch(profileOrderProvider);
     final ordered = applyOrder(profiles, order);
+    // #1183 R16: resolve each row's jump host to its TITLE here, where the full
+    // profile list is already in hand — a chained connection must never be
+    // invisible in the list.
+    final titleByIdentity = <String, String>{
+      for (final p in profiles) p.identityKey: p.title,
+    };
 
     return Expanded(
       key: const Key('profile-list-populated'),
@@ -551,6 +557,7 @@ class _SavedProfilesSection extends ConsumerWidget {
                   key: ValueKey('profile-reorder-${p.identityKey}'),
                   index: i,
                   profile: p,
+                  jumpHostTitle: titleByIdentity[p.jumpIdentityKey],
                   onTap: () => onConnect(p),
                   onEdit: () => onEdit(p),
                   onRetry: () => onConnect(p),
@@ -575,7 +582,12 @@ class _ProfileTile extends ConsumerWidget {
     required this.onTap,
     required this.onEdit,
     required this.onRetry,
+    this.jumpHostTitle,
   });
+
+  /// Title of the profile this one connects THROUGH (#1183, R16), or null when
+  /// it connects directly. Resolved by the section, which holds the full list.
+  final String? jumpHostTitle;
 
   /// This tile's position in the rendered (ordered) list — the drag index for
   /// the upper-right [ReorderableDelayedDragStartListener] handle (#481).
@@ -629,6 +641,7 @@ class _ProfileTile extends ConsumerWidget {
             profile: profile,
             entry: entry,
             onRetry: onRetry,
+            jumpHostTitle: jumpHostTitle,
           ),
           // Reserve right room for the overlaid handle + pencil so long titles
           // don't run under them.
@@ -768,18 +781,57 @@ class _ProfileSubtitle extends StatelessWidget {
     required this.profile,
     required this.entry,
     required this.onRetry,
+    this.jumpHostTitle,
   });
 
   final SavedProfile profile;
   final SessionEntry? entry;
   final VoidCallback onRetry;
 
+  /// #1183 R16: the hop this profile routes through, or null for a direct
+  /// connection.
+  final String? jumpHostTitle;
+
+  /// The `via <hop>` badge (#1183, R16). Monochrome Material glyph, no emoji.
+  Widget? _jumpBadge(BuildContext context) {
+    final via = jumpHostTitle;
+    if (via == null) return null;
+    final theme = Theme.of(context);
+    return Row(
+      key: const Key('profile-jump-badge'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.alt_route,
+          size: 14,
+          color: theme.textTheme.bodySmall?.color,
+        ),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            'via $via',
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final hostLine = Text(
+    final hostText = Text(
       '${profile.username}@${profile.host}:${profile.port}',
       overflow: TextOverflow.ellipsis,
     );
+    final badge = _jumpBadge(context);
+    final Widget hostLine = badge == null
+        ? hostText
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [hostText, badge],
+          );
 
     final e = entry;
     if (e == null) return hostLine;

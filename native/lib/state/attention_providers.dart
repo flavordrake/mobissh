@@ -18,6 +18,7 @@ import '../services/attention_focus_router.dart';
 import '../services/attention_notifier_fln.dart';
 import '../services/attention_tap_ui.dart';
 import '../services/session_attention_notification.dart';
+import '../ssh/jump_host.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../storage/profiles_store.dart';
 import 'profiles_providers.dart';
@@ -165,6 +166,15 @@ Future<String?> _reconnectHostFromProfile(Ref ref, String host) async {
       port: match.port,
       username: match.username,
       auth: auth,
+      // #1183: an attention tap re-dials the SAME route the profile defines,
+      // jump chain included. A throw here lands in the catch below (tap
+      // cancels) rather than connecting direct to a host the profile never
+      // reaches that way.
+      jumpHops: await resolveJumpHopParams(
+        profile: match,
+        all: profiles,
+        secrets: secrets,
+      ),
     );
     // The existing connect flow: addOrActivate dedupes by host:port:user,
     // starts the keepalive service, creates the per-session proxy + terminal,

@@ -23,6 +23,15 @@ const SSHD_PORT = Number(process.env.SSHD_PORT || 22);
 const SSHD_HOST = process.env.SSHD_HOST || 'test-sshd';
 const NETWORK_NAME = 'mobissh';
 
+// #1183 jump host (A8): the TARGET reached THROUGH test-sshd. Only the bastion
+// needs a device-side bridge — this one is resolved BY the bastion inside the
+// direct-tcpip channel, so the test profile's host IS this DNS name.
+const JUMP_TARGET_HOST = process.env.JUMP_TARGET_HOST || 'jump-target';
+const JUMP_TARGET_PORT = Number(process.env.JUMP_TARGET_PORT || 22);
+// Pinned in docker-compose.test.yml so `uname -n` proves which hop's shell the
+// terminal is actually showing.
+const JUMP_TARGET_HOSTNAME = 'jump-target-host';
+
 const TEST_USER = 'testuser';
 const TEST_PASS = 'testpass';
 
@@ -62,6 +71,24 @@ function ensureTestSshd() {
   throw new Error(`test-sshd not ready on ${SSHD_HOST}:${SSHD_PORT} after 15s`);
 }
 
+/**
+ * Start the jump-target sshd alongside test-sshd (#1183 A8) and wait for it.
+ * Idempotent. Call after ensureTestSshd() — it reuses the same network join.
+ */
+function ensureJumpTarget() {
+  execSync(
+    'docker compose -f docker-compose.test.yml up -d jump-target',
+    { cwd: process.cwd(), encoding: 'utf8', timeout: 60_000 }
+  );
+  for (let i = 0; i < 30; i++) {
+    if (_portOpen(JUMP_TARGET_HOST, JUMP_TARGET_PORT)) return;
+    execSync('sleep 0.5');
+  }
+  throw new Error(
+    `jump-target not ready on ${JUMP_TARGET_HOST}:${JUMP_TARGET_PORT} after 15s`
+  );
+}
+
 function _portOpen(host, port) {
   try {
     execSync(`bash -c 'echo > /dev/tcp/${host}/${port}'`, { timeout: 1000 });
@@ -71,4 +98,15 @@ function _portOpen(host, port) {
   }
 }
 
-module.exports = { ensureTestSshd, SSHD_HOST, SSHD_PORT, TEST_USER, TEST_PASS, TEST_KEY_PATH };
+module.exports = {
+  ensureTestSshd,
+  ensureJumpTarget,
+  SSHD_HOST,
+  SSHD_PORT,
+  JUMP_TARGET_HOST,
+  JUMP_TARGET_PORT,
+  JUMP_TARGET_HOSTNAME,
+  TEST_USER,
+  TEST_PASS,
+  TEST_KEY_PATH,
+};

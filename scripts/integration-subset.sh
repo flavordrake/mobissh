@@ -35,6 +35,20 @@ needs_second_bridge() {
   case "$1" in
     *multi_session_lifecycle_test.dart) return 0 ;;
     *sftp_browse_smoke_test.dart) return 0 ;;
+    # #847: two sessions to the SAME host over 2222 + 2223 (its header states
+    # the BRIDGE_PORT2=2223 requirement).
+    *attention_host_suppression_test.dart) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# #1183 jump host: the acceptance test connects to the `jump-target` container
+# THROUGH test-sshd. No extra bridge — the device never dials the target — but
+# the second container has to be up. test-sshd-up.sh composes the whole test
+# project (both services) and is idempotent, so this is safe to re-run.
+needs_jump_target() {
+  case "$1" in
+    *jump_host_1183_test.dart) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -43,6 +57,10 @@ passed=()
 failed=()
 for t in "$@"; do
   log "=== running $t ==="
+  if needs_jump_target "$t"; then
+    log "(bringing up the jump-target sshd for the jump-host acceptance)"
+    "${REPO_ROOT}/scripts/test-sshd-up.sh"
+  fi
   if needs_second_bridge "$t"; then
     log "(enabling 2nd bridge port 2223 for multi-session)"
     if BRIDGE_PORT2="2223" "${REPO_ROOT}/scripts/native-connect-test.sh" "$t"; then

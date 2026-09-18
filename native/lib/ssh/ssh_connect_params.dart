@@ -36,11 +36,18 @@ class SshConnectParams {
   final String username;
   final SshAuth auth;
 
+  /// Jump hops to dial before the target, OUTERMOST-FIRST (#1183, R7). Each
+  /// carries its OWN identity and its OWN resolved credentials (R8) — a hop is
+  /// transport, not a session, so it never gets its own [SshConnectParams]
+  /// entry anywhere else. Empty (the default) = today's direct dial.
+  final List<SshConnectParams> jumpHops;
+
   const SshConnectParams({
     required this.host,
     required this.port,
     required this.username,
     required this.auth,
+    this.jumpHops = const [],
   });
 
   /// Stable identifier for host-key lookups.

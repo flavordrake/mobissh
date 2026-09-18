@@ -14,6 +14,31 @@ services:
       retries: 5
     restart: "no"
 
+  # #1183 (jump host, A8): the TARGET reached THROUGH test-sshd acting as the
+  # bastion. Same image (it already ships AllowTcpForwarding=local, which is
+  # exactly what a bastion needs), different container so the two hops are
+  # distinguishable on the wire.
+  #
+  # The device never bridges to this one: the target profile's host is the
+  # Docker DNS name `jump-target`, resolved BY the bastion inside the
+  # direct-tcpip channel. That is the real ProxyJump mechanic and it needs no
+  # second socat/adb-reverse.
+  #
+  # `hostname` is pinned so the acceptance test can assert `uname -n` and prove
+  # the shell it reached is the TARGET's, not the bastion's.
+  jump-target:
+    build:
+      context: ./docker/test-sshd
+    hostname: jump-target-host
+    networks:
+      - mobissh
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 5
+    restart: "no"
+
 networks:
   mobissh:
     # Shared with docker-compose.prod.yml — all MobiSSH containers on one network.
