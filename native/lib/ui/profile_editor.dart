@@ -43,6 +43,15 @@ import 'top_toast.dart';
 
 enum _AuthKind { password, key }
 
+/// True when [vaultId] was minted FOR one profile identity rather than being a
+/// shareable key (#1138). The editor mints `profile-<host:port:username>` for a
+/// password, and older builds minted `profile-key-<identity>` for a per-profile
+/// key blob — both live in the `profile-` namespace and mean "this secret
+/// belongs to that one server". A LIBRARY key (#1088, `key-<id>`) is reusable
+/// across hosts by design and is NOT profile-scoped.
+bool isProfileScopedVaultId(String? vaultId) =>
+    vaultId != null && vaultId.startsWith('profile-');
+
 /// Where a key-auth profile's private key comes from: a freshly [pasted] PEM,
 /// or a [stored] key already in the vault (reused by its keyVaultId, no
 /// re-paste). Default [pasted] preserves the pre-import editor behavior.
@@ -158,6 +167,12 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   _KeySource _keySource = _KeySource.pasted;
   String? _selectedStoredKeyVaultId;
 
+  /// #1138: set once the user actively picks from the key-source dropdown.
+  /// initState PRESELECTS the profile's own key (#1121), so the selection
+  /// alone cannot tell "I chose this key for the new host" from "I never
+  /// touched the picker" — and only the former survives an identity edit.
+  bool _keySourceTouched = false;
+
   /// The IdentityFile path from an imported config, shown as a hint in the key
   /// area (the phone can't read the file — it's guidance for which key to pick
   /// or paste). Null unless a parsed entry referenced one.
@@ -259,6 +274,43 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     return t.isEmpty ? null : t;
   }
 
+  /// The identity the CURRENT fields describe (`host:port:username`) — the key
+  /// `_persist` upserts under, and what the detach predicates compare against.
+  String _fieldsIdentityKey() {
+    final host = _hostCtrl.text.trim();
+    final port = int.tryParse(_portCtrl.text.trim()) ?? 22;
+    final username = _userCtrl.text.trim();
+    return '$host:$port:$username';
+  }
+
+  /// True when this save re-points the profile at a DIFFERENT server. Create
+  /// mode has no prior identity to diverge from.
+  bool _identityEdited() =>
+      !widget.isNew && _fieldsIdentityKey() != _originalIdentityKey;
+
+  /// #1138: the stored password belongs to the host it was entered for, so an
+  /// identity edit ALWAYS releases the old handle. A password typed in the same
+  /// save then mints a fresh `profile-<new identity>` — the old handle is
+  /// never reused for a different server, not even under a new password.
+  bool _releasesPasswordHandle() =>
+      _identityEdited() && widget.profile.vaultId != null;
+
+  /// #1138: only a profile-scoped key blob is released. A LIBRARY key is
+  /// reusable across hosts by design (#1088), so it stays attached.
+  bool _releasesKeyHandle() =>
+      _identityEdited() && isProfileScopedVaultId(widget.profile.keyVaultId);
+
+  /// The user ENDS UP with no stored password for the new identity: the handle
+  /// is released and nothing was entered to replace it. Drives the notice.
+  bool _losesStoredPassword() =>
+      _releasesPasswordHandle() &&
+      !(_authKind == _AuthKind.password && _passwordCtrl.text.isNotEmpty);
+
+  /// Same for the key: re-selecting one in the picker or pasting a PEM in this
+  /// save is a deliberate re-attach, so nothing is lost.
+  bool _losesStoredKey() =>
+      _releasesKeyHandle() && !_keySourceTouched && _keyCtrl.text.isEmpty;
+
   Future<void> _save() async {
     final saved = await _persist();
     if (saved == null || !mounted) return;
@@ -326,6 +378,17 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     var vaultId = widget.profile.vaultId;
     var keyVaultId = widget.profile.keyVaultId;
 
+    // #1138: a vault handle is NOT portable across identities. Editing
+    // host/port/username re-points the profile at a DIFFERENT server, so a
+    // credential minted for the old one must not follow it there (the handle
+    // is even named `profile-<old identity>`). Detach the reference ONLY — the
+    // blob stays in the vault under its old id, because the old identity may
+    // still be in use and destroying a credential on a rename would be a worse
+    // bug than the one this fixes. The user is told via the inline notice.
+    final releaseKeyHandle = _releasesKeyHandle();
+    if (_releasesPasswordHandle()) vaultId = null;
+    if (releaseKeyHandle) keyVaultId = null;
+
     // Decide which credential fields the user actually entered. We NEVER log
     // the values — only whether each is present (length-free here; the connect
     // form already traces lengths). Writing goes solely through secrets_store.
@@ -336,9 +399,13 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     // Reusing an existing stored key (profile-import goal): point this profile
     // at the chosen key's vault id, writing NO new secret. Wins over the paste
     // path so the PEM field being blank doesn't matter.
+    // #1138: after an identity edit released a profile-scoped key, only an
+    // EXPLICIT pick re-attaches it — the untouched preselection (initState
+    // seeds the profile's own key, #1121) must not silently undo the release.
     final reuseStoredKey = _authKind == _AuthKind.key &&
         _keySource == _KeySource.stored &&
-        _selectedStoredKeyVaultId != null;
+        _selectedStoredKeyVaultId != null &&
+        (!releaseKeyHandle || _keySourceTouched);
     if (reuseStoredKey) {
       keyVaultId = _selectedStoredKeyVaultId;
     }
@@ -504,10 +571,16 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   /// the transient toast for guidance the user must read and act on (#1118
   /// phone-migration re-entry prompt) — the toast vanished before it could be
   /// read (owner-reported on rc.2).
-  Widget _buildNotice(BuildContext context, String text) {
+  Widget _buildNotice(
+    BuildContext context,
+    String text, {
+    required Key noticeKey,
+    Key? dismissKey,
+    VoidCallback? onDismiss,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      key: const Key('profile-editor-notice'),
+      key: noticeKey,
       padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
         color: scheme.errorContainer,
@@ -524,15 +597,42 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
               style: TextStyle(color: scheme.onErrorContainer),
             ),
           ),
-          IconButton(
-            key: const Key('profile-editor-notice-dismiss'),
-            icon: const Icon(Icons.close, size: 18),
-            color: scheme.onErrorContainer,
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Dismiss',
-            onPressed: () => setState(() => _notice = null),
-          ),
+          if (onDismiss != null)
+            IconButton(
+              key: dismissKey,
+              icon: const Icon(Icons.close, size: 18),
+              color: scheme.onErrorContainer,
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Dismiss',
+              onPressed: onDismiss,
+            ),
         ],
+      ),
+    );
+  }
+
+  /// #1138: the inline, PERSISTENT warning that saving this identity edit will
+  /// detach a stored credential. It sits directly under the identity fields —
+  /// where the action is — so "I moved my server" does not silently become "I
+  /// can't log in and don't know why". Not dismissible and not a toast: it
+  /// clears itself when the edit is reverted or a credential is re-entered
+  /// (feedback_actionable_guidance_not_toast).
+  Widget _buildDetachNotice(BuildContext context) {
+    final password = _losesStoredPassword();
+    final key = _losesStoredKey();
+    if (!password && !key) return const SizedBox.shrink();
+    final what = password && key
+        ? 'password and key'
+        : (password ? 'password' : 'key');
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: _buildNotice(
+        context,
+        'The stored $what belongs to $_originalIdentityKey. Saving with this '
+        'host, port or username will detach it — it is kept, but it will NOT '
+        'be sent to ${_fieldsIdentityKey()}. Re-enter a credential below to '
+        'store one for the new server.',
+        noticeKey: const Key('profile-editor-detach-notice'),
       ),
     );
   }
@@ -552,7 +652,13 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (_notice != null) ...[
-                _buildNotice(context, _notice!),
+                _buildNotice(
+                  context,
+                  _notice!,
+                  noticeKey: const Key('profile-editor-notice'),
+                  dismissKey: const Key('profile-editor-notice-dismiss'),
+                  onDismiss: () => setState(() => _notice = null),
+                ),
                 const SizedBox(height: 12),
               ],
               TextField(
@@ -595,6 +701,16 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
                 decoration: const InputDecoration(labelText: 'Username'),
                 autocorrect: false,
                 enableSuggestions: false,
+              ),
+              // #1138: warn, in place, as soon as the identity fields diverge
+              // from the ones the stored credential was entered for. Rebuilt
+              // from the identity AND credential controllers so it appears and
+              // clears as the user types.
+              ListenableBuilder(
+                listenable: Listenable.merge(
+                  [_hostCtrl, _portCtrl, _userCtrl, _passwordCtrl, _keyCtrl],
+                ),
+                builder: (context, _) => _buildDetachNotice(context),
               ),
               const SizedBox(height: 12),
               // #1183 R14: connect THROUGH another saved profile (ProxyJump).
@@ -866,6 +982,8 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
                   ),
               ],
               onChanged: (v) => setState(() {
+                // #1138: an explicit pick is a deliberate re-attach.
+                _keySourceTouched = true;
                 if (v == null || v == _pasteKeySentinel) {
                   _keySource = _KeySource.pasted;
                   _selectedStoredKeyVaultId = null;
