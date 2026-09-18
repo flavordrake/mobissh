@@ -337,4 +337,82 @@ void main() {
     expect(opened, ['https://example.com']);
     host.disposeSyncForTest();
   });
+
+  // #1177: markdown source is PROSE, not code — the raw view must soft-wrap to
+  // the viewport instead of forcing a sideways pan per paragraph. (The
+  // text/code viewer keeps its horizontal scroll deliberately.)
+  testWidgets('raw source soft-wraps to the viewport (no horizontal scroll)', (
+    tester,
+  ) async {
+    // One paragraph on a single source line, far wider than the 800px test
+    // viewport at any monospace size.
+    final longLine = List.filled(240, 'wrapme').join(' ');
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+    final host = SessionHost(
+      gateway: pair.taskSide,
+      controllerFactory: _stubControllerFactory,
+      sftpOpener: (_) async => _ScriptedSftpSession(const {}),
+      snapshotInterval: const Duration(hours: 1),
+    );
+    final container = ProviderContainer(
+      overrides: [
+        taskSshGatewayProvider.overrideWithValue(pair.uiSide),
+        textFileFetcherProvider.overrideWithValue(_CannedTextFetcher(longLine)),
+      ],
+    );
+    addTearDown(container.dispose);
+    const params = SshConnectParams(
+      host: 'h',
+      port: 22,
+      username: 'u',
+      auth: SshAuth.password('p'),
+    );
+    final session = container.read(sessionsProvider.notifier).addOrActivate(
+      params,
+    );
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: MarkdownFileViewerScreen(
+            sessionId: session.id,
+            entry: const SftpEntry(
+              name: 'W.md',
+              path: '/W.md',
+              isDirectory: false,
+            ),
+          ),
+        ),
+      ),
+    );
+    await _pump(tester);
+
+    await tester.tap(find.byKey(const Key('markdown-raw-toggle')));
+    await _pump(tester);
+    expect(find.byKey(const Key('markdown-viewer-raw')), findsOneWidget);
+
+    // No horizontal scroll view anywhere under the viewer — the vertical one
+    // stays.
+    final axes = tester
+        .widgetList<Scrollable>(
+          find.descendant(
+            of: find.byType(MarkdownFileViewerScreen),
+            matching: find.byType(Scrollable),
+          ),
+        )
+        .map((s) => axisDirectionToAxis(s.axisDirection))
+        .toList();
+    expect(axes, isNot(contains(Axis.horizontal)));
+    expect(axes, contains(Axis.vertical));
+
+    // The text lays out inside the viewport and wraps onto many lines.
+    final viewport = tester.getSize(find.byType(MaterialApp)).width;
+    final raw = tester.getSize(find.byKey(const Key('markdown-viewer-raw')));
+    expect(raw.width, lessThanOrEqualTo(viewport));
+    expect(raw.height, greaterThan(100));
+
+    host.disposeSyncForTest();
+  });
 }
