@@ -225,6 +225,7 @@ class JumpChain {
     } catch (e) {
       throw JumpHopError(_label(outer), '$e');
     }
+    final baseSocket = socket;
 
     try {
       for (var i = 0; i < hops.length; i++) {
@@ -247,8 +248,18 @@ class JumpChain {
       }
     } catch (_) {
       // Half-open: close every hop we did open before surfacing the error, so
-      // nothing is left holding the bastion (R13).
+      // nothing is left holding the bastion (R13). When the FIRST connector
+      // failed, no hop client ever took ownership of the TCP socket we dialled
+      // — destroy it here or it stays open for the life of the app.
+      final orphanedBaseSocket = _live.isEmpty;
       await close();
+      if (orphanedBaseSocket) {
+        try {
+          baseSocket.destroy();
+        } catch (_) {
+          /* already gone */
+        }
+      }
       rethrow;
     }
 
