@@ -108,6 +108,102 @@ Host prod
     });
   });
 
+  // A9 (#1184, spec docs/jump-host.md R17/R19/R20): ProxyJump is no longer an
+  // ignored directive — it parses into an ORDERED list of hop specs.
+  group('parseSshConfig — ProxyJump (R17/R19/R20)', () {
+    test('R17: a bare alias hop', () {
+      const cfg = 'Host prod\n  HostName prod.example.com\n'
+          '  ProxyJump bastion\n';
+      final e = parseSshConfig(cfg).single;
+      expect(e.proxyJump, hasLength(1));
+      final hop = e.proxyJump.single;
+      expect(hop.host, 'bastion');
+      expect(hop.user, isNull);
+      expect(hop.port, isNull);
+      expect(hop.isBareAlias, isTrue);
+      expect(hop.spec, 'bastion');
+    });
+
+    test('R17: a literal user@host:port hop', () {
+      const cfg =
+          'Host prod\n  ProxyJump jumpuser@bastion.example.com:2222\n';
+      final hop = parseSshConfig(cfg).single.proxyJump.single;
+      expect(hop.user, 'jumpuser');
+      expect(hop.host, 'bastion.example.com');
+      expect(hop.port, 2222);
+      expect(hop.isBareAlias, isFalse);
+      expect(hop.spec, 'jumpuser@bastion.example.com:2222');
+    });
+
+    test('R20: a comma-separated chain keeps ssh order (outermost first)', () {
+      const cfg = 'Host prod\n  ProxyJump a, me@b.example.com:2022 ,c\n';
+      final hops = parseSshConfig(cfg).single.proxyJump;
+      expect(hops.map((h) => h.host), ['a', 'b.example.com', 'c']);
+      expect(hops[1].user, 'me');
+      expect(hops[1].port, 2022);
+    });
+
+    test('R19: legacy ProxyCommand ssh -W %h:%p maps to a hop', () {
+      const cfg = 'Host prod\n  ProxyCommand ssh -W %h:%p bastion\n';
+      final e = parseSshConfig(cfg).single;
+      expect(e.proxyJump.single.host, 'bastion');
+      expect(e.proxyCommandNote, isNull);
+    });
+
+    test('R19: legacy form carries -p / -l onto the hop', () {
+      const cfg =
+          'Host prod\n  ProxyCommand ssh -q -W %h:%p -p 2222 -l ops jump.example.com\n';
+      final hop = parseSshConfig(cfg).single.proxyJump.single;
+      expect(hop.host, 'jump.example.com');
+      expect(hop.port, 2222);
+      expect(hop.user, 'ops');
+    });
+
+    test('R19: any OTHER ProxyCommand is ignored WITH a named reason', () {
+      const cfg = 'Host prod\n  ProxyCommand nc -X 5 -x proxy:1080 %h %p\n';
+      final e = parseSshConfig(cfg).single;
+      expect(e.proxyJump, isEmpty);
+      expect(e.proxyCommandNote, isNotNull);
+      // Names the directive AND the value, so the user can see what was
+      // dropped — a silent drop yields a profile that connects differently.
+      expect(e.proxyCommandNote, contains('ProxyCommand'));
+      expect(e.proxyCommandNote, contains('nc -X 5 -x proxy:1080 %h %p'));
+    });
+
+    test('R17: a malformed ProxyJump value is ignored, never thrown', () {
+      for (final bad in <String>[
+        'Host prod\n  ProxyJump user@\n',
+        'Host prod\n  ProxyJump ,,\n',
+        'Host prod\n  ProxyJump host:not-a-port\n',
+        'Host prod\n  ProxyJump @host\n',
+      ]) {
+        late List<SshConfigEntry> entries;
+        expect(() => entries = parseSshConfig(bad), returnsNormally);
+        expect(entries.single.proxyJump, isEmpty, reason: bad);
+      }
+    });
+
+    test('R17: ProxyJump none means no jump host (ssh semantics)', () {
+      const cfg = 'Host prod\n  ProxyJump none\n';
+      expect(parseSshConfig(cfg).single.proxyJump, isEmpty);
+    });
+
+    test('R19: an explicit ProxyJump wins over a legacy ProxyCommand', () {
+      const cfg = 'Host prod\n  ProxyCommand ssh -W %h:%p old\n'
+          '  ProxyJump new\n';
+      final e = parseSshConfig(cfg).single;
+      expect(e.proxyJump.map((h) => h.host), ['new']);
+      expect(e.proxyCommandNote, isNull);
+    });
+
+    test('hops do not leak across stanzas', () {
+      const cfg = 'Host a\n  ProxyJump bastion\nHost b\n  HostName b.example\n';
+      final entries = parseSshConfig(cfg);
+      expect(entries[0].proxyJump, hasLength(1));
+      expect(entries[1].proxyJump, isEmpty);
+    });
+  });
+
   group('formatSshConfig', () {
     test('renders a full stanza', () {
       final block = formatSshConfig(
