@@ -1,9 +1,9 @@
 // Minimal parser for pasted OpenSSH `~/.ssh/config` entries (goal: quick
 // profile import). It understands only the directives that map onto a
-// [SavedProfile] — `Host`, `HostName`, `Port`, `User`, `IdentityFile` — and
-// ignores everything else (ProxyJump, ForwardAgent, …) rather than failing, so
-// pasting a real-world block that carries extra directives still imports the
-// fields we support.
+// [SavedProfile] — `Host`, `HostName`, `Port`, `User`, `IdentityFile`,
+// `ProxyJump` — and ignores everything else (ForwardAgent, …) rather than
+// failing, so pasting a real-world block that carries extra directives still
+// imports the fields we support.
 //
 // Deliberately NOT a full ssh_config implementation: no `Match`, no `Include`,
 // no wildcard resolution against a real hostname. A pasted block is a set of
@@ -23,6 +23,7 @@ class SshConfigEntry {
     this.port,
     this.user,
     this.identityFile,
+    this.proxyJump = const <String>[],
   });
 
   /// First pattern token from the `Host` line (e.g. `prod` in `Host prod db`).
@@ -44,6 +45,12 @@ class SshConfigEntry {
   /// file.
   final String? identityFile;
 
+  /// `ProxyJump` hop tokens in dial order (outermost first), as written —
+  /// each is an alias or a literal `[user@]host[:port]`. Empty when the stanza
+  /// has no `ProxyJump` (or spells it `none`). Read today by the EXPORT
+  /// round-trip (#1185 R24); resolving a hop to a profile is slice 2 (#1184).
+  final List<String> proxyJump;
+
   /// The host to connect to: [hostName] when present and non-empty, else the
   /// [alias] (ssh falls back to the Host pattern when HostName is absent).
   String get effectiveHost =>
@@ -61,15 +68,17 @@ class SshConfigEntry {
       other.hostName == hostName &&
       other.port == port &&
       other.user == user &&
-      other.identityFile == identityFile;
+      other.identityFile == identityFile &&
+      listEquals(other.proxyJump, proxyJump);
 
   @override
-  int get hashCode => Object.hash(alias, hostName, port, user, identityFile);
+  int get hashCode => Object.hash(
+      alias, hostName, port, user, identityFile, Object.hashAll(proxyJump));
 
   @override
   String toString() =>
       'SshConfigEntry(alias: $alias, hostName: $hostName, port: $port, '
-      'user: $user, identityFile: $identityFile)';
+      'user: $user, identityFile: $identityFile, proxyJump: $proxyJump)';
 }
 
 /// Render a profile's ssh-mappable fields as an OpenSSH `~/.ssh/config` Host
@@ -87,6 +96,7 @@ String formatSshConfig({
   int port = 22,
   String? user,
   String? identityFile,
+  String? proxyJump,
 }) {
   final b = StringBuffer('Host ${alias.trim()}\n');
   b.write('  HostName ${host.trim()}\n');
@@ -95,6 +105,8 @@ String formatSshConfig({
   if (u.isNotEmpty) b.write('  User $u\n');
   final id = identityFile?.trim() ?? '';
   if (id.isNotEmpty) b.write('  IdentityFile $id\n');
+  final jump = proxyJump?.trim() ?? '';
+  if (jump.isNotEmpty) b.write('  ProxyJump $jump\n');
   return b.toString();
 }
 
@@ -114,6 +126,7 @@ List<SshConfigEntry> parseSshConfig(String text) {
   int? port;
   String? user;
   String? identityFile;
+  var proxyJump = <String>[];
 
   void flush() {
     if (alias != null) {
@@ -123,6 +136,7 @@ List<SshConfigEntry> parseSshConfig(String text) {
         port: port,
         user: user,
         identityFile: identityFile,
+        proxyJump: List<String>.unmodifiable(proxyJump),
       ));
     }
     alias = null;
@@ -130,6 +144,7 @@ List<SshConfigEntry> parseSshConfig(String text) {
     port = null;
     user = null;
     identityFile = null;
+    proxyJump = <String>[];
   }
 
   for (final rawLine in text.split('\n')) {
@@ -176,6 +191,17 @@ List<SshConfigEntry> parseSshConfig(String text) {
         // (matches ssh trying them in order). The whole value is the path, so a
         // quoted path containing a space stays intact.
         if (alias != null) identityFile ??= value;
+        break;
+      case 'proxyjump':
+        // Comma-separated hop list, outermost first. `none` is ssh's explicit
+        // "no jump" and carries no hop.
+        if (alias != null && value.toLowerCase() != 'none') {
+          proxyJump = value
+              .split(',')
+              .map((h) => h.trim())
+              .where((h) => h.isNotEmpty)
+              .toList();
+        }
         break;
       default:
         break; // ignore unsupported directives

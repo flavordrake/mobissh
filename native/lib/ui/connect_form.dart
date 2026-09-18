@@ -44,6 +44,7 @@ import 'host_key_dialog.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_editor.dart';
 import 'profile_list.dart';
+import 'ssh_config_export_dialog.dart';
 import 'top_toast.dart';
 
 class ConnectForm extends ConsumerStatefulWidget {
@@ -249,6 +250,15 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
                 onPressed: _openExportDialog,
                 icon: const Icon(Icons.upload_outlined),
                 label: const Text('Export'),
+              ),
+              // #1185: the OTHER export — profiles as ssh_config text for
+              // another machine. Distinct from the encrypted backup above:
+              // this one carries no secrets and is readable by ssh itself.
+              OutlinedButton.icon(
+                key: const Key('open-ssh-config-export-dialog'),
+                onPressed: _openSshConfigExportDialog,
+                icon: const Icon(Icons.description_outlined),
+                label: const Text('ssh config'),
               ),
             ],
           ),
@@ -672,6 +682,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   /// its own success toast.
   Future<void> _openExportDialog() async {
     await showExportBackupDialog(context);
+  }
+
+  /// "ssh config" affordance (#1185 R23) → the ssh_config export preview. The
+  /// dialog owns the render + the share hand-off (no secrets leave with it).
+  Future<void> _openSshConfigExportDialog() async {
+    await showSshConfigExportDialog(context);
   }
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {
