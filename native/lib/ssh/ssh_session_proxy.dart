@@ -250,6 +250,18 @@ class SshSessionProxy {
         // -CC`. A per-isolate global set in the UI never reaches the task host.
         controlMode: tmuxControlMode,
         force: force,
+        // #1183 R7/R8: the hops, outermost-first, each with its OWN resolved
+        // credentials. The task isolate builds the chain from these — it never
+        // reads the vault itself.
+        jumpHops: [
+          for (final hop in params.jumpHops)
+            <String, dynamic>{
+              'host': hop.host,
+              'port': hop.port,
+              'username': hop.username,
+              'auth': SessionHost.encodeAuth(hop.auth),
+            },
+        ],
       ).toJson(),
     );
   }

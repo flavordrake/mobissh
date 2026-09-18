@@ -29,10 +29,12 @@ import '../diagnostics/diagnostics_config.dart'
 import '../terminal/tmux_control_channel.dart';
 import '../terminal/tmux_control_mode_flag.dart';
 import '../ssh/da2_responder.dart';
+import '../ssh/jump_host.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_shell.dart';
 import '../ssh/sftp_session.dart';
+import '../storage/profiles_store.dart' show SavedProfile;
 import 'attention_signal_scanner.dart';
 import 'port_forwarder.dart';
 import 'session_attention_notification.dart';
@@ -945,12 +947,58 @@ class SessionHost {
       username: cmd.username,
       auth: _decodeAuth(cmd.authJson),
     );
+    // #1183: a jump chain is TRANSPORT — install it as this controller's socket
+    // opener and nothing else about the session changes (state machine,
+    // reconnect, keepalive, SFTP). Every (re)connect calls the opener, so a
+    // reconnect re-dials the whole chain (R13); the chain follows the returned
+    // socket down on disconnect (R12).
+    _installJumpChain(cmd, controller);
     // Fire connect; failures surface through the state stream.
     ctrace(
       'task.host',
       'connect sid=${cmd.sessionId} → controller.connect(${cmd.host}:${cmd.port})',
     );
     unawaited(controller.connect(params));
+  }
+
+  /// Build the jump chain carried by [cmd] and install it as [controller]'s
+  /// transport opener (#1183, R7-R13). No-op when the profile has no jump host,
+  /// which keeps the default connect path byte-for-byte what it was.
+  ///
+  /// Each hop authenticates with the credentials the UI resolved for THAT hop
+  /// (R8 — the task isolate has no vault), and its host key runs through the
+  /// session's OWN [HostKeyStore] and prompt via `verifyHopHostKey` (R9/R10),
+  /// so a bastion gets exactly the target's fail-closed treatment.
+  void _installJumpChain(SshConnectCommand cmd, SshSessionController controller) {
+    if (cmd.jumpHops.isEmpty) return;
+    final hops = <SavedProfile>[];
+    final authByIdentity = <String, SshAuth>{};
+    for (final hop in cmd.jumpHops) {
+      final profile = SavedProfile(
+        title: hop['host'] as String,
+        host: hop['host'] as String,
+        port: hop['port'] as int,
+        username: hop['username'] as String,
+      );
+      hops.add(profile);
+      authByIdentity[profile.identityKey] = _decodeAuth(
+        Map<String, dynamic>.from(hop['auth'] as Map),
+      );
+    }
+    ctrace(
+      'task.host',
+      'jump chain sid=${cmd.sessionId} hops='
+          '${hops.map((h) => '${h.host}:${h.port}').join(' → ')}',
+    );
+    final chain = JumpChain(
+      hops: hops,
+      base: SSHSocket.connect,
+      connector: sshJumpHopConnector(
+        authFor: (hop) => authByIdentity[hop.identityKey]!,
+        verify: controller.verifyHopHostKey,
+      ),
+    );
+    controller.transportOpener = chain.opener;
   }
 
   /// A drop state the user can manually reconnect from (#817) — mirrors the UI's

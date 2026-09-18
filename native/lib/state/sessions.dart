@@ -26,6 +26,7 @@ import 'package:xterm/xterm.dart';
 
 import '../diagnostics/connect_trace.dart';
 import '../services/link_verb.dart';
+import '../ssh/jump_host.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
@@ -510,12 +511,21 @@ class SessionsNotifier extends Notifier<SessionsState> {
       // re-enter) and may target a session that is still CONNECTED; without
       // the bit the host dedups the connect into a state sync and nothing
       // happens.
+      // #1183: a revived session must re-dial its jump chain too — connecting
+      // DIRECT would route it somewhere the profile never asked for. A chain
+      // that can't be resolved throws into the catch below, which degrades to
+      // the held-params reconnect rather than a wrong-route connect.
       entry.proxy.connect(
         SshConnectParams(
           host: entry.host,
           port: entry.port,
           username: entry.username,
           auth: auth,
+          jumpHops: await resolveJumpHopParams(
+            profile: match,
+            all: profiles,
+            secrets: secrets,
+          ),
         ),
         title: entry.title,
         force: true,

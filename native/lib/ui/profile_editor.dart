@@ -29,6 +29,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../ssh/jump_host.dart';
 import '../ssh/ssh_config_parser.dart';
 import '../state/keys_providers.dart';
 import '../state/profiles_providers.dart';
@@ -181,6 +182,10 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   /// edit replaces the original entry rather than creating a duplicate.
   late final String _originalIdentityKey;
 
+  /// #1183 R14: the selected jump host's `identityKey`, or null for "None".
+  /// Seeded from the profile and written straight back on save.
+  String? _jumpIdentityKey;
+
   @override
   void initState() {
     super.initState();
@@ -197,6 +202,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     _colorCtrl = TextEditingController(text: p.color ?? '');
     _linkAliasCtrl = TextEditingController(text: p.linkAlias ?? '');
     _linkAutoConnect = p.linkAutoConnect;
+    _jumpIdentityKey = p.jumpIdentityKey;
     // Seed the picker from the profile's stored theme key when it maps to a
     // known palette; otherwise fall back to the default palette's key.
     final known =
@@ -396,6 +402,9 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         // has no prior identity to bind to — the switch value stands.
         linkAutoConnect: _linkAutoConnect &&
             (widget.isNew || newIdentity == _originalIdentityKey),
+        // #1183 R14: the picker's selection. Null = "None" — the clear must
+        // reach storage, not merely reset the widget.
+        jumpIdentityKey: _jumpIdentityKey,
       );
 
       try {
@@ -588,6 +597,9 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
                 enableSuggestions: false,
               ),
               const SizedBox(height: 12),
+              // #1183 R14: connect THROUGH another saved profile (ProxyJump).
+              _buildJumpHostPicker(context),
+              const SizedBox(height: 12),
               SegmentedButton<_AuthKind>(
                 segments: const [
                   ButtonSegment(
@@ -685,6 +697,46 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
             ],
           ),
         );
+  }
+
+  /// The "Jump host" picker (#1183, R14/R15): every OTHER saved profile that
+  /// would not close a cycle, plus "None". A cycle is rejected at SAVE time
+  /// (R4), which means it must not be OFFERABLE in the first place — so the
+  /// exclusion is [jumpHostCandidates], not a post-hoc validation.
+  ///
+  /// A stored reference that is no longer a candidate (its referent was
+  /// deleted) shows as "None": R1 already resolves a dangling reference to
+  /// "no jump host", and saving then cleans the stale id up.
+  Widget _buildJumpHostPicker(BuildContext context) {
+    final all = ref.watch(savedProfilesProvider).value ?? const <SavedProfile>[];
+    final candidates = jumpHostCandidates(widget.profile, all);
+    final values = candidates.map((p) => p.identityKey).toSet();
+    final selected = values.contains(_jumpIdentityKey) ? _jumpIdentityKey : null;
+
+    return InputDecorator(
+      decoration: const InputDecoration(
+        labelText: 'Jump host',
+        border: OutlineInputBorder(),
+        prefixIcon: Icon(Icons.alt_route),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String?>(
+          key: const Key('profile-editor-jump-host'),
+          isExpanded: true,
+          value: selected,
+          items: [
+            const DropdownMenuItem<String?>(child: Text('None')),
+            for (final p in candidates)
+              DropdownMenuItem<String?>(
+                value: p.identityKey,
+                child: Text(p.title, overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: (value) => setState(() => _jumpIdentityKey = value),
+        ),
+      ),
+    );
   }
 
   /// Sentinel value for the "Paste a new key…" option in the key-source

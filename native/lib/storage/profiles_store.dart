@@ -96,6 +96,7 @@ class SavedProfile {
     this.forwards = const [],
     this.linkAlias,
     this.linkAutoConnect = false,
+    this.jumpIdentityKey,
   });
 
   final String title;
@@ -169,6 +170,16 @@ class SavedProfile {
   /// import never installs it, and a backup restores it only through the
   /// explicit auto-run opt-in (same posture as [initialCommand]).
   final bool linkAutoConnect;
+
+  /// Jump host REFERENCE (#1183, R1/R2/D1): another profile's [identityKey]
+  /// (`host:port:username`) to connect THROUGH. A reference, never an embedded
+  /// copy — an embedded copy goes stale the moment the bastion's port, user or
+  /// key changes. Absent on legacy profiles; a non-String / empty / unknown
+  /// value reads back as null and resolves to "no jump host" (no key bump,
+  /// corrupt-resilience per .claude/rules code-style). [ProfilesStore.upsert]
+  /// rebinds it when the referenced identity changes (R5) and
+  /// [ProfilesStore.remove] clears it when the referent is deleted (R6).
+  final String? jumpIdentityKey;
 
   /// Identity key for dedupe / lookup. Matches the PWA's behavior of treating
   /// (host:port:username) as the unique constraint.
@@ -279,6 +290,11 @@ class SavedProfile {
     // #1140: omit null / false so legacy profiles stay byte-identical.
     if (linkAlias != null) out['linkAlias'] = linkAlias;
     if (linkAutoConnect) out['linkAutoConnect'] = true;
+    // #1183: omit when absent so legacy profiles stay byte-identical (the
+    // absent field IS the migration).
+    if (jumpIdentityKey != null && jumpIdentityKey!.isNotEmpty) {
+      out['jumpIdentityKey'] = jumpIdentityKey;
+    }
     return out;
   }
 
@@ -350,6 +366,12 @@ class SavedProfile {
     // Non-bool (e.g. "yes", 1) reads as false — a trust bit never widens
     // through a lenient parse.
     final bool linkAutoConnect = json['linkAutoConnect'] == true;
+    // #1183 R1: anything that isn't a non-empty String reads as "no jump host"
+    // rather than throwing — a corrupt reference must not brick the profile.
+    final jumpRaw = json['jumpIdentityKey'];
+    final String? jumpIdentityKey = (jumpRaw is String && jumpRaw.isNotEmpty)
+        ? jumpRaw
+        : null;
 
     return SavedProfile(
       title: title,
@@ -368,9 +390,12 @@ class SavedProfile {
       forwards: forwards,
       linkAlias: linkAlias,
       linkAutoConnect: linkAutoConnect,
+      jumpIdentityKey: jumpIdentityKey,
     );
   }
 
+  /// [clearJumpIdentityKey] (#1183): the `??` pattern cannot express
+  /// set-to-null, and R6 (a deleted referent) needs exactly that.
   SavedProfile copyWith({
     String? title,
     String? vaultId,
@@ -382,6 +407,8 @@ class SavedProfile {
     List<ProfileForward>? forwards,
     String? linkAlias,
     bool? linkAutoConnect,
+    String? jumpIdentityKey,
+    bool clearJumpIdentityKey = false,
   }) {
     return SavedProfile(
       title: title ?? this.title,
@@ -400,6 +427,9 @@ class SavedProfile {
       forwards: forwards ?? this.forwards,
       linkAlias: linkAlias ?? this.linkAlias,
       linkAutoConnect: linkAutoConnect ?? this.linkAutoConnect,
+      jumpIdentityKey: clearJumpIdentityKey
+          ? null
+          : (jumpIdentityKey ?? this.jumpIdentityKey),
     );
   }
 
@@ -978,6 +1008,16 @@ class ProfilesStore {
         }
       }
     }
+    // #1183 R5: the incoming identity may differ from the one referrers point
+    // at. Rebind them in THIS list so the rename + the rebind land in ONE
+    // write — a second write would leave a window with a dangling reference.
+    if (prevKey != profile.identityKey) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].jumpIdentityKey == prevKey) {
+          list[i] = list[i].copyWith(jumpIdentityKey: profile.identityKey);
+        }
+      }
+    }
     final idx = list.indexWhere((p) => p.identityKey == prevKey);
     if (idx >= 0) {
       list[idx] = profile;
@@ -1069,7 +1109,19 @@ class ProfilesStore {
     return true;
   }
 
+  /// Every profile whose `jumpIdentityKey` points at [identityKey] (#1183, R6).
+  /// The delete confirmation NAMES these before it breaks their connection.
+  Future<List<SavedProfile>> referrersOf(String identityKey) async {
+    final list = await load();
+    return list.where((p) => p.jumpIdentityKey == identityKey).toList();
+  }
+
   /// Delete a single profile by identity. Persists if anything was removed.
+  ///
+  /// #1183 R6: any profile that jumped THROUGH the deleted one has its
+  /// `jumpIdentityKey` cleared in the same write. A dangling id would be an
+  /// invisible broken connection; the resolver treats it as "no jump host",
+  /// which is a silent change of route.
   Future<void> remove({
     required String host,
     required int port,
@@ -1077,12 +1129,17 @@ class ProfilesStore {
   }) async {
     final list = await load();
     final before = list.length;
+    final removedKey = '$host:$port:$username';
     list.removeWhere(
       (p) => p.host == host && p.port == port && p.username == username,
     );
-    if (list.length != before) {
-      await save(list);
+    if (list.length == before) return;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].jumpIdentityKey == removedKey) {
+        list[i] = list[i].copyWith(clearJumpIdentityKey: true);
+      }
     }
+    await save(list);
   }
 }
 

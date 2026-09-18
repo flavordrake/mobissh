@@ -28,6 +28,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../services/link_verb.dart';
+import '../ssh/jump_host.dart';
 import '../ssh/ssh_connect_params.dart';
 import '../ssh/ssh_session.dart';
 import '../state/connection_providers.dart';
@@ -533,11 +534,32 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       auth = SshAuth.password(creds.password!);
     }
 
+    // #1183 R7/R8: resolve the jump chain and EACH hop's own stored
+    // credentials before dispatching. Resolution happens here, UI-side, for the
+    // same reason the target's auth does — the task isolate has no vault. A
+    // chain that cannot be resolved (cycle / too deep) or a hop whose secret is
+    // missing fails CLOSED with a named error rather than silently connecting
+    // direct, which would route the session the wrong way.
+    final List<SshConnectParams> jumpHops;
+    try {
+      jumpHops = await _resolveJumpHops(profile);
+    } on JumpChainError catch (e) {
+      if (!mounted) return;
+      showTopToast(context, 'Jump host: ${e.message}');
+      return;
+    } on JumpHopError catch (e) {
+      if (!mounted) return;
+      showTopToast(context, 'Jump host $e');
+      return;
+    }
+    if (!mounted) return;
+
     final params = SshConnectParams(
       host: profile.host,
       port: profile.port,
       username: profile.username,
       auth: auth,
+      jumpHops: jumpHops,
     );
     ctrace(
       'ui.chooser',
@@ -554,6 +576,27 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       colorHex: profile.color,
       forwards: profile.forwards,
     );
+  }
+
+  /// Resolve [profile]'s jump chain into per-hop connect params, OUTERMOST-
+  /// FIRST (#1183, R7). Each hop carries ITS OWN vault credentials (R8) — no
+  /// credential is ever reused across hops. Throws [JumpChainError] (cycle /
+  /// too deep) or [JumpHopError] (missing secret); both fail the connect
+  /// closed, named.
+  Future<List<SshConnectParams>> _resolveJumpHops(SavedProfile profile) async {
+    if (profile.jumpIdentityKey == null) return const [];
+    final out = await resolveJumpHopParams(
+      profile: profile,
+      all: await ref.read(profilesStoreProvider).load(),
+      secrets: ref.read(secretsStoreProvider),
+    );
+    if (out.isEmpty) return const [];
+    ctrace(
+      'ui.chooser',
+      'jump chain for ${profile.host}: '
+          '${out.map((h) => '${h.host}:${h.port}').join(' → ')}',
+    );
+    return out;
   }
 
   /// #796 Recent Sessions one-tap. Resolve the saved profile matching the

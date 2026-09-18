@@ -325,6 +325,10 @@ sealed class SshTaskCommand {
           title: json['title'] as String?,
           controlMode: json['controlMode'] as bool? ?? false,
           force: json['force'] as bool? ?? false,
+          jumpHops: <Map<String, dynamic>>[
+            for (final hop in (json['jumpHops'] as List? ?? const []))
+              Map<String, dynamic>.from(hop as Map),
+          ],
         );
       case SshTaskCommandKind.disconnect:
         return SshDisconnectCommand(sessionId: sessionId);
@@ -660,6 +664,7 @@ class SshConnectCommand extends SshTaskCommand {
     this.title,
     this.controlMode = false,
     this.force = false,
+    this.jumpHops = const [],
   }) : super(sessionId);
 
   final String host;
@@ -690,6 +695,12 @@ class SshConnectCommand extends SshTaskCommand {
   /// shipped scrape path is unchanged unless the UI explicitly opts in.
   final bool controlMode;
 
+  /// Jump hops to dial before the target, OUTERMOST-FIRST (#1183, R7). Each
+  /// entry is `{host, port, username, auth}` — the hop's OWN identity and its
+  /// OWN resolved credentials (R8), resolved UI-side exactly like the target's
+  /// (the task isolate never reads the vault). Empty = a direct dial.
+  final List<Map<String, dynamic>> jumpHops;
+
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.connect;
 
@@ -704,6 +715,7 @@ class SshConnectCommand extends SshTaskCommand {
     if (title != null) 'title': title,
     if (controlMode) 'controlMode': true,
     if (force) 'force': true,
+    if (jumpHops.isNotEmpty) 'jumpHops': jumpHops,
   };
 }
 

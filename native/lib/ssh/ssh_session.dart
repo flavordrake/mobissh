@@ -173,6 +173,16 @@ class SshSessionController {
 
   final HostKeyStore _hostKeyStore;
   final SshSocketOpener _openSocket;
+
+  /// Transport opener installed AFTER construction (#1183 jump host). The
+  /// controller is built by a factory that knows nothing about the profile, so
+  /// the chain — which only the connect command carries — is installed here.
+  /// Null = the constructor's opener (a direct TCP dial). Every (re)connect
+  /// calls it, so a reconnect re-dials the WHOLE chain (R13).
+  SshSocketOpener? _transportOpener;
+
+  /// Install (or clear, with null) the transport opener for this session.
+  set transportOpener(SshSocketOpener? opener) => _transportOpener = opener;
   final ReconnectAttempt? _reconnectAttempt;
   final LivenessProbe? _livenessProbe;
 
@@ -395,7 +405,7 @@ class SshSessionController {
 
     SSHSocket socket;
     try {
-      socket = await _openSocket(
+      socket = await (_transportOpener ?? _openSocket)(
         params.host,
         params.port,
         timeout: handshakeTimeout,
@@ -979,10 +989,16 @@ class SshSessionController {
     if (completer == null || completer.isCompleted) {
       return;
     }
+    // R10/R11 (#1183): NAME the host that was rejected. With a jump host the
+    // prompt may have been about a BASTION, and a bare message reads as if the
+    // target refused. The 'Host key rejected' prefix is load-bearing — the
+    // disconnect classifier in session_host matches on it.
+    final pending = _data.pendingHostKey;
+    final label = pending == null ? '' : ' for ${pending.host}:${pending.port}';
     _emit(
       _data.copyWith(
         state: SshSessionState.failed,
-        error: 'Host key rejected by user',
+        error: 'Host key rejected by user$label',
         clearPendingHostKey: true,
       ),
     );
@@ -1073,6 +1089,24 @@ class SshSessionController {
   ) {
     _lastParams = params;
     return _onVerifyHostKey(params, type, fingerprint);
+  }
+
+  /// Verify a JUMP HOP's key through this session's trust store and prompt
+  /// (#1183, R9/R10). Handed to the hop's `SSHClient` as its `onVerifyHostKey`
+  /// so the hop gets EXACTLY the target's treatment — same [HostKeyStore],
+  /// keyed by the HOP's own `host:port`; unknown prompts (naming the hop),
+  /// CHANGED fails closed with no prompt (#1108 parity) — and the prompt
+  /// surfaces in the TARGET session's UI (D3: a jump is transport, not a
+  /// second session).
+  ///
+  /// Unlike [verifyHostKeyForTest] this does NOT touch `_lastParams`: the
+  /// session's reconnect identity stays the TARGET's.
+  Future<bool> verifyHopHostKey(
+    SshConnectParams hop,
+    String type,
+    Uint8List fingerprint,
+  ) {
+    return _onVerifyHostKey(hop, type, fingerprint);
   }
 
   // --- private helpers ---
