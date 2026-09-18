@@ -586,10 +586,18 @@ void main() {
       final f0 = fetcher.fetch(h.sid, _pdfEntry);
       final f1 = fetcher.fetch(h.sid, _pdfEntry);
       await h.awaitRequests(2);
-      final rid0 = h.requests[0].requestId;
-      final rid1 = h.requests[1].requestId;
-      expect(rid0, '${h.sid}#pdf0');
-      expect(rid1, '${h.sid}#pdf1');
+      // The seq is minted SYNCHRONOUSLY (`_seq++` before the first await), so
+      // f0 always owns #pdf0 — but each fetch awaits `TempFileSink.create`
+      // before it sends, so which command ARRIVES first is not pinned and
+      // flips under load. Assert the set, address each request by its id.
+      final rid0 = '${h.sid}#pdf0';
+      final rid1 = '${h.sid}#pdf1';
+      expect(
+        h.requests.map((r) => r.requestId).toSet(),
+        {rid0, rid1},
+        reason: 'two fetches mint two distinct seqs (arrival order is not '
+            'part of the contract)',
+      );
       h.chunk(rid1, _bytes('second'), 0);
       h.done(rid1, 6);
       final file1 = await f1;
