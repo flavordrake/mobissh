@@ -32,6 +32,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../services/html_inliner.dart';
+import '../services/link_browser_router.dart';
 import '../services/session_messages.dart';
 import '../services/sftp_image_fetcher.dart';
 import '../services/text_file_fetcher.dart';
@@ -39,11 +40,11 @@ import '../services/viewer_file_actions.dart';
 import 'file_browser_screen.dart';
 import 'file_viewer_actions.dart';
 import 'text_file_viewer.dart';
+import 'url_action_overlay.dart';
 
-/// Opens a blocked in-page navigation [url] in the system browser
-/// (externalApplication). Injected as a mutable seam (mirrors
-/// [htmlWebViewBuilder]) so widget tests spy on launches without a platform
-/// channel.
+/// Opens a blocked in-page navigation [url] in an external browser. Injected
+/// as a mutable seam (mirrors [htmlWebViewBuilder]) so widget tests spy on
+/// launches without a platform channel.
 typedef HtmlLinkOpener = Future<void> Function(String url);
 
 Future<void> _defaultOpenHtmlLink(String url) async {
@@ -52,8 +53,10 @@ Future<void> _defaultOpenHtmlLink(String url) async {
   await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
-/// Seam: production launches the system browser; tests override this to a spy.
-HtmlLinkOpener htmlLinkOpener = _defaultOpenHtmlLink;
+/// Seam: NULL in production — a blocked navigation routes through the browser
+/// chosen for the session the file was opened over (#1197 R10). Tests override
+/// this with a spy.
+HtmlLinkOpener? htmlLinkOpener;
 
 /// Test-only handle to the production opener, so a test can restore
 /// [htmlLinkOpener] after overriding it.
@@ -186,6 +189,22 @@ class _HtmlFileViewerScreenState extends ConsumerState<HtmlFileViewerScreen> {
     );
   }
 
+  /// #1197 R10: a blocked navigation opens in the browser chosen for the
+  /// session this file was opened over — the same rule a link extracted from
+  /// that session's terminal follows. The [htmlLinkOpener] spy still wins.
+  Future<void> _openLink(String url) async {
+    final injected = htmlLinkOpener;
+    if (injected != null) return injected(url);
+    await openDetectedUrlReporting(
+      Overlay.maybeOf(context, rootOverlay: true),
+      url,
+      browser: LinkBrowserContext(
+        ref.read(linkBrowserRouterProvider),
+        sessionId: widget.sessionId,
+      ),
+    );
+  }
+
   Widget _buildBody() {
     switch (_phase) {
       case _Phase.building:
@@ -208,7 +227,7 @@ class _HtmlFileViewerScreenState extends ConsumerState<HtmlFileViewerScreen> {
         // Full-bleed; the WebView owns zoom/pan (#949 selfZooming shape).
         return SizedBox.expand(
           key: const Key('html-webview-surface'),
-          child: htmlWebViewBuilder(_safeHtml!, htmlLinkOpener),
+          child: htmlWebViewBuilder(_safeHtml!, _openLink),
         );
     }
   }

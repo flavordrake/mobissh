@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 
 import '../services/browser_targets.dart';
 import '../services/clipboard.dart';
+import '../services/link_browser_router.dart';
 import 'top_toast.dart';
 
 /// Pluggable URL opener so the widget test can assert "Open was invoked with
@@ -41,11 +42,48 @@ UrlOpener? debugUrlOpenerOverride;
 
 /// Open [url] in the external browser, honouring [debugUrlOpenerOverride] (#955).
 ///
-/// The shared open path for BOTH the long-press action overlay and the gutter
-/// list-sheet's URL "Open" item, so test injection covers both. Returns true on
-/// success.
-Future<bool> openDetectedUrl(String url) =>
-    (debugUrlOpenerOverride ?? _defaultOpen)(url);
+/// The shared open path for the long-press action overlay, the gutter
+/// list-sheet's URL "Open" item AND the file viewers (#1197 R10), so test
+/// injection and browser routing cover all of them.
+///
+/// [browser] (#1197, R9) carries the session whose profile chooses the target
+/// browser; omitting it keeps today's system-default behaviour, which is what
+/// a host with no channel and every widget test without a ProviderScope get.
+/// The returned [BrowserOpenResult] is what R11 reads to tell the user a
+/// chosen browser was missing — see [linkBrowserFallbackMessage].
+Future<BrowserOpenResult> openDetectedUrl(
+  String url, {
+  LinkBrowserContext? browser,
+}) async {
+  final override = debugUrlOpenerOverride;
+  if (override != null) {
+    return BrowserOpenResult(opened: await override(url));
+  }
+  if (browser == null) return BrowserOpenResult(opened: await _defaultOpen(url));
+  return browser.open(url);
+}
+
+/// Open [url] and, when the chosen browser was missing, say so in [overlay]
+/// (R11) — where the action was, never silently.
+///
+/// Returns true when SOMETHING opened. The single place the two terminal
+/// affordances (menu + gutter sheet) and the file viewers express that policy,
+/// so a fallback can never be surfaced in one and swallowed in another.
+Future<bool> openDetectedUrlReporting(
+  OverlayState? overlay,
+  String url, {
+  LinkBrowserContext? browser,
+}) async {
+  final result = await openDetectedUrl(url, browser: browser);
+  if (overlay == null) return result.opened;
+  if (!result.opened) {
+    showTopToastInOverlay(overlay, 'Could not open: $url');
+    return false;
+  }
+  final message = await linkBrowserFallbackMessage(result, browser);
+  if (message != null) showTopToastInOverlay(overlay, message);
+  return true;
+}
 
 /// The single live overlay entry, so a new long-press replaces the old one.
 OverlayEntry? _activeEntry;
@@ -77,6 +115,9 @@ void debugDismissUrlActions() => _dismiss();
 /// an arbitrary token, not a URL — its menu drops the Open action and labels
 /// the report item "Not a match". Defaults keep the URL menu exactly as-is.
 ///
+/// [browser] (#1197, R9): the session whose profile chooses the browser Open
+/// launches. Omitted = the system default (today's behaviour).
+///
 /// Safe to call from any context under an [Overlay]. No-op if no overlay.
 void showUrlActions(
   BuildContext context,
@@ -86,14 +127,13 @@ void showUrlActions(
   VoidCallback? onMarkNotDetection,
   bool showOpen = true,
   String notLabel = 'Not a URL',
+  LinkBrowserContext? browser,
   Duration timeout = const Duration(seconds: 6),
 }) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
 
   _dismiss();
-
-  final opener = debugUrlOpenerOverride ?? _defaultOpen;
 
   late final OverlayEntry entry;
   entry = OverlayEntry(
@@ -113,10 +153,7 @@ void showUrlActions(
       },
       onOpen: () async {
         if (identical(_activeEntry, entry)) _dismiss();
-        final ok = await opener(url);
-        if (!ok) {
-          showTopToastInOverlay(overlay, 'Could not open: $url');
-        }
+        await openDetectedUrlReporting(overlay, url, browser: browser);
       },
       onDismiss: () {
         if (identical(_activeEntry, entry)) _dismiss();

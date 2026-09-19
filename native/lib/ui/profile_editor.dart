@@ -38,6 +38,7 @@ import '../state/ui_prefs_providers.dart';
 import '../storage/keys_store.dart';
 import '../storage/profiles_store.dart';
 import 'color_picker_sheet.dart';
+import 'link_browser_picker.dart';
 import 'reenter_key_dialog.dart';
 import 'revealable_field.dart';
 import 'top_toast.dart';
@@ -159,6 +160,12 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
   late bool _linkAutoConnect;
   String? _linkAliasError;
 
+  /// #1197 R7: the per-profile browser override (a PACKAGE, never a label).
+  /// Null = use the global default. Seeded from the profile and written back
+  /// verbatim on save, so a package that is no longer installed is never
+  /// silently cleared (R12).
+  String? _linkBrowserPackage;
+
   /// Paste buffer for the "SSH config" tab.
   final _sshConfigCtrl = TextEditingController();
 
@@ -230,6 +237,7 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
     _colorCtrl = TextEditingController(text: p.color ?? '');
     _linkAliasCtrl = TextEditingController(text: p.linkAlias ?? '');
     _linkAutoConnect = p.linkAutoConnect;
+    _linkBrowserPackage = p.linkBrowserPackage;
     _jumpIdentityKey = p.jumpIdentityKey;
     // Seed the picker from the profile's stored theme key when it maps to a
     // known palette; otherwise fall back to the default palette's key.
@@ -485,6 +493,10 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
         // #1183 R14: the picker's selection. Null = "None" — the clear must
         // reach storage, not merely reset the widget.
         jumpIdentityKey: _jumpIdentityKey,
+        // #1197 R7/R12: the stored package verbatim. Null = "use the global
+        // default"; an UNINSTALLED package is kept (the picker never rewrites
+        // it just because it couldn't offer it — the app may be reinstalled).
+        linkBrowserPackage: _linkBrowserPackage,
       );
 
       try {
@@ -811,6 +823,21 @@ class _ProfileEditorState extends ConsumerState<ProfileEditor>
                 ),
                 autocorrect: false,
                 enableSuggestions: false,
+              ),
+              const SizedBox(height: 12),
+              // #1197 R13: the per-profile browser for links extracted from
+              // THIS host's sessions — with the other behaviour fields
+              // (initial command, default directory), not with appearance.
+              // Hidden entirely when nothing enumerates (A8), and a profile on
+              // the global default shows no extra chrome: the same one-line
+              // control, reading 'Use the global default'.
+              LinkBrowserPicker(
+                pickerKey: const Key('profile-editor-link-browser'),
+                label: 'Browser for links',
+                defaultLabel: 'Use the global default',
+                value: _linkBrowserPackage,
+                onChanged: (package) =>
+                    setState(() => _linkBrowserPackage = package),
               ),
               const SizedBox(height: 12),
               // #613: theme PICKER over the full ported palette set. Shows the

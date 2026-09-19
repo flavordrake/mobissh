@@ -97,6 +97,7 @@ class SavedProfile {
     this.linkAlias,
     this.linkAutoConnect = false,
     this.jumpIdentityKey,
+    this.linkBrowserPackage,
   });
 
   final String title;
@@ -180,6 +181,19 @@ class SavedProfile {
   /// rebinds it when the referenced identity changes (R5) and
   /// [ProfilesStore.remove] clears it when the referent is deleted (R6).
   final String? jumpIdentityKey;
+
+  /// Per-profile browser for links extracted from this host's sessions
+  /// (#1197, R7). The PACKAGE NAME, never the display label — labels change
+  /// with app updates and locale while the package is the identity (D2).
+  /// Null = "use the global default" ([DetectionSettings.linkBrowserPackage]),
+  /// which itself falls back to the system default (R8).
+  ///
+  /// Absent on legacy profiles; anything that is not a non-empty String reads
+  /// back as null (no key bump, corrupt-resilience per .claude/rules
+  /// code-style). A package that is no longer INSTALLED is deliberately kept
+  /// (R12): the app may be reinstalled, so the fallback is runtime behaviour,
+  /// never a silent config edit.
+  final String? linkBrowserPackage;
 
   /// Identity key for dedupe / lookup. Matches the PWA's behavior of treating
   /// (host:port:username) as the unique constraint.
@@ -295,6 +309,11 @@ class SavedProfile {
     if (jumpIdentityKey != null && jumpIdentityKey!.isNotEmpty) {
       out['jumpIdentityKey'] = jumpIdentityKey;
     }
+    // #1197: same omit-when-absent policy — a profile on the global default
+    // stays byte-identical to a pre-#1197 one.
+    if (linkBrowserPackage != null && linkBrowserPackage!.isNotEmpty) {
+      out['linkBrowserPackage'] = linkBrowserPackage;
+    }
     return out;
   }
 
@@ -372,6 +391,12 @@ class SavedProfile {
     final String? jumpIdentityKey = (jumpRaw is String && jumpRaw.isNotEmpty)
         ? jumpRaw
         : null;
+    // #1197 R7: anything that isn't a non-empty String reads as "use the
+    // global default" rather than throwing — a corrupt package must not brick
+    // the profile, and it must not pin links to a name that cannot resolve.
+    final browserRaw = json['linkBrowserPackage'];
+    final String? linkBrowserPackage =
+        (browserRaw is String && browserRaw.isNotEmpty) ? browserRaw : null;
 
     return SavedProfile(
       title: title,
@@ -391,6 +416,7 @@ class SavedProfile {
       linkAlias: linkAlias,
       linkAutoConnect: linkAutoConnect,
       jumpIdentityKey: jumpIdentityKey,
+      linkBrowserPackage: linkBrowserPackage,
     );
   }
 
@@ -409,6 +435,10 @@ class SavedProfile {
     bool? linkAutoConnect,
     String? jumpIdentityKey,
     bool clearJumpIdentityKey = false,
+    String? linkBrowserPackage,
+    // #1197: the `??` pattern cannot express "back to the global default",
+    // which is exactly what the editor's default option must persist.
+    bool clearLinkBrowserPackage = false,
   }) {
     return SavedProfile(
       title: title ?? this.title,
@@ -430,6 +460,9 @@ class SavedProfile {
       jumpIdentityKey: clearJumpIdentityKey
           ? null
           : (jumpIdentityKey ?? this.jumpIdentityKey),
+      linkBrowserPackage: clearLinkBrowserPackage
+          ? null
+          : (linkBrowserPackage ?? this.linkBrowserPackage),
     );
   }
 
@@ -885,6 +918,9 @@ class ProfilesStore {
             ),
             // #1140 R13: destination trust never arrives via import.
             linkAutoConnect: prior.linkAutoConnect,
+            // #1197: a browser preference is behaviour config like theme /
+            // defaultPath (not a trust bit, not a credential) — it travels.
+            linkBrowserPackage: raw.linkBrowserPackage,
           );
           updated++;
           continue;
@@ -914,6 +950,8 @@ class ProfilesStore {
             wanted: raw.linkAlias,
           ),
           linkAutoConnect: false,
+          // #1197: see above — a browser preference travels with an import.
+          linkBrowserPackage: raw.linkBrowserPackage,
         );
         existing.add(safe);
         byIdentity[safe.identityKey] = existing.length - 1;

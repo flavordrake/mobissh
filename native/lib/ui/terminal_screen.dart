@@ -32,6 +32,7 @@ import '../diagnostics/connect_trace.dart';
 import '../diagnostics/detection_geom.dart';
 import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
+import '../services/link_browser_router.dart';
 import '../ssh/ssh_session.dart';
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
@@ -1010,7 +1011,17 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     // GLOBAL rect per row segment via xterm's PUBLIC getOffset + cellSize.
     final rects = _urlHighlightRects(box, hit);
 
-    showUrlActions(context, hit.url, highlightRects: rects, anchor: global);
+    showUrlActions(
+      context,
+      hit.url,
+      highlightRects: rects,
+      anchor: global,
+      // #1197 R9: Open goes to THIS session's profile browser.
+      browser: LinkBrowserContext(
+        ref.read(linkBrowserRouterProvider),
+        sessionId: widget.sessionId,
+      ),
+    );
   }
 
   /// Translate a [hit]'s logical-column range into GLOBAL on-screen rects, one

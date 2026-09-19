@@ -37,6 +37,7 @@ import 'package:flterm/flterm.dart' hide Key;
 import 'package:flutter/material.dart';
 
 import '../services/clipboard.dart';
+import '../services/link_browser_router.dart';
 import '../state/detection_providers.dart'
     show DetectionIntensity, DetectionSettings, GutterMode, GutterSide;
 import '../storage/custom_patterns_store.dart' show isCustomPatternId;
@@ -337,11 +338,18 @@ class GutterPatternRegistry {
   /// cwd-resolved ABSOLUTE path (the view passes the session cwd tracker's
   /// resolve). Called at ACTION time so a menu opened after a `cd` resolves
   /// against the live cwd. Null → relative payloads act on their raw text.
+  ///
+  /// [linkBrowser] (#1197, R9) supplies the session's browser routing context.
+  /// A CALLBACK, not a value: the gutter layer has no `sessionId` of its own,
+  /// so the owning terminal view — which does — resolves it at ACTION time,
+  /// the same late-binding the cwd/sftp seams above use. Null → links open in
+  /// the system default (today's behaviour).
   factory GutterPatternRegistry.standard({
     required Future<bool> Function(String path) openPath,
     String? Function(String path)? sftpUrlOf,
     void Function(String patternId, String payload)? onReportException,
     String Function(String relative)? resolveRelative,
+    LinkBrowserContext? Function()? linkBrowser,
   }) {
     GutterItemAction copyAction(String payload) => GutterItemAction(
       keyLabel: 'copy',
@@ -440,6 +448,7 @@ class GutterPatternRegistry {
           highlightRects: const [],
           anchor: markGlobal,
           onMarkNotDetection: markNot,
+          browser: linkBrowser?.call(),
         );
       },
       itemActions: (payload, {anchor}) {
@@ -461,11 +470,13 @@ class GutterPatternRegistry {
             icon: Icons.open_in_new,
             label: 'Open',
             onInvoke: (context) async {
-              final overlay = Overlay.maybeOf(context, rootOverlay: true);
-              final ok = await openDetectedUrl(payload);
-              if (!ok && overlay != null) {
-                showTopToastInOverlay(overlay, 'Could not open: $payload');
-              }
+              // #1197 R9/R11: the session's chosen browser, and a message here
+              // — where the action was — when it wasn't available.
+              await openDetectedUrlReporting(
+                Overlay.maybeOf(context, rootOverlay: true),
+                payload,
+                browser: linkBrowser?.call(),
+              );
             },
           ),
           ?not,
