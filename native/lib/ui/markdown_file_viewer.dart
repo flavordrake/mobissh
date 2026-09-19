@@ -30,9 +30,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:markdown/markdown.dart' as md;
-import 'package:url_launcher/url_launcher.dart';
 
 import '../services/clipboard.dart';
+import '../services/link_browser_router.dart';
 import '../services/session_messages.dart';
 import '../services/text_file_fetcher.dart';
 import '../services/text_file_writer.dart';
@@ -42,17 +42,14 @@ import 'file_viewer_actions.dart';
 import 'mermaid_diagram_view.dart';
 import 'sftp_markdown_image.dart';
 import 'top_toast.dart';
+import 'url_action_overlay.dart';
 
-/// Opens a markdown link [href] in the system browser (externalApplication).
-/// Mirrors the terminal URL handler idiom. Injected as a typedef so widget
-/// tests can spy on launches without a platform channel.
+/// Opens a markdown link [href]. Injected as a typedef so widget tests can spy
+/// on launches without a platform channel; when it is null the link routes
+/// through the shared open path for the session the file was opened over
+/// (#1197 R10) — the SAME browser a link extracted from that session's
+/// terminal would use.
 typedef MarkdownLinkOpener = Future<void> Function(String href);
-
-Future<void> _defaultOpenMarkdownLink(String href) async {
-  final uri = Uri.tryParse(href);
-  if (uri == null) return;
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
-}
 
 /// Full-screen markdown preview route for a single remote [entry] on
 /// [sessionId]. Rendered by default; toggle to raw source.
@@ -61,15 +58,15 @@ class MarkdownFileViewerScreen extends ConsumerStatefulWidget {
     super.key,
     required this.sessionId,
     required this.entry,
-    this.openLink = _defaultOpenMarkdownLink,
+    this.openLink,
   });
 
   final String sessionId;
   final SftpEntry entry;
 
-  /// Seam for opening tapped links — production launches the system browser;
-  /// tests inject a spy.
-  final MarkdownLinkOpener openLink;
+  /// Seam for opening tapped links — null routes through the session's chosen
+  /// browser (#1197 R10); tests inject a spy.
+  final MarkdownLinkOpener? openLink;
 
   @override
   ConsumerState<MarkdownFileViewerScreen> createState() =>
@@ -100,6 +97,23 @@ class _MarkdownFileViewerScreenState
   /// Last save failure. Non-null renders the PERSISTENT inline error + Retry;
   /// a vanishing toast is not acceptable for an action the user must re-take.
   String? _saveError;
+
+  /// #1197 R10: a link inside a viewed file opens in the browser chosen for
+  /// the session the file was opened over — same rule, same seam as a link
+  /// extracted from that session's terminal. An injected [openLink] (tests)
+  /// still wins.
+  Future<void> _openLink(String href) async {
+    final injected = widget.openLink;
+    if (injected != null) return injected(href);
+    await openDetectedUrlReporting(
+      Overlay.maybeOf(context, rootOverlay: true),
+      href,
+      browser: LinkBrowserContext(
+        ref.read(linkBrowserRouterProvider),
+        sessionId: widget.sessionId,
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -346,7 +360,7 @@ class _MarkdownFileViewerScreenState
             ? _RawContent(text: text)
             : _RenderedContent(
                 text: text,
-                openLink: widget.openLink,
+                openLink: _openLink,
                 sessionId: widget.sessionId,
                 mdPath: widget.entry.path,
               );

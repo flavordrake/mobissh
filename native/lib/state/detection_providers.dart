@@ -92,6 +92,7 @@ class DetectionSettings {
     this.intensity = DetectionIntensity.medium,
     this.gutterSide = GutterSide.right,
     this.gutterMode = GutterMode.overlay,
+    this.linkBrowserPackage,
   });
 
   /// The schema version this instance was built from (defaults to current).
@@ -125,6 +126,17 @@ class DetectionSettings {
 
   /// Gutter overlay vs dedicated column (#1154). Default overlay = today.
   final GutterMode gutterMode;
+
+  /// GLOBAL default browser for extracted links (#1197, R6): the PACKAGE name
+  /// of an enumerated browser, never its label (D2 — labels change with app
+  /// updates and locale). Null = the system default, which is today's
+  /// behaviour. A per-profile override wins over it (R8).
+  ///
+  /// It lives HERE rather than in a new prefs key because this value already
+  /// carries every link/detection preference — additive field, no key bump,
+  /// and anything that is not a non-empty String hydrates back to null
+  /// (.claude/rules/code-style.md).
+  final String? linkBrowserPackage;
 
   /// The fields that decide WHICH patterns are registered (R10). Two settings
   /// that differ only by an option field project equal.
@@ -167,6 +179,10 @@ class DetectionSettings {
     DetectionIntensity? intensity,
     GutterSide? gutterSide,
     GutterMode? gutterMode,
+    String? linkBrowserPackage,
+    // #1197: the `??` pattern cannot express "back to the system default",
+    // which is exactly what the picker's default option must persist.
+    bool clearLinkBrowserPackage = false,
   }) {
     return DetectionSettings(
       schemaVersion: detectionSettingsSchemaVersion,
@@ -178,22 +194,33 @@ class DetectionSettings {
       intensity: intensity ?? this.intensity,
       gutterSide: gutterSide ?? this.gutterSide,
       gutterMode: gutterMode ?? this.gutterMode,
+      linkBrowserPackage: clearLinkBrowserPackage
+          ? null
+          : (linkBrowserPackage ?? this.linkBrowserPackage),
     );
   }
 
   /// Serialize to the persisted JSON shape:
   /// `{"v":1,"enabled":..,"url":..,"path":..,"command":..}`.
-  String toJsonString() => jsonEncode(<String, dynamic>{
-    'v': detectionSettingsSchemaVersion,
-    'enabled': enabled,
-    'url': url,
-    'path': path,
-    'command': command,
-    'relpath': relpath,
-    'intensity': intensity.name,
-    'gutterSide': gutterSide.name,
-    'gutterMode': gutterMode.name,
-  });
+  String toJsonString() {
+    final out = <String, dynamic>{
+      'v': detectionSettingsSchemaVersion,
+      'enabled': enabled,
+      'url': url,
+      'path': path,
+      'command': command,
+      'relpath': relpath,
+      'intensity': intensity.name,
+      'gutterSide': gutterSide.name,
+      'gutterMode': gutterMode.name,
+    };
+    // #1197: omit when unset so a user on the system default stores exactly
+    // what a pre-#1197 build stored (purely additive).
+    if (linkBrowserPackage != null && linkBrowserPackage!.isNotEmpty) {
+      out['linkBrowserPackage'] = linkBrowserPackage;
+    }
+    return jsonEncode(out);
+  }
 
   /// Parse a stored JSON string, FIELD-BY-FIELD with a per-field default
   /// fallback. A null / non-JSON / non-object / wrong-version / corrupt value
@@ -242,6 +269,12 @@ class DetectionSettings {
         ),
         gutterSide: enumField('gutterSide', GutterSide.values, def.gutterSide),
         gutterMode: enumField('gutterMode', GutterMode.values, def.gutterMode),
+        // #1197 R6: absent (pre-#1197) / non-String / empty → the SYSTEM
+        // default, same corrupt-resilience rule as every field above.
+        linkBrowserPackage: switch (decoded['linkBrowserPackage']) {
+          final String s when s.isNotEmpty => s,
+          _ => null,
+        },
       );
     } catch (_) {
       // Corrupt / non-JSON value → safe all-true default (no silent disable).
@@ -260,7 +293,8 @@ class DetectionSettings {
       other.relpath == relpath &&
       other.intensity == intensity &&
       other.gutterSide == gutterSide &&
-      other.gutterMode == gutterMode;
+      other.gutterMode == gutterMode &&
+      other.linkBrowserPackage == linkBrowserPackage;
 
   @override
   int get hashCode => Object.hash(
@@ -273,6 +307,7 @@ class DetectionSettings {
     intensity,
     gutterSide,
     gutterMode,
+    linkBrowserPackage,
   );
 
   @override
@@ -280,7 +315,7 @@ class DetectionSettings {
       'DetectionSettings(v:$schemaVersion, enabled:$enabled, url:$url, '
       'path:$path, command:$command, relpath:$relpath, '
       'intensity:${intensity.name}, gutterSide:${gutterSide.name}, '
-      'gutterMode:${gutterMode.name})';
+      'gutterMode:${gutterMode.name}, linkBrowser:$linkBrowserPackage)';
 }
 
 /// Persisted GLOBAL detection settings (#888 Part A). Synchronous default
@@ -362,6 +397,15 @@ class DetectionSettingsNotifier extends StateNotifier<DetectionSettings> {
   /// Set the gutter mode (#1154; geometry follows in #1155).
   Future<void> setGutterMode(GutterMode value) async {
     state = state.copyWith(gutterMode: value);
+    await _persist();
+  }
+
+  /// Set the GLOBAL default browser for extracted links (#1197, R6).
+  /// Null (or empty) restores the system default.
+  Future<void> setLinkBrowserPackage(String? package) async {
+    state = (package == null || package.isEmpty)
+        ? state.copyWith(clearLinkBrowserPackage: true)
+        : state.copyWith(linkBrowserPackage: package);
     await _persist();
   }
 }

@@ -30,6 +30,7 @@ import '../util/relative_time.dart';
 import 'detection_lab_screen.dart';
 import 'feedback_overlay.dart' show VersionResolver, resolveBuildVersion;
 import 'keys_screen.dart';
+import 'link_browser_picker.dart';
 import 'settings_subheader.dart';
 import 'top_toast.dart';
 
@@ -284,6 +285,22 @@ class SettingsPanel extends ConsumerWidget {
                   ref.read(detectionSettingsProvider.notifier).setCommand(v)
               : null,
         ),
+        // #1197 R6: the GLOBAL default browser for extracted links. Sits with
+        // the URL toggle it qualifies ("detect links" → "…and open them
+        // where"). A per-profile override wins over it (R8). Hidden entirely
+        // when nothing enumerates (A8 — no dead affordance).
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: LinkBrowserPicker(
+            pickerKey: const ValueKey('settings-link-browser'),
+            label: 'Browser for links',
+            defaultLabel: 'System default',
+            value: detection.linkBrowserPackage,
+            onChanged: (package) => ref
+                .read(detectionSettingsProvider.notifier)
+                .setLinkBrowserPackage(package),
+          ),
+        ),
         // #1031 slice 2: the Detection LAB — per-pattern colors, intensity,
         // live previews, behavior knobs. Its OWN route (a workbench, not a
         // settings row — the deliberate #897 exception per the reviewed IA);
@@ -508,6 +525,10 @@ class SettingsPanel extends ConsumerWidget {
     await detectionNotifier.setIntensity(DetectionIntensity.medium);
     await detectionNotifier.setGutterSide(GutterSide.right);
     await detectionNotifier.setGutterMode(GutterMode.overlay);
+    // #1197 R6: the global browser choice is a tuned SETTING → resets with the
+    // rest. Per-profile overrides are profile data and survive (same line as
+    // saved profiles / detection exceptions below).
+    await detectionNotifier.setLinkBrowserPackage(null);
     // #1031 slice 2: lab styles are TUNED settings → reset with the rest.
     // AUTHORED data survives (detection exceptions here; custom pattern
     // definitions in slice 3) — the IA's one-sentence reset rule.

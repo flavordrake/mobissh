@@ -181,6 +181,7 @@ import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
 import '../services/clipboard.dart';
+import '../services/link_browser_router.dart';
 import '../services/path_verifier.dart';
 import '../services/session_cwd_tracker.dart';
 import '../services/session_messages.dart'
@@ -2594,7 +2595,18 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
         // #1036: resolves a RELATIVE anchor payload against the live session
         // cwd at ACTION time (the tracker is read fresh on every dispatch).
         resolveRelative: (relative) => _cwdTracker.resolve(relative),
+        // #1197 R9: the gutter layer has no sessionId — THIS view does, so it
+        // supplies the routing context (resolved at action time, so a profile
+        // edit applies to the very next tap).
+        linkBrowser: _linkBrowser,
       );
+
+  /// #1197 R9: this session's link-browser routing context. Built per action
+  /// (not cached) so the resolution reads the live profile + global setting.
+  LinkBrowserContext _linkBrowser() => LinkBrowserContext(
+    ref.read(linkBrowserRouterProvider),
+    sessionId: widget.sessionId,
+  );
 
   /// #705: the long-press selection ANCHOR — the 1-based VIEWPORT cell of the
   /// long-press-start, held while the finger drags so each extend rebuilds the
@@ -4277,6 +4289,8 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       highlightRects: rects,
       anchor: globalAnchor,
       onMarkNotDetection: markNot,
+      // #1197 R9: Open goes to THIS session's profile browser.
+      browser: _linkBrowser(),
     );
   }
 
