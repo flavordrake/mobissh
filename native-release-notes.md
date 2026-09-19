@@ -7,7 +7,9 @@ internal/test/CI/refactor work OUT. **Update this every release** (the gate
 refuses to ship if the top section's commit is older than the build — see
 gen-apk-install-page.sh staleness check).
 
-## v0.1.12-rc.4 (2026-09-18) — jump hosts, an editable markdown viewer, link-highlight options
+## v0.1.12-rc.4 (2026-09-19) — jump hosts, an editable markdown viewer, per-profile link browser
+- **Choose which browser a detected link opens in, per profile.** Settings picks the app-wide default; a profile can override it (Profile editor → Open links in), so work hosts can send links to a work browser while everything else keeps your normal one. Links in viewed markdown/HTML files follow the same choice. If the chosen browser isn't installed any more, the link still opens in the default and tells you which one was missing. (#1195) **Device-test:** set a profile to one browser and the global default to another, then open a link from each.
+- **Connect through a bastion.**
 - **Paste an ssh_config block with `ProxyJump` and the jump host comes with it.** Alias hops resolve against your saved profiles; `user@host:port` hops and the legacy `ProxyCommand ssh -W %h:%p` spelling work too. A hop it can't resolve blocks the import rather than quietly importing a profile that would connect straight to the target. (#1184) **Device-test:** paste a real Host block that uses a bastion.
 - **Export your profiles as an ssh_config file.** From the Connect screen — it contains no passwords, keys or passphrases, and names any profile you'll need to configure a key for by hand. (#1185) **Device-test:** export and read the file.
 - **A jumped session shows a route glyph on its title** — tap it for the full path, every hop in order then the target. A direct session looks exactly as before. (#1189) **Device-test:** tap the glyph, and check the session bar still swipes between sessions and taps open the menu.
