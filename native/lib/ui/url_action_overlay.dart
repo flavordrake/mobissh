@@ -18,8 +18,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import '../services/browser_targets.dart';
 import '../services/clipboard.dart';
 import 'top_toast.dart';
 
@@ -28,11 +28,12 @@ import 'top_toast.dart';
 typedef UrlOpener = Future<bool> Function(String url);
 
 /// Default opener: the system browser via url_launcher, external application.
-Future<bool> _defaultOpen(String url) async {
-  final uri = Uri.tryParse(url);
-  if (uri == null) return false;
-  return launchUrl(uri, mode: LaunchMode.externalApplication);
-}
+///
+/// Delegates to [launchExternalUrl] (#1196) so this app has exactly ONE
+/// `launchUrl(..., externalApplication)` call site — the browser seam's
+/// no-channel degrade path (R4) and this menu cannot drift apart. Behaviour is
+/// unchanged.
+Future<bool> _defaultOpen(String url) => launchExternalUrl(url);
 
 /// Test seam: overrides the opener used by [showUrlActions] when non-null.
 @visibleForTesting

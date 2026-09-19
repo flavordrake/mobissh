@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -78,12 +79,152 @@ class MainActivity : FlutterActivity() {
     // WRITE_EXTERNAL_STORAGE perm (declared maxSdkVersion=28 in the manifest).
     private val downloadsChannel = "mobissh/downloads"
 
+    // ── Browser enumeration + package-targeted open (#1196, slice 1 of #1195
+    // "per-profile browser for extracted links"). `url_launcher` cannot name a
+    // target app and `android_intent_plus` cannot ENUMERATE the installed
+    // browsers, so one channel does both jobs and no dependency is added.
+    // Contract (method names / argument keys / result keys) is pinned on the
+    // Dart side by `test/services/browser_targets_test.dart`.
+    private val browserChannel = "mobissh/browser"
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         installNativeCrashHandler()
         installStoragePickerChannel(flutterEngine)
         installClipboardChannel(flutterEngine)
         installDownloadsChannel(flutterEngine)
+        installBrowserChannel(flutterEngine)
+    }
+
+    private fun installBrowserChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            browserChannel,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "listBrowsers" -> {
+                    try {
+                        result.success(listBrowsers())
+                    } catch (err: Throwable) {
+                        Log.w(tag, "listBrowsers failed", err)
+                        result.error("LIST_FAILED", err.message, null)
+                    }
+                }
+                "open" -> {
+                    val url = call.argument<String>("url")
+                    if (url.isNullOrEmpty()) {
+                        result.error("BAD_ARGS", "url required", null)
+                        return@setMethodCallHandler
+                    }
+                    // Package-targeted launch is cheap and must happen on the
+                    // UI thread (it starts an activity from this one).
+                    result.success(openUrl(url, call.argument<String>("package")))
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** The probe intent used both to ENUMERATE handlers and to launch. A
+     *  concrete https URL is required — package-visibility filtering and
+     *  intent resolution both match on the data scheme. BROWSABLE keeps the
+     *  result to apps that accept web links rather than every app that happens
+     *  to deep-link an https host. */
+    private fun viewIntent(uri: Uri): Intent =
+        Intent(Intent.ACTION_VIEW, uri).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+
+    /**
+     * Enumerate the activities that can view an `https://` URL, deduplicated by
+     * package and sorted by label.
+     *
+     * Visible at all on API 30+ only because `AndroidManifest.xml` already
+     * declares `<queries>` for `ACTION_VIEW` http/https (added for #570) —
+     * WITHOUT that declaration this returns an empty list rather than an error,
+     * which is exactly why the emulator test (#1196 A4) exists.
+     *
+     * Labels come from `loadLabel` (R5): a browser this app has never heard of
+     * must still be listable, so there is no hardcoded package table anywhere.
+     */
+    private fun listBrowsers(): List<Map<String, Any?>> {
+        val pm = packageManager
+        val probe = viewIntent(Uri.parse("https://example.com"))
+        // MATCH_ALL (API 23+) suppresses the "preferred activity" short-circuit
+        // that would otherwise collapse the result to the current default.
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PackageManager.MATCH_ALL
+        } else {
+            0
+        }
+        val defaultPackage = pm.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?.packageName
+            // The disambiguation dialog is not a browser — "no default set".
+            ?.takeIf { it != "android" && !it.startsWith("com.android.internal") }
+
+        // A browser can expose several VIEW activities; the picker wants ONE
+        // row per app. First activity wins (the resolver orders by priority).
+        val byPackage = LinkedHashMap<String, Map<String, Any?>>()
+        for (info in pm.queryIntentActivities(probe, flags)) {
+            val pkg = info.activityInfo?.packageName ?: continue
+            if (byPackage.containsKey(pkg)) continue
+            val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: pkg
+            byPackage[pkg] = mapOf(
+                "package" to pkg,
+                "label" to label,
+                "isDefault" to (pkg == defaultPackage),
+            )
+        }
+        return byPackage.values.sortedBy { (it["label"] as String).lowercase(Locale.US) }
+    }
+
+    /**
+     * Open [url], in [pkg] when named. Falls back to the system default when
+     * the package is not installed or the start fails, and REPORTS that it did
+     * (R2) — a bare bool cannot express "opened, but not where you asked".
+     *
+     * `usedFallback` stays false when nothing opened at all: no other target
+     * was used either, so the caller's message is "could not open", not
+     * "opened elsewhere".
+     */
+    private fun openUrl(url: String, pkg: String?): Map<String, Any?> {
+        val uri = Uri.parse(url)
+        var usedFallback = false
+        if (!pkg.isNullOrEmpty()) {
+            try {
+                startActivity(
+                    viewIntent(uri).apply {
+                        setPackage(pkg)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    },
+                )
+                return mapOf(
+                    "opened" to true,
+                    "usedFallback" to false,
+                    "requestedPackage" to pkg,
+                )
+            } catch (err: Throwable) {
+                // Not installed / disabled / refused the intent.
+                Log.w(tag, "open in $pkg failed — falling back to default", err)
+                usedFallback = true
+            }
+        }
+        return try {
+            startActivity(viewIntent(uri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+            mapOf(
+                "opened" to true,
+                "usedFallback" to usedFallback,
+                "requestedPackage" to pkg,
+            )
+        } catch (err: Throwable) {
+            Log.w(tag, "open of $url failed", err)
+            mapOf(
+                "opened" to false,
+                "usedFallback" to false,
+                "requestedPackage" to pkg,
+            )
+        }
     }
 
     private fun installDownloadsChannel(flutterEngine: FlutterEngine) {
