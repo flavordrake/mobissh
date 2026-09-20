@@ -46,40 +46,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 NATIVE_DIR="${REPO_ROOT}/native"
-CONNECT_TEST="${REPO_ROOT}/scripts/native-connect-test.sh"
 
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
 
-# Tests that need a SECOND distinct host:port tuple on-device (two real
-# sessions). native-connect-test.sh wires the 2nd bridge when BRIDGE_PORT2 is
-# exported.
-needs_second_bridge() {
-  case "$1" in
-    *multi_session_lifecycle_test.dart) return 0 ;;
-    # #775: the SFTP browser smoke's per-session isolation leg connects a 2nd
-    # session on 2223 to prove each browser shows only its own session's cwd.
-    *sftp_browse_smoke_test.dart) return 0 ;;
-    # #847: two sessions to the SAME host over 2222 + 2223. Its own header
-    # states the requirement ("Bridge: … with BRIDGE_PORT2=2223"); without it
-    # the 2nd session has nowhere to connect and the test fails with
-    # "both same-host sessions did not reach connected" — a HARNESS gap that
-    # reads exactly like a product regression.
-    *attention_host_suppression_test.dart) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# #1183 jump host: the acceptance test connects to the `jump-target` container
-# THROUGH test-sshd. No extra bridge — the device never dials the target — but
-# the second container has to be up. test-sshd-up.sh composes the whole test
-# project (both services) and is idempotent.
-needs_jump_target() {
-  case "$1" in
-    *jump_host_1183_test.dart) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+# What each test needs from the runner is DERIVED FROM THE TEST SOURCE, not
+# listed here (#1101 G1-G3). Two hand-maintained copies of `needs_second_bridge()`
+# lived in this script and integration-subset.sh; both drifted from the tests that
+# declare the requirement in their own headers, and two tests failed for a HARNESS
+# reason that read exactly like a product regression. See the library header.
+INTEGRATION_REPO_ROOT="$REPO_ROOT"
+source "${REPO_ROOT}/scripts/lib/integration-fixtures.sh"
 
 # Emulator guard — the #589 contract: an absent emulator must be LOUD, never a
 # silent pass. A LEASED fleet device (with-fleet-emulator.sh exports
@@ -111,35 +88,38 @@ if [[ "${#TESTS[@]}" -eq 0 ]]; then
 fi
 log "discovered ${#TESTS[@]} integration tests"
 
+# One CURRENT, unambiguous sshd for the whole run (#1101 G0). Pinning it here
+# rather than per-test also keeps native-connect-test.sh from spawning and then
+# tearing down a fixture around every single test — the cc_* setup scripts seed
+# state on it that must still be there when the test connects.
+integration_pin_fixture
+
 PASS=()
 FAIL=()
+SKIP=()
 
 for abs in "${TESTS[@]}"; do
   rel="integration_test/$(basename "$abs")"
+
+  # G2: a test that declares its OWN runner is not this suite's to run.
+  own_runner="$(integration_declared_runner "$abs")"
+  if [[ -n "$own_runner" ]]; then
+    log "=== skipping $rel — not an Android device test; its runner is: $own_runner"
+    SKIP+=("$rel → $own_runner")
+    continue
+  fi
+
   log "=== running $rel ==="
-  if needs_jump_target "$abs"; then
-    log "(bringing up the jump-target sshd for the jump-host acceptance)"
-    "${REPO_ROOT}/scripts/test-sshd-up.sh"
-  fi
-  if needs_second_bridge "$abs"; then
-    log "(enabling 2nd bridge port 2223 for multi-session)"
-    if BRIDGE_PORT2="2223" "$CONNECT_TEST" "$rel"; then
-      PASS+=("$rel")
-    else
-      FAIL+=("$rel")
-    fi
-  else
-    if "$CONNECT_TEST" "$rel"; then
-      PASS+=("$rel")
-    else
-      FAIL+=("$rel")
-    fi
-  fi
+  # Bridge, jump target, and the declared setup/teardown bracket all live in
+  # scripts/lib/integration-fixtures.sh so this runner and integration-subset.sh
+  # cannot wire the same test up two different ways (#1101 G1/G3).
+  if integration_run_one "$rel"; then PASS+=("$rel"); else FAIL+=("$rel"); fi
 done
 
-echo "> INTEGRATION SUITE RESULT: ${#PASS[@]} passed, ${#FAIL[@]} failed (of ${#TESTS[@]})"
+echo "> INTEGRATION SUITE RESULT: ${#PASS[@]} passed, ${#FAIL[@]} failed, ${#SKIP[@]} run elsewhere (of ${#TESTS[@]})"
 for t in "${PASS[@]}"; do echo "  + $t"; done
 for t in "${FAIL[@]}"; do echo "  ! $t"; done
+for t in "${SKIP[@]:-}"; do [[ -n "$t" ]] && echo "  ~ $t"; done
 
 if [[ "${#FAIL[@]}" -gt 0 ]]; then
   echo "! NATIVE INTEGRATION SUITE FAILED"

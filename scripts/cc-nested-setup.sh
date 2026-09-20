@@ -29,7 +29,7 @@ chmod 600 "$KEY"
 
 echo "> installing NESTED-tmux login guard + UTF-8 status main session ($(date +%Y%m%dT%H%M%S%z))"
 ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-  testuser@test-sshd '
+  "testuser@${SSHD_HOST:-test-sshd}" '
 tmux kill-server >/dev/null 2>&1 || true
 printf "set -g mouse on\nset -g history-limit 5000\nset -g status on\nset -g status-left \"MOBI-star-B\"\n" > /home/testuser/.tmux.conf
 printf "%s\n" "[ -z \"\$TMUX\" ] && [ -t 0 ] && exec tmux attach -t main" > /home/testuser/.bash_profile

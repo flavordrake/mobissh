@@ -25,60 +25,38 @@ fi
 
 log() { echo "> [subset] $*"; }
 
-# MUST mirror native-integration-suite.sh's needs_second_bridge(): these tests
-# open a SECOND distinct host:port tuple on-device (two real sessions), and
-# native-connect-test.sh only wires that bridge when BRIDGE_PORT2 is exported.
-# Without it the 2nd session has nowhere to connect and the test fails for a
-# HARNESS reason that looks exactly like a product regression ("both sessions
-# did not reach connected"). Keep this in sync with the suite.
-needs_second_bridge() {
-  case "$1" in
-    *multi_session_lifecycle_test.dart) return 0 ;;
-    *sftp_browse_smoke_test.dart) return 0 ;;
-    # #847: two sessions to the SAME host over 2222 + 2223 (its header states
-    # the BRIDGE_PORT2=2223 requirement).
-    *attention_host_suppression_test.dart) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+# A subset run is only comparable to the suite if it wires each test up the SAME
+# WAY. It used to mirror the suite by hand — two copies of needs_second_bridge(),
+# both drifted from the tests that declare the requirement (#1101 G3). Now both
+# runners derive the wiring from the test source through one shared library.
+INTEGRATION_REPO_ROOT="$REPO_ROOT"
+source "${REPO_ROOT}/scripts/lib/integration-fixtures.sh"
 
-# #1183 jump host: the acceptance test connects to the `jump-target` container
-# THROUGH test-sshd. No extra bridge — the device never dials the target — but
-# the second container has to be up. test-sshd-up.sh composes the whole test
-# project (both services) and is idempotent, so this is safe to re-run.
-needs_jump_target() {
-  case "$1" in
-    *jump_host_1183_test.dart) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+# One CURRENT, unambiguous sshd for the whole subset (#1101 G0) — same pinning
+# the suite does, so a subset baseline means the same thing.
+integration_pin_fixture
 
 passed=()
 failed=()
+skipped=()
 for t in "$@"; do
-  log "=== running $t ==="
-  if needs_jump_target "$t"; then
-    log "(bringing up the jump-target sshd for the jump-host acceptance)"
-    "${REPO_ROOT}/scripts/test-sshd-up.sh"
+  own_runner="$(integration_declared_runner "$t")"
+  if [[ -n "$own_runner" ]]; then
+    log "=== skipping $t — not an Android device test; its runner is: $own_runner"
+    skipped+=("$t → $own_runner")
+    continue
   fi
-  if needs_second_bridge "$t"; then
-    log "(enabling 2nd bridge port 2223 for multi-session)"
-    if BRIDGE_PORT2="2223" "${REPO_ROOT}/scripts/native-connect-test.sh" "$t"; then
-      passed+=("$t"); log "PASS $t"
-    else
-      failed+=("$t"); log "FAIL $t"
-    fi
-  elif "${REPO_ROOT}/scripts/native-connect-test.sh" "$t"; then
-    passed+=("$t")
-    log "PASS $t"
+  log "=== running $t ==="
+  if integration_run_one "$t"; then
+    passed+=("$t"); log "PASS $t"
   else
-    failed+=("$t")
-    log "FAIL $t"
+    failed+=("$t"); log "FAIL $t"
   fi
 done
 
-log "SUBSET RESULT: ${#passed[@]} passed, ${#failed[@]} failed (of $#)"
+log "SUBSET RESULT: ${#passed[@]} passed, ${#failed[@]} failed, ${#skipped[@]} run elsewhere (of $#)"
 for t in "${passed[@]:-}"; do [[ -n "$t" ]] && echo "  + $t"; done
 for t in "${failed[@]:-}"; do [[ -n "$t" ]] && echo "  ! $t"; done
+for t in "${skipped[@]:-}"; do [[ -n "$t" ]] && echo "  ~ $t"; done
 
 [[ ${#failed[@]} -eq 0 ]]

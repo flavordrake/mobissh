@@ -25,7 +25,7 @@ chmod 600 "$KEY"
 
 echo "> pre-creating persistent tmux 'main' with a STATIC marker screen ($(date +%Y%m%dT%H%M%S%z))"
 ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-  testuser@test-sshd '
+  "testuser@${SSHD_HOST:-test-sshd}" '
 tmux kill-server >/dev/null 2>&1 || true
 tmux new-session -d -s main -n WCAP -x 80 -y 24
 tmux send-keys -t main:WCAP "clear; echo CAPTURE_SCREEN_MARKER_XYZ" Enter

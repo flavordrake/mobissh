@@ -1,5 +1,13 @@
 // Desktop (Linux) E2E smoke — Phase 0 of the desktop-targets arc (#1012).
 //
+// Runner: scripts/desktop-smoke.sh (-d linux under Xvfb, NOT the Android suite)
+//
+// That `Runner:` line is machine-read (#1101 G2): the Android device suite
+// discovers every *_test.dart on disk, and used to run THIS one against the
+// emulator, where `test-sshd` is unresolvable from the guest — it failed
+// "never reached the terminal" on every run, as a permanent fake red.
+// scripts/lib/integration-fixtures.sh skips any test that names its own runner.
+//
 // Runs ON THE HOST, no emulator/adb: scripts/desktop-smoke.sh drives
 // `flutter test integration_test/desktop_smoke_test.dart -d linux` under Xvfb.
 // The host process reaches test-sshd DIRECTLY over the docker network

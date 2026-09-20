@@ -24,7 +24,7 @@ chmod 600 "$KEY"
 
 echo "> pre-creating persistent tmux 'main' on test-sshd ($(date +%Y%m%dT%H%M%S%z))"
 ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-  testuser@test-sshd '
+  "testuser@${SSHD_HOST:-test-sshd}" '
 tmux kill-server >/dev/null 2>&1 || true
 tmux new-session -d -s main -n WEXIST0
 tmux new-window -t main -n WEXIST1
