@@ -44,8 +44,20 @@ SSHD_HOST=agent-a2eb9df1d494b709b-test-sshd-1
 ```
 
 **This change alone moved `port_forward_1047` and `sftp_browse_smoke` from FAIL (#1101)
-to PASS.** Call this **G0 — FIXTURE (HARNESS)**; it is the reason 3 of #1101's 22 are
-already green here.
+to PASS.** Call this **G0 — FIXTURE (HARNESS)**.
+
+Four of #1101's 22 are green here, and each has its own reason — none is "it just
+passed this time":
+
+| Recovered | Why |
+|---|---|
+| `port_forward_1047` | G0 — the pinned fixture has `AllowTcpForwarding local` |
+| `sftp_browse_smoke` | G0 — a CURRENT, unambiguous fixture |
+| `attention_host_suppression` | G3's `needs_second_bridge()` entry, added earlier today |
+| `keyboard_resize_sizing_922` | **undetermined.** Nothing in this run explains it. Its own header warns the assertion only holds "as long as the emulator keyboard changes the viewInsets"; this device does animate an inset (`ghostty-kbgrid` drops `box=762` → `box=450`), so it passed. Treat it as device-variance-sensitive, not reliably fixed |
+
+Any comparison with #1101's roster that does not account for G0 is comparing two
+different systems under test.
 
 ## 2. Run shape — three leases
 
