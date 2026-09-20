@@ -35,6 +35,9 @@ test-history/*
 !test-history/coverage/
 test-history/coverage/**/*.lcov
 test-history/coverage/**/*.info
+# #1101: the #589 integration-suite baselines are the gate's expected-pass
+# record — markdown only, same deal as coverage (raw per-test logs stay local).
+!test-history/integration-baseline/
 .traces/
 # vitest --coverage output (scripts/ts-coverage.sh); native/coverage/ is ignored in native/.gitignore
 /coverage/
