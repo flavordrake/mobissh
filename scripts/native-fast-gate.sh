@@ -65,6 +65,17 @@ else
   echo "! disk-reclaim rules: FAIL"
   exit 1
 fi
+# Same gate, same reason (#1101): the integration runner derives each test's
+# wiring — second bridge, jump target, setup/teardown, platform — from the test's
+# own header. If that derivation silently stops matching what a test declares,
+# the test fails on the emulator for a HARNESS reason that reads exactly like a
+# product regression. That drift had no CI backstop and it bit twice in one day.
+if "${REPO_ROOT}/scripts/test-integration-wiring.sh"; then
+  echo "+ integration wiring: pass"
+else
+  echo "! integration wiring: FAIL"
+  exit 1
+fi
 
 echo "> Gate 1/${TOTAL_GATES}: flutter analyze..."
 if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" analyze; then

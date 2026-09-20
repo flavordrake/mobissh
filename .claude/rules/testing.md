@@ -76,6 +76,18 @@ The native app has its OWN gate, separate from the PWA Playwright gates above.
   (#590), `sftp_download_reassembly_test.dart` (#591). Only behaviors that genuinely
   need a device (real socket, foreground service, host-key prompt) belong in
   `integration_test/`.
+- **An integration test DECLARES what it needs, in its own header (#1101).** The
+  runner derives its wiring from the test source — there is no list to add yourself
+  to, and a runner-side list is the drift that made two tests fail as fake product
+  regressions. `scripts/lib/integration-fixtures.sh` reads:
+  - `2223` anywhere in the source → the second socat+adb-reverse bridge is armed
+  - `jump-target` anywhere in the source → the second sshd container is brought up
+  - `// Setup (run FIRST): scripts/x.sh` → run before the test; a failure FAILS the test
+  - `// Teardown …: scripts/y.sh` → run after it, ALWAYS, including after a failure
+  - `// Runner: scripts/z.sh …` → not an Android device test; z.sh owns it
+  `scripts/test-integration-wiring.sh` (fast gate 0) pins this against every test on
+  disk. Fixture setup scripts must honour `SSHD_HOST` — the runner pins it to an
+  unambiguous container, so a hard-coded `test-sshd` seeds the wrong sshd.
 - **Never silently skip the device tier.** `native-integration-suite.sh` exits
   non-zero with "NOT VALIDATED" when no emulator is present (unless
   `--allow-no-emulator` is passed explicitly). A missing emulator must never

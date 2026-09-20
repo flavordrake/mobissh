@@ -25,7 +25,7 @@ chmod 600 "$KEY"
 
 echo "> pre-creating persistent tmux 'main' with 200 numbered lines ($(date +%Y%m%dT%H%M%S%z))"
 ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-  testuser@test-sshd '
+  "testuser@${SSHD_HOST:-test-sshd}" '
 tmux kill-server >/dev/null 2>&1 || true
 tmux new-session -d -s main -n WSCROLL -x 80 -y 24
 tmux send-keys -t main:WSCROLL "clear; awk '"'"'BEGIN{for(i=1;i<=200;i++)printf \"LINE_%03d\\n\", i}'"'"'" Enter

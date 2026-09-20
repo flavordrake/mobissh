@@ -16,7 +16,7 @@ chmod 600 "$KEY"
 
 echo "> removing NESTED-tmux login guard ($(date +%Y%m%dT%H%M%S%z))"
 ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-  testuser@test-sshd '
+  "testuser@${SSHD_HOST:-test-sshd}" '
 rm -f /home/testuser/.bash_profile
 tmux kill-server >/dev/null 2>&1 || true
 echo "profile removed; tmux server killed"
