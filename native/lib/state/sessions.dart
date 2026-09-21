@@ -152,22 +152,6 @@ class SessionsState {
   }
 }
 
-/// Factory injected for tests so they can substitute a controller whose
-/// `connect()` is a no-op (no real network IO). Retained for the task-side
-/// `SessionHost`'s own factory wiring (#533) — UI-side construction no longer
-/// uses this factory directly because sessions are driven through
-/// [SshSessionProxy], not an in-UI controller.
-typedef SshSessionControllerFactory = SshSessionController Function();
-
-SshSessionController _defaultControllerFactory() => SshSessionController();
-
-/// Test seam — override in `ProviderScope.overrides` to inject a stub
-/// factory. Production uses [_defaultControllerFactory] which creates a real
-/// controller with the default socket opener. Read by tests that wire a
-/// `SessionHost` directly; UI consumers no longer touch it (#533).
-final sshSessionControllerFactoryProvider =
-    Provider<SshSessionControllerFactory>((ref) => _defaultControllerFactory);
-
 /// Outcome of one "Reconnect all" batch (#959).
 ///
 /// Both lists hold session ids. Membership is decided by the session's own

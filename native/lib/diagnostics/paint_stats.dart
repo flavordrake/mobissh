@@ -84,9 +84,3 @@ Map<String, Object?>? activePaintStatsSnapshot() {
   if (id == null) return null;
   return _stats[id]?.snapshot();
 }
-
-/// Clear the whole registry + active pointer (tests).
-void clearAllPaintStats() {
-  _stats.clear();
-  _activeSessionId = null;
-}

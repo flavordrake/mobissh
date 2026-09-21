@@ -57,9 +57,3 @@ Map<String, Object?>? activeDetectionGeomSnapshot() {
   if (id == null) return null;
   return _probes[id]?.call();
 }
-
-/// Clear the whole registry + active pointer (tests).
-void clearAllDetectionGeom() {
-  _probes.clear();
-  _activeSessionId = null;
-}
