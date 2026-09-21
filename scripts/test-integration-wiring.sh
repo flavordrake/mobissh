@@ -21,6 +21,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INTEGRATION_REPO_ROOT="$REPO_ROOT"
 ITEST_DIR="${REPO_ROOT}/native/integration_test"
 source "${REPO_ROOT}/scripts/lib/integration-fixtures.sh"
+source "${REPO_ROOT}/scripts/lib/integration-manifest.sh"
 
 PASS=0
 FAIL=0
@@ -174,5 +175,148 @@ else
 fi
 
 INTEGRATION_REPO_ROOT="$REPO_ROOT"
+unset INTEGRATION_MANIFEST INTEGRATION_TEST_DIR 2>/dev/null || true
+
+# 8. THE BASELINE MANIFEST, against the real corpus (#1101/#1205). The suite no
+#    longer demands an all-green run — it enforces
+#    native/integration_test/BASELINE.manifest. That file is only worth anything
+#    if it cannot drift from the tests on disk, and this is where that is caught,
+#    with no emulator: unknown paths, duplicates, an unclassified test, a
+#    known-red with no owning issue, or a tally that disagrees with the body.
+if manifest_validate; then
+  ok "BASELINE.manifest is well-formed against every test on disk"
+else
+  bad "BASELINE.manifest does NOT match the corpus (see the ! lines above)"
+fi
+
+n_expect="$(manifest_list expect | grep -c . || true)"
+n_red="$(manifest_list known-red | grep -c . || true)"
+n_else="$(manifest_list elsewhere | grep -c . || true)"
+n_disk="$(find "$ITEST_DIR" -maxdepth 1 -name '*_test.dart' | grep -c . || true)"
+if [[ $((n_expect + n_red + n_else)) -eq "$n_disk" ]]; then
+  ok "every test on disk is classified exactly once (${n_expect} expect + ${n_red} known-red + ${n_else} elsewhere = ${n_disk})"
+else
+  bad "manifest classifies $((n_expect + n_red + n_else)) tests but ${n_disk} are on disk"
+fi
+
+# Each known-red must name the issue that owns it AND say why in one line. This
+# is the difference between "known red, tracked in #1200" and "nobody knows",
+# which is the state the #1101 baseline existed to end.
+while read -r name; do
+  [[ -n "$name" ]] || continue
+  issue="$(manifest_known_red_issue "$name")"
+  reason="$(manifest_known_red_reason "$name")"
+  if [[ "$issue" =~ ^#[0-9]+$ && -n "$reason" ]]; then
+    ok "known-red ${name} is owned by ${issue}"
+  else
+    bad "known-red ${name} has no owning issue and/or no reason (issue='${issue}')"
+  fi
+done < <(manifest_list known-red)
+
+# 9. The VERDICT itself, on synthetic runs. The four conditions the suite exists
+#    to enforce are a pure function of (manifest, pass list, fail list), so they
+#    are provable here rather than only on a device an hour into a lease. An
+#    enforcement mechanism nobody has watched fail is not known to work.
+MSAND="${SANDBOX}/manifest"
+mkdir -p "${MSAND}/tests"
+: > "${MSAND}/tests/green_test.dart"
+: > "${MSAND}/tests/red_test.dart"
+echo "// Runner: scripts/elsewhere.sh (not this suite)" > "${MSAND}/tests/other_test.dart"
+INTEGRATION_TEST_DIR="${MSAND}/tests"
+INTEGRATION_MANIFEST="${MSAND}/BASELINE.manifest"
+
+write_manifest() { printf '%s\n' "$@" > "$INTEGRATION_MANIFEST"; }
+GOOD=(
+  "accepted | synthetic | expect=1 | known-red=1 | elsewhere=1"
+  "expect    | green_test.dart"
+  "known-red | red_test.dart | #1200 | a named cause"
+  "elsewhere | other_test.dart | scripts/elsewhere.sh"
+)
+verdict_is() { # label, expected rc, pass-list, fail-list
+  local label="$1" want="$2" rc=0
+  printf '%s\n' "$3" > "${MSAND}/pass"
+  printf '%s\n' "$4" > "${MSAND}/fail"
+  manifest_verdict "${MSAND}/pass" "${MSAND}/fail" > "${MSAND}/out" 2>&1 || rc=1
+  if [[ "$rc" -eq "$want" ]]; then
+    ok "verdict: ${label}"
+  else
+    bad "verdict: ${label} — wanted rc=${want}, got ${rc}: $(tr '\n' ' ' < "${MSAND}/out")"
+  fi
+}
+reject_manifest() { # label — the manifest currently written must be REJECTED
+  if manifest_validate >/dev/null 2>&1; then
+    bad "manifest validator ACCEPTED ${1}"
+  else
+    ok "manifest validator rejects ${1}"
+  fi
+}
+
+write_manifest "${GOOD[@]}"
+if manifest_validate >/dev/null 2>&1; then
+  ok "validator: a well-formed synthetic manifest is accepted"
+else
+  bad "validator: rejected a well-formed synthetic manifest"
+fi
+verdict_is "a run matching the baseline passes" 0 "green_test.dart" "red_test.dart"
+verdict_is "an EXPECTED-PASS test that fails FAILS the run" 1 "" "green_test.dart"
+verdict_is "a known-red that fails is reported, not fatal" 0 "green_test.dart" "red_test.dart"
+verdict_is "a known-red that PASSES fails the run (promote it)" 1 "green_test.dart
+red_test.dart" ""
+# ${MSAND}/out still holds the recovered-test run above. The operator has to be
+# able to ACT on the summary, so the drift condition must be named, not implied.
+if grep -q 'KNOWN-RED TEST PASSED' "${MSAND}/out" && grep -q 'red_test.dart' "${MSAND}/out"; then
+  ok "verdict names the recovered test and the drift condition by name"
+else
+  bad "verdict does not name the recovered-test drift condition: $(tr '\n' ' ' < "${MSAND}/out")"
+fi
+verdict_is "a test in NEITHER list fails the run" 1 "green_test.dart
+stranger_test.dart" "red_test.dart"
+
+write_manifest "accepted | synthetic | expect=2 | known-red=1 | elsewhere=1" \
+  "expect    | green_test.dart" "expect    | ghost_test.dart" \
+  "known-red | red_test.dart | #1200 | a named cause" \
+  "elsewhere | other_test.dart | scripts/elsewhere.sh"
+reject_manifest "an entry naming a test that is not on disk"
+
+write_manifest "accepted | synthetic | expect=2 | known-red=1 | elsewhere=1" \
+  "expect    | green_test.dart" "expect    | green_test.dart" \
+  "known-red | red_test.dart | #1200 | a named cause" \
+  "elsewhere | other_test.dart | scripts/elsewhere.sh"
+reject_manifest "a duplicate entry"
+
+write_manifest "accepted | synthetic | expect=1 | known-red=0 | elsewhere=1" \
+  "expect    | green_test.dart" "elsewhere | other_test.dart | scripts/elsewhere.sh"
+reject_manifest "a test on disk that is in NEITHER list"
+
+write_manifest "accepted | synthetic | expect=1 | known-red=1 | elsewhere=1" \
+  "expect    | green_test.dart" "known-red | red_test.dart |  | a named cause" \
+  "elsewhere | other_test.dart | scripts/elsewhere.sh"
+reject_manifest "a known-red with no owning issue"
+
+write_manifest "accepted | synthetic | expect=1 | known-red=1 | elsewhere=1" \
+  "expect    | green_test.dart" "known-red | red_test.dart | #1200 |" \
+  "elsewhere | other_test.dart | scripts/elsewhere.sh"
+reject_manifest "a known-red with no reason"
+
+# Moving a test between sets is exactly the edit that must be visible in review —
+# it is a claim about a device run. Leaving the accepted tally untouched is how
+# that claim gets made silently, so the tally and the body must agree.
+write_manifest "accepted | synthetic | expect=1 | known-red=1 | elsewhere=1" \
+  "expect    | green_test.dart" "expect    | red_test.dart" \
+  "elsewhere | other_test.dart | scripts/elsewhere.sh"
+reject_manifest "a known-red flipped to expect without updating the accepted tally"
+
+write_manifest "accepted | synthetic | expect=1 | known-red=1 | elsewhere=1" \
+  "expect    | green_test.dart" "known-red | red_test.dart | #1200 | a named cause" \
+  "elsewhere | red_test.dart | scripts/elsewhere.sh"
+reject_manifest "'elsewhere' on a test that declares no // Runner: header"
+
+write_manifest "accepted | synthetic | expect=2 | known-red=1 | elsewhere=0" \
+  "expect    | green_test.dart" "expect    | other_test.dart" \
+  "known-red | red_test.dart | #1200 | a named cause"
+reject_manifest "a test that declares its own // Runner: but is classified 'expect'"
+
+unset INTEGRATION_MANIFEST INTEGRATION_TEST_DIR
+
 echo "integration-wiring: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]]

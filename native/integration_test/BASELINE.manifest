@@ -1,0 +1,143 @@
+# BASELINE.manifest — what the #589 integration suite EXPECTS of every test in
+# this directory (#1101, accepted by the owner 2026-09-21, umbrella #1205).
+#
+# WHY THIS EXISTS. The suite used to demand an all-green run. Main is not all
+# green and has not been for months, so a red suite said nothing about the change
+# under test and the honest move — running it — was indistinguishable from the
+# dishonest one. This file is the accepted baseline as DATA: 74 tests that passed
+# on a clean main against the fleet device, and 11 that did not, each with a named
+# cause and the issue that owns it. A reader can tell "known red, tracked in
+# #1200" from "nobody knows", because the second thing cannot exist here.
+#
+# Evidence: test-history/integration-baseline/20260920T155254Z/report.md (the run,
+# the device, the cause triage) plus 127acad (#1203), which moved 7 of that run's
+# reds to green by fixing the runner's own wiring.
+#
+# WHAT THE SUITE DOES WITH IT (scripts/lib/integration-manifest.sh):
+#   expect      fails  -> the suite FAILS. That is the whole point.
+#   known-red   fails  -> reported, not fatal.
+#   known-red   PASSES -> the suite FAILS. Move it to `expect` and update the
+#                         `accepted` tally, citing the run that proves it. A test
+#                         that quietly recovered but stays excused is how this
+#                         list rots back into "22 failures, nobody knows why".
+#   on disk, in neither list -> the suite FAILS, and fast gate 0 fails first.
+#
+# IF YOU ADD AN INTEGRATION TEST you must add a line here and bump `accepted`.
+# scripts/test-integration-wiring.sh (fast gate 0, no emulator) fails otherwise.
+# A new test goes in `expect` unless you can name the issue that owns its red.
+#
+# FORMAT — `|`-separated fields, `#` starts a comment, blank lines ignored:
+#   accepted  | <baseline run id>      | expect=N | known-red=N | elsewhere=N
+#   expect    | <file>_test.dart
+#   known-red | <file>_test.dart       | #issue   | one-line reason
+#   elsewhere | <file>_test.dart       | <the runner that owns it>
+# No field may contain a `|`. Every known-red needs BOTH an issue and a reason.
+
+accepted  | 20260920T155254Z | expect=74 | known-red=11 | elsewhere=1
+
+# --- not this suite's to run ------------------------------------------------
+# Cross-checked against the test's own `// Runner:` header: a test declares its
+# runner, and the manifest agrees, or fast gate 0 fails. #1101 G2 — the Android
+# suite ran this `-d linux` host test against the guest, where `test-sshd` is
+# unresolvable, so it was a permanent fake red.
+elsewhere | desktop_smoke_test.dart | scripts/desktop-smoke.sh
+
+# --- known red, each with the issue that owns it (11) -----------------------
+# G7 REAL PRODUCT BUGS (3) — these stay red until the product is fixed. Do NOT
+# reclassify one to make a number look better; the baseline attributed them.
+known-red | attention_notification_post_test.dart | #1188 | OSC 9 lands inside #851's 1500ms reconnect-replay window, so the attention post is suppressed
+known-red | sftp_favorites_test.dart | #948 | regression guard for an open bug: reopening favorites while the cwd IS the favorite renders favorites-empty
+known-red | golden_flow_tui_test.dart | #1200 | the gutter long-press-drag produces no Clipboard.setData at all; mechanism undetermined
+# G4 STALE (3) — assert the fork's BAKED highlight background, which #1074 removed
+# on purpose when the wash became a live widget layer. Behaviour is fine; the
+# observation point moved. Re-point at GhosttyWashLayer / DetectionStyleResolver.
+known-red | detection_lab_1031_test.dart | #1101 | G4: asserts a baked highlight background that #1074 stopped producing (wash is a live layer now)
+known-red | detection_lab_custom_1031_test.dart | #1101 | G4: same pre-#1074 observation point for custom span anchors
+known-red | url_bubble_wrap_988_test.dart | #1101 | G4: same pre-#1074 observation point, per-row across a wrap
+# G5 STALE (1)
+known-red | import_upsert_diversity_test.dart | #1101 | G5: asserts the PEM paste field, but #1121 preselects the profile's attached key so the editor renders the stored-key note
+# G1 residual (1)
+known-red | cc_nested_fallback_test.dart | #1204 | setup runs now, but #984's entry=exec attaches without a login shell so the nested fallback is never entered
+# G6 HARNESS timing (1)
+known-red | mermaid_markdown_render_test.dart | #1201 | seeds the fixture before shellReady, and input written at that seam is silently dropped
+# G6b DEVICE geometry (2)
+known-red | profile_color_picker_1030_test.dart | #1101 | G6b: ensureVisible races the keyboard animation and warnIfMissed:false swallows the miss
+known-red | wrap_join_copy_test.dart | #1101 | G6b: anchors the gutter band at 5% of box height, which is viewport row 1 at this device's geometry, so the head row is outside it
+
+# --- expected to pass (74) --------------------------------------------------
+# Every one of these passed on clean main against the fleet device. Any of them
+# going red in a PR is signal about the PR.
+expect    | active_session_reconnect_test.dart
+expect    | attention_host_suppression_test.dart
+expect    | attention_signal_measurement_test.dart
+expect    | background_snapshot_gate_test.dart
+expect    | browser_targets_1196_test.dart
+expect    | cc_attach_existing_test.dart
+expect    | cc_capture_attach_test.dart
+expect    | cc_capture_scroll_test.dart
+expect    | cc_churn_bounded_test.dart
+expect    | cc_exec_switch_test.dart
+expect    | cc_gestures_test.dart
+expect    | cc_nested_exec_test.dart
+expect    | cc_render_test.dart
+expect    | cc_setting_test.dart
+expect    | command_chip_998_test.dart
+expect    | command_incomplete_1042_test.dart
+expect    | connect_key_smoke_test.dart
+expect    | connect_smoke_test.dart
+expect    | connect_view_active_session_test.dart
+expect    | deep_link_1117_test.dart
+expect    | detect_paint_freeze_test.dart
+expect    | detection_exception_995_test.dart
+expect    | detection_repaint_921_test.dart
+expect    | detection_toggle_test.dart
+expect    | disconnect_telemetry_test.dart
+expect    | disconnected_scroll_test.dart
+expect    | file_url_actions_994_test.dart
+expect    | force_repaint_robustness_918_test.dart
+expect    | ghostty_osc8_hyperlink_test.dart
+expect    | ghostty_url_detection_test.dart
+expect    | gutter_copy_scrollback_test.dart
+expect    | gutter_mark_restyle_shot_test.dart
+expect    | gutter_track_scroll_993_test.dart
+expect    | hostkey_persist_test.dart
+expect    | html_render_sftp_test.dart
+expect    | import_smoke_test.dart
+expect    | initial_command_smoke_test.dart
+expect    | jump_host_1183_test.dart
+expect    | keyboard_resize_sizing_922_test.dart
+expect    | link_highlight_gutter_geometry_test.dart
+expect    | markdown_media_fill_test.dart
+expect    | multi_session_lifecycle_test.dart
+expect    | osc8_through_tmux_test.dart
+expect    | paint_replay_test.dart
+expect    | path_tap_navigate_999_test.dart
+expect    | path_verified_shade_test.dart
+expect    | port_forward_1047_test.dart
+expect    | port_forward_preview_1054_test.dart
+expect    | profile_default_path_test.dart
+expect    | recent_session_reconnect_test.dart
+expect    | reconnect_cycle_test.dart
+expect    | reconnect_da_writeback_leak_1072_test.dart
+expect    | reconnect_mouse_mode_1014_test.dart
+expect    | relpath_cwd_1036_test.dart
+expect    | resize_storm_bounded_test.dart
+expect    | resume_liveness_test.dart
+expect    | selection_copy_after_redraw_test.dart
+expect    | service_outlives_ui_reconnect_test.dart
+expect    | sftp_browse_smoke_test.dart
+expect    | sftp_upload_roundtrip_test.dart
+expect    | sftp_upload_test.dart
+expect    | shell_bytes_smoke_test.dart
+expect    | single_session_soft_drop_fgs_1018_test.dart
+expect    | terminal_layout_fill_test.dart
+expect    | tmux_scrollback_test.dart
+expect    | tmux_status_tap_kbrace_test.dart
+expect    | tmux_status_tap_sgr_test.dart
+expect    | tmux_window_switch_detection_test.dart
+expect    | tui_wrap_join_copy_test.dart
+expect    | url_copy_navigate_test.dart
+expect    | url_wrap_indent_925_test.dart
+expect    | viewer_actions_1038_test.dart
+expect    | wash_underlay_1074_shot_test.dart
+expect    | window_switch_repaint_922_test.dart

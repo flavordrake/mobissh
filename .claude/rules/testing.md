@@ -88,6 +88,20 @@ The native app has its OWN gate, separate from the PWA Playwright gates above.
   `scripts/test-integration-wiring.sh` (fast gate 0) pins this against every test on
   disk. Fixture setup scripts must honour `SSHD_HOST` — the runner pins it to an
   unambiguous container, so a hard-coded `test-sshd` seeds the wrong sshd.
+- **The suite enforces an ACCEPTED BASELINE, not an all-green run (#1101/#1205).**
+  `native/integration_test/BASELINE.manifest` is the record: 74 expected-pass of the
+  85 discovered device tests, plus 11 known-red each with a one-line cause and the
+  issue that owns it. The suite's verdict:
+  - an **expected-pass** test fails → the suite FAILS (the reason the gate exists)
+  - a **known-red** test fails → reported, not fatal
+  - a **known-red** test PASSES → the suite FAILS: promote it to `expect` and bump the
+    `accepted` tally, citing the run. A silently-recovered test that stays excused is
+    how the list rots back into "22 reds, nobody knows why"
+  - a test on disk in **neither** list → the suite FAILS, and fast gate 0 fails first
+  **Adding an integration test means adding a manifest line** (and bumping the tally).
+  `scripts/test-integration-wiring.sh` checks the manifest against every test on disk —
+  no emulator, sub-second — so it cannot drift from the corpus. Never move a red into
+  `known-red` to go green: a red that no issue owns is not a baseline, it is a hole.
 - **Never silently skip the device tier.** `native-integration-suite.sh` exits
   non-zero with "NOT VALIDATED" when no emulator is present (unless
   `--allow-no-emulator` is passed explicitly). A missing emulator must never
