@@ -56,7 +56,6 @@ known-red | detection_lab_custom_1031_test.dart | #1101 | G4: same pre-#1074 obs
 known-red | url_bubble_wrap_988_test.dart | #1101 | G4: same pre-#1074 observation point, per-row across a wrap
 # G5 STALE (1)
 known-red | import_upsert_diversity_test.dart | #1101 | G5: asserts the PEM paste field, but #1121 preselects the profile's attached key so the editor renders the stored-key note
-# G1 residual (1)
 # G6 HARNESS timing (1)
 known-red | mermaid_markdown_render_test.dart | #1201 | seeds the fixture before shellReady, and input written at that seam is silently dropped
 # G6b DEVICE geometry (2)
