@@ -18,7 +18,7 @@
 #   icebox            — labeled icebox, skip entirely
 #   close             — superseded or stale
 #
-# Test-fixup branches (only touch tests/) are part of the two-pass workflow
+# Test-fixup branches (only touch test dirs) are part of the two-pass workflow
 # and don't count as failed feature attempts for know-when-to-quit rules.
 
 set -euo pipefail
@@ -101,17 +101,17 @@ for issue in issues:
         signals.append('labeled icebox')
 
     # Rule 1: Has bot branches → already-attempted (needs failure analysis)
-    # Test-fixup branches (only touch tests/) are a normal part of the two-pass
+    # Test-fixup branches (only touch test dirs) are a normal part of the two-pass
     # workflow and don't count as failed feature attempts.
     if attempts > 0:
         latest_files = latest.get('filenames', [])
         latest_is_test_fixup = bool(latest_files) and all(
-            f.startswith('tests/') for f in latest_files
+            f.startswith(('native/test/', 'native/integration_test/', 'test/')) for f in latest_files
         )
         feature_attempts = sum(
             1 for b in branches
             if not (b.get('filenames') and all(
-                f.startswith('tests/') for f in b['filenames']
+                f.startswith(('native/test/', 'native/integration_test/', 'test/')) for f in b['filenames']
             ))
         )
         if latest_is_test_fixup:

@@ -3,6 +3,12 @@ name: gesture-testing
 description: Use when debugging touch/gesture issues on Android emulator, when a gesture feature is added or modified, when emulator tests pass but device testing fails, or when the user says "diagnose gestures", "debug touch", "gesture audit", "why aren't touches working", "scroll not working", "pinch broken", or "gesture interaction".
 ---
 
+> **Scope (#1205):** the PWA this skill drives (Appium, `tests/appium/`,
+> `src/modules/*.ts`, xterm.js) is RETIRED and those commands no longer run.
+> The diagnostic METHOD — handler inventory, event-flow tracing, the case
+> studies — is why it is kept. Apply it to `native/lib/` and the on-emulator
+> suite (`scripts/native-integration-suite.sh`).
+
 # Gesture Testing
 
 Guide for developing and debugging touch gesture features in MobiSSH. The frozen baseline test suite is the ground truth -- when a new feature breaks a baseline, the feature has a regression.

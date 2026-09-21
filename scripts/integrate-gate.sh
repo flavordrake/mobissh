@@ -5,11 +5,15 @@
 # Optionally closes the PR/branch on failure.
 #
 # Gate tiers:
-#   1. TypeScript typecheck
-#   2. ESLint
-#   3. Vitest unit tests
-#   4. Test coverage check (source changes must include test changes)
-#   5. Headless Playwright (auto-runs when PR touches UI files)
+#   1. scripts/native-fast-gate.sh — bash rule tests + the node:test infra tests
+#      + flutter analyze + the flutter unit suite
+#   2. ESLint over the remaining JS (server, feedback service, static scripts)
+#   3. Test coverage check (source changes must include test changes)
+#
+# #1205: tiers 1-3 used to be tsc / eslint / vitest over the PWA, and tier 5 ran
+# headless Playwright when a PR touched PWA UI files. The PWA is retired; the
+# native gate is what actually guards a bot branch now. The on-emulator
+# integration tier stays OUT of this gate — it needs a leased device.
 #
 # When running inside a worktree (agent isolation), stash/restore is skipped
 # since the working directory is already isolated.
@@ -57,11 +61,9 @@ ok()  { echo "+ $*"; }
 err() { echo "! $*" >&2; }
 
 # Track results
-TSC_RESULT=""
+NATIVE_RESULT=""
 LINT_RESULT=""
-UNIT_RESULT=""
 COVERAGE_RESULT=""
-HEADLESS_RESULT=""
 GATE_PASSED=true
 
 # Detect worktree isolation: if we're in a worktree (not the main .git dir),
@@ -138,20 +140,21 @@ if [ -f server/package.json ] && [ ! -d server/node_modules ]; then
   npm --prefix server install --ignore-scripts 2>&1
 fi
 
-# Gate 1: TypeScript
-log "Gate 1/3: TypeScript typecheck..."
-if npx tsc --noEmit 2>&1; then
-  TSC_RESULT="pass"
-  ok "tsc: pass"
+# Gate 1: the native fast gate (relative path — this runs inside the checked-out
+# branch's own tree, per .claude/rules/agents.md #537)
+log "Gate 1/3: native fast gate..."
+if scripts/native-fast-gate.sh 2>&1; then
+  NATIVE_RESULT="pass"
+  ok "native gate: pass"
 else
-  TSC_RESULT="fail"
-  err "tsc: FAIL"
+  NATIVE_RESULT="fail"
+  err "native gate: FAIL"
   GATE_PASSED=false
 fi
 
-# Gate 2: ESLint
+# Gate 2: ESLint over the JS that is left
 log "Gate 2/3: ESLint..."
-if npx eslint src/ public/ server/ tests/ 2>&1; then
+if npx eslint server/ server-feedback/ public/ test/ 2>&1; then
   LINT_RESULT="pass"
   ok "eslint: pass"
 else
@@ -160,36 +163,15 @@ else
   GATE_PASSED=false
 fi
 
-# Gate 3: Unit tests (vitest only — no browser tests)
-log "Gate 3/3: Unit tests (vitest)..."
-if npx vitest run 2>&1; then
-  UNIT_RESULT="pass"
-  ok "vitest: pass"
-else
-  UNIT_RESULT="fail"
-  err "vitest: FAIL"
-  GATE_PASSED=false
-fi
-
-# Gate 4: Test coverage check — source changes must include test changes
-log "Gate 4/5: Test coverage check..."
-CHANGED_SRC=$(git diff --name-only origin/main -- 'src/modules/*.ts' 'server/index.js' 2>/dev/null | grep -v '__tests__' | grep -v '\.d\.ts$' || true)
-CHANGED_TESTS=$(git diff --name-only origin/main -- 'src/modules/__tests__/*' 'tests/*' 2>/dev/null || true)
+# Gate 3: Test coverage check — source changes must include test changes
+log "Gate 3/3: Test coverage check..."
+CHANGED_SRC=$(git diff --name-only origin/main -- 'native/lib/*' 'server/*.js' 'server-feedback/*.js' 2>/dev/null || true)
+CHANGED_TESTS=$(git diff --name-only origin/main -- 'native/test/*' 'native/integration_test/*' 'test/*' 2>/dev/null || true)
 CHANGED_INFRA=$(git diff --name-only origin/main -- 'scripts/*' '.claude/*' '*.json' '*.md' 2>/dev/null || true)
-CHANGED_CSS_ONLY=false
 CHANGED_SRC_COUNT=$(echo "$CHANGED_SRC" | grep -c '[^[:space:]]' || true)
 CHANGED_TESTS_COUNT=$(echo "$CHANGED_TESTS" | grep -c '[^[:space:]]' || true)
 
-# CSS/HTML-only changes under 20 lines are exempt
-if [ "$CHANGED_SRC_COUNT" -eq 0 ]; then
-  CSS_HTML=$(git diff --name-only origin/main -- 'public/app.css' 'public/index.html' 2>/dev/null || true)
-  CSS_HTML_LINES=$(git diff --stat origin/main -- 'public/app.css' 'public/index.html' 2>/dev/null | tail -1 | grep -oP '\d+ insertion' | grep -oP '^\d+' || echo "0")
-  if [ -n "$CSS_HTML" ] && [ "${CSS_HTML_LINES:-0}" -lt 20 ]; then
-    CHANGED_CSS_ONLY=true
-  fi
-fi
-
-if [ "$CHANGED_SRC_COUNT" -gt 0 ] && [ "$CHANGED_TESTS_COUNT" -eq 0 ] && [ "$CHANGED_CSS_ONLY" = false ]; then
+if [ "$CHANGED_SRC_COUNT" -gt 0 ] && [ "$CHANGED_TESTS_COUNT" -eq 0 ]; then
   COVERAGE_RESULT="fail"
   err "coverage: FAIL — ${CHANGED_SRC_COUNT} source file(s) changed, 0 test files changed"
   err "  Changed: ${CHANGED_SRC}"
@@ -203,32 +185,14 @@ else
   fi
 fi
 
-# Gate 5: Headless Playwright for UI-touching PRs
-log "Gate 5/5: Headless Playwright (UI PRs only)..."
-TOUCHES_UI=$(git diff --name-only origin/main -- 'src/modules/ui.ts' 'public/index.html' 'public/app.css' 2>/dev/null | head -1 || true)
-if [ -n "$TOUCHES_UI" ]; then
-  log "PR touches UI files — running headless Playwright..."
-  if scripts/test-headless.sh 2>&1; then
-    HEADLESS_RESULT="pass"
-    ok "headless: pass"
-  else
-    HEADLESS_RESULT="fail"
-    err "headless: FAIL"
-    GATE_PASSED=false
-  fi
-else
-  HEADLESS_RESULT="skip"
-  ok "headless: skip (no UI files changed)"
-fi
-
 # Summary
 echo ""
 if [ "$GATE_PASSED" = true ]; then
   ok "GATE PASSED: ${BRANCH}"
-  ok "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT} | coverage: ${COVERAGE_RESULT} | headless: ${HEADLESS_RESULT}"
+  ok "  native: ${NATIVE_RESULT} | eslint: ${LINT_RESULT} | coverage: ${COVERAGE_RESULT}"
 else
   err "GATE FAILED: ${BRANCH}"
-  err "  tsc: ${TSC_RESULT} | eslint: ${LINT_RESULT} | vitest: ${UNIT_RESULT} | coverage: ${COVERAGE_RESULT} | headless: ${HEADLESS_RESULT}"
+  err "  native: ${NATIVE_RESULT} | eslint: ${LINT_RESULT} | coverage: ${COVERAGE_RESULT}"
 
   # Close PR if requested
   if [ "$CLOSE_ON_FAIL" = true ] && [ -n "$PR_NUMBER" ]; then
@@ -236,11 +200,9 @@ else
     gh pr close "$PR_NUMBER" --comment "$(cat <<COMMENT
 Closing: gate failed during integration triage.
 
-**tsc:** ${TSC_RESULT}
+**native gate:** ${NATIVE_RESULT}
 **eslint:** ${LINT_RESULT}
-**vitest:** ${UNIT_RESULT}
 **coverage:** ${COVERAGE_RESULT}
-**headless:** ${HEADLESS_RESULT}
 
 The bot can retry from the issue if the root cause is addressed.
 COMMENT

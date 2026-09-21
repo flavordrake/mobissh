@@ -6,9 +6,10 @@ the terminal in-browser. Designed for Android/iOS home screen install over Tails
 
 ## Architecture
 - `server/index.js` — plain JS Node.js process: HTTP static files + WebSocket SSH bridge (port 8081)
-- `src/modules/*.ts` — TypeScript source, compiles to `public/modules/*.js` via `tsc`
+- `native/lib/*.dart` — the Flutter app (the product)
 - `public/` — PWA frontend (ES modules loaded by `index.html`)
-- `tests/` — Playwright browser tests + Vitest unit tests
+- `native/test/` + `native/integration_test/` — Flutter unit/widget and on-emulator tests
+- `test/infra/` — node:test coverage of the non-Flutter infrastructure
 
 ## Module Map
 | Module | Responsibility | Key exports |

@@ -87,7 +87,7 @@ The agent's system prompt contains only the discovery/classification workflow.
 against one or more branches and returns pass/fail results.
 
 **Why it needs its own agent:** Fast-gating involves checking out a branch, running
-tsc + eslint + vitest, and restoring state. Takes 30-60 seconds per branch. Multiple
+the native gate + eslint + the coverage check, and restoring state. Multiple
 branches can be gated in parallel using separate agent instances.
 
 **What it does NOT do:** Merge decisions, acceptance testing (emulator), label management.

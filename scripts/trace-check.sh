@@ -60,7 +60,7 @@ fi
 echo ""
 echo "Recently modified files (last 30 min):"
 find . -name "*.ts" -o -name "*.js" -o -name "*.css" -o -name "*.html" -o -name "*.sh" 2>/dev/null \
-  | grep -v node_modules | grep -v ".traces/" | grep -v public/modules/ \
+  | grep -v node_modules | grep -v ".traces/" \
   | while read -r f; do
     MTIME=$(stat -c %Y "$f" 2>/dev/null || echo 0)
     AGE=$(( $(date +%s) - MTIME ))

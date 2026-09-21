@@ -2,10 +2,10 @@
 
 ## Config Structure
 `.eslintrc.json` has path-scoped overrides:
-- `src/**/*.ts` — strictest: `strict-type-checked`, no-explicit-any: error
+- `server/**/*.js`, `server-feedback/**/*.js` — node + commonjs
 - `public/**/*.js` — browser globals, module scope
 - `server/**/*.js` — node globals, commonjs
-- `tests/**/*.js` — browser+node, commonjs
+- `test/**/*.js` — node + commonjs (the infra tests)
 
 ## Most Common Lint Errors and Fixes
 
@@ -74,7 +74,7 @@ el.addEventListener('click', () => {
 - If a pre-existing error blocks your build, note it in the PR body
 
 ## Semgrep Integration
-`scripts/test-lint.sh` also runs `scripts/test-sftp-sync.sh` and semgrep custom rules.
+`npm run lint` covers the JS that is left; `npm run semgrep` runs the custom rules.
 Semgrep errors to watch for:
 - `plaintext-secret-storage` — never put passwords in localStorage
 - `duplicate-event-listener` — consolidate or add cleanup

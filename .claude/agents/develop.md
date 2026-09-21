@@ -44,12 +44,12 @@ Your prompt will contain:
 ## Setup
 
 **CRITICAL: Always use relative paths for scripts.** When running in a worktree,
-`scripts/test-typecheck.sh` (relative) works but `/home/.../scripts/test-typecheck.sh`
+`scripts/native-fast-gate.sh` (relative) works but `/home/.../scripts/native-fast-gate.sh`
 (absolute) will be denied by permission patterns. Use `scripts/*` paths, never absolute.
 
 **CRITICAL: Gate INSIDE your worktree — NEVER touch the main checkout (#537).** Run
-the gate as a RELATIVE path from your worktree root (`scripts/native-fast-gate.sh`
-for native; `scripts/test-fast-gate.sh` for the PWA). Its `REPO_ROOT` resolves to
+the gate as a RELATIVE path from your worktree root (`scripts/native-fast-gate.sh`).
+Its `REPO_ROOT` resolves to
 *your worktree*, and `flutter-cmd.sh` sets `XDG_CONFIG_HOME` so Flutter runs fine in
 the worktree — there is NO pub workspace, so the worktree resolves its deps
 independently (verified). Do **NOT** `git checkout` / `git reset --hard` / `git merge`
@@ -131,13 +131,14 @@ ANALYSIS:
 2. Write integration smoketest (end-to-end flow)
 
 ### Test file locations:
-- Logic/protocol → `src/modules/__tests__/*.test.ts` (Vitest)
-- UI/behavior → `tests/*.spec.js` (Playwright)
-- Use fixtures from `tests/fixtures.js` — never duplicate mock server setup
+- Logic/widgets → `native/test/**/*_test.dart` (flutter test)
+- Device behaviour → `native/integration_test/*_test.dart` (on-emulator tier;
+  the test DECLARES its own fixtures in its header, #1101)
+- Non-Flutter infrastructure → `test/infra/*.test.js` (node:test, no npm deps)
 
 Run the tests to establish the "red" baseline:
 ```bash
-scripts/test-unit.sh
+scripts/native-fast-gate.sh
 ```
 Record which tests fail and why. These are your targets.
 
@@ -174,17 +175,17 @@ If conflicts: resolve them. If unresolvable, report in failure summary.
 **3. Update existing tests**
 - If your code changes behavior, update existing tests to match
 - If your code renames/moves things, update test imports and selectors
-- Run `scripts/test-unit.sh` — existing tests must pass (green baseline)
+- Run `scripts/native-fast-gate.sh` — existing tests must pass (green baseline)
 
 **4. Verify new tests pass**
 - Run your new tests from Phase 1 — they should now pass (fail→pass)
 - If they don't pass, fix implementation (not the test) and re-run
 - If a test was wrong (testing the wrong thing), fix it and document why
 
-**5. Compile + Lint**
+**5. Analyze + Lint**
 ```bash
-scripts/test-typecheck.sh
-scripts/test-lint.sh
+scripts/native-fast-gate.sh
+npx eslint server/ server-feedback/ public/ test/   # only if you touched JS
 ```
 Fix errors in your changes only. Note pre-existing issues.
 
@@ -218,19 +219,18 @@ Capture a lightweight performance baseline so deltas are visible:
 
 ```bash
 # Before implementing (run once at cycle start, save to TRACE):
-scripts/test-unit.sh 2>&1 | tail -1  # vitest duration line
+scripts/native-fast-gate.sh   # keep the `flutter test` duration line
 # Save to {TRACE_DIR}/telemetry/perf-before.txt
 
 # After implementing (run again after code changes):
-scripts/test-unit.sh 2>&1 | tail -1
+scripts/native-fast-gate.sh
 # Save to {TRACE_DIR}/telemetry/perf-after.txt
 ```
 
-For web/PWA performance (when changes touch rendering, WS, or terminal):
-- **Lighthouse CI** (if available): `npx lhci autorun` — captures FCP, TTI, CLS
-- **Playwright `page.metrics()`**: captures JSHeapUsedSize, LayoutCount, RecalcStyleCount
-- **`performance.measure()` in app code**: transfer tracing (#207) already captures
-  per-chunk timing — the TRACE should reference those console logs
+For terminal/render performance (when changes touch the terminal view, gestures or
+detection):
+- **paint-stats** (`native/lib/diagnostics/paint_stats.dart`) — already instrumented
+  and carried in bug reports; `scripts/paint-replay.sh` replays a capture
 
 The agent does NOT need to analyze the data — just capture it. The TRACE becomes
 the artifact. Significant deltas are discovered during harvest, not during development.
@@ -239,11 +239,10 @@ the artifact. Significant deltas are discovered during harvest, not during devel
 
 | Layer | Tool | What it measures | When to use |
 |-------|------|-----------------|-------------|
-| Test suite | vitest duration line | Overall test speed regression | Always |
-| Browser render | `page.metrics()` | Layout thrashing, style recalcs, heap | UI changes |
-| Network/WS | Transfer tracing (localStorage) | Chunk timing, ack latency, throughput | Connection/SFTP changes |
-| Terminal | `performance.mark/measure` | Write batching effectiveness | xterm.js changes |
-| Bundle size | `ls -la public/modules/*.js` | Compiled output size delta | Any TS change |
+| Test suite | `flutter test` duration line | Overall test speed regression | Always |
+| Terminal render | paint-stats (#985) | Frame/damage accounting | Terminal view changes |
+| Byte flow | byteTrace (#790) | Chunk timing, throughput | Connect/SFTP changes |
+| Artifact size | `ls -la public/mobissh-native.apk` | Shipped size delta | Any build change |
 
 None of these require code changes to capture — they're built into the
 tools or already instrumented in the app. The agent runs them, saves output
@@ -274,7 +273,7 @@ A PR is integration-ready when ALL of these are true:
 1. **Existing tests updated** — any test broken by the change has been fixed
 2. **New tests added** — at least one test that went from fail→pass
 3. **Smoketest exists** — feature is accessible (element exists, handler registered)
-4. **Fast gate passes** — `scripts/test-fast-gate.sh` (tsc + lint + vitest)
+4. **Fast gate passes** — `scripts/native-fast-gate.sh` (rule tests + infra tests + analyze + flutter test)
 5. **Simplify validates** — no code changed without test coverage
 6. **TRACE populated** — `TRACE.md` has status, Why, Ambiguity Gap, and Knowledge Seed
 
@@ -329,9 +328,9 @@ Write `/tmp/pr-body-{N}.md` with:
 - **Smoketest**: <what it checks — feature accessible, handler registered, etc.>
 
 ## Test results
-- tsc: PASS/FAIL
-- eslint: PASS/FAIL
-- vitest: PASS/FAIL (N tests, M new)
+- analyze: PASS/FAIL
+- flutter test: PASS/FAIL (N tests, M new)
+- infra tests: PASS/FAIL
 
 ## Diff stats
 - Files changed: N

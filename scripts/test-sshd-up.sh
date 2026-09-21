@@ -4,7 +4,8 @@
 # integration tests can reach `test-sshd:22`. Idempotent; safe to re-run.
 #
 # Needed after a host/process restart (the container + network join die with it).
-# Mirrors what tests/emulator/sshd-fixture.js does, for manual/orchestrator use.
+# Mirrors what scripts/lib/testsshd-fixture.sh does, for manual/orchestrator use.
+# (The JS fixture it used to mirror went with the PWA test tier in #1205.)
 #
 # TEARDOWN (#1049): run from an AGENT WORKTREE, compose names the fixture
 # agent-<worktree-id>-test-sshd-1. That fixture intentionally OUTLIVES this

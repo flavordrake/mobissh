@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Launches the TypeScript/JS LSP MCP server (@mizchi/lsmcp, tsgo preset) for
 # Claude Code — real symbol-accurate navigation (go-to-def, find-references,
-# rename, diagnostics) for the PWA TypeScript sources (src/) instead of grep.
+# rename, diagnostics) for the remaining JavaScript (server/, server-feedback/,
+# public/, test/) instead of grep. The PWA TypeScript it was built for went in #1205.
 #
 # Pinned to Node 22: @mizchi/lsmcp requires `node:sqlite` (Node 22+); the repo's
 # default Node is 20.20.1 which lacks it. tsgo preset uses @typescript/native-

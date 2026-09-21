@@ -20,10 +20,10 @@ validate, merge). The cycle is: delegate -> bot works -> integrate -> learn -> r
 ## North Stars
 
 - **Compile non-determinism into deterministic scripts.** Every GitHub operation uses
-  `scripts/gh-ops.sh`, every test gate uses `scripts/test-fast-gate.sh`, every server
+  `scripts/gh-ops.sh`, every test gate uses `scripts/native-fast-gate.sh`, every server
   rebuild uses `scripts/container-ctl.sh`. No raw `gh`, no compound `&&` chains.
 - **Faithful input representation.** For IME/input issues, tests must verify intent ==
-  received using `IntentCapture`/`TerminalReceiver`/`assertFaithful` from `tests/emulator/fixtures.js`.
+  received, asserted in an on-emulator integration test (`native/integration_test/`).
 - **Approval noise = risk.** Scripts are approved once by pattern (`Bash(scripts/*)`).
   Composed bash commands require per-invocation approval. Speed-reading approvals is how
   the main repo got deleted.
@@ -230,14 +230,14 @@ its own patterns. Read the actual source files to produce this -- do not guess.
 **Do NOT** -- Hard constraints:
 - No inline styles (CSS classes only) -- CLAUDE.md rule
 - No new abstractions for one-time operations
-- No `force: true` or extended timeouts in Playwright tests
+- No extended timeouts or `pumpAndSettle` sleeps to paper over a race
 - No changes outside scope list
 - No emojis in code or UI text unless specifically requested
 - (Add failure-specific constraints when re-delegating)
 
 **Verify** -- Exact command sequence:
 ```
-scripts/test-fast-gate.sh
+scripts/native-fast-gate.sh
 ```
 
 ### Template
@@ -254,9 +254,9 @@ scripts/test-fast-gate.sh
 
 **Acceptance criteria:**
 1. <verifiable criterion>
-2. Headless Playwright tests added/updated for any behavior change or new feature
-3. Test mocks match the actual APIs used (e.g., mock SW registration if code uses it)
-4. All existing tests pass (`scripts/test-fast-gate.sh`)
+2. Tests added/updated for any behavior change or new feature
+3. Test fakes match the actual APIs used
+4. All existing tests pass (`scripts/native-fast-gate.sh`)
 
 **Context:**
 <code snippets from actual files on main>
@@ -272,39 +272,40 @@ scripts/test-fast-gate.sh
 
 **Verify:**
 1. Run `/simplify` to review your changes for reuse, quality, and efficiency. Fix any issues found.
-2. Run `scripts/test-fast-gate.sh`
+2. Run `scripts/native-fast-gate.sh`
 ```
 
 ### Test-fixup template
 
-Used when a bot feature has been approved by human review but headless tests fail because
+Used when a bot feature has been approved by human review but tests fail because
 the UX changed (outdated assertions, not flaky tests). This is a second pass on the same
 issue -- the feature code is already on main, only test code needs updating.
 
 ```
 @claude
 
-**Objective:** Update headless Playwright tests to match the new UX from #{issue}.
+**Objective:** Update the tests to match the new UX from #{issue}.
 
 **Files in scope:**
-- `tests/<file>.spec.js` -- <what changed in the UX that breaks this test>
-- `tests/fixtures.js` -- <if shared helpers need updating>
+- `native/test/<file>_test.dart` -- <what changed in the UX that breaks this test>
+- `native/integration_test/<file>_test.dart` -- <if a device test is affected>
 
-**Do NOT touch:** Any file outside `tests/`. Application code is correct and merged.
+**Do NOT touch:** Any file outside the test directories. Application code is correct
+and merged.
 
 **Acceptance criteria:**
-1. All headless Playwright tests pass (`scripts/test-headless.sh`)
-2. No changes to application source (`src/`, `public/`, `server/`)
+1. `scripts/native-fast-gate.sh` passes
+2. No changes to application source (`native/lib/`, `server/`)
 3. Test updates match the new UX behavior, not workarounds
 
 **Context:**
 <describe the UX change: what the old behavior was, what the new behavior is>
-<specific DOM changes: new selectors, removed elements, changed visibility>
+<specific widget changes: new keys, removed widgets, changed visibility>
 <code snippets from the updated application code showing new behavior>
 
 **Do NOT:**
 - Change any application code -- only test code
-- Add `force: true` or extended timeouts to Playwright tests
+- Add extended timeouts or sleeps to paper over a race
 - Skip or delete tests -- update assertions to match new behavior
 - Add new test files -- update existing tests
 
@@ -312,8 +313,8 @@ issue -- the feature code is already on main, only test code needs updating.
 1. `git fetch origin main && git merge origin/main` -- get the merged feature code
 
 **Verify:**
-1. Run `scripts/test-fast-gate.sh`
-2. Run `scripts/test-headless.sh` -- ALL tests must pass
+1. Run `scripts/native-fast-gate.sh`
+2. For a device-class change, run the on-emulator tier under a lease
 ```
 
 ### Quality gate
@@ -540,7 +541,7 @@ These come from real project history. They are not suggestions -- they are hard 
 boundaries. "Only touch X and Y" is mandatory. Without it, the bot adds abstractions,
 refactors adjacent code, and "improves" beyond scope.
 
-**Bot CAN run headless Playwright** (via `scripts/test-headless.sh`). For initial
+**Bot CAN run the fast gate** (via `scripts/native-fast-gate.sh`). For initial
 feature work, the fast gate (tsc + eslint + unit) is sufficient. For test-fixup passes
 where the bot must update test assertions to match new UX, include headless in the
 verify step. The distinction: feature passes verify with fast gate only; test-fixup

@@ -102,12 +102,12 @@ TS="$SANDBOX/src"
 mkdir -p "$TS/__tests__" "$TS/modules"
 touch "$TS/app.ts" "$TS/modules/x.ts" "$TS/modules/x.test.ts" "$TS/__tests__/y.ts"
 cat >"$SANDBOX/ts.info" <<EOF
-SF:src/app.ts
+SF:web/app.ts
 DA:1,1
 end_of_record
 EOF
 ts="$("$SUMMARY" "$SANDBOX/ts.info" "$TS" --ext ts)"
-check_line "ts never-loaded module"     "never-loaded${T}src/modules/x.ts" "$ts"
+check_line "ts never-loaded module"     "never-loaded${T}web/modules/x.ts" "$ts"
 check_line "ts never-loaded count"      "never-loaded-count${T}1" "$ts"
 check_absent "ts test file skipped"     "x.test.ts" "$ts"
 check_absent "ts __tests__ dir skipped" "__tests__" "$ts"

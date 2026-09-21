@@ -2,7 +2,12 @@
 
 Mobile command and control for coding agents over SSH. Swipe-type prompts, dictate instructions, manage tokens and URLs -- all from your phone, with the full power of a real terminal underneath.
 
-> **Standard SSH, mobile-native UX.** The bridge is a thin WebSocket proxy that forwards bytes between your browser and the SSH server. No command interception, no proprietary protocol. Your agents (Claude Code, OpenCode, Gemini CLI, Codex) run in their normal SSH environment.
+> **The PWA web app was retired in #1205.** MobiSSH is the native app; install it from
+> `/native.html` on the tailnet host (the root `/` redirects there). The feature prose
+> below describes the UX the native app carries forward — where it names browser
+> internals, read it as history.
+
+> **Standard SSH, mobile-native UX.** The app speaks SSH directly (dartssh2). No command interception, no proprietary protocol. Your agents (Claude Code, OpenCode, Gemini CLI, Codex) run in their normal SSH environment.
 
 ## The workflow
 
@@ -37,18 +42,17 @@ Automated security audit via `scripts/security-audit.sh` — runs semgrep (stati
 ## Architecture
 
 ```
-Phone browser --(WSS)--> Node.js bridge --(SSH)--> Target server
-                              |
-              HTTP static file server (same port)
+Native app --(SSH)--> Target server
+
+Node.js server (port 8081, Tailscale) -- install page, APK/AAB artifacts,
+                                         bug-report + telemetry relay,
+                                         Claude Code approval bridge
 ```
 
-- **`server/index.js`** -- single Node.js process: HTTP + WebSocket SSH bridge on one port (default 8081)
-- **`src/modules/*.ts`** -- frontend TypeScript (strict mode), compiled via `tsc` to `public/modules/*.js`
-- **`public/app.css`** -- mobile-first styles, CSS custom properties for theming
-- **`public/sw.js`** -- service worker, network-first with offline app shell fallback
-- **`public/recovery.js`** -- boot watchdog + emergency reset (8s timeout, long-press escape hatch)
-- **`src/modules/session.ts`** -- SessionHandle: buffered terminal with debounced ResizeObserver, output buffering, per-session lifecycle
-- **`public/vendor/`** -- vendored @xterm/xterm 6.0.0 and @xterm/addon-fit 0.11.0
+- **`native/`** -- the Flutter app: the product
+- **`server/index.js`** -- single Node.js process: static files (`public/`, `native-dist/`), `/api/bug-report` and friends, `/api/approval*` + the `/events` SSE channel, `/install-hooks/*`
+- **`server-feedback/`** -- the feedback-service container that `server/index.js` relays to
+- **`public/native.html`** -- the generated install page; `public/index.html` redirects `/` to it
 
 ### Input modes
 
@@ -110,16 +114,11 @@ The script:
 MOBISSH_LOCAL_FORWARDS=1 node ~/mobissh/server/index.js
 ```
 
-Then open `http://127.0.0.1:8081/` in any browser on the device and install as a PWA.
+Then open `http://127.0.0.1:8081/` on the device — it redirects to the install page.
 
-**Local port forwarding (`-L`):** With `MOBISSH_LOCAL_FORWARDS=1`, a "Forwards" panel
-appears in the session menu. Use it to forward a local phone port to a remote SSH host
-(e.g., `8080 → internal-host:80`). This feature is intentionally absent from the remote
-`mobissh-prod` Docker install.
-
-**PWA coexistence:** You can install both `https://mobissh.tailnet/` (remote Docker PWA)
-and `http://127.0.0.1:8081/` (Termux PWA) as separate home-screen icons — they have
-distinct scopes and do not conflict.
+> `MOBISSH_LOCAL_FORWARDS=1` gated the PWA's `-L` forwarding panel and no longer does
+> anything: the WebSocket SSH bridge it served was retired with the PWA (#1205). The
+> Termux install is still useful as a local copy of the install/telemetry server.
 
 To keep the server running when the screen is off:
 
@@ -134,22 +133,23 @@ MOBISSH_LOCAL_FORWARDS=1 node ~/mobissh/server/index.js
 
 **nginx subpath:** `BASE_PATH=/ssh PORT=8081 node server/index.js` with `nginx-ssh-location.conf`. See `scripts/setup-nginx.sh`.
 
-**Cache busting:** Visit `/clear` to unregister service workers and wipe storage. Boot watchdog shows Reset on init failure. Long-press (1.5s) Settings tab for emergency reset.
+**Stale PWA on a device:** `/clear` survives the retirement precisely for this — visit it to unregister the old service worker and wipe its storage.
 
 ## Development
 
 ### Build
 
-`npx tsc` compiles `src/modules/*.ts` to `public/modules/*.js`. No bundler.
+The app is built with `scripts/ship-native.sh` (never a bare `flutter` call). There is
+no web build step — `public/` ships verbatim.
 
 ### Testing
 
 | Layer | What it covers | Command |
 |---|---|---|
-| Type check + lint + unit | Fast pre-commit gate | `scripts/test-fast-gate.sh` |
-| Headless browser | UI rendering, navigation, vault, forms | `scripts/test-headless.sh` |
-| Android emulator (Appium) | Touch gestures, real Chrome, screen recording | `scripts/run-appium-tests.sh` |
-| Manual device | iOS, biometric, Bluetooth keyboard | On-device |
+| Fast gate | Rule tests, infra tests, `flutter analyze`, Flutter unit suite | `scripts/native-fast-gate.sh` |
+| Infra | Feedback guard, manifest, notify/TRACE/termux scripts | `scripts/test-infra.sh` |
+| On-emulator | Connect/auth, reconnect, SFTP, IPC, lifecycle | `scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh` |
+| Manual device | Gestures, keyboard, biometric, lifecycle | On-device |
 
 ### Bot delegation
 

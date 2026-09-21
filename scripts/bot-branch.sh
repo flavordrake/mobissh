@@ -73,24 +73,10 @@ _commit() {
     exit 1
   fi
 
-  # Stage only test files and fixtures (safe default for emulator test issues)
-  local staged=0
-  for f in tests/emulator/*.spec.js tests/emulator/fixtures.js; do
-    if [ -f "$f" ] && git diff --name-only HEAD -- "$f" | grep -q . 2>/dev/null; then
-      git add "$f"
-      staged=1
-    fi
-    # Also add untracked new files
-    if [ -f "$f" ] && git ls-files --others --exclude-standard "$f" | grep -q . 2>/dev/null; then
-      git add "$f"
-      staged=1
-    fi
-  done
-
-  if [ "$staged" -eq 0 ]; then
-    # Fallback: stage all modified/new test files
-    git add tests/ 2>/dev/null || true
-  fi
+  # Stage test files (safe default for test-only issues).
+  # #1205: the PWA's tests/emulator/*.spec.js shortcut went with the PWA; the
+  # test surfaces now are the Flutter suites and the node:test infra tests.
+  git add native/test native/integration_test test 2>/dev/null || true
 
   local changes
   changes="$(git diff --cached --stat)"

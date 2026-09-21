@@ -33,14 +33,14 @@ scripts/native-fast-gate.sh
 ## Phase 1 — connecting to test-sshd
 
 The integration test exercises the full lifecycle against the real
-`test-sshd` Alpine + OpenSSH container shared with the PWA tests.
+`test-sshd` Alpine + OpenSSH container (docker-compose.test.yml).
 
 ### Prerequisites
 
 The fd-dev container must share the `mobissh` Docker network so it can reach
 `test-sshd:22` by DNS. The test-sshd lifecycle helper
-(`tests/emulator/sshd-fixture.js`) handles this for headless tests; for the
-Flutter integration test you start the container manually from the repo root:
+(`scripts/lib/testsshd-fixture.sh`, via `scripts/lib/integration-fixtures.sh`)
+handles this for the suite; to start the container by hand from the repo root:
 
 ```bash
 docker compose -f docker-compose.test.yml up -d test-sshd

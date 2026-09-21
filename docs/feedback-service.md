@@ -12,9 +12,9 @@ commands, (4) the operator handoff for a PVE LXC deploy.
 
 | Route | Producer(s) | Payload | Response |
 |---|---|---|---|
-| `POST /api/bug-report` | native `feedback_overlay.dart` (in-app feedback, #661/#967), PWA `src/modules/bug-report.ts`, install-page form `public/native-feedback.js` | one JSON body: `title`, `comment` (full untruncated note), `logs`, `screenshot` (base64 data URL), `frames[]` (repro burst), `connectLog[]`, `gestureLog[]`, `byteTrace[]` + `scrollTrace[]` + `grid` (#790 replay), `sentSgrTrace[]` (#793), `userAgent`, `url`, `version` | `200 {ok:true,saved:true}`; `400 {"error":"invalid json"}` |
-| `POST /api/drop-telemetry` | PWA `src/modules/drop-telemetry.ts` (auto, on reconnect recovery, 5min throttle) | JSON: `kind`, `reason`, `sessionId`, `host`, `connectLog[]`, `gestureLog[]`, meta | `200 {ok:true,stamp}`; `400` |
-| `POST /api/gesture-telemetry` | PWA `src/modules/drop-telemetry.ts` (gesture/IME anomaly, #502) | JSON: `reason`, `eventCount`, `log[]`, meta | `200 {ok:true,stamp}`; `400` |
+| `POST /api/bug-report` | native `feedback_overlay.dart` (in-app feedback, #661/#967), install-page form `public/native-feedback.js` | one JSON body: `title`, `comment` (full untruncated note), `logs`, `screenshot` (base64 data URL), `frames[]` (repro burst), `connectLog[]`, `gestureLog[]`, `byteTrace[]` + `scrollTrace[]` + `grid` (#790 replay), `sentSgrTrace[]` (#793), `userAgent`, `url`, `version` | `200 {ok:true,saved:true}`; `400 {"error":"invalid json"}` |
+| `POST /api/drop-telemetry` | (retired with the PWA, #1205 — endpoint kept, no producer) | JSON: `kind`, `reason`, `sessionId`, `host`, `connectLog[]`, `gestureLog[]`, meta | `200 {ok:true,stamp}`; `400` |
+| `POST /api/gesture-telemetry` | (retired with the PWA, #1205 — endpoint kept, no producer) | JSON: `reason`, `eventCount`, `log[]`, meta | `200 {ok:true,stamp}`; `400` |
 | `POST /api/native-crash` | native `crash_reporter.dart` (Dart + Kotlin uncaught handlers, #501), `public/termux/mobissh-logcat.sh` | one crash JSON (or arbitrary raw text) | `200 {ok:true,path}` / `{ok:true,raw:true,path}`; `413` over 1MB; `500` on write failure |
 
 All producers post to the single Tailscale endpoint
@@ -119,7 +119,7 @@ mobissh-prod server/index.js
 - `server-feedback/test.js` (`npm test` in `server-feedback/`) — round-trip of
   all four routes against a temp dir, exact filename contract, 1MB crash cap,
   raw-crash preservation, retention sweep, healthz.
-- `server/test.js` (`npm test` in `server/`) — proxy pass-through (stub service
+HISTORICAL (#1205 deleted it) — `server/test.js` covered proxy pass-through (stub service
   receives the raw body, response relayed verbatim), fail-open fallback
   (unreachable service → local file written), pre-cutover local default.
 

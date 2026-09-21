@@ -156,8 +156,8 @@ fi
 
 # Check: scope creep (touches server, tests, or unrelated modules)
 HAS_SERVER=$(echo "$FILENAMES" | jq '[.[] | select(startswith("server/"))] | length')
-HAS_TESTS=$(echo "$FILENAMES" | jq '[.[] | select(startswith("tests/"))] | length')
-HAS_CONFIG=$(echo "$FILENAMES" | jq '[.[] | select(. == "tsconfig.json" or . == "package.json" or . == ".eslintrc.json")] | length')
+HAS_TESTS=$(echo "$FILENAMES" | jq '[.[] | select(startswith("native/test/") or startswith("native/integration_test/") or startswith("test/"))] | length')
+HAS_CONFIG=$(echo "$FILENAMES" | jq '[.[] | select(. == "package.json" or . == ".eslintrc.json" or . == "native/pubspec.yaml")] | length')
 
 if [ "$HAS_SERVER" -gt 0 ]; then
   add_signal "touches server/ (${HAS_SERVER} files)"

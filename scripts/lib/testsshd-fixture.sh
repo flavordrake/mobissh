@@ -23,7 +23,7 @@
 # Teardown mechanism map (#1049) — every spawn path is covered by ONE of:
 #   EXIT trap (this lib): run-appium-tests.sh, run-emulator-tests.sh,
 #     desktop-smoke.sh + native-connect-test.sh (teardown-if-spawned), and —
-#     transitively — tests/emulator/sshd-fixture.js, whose compose-up lands in
+#     transitively — the PWA fixture retired in #1205, whose compose-up landed in
 #     the same project as its mandated wrappers (run-appium/run-emulator).
 #   Age sweep (scripts/ci-reap.sh): test-sshd-up.sh fixtures, which
 #     INTENTIONALLY outlive one script call (multi-test agent runs). The docker

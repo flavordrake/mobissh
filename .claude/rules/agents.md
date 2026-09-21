@@ -16,7 +16,7 @@
 - Develop agents have a 1-hour wall clock timeout and max 3 implementation cycles.
 - `integrate-gate.sh` takes branch name as first arg, not issue number.
 - Always commit infra changes BEFORE delegating. Worktrees clone from HEAD, not working directory.
-- Verify commands in delegation: `scripts/test-fast-gate.sh` (never `npm test` or compound `&&` chains).
+- Verify commands in delegation: `scripts/native-fast-gate.sh` (never compound `&&` chains).
 - Bot branches use pattern `bot/issue-{N}`. Develop agents create and push these.
 - Bot branches get deleted during integration. Run `git remote prune origin` to clean stale tracking refs.
 - Develop agent failure summaries are appended to `memory/bot-attempts.md`. Review before retrying.

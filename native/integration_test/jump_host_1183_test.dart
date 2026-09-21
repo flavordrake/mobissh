@@ -24,8 +24,8 @@
 // bastion's hostname is its container id; the target's is pinned to
 // `jump-target-host` in docker-compose.test.yml.
 //
-// Fixture: docker-compose.test.yml `jump-target` service +
-// tests/emulator/sshd-fixture.js `ensureJumpTarget()`. Run with
+// Fixture: docker-compose.test.yml `jump-target` service, brought up by
+// scripts/lib/integration-fixtures.sh. Run with
 //   scripts/with-fleet-emulator.sh -- scripts/integration-subset.sh \
 //     integration_test/jump_host_1183_test.dart
 

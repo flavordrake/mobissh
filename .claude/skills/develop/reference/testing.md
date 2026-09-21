@@ -9,19 +9,19 @@
 
 ## Test Gate Commands
 ```bash
-npx tsc --noEmit                  # TypeScript type check (~5s)
-npx eslint src/ public/ server/ tests/  # Lint (~3s)
-npx vitest run                    # Unit tests (~2s)
-npx playwright test --config=playwright.config.js --grep-invert="Production endpoint"  # Headless (~60s)
+scripts/native-fast-gate.sh                       # gate 0 rule + infra tests, analyze, flutter unit
+scripts/test-infra.sh                            # just the node:test infra tests
+npx eslint server/ server-feedback/ public/ test/  # Lint
 ```
 Run in this order. Fast gates first — fail fast.
 
 ## Vitest Unit Tests
-Location: `src/modules/__tests__/*.test.ts`
+Location: `native/test/**/*_test.dart` (Flutter) and `test/infra/*.test.js` (node:test)
 
 ### Pattern
 ```typescript
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 
 // Stub browser globals for Node environment
@@ -52,8 +52,8 @@ describe('feature area', () => {
 - No network calls — mock WebSocket/fetch
 
 ## Playwright Browser Tests
-Location: `tests/*.spec.js`
-Config: `playwright.config.js`
+Location: `native/integration_test/*_test.dart`
+Runner: `scripts/native-integration-suite.sh`
 
 ### Projects
 | Name | Device | Browser |
@@ -62,7 +62,7 @@ Config: `playwright.config.js`
 | `iphone-14` | iPhone 14 viewport | WebKit |
 | `chromium` | Desktop Chrome | Chromium |
 
-### Fixtures (`tests/fixtures.js`)
+### Fixtures (`scripts/lib/integration-fixtures.sh`)
 ```javascript
 const test = base.extend({
   page: async ({ page }, use) => {
@@ -82,7 +82,7 @@ const test = base.extend({
   },
 });
 ```
-Always use the custom `test` from fixtures, not bare `@playwright/test`.
+A test DECLARES its own wiring in its header; the runner derives fixtures from it (#1101).
 
 ### Test Pattern
 ```javascript
@@ -126,7 +126,7 @@ test.describe('Feature area (#issueNumber)', () => {
 5. If a test fails on WebKit but passes on Chromium, it's likely a real cross-browser issue
 
 ## Semgrep Rules
-Custom rules in `.semgrep/rules.yml` and `.semgrep/playwright-traps.yml`:
+Custom rules in `.semgrep/rules.yml`:
 - `duplicate-event-listener` — catches doubled addEventListener calls
 - `plaintext-secret-storage` — blocks localStorage of passwords/secrets
 - `no-waitForSelector-hidden-class` — catches broken hidden-class waits

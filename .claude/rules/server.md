@@ -18,7 +18,8 @@ It includes Tailscale and serves via `tailscale serve` — no separate nginx nee
 ## Local server (legacy, headless tests only)
 
 `scripts/server-ctl.sh` (start/stop/restart/ensure/status) manages a local Node.js process on port 8081.
-This is used only by `scripts/test-headless.sh` and CI — NOT for user-facing testing.
+It serves `public/` (the install page + the root redirect) and the approval/feedback
+routes. NOT for user-facing testing — use the prod container.
 Never raw `kill`, `lsof -t`, or `node server/index.js`.
 
 ## Docker networking

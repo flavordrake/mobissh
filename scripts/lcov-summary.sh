@@ -12,7 +12,7 @@
 #   SRC_ROOT   the source tree the lcov was collected for (native/lib or src).
 #              SF: paths are matched by their suffix below SRC_ROOT's basename,
 #              so relative (flutter: lib/x.dart) and absolute (vitest) records
-#              both normalise to lib/x.dart or src/x.ts.
+#              both normalise to lib/x.dart or web/x.ts.
 #   --ext      which files count as source for the never-loaded scan
 #              (default dart). Excludes *_test.dart, *.g.dart, *.test.ts,
 #              __tests__/.

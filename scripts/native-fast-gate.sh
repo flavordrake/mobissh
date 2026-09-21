@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # scripts/native-fast-gate.sh — Pre-commit gate for the native rewrite (#501)
 #
-# Mirrors scripts/test-fast-gate.sh's role for the Flutter project at native/.
-# Runs analyzer + unit tests. Does NOT build an APK — that's a slower gate
-# that container-ctl-equivalent will run later.
+# The repo gate. Runs the bash rule tests, the node:test infrastructure tests
+# (scripts/test-infra.sh), the analyzer and the unit tests. Does NOT build an
+# APK — that is a slower gate that ship-native.sh runs.
 #
 # Usage: scripts/native-fast-gate.sh [--with-acceptance] [--with-integration]
 #   --with-acceptance    tail an install + first-run smoke against the APK at
@@ -74,6 +74,17 @@ if "${REPO_ROOT}/scripts/test-integration-wiring.sh"; then
   echo "+ integration wiring: pass"
 else
   echo "! integration wiring: FAIL"
+  exit 1
+fi
+# Same gate (#1205): the non-Flutter infrastructure that outlived the PWA —
+# the feedback-ingestion guard, manifest rewriting, notify-parse, the TRACE
+# scripts and the published termux installer. Their only coverage used to live
+# in src/modules/__tests__ under vitest; it moved to test/infra on node:test so
+# it runs here (agent worktrees have no node_modules) and in CI.
+if "${REPO_ROOT}/scripts/test-infra.sh"; then
+  echo "+ infra tests: pass"
+else
+  echo "! infra tests: FAIL"
   exit 1
 fi
 

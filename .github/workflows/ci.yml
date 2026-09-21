@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  lint-typecheck:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,10 +16,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: cd server && npm ci
-      - name: TypeScript typecheck
-        run: npx tsc --noEmit
       - name: ESLint
-        run: npx eslint src/ public/ server/ tests/
+        run: npx eslint server/ server-feedback/ public/ test/
 
   semgrep:
     runs-on: ubuntu-latest
@@ -30,35 +28,49 @@ jobs:
           python-version: '3.12'
       - run: pip install semgrep
       - name: Semgrep (custom + community rules)
-        run: semgrep --config .semgrep/rules.yml --config p/typescript --config p/javascript src/ --no-git-ignore --error --severity WARNING
+        run: semgrep --config .semgrep/rules.yml --config p/javascript server/ server-feedback/ public/ --no-git-ignore --error --severity WARNING
 
-  test:
+  # #1205: this job used to run the PWA's Playwright suite — the repo's only CI.
+  # The PWA is retired, so it runs the native gate instead: the bash rule tests +
+  # the relocated infra tests (scripts/test-infra.sh) + flutter analyze + the
+  # flutter unit suite. A CI job that no longer guards anything is worse than none.
+  # The on-emulator integration tier is NOT here — it needs a leased device
+  # (scripts/with-fleet-emulator.sh) and runs on fd-dev.
+  native-gate:
     runs-on: ubuntu-latest
-    needs: [lint-typecheck, semgrep]
+    needs: [lint, semgrep]
+    env:
+      # flutter-cmd.sh defaults XDG_CONFIG_HOME to a path under /home/dev that
+      # only exists on fd-dev; point it at the runner's workspace instead.
+      XDG_CONFIG_HOME: ${{ github.workspace }}/.flutter-config
+      # disk-guard reclaims build output below 20G free; a GitHub runner is
+      # always below that and has nothing of ours to reclaim.
+      DISK_GUARD_SKIP: '1'
+      # scripts/trace-github-search.sh is exercised by the infra tests.
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the trace-history infra tests read real git history
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: cd server && npm ci
-      - name: Build TypeScript
-        run: npx tsc
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium webkit
-      - name: Start test SSH server
-        run: |
-          docker compose -f docker-compose.test.yml up -d test-sshd
-          sleep 3
-      - name: Run headless Playwright tests
-        run: npx playwright test --config=playwright.config.js --grep-invert="Production endpoint"
-      - name: Stop test SSH server
-        if: always()
-        run: docker compose -f docker-compose.test.yml down
+      - uses: subosito/flutter-action@v2
+        with:
+          # PINNED to the SDK fd-dev builds and ships with. Unpinned `stable`
+          # resolved to 3.47.5, on which pdfrx 1.3.5 (a transitive dep of the PDF
+          # viewer) fails to COMPILE — "Property 'blockSize' cannot be accessed on
+          # 'PdfFileCache?'" — which loaded as 89 failed test FILES and read like a
+          # product regression. CI must run the SDK the project is developed
+          # against; moving to a newer SDK is a deliberate change, not a CI default.
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+      - name: Native fast gate
+        run: scripts/native-fast-gate.sh
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
-          path: test-results/
+          name: native-fast-gate-log
+          path: /tmp/mobissh/logs/native-fast-gate.log
           retention-days: 7

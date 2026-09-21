@@ -6,11 +6,12 @@
 - `blocked` label always requires an explanatory comment. `conflict` is transient (resolve within one cycle).
 
 ## PR checklist
-Before submitting a PR, run the full test suite:
+Before submitting a PR, run the gate:
 ```
-scripts/test-fast-gate.sh
-scripts/test-headless.sh
+scripts/native-fast-gate.sh
 ```
+Anything touching the session state machine, connect/auth, reconnect, SFTP or IPC
+also needs the on-emulator tier — see `.claude/rules/testing.md`.
 
 ## Device testing
 - Mobile UX features MUST be tested on real hardware before merging to main.

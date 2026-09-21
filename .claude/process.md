@@ -85,7 +85,7 @@ physical devices.
 
 ### `device` means emulator or real hardware validation required
 
-Applied when acceptance criteria cannot be verified by `tsc + eslint + vitest` alone.
+Applied when acceptance criteria cannot be verified by the fast gate alone.
 `/integrate` must not merge `device`-labeled PRs without emulator or manual validation.
 `/delegate` includes `device` in the delegation comment so the bot knows its PR will
 face additional scrutiny.
@@ -116,7 +116,7 @@ When a bot PR passes the fast gate but headless tests fail because the UX change
 3. `/delegate` posts a **test-fixup** `@claude` comment on the same issue:
    - Objective: merge from main, run headless tests, fix failures to match new UX
    - Scope: test files only -- no application code changes
-   - Verify: `scripts/test-fast-gate.sh && scripts/test-headless.sh`
+   - Verify: `scripts/native-fast-gate.sh`
 4. Bot creates a new branch, fixes test assertions, runs full gate including headless
 5. `/integrate` validates the test-fixup branch (headless must pass)
 
@@ -165,7 +165,7 @@ Every `@claude` comment must include:
 4. **Context** -- code snippets from current main branch, API signatures, patterns to follow
 5. **Do NOT** -- hard constraints (no inline styles, no new abstractions, no changes outside scope)
 6. **Test expectations** -- what tests should be written (smoketest, regression, behavior)
-7. **Verify** -- exact command sequence: `scripts/test-fast-gate.sh`
+7. **Verify** -- exact command sequence: `scripts/native-fast-gate.sh`
 
 The bot's entire instruction set is this comment. It has no other context, no memory of
 prior attempts, and no access to conversation history.

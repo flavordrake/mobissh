@@ -28,7 +28,10 @@ git -C "$R" init -q -b main
 git -C "$R" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
 git -C "$R" worktree add -q -b merged-branch "$R/.claude/worktrees/agent-merged"
 git -C "$R/.claude/worktrees/agent-merged" -c user.name=t -c user.email=t@t commit -q --allow-empty -m work
-git -C "$R" merge -q --no-ff -m merge merged-branch
+# --no-ff writes a merge COMMIT, so it needs an identity like the commits above.
+# Without it the test depends on the host having a global git identity — which a
+# GitHub runner does not (found when #1205 put this script into CI).
+git -C "$R" -c user.name=t -c user.email=t@t merge -q --no-ff -m merge merged-branch
 git -C "$R" worktree add -q -b open-branch "$R/.claude/worktrees/agent-open"
 git -C "$R/.claude/worktrees/agent-open" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wip
 for wt in agent-merged agent-open; do
@@ -68,13 +71,18 @@ check_gone   "escalation removes the 2-day-old cache" "$R/native/.dart_tool/flut
 check_exists "escalation keeps today's cache" "$R/native/.dart_tool/flutter_build/today"
 
 # 4. disk-guard: silent above the floor, fails loud when nothing can be freed.
+# DISK_GUARD_SKIP is pinned to 0 on the two cases that must NOT be bypassed: a
+# caller may legitimately have it exported (CI does — a hosted runner is always
+# under the soft floor with nothing of ours to reclaim), and inheriting it turns
+# the "fails loud" case red and the "silent above the floor" case into a false
+# pass. A test of a guard must control every variable that governs the guard.
 source "${REPO_ROOT}/scripts/lib/disk-guard.sh"
-if out=$(DISK_GUARD_SOFT_G=0 DISK_GUARD_PATH="$SANDBOX" disk_guard t 2>&1) && [[ -z "$out" ]]; then
+if out=$(DISK_GUARD_SKIP=0 DISK_GUARD_SOFT_G=0 DISK_GUARD_PATH="$SANDBOX" disk_guard t 2>&1) && [[ -z "$out" ]]; then
   ok "disk_guard is silent above the soft floor"
 else
   bad "disk_guard above the floor: rc or output ($out)"
 fi
-if DISK_GUARD_SOFT_G=999999 DISK_GUARD_HARD_G=999999 DISK_GUARD_PATH="$SANDBOX" disk_guard t 2>/dev/null; then
+if DISK_GUARD_SKIP=0 DISK_GUARD_SOFT_G=999999 DISK_GUARD_HARD_G=999999 DISK_GUARD_PATH="$SANDBOX" disk_guard t 2>/dev/null; then
   bad "disk_guard should fail when the hard floor is unreachable"
 else
   ok "disk_guard fails loud below the hard floor"

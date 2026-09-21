@@ -27,13 +27,10 @@ The integration pipeline is packaged as scripts in `scripts/`:
 |---|---|
 | `integrate-discover.sh` | List all bot branches, group by issue, count attempts, score risk. Outputs JSON. |
 | `integrate-cleanup.sh` | Delete branches for over-attempted issues, comment on GitHub issues. Reads discover JSON. |
-| `integrate-gate.sh` | Fast gate a single branch: calls test-typecheck, test-lint, test-unit. Stashes/restores local state. |
-| `test-typecheck.sh` | TypeScript type checking (`tsc --noEmit`). |
-| `test-lint.sh` | ESLint static analysis on all source directories. |
-| `test-unit.sh` | Vitest unit tests (`src/**/*.test.ts`). No browser, no Playwright. |
-| `test-headless.sh` | Headless Playwright tests (Pixel 7, iPhone 14, Desktop Chrome). Excludes Appium. |
-| `run-appium-tests.sh` | Full Appium emulator acceptance with screen recording and archival. |
-| `run-emulator-tests.sh` | Acceptance gate: boots emulator, starts server, runs Playwright emulator tests. |
+| `integrate-gate.sh` | Fast gate a single branch: native gate + eslint + the source/test coverage check. Stashes/restores local state. |
+| `native-fast-gate.sh` | Gate 0 rule tests + `scripts/test-infra.sh` + `flutter analyze` + the flutter unit suite. |
+| `native-integration-suite.sh` | On-emulator acceptance against `native/integration_test/BASELINE.manifest`. Needs a leased device. |
+| `with-fleet-emulator.sh` | Leases the fleet emulator for the command that follows. |
 | `server-ctl.sh` | Server lifecycle: start/stop/restart/ensure. Used post-merge. |
 
 ## Execution Model
@@ -91,7 +88,7 @@ scripts/integrate-gate.sh <branch-name>
 The gate runs 5 tiers:
 1. **tsc** — TypeScript typecheck
 2. **eslint** — static analysis
-3. **vitest** — unit tests
+3. **coverage check** — source changes must come with test changes
 4. **coverage** — verifies source changes include test changes (rejects PRs with
    0 test files changed when source files changed)
 5. **headless** — Playwright browser tests (auto-runs when PR touches UI files:
@@ -100,7 +97,7 @@ The gate runs 5 tiers:
 The script:
 1. Stashes any local uncommitted changes
 2. Fetches and checks out the branch (detached HEAD)
-3. Calls `scripts/test-typecheck.sh`, `scripts/test-lint.sh`, `scripts/test-unit.sh`
+3. Calls `scripts/native-fast-gate.sh` and eslint
 4. Reports pass/fail per gate
 5. Restores the original branch and pops stash
 
@@ -129,20 +126,20 @@ Always use `general-purpose` — custom subagent_types are broken in file-based
 discovery (see `.claude/rules/agents.md`). Read `.claude/agents/integrate-gater.md`
 for the prompt content.
 
-## Step 4: Acceptance gate (per-branch, headless)
+## Step 4: Acceptance gate (per-branch)
 
-Between merges, run headless Playwright to catch regressions quickly:
+Between merges, re-run the fast gate to catch regressions quickly:
 
 ```bash
-scripts/test-headless.sh
+scripts/native-fast-gate.sh
 ```
 
-This is a regression check, not final acceptance. The full emulator acceptance run
+This is a regression check, not final acceptance. The on-emulator acceptance run
 happens once after all merges complete (Step 7).
 
 **`device` label check:** If the issue has the `device` label (per `.claude/process.md`),
-emulator or real-device validation is mandatory. Do NOT merge with headless-only results
-unless the full Appium run in Step 7 will cover it.
+emulator or real-device validation is mandatory. Do NOT merge on unit-gate results
+alone unless the integration run in Step 7 will cover it.
 
 ### Production container awareness
 The user tests on the production Docker container (`mobissh-prod`), not a local server.
@@ -190,7 +187,7 @@ This is NOT a rejection. The feature is correct; the test harness is outdated. A
 2. Use `/delegate` to post a **test-fixup** `@claude` comment on the same issue
    (see the test-fixup template in the delegate skill)
 3. Keep `bot` label -- do NOT swap to `divergence`
-4. The test-fixup pass verifies with full gate including `scripts/test-headless.sh`
+4. The test-fixup pass verifies with the full gate including the on-emulator tier
 
 Key distinction: **outdated != flaky**. Tests that fail because the UX intentionally
 changed need their assertions updated. Tests that fail intermittently need investigation.
@@ -218,9 +215,12 @@ After each successful merge:
 ```bash
 git checkout main
 git pull
-scripts/test-headless.sh
+scripts/native-fast-gate.sh
 ```
-Report: "Merged PR #N (<title>). Headless tests: X pass."
+Report: "Merged PR #N (<title>). Fast gate: pass."
+
+After batch-merging 2+ PRs, RE-GATE main: a PR that widens a shared interface can
+break another PR's independently-written test fake, and per-PR gates miss it.
 
 After ALL merges complete, rebuild the production container:
 ```bash
@@ -240,39 +240,31 @@ if [[ ! -e /dev/kvm ]]; then
   EMULATOR=false
 elif ! command -v emulator &>/dev/null && ! command -v adb &>/dev/null; then
   echo "Android SDK not installed -- running setup..."
-  scripts/setup-avd.sh
-  EMULATOR=true
-else
-  EMULATOR=true
-fi
-
-if [ "$EMULATOR" = true ]; then
-  scripts/run-appium-tests.sh
-fi
+scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh
 ```
 
-`run-appium-tests.sh` handles the full pipeline: server startup, Docker sshd,
-emulator boot, ADB forwarding, Appium server, screen recording with debug overlays,
-Playwright test execution, artifact collection, and archival to `test-history/appium/`.
+The lease script books the fleet emulator for exactly the command that follows and
+releases it afterwards. The suite brings up its own sshd/jump-target fixtures from
+`docker-compose.test.yml` and enforces `native/integration_test/BASELINE.manifest`.
 
 After the run completes:
-1. Parse the HTML report in `playwright-report-appium/`
-2. Check `test-results-appium/` for per-test artifacts
-3. The recording is archived to `test-history/appium/<ISO-8601-timestamp>/recording.webm`
-4. Extract review frames if needed: `scripts/review-recording.sh`
-5. Report: "Appium acceptance: X pass, Y fail. Recording: test-history/appium/<ts>/recording.webm"
+1. Read the suite's verdict — an expected-pass test failing FAILS the run; a
+   known-red test PASSING also fails it (promote it and bump the tally)
+2. Check `test-results/uploads/` for any bug-report bundle the run produced
+3. Report: "Integration: X expected-pass, Y known-red, Z unexpected"
 
-If the emulator is unavailable (no KVM, CI runner), report which PRs need emulator
-validation and skip this step. Do NOT silently omit it.
+If no emulator can be leased, report which PRs need device validation and skip this
+step. Do NOT silently omit it — `native-integration-suite.sh` exits non-zero with
+"NOT VALIDATED" rather than passing.
 
 ## Batch Mode
 
 When processing multiple PRs:
 - Integrate in risk order (low first)
-- Run headless Playwright between each merge (Step 6) -- do not batch merges without validation
+- Re-run the fast gate between each merge (Step 6) -- do not batch merges without validation
 - Stop on first systemic failure (main broken after merge)
 - If main breaks: revert the last merge, report which PR caused it
-- After all merges: run `scripts/run-appium-tests.sh` (Step 7) for final acceptance with recording
+- After all merges: run the integration suite (Step 7) for final acceptance
 
 ## TRACE for Integration Decisions
 
@@ -325,21 +317,21 @@ These rules come from real project history. They are not suggestions.
 
 - **No inline styles**: prefer CSS classes. This is a project rule (CLAUDE.md).
 
-- **Outdated != flaky**: When a UX change causes headless test failures, those tests need
+- **Outdated != flaky**: When a UX change causes test failures, those tests need
   their assertions updated -- they aren't broken or intermittent. Use the test-fixup pass
   (approve-with-test-fixup) to delegate this to the bot rather than rejecting the feature.
-  The bot can run `scripts/test-headless.sh` and fix mismatched selectors/assertions.
+  The bot can run the gate and fix mismatched finders/assertions.
 
 - **Two-pass delegation works**: Feature pass (fast gate) -> human UX review -> test-fixup
-  pass (full gate including headless). This prevents the bot from guessing UX decisions
-  while still automating the mechanical test updates.
+  pass (full gate including the device tier). This prevents the bot from guessing UX
+  decisions while still automating the mechanical test updates.
 
 ## Edge Cases
 
 - No bot branches at all -- report "No bot PRs to integrate"
 - Bot PR conflicts with main -- close with comment, the bot will need to rebase
 - User has uncommitted local changes -- `integrate-gate.sh` auto-stashes and restores
-- Emulator boot takes too long -- 120s timeout in `run-emulator-tests.sh`
+- Emulator unavailable -- the lease in `scripts/with-fleet-emulator.sh` fails LOUD, never silently
 - SSH key not loaded for git fetch -- scripts use `gh api` which authenticates via `gh` token
 - Stale worktrees block branch deletion -- `gh-ops.sh pr-merge` now prunes worktrees and
   removes local branches before merging. Always run `git worktree prune` before merge steps.
