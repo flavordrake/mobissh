@@ -199,6 +199,16 @@ void main() {
 
       await tapWithIo(tester, const ValueKey('force-upload-button'));
 
+      // #1178 class, third site in this file: the POST and the summary toast
+      // are produced by real-async work, so `tapWithIo`'s fixed settle passes
+      // are a load-dependent assertion. The gate reddened here on a healthy
+      // main under contention. Poll to a real deadline, then assert.
+      await waitUntil(
+        tester,
+        () => posts == 1 && find.text('Uploaded 1 of 1 (failed: 0)').evaluate().isNotEmpty,
+        reason: 'the upload POSTs and its summary toast lands',
+      );
+
       expect(posts, 1, reason: 'one pending crash → one POST');
       expect(
         find.text('Uploaded 1 of 1 (failed: 0)'),
