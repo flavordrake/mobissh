@@ -14,7 +14,7 @@
 # distinctive on-screen marker. Restore with scripts/cc-nested-teardown.sh.
 #
 # Run immediately before scripts/native-connect-test.sh
-# integration_test/cc_nested_fallback_test.dart
+# integration_test/cc_nested_exec_test.dart
 set -euo pipefail
 
 MOBISSH_CC_DIR="${MOBISSH_CC_DIR:-/tmp/mobissh/cc-nested}"

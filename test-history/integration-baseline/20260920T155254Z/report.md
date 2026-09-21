@@ -86,7 +86,6 @@ the 86 ran.
 | `cc_capture_scroll` | `the live tail (LINE_200) did not render on attach. Ensure scripts/cc-scroll-setup.sh ran.` (:116) | G1 |
 | `cc_exec_switch` | `the pre-existing ACTIVE window never rendered — attach capture failed.` (:119) | G1 |
 | `cc_nested_exec` | `the pre-existing NESTED session never rendered — '-CC attach' did not attach + capture the existing session` (:126) | G1 |
-| `cc_nested_fallback` | `control mode ON in a NESTED tmux BRICKED the connection — the marker never rendered` (:127) | G1 |
 | `desktop_smoke` | `never reached the terminal screen` (:95) | G2 |
 | `reconnect_da_writeback_leak_1072` | `session B never reached the terminal` (:109) | G3 |
 | `reconnect_mouse_mode_1014` | `session B never reached the terminal` (:106) | G3 |
