@@ -24,8 +24,15 @@
 #                         an AVD (CI without KVM). Use sparingly; the default is
 #                         to FAIL so local/release runs can't skip silently.
 #
-# Exit 0 = all integration tests passed (or explicitly-allowed skip).
-# Exit 1 = a test failed. Exit 2 = setup error / emulator missing (not allowed).
+# WHAT COUNTS AS A PASS: the run matches the accepted baseline recorded in
+# native/integration_test/BASELINE.manifest (#1101) — every expected-pass test
+# passed, and no known-red test either went unclassified or quietly recovered.
+# It is NOT "all green": main has 11 named, issue-owned reds, and demanding all
+# green made a red suite carry no information about the change under test.
+#
+# Exit 0 = the run matches the accepted baseline (or explicitly-allowed skip).
+# Exit 1 = it drifted from the baseline (see the named drift conditions in the
+#          summary). Exit 2 = setup error / emulator missing (not allowed).
 
 set -euo pipefail
 
@@ -58,6 +65,13 @@ err() { echo "! $*" >&2; }
 INTEGRATION_REPO_ROOT="$REPO_ROOT"
 source "${REPO_ROOT}/scripts/lib/integration-fixtures.sh"
 
+# What COUNTS AS A PASS is the accepted baseline in
+# native/integration_test/BASELINE.manifest, not an all-green run (#1101/#1205).
+# 74 of the 85 discovered device tests pass on clean main; the other 11 have named
+# causes and owning issues. Demanding all-green made the suite say nothing about
+# the change under test, which is how four merges ended up hand-verified instead.
+source "${REPO_ROOT}/scripts/lib/integration-manifest.sh"
+
 # Emulator guard — the #589 contract: an absent emulator must be LOUD, never a
 # silent pass. A LEASED fleet device (with-fleet-emulator.sh exports
 # EMU_ADBD_ENDPOINT + EMU_ENSURE=0) is only in `adb devices` after a connect —
@@ -87,6 +101,16 @@ if [[ "${#TESTS[@]}" -eq 0 ]]; then
   exit 2
 fi
 log "discovered ${#TESTS[@]} integration tests"
+
+# Check the baseline BEFORE spending ~100 minutes of a lease on a run whose
+# verdict cannot be computed. An unclassified test is itself a drift condition:
+# a new test must be classified deliberately, never default to excused.
+if ! manifest_validate; then
+  err "BASELINE MANIFEST INVALID — see native/integration_test/BASELINE.manifest"
+  err "(fast gate 0 checks this too: scripts/test-integration-wiring.sh)"
+  exit 1
+fi
+log "baseline: $(manifest_list expect | grep -c . || true) expected-pass, $(manifest_list known-red | grep -c . || true) known-red, $(manifest_list elsewhere | grep -c . || true) run elsewhere"
 
 # One CURRENT, unambiguous sshd for the whole run (#1101 G0). Pinning it here
 # rather than per-test also keeps native-connect-test.sh from spawning and then
@@ -121,8 +145,20 @@ for t in "${PASS[@]}"; do echo "  + $t"; done
 for t in "${FAIL[@]}"; do echo "  ! $t"; done
 for t in "${SKIP[@]:-}"; do [[ -n "$t" ]] && echo "  ~ $t"; done
 
-if [[ "${#FAIL[@]}" -gt 0 ]]; then
-  echo "! NATIVE INTEGRATION SUITE FAILED"
+# The verdict is the comparison against the accepted baseline, not the raw
+# failure count: an expected-pass test going red FAILS the run, a known-red test
+# failing is reported, and a known-red test that PASSED fails the run too — it
+# has to be promoted, or the excuse list rots.
+PASSFILE="${MOBISSH_TMPDIR}/integration-pass.$$"
+FAILFILE="${MOBISSH_TMPDIR}/integration-fail.$$"
+printf '%s\n' "${PASS[@]:-}" > "$PASSFILE"
+printf '%s\n' "${FAIL[@]:-}" > "$FAILFILE"
+VERDICT=0
+manifest_verdict "$PASSFILE" "$FAILFILE" || VERDICT=1
+rm -f "$PASSFILE" "$FAILFILE"
+
+if [[ "$VERDICT" -ne 0 ]]; then
+  echo "! NATIVE INTEGRATION SUITE FAILED — the run does not match the accepted baseline"
   exit 1
 fi
-echo "+ NATIVE INTEGRATION SUITE PASSED"
+echo "+ NATIVE INTEGRATION SUITE PASSED (matches the accepted baseline)"
