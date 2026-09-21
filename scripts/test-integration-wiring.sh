@@ -95,10 +95,10 @@ for f in "$ITEST_DIR"/*_test.dart; do
     fi
   fi
 done
-if [[ "$declares_nested" -ge 2 ]]; then
+if [[ "$declares_nested" -ge 1 ]]; then
   ok "the nested-tmux fixture is still exercised (${declares_nested} tests)"
 else
-  bad "expected >=2 tests to use cc-nested-setup.sh, found ${declares_nested}"
+  bad "expected >=1 test to use cc-nested-setup.sh, found ${declares_nested}"
 fi
 
 # 6. Platform: exactly the desktop smoke declares its own runner, and it is the

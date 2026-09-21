@@ -90,7 +90,7 @@ The native app has its OWN gate, separate from the PWA Playwright gates above.
   unambiguous container, so a hard-coded `test-sshd` seeds the wrong sshd.
 - **The suite enforces an ACCEPTED BASELINE, not an all-green run (#1101/#1205).**
   `native/integration_test/BASELINE.manifest` is the record: 74 expected-pass of the
-  85 discovered device tests, plus 11 known-red each with a one-line cause and the
+  84 discovered device tests, plus 10 known-red each with a one-line cause and the
   issue that owns it. The suite's verdict:
   - an **expected-pass** test fails → the suite FAILS (the reason the gate exists)
   - a **known-red** test fails → reported, not fatal

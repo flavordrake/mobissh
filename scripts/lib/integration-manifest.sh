@@ -3,8 +3,8 @@
 # #589 baseline recorded in native/integration_test/BASELINE.manifest (#1101).
 #
 # WHY THIS EXISTS. The suite's verdict used to be "any failure fails the run".
-# Main has not been all-green for months (74 of 85 device tests pass; the other
-# 11 have named causes and owning issues), so that verdict carried no information
+# Main has not been all-green for months (74 of 84 device tests pass; the other
+# 10 have named causes and owning issues), so that verdict carried no information
 # about the change under test and the pressure was to bypass the gate entirely.
 # The verdict now compares the run against the accepted baseline:
 #

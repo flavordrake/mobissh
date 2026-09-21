@@ -1195,14 +1195,6 @@ final activeSessionThemeProvider = Provider<NamedTerminalTheme>((ref) {
   return ref.watch(sessionTerminalThemeProvider(activeId));
 });
 
-/// The ACTIVE session's font size — what the session menu's font stepper shows.
-/// Falls back to the global default when no session is active.
-final activeSessionFontSizeProvider = Provider<double>((ref) {
-  final activeId = ref.watch(activeSessionIdProvider);
-  if (activeId == null) return ref.watch(fontSizeProvider);
-  return ref.watch(sessionFontSizeProvider(activeId));
-});
-
 /// The ACTIVE session's keybar visibility (#573) — what the session menu's
 /// keybar toggle reflects/flips. Falls back to [keybarVisibleDefault] when no
 /// session is active so the toggle still renders sensibly.
