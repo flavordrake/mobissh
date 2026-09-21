@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/notify-build.sh — announce a published build on the fleet bus (hub).
 #
-# Replaces notify-ntfy.sh for build pushes. ntfy is RETIRED for operator alerts
+# This is the ONLY build-push announcement path. ntfy is RETIRED for operator alerts
 # under the fleet's pinned ONE-BUS RULE: "Matrix is the ONLY comms system for
 # notification + direction." The ntfy path silently no-opped (bridge unset ->
 # "skipping", exit 0), so builds shipped with nobody told — twice in a row
