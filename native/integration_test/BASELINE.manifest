@@ -33,7 +33,7 @@
 #   elsewhere | <file>_test.dart       | <the runner that owns it>
 # No field may contain a `|`. Every known-red needs BOTH an issue and a reason.
 
-accepted  | 20260920T155254Z | expect=74 | known-red=11 | elsewhere=1
+accepted  | 20260920T155254Z | expect=74 | known-red=10 | elsewhere=1
 
 # --- not this suite's to run ------------------------------------------------
 # Cross-checked against the test's own `// Runner:` header: a test declares its
@@ -57,7 +57,6 @@ known-red | url_bubble_wrap_988_test.dart | #1101 | G4: same pre-#1074 observati
 # G5 STALE (1)
 known-red | import_upsert_diversity_test.dart | #1101 | G5: asserts the PEM paste field, but #1121 preselects the profile's attached key so the editor renders the stored-key note
 # G1 residual (1)
-known-red | cc_nested_fallback_test.dart | #1204 | setup runs now, but #984's entry=exec attaches without a login shell so the nested fallback is never entered
 # G6 HARNESS timing (1)
 known-red | mermaid_markdown_render_test.dart | #1201 | seeds the fixture before shellReady, and input written at that seam is silently dropped
 # G6b DEVICE geometry (2)
