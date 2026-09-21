@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # scripts/native-fast-gate.sh — Pre-commit gate for the native rewrite (#501)
 #
-# Mirrors scripts/test-fast-gate.sh's role for the Flutter project at native/.
-# Runs analyzer + unit tests. Does NOT build an APK — that's a slower gate
-# that container-ctl-equivalent will run later.
+# The repo gate. Runs the bash rule tests, the node:test infrastructure tests
+# (scripts/test-infra.sh), the analyzer and the unit tests. Does NOT build an
+# APK — that is a slower gate that ship-native.sh runs.
 #
 # Usage: scripts/native-fast-gate.sh [--with-acceptance] [--with-integration]
 #   --with-acceptance    tail an install + first-run smoke against the APK at

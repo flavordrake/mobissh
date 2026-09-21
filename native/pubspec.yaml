@@ -162,7 +162,8 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
   # Generates the Android launcher icon set from the MobiSSH PWA icon (#657).
-  # Source is public/icon-512.png copied to assets/icon/mobissh_icon.png.
+  # Source was the PWA icon (public/icon-512.png, retired in #1205 — see git
+  # history); the live master is assets/icon/mobissh_icon.png.
   # Regenerate with: dart run flutter_launcher_icons
   flutter_launcher_icons: ^0.14.1
 

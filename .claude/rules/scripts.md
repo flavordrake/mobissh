@@ -6,9 +6,10 @@ paths:
 # MobiSSH Scripts
 
 Key scripts (check `ls scripts/` before writing inline commands):
-- `server-ctl.sh` -- local server lifecycle (headless tests only)
+- `server-ctl.sh` -- local static/telemetry server lifecycle (not for user testing)
 - `container-ctl.sh` -- production Docker container lifecycle
-- `test-*.sh` -- test gates (typecheck, lint, unit, headless)
+- `native-fast-gate.sh` -- the gate (rule tests, infra tests, analyze, flutter test)
+- `test-infra.sh` -- the node:test infrastructure suite (`test/infra/`)
 - `native-integration-suite.sh` -- on-emulator tests
 - `gh-file-issue.sh` / `gh-ops.sh` -- GitHub operations
 - `integrate-gate.sh` -- bot PR validation

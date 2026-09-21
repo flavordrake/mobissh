@@ -58,7 +58,7 @@ git checkout -b bot/test-{description} origin/main
 ### Read first
 - The source file(s) under test
 - Adjacent test files for patterns (fixtures, helpers, assertions)
-- `.claude/rules/ime.md` or `.claude/rules/typescript.md` for conventions
+- `.claude/rules/testing.md` for the gate tiers and the integration contract
 
 ### Test principles
 1. Test behavior, not implementation — what does the user see/experience?
