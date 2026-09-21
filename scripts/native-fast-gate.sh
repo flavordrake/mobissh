@@ -76,6 +76,17 @@ else
   echo "! integration wiring: FAIL"
   exit 1
 fi
+# Same gate (#1205): the non-Flutter infrastructure that outlived the PWA —
+# the feedback-ingestion guard, manifest rewriting, notify-parse, the TRACE
+# scripts and the published termux installer. Their only coverage used to live
+# in src/modules/__tests__ under vitest; it moved to test/infra on node:test so
+# it runs here (agent worktrees have no node_modules) and in CI.
+if "${REPO_ROOT}/scripts/test-infra.sh"; then
+  echo "+ infra tests: pass"
+else
+  echo "! infra tests: FAIL"
+  exit 1
+fi
 
 echo "> Gate 1/${TOTAL_GATES}: flutter analyze..."
 if "${REPO_ROOT}/scripts/flutter-cmd.sh" --in "$NATIVE_DIR" analyze; then

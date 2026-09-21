@@ -1,4 +1,6 @@
 /**
+ * test/infra/feedback-guard.test.js
+ *
  * Unit + integration tests for feedback upload hardening (#484).
  *
  * The four feedback ingestion routes (/api/bug-report, /api/drop-telemetry,
@@ -11,15 +13,20 @@
  *   - per-IP rate limit (429)
  *   - a valid, in-cap, authenticated request still succeeds and writes (no regression)
  * and that BOTH doors enforce it (server-feedback e2e + server/index.js wiring).
+ *
+ * Relocated from src/modules/__tests__/feedback-guard.test.ts when the PWA was
+ * retired (#1205). Runner is node:test so it needs no node_modules and runs
+ * inside agent worktrees; see scripts/test-infra.sh.
  */
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { createRequire } from 'node:module';
-import * as http from 'node:http';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
 
-const req = createRequire(import.meta.url);
+const { describe, it, before, beforeEach, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const REPO_ROOT = path.resolve(__dirname, '../..');
 
 // UPLOADS_DIR + key are read at module-load by server-feedback/index.js and
 // per-request by the guard, so set them BEFORE requiring the door.
@@ -28,24 +35,23 @@ process.env.UPLOADS_DIR = TMP;
 process.env.MOBISSH_FEEDBACK_KEY = 'test-key-484';
 process.env.MOBISSH_FEEDBACK_RATE_MAX = '10000'; // generous default; the rate test lowers it
 
-const guard = req('../../../server/feedback-guard.js') as {
-  maxFeedbackBytes: () => number;
-  checkAuth: (r: unknown) => null | { status: number; body: string };
-  checkRateLimit: (ip: string) => null | { status: number; body: string };
-  preflight: (r: unknown) => null | { status: number; body: string };
-  getIP: (r: unknown) => string;
-  resetRateLimit: () => void;
-};
-const service = req('../../../server-feedback/index.js') as { server: http.Server };
+const guard = require(path.join(REPO_ROOT, 'server/feedback-guard.js'));
+const service = require(path.join(REPO_ROOT, 'server-feedback/index.js'));
 
 const KEY = 'test-key-484';
 
-function uploadFiles(): string[] {
+function uploadFiles() {
   try { return fs.readdirSync(TMP); } catch { return []; }
 }
 
 let port = 0;
-beforeEach(async () => {
+
+before(async () => {
+  await new Promise((resolve) => service.server.listen(0, '127.0.0.1', resolve));
+  port = service.server.address().port;
+});
+
+beforeEach(() => {
   guard.resetRateLimit();
   process.env.MOBISSH_FEEDBACK_KEY = KEY;
   delete process.env.MOBISSH_FEEDBACK_MAX_BYTES;
@@ -53,18 +59,14 @@ beforeEach(async () => {
   process.env.MOBISSH_FEEDBACK_RATE_MAX = '10000';
   // clear the uploads dir between tests
   for (const f of uploadFiles()) { try { fs.unlinkSync(path.join(TMP, f)); } catch { /* ignore */ } }
-  if (!port) {
-    await new Promise<void>((resolve) => service.server.listen(0, '127.0.0.1', resolve));
-    port = (service.server.address() as { port: number }).port;
-  }
 });
 
-afterAll(() => {
+after(() => {
   try { service.server.close(); } catch { /* ignore */ }
+  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-interface Resp { status: number; body: string }
-function post(urlPath: string, body: string, headers: Record<string, string> = {}): Promise<Resp> {
+function post(urlPath, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const r = http.request(
       { host: '127.0.0.1', port, path: urlPath, method: 'POST', headers: { 'Content-Type': 'application/json', ...headers } },
@@ -86,8 +88,8 @@ describe('feedback-guard #484 — shared guard', () => {
     process.env.MOBISSH_FEEDBACK_MAX_BYTES = '1024'; // 1KB cap for the test
     const big = JSON.stringify({ title: 'x', logs: 'A'.repeat(4096) }); // > 1KB
     const res = await post('/api/bug-report', big, authHdr);
-    expect(res.status).toBe(413);
-    expect(uploadFiles().length).toBe(0);
+    assert.equal(res.status, 413);
+    assert.equal(uploadFiles().length, 0);
   });
 
   it('rejects an oversized DECODED image artifact (small-ish encoded) without writing a giant file', async () => {
@@ -95,29 +97,29 @@ describe('feedback-guard #484 — shared guard', () => {
     // decoded screenshot is ~300 bytes (> 64) but the encoded body stays under the byte cap
     const shot = 'data:image/png;base64,' + Buffer.alloc(300, 7).toString('base64');
     const res = await post('/api/bug-report', JSON.stringify({ title: 'shot', screenshot: shot }), authHdr);
-    expect(res.status).toBe(200);
+    assert.equal(res.status, 200);
     // the oversized screenshot must NOT be written; only the meta .json is
-    expect(uploadFiles().some((f) => f.endsWith('-bug-report.png'))).toBe(false);
-    expect(uploadFiles().some((f) => f.endsWith('-bug-report.json'))).toBe(true);
+    assert.equal(uploadFiles().some((f) => f.endsWith('-bug-report.png')), false);
+    assert.equal(uploadFiles().some((f) => f.endsWith('-bug-report.json')), true);
   });
 
   it('rejects a request with no auth header (401) and writes nothing', async () => {
     const res = await post('/api/bug-report', JSON.stringify({ title: 'x' }), {});
-    expect(res.status).toBe(401);
-    expect(uploadFiles().length).toBe(0);
+    assert.equal(res.status, 401);
+    assert.equal(uploadFiles().length, 0);
   });
 
   it('rejects a request with a WRONG auth header (401) and writes nothing', async () => {
     const res = await post('/api/bug-report', JSON.stringify({ title: 'x' }), { 'X-MobiSSH-Key': 'nope' });
-    expect(res.status).toBe(401);
-    expect(uploadFiles().length).toBe(0);
+    assert.equal(res.status, 401);
+    assert.equal(uploadFiles().length, 0);
   });
 
   it('rejects with 503 when the feedback key is not configured (block, do not degrade)', async () => {
     delete process.env.MOBISSH_FEEDBACK_KEY;
     const res = await post('/api/bug-report', JSON.stringify({ title: 'x' }), authHdr);
-    expect(res.status).toBe(503);
-    expect(uploadFiles().length).toBe(0);
+    assert.equal(res.status, 503);
+    assert.equal(uploadFiles().length, 0);
   });
 
   it('rejects once the per-IP rate limit is exceeded (429)', async () => {
@@ -126,59 +128,59 @@ describe('feedback-guard #484 — shared guard', () => {
     const a = await post('/api/gesture-telemetry', JSON.stringify({ reason: 'r' }), authHdr);
     const b = await post('/api/gesture-telemetry', JSON.stringify({ reason: 'r' }), authHdr);
     const c = await post('/api/gesture-telemetry', JSON.stringify({ reason: 'r' }), authHdr);
-    expect(a.status).toBe(200);
-    expect(b.status).toBe(200);
-    expect(c.status).toBe(429);
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200);
+    assert.equal(c.status, 429);
   });
 
   it('accepts a valid, in-cap, authenticated bug report and writes it (no regression)', async () => {
     const shot = 'data:image/png;base64,' + Buffer.alloc(32, 1).toString('base64');
     const res = await post('/api/bug-report', JSON.stringify({ title: 'real bug', comment: 'it broke', screenshot: shot }), authHdr);
-    expect(res.status).toBe(200);
-    expect(res.body).toContain('"ok":true');
-    expect(uploadFiles().some((f) => f.endsWith('-bug-report.json'))).toBe(true);
-    expect(uploadFiles().some((f) => f.endsWith('-bug-report.png'))).toBe(true);
+    assert.equal(res.status, 200);
+    assert.ok(res.body.includes('"ok":true'));
+    assert.equal(uploadFiles().some((f) => f.endsWith('-bug-report.json')), true);
+    assert.equal(uploadFiles().some((f) => f.endsWith('-bug-report.png')), true);
   });
 });
 
 describe('feedback-guard #484 — guard unit surface', () => {
-  const fakeReq = (headers: Record<string, string>, ip = '9.9.9.9') => ({ headers, socket: { remoteAddress: ip } });
+  const fakeReq = (headers, ip = '9.9.9.9') => ({ headers, socket: { remoteAddress: ip } });
 
   it('checkAuth returns null for a matching key, 401 for mismatch, 503 when unset', () => {
     process.env.MOBISSH_FEEDBACK_KEY = KEY;
-    expect(guard.checkAuth(fakeReq({ 'x-mobissh-key': KEY }))).toBeNull();
-    expect(guard.checkAuth(fakeReq({ 'x-mobissh-key': 'bad' }))?.status).toBe(401);
-    expect(guard.checkAuth(fakeReq({}))?.status).toBe(401);
+    assert.equal(guard.checkAuth(fakeReq({ 'x-mobissh-key': KEY })), null);
+    assert.equal(guard.checkAuth(fakeReq({ 'x-mobissh-key': 'bad' })).status, 401);
+    assert.equal(guard.checkAuth(fakeReq({})).status, 401);
     delete process.env.MOBISSH_FEEDBACK_KEY;
-    expect(guard.checkAuth(fakeReq({ 'x-mobissh-key': KEY }))?.status).toBe(503);
+    assert.equal(guard.checkAuth(fakeReq({ 'x-mobissh-key': KEY })).status, 503);
   });
 
   it('preflight enforces auth before rate limiting', () => {
     process.env.MOBISSH_FEEDBACK_KEY = KEY;
     guard.resetRateLimit();
-    expect(guard.preflight(fakeReq({ 'x-mobissh-key': KEY }))).toBeNull();
-    expect(guard.preflight(fakeReq({ 'x-mobissh-key': 'bad' }))?.status).toBe(401);
+    assert.equal(guard.preflight(fakeReq({ 'x-mobissh-key': KEY })), null);
+    assert.equal(guard.preflight(fakeReq({ 'x-mobissh-key': 'bad' })).status, 401);
   });
 });
 
 describe('feedback-guard #484 — both front doors wire the guard', () => {
   it('server/index.js requires and calls the shared guard preflight', () => {
-    const src = fs.readFileSync(path.join(__dirname, '../../../server/index.js'), 'utf8');
-    expect(src).toContain("require('./feedback-guard')");
-    expect(src).toMatch(/feedbackGuard\.preflight\(/);
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'server/index.js'), 'utf8');
+    assert.ok(src.includes("require('./feedback-guard')"));
+    assert.match(src, /feedbackGuard\.preflight\(/);
   });
 
   it('server-feedback/index.js requires and calls the shared guard preflight', () => {
-    const src = fs.readFileSync(path.join(__dirname, '../../../server-feedback/index.js'), 'utf8');
-    expect(src).toMatch(/require\('\.\.\/server\/feedback-guard'\)/);
-    expect(src).toMatch(/guard\.preflight\(/);
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'server-feedback/index.js'), 'utf8');
+    assert.match(src, /require\('\.\.\/server\/feedback-guard'\)/);
+    assert.match(src, /guard\.preflight\(/);
   });
 
   it('server/index.js forwards the auth key when relaying to the feedback service', () => {
     // Otherwise the downstream service (same shared guard) 401s the relayed,
     // already-authenticated request. Prod + service share MOBISSH_FEEDBACK_KEY.
-    const src = fs.readFileSync(path.join(__dirname, '../../../server/index.js'), 'utf8');
-    expect(src).toMatch(/proxyFeedbackBody\([^)]*x-mobissh-key/);
-    expect(src).toMatch(/headers\['X-MobiSSH-Key'\] = authKey/);
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'server/index.js'), 'utf8');
+    assert.match(src, /proxyFeedbackBody\([^)]*x-mobissh-key/);
+    assert.match(src, /headers\['X-MobiSSH-Key'\] = authKey/);
   });
 });

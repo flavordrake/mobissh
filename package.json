@@ -16,6 +16,7 @@
     "lint:fix": "eslint --fix public/ server/ tests/ src/",
     "pretest": "tsc",
     "test": "playwright test",
+    "test:infra": "bash scripts/test-infra.sh",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "test:ui": "playwright test --ui",
