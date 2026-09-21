@@ -57,6 +57,13 @@ jobs:
           node-version: 20
       - uses: subosito/flutter-action@v2
         with:
+          # PINNED to the SDK fd-dev builds and ships with. Unpinned `stable`
+          # resolved to 3.47.5, on which pdfrx 1.3.5 (a transitive dep of the PDF
+          # viewer) fails to COMPILE — "Property 'blockSize' cannot be accessed on
+          # 'PdfFileCache?'" — which loaded as 89 failed test FILES and read like a
+          # product regression. CI must run the SDK the project is developed
+          # against; moving to a newer SDK is a deliberate change, not a CI default.
+          flutter-version: '3.44.0'
           channel: stable
           cache: true
       - name: Native fast gate
