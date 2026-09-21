@@ -67,9 +67,11 @@ source "${REPO_ROOT}/scripts/lib/integration-fixtures.sh"
 
 # What COUNTS AS A PASS is the accepted baseline in
 # native/integration_test/BASELINE.manifest, not an all-green run (#1101/#1205).
-# 74 of the 85 discovered device tests pass on clean main; the other 11 have named
-# causes and owning issues. Demanding all-green made the suite say nothing about
-# the change under test, which is how four merges ended up hand-verified instead.
+# 74 of the 84 discovered device tests pass on clean main; the other 10 have named
+# causes and owning issues (plus 1 that declares its own runner). Demanding
+# all-green made the suite say nothing about the change under test, which is how
+# four merges ended up hand-verified instead. The manifest is authoritative —
+# these numbers are prose and drifted once already (#1205 codex audit).
 source "${REPO_ROOT}/scripts/lib/integration-manifest.sh"
 
 # Emulator guard — the #589 contract: an absent emulator must be LOUD, never a

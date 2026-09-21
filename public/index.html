@@ -1,3 +1,4 @@
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MobiSSH</title>
@@ -18,11 +19,18 @@
   }
   a { color: #8ab4ff; }
 </style>
+</head>
 <!--
   #1205: the PWA web app was retired. The tailnet root used to serve the PWA
   shell; it now forwards to the native install page so / does not 404. The
   meta refresh fires with no JavaScript (the server sends
   Content-Security-Policy: script-src 'self', and an inline script would be
   blocked); the link below is the manual fallback.
+
+  The literal `<head>` tag above is REQUIRED, not decoration: server/index.js
+  injects the app-version meta by string-replacing `<head>`, and
+  scripts/server-ctl.sh scrapes that meta off `/` to decide whether the running
+  local server is current. Without the tag the injection silently no-ops and
+  server-ctl treats a healthy current server as stale (codex audit, #1205).
 -->
 <p>MobiSSH has moved to the native app.<br><a href="./native.html">Open the install page</a></p>

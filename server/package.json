@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "node --test test.js"
+    "//test": "#1205: server/test.js was retired with the PWA. Server coverage now lives in test/infra/ (node:test), run by scripts/test-infra.sh in fast-gate 0 — not from this package."
   },
   "dependencies": {
     "marked": "^18.0.4",

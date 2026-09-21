@@ -23,6 +23,11 @@ public/mobissh-native-*.apk
 public/mobissh-native.apk
 public/mobissh-native-macos*.zip
 public/*.aab
+# #1205: compiled output of the RETIRED PWA. These are gitignored, so a
+# long-lived checkout still has them from before the retirement and `COPY
+# public/` would bake dead JavaScript into the image. Nothing serves them.
+public/app.js
+public/modules
 hooks
 *.md
 *.log
