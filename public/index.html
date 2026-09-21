@@ -1,0 +1,28 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MobiSSH</title>
+<meta http-equiv="refresh" content="0; url=./native.html">
+<link rel="canonical" href="./native.html">
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d1a;
+    color: #e6e6f0;
+    font: 16px/1.5 system-ui, -apple-system, sans-serif;
+    text-align: center;
+  }
+  a { color: #8ab4ff; }
+</style>
+<!--
+  #1205: the PWA web app was retired. The tailnet root used to serve the PWA
+  shell; it now forwards to the native install page so / does not 404. The
+  meta refresh fires with no JavaScript (the server sends
+  Content-Security-Policy: script-src 'self', and an inline script would be
+  blocked); the link below is the manual fallback.
+-->
+<p>MobiSSH has moved to the native app.<br><a href="./native.html">Open the install page</a></p>
