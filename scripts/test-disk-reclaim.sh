@@ -28,7 +28,10 @@ git -C "$R" init -q -b main
 git -C "$R" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
 git -C "$R" worktree add -q -b merged-branch "$R/.claude/worktrees/agent-merged"
 git -C "$R/.claude/worktrees/agent-merged" -c user.name=t -c user.email=t@t commit -q --allow-empty -m work
-git -C "$R" merge -q --no-ff -m merge merged-branch
+# --no-ff writes a merge COMMIT, so it needs an identity like the commits above.
+# Without it the test depends on the host having a global git identity — which a
+# GitHub runner does not (found when #1205 put this script into CI).
+git -C "$R" -c user.name=t -c user.email=t@t merge -q --no-ff -m merge merged-branch
 git -C "$R" worktree add -q -b open-branch "$R/.claude/worktrees/agent-open"
 git -C "$R/.claude/worktrees/agent-open" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wip
 for wt in agent-merged agent-open; do
