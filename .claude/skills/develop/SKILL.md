@@ -65,7 +65,7 @@ For each issue number:
 
 > "User's intended text is faithfully represented to the terminal as entered, in all cases."
 
-For IME/input-related issues, the test infrastructure in `tests/emulator/fixtures.js` provides:
+For IME/input-related issues, the native integration suite (`native/integration_test/`) provides:
 - `IntentCapture` — records what the user intended (swipe, voice, keyboard)
 - `TerminalReceiver` — records what the terminal actually received
 - `assertFaithful(intent, receiver, expected)` — the North Star assertion
@@ -196,7 +196,7 @@ agent handles both test writing and implementation per `.claude/agents/develop.m
 - Existing tests updated where behavior changed
 - New tests added that went from fail→pass
 - Smoketest exists for feature accessibility
-- Fast gate passes (`scripts/test-fast-gate.sh`)
+- Fast gate passes (`scripts/native-fast-gate.sh`)
 
 ### Valuable failures:
 An agent that aborts with code + failing tests is still useful. The branch shows
@@ -216,7 +216,7 @@ and knowledge seeds — they are how the project learns from bot work.
 - TRACE is part of done-when criteria: a PR without a populated TRACE is not integration-ready
 
 ## Verify
-scripts/test-fast-gate.sh
+scripts/native-fast-gate.sh
 ```
 
 ## Spawning agents

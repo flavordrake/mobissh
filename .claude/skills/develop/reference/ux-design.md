@@ -1,3 +1,7 @@
+> **Scope (#1205):** this documents the RETIRED PWA. It is kept because the
+> native app duplicates its UX — treat every `src/` / `public/app.css` path here
+> as a pointer into git history, not a file to edit.
+
 # UX Design & CSS Best Practices — MobiSSH
 
 ## Design Philosophy

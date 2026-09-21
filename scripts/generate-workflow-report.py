@@ -9,7 +9,7 @@ video frames, and links to the full recording.
 Usage:
     python3 scripts/generate-workflow-report.py
     python3 scripts/generate-workflow-report.py --open
-    python3 scripts/generate-workflow-report.py --baseline tests/emulator/baseline
+    python3 scripts/generate-workflow-report.py --baseline test-history/baseline
 """
 
 import argparse

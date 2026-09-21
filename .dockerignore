@@ -4,10 +4,9 @@
 .auth
 node_modules
 server/node_modules
-tests
+test
 scripts
-playwright-report
-playwright-report-*
+playwright-report*
 test-results
 test-results-*
 test-history
@@ -24,8 +23,6 @@ public/mobissh-native-*.apk
 public/mobissh-native.apk
 public/mobissh-native-macos*.zip
 public/*.aab
-playwright*.config.*
-browserstack.yml
 hooks
 *.md
 *.log

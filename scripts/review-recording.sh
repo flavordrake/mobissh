@@ -10,11 +10,11 @@
 #   scripts/review-recording.sh --recording path/to/file.webm    # custom recording
 #   scripts/review-recording.sh --open                           # open output dir
 #
-# Default recording path: test-results-appium/recording.webm (run-appium-tests.sh output)
+# Default recording path: test-results/recording.webm
 # For emulator tests use: --recording test-results/emulator/recording.mp4
 #
 # NOTE — debug overlay artifacts in recordings:
-#   run-appium-tests.sh enables show_touches and pointer_location for the
+#   the emulator run enables show_touches and pointer_location for the
 #   entire test run. These are cosmetic overlays and appear in all recordings:
 #   - Green circles at touch points (show_touches): disappear on finger lift;
 #     the last circle may linger ~100ms between test cases — expected behavior.
@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-RECORDING="test-results-appium/recording.webm"
+RECORDING="test-results/recording.webm"
 INTERVAL=5
 OPEN=false
 

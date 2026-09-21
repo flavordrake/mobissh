@@ -12,7 +12,7 @@ The agent writes tests only — no application code changes.
 
 - `/test 225` — write tests for issue #225's changes
 - `/test keybar scroll` — write tests for keybar scrolling behavior
-- `/test src/modules/ui.ts:_attachRepeat` — write tests for a specific function
+- `/test native/lib/ui/keybar.dart:KeyBar` — write tests for a specific symbol
 - `/test` — auto-detect what needs coverage from recent git diff
 
 ## Agent Design
@@ -64,8 +64,8 @@ git checkout -b bot/test-{description} origin/main
 1. Test behavior, not implementation — what does the user see/experience?
 2. Test boundaries — what happens at limits, with empty input, with null?
 3. Test interactions — what happens when this feature meets another?
-4. For UI: Playwright tests in tests/*.spec.js
-5. For logic: Vitest tests in src/modules/__tests__/*.test.ts
+4. For device behaviour: integration tests in native/integration_test/*_test.dart
+5. For logic: Flutter tests in native/test/, or node:test in test/infra/ for non-Flutter infra
 6. Use existing fixtures — never duplicate mock server setup
 7. Smoketests first (feature accessible), then behavior tests (feature works)
 
@@ -81,7 +81,7 @@ git checkout -b bot/test-{description} origin/main
 - Write tests for test infrastructure
 
 ### Verify
-scripts/test-fast-gate.sh
+scripts/native-fast-gate.sh
 
 ### Finish
 Verify branch, git add, commit, push, create PR, git checkout main

@@ -20,7 +20,7 @@ Every release must update ALL of these in sync:
 
 The server reads version from `server/package.json` at startup and injects it as `<meta name="app-version" content="{version}:{git-hash}">`.
 
-`public/sw.js` `CACHE_NAME` is automatically derived from a content hash of `public/` files by `container-ctl.sh` at build time. No manual bump needed — it changes only when actual file content changes.
+HISTORICAL (#1205): `public/sw.js` `CACHE_NAME` used to be derived from a content hash of `public/` files by `container-ctl.sh` at build time. No manual bump needed — it changes only when actual file content changes.
 
 Root `package.json` has no version field (private workspace). Don't add one.
 
@@ -61,14 +61,12 @@ Format as a concise changelog section. Include issue numbers where present. Don'
 Run the full CI gate before tagging. ALL must pass:
 
 ```bash
-scripts/test-fast-gate.sh           # TypeScript + ESLint + Vitest
-scripts/test-headless.sh            # Headless Playwright E2E
+scripts/native-fast-gate.sh         # gate 0 rule + infra tests, analyze, flutter unit
 ```
 
 If an emulator is available (`adb devices | grep emulator`), also run:
 ```bash
-scripts/run-emulator-tests.sh
-scripts/run-appium-tests.sh         # Appium gesture baseline
+scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh
 ```
 
 Do NOT tag if any validation fails. Fix first, commit, then re-run.
@@ -223,7 +221,7 @@ Update all touchpoints:
 
 1. **`server/package.json`**: Update `"version"` field
 
-`public/sw.js` `CACHE_NAME` is auto-derived by `container-ctl.sh` at build time (content hash of `public/` files). No manual bump needed.
+HISTORICAL (#1205): `public/sw.js` `CACHE_NAME` was auto-derived by `container-ctl.sh` at build time (content hash of `public/` files). No manual bump needed.
 
 ## Step 5: Commit and Tag
 
@@ -241,12 +239,12 @@ Move timestamped test-history runs into a versioned directory for the release. T
 
 ```bash
 # Create versioned archive directory
-mkdir -p test-history/appium/v{VERSION}
+mkdir -p test-history/integration-baseline/v{VERSION}
 
 # Move all timestamped runs since last release into versioned dir
-# (each run-appium-tests.sh invocation creates test-history/appium/YYYYMMDD-HHMMSS/)
-for dir in test-history/appium/20*; do
-  [ -d "$dir" ] && mv "$dir" "test-history/appium/v{VERSION}/$(basename "$dir")"
+# (each suite run creates test-history/integration-baseline/<UTC stamp>/)
+for dir in test-history/integration-baseline/20*; do
+  [ -d "$dir" ] && mv "$dir" "test-history/integration-baseline/v{VERSION}/$(basename "$dir")"
 done
 
 # Stage and include in the release commit

@@ -49,7 +49,7 @@ NEW_FINDINGS=0
 
 log "Running semgrep scan..."
 if command -v semgrep &>/dev/null; then
-  semgrep scan --config auto --json --quiet src/ server/ public/ \
+  semgrep scan --config auto --json --quiet server/ server-feedback/ public/ \
     --max-target-bytes 500000 --timeout 30 \
     > "${AUDIT_DIR}/semgrep-raw.json" 2>/dev/null || true
 

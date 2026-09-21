@@ -29,7 +29,7 @@ scripts/container-ctl.sh ensure
 docker logs mobissh-prod --tail 50
 
 # Verify code is current
-docker exec mobissh-prod grep '<marker>' /app/public/app.css
+docker exec mobissh-prod grep '<marker>' /app/public/native.html
 
 # Shell into container
 docker exec -it mobissh-prod sh
@@ -37,21 +37,18 @@ docker exec -it mobissh-prod sh
 
 ### "My changes aren't showing"
 
-1. Did you run `npx tsc` to compile TypeScript? (`tsc --noEmit` only type-checks)
-2. Did you rebuild the container? (`scripts/container-ctl.sh restart`)
-3. Verify: `docker exec mobissh-prod grep '<your change>' /app/public/modules/<file>.js`
+1. Did you rebuild the container? (`scripts/container-ctl.sh restart`) — the image
+   COPYs `public/` and `server/` at build time.
+2. Is the container serving HEAD? (`scripts/container-ctl.sh status`)
+3. Verify: `docker exec mobissh-prod grep '<your change>' /app/server/index.js`
 
-### TypeScript workflow for container
+There is no build step: #1205 retired the PWA's TypeScript sources, so `public/`
+is shipped verbatim.
 
-1. Edit `src/modules/*.ts`
-2. Run `npx tsc` (NOT `--noEmit`)
-3. Rebuild container: `scripts/container-ctl.sh restart`
-4. Verify: `docker exec mobissh-prod grep '<marker>' /app/public/modules/<file>.js`
+## Local server
 
-## Local server (headless tests only)
-
-`scripts/server-ctl.sh` manages a local Node.js process on port 8081 for headless Playwright tests.
-This is NOT used for user-facing testing.
+`scripts/server-ctl.sh` manages a local Node.js process on port 8081.
+This is NOT used for user-facing testing — use the prod container.
 
 ```bash
 scripts/server-ctl.sh ensure    # start or restart until healthy at HEAD
@@ -61,7 +58,7 @@ scripts/server-ctl.sh stop      # stop server
 scripts/server-ctl.sh restart   # force restart
 ```
 
-`scripts/test-headless.sh` handles server lifecycle automatically via Playwright's `webServer` config.
+`scripts/server-ctl.sh ensure` is the local-server lifecycle; the prod container is `scripts/container-ctl.sh`.
 
 ## Environment Variables
 

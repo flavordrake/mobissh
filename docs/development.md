@@ -2,67 +2,39 @@
 
 ## Build
 
-Source: `src/modules/*.ts` (strict TypeScript). Compiled via `npx tsc` to `public/modules/*.js`.
-Server: `server/index.js` (plain Node.js, not compiled). Start with `cd server && npm start`.
+The product is the Flutter app in `native/`. Build and test it only through
+`scripts/flutter-cmd.sh` / `scripts/native-fast-gate.sh` / `scripts/ship-native.sh` —
+never a bare `flutter` invocation.
 
-No bundler. ES modules served directly by the Node.js static file server.
+`server/index.js` (plain Node.js, not compiled) serves the install page, the native
+artifacts, the feedback relay and the Claude Code approval bridge. There is no web
+build step: #1205 retired the PWA's TypeScript sources, so `public/` ships verbatim.
 
 ## Test layers
 
-### Headless browser (Playwright)
+The controlling document is `.claude/rules/testing.md`. In short:
 
-506 tests across 9 spec files. Covers UI rendering, navigation, vault operations, input
-modes, settings, and basic gesture simulation.
+| Tier | Command | What it covers |
+|---|---|---|
+| Fast gate | `scripts/native-fast-gate.sh` | bash rule tests, the `test/infra/` node:test suite, `flutter analyze`, the Flutter unit/widget suite |
+| Infra only | `scripts/test-infra.sh` | `server/feedback-guard.js`, `server/manifest.js`, `scripts/notify-parse.sh`, the TRACE scripts, `scripts/termux-bootstrap.sh` |
+| On-emulator | `scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh` | connect/auth, reconnect, SFTP, IPC, lifecycle — against `native/integration_test/BASELINE.manifest` |
 
-```bash
-scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh
-npx playwright test --grep "vault"  # run a subset
-```
-
-The `webServer` config in `playwright.config.js` auto-starts the server.
-
-### Android emulator (Appium)
-
-31 tests across 7 spec files. Covers real Chrome touch gestures (scroll, horizontal swipe,
-pinch-to-zoom), vault biometric flow, full user workflows, and integration validations.
-
-```bash
-scripts/run-appium-tests.sh           # full suite with recording
-scripts/run-appium-tests.sh --suite smoke  # tagged subset
-```
-
-Never run Appium tests bare (`npx playwright test --config=playwright.appium.config.js`).
-The script handles emulator boot, screen recording, ANR dismissal, archival, and ffprobe
-validation.
-
-Requires: Android SDK, AVD `MobiSSH_Pixel7`, Appium v2, UiAutomator2 driver.
-Setup: `scripts/setup-appium.sh` (run as non-root).
+The emulator is a leased fleet device (CT113); `with-fleet-emulator.sh` books it for
+one command and releases it afterwards.
 
 ### Manual device testing
 
-Features requiring real hardware: iOS Safari, biometric vault unlock, Bluetooth keyboards,
-real-world network latency. Use `scripts/run-appium-tests.sh` for Android; iOS needs manual
-validation until iOS Simulator support is added (#140).
-
-## Test conventions
-
-**Frozen baselines.** Files matching `*-baseline.spec.*` are frozen. They capture known-correct
-behavior and must not be modified. New features get new spec files alongside baselines.
-Semgrep and the pre-commit hook enforce this.
-
-**Per-test recording.** Each Appium test produces its own `.webm` file (540x1200, 12fps, 1Mbps).
-Recordings archive to `test-history/appium/{timestamp}-{suite}/`.
-
-**Worker-scoped sessions.** Appium tests use one session per Playwright worker to avoid
-UiAutomator2 crashes from session churn.
+Mobile UX features MUST be validated on real hardware before merging. The emulator
+tier is necessary, not sufficient — see `feedback_device_run_not_headless_green`.
 
 ## Pre-commit validation
 
 ```bash
-scripts/test-typecheck.sh && scripts/test-lint.sh && scripts/test-unit.sh && scripts/test-headless.sh
+scripts/native-fast-gate.sh
 ```
 
-This is the minimum gate. All bot PRs must pass this before merge.
+This is the minimum gate, and it is what CI runs. All bot PRs must pass it before merge.
 
 ## Bot delegation workflow
 
@@ -74,7 +46,7 @@ Issues are worked by the Claude Code GitHub integration via `@claude` comments o
 open issue
   -> /delegate classifies, posts @claude comment, applies `bot` label
   -> bot creates branch claude/issue-{N}-{date}-{time}, opens PR
-  -> /integrate runs fast gates (tsc + eslint + vitest)
+  -> /integrate runs the fast gate (native gate + eslint + coverage check)
   -> pass -> merge, close issue
   -> fail -> `divergence` label, needs re-scoping
   -> /delegate analyzes failure, re-delegates with corrections
@@ -131,10 +103,11 @@ Key scripts in `scripts/`:
 
 | Script | Purpose |
 |---|---|
-| `run-appium-tests.sh` | Full Appium test lifecycle (emulator, recording, archival) |
-| `start-appium.sh` | Appium server lifecycle (ensure/start/stop/restart) |
-| `setup-appium.sh` | One-time Appium + Android SDK setup |
-| `integrate-gate.sh` | Fast gate: tsc + eslint + vitest on a branch |
+| `native-fast-gate.sh` | Fast gate: rule tests + infra tests + analyze + flutter test |
+| `test-infra.sh` | The node:test infrastructure suite (`test/infra/`) |
+| `with-fleet-emulator.sh` | Lease the fleet emulator for one command |
+| `native-integration-suite.sh` | On-emulator acceptance against the baseline manifest |
+| `integrate-gate.sh` | Fast gate a bot branch (native gate + eslint + coverage check) |
 | `delegate-discover.sh` | Fetch open issues + bot branches for /delegate |
 | `delegate-classify.sh` | Classify issues into delegation categories |
 | `delegate-fetch-bodies.sh` | Fetch issue bodies for classified issues |

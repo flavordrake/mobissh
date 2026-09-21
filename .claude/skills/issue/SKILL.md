@@ -82,8 +82,8 @@ Check for recent test artifacts in either test results directory. If the report 
 was modified within 30 minutes (`stat -c %Y` vs `date +%s`), include relevant evidence:
 
 **Appium tests** (primary):
-1. **test-results-appium/results.json**: parse for pass/fail summary, failed test names
-2. **test-history/appium/**: archived recordings and results per run
+1. **test-results/uploads/**: bug-report bundles from the app (screenshots, rings)
+2. **test-history/integration-baseline/**: archived integration-suite reports per run
 
 **Legacy CDP emulator tests**:
 1. **test-results/emulator/report.json**: pass/fail summary, failed test names and errors

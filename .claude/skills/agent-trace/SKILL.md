@@ -86,9 +86,9 @@ Run Nsight Compute, Nsight Systems, or compute-sanitizer. Save raw output to
 
 | File | What to capture | Tool |
 |------|----------------|------|
-| `telemetry/perf-before.txt` | Test suite duration before changes | `scripts/test-unit.sh` duration line |
-| `telemetry/perf-after.txt` | Test suite duration after changes | `scripts/test-unit.sh` duration line |
-| `telemetry/bundle-size.txt` | Compiled JS sizes | `ls -la public/modules/*.js` |
+| `telemetry/perf-before.txt` | Test suite duration before changes | the `flutter test` duration line |
+| `telemetry/perf-after.txt` | Test suite duration after changes | the `flutter test` duration line |
+| `telemetry/apk-size.txt` | Shipped artifact size | `ls -la public/mobissh-native.apk` |
 | `telemetry/page-metrics.json` | Layout count, style recalcs, heap | Playwright `page.metrics()` |
 | `telemetry/transfer-trace.log` | Chunk timing, ack latency | App's built-in transfer tracing |
 

@@ -53,7 +53,7 @@ Branch diverges from main, merge conflicts at integration time.
 ## Test Failures
 
 ### Type errors from cherry-pick
-Compiled JS in `public/modules/` is gitignored. After checkout, run `npx tsc` to
+HISTORICAL (#1205 retired the PWA build): compiled JS in `public/modules/` was gitignored, so after checkout you had to run `npx tsc` to
 regenerate. Stale compiled JS causes runtime errors that don't match source.
 
 ### Playwright: element not visible
@@ -70,7 +70,7 @@ Usually means the UI state is wrong, not that the test is broken. Check:
 ### Vitest: module not found
 - Check import extensions (must be `.js` not `.ts`)
 - Check that `vi.stubGlobal()` runs before dynamic import
-- Check `vitest.config.mts` for path aliases
+- Check the runner config for path aliases
 
 ## CSS Regressions
 - Never use `!important` — fix specificity instead

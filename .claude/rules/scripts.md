@@ -9,7 +9,7 @@ Key scripts (check `ls scripts/` before writing inline commands):
 - `server-ctl.sh` -- local server lifecycle (headless tests only)
 - `container-ctl.sh` -- production Docker container lifecycle
 - `test-*.sh` -- test gates (typecheck, lint, unit, headless)
-- `run-appium-tests.sh` -- emulator tests
+- `native-integration-suite.sh` -- on-emulator tests
 - `gh-file-issue.sh` / `gh-ops.sh` -- GitHub operations
 - `integrate-gate.sh` -- bot PR validation
 - `delegate-*.sh` -- delegation
@@ -25,4 +25,4 @@ Key scripts (check `ls scripts/` before writing inline commands):
   MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
   mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
   ```
-- `scripts/setup-appium.sh` must NOT run as root/sudo.
+- Emulator/adb helpers must NOT run as root/sudo.

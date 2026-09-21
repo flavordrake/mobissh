@@ -2,17 +2,12 @@ node_modules/
 npm-debug.log*
 .DS_Store
 .auth/
-playwright-report/
-playwright-report-emulator/
-playwright-report-appium/
+playwright-report*/
 test-results/
-test-results-appium/
 # Baseline results ARE tracked (overwritten each run)
-!tests/emulator/baseline/
 *.js.map
 # Compiled TypeScript output (built by tsc, not checked in)
-public/app.js
-public/modules/*.js
+# (the PWA build output that used to be listed here went with #1205)
 # Native APKs — built by flutter, placed in public/ for container deploy, not checked in
 public/*.apk
 # macOS app bundles + Play AAB + the macOS publish manifest — same deal: build
@@ -39,7 +34,7 @@ test-history/coverage/**/*.info
 # record — markdown only, same deal as coverage (raw per-test logs stay local).
 !test-history/integration-baseline/
 .traces/
-# vitest --coverage output (scripts/ts-coverage.sh); native/coverage/ is ignored in native/.gitignore
+# coverage output; native/coverage/ is ignored in native/.gitignore
 /coverage/
 
 # lsmcp cache

@@ -64,9 +64,8 @@ scripts/gh-ops.sh pr-create --head bot/issue-{N} --title "Issue title" --body-fi
 
 ## Pre-Push Checklist
 1. `git fetch origin main && git merge origin/main --no-edit`
-2. `npx tsc --noEmit` — type check
-3. `npx eslint src/ public/ server/ tests/` — lint
-4. `npx vitest run` — unit tests
+2. `scripts/native-fast-gate.sh` — the gate
+3. `npx eslint server/ server-feedback/ public/ test/` — lint
 5. `git diff --stat origin/main` — review your delta
 6. If delta > 200 lines or > 5 files, reconsider scope
 
@@ -89,6 +88,6 @@ git stash pop
 
 ### Tests pass locally but fail in CI
 - Check Node version (CI uses 20, local may differ)
-- Check if `npx tsc` was run (compiled JS may be stale)
+- Check that `flutter pub get` ran in `native/` (a fresh worktree resolves its own deps)
 - Check if test depends on server being running
-- Check Playwright browser versions (`npx playwright install`)
+- Check the Flutter SDK version (`scripts/flutter-cmd.sh --in native --version`)

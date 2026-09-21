@@ -60,7 +60,7 @@ Found: N issues matching theme (M total open)
 
 Group matching issues by shared concern:
 1. **File overlap** — issues touching the same source files
-2. **Module proximity** — issues in the same `src/modules/` file
+2. **Module proximity** — issues in the same `native/lib/` file
 3. **Functional cluster** — issues describing facets of the same behavior
 
 For each cluster:
