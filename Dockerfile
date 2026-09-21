@@ -21,10 +21,8 @@ COPY public/ ./public/
 COPY docs/install-mobissh-hooks.md ./docs/install-mobissh-hooks.md
 COPY hooks/mobissh-bridge.sh ./hooks/mobissh-bridge.sh
 
-# Compile TypeScript (src/ -> public/modules/, overwrites any stale compiled JS)
-COPY tsconfig.json ./
-COPY src/ ./src/
-RUN npm install --no-save typescript @xterm/xterm && npx tsc && rm -rf node_modules src
+# No build step: the PWA's TypeScript sources were retired in #1205, so public/
+# is now shipped verbatim (the install page, its two scripts, the redirect stub).
 
 # Bake git hash so server can report version without git installed
 ARG GIT_HASH=unknown

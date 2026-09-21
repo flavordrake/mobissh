@@ -125,46 +125,20 @@ cmd_build() {
   local hash
   hash=$(head_hash)
 
-  # Pre-build static checks — catches JS errors (use-before-define, etc.) and
-  # TS errors BEFORE baking a broken image. Set SKIP_GATE=1 to bypass in emergencies.
+  # Pre-build static check — catches JS errors (use-before-define, etc.) BEFORE
+  # baking a broken image. Set SKIP_GATE=1 to bypass in emergencies.
+  # #1205: the tsc step and the src/ + public/app.js lint targets went with the
+  # PWA; what the image serves now is server/ plus a handful of static files.
+  # The service-worker cache-hash rewrite went with public/sw.js.
   if [[ "${SKIP_GATE:-0}" != "1" ]]; then
-    log "Pre-build gate: tsc + eslint..."
-    if ! npx tsc --noEmit; then
-      err "tsc failed — aborting build. Set SKIP_GATE=1 to override."
-      exit 1
-    fi
-    if ! npx eslint server/ src/ public/app.js 2>&1; then
+    log "Pre-build gate: eslint..."
+    if ! npx eslint server/ server-feedback/ public/native-time.js public/native-feedback.js 2>&1; then
       err "eslint failed — aborting build. Set SKIP_GATE=1 to override."
       exit 1
     fi
     ok "Pre-build gate passed."
   else
     log "Pre-build gate: SKIPPED (SKIP_GATE=1)"
-  fi
-
-  # SW cache name: content hash of cached files, not a monotonic counter.
-  # The browser re-triggers SW update when sw.js changes byte-for-byte.
-  # Network-first + no-store means the cache is offline-fallback only —
-  # bumping on every rebuild was noise (#146).
-  # Derive SW cache name from content hash. Write to a temp copy so the
-  # source file stays clean — no in-place modification (#237).
-  local sw_file="public/sw.js"
-  if [[ -f "$sw_file" ]]; then
-    local content_hash
-    content_hash=$(find public/ -type f -not -name 'sw.js' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-8)
-    local current_name
-    current_name=$(grep -oP "mobissh-[a-z0-9]+" "$sw_file" | head -1)
-    local new_name="mobissh-${content_hash}"
-    if [[ "$current_name" != "$new_name" ]]; then
-      cp "$sw_file" "${sw_file}.build"
-      sed -i "s/${current_name}/${new_name}/" "${sw_file}.build"
-      mv "${sw_file}.build" "$sw_file"
-      log "SW cache: ${current_name} → ${new_name}"
-      # Restore source after Docker COPY picks up the modified version
-      trap 'git checkout -- public/sw.js 2>/dev/null' EXIT
-    else
-      log "SW cache: ${new_name} (unchanged)"
-    fi
   fi
 
   log "Building ${CONTAINER} at ${hash}..."
@@ -273,9 +247,6 @@ cmd_push() {
     err "Container ${CONTAINER} not running. Use 'restart' for a full rebuild."
     return 1
   fi
-
-  log "Compiling TypeScript..."
-  npx tsc 2>&1
 
   log "Pushing public/ and server/ into ${CONTAINER}..."
   docker cp public/. "${CONTAINER}:/app/public/"
