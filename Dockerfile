@@ -18,8 +18,6 @@ RUN cd server && npm ci --omit=dev
 # Copy application sources
 COPY server/ ./server/
 COPY public/ ./public/
-COPY docs/install-mobissh-hooks.md ./docs/install-mobissh-hooks.md
-COPY hooks/mobissh-bridge.sh ./hooks/mobissh-bridge.sh
 
 # No build step: the PWA's TypeScript sources were retired in #1205, so public/
 # is now shipped verbatim (the install page, its two scripts, the redirect stub).

@@ -17,7 +17,7 @@ The controlling document is `.claude/rules/testing.md`. In short:
 | Tier | Command | What it covers |
 |---|---|---|
 | Fast gate | `scripts/native-fast-gate.sh` | bash rule tests, the `test/infra/` node:test suite, `flutter analyze`, the Flutter unit/widget suite |
-| Infra only | `scripts/test-infra.sh` | `server/feedback-guard.js`, `server/manifest.js`, `scripts/notify-parse.sh`, the TRACE scripts, `scripts/termux-bootstrap.sh` |
+| Infra only | `scripts/test-infra.sh` | `server/feedback-guard.js`, `server/manifest.js`, `scripts/notify-parse.sh`, the TRACE scripts |
 | On-emulator | `scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh` | connect/auth, reconnect, SFTP, IPC, lifecycle — against `native/integration_test/BASELINE.manifest` |
 
 The emulator is a leased fleet device (CT113); `with-fleet-emulator.sh` books it for

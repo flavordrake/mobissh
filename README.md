@@ -50,7 +50,7 @@ Node.js server (port 8081, Tailscale) -- install page, APK/AAB artifacts,
 ```
 
 - **`native/`** -- the Flutter app: the product
-- **`server/index.js`** -- single Node.js process: static files (`public/`, `native-dist/`), `/api/bug-report` and friends, `/api/approval*` + the `/events` SSE channel, `/install-hooks/*`
+- **`server/index.js`** -- single Node.js process: static files (`public/`, `native-dist/`), `/api/bug-report` and friends, `/api/approval*` + the `/events` SSE channel
 - **`server-feedback/`** -- the feedback-service container that `server/index.js` relays to
 - **`public/native.html`** -- the generated install page; `public/index.html` redirects `/` to it
 
@@ -88,45 +88,6 @@ cd server && npm install && npm start
 # Listening on http://0.0.0.0:8081
 ```
 
-### Local install via Termux (Android)
-
-Run MobiSSH directly on your Android device with [Termux](https://termux.dev).
-This gives you `-L` local port forwarding — not available in the remote Docker install.
-
-**Prerequisites:** Termux installed from F-Droid or Google Play.
-
-**One-line bootstrap:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/flavordrake/mobissh/main/scripts/termux-bootstrap.sh | bash
-```
-
-The script:
-1. Verifies it is running inside Termux (aborts cleanly otherwise)
-2. Installs `nodejs` and `git` via `pkg` if not already present
-3. Clones or updates this repo to `~/mobissh`
-4. Runs `npm install --omit=dev` inside `server/`
-5. Prints the exact command to start the bridge
-
-**Start the bridge with local port-forwarding enabled:**
-
-```bash
-MOBISSH_LOCAL_FORWARDS=1 node ~/mobissh/server/index.js
-```
-
-Then open `http://127.0.0.1:8081/` on the device — it redirects to the install page.
-
-> `MOBISSH_LOCAL_FORWARDS=1` gated the PWA's `-L` forwarding panel and no longer does
-> anything: the WebSocket SSH bridge it served was retired with the PWA (#1205). The
-> Termux install is still useful as a local copy of the install/telemetry server.
-
-To keep the server running when the screen is off:
-
-```bash
-termux-wake-lock
-MOBISSH_LOCAL_FORWARDS=1 node ~/mobissh/server/index.js
-```
-
 ### Other options
 
 **Tailscale Serve (no Docker):** `cd server && npm start` then `tailscale serve https / http://localhost:8081`
@@ -147,7 +108,7 @@ no web build step — `public/` ships verbatim.
 | Layer | What it covers | Command |
 |---|---|---|
 | Fast gate | Rule tests, infra tests, `flutter analyze`, Flutter unit suite | `scripts/native-fast-gate.sh` |
-| Infra | Feedback guard, manifest, notify/TRACE/termux scripts | `scripts/test-infra.sh` |
+| Infra | Feedback guard, manifest, notify + TRACE scripts | `scripts/test-infra.sh` |
 | On-emulator | Connect/auth, reconnect, SFTP, IPC, lifecycle | `scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh` |
 | Manual device | Gestures, keyboard, biometric, lifecycle | On-device |
 

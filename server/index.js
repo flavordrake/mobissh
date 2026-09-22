@@ -84,27 +84,12 @@ try { GIT_HASH = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).tr
   try { GIT_HASH = fs.readFileSync(path.join(__dirname, '..', '.git-hash'), 'utf8').trim(); } catch (_2) {}
 }
 
-// Cache the install-hooks doc + canonical bridge script at startup for the
-// /install-hooks routes. Doc is served as text/markdown; the script is served
-// as text/plain so curl/wget/WebFetch can pipe it directly to a file.
-let INSTALL_HOOKS_DOC = '';
-let INSTALL_HOOKS_BRIDGE_SCRIPT = '';
-try {
-  INSTALL_HOOKS_BRIDGE_SCRIPT = fs.readFileSync(
-    path.join(__dirname, '..', 'hooks', 'mobissh-bridge.sh'),
-    'utf8',
-  );
-} catch (_) {
-  INSTALL_HOOKS_BRIDGE_SCRIPT = '#!/usr/bin/env bash\n# install-hooks: mobissh-bridge.sh not bundled in this image\nexit 1\n';
-}
-try {
-  INSTALL_HOOKS_DOC = fs.readFileSync(
-    path.join(__dirname, '..', 'docs', 'install-mobissh-hooks.md'),
-    'utf8',
-  );
-} catch (_) {
-  INSTALL_HOOKS_DOC = '# install-mobissh-hooks.md not found\n\nThis MobiSSH build was packaged without the install doc.\n';
-}
+// #1205: the /install-hooks doc + script routes were removed. They described a
+// PHONE approval/notification UI that the retired PWA provided and nothing
+// replaced — with no SSE client subscribed, `/api/approval-gate` just falls to
+// the default mode. The hook PROTOCOL below (/api/hook, /api/approval*) is
+// still live and still used by an installed hooks/mobissh-bridge.sh, so those
+// routes stay; only the install instructions for a dead UI are gone.
 
 // SSE clients for real-time telemetry push
 const sseClients = new Set();
@@ -476,29 +461,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // /install-hooks — install snippet for adding the MobiSSH notification
-  // hook to a Claude Code instance. Markdown so it renders sanely in
-  // browsers AND copies cleanly when fetched by another Claude Code agent.
-  if (req.url === '/install-hooks' || req.url === '/install-hooks.md') {
-    res.writeHead(200, {
-      'Content-Type': 'text/markdown; charset=utf-8',
-      'Cache-Control': 'no-store',
-    });
-    res.end(INSTALL_HOOKS_DOC);
-    return;
-  }
-
-  // /install-hooks/mobissh-bridge.sh — canonical bridge script. The doc
-  // tells agents to fetch this URL directly, so script changes flow
-  // automatically without a doc rewrite.
-  if (req.url === '/install-hooks/mobissh-bridge.sh') {
-    res.writeHead(200, {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store',
-    });
-    res.end(INSTALL_HOOKS_BRIDGE_SCRIPT);
-    return;
-  }
 
   // /version — lightweight JSON endpoint (kept for curl / scripted checks).
   if (req.url === '/version') {

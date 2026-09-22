@@ -6,7 +6,6 @@
 #   server/manifest.js                                   (manifest rewriting)
 #   scripts/notify-parse.sh                              (attention notifications)
 #   scripts/trace-*.sh                                   (TRACE tooling)
-#   scripts/termux-bootstrap.sh                          (published curl|bash installer)
 #
 # Runner is node:test, NOT vitest: agent worktrees have no node_modules (it is
 # gitignored and never copied), so a gate step that needs npm deps is exactly

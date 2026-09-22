@@ -32,5 +32,5 @@ hooks
 *.md
 *.log
 .DS_Store
-!docs/install-mobissh-hooks.md
-!hooks/mobissh-bridge.sh
+# #1205: the /install-hooks routes were removed, so the image no longer needs
+# the install doc or the bridge script — both un-ignored here for that purpose.
