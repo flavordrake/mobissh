@@ -103,11 +103,25 @@ log "generating stable install landing page (public/native.html)"
 # immediately via the /app/native-dist mount, and they survive restarts.
 log "publishing APKs + install page into ${NATIVE_DIST_HOST}/ (persistent, live-served)"
 mkdir -p "$NATIVE_DIST_HOST"
-cp "${PUBLIC_DIR}/${STAMPED}" "${NATIVE_DIST_HOST}/${STAMPED}"
-cp "${PUBLIC_DIR}/${STABLE}" "${NATIVE_DIST_HOST}/${STABLE}"
-cp "${PUBLIC_DIR}/native.html" "${NATIVE_DIST_HOST}/native.html"
-cp "${PUBLIC_DIR}/native-time.js" "${NATIVE_DIST_HOST}/native-time.js"
-cp "${PUBLIC_DIR}/native-feedback.js" "${NATIVE_DIST_HOST}/native-feedback.js"
+# `cp -f` with --remove-destination, NOT a bare cp: public/ and native-dist/
+# entries can be HARDLINKS to the same inode (same device, and something has
+# linked rather than copied them before). A bare `cp A B` on one inode fails
+# "are the same file" and, under `set -e`, aborts the publish MID-WAY — on
+# 2026-09-23 that shipped +190's APK while leaving native.html at +189, so the
+# install page advertised the old build with the new binary beside it.
+publish_to_dist() {
+  local src="$1" dest="$2"
+  if [[ "$src" -ef "$dest" ]]; then
+    echo "> (${dest##*/} is already the same inode as the source — nothing to copy)"
+    return 0
+  fi
+  cp -f --remove-destination "$src" "$dest"
+}
+publish_to_dist "${PUBLIC_DIR}/${STAMPED}" "${NATIVE_DIST_HOST}/${STAMPED}"
+publish_to_dist "${PUBLIC_DIR}/${STABLE}" "${NATIVE_DIST_HOST}/${STABLE}"
+publish_to_dist "${PUBLIC_DIR}/native.html" "${NATIVE_DIST_HOST}/native.html"
+publish_to_dist "${PUBLIC_DIR}/native-time.js" "${NATIVE_DIST_HOST}/native-time.js"
+publish_to_dist "${PUBLIC_DIR}/native-feedback.js" "${NATIVE_DIST_HOST}/native-feedback.js"
 
 # Fallback splits for non-arm64 devices (best-effort; published but not the
 # primary install link). The server's native-dist regex serves these names too.
