@@ -18,6 +18,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../diagnostics/connect_trace.dart';
+import '../diagnostics/frame_stats.dart' show noteSessionOutput;
 import 'session_messages.dart';
 
 /// Build a one-line trace label for a gateway payload. Includes the message
@@ -436,6 +437,16 @@ class FlutterForegroundSshGateway implements TaskSshGateway {
       final line = map['line'];
       if (line is String) recordControlModeLine(line);
       return;
+    }
+    // #1135 (telemetry, additive): note which session delivered output, so the
+    // frame stats can report how many sessions were STREAMING concurrently.
+    // Both stall reports had four-plus sessions streaming at once; without this
+    // number a high p95 cannot be told apart from ordinary load. This is the
+    // one session-agnostic seam every inbound payload passes; it records a
+    // timestamp per session id and nothing else (no bytes, no content).
+    if (map['kind'] == SshTaskEventKind.output.name) {
+      final sid = map['sessionId'];
+      if (sid is String && sid.isNotEmpty) noteSessionOutput(sid);
     }
     // First inbound payload proves the task isolate is alive and listening:
     // flush anything we buffered during spin-up, in order (#539).

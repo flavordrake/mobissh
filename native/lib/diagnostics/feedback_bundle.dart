@@ -79,6 +79,7 @@ String assembleFeedbackBundle({
   List<String> lifecycleLog = const <String>[],
   List<String> controlModeTrace = const <String>[],
   List<String> detectionExceptions = const <String>[],
+  Map<String, Object?>? frameStats,
   String? crashJson,
 }) {
   final scrubbedLog = connectLog.map(scrubSecrets).toList(growable: false);
@@ -143,6 +144,13 @@ String assembleFeedbackBundle({
     'controlModeTrace': scrubbedControlModeTrace,
     'detectionExceptionCount': detectionExceptions.length,
     'detectionExceptions': scrubbedExceptions,
+    // #1135: frame-time + viewport + session-load telemetry. Lifetime
+    // aggregates (count / p50 / p95 / max / over-16-32-100ms) plus the worst
+    // frames with the geometry and session load captured AT those frames — the
+    // two stall reports arrived with no frame timing at all, so every reading
+    // of them was inference. Numbers only (durations, pixel sizes, counts), so
+    // there is nothing here to scrub. Omitted entirely when absent.
+    'frameStats': ?frameStats,
     'lastCrash': lastCrash,
     // Null-aware element: the entry is omitted entirely when there is no raw
     // (non-JSON) crash blob to preserve.
