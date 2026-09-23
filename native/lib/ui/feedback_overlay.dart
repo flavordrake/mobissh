@@ -33,6 +33,8 @@ import 'package:mobissh/diagnostics/detection_geom.dart'
 import 'package:mobissh/diagnostics/diagnostics_config.dart'
     show kRawContentDiagnosticsEnabled;
 import 'package:mobissh/diagnostics/feedback_bundle.dart' show scrubSecrets;
+import 'package:mobissh/diagnostics/frame_stats.dart'
+    show frameStatsLine, frameStatsSnapshot;
 import 'package:mobissh/diagnostics/paint_stats.dart'
     show activePaintStatsSnapshot;
 import 'package:mobissh/diagnostics/gesture_trace.dart';
@@ -98,6 +100,7 @@ Map<String, Object?> buildFeedbackPayload({
   List<Map<String, Object?>> termReplyTrace = const <Map<String, Object?>>[],
   Map<String, Object?>? grid,
   Map<String, Object?>? detectionGeom,
+  Map<String, Object?>? frameStats,
   // #967: the pre-send Review & Send sheet lets the user EXCLUDE categories.
   // These gate ASSEMBLY (not just display) so an excluded artifact is provably
   // absent from the uploaded body. Default true → report quality preserved; the
@@ -216,6 +219,15 @@ Map<String, Object?> buildFeedbackPayload({
     // second capture whose paintTick didn't advance proves the wash never
     // repainted. Read-only telemetry; omitted when no session is active.
     if (includeTraces && detectionGeom != null) 'detectionGeom': detectionGeom,
+    // #1135: frame-time + viewport + session-load telemetry. Lifetime
+    // aggregates (frames / p50 / p95 / max / over-16-32-100ms) + the worst
+    // frames with the window geometry, the terminal boxes the app laid out and
+    // the session load captured AT those frames. This is the section that lets
+    // the next stall report separate LOAD (many streaming sessions, high frame
+    // times everywhere) from a REGRESSION (jank without the load), and tells a
+    // reader whether the "dead bottom 45%" is a real viewport collapse or the
+    // keyboard inset the capture cannot draw. Pure numbers — nothing to scrub.
+    if (includeTraces && frameStats != null) 'frameStats': frameStats,
   };
 }
 
@@ -461,6 +473,9 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       termReplyTrace: activeTermReplyTraceSnapshot(),
       grid: activeGridSnapshot(),
       detectionGeom: activeDetectionGeomSnapshot(),
+      // #1135: the burst just recorded a MOVING repro — the frame stats over
+      // that burst are exactly the measurement it lacks.
+      frameStats: frameStatsSnapshot(),
     );
   }
 
@@ -474,6 +489,15 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     if (stats == null) return;
     final line = stats.entries.map((e) => '${e.key}=${e.value}').join(' ');
     clifecycle('paint-stats', line);
+  }
+
+  /// #1135: one-line frame-timing + viewport + session-load stamp into the
+  /// lifecycle/connect rings, exactly like [_stampPaintStats]. The structured
+  /// `frameStats` section carries the full detail, but the stamp rides inside
+  /// the connect log, which is persisted today — so the numbers reach the next
+  /// report whatever the ingest end is running. Bounded: one line per report.
+  void _stampFrameStats() {
+    clifecycle('frame-stats', frameStatsLine());
   }
 
   Future<void> _onTap() async {
@@ -493,6 +517,12 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     // Paint replay harness: stamp the paint-stack boundary counters first so
     // they ride inside the connect/lifecycle logs of THIS report.
     _stampPaintStats();
+    // #1135: frame timing + the viewport/session load AT THE MOMENT OF TAP —
+    // the sheet's own layout (and a dismissed keyboard) must not rewrite the
+    // geometry the owner is reporting. Stamped into the rings first so the line
+    // rides inside the very connect log this report carries.
+    _stampFrameStats();
+    final frameStats = frameStatsSnapshot();
     final connectLog = connectLogSnapshot();
     final gestureLog = gestureLogSnapshot();
     final lifecycleLog = lifecycleLogSnapshot();
@@ -533,6 +563,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       termReplyTrace: termReplyTrace,
       grid: grid,
       detectionGeom: detectionGeom,
+      frameStats: frameStats,
     );
   }
 
@@ -550,6 +581,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
     List<Map<String, Object?>> termReplyTrace = const <Map<String, Object?>>[],
     Map<String, Object?>? grid,
     Map<String, Object?>? detectionGeom,
+    Map<String, Object?>? frameStats,
   }) async {
     // Show the sheet from the Navigator's OVERLAY context — NOT this overlay's
     // own context, which sits above the Navigator (mounted via
@@ -599,6 +631,7 @@ class _FeedbackOverlayState extends State<FeedbackOverlay> {
       termReplyTrace: termReplyTrace,
       grid: grid,
       detectionGeom: detectionGeom,
+      frameStats: frameStats,
       includeImages: review.includeImages,
       includeTraces: review.includeTraces,
     );

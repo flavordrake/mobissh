@@ -262,6 +262,12 @@ void main() {
           termReplyTrace: const [{'tMs': 1, 'b64': 'xx', 'kind': 'DA1'}],
           grid: const {'cols': 80, 'rows': 24},
           detectionGeom: const {'paintTick': 7, 'anchorCount': 0, 'anchors': []},
+          frameStats: const {
+            'frames': 4821,
+            'p95Ms': 48.0,
+            'over100': 57,
+            'worst': <Map<String, Object?>>[],
+          },
           includeImages: images,
           includeTraces: traces,
         );
@@ -272,6 +278,7 @@ void main() {
         'screenshot', 'frames', 'connectLog', 'gestureLog', 'lifecycleLog',
         'scrollTrace', 'sentSgrTrace', 'grid',
         'termReplyTrace', 'termReplyTraceEventCount', 'detectionGeom',
+        'frameStats',
       ]) {
         expect(p.containsKey(k), isTrue, reason: '$k present by default');
       }
@@ -298,6 +305,7 @@ void main() {
         'connectLog', 'gestureLog', 'lifecycleLog',
         'byteTrace', 'scrollTrace', 'sentSgrTrace', 'grid',
         'termReplyTrace', 'termReplyTraceEventCount', 'detectionGeom',
+        'frameStats',
       ]) {
         expect(p.containsKey(k), isFalse, reason: '$k must be omitted');
       }
@@ -305,6 +313,21 @@ void main() {
       expect(p.containsKey('screenshot'), isTrue);
       expect(p.containsKey('frames'), isTrue);
       expect(p['comment'], 'note');
+    });
+
+    // #1135: the frame-stats section is the answer to "was the UI janking, when,
+    // and under how much session load". It must ride in the uploaded payload —
+    // and be omitted cleanly when no frames were recorded.
+    test('carries the frame-stats section with its numbers intact (#1135)', () {
+      final stats = full()['frameStats']! as Map<String, Object?>;
+      expect(stats['frames'], 4821);
+      expect(stats['p95Ms'], 48.0);
+      expect(stats['over100'], 57);
+    });
+
+    test('omits frameStats entirely when none is supplied (#1135)', () {
+      final p = buildFeedbackPayload(comment: 'x', version: '[v]');
+      expect(p.containsKey('frameStats'), isFalse);
     });
 
     test('excluding both leaves only comment/version/title/logs/source', () {

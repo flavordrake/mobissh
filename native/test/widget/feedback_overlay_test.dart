@@ -167,8 +167,29 @@ void main() {
       await tester.pumpAndSettle();
 
       final log = (submitter.lastPayload!['connectLog'] as List).cast<String>();
-      expect(log.length, 2);
+      // Two planted ctrace lines + the #1135 frame-stats stamp the tap writes.
+      expect(log.length, 3);
       expect(log.any((l) => l.contains('view=393.0x300.0')), isTrue);
+      // #1135: EVERY report carries the frame-timing stamp inside the connect
+      // ring — the ring is persisted today, so the numbers arrive whatever the
+      // ingest end is running.
+      expect(
+        log.any((l) => l.contains('[frame-stats]') && l.contains('frames=')),
+        isTrue,
+        reason: 'the frame-stats stamp must ride in the connect log',
+      );
+      // #1135: and the structured section rides in the submitted payload, so a
+      // reader gets the worst frames + the geometry, not just the summary.
+      final stats =
+          submitter.lastPayload!['frameStats']! as Map<String, Object?>;
+      expect(stats.containsKey('frames'), isTrue);
+      expect(stats.containsKey('p95Ms'), isTrue);
+      expect(stats.containsKey('worst'), isTrue);
+      expect(
+        (stats['now']! as Map<String, Object?>)['viewport'],
+        isA<Map<String, Object?>>(),
+        reason: 'the viewport at capture time is the layout evidence',
+      );
       clearConnectLog();
     },
   );

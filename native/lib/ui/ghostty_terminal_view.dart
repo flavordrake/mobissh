@@ -177,6 +177,8 @@ import '../diagnostics/detection_geom.dart';
 import '../diagnostics/diagnostics_config.dart'
     show kRawContentDiagnosticsEnabled;
 import '../diagnostics/feedback_bundle.dart' show scrubSecrets;
+import '../diagnostics/frame_stats.dart'
+    show clearTerminalViewport, recordTerminalViewport;
 import '../diagnostics/gesture_trace.dart';
 import '../diagnostics/paint_stats.dart';
 import '../diagnostics/session_byte_recorder.dart';
@@ -4505,6 +4507,9 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
     unregisterPaintStats(widget.sessionId);
     // #1072: drop the detection-geometry probe with the session.
     unregisterDetectionGeom(widget.sessionId);
+    // #1135: drop this view's published box/grid so the telemetry's terminal
+    // list reflects the views that are actually laid out.
+    clearTerminalViewport(widget.sessionId);
     super.dispose();
   }
 
@@ -4761,6 +4766,20 @@ class _GhosttyTerminalViewState extends ConsumerState<GhosttyTerminalView> {
       cellHeight: cellSize.height,
       // #1155 R19: column mode reserves the strip → fewer cols → a resize.
       geometry: _gutterGeometry,
+    );
+    // #1135 (telemetry, additive): publish the box this view was ACTUALLY laid
+    // out with plus the grid it computed from it — the app-believed half of the
+    // viewport truth the frame stats pair against the real window metrics. It
+    // is published BEFORE the no-op guard below so the bug report shows the
+    // CURRENT box even when the grid hasn't changed (a viewport collapse that
+    // does not move the grid is exactly the case a post-guard write would
+    // miss). Plain map write: no notify, no rebuild, no resize.
+    recordTerminalViewport(
+      sessionId: widget.sessionId,
+      boxWidth: box.width,
+      boxHeight: box.height,
+      cols: cols,
+      rows: rows,
     );
     if (cols == _lastSubmittedGridCols && rows == _lastSubmittedGridRows) {
       return;

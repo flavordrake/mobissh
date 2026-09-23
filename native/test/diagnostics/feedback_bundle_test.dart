@@ -302,5 +302,66 @@ void main() {
         reason: 'scrubbed values are replaced with a redaction marker',
       );
     });
+
+    // #1135: the stall reports arrived with NO frame timing at all. The
+    // frame-stats section must ride in the bundle so the NEXT report answers
+    // "was it janking, when, and under how much session load".
+    test('carries the frame-stats section when one is supplied (#1135)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        frameStats: <String, Object?>{
+          'frames': 4821,
+          'p50Ms': 9.0,
+          'p95Ms': 48.0,
+          'maxMs': 1540.5,
+          'over16': 1200,
+          'over32': 402,
+          'over100': 57,
+          'worst': <Map<String, Object?>>[
+            <String, Object?>{
+              'tsMs': 1790000000000,
+              'totalMs': 1540.5,
+              'viewport': <String, Object?>{
+                'screenH': 874.0,
+                'insetBottom': 280.0,
+              },
+              'sessions': <String, Object?>{'live': 5, 'streaming': 4},
+            },
+          ],
+        },
+        crashJson: null,
+      );
+
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      final stats = decoded['frameStats']! as Map<String, Object?>;
+      expect(stats['frames'], 4821);
+      expect(stats['p95Ms'], 48.0);
+      expect(stats['maxMs'], 1540.5);
+      expect(stats['over100'], 57);
+      final worst = stats['worst']! as List<Object?>;
+      final worstFrame = worst.first! as Map<String, Object?>;
+      expect(worstFrame['tsMs'], 1790000000000);
+      expect(
+        (worstFrame['viewport']! as Map<String, Object?>)['insetBottom'],
+        280.0,
+        reason: 'the viewport at the janky frame is the layout evidence',
+      );
+      expect(
+        (worstFrame['sessions']! as Map<String, Object?>)['streaming'],
+        4,
+        reason: 'load must be readable alongside the frame time',
+      );
+    });
+
+    test('omits the frame-stats section entirely when absent (#1135)', () {
+      final blob = assembleFeedbackBundle(
+        info: info,
+        connectLog: const [],
+        crashJson: null,
+      );
+      final decoded = jsonDecode(blob) as Map<String, Object?>;
+      expect(decoded.containsKey('frameStats'), isFalse);
+    });
   });
 }

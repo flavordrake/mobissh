@@ -208,7 +208,7 @@ function saveNativeCrash(rawBody, reportDir) {
 
 /** Save a bug-report payload. Returns the meta object written to disk. */
 function saveBugReport(data, reportDir) {
-  const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, sentSgrTrace, grid } = data;
+  const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, sentSgrTrace, grid, frameStats } = data;
   const ts = stampNow();
   fs.mkdirSync(reportDir, { recursive: true });
 
@@ -352,6 +352,11 @@ function saveBugReport(data, reportDir) {
     sentSgrTraceFile,
     sentSgrTraceEventCount,
     grid: (grid && typeof grid === 'object') ? grid : null,
+    // #1135: frame-time + viewport + session-load telemetry. The meta object is
+    // an ALLOWLIST — a field the app sends but that is not named here is
+    // silently dropped, which is why the stall reports carried no frame timing
+    // even once the app had it. Stored verbatim (numbers only).
+    frameStats: (frameStats && typeof frameStats === 'object') ? frameStats : null,
   };
   fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.json`), JSON.stringify(meta, null, 2));
   console.log(`[bug-report] saved: "${meta.title}"`);

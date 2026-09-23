@@ -12,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import '../diagnostics/connect_trace.dart';
 import '../diagnostics/crash_reporter.dart';
 import '../diagnostics/feedback_bundle.dart';
+import '../diagnostics/frame_stats.dart' show frameStatsSnapshot;
 import '../diagnostics/gesture_trace.dart';
 import '../storage/detection_exceptions_store.dart';
 import 'connection_audit.dart';
@@ -109,6 +110,10 @@ class _DiagnosticsSectionState extends State<DiagnosticsSection> {
         lifecycleLog: lifecycleLogSnapshot(),
         controlModeTrace: controlModeLogSnapshot(),
         detectionExceptions: exceptionLines,
+        // #1135: frame timing + viewport + session load. The share path is the
+        // only route off the device when the network is down, so it carries the
+        // same section the upload does.
+        frameStats: frameStatsSnapshot(),
         crashJson: crashJson,
       );
 

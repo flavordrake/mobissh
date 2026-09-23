@@ -11,6 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'diagnostics/connect_trace.dart';
 import 'diagnostics/crash_reporter.dart';
+import 'diagnostics/frame_stats.dart'
+    show recordSessionLoad, startFrameStats;
 import 'platform/desktop.dart';
 import 'ssh/ssh_session.dart';
 import 'state/attention_providers.dart';
@@ -33,6 +35,12 @@ void main() {
   // for the "user installs APK, app crashes silently" failure mode.
   CrashReporter.runGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
+    // #1135: arm per-frame timing capture before the first frame. Pure observer
+    // (`addTimingsCallback`) — it records build/raster durations into bounded
+    // lifetime aggregates + a worst-offender list, and never touches scheduling,
+    // layout or paint. Two stall reports arrived with no frame timing at all;
+    // this is what turns the next one into a measurement.
+    startFrameStats();
     await CrashReporter.bootstrap();
     // Fire-and-forget — don't block first paint on bridge reachability.
     unawaited(CrashReporter.uploadPending());
@@ -309,6 +317,10 @@ class _RootRouterState extends ConsumerState<RootRouter> {
 
     final entries = ref.watch(sessionsProvider).entries;
     var showTerminal = false;
+    // #1135: both stall reports had 4-5 concurrent sessions. This loop already
+    // walks every entry and watches its state, so it is the cheapest honest
+    // place to publish the load axis the frame telemetry is read against.
+    var connectedCount = 0;
     for (final e in entries) {
       // Watch each session's data so we re-route when any of them connects —
       // OR when a previously-live session drops (#624).
@@ -321,6 +333,7 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         // snapping back to the chooser (#624 root cause).
         _everConnected.add(e.id);
         showTerminal = true;
+        connectedCount++;
         continue;
       }
       // #624: a KEPT-but-dead entry must keep the terminal screen mounted so
@@ -352,6 +365,7 @@ class _RootRouterState extends ConsumerState<RootRouter> {
           break;
       }
     }
+    recordSessionLoad(live: entries.length, connected: connectedCount);
     // Drop bookkeeping for ids no longer in the collection (close()d sessions)
     // so the set can't grow unbounded across many connect/close cycles.
     if (_everConnected.isNotEmpty) {
