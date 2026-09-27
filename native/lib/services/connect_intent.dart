@@ -26,6 +26,7 @@ class ConnectRequest {
     this.user,
     this.name,
     this.tmux,
+    this.window,
   });
 
   final ConnectVerb verb;
@@ -38,6 +39,10 @@ class ConnectRequest {
 
   /// Validated per R6. Grammar only — the v1.1 wiring lands in PR E.
   final String? tmux;
+
+  /// #1211: the tmux window to select after the attach. Same shape as [tmux]
+  /// (R6); only valid alongside it.
+  final String? window;
 }
 
 enum ConnectIntentReason { malformed, unknownVerb, badParam, duplicateKey, reserved }
@@ -142,6 +147,14 @@ ConnectIntentResult parseConnectIntent(String link) {
     }
   }
 
+  // #1211: `window` selects a window INSIDE the tmux session, so it needs
+  // `tmux` (a lone window has nothing to select in; `create` never carries
+  // tmux) and the same allowlist — no `:`/`.` to re-target a session or pane.
+  final window = params['window'];
+  if (window != null) {
+    if (tmux == null || !tmuxNameShape.hasMatch(window)) return _bad('window');
+  }
+
   final required = switch (verb) {
     ConnectVerb.connect => host != null || name != null,
     ConnectVerb.create => host != null,
@@ -155,6 +168,7 @@ ConnectIntentResult parseConnectIntent(String link) {
     user: user,
     name: name,
     tmux: tmux,
+    window: window,
   ));
 }
 

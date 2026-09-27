@@ -656,10 +656,15 @@ class InitialCommandRunner {
   /// resume". A live session won't re-tick shell-ready unless it reconnects, and
   /// the one-shot guard would suppress that anyway, but skipping the arm keeps
   /// the intent explicit.
+  ///
+  /// [onSent] (#1211) runs right after the command went into the PTY, inside
+  /// the same shell-ready tick — the link's tmux window select hangs off it so
+  /// it is ordered after the attach line, never on a timer.
   void arm({
     required String sessionId,
     required SshSessionProxy proxy,
     required String? command,
+    void Function()? onSent,
   }) {
     final cmd = command?.trim() ?? '';
     if (cmd.isEmpty) return;
@@ -679,6 +684,7 @@ class InitialCommandRunner {
       // can't re-trigger.
       sub.cancel();
       _subs[sessionId]?.remove(sub);
+      onSent?.call();
     });
     _subs.putIfAbsent(sessionId, () => []).add(sub);
   }
@@ -712,11 +718,41 @@ class InitialCommandRunner {
     _sendNowCounts[sessionId] = sendNowCount(sessionId) + 1;
     ctrace('ui.initcmd', 'sendNow link verb for sid=$sessionId');
     proxy.sendInput(Uint8List.fromList(utf8.encode('${command.commandLine}\n')));
+    if (command is TmuxAttach) markTmuxAttached(sessionId, command.name, proxy);
+  }
+
+  /// #1211: the tmux session a link verb attached [sessionId]'s CURRENT shell
+  /// to, so a later `window=` link for the same tmux session selects without
+  /// re-attaching (and without the R23 confirm — nothing is typed). Only
+  /// link-sent attaches are known; anything else takes the R23 path.
+  final Map<String, String> _tmuxAttached = {};
+  final Map<String, StreamSubscription<void>> _tmuxAttachedSubs = {};
+
+  /// The tmux session a link attached [sessionId]'s current shell to, or null.
+  String? tmuxAttachedTo(String sessionId) => _tmuxAttached[sessionId];
+
+  /// Record that [sessionId]'s shell was just told to attach to tmux session
+  /// [name]. The NEXT shell-ready drops it: a reconnect opens a fresh login
+  /// shell that is no longer inside tmux. (A broadcast stream does not
+  /// deliver the in-flight event to a listener added during it, so calling
+  /// this from [arm]'s `onSent` is safe.)
+  void markTmuxAttached(
+      String sessionId, String name, SshSessionProxy proxy) {
+    _tmuxAttached[sessionId] = name;
+    _tmuxAttachedSubs.remove(sessionId)?.cancel();
+    _tmuxAttachedSubs[sessionId] = proxy.shellReady.listen((_) {
+      _tmuxAttached.remove(sessionId);
+      _tmuxAttachedSubs.remove(sessionId)?.cancel();
+    });
   }
 
   /// Cancel any still-armed listeners. Fired runners have already self-
   /// cancelled; this cleans up sessions whose shell never opened.
   void dispose() {
+    for (final s in _tmuxAttachedSubs.values) {
+      s.cancel();
+    }
+    _tmuxAttachedSubs.clear();
     for (final subs in _subs.values) {
       for (final s in subs) {
         s.cancel();

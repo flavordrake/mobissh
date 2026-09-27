@@ -380,10 +380,26 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         runner.cancel(entry.id);
         ctrace('ui.link', 'arming link verb for ${entry.id}');
       }
+      // #1211: a `tmux=` verb records the attach, and a `window=` select
+      // follows it on the SAME shell-ready tick, over the exec channel. Gated
+      // on the attach having been sent, not a timer: `select-window -t =S:=W`
+      // acts on the tmux SESSION server-side, so the attaching client shows
+      // W whether the select lands just before or after the client finishes
+      // attaching; a session that did not exist yet is created by the attach
+      // with only its default window, so "no such window" is the right answer.
+      final attach = verb is TmuxAttach ? verb : null;
       runner.arm(
         sessionId: entry.id,
         proxy: entry.proxy,
         command: verb?.commandLine ?? initialCommand,
+        onSent: attach == null
+            ? null
+            : () {
+                runner.markTmuxAttached(entry.id, attach.name, entry.proxy);
+                if (attach.window != null) {
+                  unawaited(runLinkWindowSelect(entry.proxy, attach));
+                }
+              },
       );
       // Recent Sessions quick-connect (#796, PWA #385): persist this identity
       // to the recents list when the session reaches `connected` — NOT on

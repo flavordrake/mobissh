@@ -19,9 +19,11 @@ import '../services/connect_link_router.dart';
 import '../services/link_verb.dart';
 import '../services/session_attention_notification.dart';
 import '../ssh/ssh_session.dart';
+import '../ssh/ssh_session_proxy.dart';
 import '../storage/profiles_store.dart';
 import '../ui/link_dialogs.dart';
 import '../ui/profile_editor.dart';
+import '../ui/top_toast.dart';
 import 'profiles_providers.dart';
 import 'sessions.dart';
 
@@ -68,6 +70,25 @@ final linkIntentSourceProvider =
 /// attention bridge). Tests override with a `MapKeyValueStore`.
 final linkPendingStoreProvider =
     Provider<KeyValueStore>((_) => const FftKeyValueStore());
+
+/// #1211: select a link's tmux window on [proxy]'s session over its exec
+/// channel (never the PTY) and, when tmux has no such window, show ONE short
+/// neutral notice. Nothing is required of the user and nothing is created, so
+/// a toast (not a persistent banner) is the right weight.
+Future<bool> runLinkWindowSelect(SshSessionProxy proxy, TmuxAttach verb) {
+  return selectLinkWindow(
+    verb,
+    run: (session, window) =>
+        proxy.tmuxSelectWindow(session: session, window: window),
+    notify: (message) {
+      ctrace('ui.link', 'window select: no match sid=${proxy.sessionId}');
+      final overlay = appNavigatorKey.currentState?.overlay;
+      if (overlay == null) return;
+      showTopToastInOverlay(overlay, message,
+          duration: const Duration(seconds: 4));
+    },
+  );
+}
 
 final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
   Future<void> handOff(SavedProfile profile, LinkVerbCommand? verb) async {
@@ -117,6 +138,17 @@ final connectLinkRouterProvider = Provider<ConnectLinkRouter>((ref) {
         return;
       }
       ctrace('ui.link', 'sendVerb: session gone sid=$sessionId');
+    },
+    isTmuxAttached: (sessionId, name) =>
+        ref.read(initialCommandRunnerProvider).tmuxAttachedTo(sessionId) ==
+        name,
+    selectWindow: (sessionId, verb) async {
+      for (final e in ref.read(sessionsProvider).entries) {
+        if (e.id != sessionId) continue;
+        await runLinkWindowSelect(e.proxy, verb);
+        return;
+      }
+      ctrace('ui.link', 'selectWindow: session gone sid=$sessionId');
     },
     pick: (candidates) async {
       final ctx = appNavigatorKey.currentContext;

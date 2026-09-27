@@ -76,6 +76,8 @@ class _CountingLinkRouter extends ConnectLinkRouter {
         persistAutoConnect: (_) async {},
         connectProfile: (_, _) async {},
         sendVerb: (_, _) {},
+        isTmuxAttached: (_, _) => false,
+        selectWindow: (_, _) async {},
         openCreate: (_) async {},
         reject: () {},
       );
