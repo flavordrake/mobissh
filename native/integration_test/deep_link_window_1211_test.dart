@@ -118,8 +118,21 @@ void main() {
 
     final entry = container.read(sessionsProvider).active!;
     final runner = container.read(initialCommandRunnerProvider);
-    expect(runner.hasFired(entry.id), isTrue,
-        reason: 'fresh: attach verb did not fire on shell-ready');
+    // `out` already holds connect-progress bytes from BEFORE the shell opened
+    // (the terminal shows connecting/auth status), so "terminal mounted +
+    // bytes" is not shell-ready. Wait on the transition itself: the runner
+    // fires the attach (and onSent → the select) on shell-ready. Bounded poll,
+    // never a fixed delay (#1178).
+    var fired = false;
+    for (var i = 0; i < 40; i++) {
+      if (runner.hasFired(entry.id)) {
+        fired = true;
+        break;
+      }
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    expect(fired, isTrue,
+        reason: 'fresh: attach verb did not fire on shell-ready within 20s');
     expect(runner.sendNowCount(entry.id), 0,
         reason: 'fresh: a fresh connect must arm, never sendNow');
     expect(await _tmuxAnswer(tester, entry, out, 'S1', '#S', 'w1211'), isTrue,
