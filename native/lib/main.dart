@@ -22,10 +22,12 @@ import 'state/lifecycle_providers.dart';
 import 'state/link_providers.dart';
 import 'state/sessions.dart';
 import 'state/terminal_providers.dart';
+import 'state/update_providers.dart';
 import 'ui/connect_form.dart';
 import 'ui/feedback_overlay.dart';
 import 'ui/settings_screen.dart';
 import 'ui/terminal_screen.dart';
+import 'ui/update_banner.dart';
 import 'util/large_landscape.dart';
 
 void main() {
@@ -141,6 +143,12 @@ class _RootRouterState extends ConsumerState<RootRouter> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_initAttentionTapThenConsume());
+      // #1216 R12: drop downloaded APKs this launch has already installed.
+      unawaited(
+        ref
+            .read(updateInstallerProvider)
+            .cleanup(runningBuild: ref.read(runningBuildProvider)),
+      );
     });
   }
 
@@ -311,6 +319,9 @@ class _RootRouterState extends ConsumerState<RootRouter> {
         unawaited(ref.read(attentionFocusRouterProvider).consumePending());
         // #1141 R18: a link recorded before a process death / pause.
         unawaited(ref.read(connectLinkRouterProvider).consumePending());
+        // #1216 R5: re-check for an update on resume (lazy: it re-runs when
+        // the home banner / Settings next reads it).
+        ref.invalidate(updateCheckProvider);
         setState(() {});
       }
     });
@@ -470,9 +481,18 @@ class _ConnectHomePageState extends State<ConnectHomePage> {
     // list expands and scrolls internally. IndexedStack gives ConnectForm a
     // bounded height (its Expanded needs that) and keeps each destination's
     // state alive across tab switches. Shared by both layouts below.
-    final destinations = IndexedStack(
-      index: _index,
-      children: const [ConnectForm(), SettingsScreen()],
+    // #1216 R7: the update banner sits above both destinations; it renders
+    // nothing unless a newer build for this device is on offer.
+    final destinations = Column(
+      children: [
+        const UpdateBanner(),
+        Expanded(
+          child: IndexedStack(
+            index: _index,
+            children: const [ConnectForm(), SettingsScreen()],
+          ),
+        ),
+      ],
     );
 
     // #1086: large-landscape (tablet / desktop-mode / connected display) presents

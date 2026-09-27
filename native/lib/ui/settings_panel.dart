@@ -33,6 +33,7 @@ import 'keys_screen.dart';
 import 'link_browser_picker.dart';
 import 'settings_subheader.dart';
 import 'top_toast.dart';
+import 'update_banner.dart';
 
 class SettingsPanel extends ConsumerWidget {
   /// Injectable so widget tests can supply a fixed build string without a
@@ -86,6 +87,9 @@ class SettingsPanel extends ConsumerWidget {
             );
           },
         ),
+        // #1216: Installed / Latest / Install. Renders nothing on a build
+        // without the updater (Play, desktop — R13).
+        const UpdateSettingsSection(),
         const SettingsSubheader('Keys'),
         // #1088: the SSH key library — named, reusable keys managed independently
         // of any profile. Import here, then attach to one or more profiles from
