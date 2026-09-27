@@ -44,6 +44,8 @@ function isNativeDistArtifact(baseName) {
     baseName === 'native-time.js' ||
     baseName === 'native-feedback.js' ||
     baseName === 'macos-latest.json' ||
+    // #1215: sideload self-update manifest (native-release-apk.sh).
+    baseName === 'android-latest.json' ||
     /^mobissh-native(-[\w.+-]+)?\.apk$/.test(baseName) ||
     // #1026: macOS desktop app bundle — the stable `mobissh-native-macos.zip`
     // alias + the versioned `mobissh-native-macos-<version>-<stamp>.zip`, built

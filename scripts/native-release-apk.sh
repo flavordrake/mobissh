@@ -3,13 +3,15 @@
 #
 # Captures the recurring delivery ritual (memory: feedback_apk_timestamp):
 #   1. flutter build apk --release (signed with the release keystore — see
-#      memory native-android-signing; falls back to debug cert if missing).
+#      memory native-android-signing; REFUSES to build if key.properties is
+#      missing, #1215), with --dart-define=MOBISSH_BUILD=<B>.
 #   2. Copy to public/mobissh-native-<ISO-8601-ts>.apk AND the stable
 #      public/mobissh-native.apk alias.
 #   3. docker cp BOTH into mobissh-prod:/app/public/ so the running container
 #      serves them immediately (the build caches the public/ COPY layer, so a
 #      container rebuild would NOT pick up a new APK — copy directly).
 #   4. Print the timestamped download URL to quote to the user.
+#   5. Write native-dist/android-latest.json (self-update manifest, #1215) last.
 #
 # Run from the repo root. Exit 0 = published, 2 = build/setup error.
 
@@ -21,6 +23,18 @@ MOBISSH_LOGDIR="${MOBISSH_LOGDIR:-/tmp/mobissh/logs}"
 mkdir -p "$MOBISSH_TMPDIR" "$MOBISSH_LOGDIR"
 LOGFILE="${MOBISSH_LOGDIR}/native-release-apk.log"
 exec > >(tee -a "$LOGFILE") 2>&1
+
+# #1215 R4: refuse to build without the release keystore. Gradle silently falls
+# back to the DEBUG keystore when key.properties is missing; a debug-signed APK
+# can never upgrade an installed release copy and the in-app updater refuses it
+# (signing-cert match, docs/self-update.md R10). Same path gradle reads.
+KEY_PROPS="${MOBISSH_KEY_PROPERTIES:-/home/dev/.mobissh-android/key.properties}"
+if [[ ! -f "$KEY_PROPS" ]]; then
+  echo "! FATAL: release keystore config missing (${KEY_PROPS})." >&2
+  echo "  Without it the APK is DEBUG-signed and cannot upgrade installed copies. Aborting." >&2
+  exit 2
+fi
+echo "> release keystore config: ${KEY_PROPS}"
 
 NATIVE_DIR="${REPO_ROOT}/native"
 PUBLIC_DIR="${REPO_ROOT}/public"
@@ -62,11 +76,20 @@ BUILD_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 log() { echo "> $*"; }
 err() { echo "! $*" >&2; }
 
+# #1215 R2: bake the exact build ordinal B (x.y.z[-STAGE]+B) into the app so the
+# self-updater compares integers, not the split-per-abi versionCode decoding
+# (`% 1000`), which breaks at B=1000.
+BUILD_NUMBER="${APP_VERSION##*+}"
+if [[ "$APP_VERSION" != *+* || ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+  err "pubspec version has no integer build ordinal: ${APP_VERSION}"
+  exit 2
+fi
+
 # Feedback upload auth (#484/#1115): bake the shared X-MobiSSH-Key into the
 # build so bug reports keep working once prod fails closed. Same source the
 # AAB build uses (~/.mobissh/feedback.env, FEEDBACK_KEY=...). LOUD when
 # missing — a keyless build files no reports against a keyed server.
-DEFINES=()
+DEFINES=("--dart-define=MOBISSH_BUILD=${BUILD_NUMBER}")
 FEEDBACK_ENV="${HOME}/.mobissh/feedback.env"
 if [ -z "${FEEDBACK_KEY:-}" ] && [ -f "$FEEDBACK_ENV" ]; then
   # shellcheck disable=SC1090
@@ -133,6 +156,14 @@ fi
 if [[ -f "$FALLBACK_X64" ]]; then
   cp "$FALLBACK_X64" "${NATIVE_DIST_HOST}/${STAMPED_X64}"
 fi
+
+# #1215 R1: the self-update manifest goes LAST, once the APK it names is in
+# place. sha256 is of the published stamped arm64 file; written atomically.
+# Notes default to the ship commit's subject (ship-native.sh commits, then execs us).
+RELEASE_NOTES="${MOBISSH_RELEASE_NOTES:-$(git -C "$REPO_ROOT" log -1 --format=%s)}"
+log "writing ${NATIVE_DIST_HOST}/android-latest.json"
+"${REPO_ROOT}/scripts/gen-android-latest-json.sh" \
+  "$NATIVE_DIST_HOST" "$STAMPED" "$APP_VERSION" "$SERVE_HOST" "$RELEASE_NOTES"
 
 echo "+ PUBLISHED"
 echo "+ install page (bookmark this, refresh for latest):"
