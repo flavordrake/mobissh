@@ -25,6 +25,10 @@
          is never requested on modern devices. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"/>
+    <!-- #1216 self-update (sideload build ONLY): hand a verified APK to the
+         system installer. Removed from the Play bundle by
+         src/play/AndroidManifest.xml (R13). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- networkSecurityConfig (#1037): permit cleartext HTTP to 127.0.0.1 ONLY
          (the HTML viewer's on-device SFTP loopback resolver); everything else
          stays cleartext-blocked. See res/xml/network_security_config.xml. -->
@@ -100,6 +104,19 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <!-- #1216 R11: self-update FileProvider on its OWN authority, exposing
+             only cache/updates/ (res/xml/update_paths.xml). Removed from the
+             Play bundle (src/play/AndroidManifest.xml, R13). -->
+        <provider
+            android:name=".mobissh.UpdatesFileProvider"
+            android:authorities="${applicationId}.updates.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -127,6 +144,12 @@
         <intent>
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="http"/>
+        </intent>
+        <!-- #1216: resolve WHICH package the self-update hand-off reaches (the
+             system installer), so the result can name it. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:mimeType="application/vnd.android.package-archive"/>
         </intent>
     </queries>
 </manifest>

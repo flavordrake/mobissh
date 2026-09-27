@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- #1216 R13: the Play App Bundle must not carry the self-updater. Google
+     restricts REQUEST_INSTALL_PACKAGES, and a Play-installed copy cannot be
+     upgraded by our key anyway. build.gradle.kts applies this overlay to the
+     release source set ONLY when a bundle task is building (isPlayBundle), so
+     sideload APKs keep both entries. With neither in the merged manifest the
+     Dart side reports `unsupported` and shows no update UI at all.
+     Asserted on the built AAB by scripts/test-self-update-play-exclusion.sh. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
+    <application>
+        <provider
+            android:name=".mobissh.UpdatesFileProvider"
+            android:authorities="${applicationId}.updates.fileprovider"
+            tools:node="remove" />
+    </application>
+</manifest>

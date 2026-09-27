@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- #1216 R11: the self-update FileProvider exposes ONLY <cacheDir>/updates/,
+     where Dart writes an APK after its sha256 matched the manifest. -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>

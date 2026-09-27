@@ -23,8 +23,26 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+// #1216 R13: a bundle build is the Play build (build-release-aab.sh is the only
+// caller; sideload ships split APKs via assembleRelease). Keyed on the task
+// name rather than a new product flavor: a flavor would rename every APK
+// output path the ship scripts and the integration runner depend on, and a
+// -P flag could be forgotten — `flutter build appbundle` always runs a
+// bundle* task, so the Play build cannot come out with the updater in it.
+val isPlayBundle = gradle.startParameter.taskNames.any {
+    it.contains("bundle", ignoreCase = true)
+}
+
 android {
     namespace = "com.flavordrake.mobissh"
+
+    sourceSets {
+        if (isPlayBundle) {
+            // tools:node="remove" for REQUEST_INSTALL_PACKAGES + the updater
+            // FileProvider. The release source set has no manifest of its own.
+            getByName("release").manifest.srcFile("src/play/AndroidManifest.xml")
+        }
+    }
     // #960: the file-picker plugin set pulls a flutter_plugin_android_lifecycle
     // AAR that requires consumers to compile against API 36+. Pin compileSdk to
     // 36 (was the Flutter default 34). compileSdk only widens the APIs available
@@ -95,4 +113,8 @@ dependencies {
     // Backports java.time etc. so flutter_local_notifications builds on
     // minSdk < 26 (coreLibraryDesugaringEnabled above).
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // #1216: FileProvider for the self-update hand-off. Already on the runtime
+    // classpath via plugins (url_launcher/share_plus pull core 1.13-1.15);
+    // declared so app code can compile against it. No version bump results.
+    implementation("androidx.core:core:1.13.1")
 }

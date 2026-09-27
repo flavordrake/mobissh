@@ -94,6 +94,8 @@ class MainActivity : FlutterActivity() {
         installClipboardChannel(flutterEngine)
         installDownloadsChannel(flutterEngine)
         installBrowserChannel(flutterEngine)
+        // #1216: self-update verify (R10) + installer hand-off (R11).
+        UpdatesChannel(this).install(flutterEngine)
     }
 
     private fun installBrowserChannel(flutterEngine: FlutterEngine) {
