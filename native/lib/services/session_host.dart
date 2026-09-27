@@ -36,6 +36,7 @@ import '../ssh/ssh_shell.dart';
 import '../ssh/sftp_session.dart';
 import '../storage/profiles_store.dart' show SavedProfile;
 import 'attention_signal_scanner.dart';
+import 'link_verb.dart' show tmuxSelectWindowExecLine;
 import 'port_forwarder.dart';
 import 'session_attention_notification.dart';
 import 'session_messages.dart';
@@ -74,6 +75,14 @@ Future<SshShellTransport?> _defaultExecOpener(
   int rows,
 ) => openSshExecTransportSized(client, command, width: cols, height: rows);
 
+/// Runs ONE non-PTY exec on the session's connection and returns its exit
+/// status (#1211). Production uses [_defaultExecRunner]; tests inject a fake
+/// that records the line. A separate channel: nothing reaches the user's PTY.
+typedef HostExecRunner = Future<int?> Function(SSHClient client, String line);
+
+Future<int?> _defaultExecRunner(SSHClient client, String line) async =>
+    (await client.runWithResult(line)).exitCode;
+
 SshSessionController _defaultControllerFactory() => SshSessionController();
 
 /// Builds the per-session direct-tcpip tunnel opener for the ssh -L engine
@@ -100,6 +109,7 @@ class SessionHost {
     SftpSessionOpener? sftpOpener,
     HostShellOpener? shellOpener,
     HostExecOpener? execOpener,
+    HostExecRunner? execRunner,
     HostForwardOpenerFactory? forwardOpenerFactory,
     this.snapshotInterval = const Duration(seconds: 2),
     this.resumeProbeTimeout = const Duration(seconds: 2),
@@ -115,6 +125,7 @@ class SessionHost {
        _sftpOpener = sftpOpener,
        _shellOpener = shellOpener ?? _defaultShellOpener,
        _execOpener = execOpener ?? _defaultExecOpener,
+       _execRunner = execRunner ?? _defaultExecRunner,
        _forwardOpenerFactory = forwardOpenerFactory,
        _attentionNotifier = attentionNotifier,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch) {
@@ -163,6 +174,7 @@ class SessionHost {
   /// used when [tmuxControlMode] is ON: the tmux `-CC` invocation runs as the
   /// channel's exec command instead of being typed into an interactive shell.
   final HostExecOpener _execOpener;
+  final HostExecRunner _execRunner;
 
   /// Per-session direct-tcpip tunnel opener factory for ssh -L forwards
   /// (#1047). Null in production → [_defaultForwardOpener] dials over the
@@ -407,6 +419,8 @@ class SessionHost {
         _handleSftpMkdir(cmd);
       case SftpStatCommand():
         _handleSftpStat(cmd);
+      case SshTmuxSelectWindowCommand():
+        _handleTmuxSelectWindow(cmd);
       case SshControlCommand():
         _handleControlCommand(cmd);
       case SshTmuxGestureCommand():
@@ -2010,6 +2024,39 @@ class SessionHost {
         requestId: cmd.requestId,
         path: cmd.path,
         exists: exists,
+      ).toJson(),
+    );
+  }
+
+  /// #1211: select a tmux window for a deep link. Runs the exact-name
+  /// `select-window` as its OWN non-PTY exec channel on this session's
+  /// connection — never bytes into the user's terminal (codex finding 7 on
+  /// #1117), and the same path whether or not control mode is on (a control
+  /// channel exists only when it is ON, the non-default). The line is built
+  /// here from the re-validated tokens; an invalid token never reaches a
+  /// shell. ALWAYS replies; every failure is `selected=false`.
+  Future<void> _handleTmuxSelectWindow(SshTmuxSelectWindowCommand cmd) async {
+    var selected = false;
+    try {
+      final line = tmuxSelectWindowExecLine(cmd.session, cmd.window);
+      final client = _sessions[cmd.sessionId]?.controller.client;
+      if (client != null) {
+        final code = await _execRunner(client, line)
+            .timeout(const Duration(seconds: 10));
+        selected = code == 0;
+        ctrace('task.host',
+            'tmux select-window exit=$code sid=${cmd.sessionId}');
+      }
+    } catch (e) {
+      ctrace('task.host',
+          'tmux select-window FAILED sid=${cmd.sessionId} — ${e.runtimeType}');
+    }
+    if (_disposed) return;
+    _gateway.send(
+      TmuxSelectWindowResultEvent(
+        sessionId: cmd.sessionId,
+        requestId: cmd.requestId,
+        selected: selected,
       ).toJson(),
     );
   }

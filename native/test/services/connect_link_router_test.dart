@@ -34,6 +34,11 @@ class _Spy {
   final List<String> activated = [];
   final List<String> confirmSends = [];
   final List<String> sent = [];
+  // #1211: window selections (`sid session:window`) and the ORDER of every
+  // send/select, so "select after attach" is asserted, not assumed.
+  final List<String> selects = [];
+  final List<String> order = [];
+  Set<String> attached = {}; // `sid session` pairs the app attached via a link
   int rejections = 0;
   LinkConfirmChoice? confirmAnswer = LinkConfirmChoice.once;
   bool confirmSendAnswer = true;
@@ -70,7 +75,15 @@ class _Spy {
           connected.add(p);
           connectedVerbs.add(verb);
         },
-        sendVerb: (sid, verb) => sent.add('$sid ${verb.commandLine}'),
+        sendVerb: (sid, verb) {
+          sent.add('$sid ${verb.commandLine}');
+          order.add('send');
+        },
+        isTmuxAttached: (sid, name) => attached.contains('$sid $name'),
+        selectWindow: (sid, verb) async {
+          selects.add('$sid ${verb.name}:${verb.window}');
+          order.add('select');
+        },
         openCreate: (p) async => created.add(p),
         reject: () => rejections++,
         log: (where, msg) => log.add('$where: $msg'),
@@ -358,6 +371,91 @@ void main() {
       expect(spy.confirmSends, isEmpty);
       expect(spy.sent, isEmpty);
       expect(spy.connectedVerbs.single!.commandLine, cmd);
+    });
+  });
+
+  group('#1211 window= routing', () {
+    const windowLink =
+        'mobissh://connect?host=box.example&user=alice&tmux=main&window=beta';
+    const cmd = 'tmux new-session -A -s main';
+
+    setUp(() {
+      spy.profiles = [_alice.copyWith(linkAutoConnect: true), _bob];
+    });
+
+    test('fresh connect → the hand-off carries the window; the router itself '
+        'selects nothing (the connect path selects after the attach)',
+        () async {
+      await router.deliver(windowLink);
+      final verb = spy.connectedVerbs.single! as TmuxAttach;
+      expect(verb.commandLine, cmd);
+      expect(verb.window, 'beta');
+      expect(spy.selects, isEmpty);
+      expect(spy.sent, isEmpty);
+    });
+
+    test('live session already attached to that tmux session → select only: '
+        'no confirm, no second attach', () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.attached = {'alice-sid main'};
+      await router.deliver(windowLink);
+      expect(spy.activated, ['alice-sid']);
+      expect(spy.confirmSends, isEmpty, reason: 'nothing is typed, so no R23');
+      expect(spy.sent, isEmpty, reason: 'no second attach');
+      expect(spy.selects, ['alice-sid main:beta']);
+      expect(spy.connected, isEmpty);
+    });
+
+    test('live session attached to ANOTHER tmux session → R23 confirm; Run '
+        'attaches, THEN selects', () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.attached = {'alice-sid other'};
+      await router.deliver(windowLink);
+      expect(spy.confirmSends, [cmd]);
+      expect(spy.sent, ['alice-sid $cmd']);
+      expect(spy.selects, ['alice-sid main:beta']);
+      expect(spy.order, ['send', 'select']);
+    });
+
+    test('live session, R23 cancelled → neither attach nor select', () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.confirmSendAnswer = false;
+      await router.deliver(windowLink);
+      expect(spy.sent, isEmpty);
+      expect(spy.selects, isEmpty);
+    });
+
+    test('live session + tmux= WITHOUT window= → unchanged: confirm + send, '
+        'no select even when attached', () async {
+      spy.live = [
+        LiveSessionRef(id: 'alice-sid', profileKey: _alice.identityKey),
+      ];
+      spy.attached = {'alice-sid main'};
+      await router.deliver(
+          'mobissh://connect?host=box.example&user=alice&tmux=main');
+      expect(spy.confirmSends, [cmd]);
+      expect(spy.sent, ['alice-sid $cmd']);
+      expect(spy.selects, isEmpty);
+    });
+
+    test('the window survives the process-death pending record', () async {
+      final bridge = PendingLinkBridge(store);
+      await bridge.setPending(const ConnectRequest(
+        verb: ConnectVerb.connect,
+        host: 'box.example',
+        user: 'alice',
+        tmux: 'main',
+        window: 'beta',
+      ));
+      await router.consumePending();
+      expect((spy.connectedVerbs.single! as TmuxAttach).window, 'beta');
+      expect(spy.log.join('\n'), isNot(contains('beta')));
     });
   });
 }

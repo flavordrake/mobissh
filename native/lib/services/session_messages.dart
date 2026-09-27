@@ -99,6 +99,14 @@ enum SshTaskCommandKind {
   /// directory listing (that's [sftpList], too heavy for a probe).
   sftpStat,
 
+  /// UI → task (#1211): select a tmux window by EXACT name for a
+  /// `mobissh://…tmux=S&window=W` link. Carries the two validated tokens, not
+  /// a command: the host re-validates them and runs
+  /// `tmuxSelectWindowExecLine` on a SEPARATE non-PTY exec channel of the
+  /// session's connection — never the user's terminal, and independent of
+  /// control mode. Replies with a [SshTaskEventKind.tmuxSelectWindowResult].
+  tmuxSelectWindow,
+
   // --- tmux control mode (#911, Part C) ---
 
   /// UI → task: a FULL tmux `-CC` control-command LINE, delivered ATOMICALLY
@@ -211,6 +219,11 @@ enum SshTaskEventKind {
   /// path exists on the connected host. Errors collapse to `exists=false`
   /// (fail-open) so the verifier needs no error branch.
   sftpStatResult,
+
+  /// The reply to a [SshTaskCommandKind.tmuxSelectWindow] (#1211): whether
+  /// tmux selected the window (exec exit 0). Every failure — no such window,
+  /// no such session, no tmux, no client — is `selected=false`.
+  tmuxSelectWindowResult,
 
   /// An SFTP operation failed (list, download, or upload). Carries the request
   /// id so the UI can match it to the in-flight op without tearing down the
@@ -409,6 +422,13 @@ sealed class SshTaskCommand {
           sessionId: sessionId,
           requestId: json['requestId'] as String,
           path: json['path'] as String,
+        );
+      case SshTaskCommandKind.tmuxSelectWindow:
+        return SshTmuxSelectWindowCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          session: json['session'] as String,
+          window: json['window'] as String,
         );
       case SshTaskCommandKind.controlCommand:
         return SshControlCommand(
@@ -651,6 +671,33 @@ class SftpStatCommand extends SshTaskCommand {
     'sessionId': sessionId,
     'requestId': requestId,
     'path': path,
+  };
+}
+
+/// UI → task (#1211): select tmux window [window] of session [session] by
+/// exact name. Typed tokens only — the host composes the exec line itself.
+class SshTmuxSelectWindowCommand extends SshTaskCommand {
+  const SshTmuxSelectWindowCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.session,
+    required this.window,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String session;
+  final String window;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.tmuxSelectWindow;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'session': session,
+    'window': window,
   };
 }
 
@@ -1195,6 +1242,12 @@ sealed class SshTaskEvent {
           requestId: json['requestId'] as String,
           path: json['path'] as String,
           exists: json['exists'] as bool,
+        );
+      case SshTaskEventKind.tmuxSelectWindowResult:
+        return TmuxSelectWindowResultEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          selected: json['selected'] as bool,
         );
       case SshTaskEventKind.sftpError:
         return SftpErrorEvent(
@@ -1783,6 +1836,30 @@ class SftpStatResultEvent extends SshTaskEvent {
     'requestId': requestId,
     'path': path,
     'exists': exists,
+  };
+}
+
+/// Task → UI (#1211): the reply to a [SshTmuxSelectWindowCommand], keyed by
+/// [requestId]. [selected] is true iff the exec exited 0.
+class TmuxSelectWindowResultEvent extends SshTaskEvent {
+  const TmuxSelectWindowResultEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.selected,
+  }) : super(sessionId);
+
+  final String requestId;
+  final bool selected;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.tmuxSelectWindowResult;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'selected': selected,
   };
 }
 

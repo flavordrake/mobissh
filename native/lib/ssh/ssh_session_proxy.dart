@@ -574,6 +574,43 @@ class SshSessionProxy {
     if (!_shellReadyCtrl.isClosed) await _shellReadyCtrl.close();
     if (!_sftpCtrl.isClosed) await _sftpCtrl.close();
     if (!_forwardCtrl.isClosed) await _forwardCtrl.close();
+    for (final c in _windowSelects.values) {
+      if (!c.isCompleted) c.complete(false);
+    }
+    _windowSelects.clear();
+  }
+
+  /// In-flight [tmuxSelectWindow] requests by request id (#1211).
+  final Map<String, Completer<bool>> _windowSelects = {};
+  int _windowSelectSeq = 0;
+
+  /// #1211: select tmux window [window] of session [session] by exact name.
+  /// The task runs it on a SEPARATE non-PTY exec channel of this session's
+  /// connection — nothing is typed into the terminal, and it works whether or
+  /// not control mode is on. Completes true iff tmux selected it; false on no
+  /// such window/session, a dead session, or no reply within [timeout].
+  Future<bool> tmuxSelectWindow({
+    required String session,
+    required String window,
+    Duration timeout = const Duration(seconds: 15),
+  }) {
+    if (_disposed) return Future.value(false);
+    final requestId = '$sessionId#win${_windowSelectSeq++}';
+    final done = Completer<bool>();
+    _windowSelects[requestId] = done;
+    gateway.send(
+      SshTmuxSelectWindowCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        session: session,
+        window: window,
+      ).toJson(),
+    );
+    return done.future.timeout(timeout, onTimeout: () {
+      _windowSelects.remove(requestId);
+      ctrace('ui.link', 'tmux select-window TIMEOUT sid=$sessionId');
+      return false;
+    });
   }
 
   void _handleEvent(Map<String, dynamic> payload) {
@@ -655,6 +692,9 @@ class SshSessionProxy {
         // subscribers (menu badge) and fan out to the sheet.
         _forwards = event.forwards;
         if (!_forwardCtrl.isClosed) _forwardCtrl.add(event.forwards);
+      case TmuxSelectWindowResultEvent():
+        // #1211: resolve the matching [tmuxSelectWindow] future.
+        _windowSelects.remove(event.requestId)?.complete(event.selected);
       case SftpListingEvent():
       case SftpDownloadChunkEvent():
       case SftpDownloadDoneEvent():

@@ -39,7 +39,7 @@ mobissh://create?host=<fqdn>[&port=<n>][&user=<u>][&name=<label>]
 v1.1 extensions on `connect` only, mutually exclusive:
 
 ```
-&tmux=<name>
+&tmux=<name>[&window=<name>]
 &claude=<id>
 ```
 
@@ -49,6 +49,7 @@ v1.1 extensions on `connect` only, mutually exclusive:
 - R4 `port` is 1–65535, default 22. `user` is `^[A-Za-z0-9._-]{1,64}$`.
 - R5 `name` on `connect` is a per-profile link alias (§4), `^[A-Za-z0-9_-]{1,32}$`. It is a new profile field, never the display title.
 - R6 `tmux` is `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$` (no leading hyphen: the token is always the argument of `-s`, but a leading `-` would complicate every probe and future target command for no benefit — codex review 2026-09-12). `claude` is a UUID, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`.
+- R6a (#1211) `window` uses the R6 shape, so it can never carry `:` or `.` to re-target another session or pane. It is only valid alongside `tmux` on `connect`; `window` without `tmux`, or on `create`, rejects the whole link with `badParam(window)`.
 - R7 Unknown parameters are ignored so the grammar can grow; a known parameter that fails its rule rejects the whole link. A parameter that names an action mobissh does not implement yet (`claude=` until R24 ships) rejects the whole link rather than degrading into a plain `connect` — a caller asking for a command must never silently get less than it asked for.
 
 ## 4. Profile matching
@@ -83,6 +84,9 @@ Owner decision recorded 2026-08-21 as pending: destination-based trust as above 
 
 - R22 `tmux=<name>` sends, on shell-ready, exactly `tmux new-session -A -s <name>` with `<name>` already validated by R6. The string is composed from a constant template and the validated token; the raw link value is never interpolated into a shell line.
 - R23 A fresh connect arms the verb on shell-ready with no further prompt (R12/R13 already covered it). If the matched session is already LIVE, the session is focused and the app always shows an in-terminal confirmation naming the exact command (`link-verb-run-dialog`), regardless of `linkAutoConnect`; only the Run tap sends, once, through `InitialCommandRunner.sendNow` (immediate, not a shell-ready arm, not gated by the one-shot `_fired` flag). Cancel sends nothing. There is no foreground probe: `sendInput` is indistinguishable from typing and the bytes could land in an editor, a password prompt or a nested ssh, so the user reads the command before it goes. Shipped as §14 option (b), #1149.
+- R22a (#1211) `window=<w>` selects tmux window `<w>` of session `<name>` by exact name, running `tmux select-window -t '=<name>:=<w>'` on a SEPARATE non-PTY exec channel of the session's own SSH connection. It is never typed into the terminal (the R23 hazard does not apply) and it does not depend on tmux control mode, which is off by default. The line is built task-side from the two tokens after re-validating both against R6, and single-quoted anyway. Ordering: on a fresh connect the select follows the R22 attach on the same shell-ready tick. `select-window` acts on the tmux session server-side, so the attaching client shows `<w>` whether the select lands just before or just after the client finishes attaching; a session that did not exist yet is created by the attach with only its default window, so "no such window" is the right answer there.
+- R22b (#1211) Live session: if the app's last link attach on that session's current shell was to `<name>` (`InitialCommandRunner.tmuxAttachedTo`, cleared by the next shell-ready, since a reconnect opens a fresh shell outside tmux), only the select runs: no R23 confirmation, because nothing is typed, and no second attach. Otherwise R23 applies unchanged, and the select runs after the Run tap; Cancel runs neither. A shell attached to tmux by hand, or by the profile's own `initialCommand`, is not known to the app and takes the R23 path.
+- R22c (#1211) No matching window (non-zero exit: no such window, no such session, no tmux, no reply within 10 s) shows one short neutral notice, `No window "<w>" in tmux session <name>`. Nothing is created and nothing else changes. A link without `window=` behaves exactly as before.
 - R24 `claude=<id>` sends exactly `claude --resume <id>` under the same rules. It is reserved in the grammar for v1 and implemented only after the tmux verb ships and the owner gives a separate go.
 - R25 A verb never combines with a profile `initialCommand`: when a link carries a verb, the profile's own initial command is not run for that connect. One command per link, and the user saw which. `InitialCommandRunner` keeps a shell-ready arm alive until it fires, so a connect that never reached shell-ready leaves a stale profile-command arm behind; arming a verb first cancels every outstanding arm for that session (a `cancel(sessionId)` beside `arm`), otherwise a reconnect could run both.
 
@@ -109,7 +113,7 @@ Published with the feature so opsurface and others build to the same rules:
 
 - Fire `mobissh://connect?host=<fqdn>&user=<u>` with `LaunchMode.externalApplication`; declare `<queries><intent><action android:name="android.intent.action.VIEW"/><data android:scheme="mobissh"/></intent></queries>` or the launch throws on Android 11+.
 - Expect no result. Expect the first tap per profile to confirm. A `connect` naming a host the user has not saved opens mobissh's create form pre-filled from the link (R9/R14) — the user still confirms; nothing connects on its own. A `connect?name=` with an unknown alias shows `Link not recognized`; fall back to the host form in that case.
-- `tmux=` names match `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$` (no leading hyphen). `claude=` is reserved and rejects the whole link until it ships.
+- `tmux=` names match `^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$` (no leading hyphen). `window=` (#1211) uses the same shape, needs `tmux=`, and names the window exactly (no prefix match); a missing window is a notice, never a new window. `claude=` is reserved and rejects the whole link until it ships.
 - Do not put a command, a path or a credential in the link; it is rejected.
 
 ## 12. Acceptance
@@ -130,6 +134,7 @@ Integration (`native/integration_test/deep_link_1117_test.dart`, emulator, `adb 
 - A9 A link to a host with an unknown key stops at the TOFU dialog.
 - A10 Back from the linked terminal returns to the launching activity (a stub caller app or `am start` from the launcher) — the R20 check.
 - A11 v1.1: `tmux=<name>` on a fresh session results in a tmux client attached to `<name>` (asserted through `tmux display-message -p '#S'` over the same session); the same link again, while that session is live, opens no new session, shows the R23 confirmation and sends nothing until Run is tapped; after the tap the session is still attached to `<name>`.
+- A15 (#1211, `native/integration_test/deep_link_window_1211_test.dart`) `tmux=S&window=B` on a fresh session with S holding windows `alpha` and `beta` lands on `beta` (asserted with `tmux display-message -p '#W'`); the PTY never receives `select-window`. `window=alpha` while live and attached selects `alpha` with no R23 dialog and no second attach. `window=nope` shows the notice, and S still has exactly two windows.
 
 ## 13. Phasing
 
