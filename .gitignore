@@ -33,6 +33,8 @@ test-history/coverage/**/*.info
 # #1101: the #589 integration-suite baselines are the gate's expected-pass
 # record — markdown only, same deal as coverage (raw per-test logs stay local).
 !test-history/integration-baseline/
+# Launcher-icon emulator frames: the evidence for an icon change (one small PNG each).
+!test-history/icon-family/
 .traces/
 # coverage output; native/coverage/ is ignored in native/.gitignore
 /coverage/

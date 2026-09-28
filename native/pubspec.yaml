@@ -161,22 +161,26 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
-  # Generates the Android launcher icon set from the MobiSSH PWA icon (#657).
-  # Source was the PWA icon (public/icon-512.png, retired in #1205 — see git
-  # history); the live master is assets/icon/mobissh_icon.png.
-  # Regenerate with: dart run flutter_launcher_icons
+  # Generates the Android launcher icon set from the icon-family mark.
+  # Regenerate with: scripts/flutter-cmd.sh --in native pub run flutter_launcher_icons
   flutter_launcher_icons: ^0.14.1
 
-# flutter_launcher_icons config (#657). Replaces the default Flutter blue
-# launcher icon with the MobiSSH PWA icon (pager showing "SSh" on a green LCD,
-# white backdrop). adaptive_icon_background is white to match the icon's own
-# backdrop so the pager stays centered with safe-zone padding on Android 8+.
+# flutter_launcher_icons config. The approved icon-family mark (the SVGs in
+# assets/icon-family/ are the masters; geometry is owner-final, never edit it).
+# The tool needs PNG inputs, so the *-1024.png rasters are generated from the
+# SVGs with the Playwright headless Chromium already on fd-dev (no project dep):
+#   chrome-headless-shell --no-sandbox --hide-scrollbars
+#     --force-device-scale-factor=1 --window-size=1024,1024
+#     --default-background-color=00000000 --screenshot=<out>.png file://<in>.svg
+# Adaptive: transparent foreground on the mark's own ground colour (#0C1F15);
+# the tool's default 16% foreground inset keeps the whole ring inside the
+# 66dp safe-zone mask.
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: false
-  image_path: "assets/icon/mobissh_icon.png"
-  adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/icon/mobissh_icon.png"
+  image_path: "assets/icon-family/mobissh-final-1024.png"
+  adaptive_icon_background: "#0C1F15"
+  adaptive_icon_foreground: "assets/icon-family/mobissh-final-fg-1024.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
