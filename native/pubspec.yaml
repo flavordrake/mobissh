@@ -175,12 +175,25 @@ dev_dependencies:
 # Adaptive: transparent foreground on the mark's own ground colour (#0C1F15);
 # the tool's default 16% foreground inset keeps the whole ring inside the
 # 66dp safe-zone mask.
+# iOS/macOS use the FULL mark on its ground (no adaptive mask on either);
+# remove_alpha_ios because App Store rejects icons with an alpha channel.
+# No web/ or windows/ platform dir exists, so those sections are omitted;
+# linux/ has no icon slot (the runner sets no window icon).
+# After regenerating, discard the tool's collateral (0.14.4 bugs, not icons):
+# it rewrites every `ASSETCATALOG*` line in ios/Runner.xcodeproj/project.pbxproj
+# (breaking GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS), re-serialises both
+# AppIcon Contents.json files, and adds pre-iOS-7 50/57/72 sizes. Keep only the
+# regenerated PNGs that Contents.json already lists.
 flutter_launcher_icons:
   android: "ic_launcher"
-  ios: false
+  ios: true
+  remove_alpha_ios: true
   image_path: "assets/icon-family/mobissh-final-1024.png"
   adaptive_icon_background: "#0C1F15"
   adaptive_icon_foreground: "assets/icon-family/mobissh-final-fg-1024.png"
+  macos:
+    generate: true
+    image_path: "assets/icon-family/mobissh-final-1024.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
