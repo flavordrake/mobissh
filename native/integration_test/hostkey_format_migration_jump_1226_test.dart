@@ -3,8 +3,8 @@
 // Every hop is verified against the same HostKeyStore (R9), so a pre-upgrade
 // install holds legacy 32-hex MD5 entries for the BASTION and the TARGET. Both
 // must re-confirm once — each dialog naming its own host (R10) — and neither
-// may fail as HOST KEY CHANGED or fall back to the first-contact prompt. After
-// that the jumped connect is silent.
+// may fail as HOST KEY CHANGED or fall back to the first-contact prompt. Both
+// entries are replaced with SHA256, and a direct bastion connect is then silent.
 //
 // Topology as jump_host_1183_test.dart: the bastion is test-sshd via the
 // 127.0.0.1:2222 bridge; the target is `jump-target:22`, reachable only from
@@ -75,7 +75,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('legacy MD5 entries on BOTH hops re-confirm once, then the '
-      'jumped connect is silent (#1226)', (tester) async {
+      'replaced entry is silent (#1226)', (tester) async {
     FlutterForegroundTask.initCommunicationPort();
 
     // REAL prefs, seeded before the foreground-task isolate (which owns the
@@ -158,8 +158,24 @@ void main() {
         reason: 'R9/R10 — the BASTION hop and the TARGET each re-confirm, '
             'each dialog naming its host');
 
-    // Disconnect, then reconnect the saved target: both entries were replaced
-    // with their SHA256, so the whole chain is silent.
+    // Both legacy entries were REPLACED with the SHA256 the hops presented.
+    // Read the real store (the task isolate wrote it; reload drops this
+    // isolate's cache).
+    await prefs.reload();
+    final stored = Map<String, dynamic>.from(
+      jsonDecode(prefs.getString(hostKeysPrefsKey) ?? '{}') as Map,
+    );
+    expect(stored['127.0.0.1:2222'], startsWith('SHA256:'),
+        reason: 'the bastion hop entry must be replaced on accept');
+    expect(stored['$_targetHost:22'], startsWith('SHA256:'),
+        reason: 'the target entry must be replaced on accept');
+
+    // Disconnect, then reconnect the BASTION directly: its entry was replaced
+    // via the hop re-confirm, so a direct connect is silent. (Not a second
+    // JUMPED connect: `jump-target` is a bare Docker DNS alias shared by every
+    // worktree's fixture on the `mobissh` network, so the bastion may resolve
+    // a DIFFERENT container — a different host key — on each connect, which
+    // the store rightly fails closed as HOST KEY CHANGED.)
     await tester.tap(find.byKey(const Key('session-bar-open-menu')));
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const Key('terminal-disconnect-button')));
@@ -172,13 +188,13 @@ void main() {
     expect(backAtChooser, isTrue, reason: 'disconnect did not return home');
 
     await tester.tap(
-      find.byKey(const Key('profile-tile-$_targetHost:22:testuser')),
+      find.byKey(const Key('profile-tile-127.0.0.1:2222:testuser')),
     );
     await tester.pump(const Duration(milliseconds: 300));
     final second = await _drive(tester);
-    expect(second.connected, isTrue, reason: 'jumped reconnect failed');
+    expect(second.connected, isTrue, reason: 'direct bastion reconnect failed');
     expect(second.reconfirmed, isEmpty,
-        reason: 'the re-confirm is ONE-TIME per hop');
+        reason: 'the re-confirm is ONE-TIME per host — the hop replaced it');
     expect(second.plainTrust, isFalse);
   });
 }
