@@ -46,6 +46,9 @@ class _SilentSocket implements SSHSocket {
   }
 
   @override
+  Future<void> flush() async {}
+
+  @override
   void destroy() {
     destroyed = true;
     if (!_streamCtrl.isClosed) _streamCtrl.close();
@@ -240,12 +243,11 @@ void main() {
         );
 
         // Pre-trust the fingerprint so the verify path goes straight to
-        // `authenticating` (no prompt). The hex must match _fingerprintHex of
-        // the bytes below: 32 bytes of 0x05 → "05" * 32.
-        final fp = Uint8List.fromList(List<int>.filled(32, 5));
-        const hex =
-            '0505050505050505050505050505050505050505050505050505050505050505';
-        controller.hostKeyStore.trust(params.host, params.port, hex);
+        // `authenticating` (no prompt). dartssh2 >= 2.18 hands the verify
+        // callback the UTF-8 `SHA256:<b64>` text, stored verbatim (#1226).
+        const text = 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s';
+        final fp = Uint8List.fromList(text.codeUnits);
+        controller.hostKeyStore.trust(params.host, params.port, text);
 
         final verifyFuture = controller.verifyHostKeyForTest(
           params,

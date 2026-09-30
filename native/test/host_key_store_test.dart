@@ -228,6 +228,110 @@ void main() {
           reason: 'forget must win — writes serialize in call order');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // #1226: dartssh2 >= 2.18 hands `onVerifyHostKey` the OpenSSH `SHA256:<b64>`
+  // text instead of raw MD5 bytes. Every entry written before the upgrade is a
+  // 32-hex MD5 that can never equal the new value — and 4.1.0 no longer exposes
+  // the raw key to recompute it. Those entries must re-confirm ONCE: never a
+  // false MITM alarm (mismatch), never a silent first-contact prompt (unknown).
+  // -------------------------------------------------------------------------
+  group('HostKeyStore legacy MD5 → formatChanged migration (#1226)', () {
+    const legacyMd5 = '0f1e2d3c4b5a69788796a5b4c3d2e1f0';
+    const sha = 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s';
+    const otherSha = 'SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU';
+
+    Future<HostKeyStore> storeWith(Map<String, String> seed) async {
+      final s = HostKeyStore(backend: InMemoryHostKeyBackend(seed));
+      await s.ready;
+      return s;
+    }
+
+    test('legacy 32-hex MD5 entry → formatChanged (not mismatch, not unknown)',
+        () async {
+      final store = await storeWith(<String, String>{'h:22': legacyMd5});
+      final s = store.status('h', 22, sha);
+      expect(s, HostKeyStatus.formatChanged);
+      expect(s, isNot(HostKeyStatus.mismatch));
+      expect(s, isNot(HostKeyStatus.unknown));
+    });
+
+    test('SHA256 equal → match', () async {
+      final store = await storeWith(<String, String>{'h:22': sha});
+      expect(store.status('h', 22, sha), HostKeyStatus.match);
+    });
+
+    test('SHA256 differs → mismatch (#1108 fail closed unchanged)', () async {
+      final store = await storeWith(<String, String>{'h:22': otherSha});
+      expect(store.status('h', 22, sha), HostKeyStatus.mismatch);
+      expect(store.trustIfPromptable('h', 22, sha), isFalse,
+          reason: 'a changed SHA256 key is never trustable through a prompt');
+      expect(store.trustedFingerprint('h', 22), otherSha);
+    });
+
+    test('accept (trustIfPromptable) REPLACES the legacy entry verbatim',
+        () async {
+      final backend = InMemoryHostKeyBackend(<String, String>{'h:22': legacyMd5});
+      final store = HostKeyStore(backend: backend);
+      await store.ready;
+      expect(store.trustIfPromptable('h', 22, sha), isTrue);
+      expect(store.trustedFingerprint('h', 22), sha);
+      expect(store.status('h', 22, sha), HostKeyStatus.match);
+      await Future<void>.delayed(Duration.zero);
+      expect(await backend.loadAll(), <String, String>{'h:22': sha},
+          reason: 'the SHA256 string is persisted as-is, no hex');
+    });
+
+    test('reject leaves the legacy entry untouched', () async {
+      final store = await storeWith(<String, String>{'h:22': legacyMd5});
+      // A reject performs no store write; the classification is stable.
+      expect(store.status('h', 22, sha), HostKeyStatus.formatChanged);
+      expect(store.trustedFingerprint('h', 22), legacyMd5);
+    });
+
+    test('trustIfUnknown still refuses a legacy entry (only the re-confirm '
+        'path may replace it)', () async {
+      final store = await storeWith(<String, String>{'h:22': legacyMd5});
+      expect(store.trustIfUnknown('h', 22, sha), isFalse);
+      expect(store.trustedFingerprint('h', 22), legacyMd5);
+    });
+
+    test('trustIfPromptable trusts an unknown host', () async {
+      final store = await storeWith(<String, String>{});
+      expect(store.trustIfPromptable('h', 22, sha), isTrue);
+      expect(store.status('h', 22, sha), HostKeyStatus.match);
+    });
+
+    test('corrupt / non-fingerprint stored values are safe: no throw, fail '
+        'closed as mismatch', () async {
+      final store = await storeWith(<String, String>{
+        'a:22': '',
+        'b:22': 'garbage',
+        'c:22': '0F1E2D3C4B5A69788796A5B4C3D2E1F0', // uppercase: not legacy
+        'd:22': '${legacyMd5}00', // 34 hex: not legacy
+      });
+      for (final h in <String>['a', 'b', 'c', 'd']) {
+        expect(store.status(h, 22, sha), HostKeyStatus.mismatch, reason: h);
+        expect(store.trustIfPromptable(h, 22, sha), isFalse, reason: h);
+      }
+    });
+
+    test('isLegacyMd5Fingerprint recognises exactly 32 lowercase hex', () {
+      expect(HostKeyStore.isLegacyMd5Fingerprint(legacyMd5), isTrue);
+      expect(HostKeyStore.isLegacyMd5Fingerprint(sha), isFalse);
+      expect(HostKeyStore.isLegacyMd5Fingerprint(legacyMd5.toUpperCase()),
+          isFalse);
+      expect(HostKeyStore.isLegacyMd5Fingerprint(legacyMd5.substring(1)),
+          isFalse);
+    });
+
+    test('store unavailable still wins over a legacy entry', () async {
+      final store = HostKeyStore(backend: _ThrowingBackend());
+      await store.ready;
+      expect(store.status('h', 22, sha), HostKeyStatus.storeUnavailable);
+      expect(store.trustIfPromptable('h', 22, sha), isFalse);
+    });
+  });
 }
 
 /// A backend whose [loadAll] always throws — simulates unavailable/corrupt

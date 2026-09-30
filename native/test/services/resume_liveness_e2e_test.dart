@@ -63,6 +63,9 @@ class _SilentSocket implements SSHSocket {
   }
 
   @override
+  Future<void> flush() async {}
+
+  @override
   void destroy() {
     if (!_doneCompleter.isCompleted) _doneCompleter.complete();
   }
