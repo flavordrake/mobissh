@@ -12,7 +12,8 @@
 // Drives the session proxy directly (like sftp_upload_roundtrip_test.dart) —
 // the dialog/menu wiring is covered headless in
 // test/widget/file_browser_new_file_test.dart. No fixture scripts: every path
-// is unique per run under /tmp and removed through the shell at the end.
+// is unique per run under /tmp in the throwaway test-sshd container, so there
+// is nothing to clean up.
 //
 // Network: scripts/native-connect-test.sh sets up
 //   emulator 127.0.0.1:2222 → (adb reverse → socat) → test-sshd:22
@@ -55,25 +56,31 @@ Future<bool> _pumpUntil(
   return false;
 }
 
-/// Send [cmd] to the shell and wait for [marker] to echo back.
-Future<void> _shell(
+/// Make the per-run scratch dir over SFTP. The first cut typed `mkdir` into the
+/// shell and waited for an echoed marker; on the leased emulator the marker
+/// never came back (the SFTP channel was fine), so that red was about the shell
+/// round-trip, not #1222. SFTP-only keeps this test about SFTP.
+Future<void> _mkdir(
   WidgetTester tester,
-  SessionEntry entry,
-  String cmd, {
-  required String marker,
+  SessionEntry entry, {
+  required String requestId,
+  required String path,
 }) async {
-  final out = <int>[];
-  final sub = entry.proxy.output.listen(out.addAll);
-  entry.proxy.sendInput(
-    Uint8List.fromList(utf8.encode('$cmd; echo $marker\n')),
-  );
-  final saw = await _pumpUntil(
+  SftpMkdirDoneEvent? done;
+  SftpErrorEvent? err;
+  final sub = entry.proxy.sftpEvents.listen((e) {
+    if (e is SftpMkdirDoneEvent && e.requestId == requestId) done = e;
+    if (e is SftpErrorEvent && e.requestId == requestId) err = e;
+  });
+  entry.proxy.sftpMkdir(requestId: requestId, path: path);
+  final settled = await _pumpUntil(
     tester,
-    () => utf8.decode(out, allowMalformed: true).contains(marker),
+    () => done != null || err != null,
     maxSlices: 40,
   );
   await sub.cancel();
-  expect(saw, isTrue, reason: 'shell never echoed $marker');
+  expect(settled, isTrue, reason: 'mkdir of $path never settled');
+  expect(err, isNull, reason: 'mkdir of $path errored: ${err?.message}');
 }
 
 /// Create [path] via the proxy; returns the error message, or null on success.
@@ -196,7 +203,7 @@ void main() {
 
     final run = DateTime.now().millisecondsSinceEpoch;
     final dir = '/tmp/mobissh_itest_1222_$run';
-    await _shell(tester, entry, 'mkdir -p $dir', marker: 'MKDIR_OK_1222');
+    await _mkdir(tester, entry, requestId: 'it1222#m1', path: dir);
 
     // 1) New name → an EMPTY file.
     final fresh = '$dir/README.md';
@@ -243,8 +250,6 @@ void main() {
       original,
       reason: 'the existing file must never be overwritten',
     );
-
-    await _shell(tester, entry, 'rm -rf $dir', marker: 'RM_OK_1222');
 
     final notifier = container.read(sessionsProvider.notifier);
     for (final id in container
