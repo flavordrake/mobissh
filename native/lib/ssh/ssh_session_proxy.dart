@@ -462,6 +462,19 @@ class SshSessionProxy {
     );
   }
 
+  /// Create an EMPTY file at the ABSOLUTE [path] over SFTP, never overwriting
+  /// (#1222). [SftpCreateFileDoneEvent] or [SftpErrorEvent] arrives on
+  /// [sftpEvents] keyed by [requestId].
+  void sftpCreateFile({required String requestId, required String path}) {
+    gateway.send(
+      SftpCreateFileCommand(
+        sessionId: sessionId,
+        requestId: requestId,
+        path: path,
+      ).toJson(),
+    );
+  }
+
   /// Probe whether a remote path exists over SFTP (#990). The
   /// [SftpStatResultEvent] arrives on [sftpEvents] keyed by [requestId] —
   /// ALWAYS a result (errors collapse to `exists=false`, fail-open). Used by
@@ -703,6 +716,7 @@ class SshSessionProxy {
       case SftpUploadProgressEvent():
       case SftpStatResultEvent():
       case SftpMkdirDoneEvent():
+      case SftpCreateFileDoneEvent():
       case SftpErrorEvent():
         // SFTP results (#559/#892/#960/#1133) — forward to the file browser / writer
         // seam, which match by request id. They never touch the SSH lifecycle.

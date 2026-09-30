@@ -117,6 +117,10 @@ class _ChunkedSftpSession implements SftpSession {
   @override
   Future<void> mkdir(String path) async {}
 
+  // #1222 widened the SftpSession seam with createFile; unused here.
+  @override
+  Future<void> createFile(String path) async {}
+
   @override
   Future<void> close() async {}
 }

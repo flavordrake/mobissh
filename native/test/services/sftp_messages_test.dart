@@ -96,6 +96,18 @@ void main() {
       expect(restored.bytes, bytes);
     });
 
+    test('SftpCreateFileCommand preserves request id + path (#1222)', () {
+      const cmd = SftpCreateFileCommand(
+        sessionId: 'sid',
+        requestId: 'sid#new0',
+        path: '/home/u/README.md',
+      );
+      final restored =
+          SshTaskCommand.fromJson(cmd.toJson()) as SftpCreateFileCommand;
+      expect(restored.requestId, 'sid#new0');
+      expect(restored.path, '/home/u/README.md');
+    });
+
     test('SftpMkdirCommand preserves request id + path (#1133)', () {
       const cmd = SftpMkdirCommand(
         sessionId: 'sid',
@@ -198,6 +210,18 @@ void main() {
           SshTaskEvent.fromJson(ev.toJson()) as SftpUploadDoneEvent;
       expect(restored.requestId, 'sid#write0');
       expect(restored.totalBytes, 4096);
+    });
+
+    test('SftpCreateFileDoneEvent preserves path + request id (#1222)', () {
+      const ev = SftpCreateFileDoneEvent(
+        sessionId: 'sid',
+        requestId: 'sid#new0',
+        path: '/home/u/README.md',
+      );
+      final restored =
+          SshTaskEvent.fromJson(ev.toJson()) as SftpCreateFileDoneEvent;
+      expect(restored.requestId, 'sid#new0');
+      expect(restored.path, '/home/u/README.md');
     });
 
     test('SftpMkdirDoneEvent preserves path + request id (#1133)', () {

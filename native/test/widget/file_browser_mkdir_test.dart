@@ -67,6 +67,10 @@ class _MkdirSftpSession implements SftpSession {
     byPath[path] = const [];
   }
 
+  // #1222 widened the SftpSession seam with createFile; unused here.
+  @override
+  Future<void> createFile(String path) async {}
+
   @override
   Future<int?> sizeOf(String path) async => 0;
 
@@ -296,7 +300,14 @@ void main() {
     await _pump(tester);
     expect(find.byKey(const Key('file-context-new-folder')), findsOneWidget);
     // The sheet says where the folder will land — never ambiguous.
-    expect(find.text('Inside /home/u/projects'), findsOneWidget);
+    // Scoped to the folder tile: #1222's "New file" tile carries the same line.
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('file-context-new-folder')),
+        matching: find.text('Inside /home/u/projects'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const Key('file-context-new-folder')));
     await _pump(tester);
@@ -320,7 +331,13 @@ void main() {
     await tester.longPress(find.byKey(const Key('file-entry-a.txt')));
     await _pump(tester);
     expect(find.byKey(const Key('file-context-new-folder')), findsOneWidget);
-    expect(find.text('In /home/u'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('file-context-new-folder')),
+        matching: find.text('In /home/u'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const Key('file-context-new-folder')));
     await _pump(tester);

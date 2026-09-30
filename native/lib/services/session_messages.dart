@@ -91,6 +91,10 @@ enum SshTaskCommandKind {
   /// listing, so a stale listing can't veto a legitimate create.
   sftpMkdir,
 
+  /// CREATE an EMPTY remote file (#1222), never overwriting (exclusive open).
+  /// Replies with [SftpCreateFileDoneEvent] or an [SftpErrorEvent].
+  sftpCreateFile,
+
   /// Lightweight existence probe for ONE remote path (#990). The task stats
   /// the path over the session's SftpSession and replies with a
   /// [SftpStatResultEvent] (`exists` bool) — ALWAYS a result, never an error
@@ -214,6 +218,9 @@ enum SshTaskEventKind {
   /// A directory was created (#1133) — echoes the created path + request id so
   /// the browser can refresh its listing and select the new folder.
   sftpMkdirDone,
+
+  /// An empty file was created (#1222) — echoes the path + request id.
+  sftpCreateFileDone,
 
   /// The reply to an [SshTaskCommandKind.sftpStat] probe (#990): whether the
   /// path exists on the connected host. Errors collapse to `exists=false`
@@ -413,6 +420,12 @@ sealed class SshTaskCommand {
         );
       case SshTaskCommandKind.sftpMkdir:
         return SftpMkdirCommand(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+        );
+      case SshTaskCommandKind.sftpCreateFile:
+        return SftpCreateFileCommand(
           sessionId: sessionId,
           requestId: json['requestId'] as String,
           path: json['path'] as String,
@@ -637,6 +650,31 @@ class SftpMkdirCommand extends SshTaskCommand {
 
   @override
   SshTaskCommandKind get kind => SshTaskCommandKind.sftpMkdir;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
+  };
+}
+
+/// UI → task: CREATE an EMPTY file at the ABSOLUTE [path] (#1222), never
+/// overwriting. Replies with [SftpCreateFileDoneEvent], or an [SftpErrorEvent]
+/// ("Already exists: …" when the name is taken).
+class SftpCreateFileCommand extends SshTaskCommand {
+  const SftpCreateFileCommand({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.sftpCreateFile;
 
   @override
   Map<String, dynamic> toJson() => {
@@ -1236,6 +1274,12 @@ sealed class SshTaskEvent {
           requestId: json['requestId'] as String,
           path: json['path'] as String,
         );
+      case SshTaskEventKind.sftpCreateFileDone:
+        return SftpCreateFileDoneEvent(
+          sessionId: sessionId,
+          requestId: json['requestId'] as String,
+          path: json['path'] as String,
+        );
       case SshTaskEventKind.sftpStatResult:
         return SftpStatResultEvent(
           sessionId: sessionId,
@@ -1798,6 +1842,29 @@ class SftpMkdirDoneEvent extends SshTaskEvent {
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.sftpMkdirDone;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'requestId': requestId,
+    'path': path,
+  };
+}
+
+/// Task → UI: the empty file at [path] was created (#1222).
+class SftpCreateFileDoneEvent extends SshTaskEvent {
+  const SftpCreateFileDoneEvent({
+    required String sessionId,
+    required this.requestId,
+    required this.path,
+  }) : super(sessionId);
+
+  final String requestId;
+  final String path;
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.sftpCreateFileDone;
 
   @override
   Map<String, dynamic> toJson() => {
