@@ -523,9 +523,14 @@ class _EditContent extends StatelessWidget {
               expands: true,
               textAlignVertical: TextAlignVertical.top,
               keyboardType: TextInputType.multiline,
-              // Source text: the platform must not "helpfully" rewrite it.
-              autocorrect: false,
-              enableSuggestions: false,
+              // #1221: the FULL keyboard — glide typing, suggestions, voice.
+              // `enableSuggestions: false` set Android's NO_SUGGESTIONS flag,
+              // which made Gboard drop swipe typing and the voice key and left
+              // one tap per letter. Rejected: keeping it off to stop the IME
+              // "rewriting source" — this editor is for prose markdown on a
+              // phone, and the owner needs the keyboard more than that guard.
+              autocorrect: true,
+              enableSuggestions: true,
               style: style,
               decoration: const InputDecoration(
                 border: InputBorder.none,

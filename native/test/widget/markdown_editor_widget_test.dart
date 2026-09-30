@@ -209,6 +209,38 @@ void main() {
     await _settleToasts(tester);
   });
 
+  // #1221 (owner P0): on Android `enableSuggestions: false` sets
+  // TYPE_TEXT_FLAG_NO_SUGGESTIONS, which makes Gboard drop glide typing, the
+  // suggestion strip AND the voice key — the editor degraded to one tap per
+  // letter. Pin the full-keyboard configuration so a future "protect the
+  // source text" change cannot silently take swipe and voice away again.
+  testWidgets('editor keeps swipe typing, suggestions and voice (#1221)', (
+    tester,
+  ) async {
+    await _openViewer(tester);
+    await _enterEditMode(tester);
+
+    final field = tester.widget<TextField>(
+      find.byKey(const Key('markdown-viewer-editor')),
+    );
+    expect(
+      field.enableSuggestions,
+      isTrue,
+      reason: 'false = NO_SUGGESTIONS on Android: no glide typing, no voice',
+    );
+    expect(field.autocorrect, isTrue);
+
+    final editable = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(const Key('markdown-viewer-editor')),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(editable.enableSuggestions, isTrue);
+    expect(editable.autocorrect, isTrue);
+    expect(editable.keyboardType, TextInputType.multiline);
+  });
+
   testWidgets('Save is inert when nothing changed', (tester) async {
     final writer = await _openViewer(tester);
     await _enterEditMode(tester);
