@@ -11,6 +11,7 @@
 // the appropriate terminal state.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -62,11 +63,19 @@ class PendingHostKey {
   final String keyType;
   final String fingerprint;
 
+  /// True when the saved entry for `host:port` is a legacy MD5 that can't be
+  /// compared with [fingerprint] (#1226) — the UI shows the one-time
+  /// re-confirm warning instead of the first-contact prompt. Kept as a flag on
+  /// the existing `awaitingHostKey` state rather than a new state so every
+  /// exhaustive state switch keeps treating it as the human-paced prompt.
+  final bool formatChanged;
+
   const PendingHostKey({
     required this.host,
     required this.port,
     required this.keyType,
     required this.fingerprint,
+    this.formatChanged = false,
   });
 }
 
@@ -475,15 +484,13 @@ class SshSessionController {
         _emit(
           _data.copyWith(
             state: SshSessionState.failed,
-            error: 'Authentication failed: $e',
+            error: describeSshError(e) ?? 'Authentication failed: $e',
           ),
         );
       }
-      try {
-        client.close();
-      } catch (_) {
-        /* ignore */
-      }
+      // The failure is already recorded; teardown is fire-and-forget (#1226:
+      // close() is a Future since dartssh2 3.0) and a close error is moot.
+      unawaited(client.close().catchError((Object _) {}));
       return;
     }
 
@@ -491,11 +498,7 @@ class SshSessionController {
     // (close/auth race) — the session stays closed.
     if (_userDisconnected) {
       ctrace('task.ssh', 'connect: aborted (user disconnected mid-auth)');
-      try {
-        client.close();
-      } catch (_) {
-        /* ignore */
-      }
+      unawaited(client.close().catchError((Object _) {}));
       if (identical(_client, client)) _client = null;
       return;
     }
@@ -772,6 +775,19 @@ class SshSessionController {
       return;
     }
 
+    // dartssh2 < 3.3 logged a peer SSH_MSG_DISCONNECT and closed CLEANLY;
+    // 3.3.0 completes `done` with SSHDisconnectError instead (#1226). Keep the
+    // clean-close semantics (softDisconnected + auto-reconnect, #551) rather
+    // than turning every server-side disconnect into a terminal `failed`; the
+    // peer's reason is traced so it is not lost.
+    if (error is SSHDisconnectError) {
+      clifecycle(
+        'task.ssh',
+        'peer disconnect (${error.reasonCode}): ${error.message}',
+      );
+      error = null;
+    }
+
     if (error == null) {
       // Clean transport close. If we were `connected`, the server (or a clean
       // network teardown) dropped a working session — surface
@@ -798,7 +814,7 @@ class SshSessionController {
     _emit(
       _data.copyWith(
         state: SshSessionState.failed,
-        error: 'Transport error: $error',
+        error: describeSshError(error) ?? 'Transport error: $error',
       ),
     );
   }
@@ -966,10 +982,11 @@ class SshSessionController {
     if (pending == null || completer == null || completer.isCompleted) {
       return;
     }
-    // Compare-and-set: the ordinary accept path can only trust an UNKNOWN host
-    // (#1108). A changed key never reaches a pending prompt (the verify path
-    // fails it closed), so this is the belt-and-suspenders second layer.
-    _hostKeyStore.trustIfUnknown(
+    // Compare-and-set: the accept path can only trust an UNKNOWN host (#1108)
+    // or replace a legacy-format entry being re-confirmed (#1226). A changed
+    // key never reaches a pending prompt (the verify path fails it closed), so
+    // this is the belt-and-suspenders second layer.
+    _hostKeyStore.trustIfPromptable(
       pending.host,
       pending.port,
       pending.fingerprint,
@@ -1028,7 +1045,11 @@ class SshSessionController {
     _emit(_data.copyWith(state: SshSessionState.disconnected));
     if (client != null) {
       try {
-        client.close();
+        // Not awaited on purpose (#1226): dartssh2 3.0+ close() ends in
+        // `await socket.close()`, which can hang on a half-open (Doze) socket.
+        // `done` completes as soon as the transport is torn down — the same
+        // point the pre-3.0 void close() let us await.
+        unawaited(client.close().catchError((Object _) {}));
         await client.done;
       } catch (_) {
         /* ignore */
@@ -1204,10 +1225,16 @@ class SshSessionController {
     final client = _client;
     _client = null;
     if (client != null) {
+      // Force-close is synchronous by design; the close() Future (dartssh2
+      // 3.0+) is deliberately not awaited. 3.0+ close() only does a GRACEFUL
+      // socket.close() (pre-3.0 it destroyed the socket), which can linger on
+      // the dead link we are force-closing — so hard-destroy the client's own
+      // socket too (#1226). Idempotent with the `_socket` destroy below.
+      unawaited(client.close().catchError((Object _) {}));
       try {
-        client.close();
+        client.socket.destroy();
       } catch (_) {
-        /* ignore */
+        /* already gone */
       }
     }
     final socket = _socket;
@@ -1226,7 +1253,9 @@ class SshSessionController {
     String type,
     Uint8List fingerprint,
   ) async {
-    final hex = _fingerprintHex(fingerprint);
+    // dartssh2 >= 2.18 passes the UTF-8 text `SHA256:<b64>` (it used to be raw
+    // MD5 bytes, which we hex-encoded). Show and store it verbatim (#1226).
+    final fp = utf8.decode(fingerprint, allowMalformed: true);
     // Persisted trust is hydrated in connect() (before the SSHClient is built),
     // so by the time dartssh2 invokes this callback the in-memory map already
     // reflects previously-accepted fingerprints (#565). This method stays
@@ -1235,8 +1264,9 @@ class SshSessionController {
     //
     // #1108: classify the offered key. A CHANGED key (mismatch) or an unreadable
     // trust store must NOT get the ordinary trust-on-first-use prompt — both
-    // fail CLOSED. Only `unknown` (genuine first contact) prompts.
-    final status = _hostKeyStore.status(params.host, params.port, hex);
+    // fail CLOSED. Only `unknown` (genuine first contact) and `formatChanged`
+    // (a legacy MD5 entry that can't be compared, #1226) prompt.
+    final status = _hostKeyStore.status(params.host, params.port, fp);
     switch (status) {
       case HostKeyStatus.match:
         _emit(_data.copyWith(state: SshSessionState.authenticating));
@@ -1254,7 +1284,7 @@ class SshSessionController {
             state: SshSessionState.failed,
             error:
                 'HOST KEY CHANGED for ${params.host}:${params.port} — possible '
-                'man-in-the-middle. Stored: $stored  Offered: $hex. Connection '
+                'man-in-the-middle. Stored: $stored  Offered: $fp. Connection '
                 'refused. Forget the old key to re-trust.',
           ),
         );
@@ -1272,6 +1302,7 @@ class SshSessionController {
         );
         return false;
       case HostKeyStatus.unknown:
+      case HostKeyStatus.formatChanged:
         break;
     }
 
@@ -1284,11 +1315,41 @@ class SshSessionController {
           host: params.host,
           port: params.port,
           keyType: type,
-          fingerprint: hex,
+          fingerprint: fp,
+          formatChanged: status == HostKeyStatus.formatChanged,
         ),
       ),
     );
     return completer.future;
+  }
+
+  /// A readable reason for the dartssh2 failures a user can act on, or null to
+  /// let the caller keep its generic wording (#1226). dartssh2 4.x reports a
+  /// failed algorithm negotiation as `SSHInternalError(Bad state: No matching
+  /// …)` (or the server's own SSH_MSG_DISCONNECT text), which used to surface
+  /// under a misleading "Authentication failed:" prefix; and it now drops a
+  /// connection whose host key changes on rekey.
+  static String? describeSshError(Object error) {
+    const legacyHint =
+        ' The server may only offer legacy algorithms (SHA-1 key exchange, '
+        'ssh-rsa signatures, CBC ciphers), which are disabled for security.';
+    if (error is SSHInternalError &&
+        error.error is StateError &&
+        (error.error as StateError).message.startsWith('No matching')) {
+      final what = (error.error as StateError).message;
+      return 'SSH algorithm negotiation failed: $what.$legacyHint';
+    }
+    if (error is SSHDisconnectError) {
+      final hint = error.message.toLowerCase().contains('no matching')
+          ? legacyHint
+          : '';
+      return 'Server closed the connection: ${error.message}.$hint';
+    }
+    if (error is SSHHostkeyError && error.message.contains('during rekey')) {
+      return 'HOST KEY CHANGED during rekey — possible man-in-the-middle. '
+          'Connection dropped. (${error.message})';
+    }
+    return null;
   }
 
   FutureOr<String?> _onPasswordRequest(SshConnectParams params) {
@@ -1297,12 +1358,4 @@ class SshSessionController {
     return null;
   }
 
-  static String _fingerprintHex(Uint8List bytes) {
-    final sb = StringBuffer();
-    for (final b in bytes) {
-      final h = b.toRadixString(16).padLeft(2, '0');
-      sb.write(h);
-    }
-    return sb.toString();
-  }
 }
