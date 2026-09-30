@@ -174,6 +174,12 @@ abstract class SftpSession {
   /// exists) propagates to the caller for the UI to surface.
   Future<void> mkdir(String path);
 
+  /// CREATE an EMPTY file at [path] (#1222), NEVER overwriting: the open is
+  /// write|create|EXCLUSIVE, so the server refuses an existing name atomically
+  /// (a stat-then-write pre-check would race). An existing name surfaces as an
+  /// [SftpStatusError] with code 11 (already exists).
+  Future<void> createFile(String path);
+
   /// Release the underlying SFTP channel.
   Future<void> close();
 }
@@ -380,6 +386,32 @@ class DartSshSftpSession implements SftpSession {
   @override
   Future<void> mkdir(String path) async {
     await _client.mkdir(await _resolve(path));
+  }
+
+  @override
+  Future<void> createFile(String path) async {
+    final resolved = await _resolve(path);
+    final SftpFile file;
+    try {
+      file = await _client.open(
+        resolved,
+        mode: SftpFileOpenMode.write |
+            SftpFileOpenMode.create |
+            SftpFileOpenMode.exclusive,
+      );
+    } on SftpStatusError {
+      // OpenSSH's sftp-server reports EEXIST as a generic FAILURE (code 4),
+      // not FILE_ALREADY_EXISTS. The exclusive open already refused — this stat
+      // only NAMES the reason, it decides nothing — so it is not a race.
+      var exists = false;
+      try {
+        await _client.stat(resolved);
+        exists = true;
+      } catch (_) {}
+      if (exists) throw SftpStatusError(11, 'File already exists');
+      rethrow;
+    }
+    await file.close();
   }
 
   @override

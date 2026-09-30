@@ -417,6 +417,8 @@ class SessionHost {
         _handleSftpUploadFile(cmd);
       case SftpMkdirCommand():
         _handleSftpMkdir(cmd);
+      case SftpCreateFileCommand():
+        _handleSftpCreateFile(cmd);
       case SftpStatCommand():
         _handleSftpStat(cmd);
       case SshTmuxSelectWindowCommand():
@@ -1990,6 +1992,35 @@ class SessionHost {
       // Keep the raw error (incl. the SftpStatusError code) in the diagnostic
       // log; the UI gets the friendly, server-worded line.
       ctrace('task.host', 'sftp mkdir FAILED path=${cmd.path} — $e');
+      _emitSftpError(
+        cmd.sessionId,
+        cmd.requestId,
+        friendlySftpMkdirError(e, cmd.path),
+      );
+    }
+  }
+
+  /// #1222: create ONE empty file, never overwriting (exclusive open in
+  /// [SftpSession.createFile]). Same error mapping as mkdir: "Already exists"
+  /// / "Permission denied" / the server's own message.
+  Future<void> _handleSftpCreateFile(SftpCreateFileCommand cmd) async {
+    try {
+      final sftp = await _ensureSftp(cmd.sessionId);
+      if (sftp == null) {
+        _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
+        return;
+      }
+      await sftp.createFile(cmd.path);
+      if (_disposed) return;
+      _gateway.send(
+        SftpCreateFileDoneEvent(
+          sessionId: cmd.sessionId,
+          requestId: cmd.requestId,
+          path: cmd.path,
+        ).toJson(),
+      );
+    } catch (e) {
+      ctrace('task.host', 'sftp createFile FAILED path=${cmd.path} — $e');
       _emitSftpError(
         cmd.sessionId,
         cmd.requestId,

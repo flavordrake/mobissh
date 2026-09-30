@@ -33,7 +33,7 @@
 #   elsewhere | <file>_test.dart       | <the runner that owns it>
 # No field may contain a `|`. Every known-red needs BOTH an issue and a reason.
 
-accepted  | 20260920T155254Z | expect=76 | known-red=10 | elsewhere=1
+accepted  | 20260920T155254Z | expect=77 | known-red=10 | elsewhere=1
 
 # --- not this suite's to run ------------------------------------------------
 # Cross-checked against the test's own `// Runner:` header: a test declares its
@@ -126,6 +126,7 @@ expect    | selection_copy_after_redraw_test.dart
 expect    | self_update_1216_test.dart
 expect    | service_outlives_ui_reconnect_test.dart
 expect    | sftp_browse_smoke_test.dart
+expect    | sftp_create_file_1222_test.dart
 expect    | sftp_upload_roundtrip_test.dart
 expect    | sftp_upload_test.dart
 expect    | shell_bytes_smoke_test.dart

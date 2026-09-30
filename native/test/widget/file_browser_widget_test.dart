@@ -92,6 +92,10 @@ class _ScriptedSftpSession implements SftpSession {
   @override
   Future<void> mkdir(String path) async {}
 
+  // #1222 widened the SftpSession seam with createFile; unused here.
+  @override
+  Future<void> createFile(String path) async {}
+
   @override
   Future<void> close() async {}
 }
@@ -428,6 +432,10 @@ class _ThrowingSftpSession implements SftpSession {
   // exercise directory creation.
   @override
   Future<void> mkdir(String path) async {}
+
+  // #1222 widened the SftpSession seam with createFile; unused here.
+  @override
+  Future<void> createFile(String path) async {}
 
   @override
   Future<void> close() async {}

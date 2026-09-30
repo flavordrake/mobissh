@@ -116,12 +116,18 @@ final fileUploadPickerProvider = Provider<FileUploadPicker>(
 /// SERVER is the authority on whether a create is legal, and a stale listing
 /// must never block a legitimate one. "Already exists" comes back as the
 /// server's own error.
-String? validateNewFolderName(String raw) {
+String? validateNewFolderName(String raw) => _validateNewName(raw, 'folder');
+
+/// Validate a typed new-file name (#1222) — the SAME rules as a folder name;
+/// only the wording names a file.
+String? validateNewFileName(String raw) => _validateNewName(raw, 'file');
+
+String? _validateNewName(String raw, String noun) {
   final name = raw.trim();
-  if (name.isEmpty) return 'Enter a folder name';
-  if (name == '.' || name == '..') return '"$name" is not a folder name';
-  if (name.contains('/')) return "A folder name can't contain '/'";
-  if (name.contains('\u0000')) return "A folder name can't contain NUL";
+  if (name.isEmpty) return 'Enter a $noun name';
+  if (name == '.' || name == '..') return '"$name" is not a $noun name';
+  if (name.contains('/')) return "A $noun name can't contain '/'";
+  if (name.contains('\u0000')) return "A $noun name can't contain NUL";
   return null;
 }
 
@@ -317,6 +323,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   String? _highlightPath;
   final GlobalKey _highlightKey = GlobalKey();
 
+  /// In-flight create-file request (#1222). The name dialog stays open and
+  /// awaits [_createFileResult] — null on success, else the reason, shown
+  /// inline so the user can pick another name. The modal dialog keeps it to
+  /// one at a time.
+  String? _createFileRequestId;
+  Completer<String?>? _createFileResult;
+
   bool _attached = false;
 
   @override
@@ -434,6 +447,9 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       case SftpMkdirDoneEvent():
         if (event.requestId != _mkdirRequestId) return;
         _onMkdirDone(event);
+      case SftpCreateFileDoneEvent():
+        if (event.requestId != _createFileRequestId) return;
+        _finishCreateFile(null);
       case SftpErrorEvent():
         _onSftpError(event);
       default:
@@ -599,6 +615,10 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       _snack('Upload failed: ${event.message}');
       return;
     }
+    if (event.requestId == _createFileRequestId) {
+      _finishCreateFile(event.message);
+      return;
+    }
     if (event.requestId == _mkdirRequestId) {
       // The listing is left exactly as it was — nothing was created, so there
       // is nothing to refresh, and re-listing would only hide the error.
@@ -663,6 +683,52 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
       _mkdirName = name;
     });
     proxy.sftpMkdir(requestId: reqId, path: joinRemotePath(parentPath, name));
+  }
+
+  /// Ask for a name (default `README.md`), then create an EMPTY file under
+  /// [parentPath] (#1222) — same targeting as [_promptNewFolder]. Unlike a
+  /// folder, the dialog stays open until the server answers, so "Already
+  /// exists" lands inline where the user can rename. On success: refresh, mark
+  /// the new row, and open it in its viewer (no viewer → just the listing).
+  Future<void> _promptNewFile(String parentPath) async {
+    final proxy = _proxy;
+    if (proxy == null) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => _NewFolderDialog(
+        parentPath: parentPath,
+        isFile: true,
+        onCreate: (name) {
+          final reqId = _nextRequestId();
+          final result = Completer<String?>();
+          _createFileRequestId = reqId;
+          _createFileResult = result;
+          proxy.sftpCreateFile(
+            requestId: reqId,
+            path: joinRemotePath(parentPath, name),
+          );
+          return result.future;
+        },
+      ),
+    );
+    if (name == null || !mounted) return;
+    final path = joinRemotePath(parentPath, name);
+    setState(() => _highlightPath = path);
+    _snack('Created $name');
+    _list(_path);
+    final entry = SftpEntry(name: name, path: path, isDirectory: false, size: 0);
+    ref.read(fileViewerRegistryProvider).viewerFor(entry)?.open(
+      context,
+      widget.sessionId,
+      entry,
+    );
+  }
+
+  void _finishCreateFile(String? error) {
+    final result = _createFileResult;
+    _createFileRequestId = null;
+    _createFileResult = null;
+    if (result != null && !result.isCompleted) result.complete(error);
   }
 
   void _snack(String message) {
@@ -934,6 +1000,21 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
                     );
                   },
                 ),
+                ListTile(
+                  key: const Key('file-context-new-file'),
+                  leading: const Icon(Icons.note_add_outlined),
+                  title: const Text('New file'),
+                  subtitle: Text(
+                    entry.isDirectory ? 'Inside ${entry.path}' : 'In $_path',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    unawaited(
+                      _promptNewFile(entry.isDirectory ? entry.path : _path),
+                    );
+                  },
+                ),
                 if (!entry.isDirectory)
                   ListTile(
                     key: const Key('file-context-download'),
@@ -1165,6 +1246,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
                   ? null
                   : () => unawaited(_promptNewFolder(_path)),
             ),
+            // Create an empty file in the current directory (#1222).
+            IconButton(
+              key: const Key('file-browser-new-file'),
+              tooltip: 'New file',
+              icon: const Icon(Icons.note_add_outlined),
+              onPressed: () => unawaited(_promptNewFile(_path)),
+            ),
             // Upload a local file INTO the current directory (#960). Disabled
             // while an upload is in flight (one at a time). Monochrome glyph.
             IconButton(
@@ -1287,18 +1375,47 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
 /// the reason a name was rejected sits under the field until it is fixed. The
 /// dialog pops the TRIMMED name; it never pops an invalid one, so the caller
 /// can send it straight to the server.
+///
+/// [isFile] (#1222) reuses it for New file: `new-file-*` keys, a `README.md`
+/// default with the name part selected, and [onCreate] — awaited with the
+/// dialog OPEN, returning null on success or the reason to show inline.
 class _NewFolderDialog extends StatefulWidget {
-  const _NewFolderDialog({required this.parentPath});
+  const _NewFolderDialog({
+    required this.parentPath,
+    this.isFile = false,
+    this.onCreate,
+  });
 
   final String parentPath;
+  final bool isFile;
+  final Future<String?> Function(String name)? onCreate;
 
   @override
   State<_NewFolderDialog> createState() => _NewFolderDialogState();
 }
 
 class _NewFolderDialogState extends State<_NewFolderDialog> {
-  final TextEditingController _controller = TextEditingController();
+  late final TextEditingController _controller;
   String? _error;
+  bool _busy = false;
+
+  String get _k => widget.isFile ? 'new-file' : 'new-folder';
+
+  @override
+  void initState() {
+    super.initState();
+    const initial = 'README.md';
+    _controller = widget.isFile
+        ? TextEditingController(text: initial)
+        : TextEditingController();
+    if (widget.isFile) {
+      // Select the name part only, so typing replaces "README" but keeps ".md".
+      _controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: initial.lastIndexOf('.'),
+      );
+    }
+  }
 
   @override
   void dispose() {
@@ -1306,48 +1423,70 @@ class _NewFolderDialogState extends State<_NewFolderDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_busy) return;
     final raw = _controller.text;
-    final problem = validateNewFolderName(raw);
+    final problem = widget.isFile
+        ? validateNewFileName(raw)
+        : validateNewFolderName(raw);
     if (problem != null) {
       setState(() => _error = problem);
       return;
     }
-    Navigator.of(context).pop(raw.trim());
+    final name = raw.trim();
+    final onCreate = widget.onCreate;
+    if (onCreate != null) {
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+      final failure = await onCreate(name);
+      if (!mounted) return;
+      if (failure != null) {
+        setState(() {
+          _busy = false;
+          _error = failure;
+        });
+        return;
+      }
+    }
+    Navigator.of(context).pop(name);
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      key: const Key('new-folder-dialog'),
-      title: const Text('New folder'),
+      key: Key('$_k-dialog'),
+      title: Text(widget.isFile ? 'New file' : 'New folder'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'In ${widget.parentPath}',
-            key: const Key('new-folder-target'),
+            key: Key('$_k-target'),
             style: Theme.of(context).textTheme.bodySmall,
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 12),
           TextField(
-            key: const Key('new-folder-name-field'),
+            key: Key('$_k-name-field'),
             controller: _controller,
             autofocus: true,
             autocorrect: false,
             enableSuggestions: false,
             textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(labelText: 'Folder name'),
-            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              labelText: widget.isFile ? 'File name' : 'Folder name',
+            ),
+            onSubmitted: (_) => unawaited(_submit()),
           ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
                 _error!,
-                key: const Key('new-folder-error'),
+                key: Key('$_k-error'),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
@@ -1355,13 +1494,13 @@ class _NewFolderDialogState extends State<_NewFolderDialog> {
       ),
       actions: [
         TextButton(
-          key: const Key('new-folder-cancel'),
+          key: Key('$_k-cancel'),
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         TextButton(
-          key: const Key('new-folder-create'),
-          onPressed: _submit,
+          key: Key('$_k-create'),
+          onPressed: _busy ? null : () => unawaited(_submit()),
           child: const Text('Create'),
         ),
       ],

@@ -186,6 +186,17 @@ class FakeSftpSession implements SftpSession {
     if (throwOnMkdir) throw Exception('boom-mkdir');
   }
 
+  /// #1222: every file the host asked us to create; [createFileError] makes
+  /// the create throw (the server refusing an existing name).
+  final List<String> createdFiles = [];
+  Object? createFileError;
+
+  @override
+  Future<void> createFile(String path) async {
+    createdFiles.add(path);
+    if (createFileError != null) throw createFileError!;
+  }
+
   @override
   Future<void> close() async {
     closed = true;
@@ -433,6 +444,54 @@ void main() {
     expect(err!.requestId, 'sid-mkerr#mkdir0');
     expect(err!.message, contains('Permission denied'));
     expect(ctx.host.sessionIds, contains('sid-mkerr'));
+
+    await sub.cancel();
+  });
+
+  test('sftpCreateFile creates the path then emits a done event (#1222)',
+      () async {
+    final fake = FakeSftpSession();
+    final ctx = await setUpConnected('sid-nf', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpCreateFileDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpCreateFileDoneEvent) done = e;
+    });
+
+    ctx.proxy.sftpCreateFile(requestId: 'sid-nf#new0', path: '/h/README.md');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(fake.createdFiles, ['/h/README.md']);
+    expect(done, isNotNull);
+    expect(done!.requestId, 'sid-nf#new0');
+    expect(done!.path, '/h/README.md');
+
+    await sub.cancel();
+  });
+
+  test('sftpCreateFile on an existing name reports "Already exists" (#1222)',
+      () async {
+    final fake = FakeSftpSession()
+      ..createFileError = SftpStatusError(11, 'File already exists');
+    final ctx = await setUpConnected('sid-nferr', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpErrorEvent? err;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+    });
+
+    ctx.proxy.sftpCreateFile(requestId: 'sid-nferr#new0', path: '/h/a.md');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(err, isNotNull);
+    expect(err!.requestId, 'sid-nferr#new0');
+    expect(err!.message, 'Already exists: /h/a.md');
 
     await sub.cancel();
   });
