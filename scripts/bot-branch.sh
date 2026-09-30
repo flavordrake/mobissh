@@ -16,17 +16,32 @@
 set -euo pipefail
 
 source "$(dirname "$0")/lib/repo-guard.sh"
-guard_cwd
-ensure_repo_root
 
-# Restore the shared checkout to `main` on exit so this script never LEAVES the
-# main repo's HEAD on a bot branch. Leaving it there ("hijack") made later
-# commits in the shared checkout land on the wrong branch and left bot-branch
-# files stray in the main working tree. Agents do their real work in isolated
-# worktrees (rescue copies+commits before this fires), so nothing relies on the
-# leftover branch checkout. No-op on a dirty/error state so it can't worsen a
-# failure.
-trap 'git checkout main >/dev/null 2>&1 || true' EXIT
+# #1224: a develop agent calls this from its OWN live worktree (agents.md #537)
+# and every branch op must happen THERE. guard_cwd treats any worktree CWD as
+# drift and cds to the main repo, so create used to `checkout -B` the MAIN
+# checkout — the hijack #537 forbids. `rescue` alone is designed to run in the
+# main repo (it copies a dead worktree's files in), so it keeps the old path.
+WT_ROOT=""
+if [ "${1:-}" != "rescue" ]; then
+  top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  case "$top" in
+    "$REPO_ROOT/.claude/worktrees/"*) WT_ROOT="$top" ;;
+  esac
+fi
+
+if [ -n "$WT_ROOT" ]; then
+  cd "$WT_ROOT"
+else
+  guard_cwd
+  ensure_repo_root
+  # Restore the shared checkout to `main` on exit so this script never LEAVES
+  # the main repo's HEAD on a bot branch. Leaving it there ("hijack") made later
+  # commits in the shared checkout land on the wrong branch and left bot-branch
+  # files stray in the main working tree. No-op on a dirty/error state so it
+  # can't worsen a failure.
+  trap 'git checkout main >/dev/null 2>&1 || true' EXIT
+fi
 
 log() { echo "> $*" >&2; }
 err() { echo "! $*" >&2; }
@@ -55,6 +70,14 @@ _ensure_on_branch() {
 
 _create() {
   log "creating $BRANCH from main"
+  if [ -n "$WT_ROOT" ]; then
+    # `main` is checked out by the main repo, so a worktree can't switch to it;
+    # branch from the fetched origin/main instead.
+    git fetch origin main
+    git checkout -B "$BRANCH" origin/main
+    ok "on $BRANCH in worktree $WT_ROOT (up to date with origin/main)"
+    return 0
+  fi
   git checkout main 2>/dev/null || true
   git pull --ff-only 2>/dev/null || true
   git checkout -B "$BRANCH" main
