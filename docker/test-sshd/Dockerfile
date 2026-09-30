@@ -34,5 +34,13 @@ RUN printf 'set -g mouse on\nset -g history-limit 5000\n' \
 COPY fake-tui.sh /usr/local/bin/fake-tui
 RUN chmod 755 /usr/local/bin/fake-tui
 
+# #1225: a READ-capping SFTP relay in front of the real sftp-server. INERT by
+# default — the Subsystem line above stays internal-sftp; only
+# scripts/sftp-bytes-1225-setup.sh switches it in (and its teardown back), so
+# no other test sees it. openssh-sftp-server provides /usr/lib/ssh/sftp-server.
+RUN apk add --no-cache python3 openssh-sftp-server
+COPY sftp-cap-proxy.py /usr/local/bin/sftp-cap-proxy.py
+RUN chmod 755 /usr/local/bin/sftp-cap-proxy.py
+
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]

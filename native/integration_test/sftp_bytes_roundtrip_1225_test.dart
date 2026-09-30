@@ -1,6 +1,13 @@
 // On-emulator SFTP BYTES IN / BYTES OUT round-trip (#1225).
 //
 // Setup (run FIRST): scripts/sftp-bytes-1225-setup.sh
+// Teardown (always): scripts/sftp-bytes-1225-teardown.sh
+//
+// The setup puts a READ-capping relay in front of test-sshd's sftp-server
+// (docker/test-sshd/sftp-cap-proxy.py): every READ asks for at most 32 KiB, so
+// a 64 KiB request is answered short, the way the owner's server answers. The
+// stock internal-sftp always answers in full, which is why #1225 hid from this
+// fixture. The teardown restores internal-sftp for later tests.
 //
 // #1225 (owner data loss): downloads over 32 KiB silently truncated with a
 // success snackbar — 94,915 bytes arrived as 62,147, bytes 32,768..65,535
@@ -518,6 +525,12 @@ void main() {
 
       debugPrint('BYTES1225 SUMMARY passed=${passes.length} '
           'failed=${failures.length}');
+      for (final p in passes) {
+        debugPrint('BYTES1225 SUMMARY-PASS $p');
+      }
+      for (final f in failures) {
+        debugPrint('BYTES1225 SUMMARY-FAIL $f');
+      }
       expect(
         failures,
         isEmpty,

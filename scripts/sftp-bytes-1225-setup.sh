@@ -16,6 +16,14 @@
 # bytes that never went through the reader under test. Any previous run's
 # leftovers are removed first. Honours SSHD_HOST (the runner pins it).
 #
+# It then switches that container's sftp subsystem to the READ-capping relay
+# (docker/test-sshd/sftp-cap-proxy.py: every READ asks for at most 32 KiB, so
+# the server replies short the way the owner's server did — stock
+# internal-sftp never does, which is why #1225 hid from test-sshd), and
+# self-checks it: the stock sftp client, which handles short reads, must fetch
+# bin_94915.bin byte-exact THROUGH the relay while the relay reports capped
+# READs. sftp-bytes-1225-teardown.sh switches back to internal-sftp.
+#
 # Runs as the test's declared Setup (scripts/lib/integration-fixtures.sh).
 set -euo pipefail
 
@@ -71,3 +79,45 @@ sha256sum bin/* md/* ./*.part
 ls -la . bin md up
 '
 echo "+ bytes_1225 seeded on ${HOST}"
+
+source "${REPO_ROOT}/scripts/lib/sftp-cap-proxy.sh"
+CONTAINER="$(sftpcap_container)"
+echo "> enabling the READ-capping sftp relay in ${CONTAINER}"
+docker exec "$CONTAINER" test -x /usr/local/bin/sftp-cap-proxy.py
+docker exec "$CONTAINER" test -x /usr/lib/ssh/sftp-server
+docker exec "$CONTAINER" sh -c 'rm -rf /tmp/sftp-cap-proxy; mkdir -m 1777 /tmp/sftp-cap-proxy'
+# A failed self-check must not leave the relay in place for later tests.
+restore_on_fail() {
+  [[ "${SELFCHECK_OK:-0}" == 1 ]] && return 0
+  echo "! setup failed — restoring ${SFTPCAP_STOCK_SUBSYSTEM}" >&2
+  sftpcap_set_subsystem "$CONTAINER" "$SFTPCAP_STOCK_SUBSYSTEM" || true
+}
+trap restore_on_fail EXIT
+sftpcap_set_subsystem "$CONTAINER" "$SFTPCAP_PROXY_SUBSYSTEM"
+
+echo "> self-check: stock sftp client (64 KiB requests) through the relay"
+printf 'get %s %s\n' /home/testuser/bytes_1225/bin/bin_94915.bin "$WORK/selfcheck.bin" \
+  > "$WORK/selfcheck.batch"
+fetched=0
+for attempt in 1 2 3 4 5; do
+  # sshd re-execs on HUP; the first connect can race the listener coming back.
+  if sftp -B 65536 -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -b "$WORK/selfcheck.batch" "testuser@${HOST}"; then
+    fetched=1
+    break
+  fi
+  echo "  sftp attempt ${attempt} failed; retrying"
+  sleep 1
+done
+[[ "$fetched" == 1 ]] || { echo "! self-check: sftp through the relay never succeeded" >&2; exit 1; }
+want="$(sha256sum "$WORK/stage/bin/bin_94915.bin" | awk '{print $1}')"
+got="$(sha256sum "$WORK/selfcheck.bin" | awk '{print $1}')"
+echo "  sha256 want=${want} got=${got}"
+[[ "$want" == "$got" ]] || { echo "! self-check: relay is NOT transparent (sha256 mismatch)" >&2; exit 1; }
+if ! sftpcap_report "$CONTAINER"; then
+  echo "! self-check: the relay capped no READs — the cap is not engaged" >&2
+  exit 1
+fi
+docker exec "$CONTAINER" sh -c 'rm -f /tmp/sftp-cap-proxy/*.log'
+SELFCHECK_OK=1
+echo "+ READ-capping relay engaged and transparent; counters reset for the test"
