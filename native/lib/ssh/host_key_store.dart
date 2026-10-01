@@ -180,10 +180,17 @@ class HostKeyStore {
       return;
     }
     // Don't clobber any trust decisions that landed between ctor and hydrate
-    // completion — in-memory writes win, hydration only fills gaps.
-    loaded.forEach((k, v) => _trusted.putIfAbsent(k, () => v));
+    // completion — in-memory writes win, hydration only fills gaps. A forget
+    // that landed early wins too (#1235): it must not be resurrected.
+    loaded.forEach((k, v) {
+      if (!_forgottenEarly.contains(k)) _trusted.putIfAbsent(k, () => v);
+    });
     _hydrated = true;
+    if (loaded.keys.any(_forgottenEarly.contains)) _persist();
   }
+
+  /// Keys forgotten before hydration finished (#1235).
+  final Set<String> _forgottenEarly = <String>{};
 
   void _persist() {
     // Snapshot the map at call time and queue the write behind any in-flight
@@ -262,8 +269,11 @@ class HostKeyStore {
 
   /// Remove a trust entry (e.g. user rejected a rotated key).
   void forget(String host, int port) {
+    // Before hydration the map is partial: persisting it would overwrite the
+    // stored trust with a fragment. Record the forget; _hydrate applies it.
+    if (!_hydrated) _forgottenEarly.add('$host:$port');
     final removed = _trusted.remove('$host:$port');
-    if (removed != null) _persist();
+    if (removed != null && _hydrated) _persist();
   }
 
   /// Number of trusted hosts. Useful in tests.

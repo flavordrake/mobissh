@@ -18,8 +18,11 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
 import '../diagnostics/connect_trace.dart';
+import 'host_key_mismatch.dart';
 import 'host_key_store.dart';
 import 'ssh_connect_params.dart';
+
+export 'host_key_mismatch.dart';
 
 /// Discrete lifecycle states for an SSH session. UI watches this directly
 /// rather than inferring from boolean combinations.
@@ -90,6 +93,10 @@ class SshSessionData {
   final int? port;
   final String? username;
 
+  /// #1235: the refused CHANGED key, structured, so the failure view can offer
+  /// a review + forget. Null for every other failure.
+  final HostKeyMismatch? hostKeyMismatch;
+
   const SshSessionData({
     this.state = SshSessionState.idle,
     this.error,
@@ -99,6 +106,7 @@ class SshSessionData {
     this.host,
     this.port,
     this.username,
+    this.hostKeyMismatch,
   });
 
   SshSessionData copyWith({
@@ -110,9 +118,11 @@ class SshSessionData {
     String? host,
     int? port,
     String? username,
+    HostKeyMismatch? hostKeyMismatch,
     bool clearError = false,
     bool clearPendingHostKey = false,
     bool clearBanner = false,
+    bool clearHostKeyMismatch = false,
   }) {
     return SshSessionData(
       state: state ?? this.state,
@@ -125,6 +135,9 @@ class SshSessionData {
       host: host ?? this.host,
       port: port ?? this.port,
       username: username ?? this.username,
+      hostKeyMismatch: clearHostKeyMismatch
+          ? null
+          : (hostKeyMismatch ?? this.hostKeyMismatch),
     );
   }
 }
@@ -1022,6 +1035,19 @@ class SshSessionController {
     completer.complete(false);
   }
 
+  /// #1235: drop the stored key behind THIS session's CHANGED-key failure —
+  /// step one of the deliberate re-trust. Refused (false) unless [host]:[port]
+  /// is the session's current mismatch, so a stray command can't erase other
+  /// trust. Never trusts anything: the next connect gets the ordinary
+  /// first-contact prompt for the offered key.
+  bool forgetMismatchedHostKey(String host, int port) {
+    final m = _data.hostKeyMismatch;
+    if (m == null || m.host != host || m.port != port) return false;
+    _hostKeyStore.forget(host, port);
+    _emit(_data.copyWith(clearHostKeyMismatch: true));
+    return true;
+  }
+
   /// Disconnect the active session. No-op when not connected.
   Future<void> disconnect() async {
     _userDisconnected = true;
@@ -1286,6 +1312,16 @@ class SshSessionController {
                 'HOST KEY CHANGED for ${params.host}:${params.port} — possible '
                 'man-in-the-middle. Stored: $stored  Offered: $fp. Connection '
                 'refused. Forget the old key to re-trust.',
+            // #1235: structured, for the Review action. A hop is any params
+            // other than the session's own target (verifyHopHostKey).
+            hostKeyMismatch: HostKeyMismatch(
+              host: params.host,
+              port: params.port,
+              keyType: type,
+              storedFingerprint: stored ?? '',
+              offeredFingerprint: fp,
+              jumpHop: !identical(params, _lastParams),
+            ),
           ),
         );
         return false;

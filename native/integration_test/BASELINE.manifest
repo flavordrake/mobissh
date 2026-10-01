@@ -33,7 +33,7 @@
 #   elsewhere | <file>_test.dart       | <the runner that owns it>
 # No field may contain a `|`. Every known-red needs BOTH an issue and a reason.
 
-accepted  | 20260920T155254Z | expect=79 | known-red=10 | elsewhere=1
+accepted  | 20260920T155254Z | expect=80 | known-red=10 | elsewhere=1
 
 # --- not this suite's to run ------------------------------------------------
 # Cross-checked against the test's own `// Runner:` header: a test declares its
@@ -102,6 +102,7 @@ expect    | gutter_track_scroll_993_test.dart
 expect    | hostkey_format_migration_1226_test.dart
 expect    | hostkey_format_migration_jump_1226_test.dart
 expect    | hostkey_persist_test.dart
+expect    | hostkey_retrust_1235_test.dart
 expect    | html_render_sftp_test.dart
 expect    | import_smoke_test.dart
 expect    | initial_command_smoke_test.dart

@@ -40,7 +40,7 @@ import '../state/tmux_control_mode_setting.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
 import 'export_backup_dialog.dart';
-import 'host_key_dialog.dart';
+import 'host_key_review.dart';
 import 'import_profiles_dialog.dart';
 import 'profile_editor.dart';
 import 'profile_list.dart';
@@ -707,16 +707,14 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   }
 
   Future<void> _handleHostKeyPrompt(PendingHostKey pending) async {
-    final accepted = await showHostKeyDialog(context, pending: pending);
-    // Defensive — the chooser can be popped (e.g. New session route) while the
-    // dialog is in-flight. Touching `ref` after dispose throws StateError.
-    if (!mounted) return;
-    final proxy = ref.read(sshSessionProxyProvider);
-    if (accepted) {
-      proxy.acceptHostKey();
-    } else {
-      proxy.rejectHostKey();
-    }
+    // #1235: through the once-guard, so a post-forget re-trust (which arms its
+    // own prompt) never stacks a second dialog over this one. The proxy is the
+    // one that raised the prompt, read before the dialog.
+    await promptHostKeyOnce(
+      context,
+      ref.read(sshSessionProxyProvider),
+      pending,
+    );
   }
 }
 
