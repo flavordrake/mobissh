@@ -878,4 +878,129 @@ void main() {
 
     await sub.cancel();
   });
+
+  // #1225: the done event carried `written` as its total, so every consumer's
+  // "received vs total" guard compared a number with itself. The total must be
+  // the server-reported size; the received count travels separately.
+  test('#1225 sftpDownload done carries the STAT size, not the bytes sent',
+      () async {
+    final fake = _ShortSftpSession(fileBytes: List<int>.filled(100, 7));
+    final ctx = await setUpConnected('sid-1225c', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    var received = 0;
+    SftpDownloadDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpDownloadChunkEvent) received += e.bytes.length;
+      if (e is SftpDownloadDoneEvent) done = e;
+    });
+    ctx.proxy.sftpDownload(requestId: 'sid-1225c#0', path: '/a.bin');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(received, 60);
+    expect(done, isNotNull);
+    expect(done!.totalBytes, 100, reason: 'expected = stat size');
+    expect(done!.receivedBytes, 60);
+    await sub.cancel();
+  });
+
+  test('#1225 sftpDownloadFile done carries the expected total and the '
+      'received count separately', () async {
+    final fake = _ShortSftpSession(fileBytes: List<int>.filled(100, 7));
+    final ctx = await setUpConnected('sid-1225f', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+    final tmp = await Directory.systemTemp.createTemp('mobissh_1225f_');
+    addTearDown(() => tmp.delete(recursive: true));
+
+    SftpDownloadDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpDownloadDoneEvent) done = e;
+    });
+    ctx.proxy.sftpDownloadFile(
+      requestId: 'sid-1225f#0',
+      remotePath: '/a.bin',
+      localPath: '${tmp.path}/a.bin',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(done, isNotNull);
+    expect(done!.totalBytes, 100);
+    expect(done!.receivedBytes, 60);
+    await sub.cancel();
+  });
+
+  test('#1225 a download that throws DownloadIncompleteException surfaces as '
+      'an error naming both counts, never a done', () async {
+    final fake = _ShortSftpSession(
+      fileBytes: List<int>.filled(100, 7),
+      throwIncomplete: true,
+    );
+    final ctx = await setUpConnected('sid-1225e', fake);
+    addTearDown(ctx.pair.dispose);
+    addTearDown(ctx.host.dispose);
+    addTearDown(ctx.proxy.dispose);
+
+    SftpErrorEvent? err;
+    SftpDownloadDoneEvent? done;
+    final sub = ctx.proxy.sftpEvents.listen((e) {
+      if (e is SftpErrorEvent) err = e;
+      if (e is SftpDownloadDoneEvent) done = e;
+    });
+    ctx.proxy.sftpDownloadFile(
+      requestId: 'sid-1225e#0',
+      remotePath: '/a.bin',
+      localPath: '/nonexistent/a.bin',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(done, isNull);
+    expect(err, isNotNull);
+    expect(err!.message, contains('Download incomplete: got 60 of 100 bytes'));
+    await sub.cancel();
+  });
+}
+
+/// A session whose transfers deliver only the first 60% of [fileBytes] while
+/// [sizeOf] / the progress total report the full size — a reader that trusts
+/// its own stream. With [throwIncomplete] it behaves like the fixed
+/// [DartSshSftpSession] and throws instead.
+class _ShortSftpSession extends FakeSftpSession {
+  _ShortSftpSession({required super.fileBytes, this.throwIncomplete = false});
+
+  final bool throwIncomplete;
+
+  int get _short => fileBytes.length * 6 ~/ 10;
+
+  @override
+  Future<int> download(
+    String path, {
+    required void Function(Uint8List chunk, int offset) onChunk,
+    int chunkSize = 64 * 1024,
+  }) async {
+    onChunk(Uint8List.fromList(fileBytes.sublist(0, _short)), 0);
+    if (throwIncomplete) {
+      throw DownloadIncompleteException(_short, fileBytes.length);
+    }
+    return _short;
+  }
+
+  @override
+  Future<int> downloadFile(
+    String remotePath,
+    String localPath, {
+    required void Function(int done, int total) onProgress,
+    int chunkSize = 64 * 1024,
+  }) async {
+    onProgress(0, fileBytes.length);
+    onProgress(_short, fileBytes.length);
+    if (throwIncomplete) {
+      throw DownloadIncompleteException(_short, fileBytes.length);
+    }
+    await File(localPath).writeAsBytes(fileBytes.sublist(0, _short));
+    return _short;
+  }
 }

@@ -17,6 +17,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ssh/sftp_session.dart' show DownloadIncompleteException;
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
 import 'session_messages.dart';
@@ -124,6 +125,14 @@ class ProxyTextFileFetcher implements TextFileFetcher {
         case SftpDownloadDoneEvent():
           if (event.requestId != requestId) return;
           if (completer.isCompleted) return;
+          // #1225: a short document must never load into the editor, where a
+          // Save would write the truncation back to the server.
+          if (received != event.totalBytes) {
+            completer.completeError(
+              DownloadIncompleteException(received, event.totalBytes),
+            );
+            return;
+          }
           for (final offset in (byOffset.keys.toList()..sort())) {
             buffer.add(byOffset[offset]!);
           }

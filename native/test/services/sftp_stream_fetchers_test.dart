@@ -322,6 +322,23 @@ void main() {
       expect(await f0, 'first');
     });
 
+    test('#1225 done with an expected total the bytes do not reach fails the '
+        'load, never a short document', () async {
+      final f = fetcher.fetch(h.sid, _txtEntry);
+      await h.awaitRequests(1);
+      final rid = h.requests.single.requestId;
+      h.chunk(rid, _bytes('0123456789'), 0, total: 20);
+      h.done(rid, 20);
+      await expectLater(
+        f,
+        throwsA(isA<Exception>().having(
+          (e) => e.toString(),
+          'toString',
+          contains('Download incomplete: got 10 of 20 bytes'),
+        )),
+      );
+    });
+
     test('unknown session throws StateError before any command is sent',
         () async {
       await expectLater(
@@ -440,6 +457,23 @@ void main() {
       h.chunk(rid0, [1], 0);
       h.done(rid0, 1);
       expect(await f0, [1]);
+    });
+
+    test('#1225 done with an expected total the bytes do not reach fails',
+        () async {
+      final f = fetcher.fetch(h.sid, '/srv/a.png');
+      await h.awaitRequests(1);
+      final rid = h.requests.single.requestId;
+      h.chunk(rid, [1, 2, 3], 0, total: 8);
+      h.done(rid, 8);
+      await expectLater(
+        f,
+        throwsA(isA<Exception>().having(
+          (e) => e.toString(),
+          'toString',
+          contains('Download incomplete: got 3 of 8 bytes'),
+        )),
+      );
     });
 
     test('unknown session throws StateError', () async {

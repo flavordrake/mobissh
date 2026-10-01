@@ -121,4 +121,27 @@ void main() {
       reason: 'a transfer missing bytes must not be reported as complete',
     );
   });
+
+  test('#1225 finish() rejects a HOLE: a middle chunk missing while the last '
+      'one reaches the expected end', () async {
+    final source = makeSource();
+    final file = File('${tmp.path}/hole.bin');
+    final sink = await OffsetFileSink.create(file);
+
+    final chunks = _chunkify(source, 32 * 1024);
+    for (var i = 0; i < chunks.length; i++) {
+      if (i == 1) continue; // bytes 32,768..65,535 never arrive
+      await sink.addChunk(chunks[i].bytes, chunks[i].offset);
+    }
+
+    await expectLater(
+      sink.finish(expectedTotal: source.length),
+      throwsA(isA<Exception>().having(
+        (e) => e.toString(),
+        'toString',
+        contains('Download incomplete'),
+      )),
+    );
+    expect(file.existsSync(), isFalse);
+  });
 }

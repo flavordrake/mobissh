@@ -42,11 +42,16 @@ class _DlSftp implements SftpSession {
     required this.entries,
     required this.fileSize,
     this.blockDownload = false,
+    this.shortBy = 0,
   });
 
   final List<SftpEntry> entries;
   final int fileSize;
   final bool blockDownload;
+
+  /// #1225: deliver [shortBy] fewer bytes than [fileSize] and still return
+  /// normally — the pre-fix reader that trusted its own stream.
+  final int shortBy;
   final Completer<void> release = Completer<void>();
 
   bool downloadCalled = false;
@@ -80,8 +85,8 @@ class _DlSftp implements SftpSession {
     downloadFileCalled = true;
     onProgress(0, fileSize);
     if (blockDownload) await release.future;
-    onProgress(fileSize, fileSize);
-    return fileSize;
+    onProgress(fileSize - shortBy, fileSize);
+    return fileSize - shortBy;
   }
 
   @override
@@ -362,6 +367,44 @@ void main() {
     // done event no longer matches the (cleared) request id and is ignored.
     fake.release.complete();
     await _pump(tester);
+
+    host.disposeSyncForTest();
+  });
+
+  testWidgets(
+      '#1225 a done whose received count misses the expected total is a '
+      'FAILURE: no publish, partial aborted, no success snackbar',
+      (tester) async {
+    final pair = InMemoryGatewayPair();
+    addTearDown(pair.dispose);
+
+    final fake = _DlSftp(
+      entries: const [
+        SftpEntry(name: 'r.bin', path: '/r.bin', isDirectory: false, size: 94915),
+      ],
+      fileSize: 94915,
+      shortBy: 94915 - 62147,
+    );
+    final target = _FakeTarget('/tmp/mobissh_test/r.bin');
+    late SessionHost host;
+    await _mountBrowser(
+      tester,
+      pair: pair,
+      fake: fake,
+      target: target,
+      captureHost: (h) => host = h,
+    );
+
+    await tester.tap(find.byKey(const Key('file-entry-r.bin')));
+    await _pump(tester);
+
+    expect(fake.downloadFileCalled, isTrue);
+    expect(target.published, isFalse,
+        reason: 'a short file must never reach Downloads');
+    expect(target.aborted, isTrue, reason: 'the partial is deleted');
+    expect(find.textContaining('Downloaded'), findsNothing);
+    expect(find.textContaining('Download incomplete: got 62147 of 94915 bytes'),
+        findsOneWidget);
 
     host.disposeSyncForTest();
   });

@@ -1291,6 +1291,7 @@ sealed class SshTaskEvent {
           sessionId: sessionId,
           requestId: json['requestId'] as String,
           totalBytes: json['totalBytes'] as int,
+          receivedBytes: json['receivedBytes'] as int?,
         );
       case SshTaskEventKind.sftpUploadDone:
         return SftpUploadDoneEvent(
@@ -1774,17 +1775,22 @@ class SftpDownloadChunkEvent extends SshTaskEvent {
   };
 }
 
-/// Task → UI: a download completed successfully. [totalBytes] is the full
-/// transferred size; the UI flushes + closes its destination sink on this.
+/// Task → UI: the task finished a download. [totalBytes] is the EXPECTED size
+/// (the server's stat, #1225) — never the count the task happened to send — so
+/// every consumer compares what it received against it and fails loudly on a
+/// difference. [receivedBytes] is the task's own count, for the task-side
+/// (#976) path whose bytes never cross to the UI.
 class SftpDownloadDoneEvent extends SshTaskEvent {
   const SftpDownloadDoneEvent({
     required String sessionId,
     required this.requestId,
     required this.totalBytes,
+    this.receivedBytes,
   }) : super(sessionId);
 
   final String requestId;
   final int totalBytes;
+  final int? receivedBytes;
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.sftpDownloadDone;
@@ -1795,6 +1801,7 @@ class SftpDownloadDoneEvent extends SshTaskEvent {
     'sessionId': sessionId,
     'requestId': requestId,
     'totalBytes': totalBytes,
+    if (receivedBytes != null) 'receivedBytes': receivedBytes,
   };
 }
 

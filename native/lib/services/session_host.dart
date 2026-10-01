@@ -1884,11 +1884,17 @@ class SessionHost {
         },
       );
       if (_disposed) return;
+      // #1225: totalBytes is the EXPECTED size (stat), never the count we sent —
+      // consumers compare what they received against it. Size 0/unknown (a
+      // virtual file read to EOF) leaves only the count.
+      final expected =
+          (totalBytes != null && totalBytes > 0) ? totalBytes : written;
       _gateway.send(
         SftpDownloadDoneEvent(
           sessionId: cmd.sessionId,
           requestId: cmd.requestId,
-          totalBytes: written,
+          totalBytes: expected,
+          receivedBytes: written,
         ).toJson(),
       );
     } catch (e) {
@@ -1910,10 +1916,12 @@ class SessionHost {
         _emitSftpError(cmd.sessionId, cmd.requestId, 'Session not connected');
         return;
       }
+      var expected = 0;
       final written = await sftp.downloadFile(
         cmd.remotePath,
         cmd.localPath,
         onProgress: (done, total) {
+          expected = total;
           if (_disposed) return;
           _gateway.send(
             SftpDownloadProgressEvent(
@@ -1926,11 +1934,14 @@ class SessionHost {
         },
       );
       if (_disposed) return;
+      // #1225: expected (the stat size the progress reported) and received
+      // travel separately so the browser can refuse a short file.
       _gateway.send(
         SftpDownloadDoneEvent(
           sessionId: cmd.sessionId,
           requestId: cmd.requestId,
-          totalBytes: written,
+          totalBytes: expected > 0 ? expected : written,
+          receivedBytes: written,
         ).toJson(),
       );
     } catch (e) {
