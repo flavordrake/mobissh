@@ -185,9 +185,9 @@ void main() {
         auth: SshAuth.password('p'),
       );
       // Seed persisted trust for the exact fingerprint the verify path will
-      // compute from these bytes (hex of [0xDE,0xAD,0xBE,0xEF]).
+      // see: dartssh2 >= 2.18 hands over the UTF-8 `SHA256:<b64>` text (#1226).
       final backend = InMemoryHostKeyBackend(<String, String>{
-        'trusted.example:22': 'deadbeef',
+        'trusted.example:22': _shaA,
       });
       final store = HostKeyStore(backend: backend);
       await store.ready;
@@ -199,7 +199,7 @@ void main() {
       final trusted = await controller.verifyHostKeyForTest(
         params,
         'ssh-ed25519',
-        Uint8List.fromList(<int>[0xDE, 0xAD, 0xBE, 0xEF]),
+        _fp(_shaA),
       );
 
       expect(trusted, isTrue, reason: 'persisted-trust host must not prompt');
@@ -255,9 +255,9 @@ void main() {
           username: 'u',
           auth: SshAuth.password('p'),
         );
-        // Host is already trusted with a DIFFERENT fingerprint (0xAA,0xBB).
+        // Host is already trusted with a DIFFERENT SHA256 fingerprint.
         final backend = InMemoryHostKeyBackend(<String, String>{
-          'known.example:22': 'aabb',
+          'known.example:22': _shaB,
         });
         final store = HostKeyStore(backend: backend);
         await store.ready;
@@ -266,11 +266,11 @@ void main() {
         final transitions = <SshSessionState>[];
         final sub = controller.stream.listen((d) => transitions.add(d.state));
 
-        // Server now offers hex of [0xDE,0xAD,0xBE,0xEF] = 'deadbeef'.
+        // Server now offers a different SHA256 key.
         final ok = await controller.verifyHostKeyForTest(
           params,
           'ssh-ed25519',
-          Uint8List.fromList(<int>[0xDE, 0xAD, 0xBE, 0xEF]),
+          _fp(_shaA),
         );
 
         expect(ok, isFalse, reason: 'a changed key must be rejected, not prompted');
@@ -282,15 +282,214 @@ void main() {
         );
         expect(controller.data.pendingHostKey, isNull);
         // Error surfaces BOTH the stored and the offered fingerprint.
-        expect(controller.data.error, contains('aabb'));
-        expect(controller.data.error, contains('deadbeef'));
+        expect(controller.data.error, contains(_shaB));
+        expect(controller.data.error, contains(_shaA));
         // The MITM evidence (originally-trusted fp) is not overwritten.
-        expect(store.trustedFingerprint('known.example', 22), 'aabb');
+        expect(store.trustedFingerprint('known.example', 22), _shaB);
 
         await sub.cancel();
         await controller.dispose();
       },
     );
+
+    // #1226: a pre-upgrade 32-hex MD5 entry can't be compared with the
+    // SHA256 text dartssh2 now provides. It gets a ONE-TIME re-confirm prompt:
+    // the same human-paced awaitingHostKey state, but a PendingHostKey flagged
+    // formatChanged so the UI renders the distinct warning — never the
+    // CHANGED fail-closed path, never the plain first-contact prompt.
+    group('legacy MD5 entry → one-time re-confirm (#1226)', () {
+      const params = SshConnectParams(
+        host: 'legacy.example',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      );
+      const legacy = '00112233445566778899aabbccddeeff';
+
+      Future<(SshSessionController, HostKeyStore, InMemoryHostKeyBackend)>
+          setUpLegacy() async {
+        final backend = InMemoryHostKeyBackend(<String, String>{
+          'legacy.example:22': legacy,
+        });
+        final store = HostKeyStore(backend: backend);
+        await store.ready;
+        return (SshSessionController(hostKeyStore: store), store, backend);
+      }
+
+      test('emits awaitingHostKey with formatChanged=true and the SHA256 text',
+          () async {
+        final (controller, _, _) = await setUpLegacy();
+        final transitions = <SshSessionState>[];
+        final sub = controller.stream.listen((d) => transitions.add(d.state));
+
+        // ignore: unawaited_futures
+        controller.verifyHostKeyForTest(params, 'ssh-ed25519', _fp(_shaA));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(controller.data.state, SshSessionState.awaitingHostKey);
+        final pending = controller.data.pendingHostKey;
+        expect(pending, isNotNull);
+        expect(pending!.formatChanged, isTrue);
+        expect(pending.fingerprint, _shaA, reason: 'shown verbatim, no hex');
+        expect(transitions, isNot(contains(SshSessionState.failed)),
+            reason: 'a legacy entry is not a MITM alarm');
+
+        controller.rejectHostKey();
+        await sub.cancel();
+        await controller.dispose();
+      });
+
+      test('an unknown host still gets the ordinary prompt (formatChanged=false)',
+          () async {
+        final store = HostKeyStore(backend: InMemoryHostKeyBackend());
+        await store.ready;
+        final controller = SshSessionController(hostKeyStore: store);
+
+        // ignore: unawaited_futures
+        controller.verifyHostKeyForTest(params, 'ssh-ed25519', _fp(_shaA));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(controller.data.state, SshSessionState.awaitingHostKey);
+        expect(controller.data.pendingHostKey!.formatChanged, isFalse);
+
+        controller.rejectHostKey();
+        await controller.dispose();
+      });
+
+      test('accept replaces the legacy entry; the next verify is silent',
+          () async {
+        final (controller, store, backend) = await setUpLegacy();
+
+        final verify =
+            controller.verifyHostKeyForTest(params, 'ssh-ed25519', _fp(_shaA));
+        await Future<void>.delayed(Duration.zero);
+        controller.acceptHostKey();
+
+        expect(await verify, isTrue);
+        expect(store.trustedFingerprint('legacy.example', 22), _shaA);
+        await Future<void>.delayed(Duration.zero);
+        expect((await backend.loadAll())['legacy.example:22'], _shaA);
+
+        final transitions = <SshSessionState>[];
+        final sub = controller.stream.listen((d) => transitions.add(d.state));
+        expect(
+          await controller.verifyHostKeyForTest(
+            params,
+            'ssh-ed25519',
+            _fp(_shaA),
+          ),
+          isTrue,
+        );
+        expect(transitions, isNot(contains(SshSessionState.awaitingHostKey)),
+            reason: 'the re-confirm is one-time');
+        await sub.cancel();
+        await controller.dispose();
+      });
+
+      test('reject refuses the connect and leaves the legacy entry alone',
+          () async {
+        final (controller, store, _) = await setUpLegacy();
+
+        final verify =
+            controller.verifyHostKeyForTest(params, 'ssh-ed25519', _fp(_shaA));
+        await Future<void>.delayed(Duration.zero);
+        controller.rejectHostKey();
+
+        expect(await verify, isFalse);
+        expect(controller.data.state, SshSessionState.failed);
+        expect(controller.data.error, contains('Host key rejected'));
+        expect(store.trustedFingerprint('legacy.example', 22), legacy);
+        await controller.dispose();
+      });
+    });
+
+    // #1226: dartssh2 4.x no longer negotiates legacy algorithms by default and
+    // drops a connection whose host key changes on rekey. Both must reach the
+    // user as a readable reason, not a raw library type dump.
+    group('readable dartssh2 failure reasons (#1226)', () {
+      test('no common algorithm (local negotiation) names the algorithm problem',
+          () {
+        final msg = SshSessionController.describeSshError(
+          SSHInternalError(StateError('No matching host key algorithm')),
+        );
+        expect(msg, isNotNull);
+        expect(msg, contains('No matching host key algorithm'));
+        expect(msg, contains('legacy'));
+        expect(msg, isNot(contains('SSHInternalError')));
+      });
+
+      test('server-side negotiation refusal (SSH_MSG_DISCONNECT) is readable',
+          () {
+        final msg = SshSessionController.describeSshError(
+          SSHDisconnectError(3, 'no matching key exchange method found'),
+        );
+        expect(msg, contains('no matching key exchange method found'));
+        expect(msg, contains('legacy'));
+      });
+
+      test('host key changed during rekey reads as a HOST KEY CHANGED alarm', () {
+        final msg = SshSessionController.describeSshError(
+          SSHHostkeyError('Host key changed during rekey: was a, now b'),
+        );
+        expect(msg, contains('HOST KEY CHANGED'));
+        expect(msg, contains('rekey'));
+      });
+
+      test('unrelated errors are left to the caller (null)', () {
+        expect(
+          SshSessionController.describeSshError(SSHAuthFailError('nope')),
+          isNull,
+        );
+      });
+
+      test('a peer SSH_MSG_DISCONNECT on a live session keeps the pre-3.3 clean '
+          'close semantics: softDisconnected + auto-reconnect (#551 parity)',
+          () async {
+        // dartssh2 < 3.3 logged SSH_MSG_DISCONNECT and closed cleanly (done
+        // completed normally). 3.3.0 completes done with SSHDisconnectError,
+        // which would otherwise fall through to a terminal `failed`.
+        final controller = SshSessionController(
+          reconnectAttemptOverride: (_) async => false,
+        );
+        final seen = <SshSessionState>[];
+        final sub = controller.stream.listen((d) => seen.add(d.state));
+        controller.debugSetConnectedForTest(
+          const SshConnectParams(
+            host: 'h',
+            port: 22,
+            username: 'u',
+            auth: SshAuth.password('p'),
+          ),
+        );
+        controller.handleTransportClosed(
+          SSHDisconnectError(11, 'Closed by server administrator'),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(seen, contains(SshSessionState.softDisconnected));
+        expect(seen, isNot(contains(SshSessionState.failed)));
+        await sub.cancel();
+        await controller.dispose();
+      });
+
+      test('a rekey host-key change on a live session fails (no auto-reconnect) '
+          'with the readable reason', () {
+        final controller = SshSessionController();
+        controller.debugSetConnectedForTest(
+          const SshConnectParams(
+            host: 'h',
+            port: 22,
+            username: 'u',
+            auth: SshAuth.password('p'),
+          ),
+        );
+        controller.handleTransportClosed(
+          SSHHostkeyError('Host key changed during rekey: was a, now b'),
+        );
+        expect(controller.data.state, SshSessionState.failed);
+        expect(controller.data.error, contains('HOST KEY CHANGED'));
+        controller.dispose();
+      });
+    });
 
     test(
       'verify with an UNAVAILABLE store fails closed (→ failed, NOT '
@@ -599,6 +798,13 @@ void main() {
     });
   });
 }
+
+/// OpenSSH-style fingerprints as dartssh2 >= 2.18 reports them (#1226).
+const _shaA = 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s';
+const _shaB = 'SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU';
+
+/// The bytes `onVerifyHostKey` receives: the UTF-8 of the fingerprint text.
+Uint8List _fp(String text) => Uint8List.fromList(utf8.encode(text));
 
 /// A host-key backend whose [loadAll] always throws — simulates unavailable
 /// storage so the store must fail closed (storeUnavailable) — #1108.

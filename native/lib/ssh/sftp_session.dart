@@ -416,7 +416,12 @@ class DartSshSftpSession implements SftpSession {
 
   @override
   Future<void> close() async {
-    _client.close();
+    // SftpClient.close() is a Future since dartssh2 2.22.3 (#1226, minimal
+    // API adaptation only — transfer logic is #1225's). Deliberately NOT
+    // awaited: it waits for the peer's CHANNEL_CLOSE, which never comes on a
+    // dead link, and session teardown awaits this before disposing the
+    // controller. Pre-upgrade close() was void, so this keeps that behaviour.
+    unawaited(_client.close().catchError((Object _) {}));
   }
 }
 

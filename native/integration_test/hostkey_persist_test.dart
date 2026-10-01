@@ -35,18 +35,23 @@ import 'support/connect_helpers.dart';
 /// AND the shell streams bytes. The connect itself is dispatched by the caller
 /// (ad-hoc editor for the first connect; saved-profile tap on reconnect, #583).
 /// Returns a record: (reachedShell, sawPrompt).
-Future<({bool reachedShell, bool sawPrompt})> _awaitShell(
+Future<({bool reachedShell, bool sawPrompt, bool sawSha256})> _awaitShell(
   WidgetTester tester,
   ProviderContainer container, {
   required bool acceptPromptIfShown,
 }) async {
   var connected = false;
   var sawPrompt = false;
+  var sawSha256 = false;
   for (var i = 0; i < 60; i++) {
     await tester.pump(const Duration(milliseconds: 500));
     final accept = find.text('Trust + connect');
     if (accept.evaluate().isNotEmpty) {
       sawPrompt = true;
+      // #1226: dartssh2 4.x reports the OpenSSH SHA256 form, shown verbatim.
+      if (find.textContaining('SHA256:').evaluate().isNotEmpty) {
+        sawSha256 = true;
+      }
       if (acceptPromptIfShown) {
         await tester.tap(accept.first);
         await tester.pump(const Duration(milliseconds: 300));
@@ -57,10 +62,10 @@ Future<({bool reachedShell, bool sawPrompt})> _awaitShell(
       break;
     }
   }
-  if (!connected) return (reachedShell: false, sawPrompt: sawPrompt);
+  if (!connected) return (reachedShell: false, sawPrompt: sawPrompt, sawSha256: sawSha256);
 
   final entry = container.read(sessionsProvider).active;
-  if (entry == null) return (reachedShell: false, sawPrompt: sawPrompt);
+  if (entry == null) return (reachedShell: false, sawPrompt: sawPrompt, sawSha256: sawSha256);
   final out = <int>[];
   final sub = entry.proxy.output.listen(out.addAll);
   var gotBytes = false;
@@ -72,7 +77,7 @@ Future<({bool reachedShell, bool sawPrompt})> _awaitShell(
     }
   }
   await sub.cancel();
-  return (reachedShell: gotBytes, sawPrompt: sawPrompt);
+  return (reachedShell: gotBytes, sawPrompt: sawPrompt, sawSha256: sawSha256);
 }
 
 void main() {
@@ -122,6 +127,12 @@ void main() {
         first.sawPrompt,
         isTrue,
         reason: 'first connect to a brand-new host should prompt to trust',
+      );
+      expect(
+        first.sawSha256,
+        isTrue,
+        reason: '#1226: the prompt must show the OpenSSH SHA256:<b64> '
+            'fingerprint verbatim (dartssh2 >= 2.18), not a hex dump',
       );
 
       // Disconnect → removes the session + its controller/store. #607: the

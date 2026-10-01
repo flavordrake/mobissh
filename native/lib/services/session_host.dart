@@ -309,6 +309,11 @@ class SessionHost {
 
   final Map<String, _HostedSession> _sessions = {};
 
+  /// #1235: forgets for sessions not hosted here (the isolate was rebuilt after
+  /// a failed first connect stopped the service), applied to the controller the
+  /// next connect builds for that session id.
+  final Map<String, ({String host, int port})> _pendingHostKeyForgets = {};
+
   /// Sessions visible to tests + the future audit screen wiring.
   Iterable<String> get sessionIds => _sessions.keys;
 
@@ -384,6 +389,8 @@ class SessionHost {
         _handleSetActive(cmd.active, cmd.activeSessionId, cmd.activeHost);
       case SshHostKeyDecisionCommand():
         _handleHostKeyDecision(cmd);
+      case SshForgetHostKeyCommand():
+        _handleForgetHostKey(cmd);
       case SshUiHelloCommand():
         // #731: a fresh UI gateway asking the live task to re-announce
         // readiness. The Android task isolate normally intercepts this in
@@ -702,6 +709,23 @@ class SessionHost {
     }
   }
 
+  /// #1235: the trust store lives on each task-side controller, so the forget
+  /// runs here. A hosted session only forgets its own reported mismatch; an
+  /// unhosted one queues the forget for the controller its reconnect builds.
+  void _handleForgetHostKey(SshForgetHostKeyCommand cmd) {
+    final hosted = _sessions[cmd.sessionId];
+    if (hosted == null) {
+      _pendingHostKeyForgets[cmd.sessionId] = (host: cmd.host, port: cmd.port);
+      clifecycle('task.host', 'hostkey forget queued ${cmd.host}:${cmd.port}');
+      return;
+    }
+    final ok = hosted.controller.forgetMismatchedHostKey(cmd.host, cmd.port);
+    clifecycle(
+      'task.host',
+      'hostkey forget ${cmd.host}:${cmd.port} ${ok ? 'OK' : 'REFUSED'}',
+    );
+  }
+
   /// End-to-end resume liveness (#759).
   ///
   /// The #737 transport ping answers whenever SSH is up — but after deep Doze
@@ -875,6 +899,10 @@ class SessionHost {
         'connect sid=${cmd.sessionId} controlMode=${cmd.controlMode}');
 
     final controller = _factory();
+    final forget = _pendingHostKeyForgets.remove(cmd.sessionId);
+    if (forget != null) {
+      controller.hostKeyStore.forget(forget.host, forget.port);
+    }
     final hosted = _HostedSession(controller: controller);
     _sessions[cmd.sessionId] = hosted;
 
@@ -1610,6 +1638,8 @@ class SessionHost {
       if (err.contains('No SSH response')) return 'handshake-timeout';
       if (err.contains('Authentication failed')) return 'auth-failed';
       if (err.contains('Host key rejected')) return 'hostkey-rejected';
+      if (err.contains('HOST KEY CHANGED')) return 'hostkey-changed';
+      if (err.contains('algorithm negotiation failed')) return 'algo-mismatch';
       if (err.contains('TCP connect failed')) return 'tcp-connect-failed';
       if (err.contains('Could not load private key') ||
           err.contains('Private key contained no usable identity')) {
@@ -2126,6 +2156,7 @@ class SessionHost {
         port: pending.port,
         keyType: pending.keyType,
         fingerprint: pending.fingerprint,
+        formatChanged: pending.formatChanged,
       ).toJson(),
     );
   }
@@ -2143,6 +2174,7 @@ class SessionHost {
         host: data.host,
         port: data.port,
         username: data.username,
+        hostKeyMismatch: data.hostKeyMismatch,
       ).toJson(),
     );
   }

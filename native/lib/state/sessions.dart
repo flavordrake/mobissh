@@ -339,6 +339,29 @@ class SessionsNotifier extends Notifier<SessionsState> {
     unawaited(_reviveFromProfile(e));
   }
 
+  /// #1235: step one of re-trusting a CHANGED host key — forget the stored key
+  /// behind session [id]'s mismatch, then reconnect. The reconnect meets the
+  /// ordinary first-contact prompt, so the new key still needs an explicit
+  /// accept. No-op when the session has no mismatch.
+  Future<void> forgetHostKeyAndReconnect(String id) async {
+    for (final e in state.entries) {
+      if (e.id != id) continue;
+      if (e.proxy.data.hostKeyMismatch == null) return;
+      // Start the service FIRST. A failed first connect stops it, and the dying
+      // isolate's last `closed` event can flip the gateway back to ready, so a
+      // forget sent before the restart goes to a dead transport (seen on the
+      // fleet emulator). After the start it rides the same live channel as the
+      // reconnect's connect, ahead of it.
+      try {
+        await ref.read(keepaliveServiceStarterProvider)();
+      } catch (_) {
+        // Same best-effort prelude as [reconnect]; the forget still goes out.
+      }
+      if (e.proxy.forgetHostKey()) reconnect(id);
+      return;
+    }
+  }
+
   /// Reconnect every session in [ids] INDEPENDENTLY and report what actually
   /// happened (#959).
   ///

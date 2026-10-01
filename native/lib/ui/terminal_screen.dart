@@ -43,6 +43,7 @@ import '../terminal/url_hit_test.dart';
 import '../util/large_landscape.dart';
 import 'compose_bar.dart';
 import 'ghostty_terminal_view.dart';
+import 'host_key_review.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
 import 'session_route_details.dart';
@@ -1167,14 +1168,14 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     // directly (no parallel boolean — rules/state-management.md). The banner is
     // shown only for "was-live-then-dropped" states so it never flashes during
     // the initial connect handshake (idle/connecting/authenticating).
-    final sessionState =
-        ref.watch(sessionDataProvider(widget.sessionId)).valueOrNull?.state ??
-        SshSessionState.idle;
+    final sessionData =
+        ref.watch(sessionDataProvider(widget.sessionId)).valueOrNull ??
+        const SshSessionData();
+    final sessionState = sessionData.state;
 
     return Column(
       children: [
-        if (_isDisconnected(sessionState))
-          _DisconnectBanner(state: sessionState),
+        if (_isDisconnected(sessionState)) _disconnectBanner(sessionData),
         if (shellAsync.hasError)
           Container(
             width: double.infinity,
@@ -1227,17 +1228,29 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// flterm view (which owns its own I/O wiring + native drag-select). The
   /// xterm-only fit/URL/mouse machinery is intentionally absent here.
   Widget _buildGhosttyBody() {
-    final sessionState =
-        ref.watch(sessionDataProvider(widget.sessionId)).valueOrNull?.state ??
-        SshSessionState.idle;
+    final sessionData =
+        ref.watch(sessionDataProvider(widget.sessionId)).valueOrNull ??
+        const SshSessionData();
     return Column(
       children: [
-        if (_isDisconnected(sessionState))
-          _DisconnectBanner(state: sessionState),
+        if (_isDisconnected(sessionData.state)) _disconnectBanner(sessionData),
         Expanded(child: GhosttyTerminalView(sessionId: widget.sessionId)),
       ],
     );
   }
+
+  /// The #624 banner plus, for a CHANGED host key, the persistent Review
+  /// action (#1235).
+  Widget _disconnectBanner(SshSessionData data) => _DisconnectBanner(
+    state: data.state,
+    review: HostKeyReviewAction(
+      sessionId: widget.sessionId,
+      data: data,
+      foregroundColor: Colors.white,
+      onForget: (_) =>
+          forgetHostKeyAndRetrust(context, ref, widget.sessionId),
+    ),
+  );
 }
 
 /// True when [state] is a "was-live-then-dropped" lifecycle state that warrants
@@ -1264,9 +1277,12 @@ bool _isDisconnected(SshSessionState state) {
 /// session is no longer live (#624). Distinct copy for reconnecting vs. fully
 /// disconnected so the user knows whether the app is auto-retrying.
 class _DisconnectBanner extends StatelessWidget {
-  const _DisconnectBanner({required this.state});
+  const _DisconnectBanner({required this.state, required this.review});
 
   final SshSessionState state;
+
+  /// #1235 Review action; renders nothing unless the failure is a CHANGED key.
+  final Widget review;
 
   @override
   Widget build(BuildContext context) {
@@ -1296,6 +1312,7 @@ class _DisconnectBanner extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
+          Flexible(child: review),
         ],
       ),
     );

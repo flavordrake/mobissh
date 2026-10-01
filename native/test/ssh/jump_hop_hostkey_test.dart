@@ -16,6 +16,7 @@
 // `onVerifyHostKey` so a hop prompt surfaces in the TARGET session's UI (D3:
 // a jump is transport, not a second session).
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -33,8 +34,10 @@ const _bastion = SshConnectParams(
   auth: SshAuth.password('p'),
 );
 
-final _fingerprint = Uint8List.fromList(<int>[0xDE, 0xAD]);
-const _fingerprintHex = 'dead';
+const _fingerprintText = 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s';
+final _fingerprint = Uint8List.fromList(utf8.encode(_fingerprintText));
+const _otherSha = 'SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU';
+const _legacyMd5 = '00112233445566778899aabbccddeeff';
 
 void main() {
   group('A5 — unknown hop key prompts and NAMES the hop (R9, R10)', () {
@@ -57,7 +60,7 @@ void main() {
         reason: 'R10 — the prompt names the HOP, never the target it fronts',
       );
       expect(pending.port, 2222);
-      expect(pending.fingerprint, _fingerprintHex);
+      expect(pending.fingerprint, _fingerprintText);
 
       controller.rejectHostKey();
     });
@@ -80,7 +83,7 @@ void main() {
       expect(await verify, isTrue);
       expect(
         store.trustedFingerprint('bastion.example', 2222),
-        _fingerprintHex,
+        _fingerprintText,
         reason: 'trust is keyed by the HOP host:port, not the target',
       );
     });
@@ -88,7 +91,7 @@ void main() {
     test('a hop already trusted proceeds with NO prompt', () async {
       final store = HostKeyStore(
         backend: InMemoryHostKeyBackend(<String, String>{
-          'bastion.example:2222': _fingerprintHex,
+          'bastion.example:2222': _fingerprintText,
         }),
       );
       await store.ready;
@@ -147,7 +150,7 @@ void main() {
   group('A5 — a CHANGED hop key fails closed without prompting (#1108)', () {
     test('mismatch → failed, NO awaitingHostKey, stored key preserved', () async {
       final backend = InMemoryHostKeyBackend(<String, String>{
-        'bastion.example:2222': 'aabb',
+        'bastion.example:2222': _otherSha,
       });
       final store = HostKeyStore(backend: backend);
       await store.ready;
@@ -174,7 +177,7 @@ void main() {
       expect(controller.data.error, contains('bastion.example'));
       expect(
         store.trustedFingerprint('bastion.example', 2222),
-        'aabb',
+        _otherSha,
         reason: 'the stored fingerprint is the MITM evidence — never overwritten',
       );
     });
@@ -194,6 +197,74 @@ void main() {
       expect(ok, isFalse);
       expect(controller.data.state, SshSessionState.failed);
       expect(controller.data.error, contains('bastion.example'));
+    });
+  });
+
+  // #1226: a hop saved before the dartssh2 upgrade holds a 32-hex MD5 that can
+  // never equal the SHA256 text 4.x provides. The hop gets the same one-time
+  // re-confirm as a target: named, flagged formatChanged, never CHANGED.
+  group('#1226 — a legacy MD5 hop entry re-confirms once', () {
+    test('legacy hop → awaitingHostKey naming the HOP, formatChanged=true',
+        () async {
+      final store = HostKeyStore(
+        backend: InMemoryHostKeyBackend(<String, String>{
+          'bastion.example:2222': _legacyMd5,
+        }),
+      );
+      await store.ready;
+      final controller = SshSessionController(hostKeyStore: store);
+      addTearDown(controller.dispose);
+      final seen = <SshSessionState>[];
+      final sub = controller.stream.listen((d) => seen.add(d.state));
+      addTearDown(sub.cancel);
+
+      // ignore: unawaited_futures
+      controller.verifyHopHostKey(_bastion, 'ssh-ed25519', _fingerprint);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.data.state, SshSessionState.awaitingHostKey);
+      final pending = controller.data.pendingHostKey!;
+      expect(pending.host, 'bastion.example');
+      expect(pending.port, 2222);
+      expect(pending.formatChanged, isTrue);
+      expect(pending.fingerprint, _fingerprintText);
+      expect(seen, isNot(contains(SshSessionState.failed)),
+          reason: 'a legacy hop entry is not a MITM alarm');
+
+      controller.rejectHostKey();
+      expect(store.trustedFingerprint('bastion.example', 2222), _legacyMd5,
+          reason: 'reject leaves the legacy entry alone');
+    });
+
+    test('accepting the hop re-confirm replaces the entry; next verify silent',
+        () async {
+      final store = HostKeyStore(
+        backend: InMemoryHostKeyBackend(<String, String>{
+          'bastion.example:2222': _legacyMd5,
+        }),
+      );
+      await store.ready;
+      final controller = SshSessionController(hostKeyStore: store);
+      addTearDown(controller.dispose);
+
+      final verify = controller.verifyHopHostKey(
+        _bastion,
+        'ssh-ed25519',
+        _fingerprint,
+      );
+      await Future<void>.delayed(Duration.zero);
+      controller.acceptHostKey();
+      expect(await verify, isTrue);
+      expect(store.trustedFingerprint('bastion.example', 2222), _fingerprintText);
+
+      final seen = <SshSessionState>[];
+      final sub = controller.stream.listen((d) => seen.add(d.state));
+      addTearDown(sub.cancel);
+      expect(
+        await controller.verifyHopHostKey(_bastion, 'ssh-ed25519', _fingerprint),
+        isTrue,
+      );
+      expect(seen, isNot(contains(SshSessionState.awaitingHostKey)));
     });
   });
 

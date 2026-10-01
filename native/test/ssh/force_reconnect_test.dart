@@ -52,6 +52,9 @@ class _FakeSocket implements SSHSocket {
   }
 
   @override
+  Future<void> flush() async {}
+
+  @override
   void destroy() {
     destroyed = true;
     if (!_streamCtrl.isClosed) _streamCtrl.close();

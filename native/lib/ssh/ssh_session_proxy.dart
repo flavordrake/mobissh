@@ -296,6 +296,23 @@ class SshSessionProxy {
     _sendHostKeyDecision(false);
   }
 
+  /// #1235: ask the task side to forget the stored key behind this session's
+  /// CHANGED-host-key failure. False when there is no mismatch to act on. The
+  /// caller reconnects afterwards; that lands on the first-contact prompt.
+  bool forgetHostKey() {
+    if (_disposed) return false;
+    final m = _data.hostKeyMismatch;
+    if (m == null) return false;
+    gateway.send(
+      SshForgetHostKeyCommand(
+        sessionId: sessionId,
+        host: m.host,
+        port: m.port,
+      ).toJson(),
+    );
+    return true;
+  }
+
   void _sendHostKeyDecision(bool accepted) {
     if (_disposed) return;
     if (_data.pendingHostKey == null) return;
@@ -646,6 +663,8 @@ class SshSessionProxy {
           host: event.host,
           port: event.port,
           username: event.username,
+          hostKeyMismatch: event.hostKeyMismatch,
+          clearHostKeyMismatch: event.hostKeyMismatch == null,
         );
         if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
       case SshOutputEvent():
@@ -677,6 +696,7 @@ class SshSessionProxy {
             port: event.port,
             keyType: event.keyType,
             fingerprint: event.fingerprint,
+            formatChanged: event.formatChanged,
           ),
         );
         if (!_dataCtrl.isClosed) _dataCtrl.add(_data);

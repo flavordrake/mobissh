@@ -14,6 +14,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../ssh/host_key_mismatch.dart';
+
 /// Envelope kind discriminator for UI → task commands.
 enum SshTaskCommandKind {
   connect,
@@ -22,6 +24,10 @@ enum SshTaskCommandKind {
   resize,
   requestSnapshot,
   hostKeyDecision,
+
+  /// UI → task: forget the stored key behind a CHANGED-host-key failure
+  /// (#1235), step one of the deliberate re-trust.
+  forgetHostKey,
 
   /// UI → task: a fresh UI-side gateway re-handshake request (#731). Sent
   /// straight to the transport via `sendControl` (NOT buffered) when the
@@ -372,6 +378,12 @@ sealed class SshTaskCommand {
         return SshHostKeyDecisionCommand(
           sessionId: sessionId,
           accepted: json['accepted'] as bool,
+        );
+      case SshTaskCommandKind.forgetHostKey:
+        return SshForgetHostKeyCommand(
+          sessionId: sessionId,
+          host: json['host'] as String,
+          port: json['port'] as int,
         );
       case SshTaskCommandKind.uiHello:
         return const SshUiHelloCommand();
@@ -894,6 +906,32 @@ class SshHostKeyDecisionCommand extends SshTaskCommand {
   };
 }
 
+/// UI → task: forget the stored key for [host]:[port] behind this session's
+/// CHANGED-host-key failure (#1235). Task-side it only applies to the session's
+/// own reported mismatch; the reconnect that follows gets the ordinary
+/// first-contact prompt, so nothing is trusted by this command.
+class SshForgetHostKeyCommand extends SshTaskCommand {
+  const SshForgetHostKeyCommand({
+    required String sessionId,
+    required this.host,
+    required this.port,
+  }) : super(sessionId);
+
+  final String host;
+  final int port;
+
+  @override
+  SshTaskCommandKind get kind => SshTaskCommandKind.forgetHostKey;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'kind': kind.name,
+    'sessionId': sessionId,
+    'host': host,
+    'port': port,
+  };
+}
+
 /// UI → task: a fresh UI-side gateway asks the (already-running) task to
 /// re-announce its readiness (#731). When the foreground service OUTLIVES the
 /// UI process, a new cold launch builds a not-ready [TaskSshGateway] but
@@ -1187,6 +1225,11 @@ sealed class SshTaskEvent {
           host: json['host'] as String?,
           port: json['port'] as int?,
           username: json['username'] as String?,
+          hostKeyMismatch: json['hostKeyMismatch'] == null
+              ? null
+              : HostKeyMismatch.fromJson(
+                  Map<String, dynamic>.from(json['hostKeyMismatch'] as Map),
+                ),
         );
       case SshTaskEventKind.output:
         final b64 = json['bytes'] as String;
@@ -1219,6 +1262,7 @@ sealed class SshTaskEvent {
           port: json['port'] as int,
           keyType: json['keyType'] as String,
           fingerprint: json['fingerprint'] as String,
+          formatChanged: json['formatChanged'] as bool? ?? false,
         );
       case SshTaskEventKind.ready:
         return const SshTaskReadyEvent();
@@ -1384,6 +1428,7 @@ class SshStateEvent extends SshTaskEvent {
     this.host,
     this.port,
     this.username,
+    this.hostKeyMismatch,
   }) : super(sessionId);
 
   /// SshSessionState.name string; the UI proxy maps it back to the enum.
@@ -1392,6 +1437,10 @@ class SshStateEvent extends SshTaskEvent {
   final String? host;
   final int? port;
   final String? username;
+
+  /// #1235: the controller's current CHANGED-key evidence (null = none). Every
+  /// state event carries it, so the proxy mirrors it authoritatively.
+  final HostKeyMismatch? hostKeyMismatch;
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.state;
@@ -1405,6 +1454,7 @@ class SshStateEvent extends SshTaskEvent {
     if (host != null) 'host': host,
     if (port != null) 'port': port,
     if (username != null) 'username': username,
+    if (hostKeyMismatch != null) 'hostKeyMismatch': hostKeyMismatch!.toJson(),
   };
 }
 
@@ -1504,12 +1554,17 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
     required this.port,
     required this.keyType,
     required this.fingerprint,
+    this.formatChanged = false,
   }) : super(sessionId);
 
   final String host;
   final int port;
   final String keyType;
   final String fingerprint;
+
+  /// The saved entry is a legacy MD5 that can't be compared — render the
+  /// one-time re-confirm prompt, not the first-contact one (#1226).
+  final bool formatChanged;
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.hostKeyChallenge;
@@ -1522,6 +1577,7 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
     'port': port,
     'keyType': keyType,
     'fingerprint': fingerprint,
+    'formatChanged': formatChanged,
   };
 }
 
