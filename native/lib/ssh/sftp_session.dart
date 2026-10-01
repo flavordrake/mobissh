@@ -113,6 +113,34 @@ String friendlySftpMkdirError(Object error, String path) {
   return "Couldn't create $path";
 }
 
+/// #1225: a download whose received byte count differs from the size the
+/// server reported. Success is a checked state, not the end of a stream.
+class DownloadIncompleteException implements Exception {
+  const DownloadIncompleteException(this.received, this.expected);
+
+  final int received;
+  final int expected;
+
+  @override
+  String toString() => 'Download incomplete: got $received of $expected bytes';
+}
+
+/// Throws [DownloadIncompleteException] unless [received] == [expected].
+void verifyDownloadComplete(int received, int expected) {
+  if (received != expected) {
+    throw DownloadIncompleteException(received, expected);
+  }
+}
+
+/// The size to verify a download of [file] against: its FSTAT size, taken on
+/// the open handle so it is the same snapshot the read uses. Null when the
+/// server omits it or reports 0 — virtual files (`/proc`) report 0 yet have
+/// content, and dartssh2 then reads to EOF, so only the count is known.
+Future<int?> _expectedSize(SftpFile file) async {
+  final size = (await file.stat()).size;
+  return (size == null || size == 0) ? null : size;
+}
+
 /// Abstraction the [SessionHost] talks to. One per live SSH session, opened
 /// lazily on the first SFTP command and reused for subsequent ones.
 abstract class SftpSession {
@@ -121,12 +149,11 @@ abstract class SftpSession {
 
   /// Download the file at [path], invoking [onChunk] for each block (with the
   /// byte offset of the block's first byte) and [onProgress] with the running
-  /// total. Returns the total bytes transferred. [totalBytes] is resolved up
-  /// front via stat so the UI can render a determinate progress bar.
+  /// total. Returns the total bytes transferred. Throws
+  /// [DownloadIncompleteException] when that differs from the server's size.
   Future<int> download(
     String path, {
     required void Function(Uint8List chunk, int offset) onChunk,
-    int chunkSize,
   });
 
   /// Stat the file at [path] to learn its size (for progress). Null when the
@@ -161,11 +188,12 @@ abstract class SftpSession {
   /// which hands every chunk back to the UI). [total] is resolved up front via
   /// stat (0 when the server omits the size) so the UI can render a determinate
   /// bar. Returns the total bytes written. Reuses `~`/relative resolution.
+  /// Throws [DownloadIncompleteException] (and deletes [localPath]) when the
+  /// bytes written differ from the server's size (#1225).
   Future<int> downloadFile(
     String remotePath,
     String localPath, {
     required void Function(int done, int total) onProgress,
-    int chunkSize,
   });
 
   /// CREATE the directory at [path] (#1133). Reuses the same `~`/relative
@@ -244,18 +272,20 @@ class DartSshSftpSession implements SftpSession {
   Future<int> download(
     String path, {
     required void Function(Uint8List chunk, int offset) onChunk,
-    int chunkSize = 64 * 1024,
   }) async {
     final file = await _client.open(await _resolve(path));
     try {
+      // #1225: library default request size. dartssh2 >= 3.0.2 re-requests the
+      // remainder of a short READ and yields in offset order, so `offset` is
+      // the running count; no chunk bookkeeping of our own.
+      final expected = await _expectedSize(file);
       var offset = 0;
-      var total = 0;
-      await for (final chunk in file.read(chunkSize: chunkSize)) {
+      await for (final chunk in file.read(length: expected)) {
         onChunk(Uint8List.fromList(chunk), offset);
         offset += chunk.length;
-        total += chunk.length;
       }
-      return total;
+      if (expected != null) verifyDownloadComplete(offset, expected);
+      return offset;
     } finally {
       await file.close();
     }
@@ -356,31 +386,42 @@ class DartSshSftpSession implements SftpSession {
     String remotePath,
     String localPath, {
     required void Function(int done, int total) onProgress,
-    int chunkSize = 64 * 1024,
   }) async {
-    final resolved = await _resolve(remotePath);
-    // Resolve the size up front for a determinate bar; a null size (server
-    // omitted it) reports as 0 total — the UI falls back to an indeterminate
-    // spinner but progress still ticks by `done`.
-    final attr = await _client.stat(resolved);
-    final total = attr.size ?? 0;
-    final file = await _client.open(resolved);
+    final file = await _client.open(await _resolve(remotePath));
+    final local = File(localPath);
     // openWrite streams to disk incrementally — the whole file is never held in
     // memory and never returned to the caller (bytes stay task-side).
-    final sink = File(localPath).openWrite();
-    var done = 0;
+    final sink = local.openWrite();
+    var complete = false;
     try {
-      onProgress(done, total);
-      await for (final chunk in file.read(chunkSize: chunkSize)) {
-        sink.add(chunk);
-        done += chunk.length;
-        onProgress(done, total);
-      }
+      // The size drives a determinate bar and is the completeness check; when
+      // unknown the total reports 0 and the UI shows an indeterminate spinner.
+      final expected = await _expectedSize(file);
+      final total = expected ?? 0;
+      onProgress(0, total);
+      // #1225: the library's downloadTo, at its default request size — it
+      // re-requests short READs and writes in offset order (dartssh2 >= 3.0.2).
+      final done = await file.downloadTo(
+        sink,
+        length: expected,
+        onProgress: (n) => onProgress(n, total),
+      );
+      await sink.flush();
+      if (expected != null) verifyDownloadComplete(done, expected);
+      complete = true;
+      return done;
     } finally {
       await file.close();
       await sink.close();
+      // Never leave a short file where a caller could publish it.
+      if (!complete) {
+        try {
+          if (await local.exists()) await local.delete();
+        } catch (_) {
+          /* best-effort; the error that got us here is what surfaces */
+        }
+      }
     }
-    return done;
   }
 
   @override

@@ -18,6 +18,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ssh/sftp_session.dart' show DownloadIncompleteException;
 import '../ssh/ssh_session_proxy.dart';
 import '../state/sessions.dart';
 import 'session_messages.dart';
@@ -131,6 +132,12 @@ class ProxySftpImageFetcher implements SftpImageFetcher {
         case SftpDownloadDoneEvent():
           if (event.requestId != requestId) return;
           if (completer.isCompleted) return;
+          if (received != event.totalBytes) {
+            completer.completeError(
+              DownloadIncompleteException(received, event.totalBytes),
+            );
+            return;
+          }
           final builder = BytesBuilder(copy: false);
           for (final offset in (byOffset.keys.toList()..sort())) {
             builder.add(byOffset[offset]!);

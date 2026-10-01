@@ -523,6 +523,18 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   }
 
   Future<void> _onDownloadDone(SftpDownloadDoneEvent event) async {
+    // #1225: the task's count must reach the server's size, or this is a
+    // failure — abort the staged partial, never publish it as a success.
+    final received = event.receivedBytes;
+    if (received != null && received != event.totalBytes) {
+      _onSftpError(SftpErrorEvent(
+        sessionId: event.sessionId,
+        requestId: event.requestId,
+        message:
+            DownloadIncompleteException(received, event.totalBytes).toString(),
+      ));
+      return;
+    }
     final target = _downloadTarget;
     final name = _downloadName ?? 'file';
     _downloadTarget = null;

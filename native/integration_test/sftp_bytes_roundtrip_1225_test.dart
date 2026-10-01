@@ -34,8 +34,9 @@
 //      editor loaded the FULL document, append a line through the field, Save
 //      → server bytes == original + line.
 //   E. create file (#1222) → upload known bytes into it → verify as C.
-//   F. resumable upload over a seeded interrupted `.part` WITH A HOLE (a lost
-//      16 KiB concurrent write) → final file == formula, `.part` gone.
+//
+// Resume over a `.part` WITH A HOLE is a separate bug (#1228) with its own
+// test, sftp_resume_hole_1228_test.dart, on the same fixture.
 //
 // Data mismatches are COLLECTED and asserted once at the end so a single run
 // reports every size and phase; transport failures (never settled / error
@@ -382,55 +383,6 @@ void main() {
         check(
           'E create+upload size=94915 readback',
           await downloadToDisk(path),
-          want,
-        );
-      }
-
-      // Phase F: resume over an interrupted `.part` WITH A HOLE. dartssh2's
-      // writeBytes sends each 64 KiB chunk as four concurrent 16 KiB writes, so
-      // a cut upload can leave a `.part` whose size spans never-written bytes;
-      // resuming from that size publishes the hole. The setup seeded two such
-      // leftovers. up_hole2's hole (16,384..32,767) lies in the range the
-      // pre-fix reader still returns, so its red is visible even before the
-      // download fix; up_hole's (32,768..49,151, the state #1225 names) is
-      // hidden by the download truncation until that is fixed.
-      for (final (name, holeLo) in [
-        ('up_hole.bin', 32768),
-        ('up_hole2.bin', 16384),
-      ]) {
-        const n = 94915;
-        final want = _formula(n);
-        final src = File('${local.path}/src_hole_$name');
-        await src.writeAsBytes(want, flush: true);
-        final id = 'it1225#uph${seq++}';
-        await _await<SftpUploadDoneEvent>(
-          tester,
-          entry,
-          id,
-          () => entry.proxy.sftpUploadFile(
-            requestId: id,
-            localPath: src.path,
-            remotePath: '$_root/$name',
-          ),
-        );
-        checkEq(
-          'F resume-over-hole $name size=$n server size',
-          await serverSize(_root, name),
-          n,
-        );
-        checkEq(
-          'F resume-over-hole $name .part removed',
-          await serverSize(_root, '$name.part'),
-          null,
-        );
-        final got = await downloadToDisk('$_root/$name');
-        final holeEnd = holeLo + 16384;
-        final holeZero = got.length >= holeEnd &&
-            got.sublist(holeLo, holeEnd).every((b) => b == 0);
-        check(
-          'F resume-over-hole $name size=$n readback '
-          '(seeded hole $holeLo..${holeEnd - 1} all-zero in result: $holeZero)',
-          got,
           want,
         );
       }

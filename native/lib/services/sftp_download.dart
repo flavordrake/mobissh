@@ -86,6 +86,10 @@ class OffsetFileSink implements FileDownloadSink {
   /// One byte past the highest offset written — the assembled length so far.
   int _highWater = 0;
 
+  /// Sum of every chunk's length. Below [_highWater] means a HOLE — a middle
+  /// chunk never arrived though the last one reached the end (#1225).
+  int _written = 0;
+
   /// Open [file] for random-access writing (truncating any prior content).
   static Future<OffsetFileSink> create(File file) async {
     final parent = file.parent;
@@ -102,6 +106,7 @@ class OffsetFileSink implements FileDownloadSink {
     if (bytes.isEmpty) return;
     await _raf.setPosition(offset);
     await _raf.writeFrom(bytes);
+    _written += bytes.length;
     final end = offset + bytes.length;
     if (end > _highWater) _highWater = end;
   }
@@ -110,7 +115,8 @@ class OffsetFileSink implements FileDownloadSink {
   Future<String> finish({int? expectedTotal}) async {
     await _raf.flush();
     await _raf.close();
-    if (expectedTotal != null && _highWater != expectedTotal) {
+    if (expectedTotal != null &&
+        (_highWater != expectedTotal || _written != expectedTotal)) {
       // The transfer is short (or over-long): do NOT present a corrupt file as
       // a completed download. Clean up and surface the mismatch.
       try {
@@ -119,7 +125,8 @@ class OffsetFileSink implements FileDownloadSink {
         /* best-effort */
       }
       throw Exception(
-        'Download incomplete: wrote $_highWater of $expectedTotal bytes',
+        'Download incomplete: wrote $_written bytes spanning $_highWater of '
+        '$expectedTotal',
       );
     }
     return file.path;
