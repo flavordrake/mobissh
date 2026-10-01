@@ -28,6 +28,7 @@ import '../state/recent_sessions.dart';
 import '../state/sessions.dart';
 import '../state/ui_prefs_providers.dart';
 import '../storage/profiles_store.dart';
+import 'host_key_review.dart';
 import 'session_state_dot.dart';
 import 'top_toast.dart';
 
@@ -842,11 +843,30 @@ class _ProfileSubtitle extends StatelessWidget {
       builder: (context, snapshot) {
         final state = snapshot.data?.state ?? SshSessionState.idle;
         final affordance = _affordanceFor(context, state, snapshot.data?.error);
-        if (affordance == null) return hostLine;
+        final data = snapshot.data;
+        if (affordance == null && data?.hostKeyMismatch == null) {
+          return hostLine;
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
-          children: [hostLine, const SizedBox(height: 4), affordance],
+          children: [
+            hostLine,
+            const SizedBox(height: 4),
+            ?affordance,
+            // #1235: a first connect that hits a CHANGED key fails here, on the
+            // chooser, so the Review action must live here too. It survives
+            // the service-stop `disconnected` that follows a failed first
+            // connect (the action renders nothing once the mismatch clears).
+            if (data?.hostKeyMismatch != null)
+              Consumer(
+                builder: (context, ref, _) => HostKeyReviewAction(
+                  sessionId: e.id,
+                  data: data!,
+                  onForget: (_) => forgetHostKeyAndRetrust(context, ref, e.id),
+                ),
+              ),
+          ],
         );
       },
     );
