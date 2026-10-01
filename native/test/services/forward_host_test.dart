@@ -48,6 +48,9 @@ class _SilentSocket implements SSHSocket {
   }
 
   @override
+  Future<void> flush() async {}
+
+  @override
   void destroy() {
     if (!_doneCompleter.isCompleted) _doneCompleter.complete();
   }
@@ -104,6 +107,9 @@ class _EchoTunnel implements SSHSocket {
     if (!_in.isClosed) await _in.close();
     if (!_done.isCompleted) _done.complete();
   }
+
+  @override
+  Future<void> flush() async {}
 
   @override
   void destroy() {

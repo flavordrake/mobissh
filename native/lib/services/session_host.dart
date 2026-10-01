@@ -1638,6 +1638,8 @@ class SessionHost {
       if (err.contains('No SSH response')) return 'handshake-timeout';
       if (err.contains('Authentication failed')) return 'auth-failed';
       if (err.contains('Host key rejected')) return 'hostkey-rejected';
+      if (err.contains('HOST KEY CHANGED')) return 'hostkey-changed';
+      if (err.contains('algorithm negotiation failed')) return 'algo-mismatch';
       if (err.contains('TCP connect failed')) return 'tcp-connect-failed';
       if (err.contains('Could not load private key') ||
           err.contains('Private key contained no usable identity')) {
@@ -2154,6 +2156,7 @@ class SessionHost {
         port: pending.port,
         keyType: pending.keyType,
         fingerprint: pending.fingerprint,
+        formatChanged: pending.formatChanged,
       ).toJson(),
     );
   }

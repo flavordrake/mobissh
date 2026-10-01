@@ -42,8 +42,10 @@ Future<bool> showHostKeyMismatchDialog(
   final target = m.jumpHop
       ? 'Jump host ${m.host}:${m.port}'
       : '${m.host}:${m.port}';
+  // #1226: a CHANGED key is SHA256 vs SHA256 (a legacy MD5 entry re-confirms
+  // instead), and plain `ssh-keygen -l` prints SHA256.
   final verifyCmd =
-      'ssh-keygen -l -E md5 -f /etc/ssh/ssh_host_${_hostKeyFileType(m.keyType)}_key.pub';
+      'ssh-keygen -l -f /etc/ssh/ssh_host_${_hostKeyFileType(m.keyType)}_key.pub';
   final result = await showDialog<bool>(
     context: context,
     builder: (ctx) {
@@ -60,14 +62,14 @@ Future<bool> showHostKeyMismatchDialog(
               const SizedBox(height: 4),
               Text('Key type: ${m.keyType}'),
               const SizedBox(height: 12),
-              const Text('Trusted key (stored, MD5 hex):'),
+              const Text('Trusted key (stored, SHA256):'),
               SelectableText(
                 m.storedFingerprint,
                 key: const Key('hostkey-mismatch-stored'),
                 style: _mono,
               ),
               const SizedBox(height: 8),
-              const Text('Key the server offers now (MD5 hex):'),
+              const Text('Key the server offers now (SHA256):'),
               SelectableText(
                 m.offeredFingerprint,
                 key: const Key('hostkey-mismatch-offered'),

@@ -37,7 +37,7 @@ dependencies:
   flutter_riverpod: ^2.6.1
 
   # SSH client (terminal.studio, full -L/-R/-D support)
-  dartssh2: ^2.17.1
+  dartssh2: ^4.1.0
 
   # Terminal widget (terminal.studio, same publisher as dartssh2)
   xterm: ^4.0.0

@@ -424,12 +424,13 @@ JumpHopConnector sshJumpHopConnector({
           : client.authenticated.timeout(timeout);
       await authed;
     } catch (e) {
-      try {
-        client.close();
-      } catch (_) {
-        /* ignore */
-      }
-      throw JumpHopError('${hop.host}:${hop.port}', '$e');
+      // close() is a Future since dartssh2 3.0 (#1226); the hop already failed,
+      // so teardown is fire-and-forget and its error is moot.
+      unawaited(client.close().catchError((Object _) {}));
+      throw JumpHopError(
+        '${hop.host}:${hop.port}',
+        SshSessionController.describeSshError(e) ?? '$e',
+      );
     }
     return _SshClientJumpHop(client);
   };
@@ -447,7 +448,9 @@ class _SshClientJumpHop implements JumpHopConnection {
   @override
   Future<void> close() async {
     try {
-      _client.close();
+      // Same reasoning as SshSessionController.disconnect (#1226): await
+      // `done`, not close(), which can hang on a half-open socket.
+      unawaited(_client.close().catchError((Object _) {}));
       await _client.done;
     } catch (_) {
       /* a hop already gone is still closed */

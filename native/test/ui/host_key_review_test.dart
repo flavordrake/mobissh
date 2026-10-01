@@ -57,10 +57,14 @@ void main() {
     expect(find.textContaining('man-in-the-middle'), findsOneWidget);
     expect(
       find.textContaining(
-        'ssh-keygen -l -E md5 -f /etc/ssh/ssh_host_ed25519_key.pub',
+        'ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub',
       ),
       findsOneWidget,
+      reason: 'since #1226 a CHANGED key is SHA256 vs SHA256 (legacy MD5 '
+          're-confirms instead), and plain ssh-keygen -l prints SHA256',
     );
+    expect(find.textContaining('MD5'), findsNothing);
+    expect(find.textContaining('SHA256'), findsWidgets);
   });
 
   testWidgets('Cancel is the default and returns false', (tester) async {

@@ -39,8 +39,10 @@ import 'support/connect_helpers.dart';
 /// test-sshd as the device sees it (adb reverse).
 const _hostPort = '127.0.0.1:2222';
 
-/// Deliberately WRONG stored key: a "rebuilt host" from the app's view.
-const _wrongFingerprint = '00112233445566778899aabbccddeeff';
+/// Deliberately WRONG stored key: a "rebuilt host" from the app's view. It must
+/// be SHA256 text (#1226): a 32-hex MD5 value now means a LEGACY entry, which
+/// gets the format re-confirm prompt instead of the CHANGED failure.
+const _wrongFingerprint = 'SHA256:WrongKeyRebuiltHost000000000000000000000000';
 
 const _reviewText = 'Host key changed — Review';
 

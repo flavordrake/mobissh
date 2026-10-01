@@ -58,6 +58,9 @@ class _EchoTunnel implements SSHSocket {
   }
 
   @override
+  Future<void> flush() async {}
+
+  @override
   void destroy() {
     closed = true;
     _in.close();

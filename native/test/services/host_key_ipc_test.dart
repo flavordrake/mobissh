@@ -8,6 +8,7 @@
 //   → task-side controller's verify Completer resolves
 //   → HostKeyStore gains (accept) / stays empty (reject).
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -36,6 +37,21 @@ void main() {
       expect(restored.port, 2222);
       expect(restored.keyType, 'ssh-ed25519');
       expect(restored.fingerprint, 'abc123');
+      expect(restored.formatChanged, isFalse);
+    });
+
+    test('SshHostKeyChallengeEvent carries formatChanged (#1226)', () {
+      const ev = SshHostKeyChallengeEvent(
+        sessionId: 'sid',
+        host: 'example.com',
+        port: 22,
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abc',
+        formatChanged: true,
+      );
+      final restored =
+          SshTaskEvent.fromJson(ev.toJson()) as SshHostKeyChallengeEvent;
+      expect(restored.formatChanged, isTrue);
     });
 
     test('SshHostKeyDecisionCommand preserves accepted flag', () {
@@ -83,7 +99,7 @@ void main() {
       stores = [];
     });
 
-    Uint8List fp(List<int> bytes) => Uint8List.fromList(bytes);
+    Uint8List fp(String text) => Uint8List.fromList(utf8.encode(text));
 
     test('accept: challenge surfaces, decision trusts the key', () async {
       final pair = InMemoryGatewayPair();
@@ -121,7 +137,7 @@ void main() {
           auth: SshAuth.password('p'),
         ),
         'ssh-ed25519',
-        fp([0xDE, 0xAD, 0xBE, 0xEF]),
+        fp('SHA256:deadbeef'),
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
@@ -130,7 +146,7 @@ void main() {
       expect(proxy.data.pendingHostKey!.host, 'newhost');
       expect(proxy.data.pendingHostKey!.port, 22);
       expect(proxy.data.pendingHostKey!.keyType, 'ssh-ed25519');
-      expect(proxy.data.pendingHostKey!.fingerprint, 'deadbeef');
+      expect(proxy.data.pendingHostKey!.fingerprint, 'SHA256:deadbeef');
       expect(proxy.data.state, SshSessionState.awaitingHostKey);
 
       // User accepts → decision crosses the wire → controller resolves true.
@@ -138,9 +154,69 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(await verifyFuture, isTrue);
-      expect(store.isTrusted('newhost', 22, 'deadbeef'), isTrue);
+      expect(store.isTrusted('newhost', 22, 'SHA256:deadbeef'), isTrue);
       // Prompt cleared on the UI side.
       expect(proxy.data.pendingHostKey, isNull);
+    });
+
+    test('legacy MD5 entry: the re-confirm prompt crosses IPC flagged '
+        'formatChanged and accept replaces the entry (#1226)', () async {
+      created = [];
+      stores = [];
+      final pair = InMemoryGatewayPair();
+      addTearDown(pair.dispose);
+      final host = SessionHost(
+        gateway: pair.taskSide,
+        controllerFactory: () {
+          final store = HostKeyStore(
+            backend: InMemoryHostKeyBackend(<String, String>{
+              'legacyhost:22': '00112233445566778899aabbccddeeff',
+            }),
+          );
+          final c = SshSessionController(
+            hostKeyStore: store,
+            socketOpener: (host, port, {timeout}) => Future.delayed(
+              const Duration(days: 1),
+              () => throw Exception('unused'),
+            ),
+          );
+          created.add(c);
+          stores.add(store);
+          return c;
+        },
+        snapshotInterval: const Duration(hours: 1),
+      );
+      addTearDown(host.disposeSyncForTest);
+      final proxy = SshSessionProxy(sessionId: 'sid-l', gateway: pair.uiSide);
+      addTearDown(proxy.dispose);
+
+      const params = SshConnectParams(
+        host: 'legacyhost',
+        port: 22,
+        username: 'u',
+        auth: SshAuth.password('p'),
+      );
+      proxy.connect(params);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final controller = created.first;
+      final store = stores.first;
+      await store.ready;
+
+      final verifyFuture = controller.verifyHostKeyForTest(
+        params,
+        'ssh-ed25519',
+        fp('SHA256:newkey'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(proxy.data.state, SshSessionState.awaitingHostKey);
+      expect(proxy.data.pendingHostKey!.formatChanged, isTrue);
+      expect(proxy.data.pendingHostKey!.fingerprint, 'SHA256:newkey');
+
+      proxy.acceptHostKey();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(await verifyFuture, isTrue);
+      expect(store.trustedFingerprint('legacyhost', 22), 'SHA256:newkey');
     });
 
     test('reject: decision aborts and does not trust', () async {
@@ -175,7 +251,7 @@ void main() {
           auth: SshAuth.password('p'),
         ),
         'ssh-rsa',
-        fp([0x01, 0x02, 0x03]),
+        fp('SHA256:010203'),
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(proxy.data.pendingHostKey, isNotNull);
@@ -229,24 +305,24 @@ void main() {
       final fA = ctrlA.verifyHostKeyForTest(
         paramsA,
         'ssh-ed25519',
-        fp([0xAA, 0xAA]),
+        fp('SHA256:aaaa'),
       );
       final fB = ctrlB.verifyHostKeyForTest(
         paramsB,
         'ssh-ed25519',
-        fp([0xBB, 0xBB]),
+        fp('SHA256:bbbb'),
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(proxyA.data.pendingHostKey!.fingerprint, 'aaaa');
-      expect(proxyB.data.pendingHostKey!.fingerprint, 'bbbb');
+      expect(proxyA.data.pendingHostKey!.fingerprint, 'SHA256:aaaa');
+      expect(proxyB.data.pendingHostKey!.fingerprint, 'SHA256:bbbb');
 
       // Accept only session 1; session 2 must remain unanswered.
       proxyA.acceptHostKey();
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(await fA, isTrue);
-      expect(storeA.isTrusted('hostA', 22, 'aaaa'), isTrue);
+      expect(storeA.isTrusted('hostA', 22, 'SHA256:aaaa'), isTrue);
       expect(proxyA.data.pendingHostKey, isNull);
 
       // Session 2's verify Completer is still pending and its store empty.

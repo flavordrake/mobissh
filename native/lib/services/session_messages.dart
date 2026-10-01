@@ -1262,6 +1262,7 @@ sealed class SshTaskEvent {
           port: json['port'] as int,
           keyType: json['keyType'] as String,
           fingerprint: json['fingerprint'] as String,
+          formatChanged: json['formatChanged'] as bool? ?? false,
         );
       case SshTaskEventKind.ready:
         return const SshTaskReadyEvent();
@@ -1553,12 +1554,17 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
     required this.port,
     required this.keyType,
     required this.fingerprint,
+    this.formatChanged = false,
   }) : super(sessionId);
 
   final String host;
   final int port;
   final String keyType;
   final String fingerprint;
+
+  /// The saved entry is a legacy MD5 that can't be compared — render the
+  /// one-time re-confirm prompt, not the first-contact one (#1226).
+  final bool formatChanged;
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.hostKeyChallenge;
@@ -1571,6 +1577,7 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
     'port': port,
     'keyType': keyType,
     'fingerprint': fingerprint,
+    'formatChanged': formatChanged,
   };
 }
 

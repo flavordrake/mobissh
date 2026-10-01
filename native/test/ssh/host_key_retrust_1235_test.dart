@@ -17,6 +17,7 @@
 //     built for that session, even though its store has not hydrated yet
 //   - a jump-hop mismatch names the hop
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -42,9 +43,12 @@ const _bastion = SshConnectParams(
   auth: SshAuth.password('p'),
 );
 
-final _offered = Uint8List.fromList(<int>[0xDE, 0xAD]);
-const _offeredHex = 'dead';
-const _storedHex = 'aabb';
+// dartssh2 >= 2.18 (#1226) hands onVerifyHostKey the UTF-8 text
+// `SHA256:<b64>`, and that text is what gets shown and stored. A CHANGED key is
+// therefore SHA256 vs SHA256 (a legacy MD5 entry re-confirms instead).
+const _offeredHex = 'SHA256:OffEredKeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+final _offered = Uint8List.fromList(utf8.encode(_offeredHex));
+const _storedHex = 'SHA256:StoredKeyBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 
 Future<void> _settle() => Future<void>.delayed(const Duration(milliseconds: 20));
 

@@ -41,11 +41,17 @@ enum HostKeyStatus {
 
   /// Trust could not be loaded (corrupt/unavailable storage) — fail closed.
   storeUnavailable,
+
+  /// The stored value is a legacy MD5 hex (written before the dartssh2 2.18
+  /// switch to `SHA256:<b64>`, #1226) and so CAN'T be compared with the offered
+  /// key. Neither [mismatch] (a false MITM alarm) nor [unknown] (a silent TOFU
+  /// prompt that hides history): a distinct one-time re-confirm.
+  formatChanged,
 }
 
 /// Pluggable persistence backend for trusted host fingerprints.
 ///
-/// The map is keyed by `"host:port"` → fingerprint hex. Production uses
+/// The map is keyed by `"host:port"` → fingerprint string. Production uses
 /// [SharedPrefsHostKeyBackend]; tests inject [InMemoryHostKeyBackend].
 abstract class HostKeyBackend {
   /// Load the full trust map. Returns `{}` when nothing is stored.
@@ -117,9 +123,11 @@ class InMemoryHostKeyBackend implements HostKeyBackend {
 
 /// Trust-on-first-use host-key registry.
 ///
-/// Keyed by `"host:port"` -> fingerprint string (caller decides format —
-/// SshSessionController hands us hex of the SHA-256 fingerprint that dartssh2
-/// provides via `SSHHostkeyVerifyHandler`).
+/// Keyed by `"host:port"` -> fingerprint string. SshSessionController hands us
+/// the OpenSSH `SHA256:<b64>` text dartssh2 provides via
+/// `SSHHostkeyVerifyHandler`, stored verbatim. Entries written before #1226 are
+/// 32-hex MD5; the value's FORMAT is the schema discriminator (no key bump) and
+/// they migrate lazily, per host, through [HostKeyStatus.formatChanged].
 ///
 /// The in-memory [_trusted] map is the authoritative source for the SYNC
 /// [isTrusted] verify path. Construction eagerly hydrates it from [_backend];
@@ -214,8 +222,19 @@ class HostKeyStore {
     if (!_storeAvailable) return HostKeyStatus.storeUnavailable;
     final stored = _trusted['$host:$port'];
     if (stored == null) return HostKeyStatus.unknown;
-    return stored == fingerprint ? HostKeyStatus.match : HostKeyStatus.mismatch;
+    if (stored == fingerprint) return HostKeyStatus.match;
+    // #1226: only the EXACT legacy shape re-confirms. Anything else that
+    // differs — another SHA256, or a corrupt value — stays a fail-closed
+    // mismatch: an unrecognised value must never soften the CHANGED alarm.
+    if (isLegacyMd5Fingerprint(stored)) return HostKeyStatus.formatChanged;
+    return HostKeyStatus.mismatch;
   }
+
+  static final RegExp _legacyMd5 = RegExp(r'^[0-9a-f]{32}$');
+
+  /// True for a pre-#1226 entry: dartssh2 < 2.18 handed over raw MD5 bytes,
+  /// which the session hex-encoded to exactly 32 lowercase hex chars.
+  static bool isLegacyMd5Fingerprint(String value) => _legacyMd5.hasMatch(value);
 
   /// Trust [fingerprint] for `host:port` ONLY when the host is currently UNKNOWN
   /// (compare-and-set). Returns whether it trusted. The ordinary accept prompt
@@ -224,6 +243,19 @@ class HostKeyStore {
   /// affordance. Refuses while the store is unavailable (fail closed).
   bool trustIfUnknown(String host, int port, String fingerprint) {
     if (status(host, port, fingerprint) != HostKeyStatus.unknown) return false;
+    trust(host, port, fingerprint);
+    return true;
+  }
+
+  /// Compare-and-set for the host-key PROMPT's accept (#1226): trusts only an
+  /// [HostKeyStatus.unknown] host or a [HostKeyStatus.formatChanged] legacy
+  /// entry (which it replaces). A [HostKeyStatus.mismatch] or an unavailable
+  /// store is still refused (#1108 fail closed).
+  bool trustIfPromptable(String host, int port, String fingerprint) {
+    final s = status(host, port, fingerprint);
+    if (s != HostKeyStatus.unknown && s != HostKeyStatus.formatChanged) {
+      return false;
+    }
     trust(host, port, fingerprint);
     return true;
   }

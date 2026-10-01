@@ -33,7 +33,10 @@ const _pending = PendingHostKey(
 
 /// Pump a launcher that opens the dialog on a button tap and captures the
 /// resolved `Future<bool>`. Returns a getter for the result (null while pending).
-Future<Future<bool?> Function()> _mountDialog(WidgetTester tester) async {
+Future<Future<bool?> Function()> _mountDialog(
+  WidgetTester tester, {
+  PendingHostKey pending = _pending,
+}) async {
   bool? result;
   bool resolved = false;
 
@@ -56,7 +59,7 @@ Future<Future<bool?> Function()> _mountDialog(WidgetTester tester) async {
                 onPressed: () async {
                   final r = await showHostKeyDialog(
                     dialogContext,
-                    pending: _pending,
+                    pending: pending,
                   );
                   result = r;
                   resolved = true;
@@ -162,4 +165,58 @@ void main() {
       expect(await readResult(), isFalse);
     },
   );
+
+  // #1226: a saved legacy MD5 fingerprint can't be compared with the SHA256
+  // the server now reports. The re-confirm is a DISTINCT, forced warning — not
+  // the first-contact wording, not a toast.
+  group('format-changed re-confirm variant (#1226)', () {
+    const reconfirm = PendingHostKey(
+      host: 'server.example',
+      port: 2222,
+      keyType: 'ssh-ed25519',
+      fingerprint: 'SHA256:abcDEF123+ghi/jklMNO456pqrSTU789vwxYZ0',
+      formatChanged: true,
+    );
+
+    testWidgets('renders the older-format warning with the SHA256 verbatim', (
+      tester,
+    ) async {
+      await _mountDialog(tester, pending: reconfirm);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('host-key-reconfirm-dialog')), findsOneWidget);
+      expect(
+        find.textContaining(
+          'The saved key for server.example:2222 uses an older fingerprint '
+          "format and can't be compared.",
+        ),
+        findsOneWidget,
+      );
+      expect(find.text(reconfirm.fingerprint), findsOneWidget);
+      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+      expect(find.text('Trust + connect'), findsNothing,
+          reason: 'distinct from the first-contact prompt');
+      expect(find.text('Confirm + connect'), findsOneWidget);
+    });
+
+    testWidgets('Confirm resolves true, Cancel resolves false', (tester) async {
+      var readResult = await _mountDialog(tester, pending: reconfirm);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirm + connect'));
+      await tester.pumpAndSettle();
+      expect(await readResult(), isTrue);
+
+      readResult = await _mountDialog(tester, pending: reconfirm);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(await readResult(), isFalse);
+    });
+  });
 }
