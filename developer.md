@@ -63,7 +63,7 @@ The container copies `public/` and `server/` at build time, so it must be rebuil
 
 ### Approval bridge and agent notifications
 
-`hooks/mobissh-bridge.sh` is a Claude Code hook installed on a remote host with `scripts/install-remote-hooks.sh`. On a permission request it asks `/api/approval-gate`; other events go to `/api/hook`. The gate only waits for a decision when a client is subscribed to `/events`, and the native app does not subscribe, so every request is answered at once with the default mode (`allow` unless `.approval-mode` says otherwise). The hook also answers `allow` when the server is unreachable. Bell notifications, which the app does act on, are set up per agent as in [INTEGRATION.md](INTEGRATION.md).
+`hooks/mobissh-bridge.sh` is a Claude Code hook installed on a remote host with `scripts/install-remote-hooks.sh`. It is OFF by default (#1251): unless `MOBISSH_APPROVAL_BRIDGE=1` is set or `~/.claude/mobissh-approval-bridge.enabled` exists, it prints nothing and exits, so Claude Code uses its normal permission flow. `MOBISSH_BRIDGE_URL` overrides the server URL. When enabled, on a permission request it asks `/api/approval-gate`; other events go to `/api/hook`. The gate only waits for a decision when a client is subscribed to `/events`, and the native app does not subscribe, so every request is answered at once with the default mode (`allow` unless `.approval-mode` says otherwise). The hook also answers `allow` when the server is unreachable. Bell notifications, which the app does act on, are set up per agent as in [INTEGRATION.md](INTEGRATION.md).
 
 ### Bug reports, repro recordings and telemetry
 

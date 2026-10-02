@@ -14,7 +14,18 @@
 # Requires: curl, jq, Tailscale access to mobissh.tailbe5094.ts.net
 set -euo pipefail
 
-BRIDGE_URL="https://mobissh.tailbe5094.ts.net"
+# #1251: OFF unless explicitly enabled. With no phone client subscribed (the
+# PWA that answered prompts was retired in #1205) every path below emits
+# `allow`, which silently auto-approved every Claude Code permission prompt.
+# Off = drain stdin and print nothing, so Claude Code falls back to its normal
+# permission flow. Enable with MOBISSH_APPROVAL_BRIDGE=1 or by creating
+# ~/.claude/mobissh-approval-bridge.enabled.
+if [[ "${MOBISSH_APPROVAL_BRIDGE:-}" != "1" && ! -e "${HOME}/.claude/mobissh-approval-bridge.enabled" ]]; then
+  cat >/dev/null
+  exit 0
+fi
+
+BRIDGE_URL="${MOBISSH_BRIDGE_URL:-https://mobissh.tailbe5094.ts.net}"
 INPUT=$(cat)
 EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)
 if [[ -z "$EVENT" ]]; then
