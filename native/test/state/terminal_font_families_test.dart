@@ -1,8 +1,8 @@
 // #707 — the per-session terminal font picker (#679) lists the bundled
 // monospace families. This asserts the contents of [terminalFontFamilies]:
 // the three originals (JetBrainsMono / FiraCode / CascadiaCode) plus the
-// three added in #707 (RobotoMono / UbuntuMono / Cousine). Iosevka is
-// DEFERRED (needs a custom build) and must NOT appear yet.
+// three added in #707 (RobotoMono / UbuntuMono / Cousine), plus Iosevka Term
+// (#1256, a subset of the official release; see terminal_font_iosevka_test).
 //
 // Each id must match a `fonts:` family registered in pubspec.yaml; a green
 // `flutter test` build (which loads the manifest + font assets) plus this
@@ -15,7 +15,7 @@ import 'package:mobissh/state/ui_prefs_providers.dart';
 
 void main() {
   group('terminalFontFamilies (#679 + #707)', () {
-    test('lists all six bundled families in order, no duplicates', () {
+    test('lists all seven bundled families in order, no duplicates', () {
       final ids = terminalFontFamilies.map((f) => f.id).toList();
       expect(ids, <String>[
         'JetBrainsMono',
@@ -24,6 +24,7 @@ void main() {
         'RobotoMono',
         'UbuntuMono',
         'Cousine',
+        'IosevkaTerm',
       ]);
       expect(ids.toSet().length, ids.length, reason: 'no duplicate family ids');
     });
@@ -51,15 +52,6 @@ void main() {
           reason: '$id must resolve to its own face, not the default',
         );
       }
-    });
-
-    test('Iosevka is deferred — must NOT be listed yet', () {
-      expect(
-        terminalFontFamilies.any((f) => f.id == 'Iosevka'),
-        isFalse,
-        reason: 'Iosevka needs a custom build (#707 defers it)',
-      );
-      expect(isKnownFontFamily('Iosevka'), isFalse);
     });
   });
 }

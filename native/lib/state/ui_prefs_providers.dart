@@ -165,7 +165,9 @@ const String fontFamilyDefault = 'JetBrainsMono';
 /// here + a pubspec entry. The first three mirror the PWA terminal's
 /// selectable fonts (`FONT_FAMILIES` in src/modules/terminal.ts: JetBrains
 /// Mono, Fira Code, Cascadia Code); #707 adds Roboto Mono, Ubuntu Mono, and
-/// Cousine (Iosevka deferred — needs a custom build).
+/// Cousine; #1256 adds Iosevka Term (subset, see pubspec.yaml). The storage
+/// layer mirrors these ids in two inlined allowlists (SavedProfile and
+/// backup_restore); terminal_font_iosevka_test.dart guards that they match.
 const List<NamedFontFamily> terminalFontFamilies = [
   NamedFontFamily('JetBrainsMono', 'JetBrains Mono'),
   NamedFontFamily('FiraCode', 'Fira Code'),
@@ -173,6 +175,7 @@ const List<NamedFontFamily> terminalFontFamilies = [
   NamedFontFamily('RobotoMono', 'Roboto Mono'),
   NamedFontFamily('UbuntuMono', 'Ubuntu Mono'),
   NamedFontFamily('Cousine', 'Cousine'),
+  NamedFontFamily('IosevkaTerm', 'Iosevka'),
 ];
 
 /// Resolve an arbitrary stored family string to a known bundled family id,
