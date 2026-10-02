@@ -38,6 +38,7 @@ void main() {
       expect(restored.keyType, 'ssh-ed25519');
       expect(restored.fingerprint, 'abc123');
       expect(restored.formatChanged, isFalse);
+      expect(restored.storedFingerprint, isNull);
     });
 
     test('SshHostKeyChallengeEvent carries formatChanged (#1226)', () {
@@ -48,10 +49,12 @@ void main() {
         keyType: 'ssh-ed25519',
         fingerprint: 'SHA256:abc',
         formatChanged: true,
+        storedFingerprint: '00112233445566778899aabbccddeeff',
       );
       final restored =
           SshTaskEvent.fromJson(ev.toJson()) as SshHostKeyChallengeEvent;
       expect(restored.formatChanged, isTrue);
+      expect(restored.storedFingerprint, '00112233445566778899aabbccddeeff');
     });
 
     test('SshHostKeyDecisionCommand preserves accepted flag', () {
@@ -212,6 +215,9 @@ void main() {
       expect(proxy.data.state, SshSessionState.awaitingHostKey);
       expect(proxy.data.pendingHostKey!.formatChanged, isTrue);
       expect(proxy.data.pendingHostKey!.fingerprint, 'SHA256:newkey');
+      expect(proxy.data.pendingHostKey!.storedFingerprint,
+          '00112233445566778899aabbccddeeff',
+          reason: '#1249: the re-confirm needs the old key to compare');
 
       proxy.acceptHostKey();
       await Future<void>.delayed(const Duration(milliseconds: 20));
