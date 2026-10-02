@@ -22,9 +22,11 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final showExperimental = ref.watch(featureFlagsProvider).showExperimental;
-    final hiddenOn = showExperimental
-        ? 0
-        : ref.watch(experimentalSettingsOnCountProvider);
+    // Watched unconditionally: this eager build (the home IndexedStack) is what
+    // constructs + hydrates tmuxControlModeProvider before the first connect
+    // reads its global. The collapsed tile alone would not build it.
+    final onCount = ref.watch(experimentalSettingsOnCountProvider);
+    final hiddenOn = showExperimental ? 0 : onCount;
     final hiddenOnLabel = hiddenOn == 1
         ? '1 experimental setting is on'
         : '$hiddenOn experimental settings are on';

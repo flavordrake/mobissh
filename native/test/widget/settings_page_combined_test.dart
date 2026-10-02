@@ -232,6 +232,19 @@ void main() {
     expect(prefs.getString(featureFlagsPrefKey), contains('"showExperimental":true'));
   });
 
+  testWidgets('the page constructs the tmux setting provider whatever the '
+      'flag (connect reads its hydrated global)', (tester) async {
+    for (final show in const [false, true]) {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        featureFlagsPrefKey: '{"v":1,"showExperimental":$show}',
+      });
+      final container = _container();
+      await _pumpPage(tester, container);
+      expect(container.exists(tmuxControlModeProvider), isTrue,
+          reason: 'showExperimental=$show, Advanced collapsed');
+    }
+  });
+
   testWidgets('a hidden setting that is ON keeps working and is announced', (
     tester,
   ) async {
