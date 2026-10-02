@@ -163,6 +163,78 @@ describe('feedback-guard #484 — guard unit surface', () => {
   });
 });
 
+describe('#1243 — every uploader authenticates', () => {
+  it('/api/native-crash accepts the key and rejects a missing or wrong one', async () => {
+    const crash = JSON.stringify({ schema: 1, kind: 'dart', error: 'boom' });
+    assert.equal((await post('/api/native-crash', crash, {})).status, 401);
+    assert.equal((await post('/api/native-crash', crash, { 'X-MobiSSH-Key': 'nope' })).status, 401);
+    assert.equal(uploadFiles().length, 0);
+    const ok = await post('/api/native-crash', crash, authHdr);
+    assert.equal(ok.status, 200);
+    assert.equal(uploadFiles().some((f) => f.endsWith('-native-crash.json')), true);
+  });
+
+  it('the install-page form posts to the same-origin route and carries no key', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'public/native-feedback.js'), 'utf8');
+    assert.match(src, /fetch\('\.\/api\/install-feedback'/);
+    assert.doesNotMatch(src, /X-MobiSSH-Key/i);
+  });
+
+  it('the termux uploader sends X-MobiSSH-Key from MOBISSH_FEEDBACK_KEY', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'public/termux/mobissh-logcat.sh'), 'utf8');
+    assert.match(src, /X-MobiSSH-Key: \$\{?MOBISSH_FEEDBACK_KEY/);
+  });
+
+  describe('server/index.js /api/install-feedback adds the server key', () => {
+    let front;
+    let frontPort = 0;
+    const frontPost = (urlPath, body, headers = {}) => new Promise((resolve, reject) => {
+      const r = http.request(
+        { host: '127.0.0.1', port: frontPort, path: urlPath, method: 'POST', headers: { 'Content-Type': 'application/json', ...headers } },
+        (res) => {
+          let out = '';
+          res.on('data', (c) => { out += c; });
+          res.on('end', () => resolve({ status: res.statusCode || 0, body: out }));
+        },
+      );
+      r.on('error', reject);
+      r.end(body);
+    });
+
+    before(async () => {
+      // Relay to the test feedback service so nothing is written into the repo.
+      process.env.FEEDBACK_SERVICE_URL = `http://127.0.0.1:${port}`;
+      front = require(path.join(REPO_ROOT, 'server/index.js')).server;
+      await new Promise((resolve) => front.listen(0, '127.0.0.1', resolve));
+      frontPort = front.address().port;
+    });
+
+    after(() => {
+      delete process.env.FEEDBACK_SERVICE_URL;
+      try { front.close(); } catch { /* ignore */ }
+    });
+
+    it('accepts a keyless install-page report and stores it as a bug report', async () => {
+      const res = await frontPost('/api/install-feedback', JSON.stringify({ title: 'from install page' }));
+      assert.equal(res.status, 200);
+      assert.equal(uploadFiles().some((f) => f.endsWith('-bug-report.json')), true);
+    });
+
+    it('install-feedback still blocks (503) when the server has no key', async () => {
+      delete process.env.MOBISSH_FEEDBACK_KEY;
+      const res = await frontPost('/api/install-feedback', JSON.stringify({ title: 'x' }));
+      assert.equal(res.status, 503);
+      assert.equal(uploadFiles().length, 0);
+    });
+
+    it('the keyed routes on the front door still reject a keyless post (401)', async () => {
+      const res = await frontPost('/api/bug-report', JSON.stringify({ title: 'x' }));
+      assert.equal(res.status, 401);
+      assert.equal(uploadFiles().length, 0);
+    });
+  });
+});
+
 describe('feedback-guard #484 — both front doors wire the guard', () => {
   it('server/index.js requires and calls the shared guard preflight', () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, 'server/index.js'), 'utf8');

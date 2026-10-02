@@ -10,6 +10,11 @@
 set -euo pipefail
 
 ENDPOINT="${MOBISSH_CRASH_ENDPOINT:-https://mobissh.tailbe5094.ts.net/api/native-crash}"
+# The relay rejects uploads without the shared key (#484/#1243). Export it in
+# Termux; it is never written to disk or echoed by this script.
+if [ -z "${MOBISSH_FEEDBACK_KEY:-}" ]; then
+  echo "warning: MOBISSH_FEEDBACK_KEY is not set; uploads will be rejected (401)" >&2
+fi
 PACKAGE="${MOBISSH_PKG:-com.flavordrake.mobissh}"
 LINES="${MOBISSH_CRASH_LINES:-5000}"
 DEBOUNCE_S="${MOBISSH_CRASH_DEBOUNCE:-10}"
@@ -73,6 +78,7 @@ upload_bundle() {
     cat "$log"
   } | curl --max-time 30 --fail -sS -X POST \
         -H "Content-Type: text/plain" \
+        -H "X-MobiSSH-Key: ${MOBISSH_FEEDBACK_KEY:-}" \
         --data-binary @- \
         "$ENDPOINT" \
     && echo "[$ts] uploaded — local copy: $log" \

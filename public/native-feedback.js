@@ -1,7 +1,8 @@
 // native-feedback.js — version-scoped feedback form on the APK install page
 // (native.html, #609).
 //
-// Posts to the EXISTING /api/bug-report endpoint (server/index.js) — which
+// Posts to /api/install-feedback (server/index.js), which runs the /api/bug-report
+// pipeline with the server's own feedback key (#1243). That pipeline
 // already accepts { screenshot (base64 data URL), title, version } and saves to
 // test-results/uploads/, the dir the orchestrator watches. The point here is
 // the `version` field: it's pre-filled to THIS build's stamp + commit hash (via
@@ -73,7 +74,9 @@
     };
     if (screenshot) payload.screenshot = screenshot;
 
-    fetch('./api/bug-report', {
+    // #1243: /api/bug-report requires the feedback key, which a page cannot hold;
+    // the same-origin install-feedback route adds the server's key instead.
+    fetch('./api/install-feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

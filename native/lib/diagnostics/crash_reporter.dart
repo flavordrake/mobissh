@@ -24,14 +24,26 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'crash_environment.dart';
+import 'diagnostics_config.dart' show feedbackEndpoint, feedbackKey;
 
-/// Default endpoint for crash uploads. Pointed at the production bridge.
-/// Overridable via [CrashReporter.configure] for tests/dev.
-const String _defaultEndpoint =
-    'https://mobissh.tailbe5094.ts.net/api/native-crash';
+/// Default endpoint for crash uploads: the bug-report endpoint's origin +
+/// `/api/native-crash` (#1243), so a build pointed at the Worker sends crashes
+/// there too. Overridable via [CrashReporter.configure] for tests/dev.
+final String _defaultEndpoint = Uri.parse(
+  feedbackEndpoint,
+).resolve('/api/native-crash').toString();
+
+/// Alias so [CrashReporter.configure]'s `feedbackKey` parameter can't shadow it.
+const String _bakedFeedbackKey = feedbackKey;
 
 /// JSON file extension we expect under the crashes dir.
 const String _crashFileSuffix = '.json';
+
+/// Suffix a crash file is renamed to when the relay REJECTS it (401/403,
+/// #1243). Auth failures are permanent for this build — retrying on every
+/// launch + connect only re-sends a request that can never succeed. The file
+/// stays on disk (manual recovery) but no longer counts as pending.
+const String _rejectedSuffix = '.rejected';
 
 /// Monotonic per-process counter that disambiguates crash filenames written
 /// within the same millisecond. Without it, two errors recorded in the same
@@ -46,6 +58,7 @@ class _ReporterState {
   CrashEnvironment env;
   http.Client httpClient;
   String endpoint;
+  String feedbackKey;
   bool bootstrapped;
   bool uploadInFlight;
 
@@ -53,6 +66,7 @@ class _ReporterState {
     required this.env,
     required this.httpClient,
     required this.endpoint,
+    required this.feedbackKey,
   }) : bootstrapped = false,
        uploadInFlight = false;
 }
@@ -79,12 +93,18 @@ class CrashReporter {
   /// changes so the bridge can detect mismatches.
   static const int schemaVersion = 1;
 
+  /// The endpoint used when [configure] is not given one.
+  @visibleForTesting
+  static String get defaultEndpoint => _defaultEndpoint;
+
   /// Configure (or reconfigure) the reporter. The first call wins for the
   /// `env` parameter unless [reset] is called first. Useful for tests.
+  /// [feedbackKey] overrides the baked `MOBISSH_FEEDBACK_KEY` (tests only).
   static void configure({
     CrashEnvironment? env,
     http.Client? httpClient,
     String? endpoint,
+    String? feedbackKey,
   }) {
     final existing = _state;
     if (existing == null) {
@@ -92,11 +112,13 @@ class CrashReporter {
         env: env ?? const DefaultCrashEnvironment(),
         httpClient: httpClient ?? http.Client(),
         endpoint: endpoint ?? _defaultEndpoint,
+        feedbackKey: feedbackKey ?? _bakedFeedbackKey,
       );
     } else {
       if (env != null) existing.env = env;
       if (httpClient != null) existing.httpClient = httpClient;
       if (endpoint != null) existing.endpoint = endpoint;
+      if (feedbackKey != null) existing.feedbackKey = feedbackKey;
     }
   }
 
@@ -112,6 +134,7 @@ class CrashReporter {
       env: const DefaultCrashEnvironment(),
       httpClient: http.Client(),
       endpoint: _defaultEndpoint,
+      feedbackKey: _bakedFeedbackKey,
     );
   }
 
@@ -302,11 +325,27 @@ class CrashReporter {
           final resp = await state.httpClient
               .post(
                 Uri.parse(state.endpoint),
-                headers: {'Content-Type': 'application/json'},
+                headers: {
+                  'Content-Type': 'application/json',
+                  if (state.feedbackKey.isNotEmpty)
+                    'X-MobiSSH-Key': state.feedbackKey,
+                },
                 body: body,
               )
               .timeout(const Duration(seconds: 15));
-          if (resp.statusCode >= 200 && resp.statusCode < 300) {
+          if (resp.statusCode == 401 || resp.statusCode == 403) {
+            // Permanent: this build's key is missing or wrong (#1243).
+            _safeLog(
+              'upload rejected (${resp.statusCode}) for ${entry.path}; '
+              'not retrying',
+            );
+            try {
+              await entry.rename('${entry.path}$_rejectedSuffix');
+            } catch (renErr) {
+              _safeLog('failed to mark ${entry.path} rejected: $renErr');
+            }
+            failed++;
+          } else if (resp.statusCode >= 200 && resp.statusCode < 300) {
             try {
               await entry.delete();
             } catch (delErr) {
