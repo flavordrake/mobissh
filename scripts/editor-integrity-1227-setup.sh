@@ -13,6 +13,9 @@
 #                then lines until >= 100000 bytes.
 #   latin1.md  Latin-1 (NOT UTF-8) bytes: "# latin1 1227\r\n\r\n" + 40 ×
 #              "café naïve résumé © 2026\r\n" encoded as ISO-8859-1.
+#   #1248      secret.md chmod 0600, script.md chmod 0755 (a save must keep
+#              the mode), canary.txt, and a SYMLINK secret.md.part → canary.txt
+#              (a save must never write through it).
 #
 # The test recomputes both recipes in Dart, so nothing is verified by comparing
 # one transfer with another through the same reader. Any previous run's
@@ -57,6 +60,13 @@ lat = ("# latin1 1227\r\n\r\n" + "caf\xe9 na\xefve r\xe9sum\xe9 \xa9 2026\r\n" *
 with open(os.path.join(root, "latin1.md"), "wb") as f:
     f.write(lat)
 print("utf8.md bytes=%d latin1.md bytes=%d" % (len(out), len(lat)))
+# #1248: small files whose MODE the save must keep, and a canary a planted
+# symlink secret.md.part points at (the save must never write through it).
+for name, text in (("secret.md", "# secret 1248\n\nHost example\n"),
+                   ("script.md", "# script 1248\n\necho hello\n"),
+                   ("canary.txt", "canary 1248 untouched\n")):
+    with open(os.path.join(root, name), "wb") as f:
+        f.write(text.encode("ascii"))
 ' "$WORK/stage"
 
 echo "> local checksums"
@@ -69,6 +79,9 @@ rm -rf /home/testuser/edit_1227
 mkdir -p /home/testuser/edit_1227
 tar -C /home/testuser/edit_1227 -xf -
 cd /home/testuser/edit_1227
+chmod 600 secret.md
+chmod 755 script.md
+ln -s canary.txt secret.md.part
 echo "remote checksums:"
 sha256sum ./*
 ls -la .

@@ -29,6 +29,10 @@
 //   B. latin1.md through the UI: the viewer opens it read-only — Edit is
 //      DISABLED with the persistent explanation, tapping it opens no editor —
 //      and the server file is byte-identical afterwards.
+//   C. #1248: edit + save secret.md (chmod 0600, with a planted SYMLINK
+//      secret.md.part → canary.txt) and script.md (chmod 0755) through the
+//      UI. The server's own `stat` says both kept their mode, canary.txt is
+//      unchanged and no secret.md.part remains.
 //
 // Data mismatches are COLLECTED and asserted once at the end so a single run
 // reports every phase; transport failures stay hard failures.
@@ -44,6 +48,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -89,6 +94,11 @@ Uint8List _utf8Doc() {
 Uint8List _latin1Doc() => Uint8List.fromList(
   latin1.encode('# latin1 1227\r\n\r\n${'café naïve résumé © 2026\r\n' * 40}'),
 );
+
+/// #1248 recipes, shared with scripts/editor-integrity-1227-setup.sh.
+const _secretDoc = '# secret 1248\n\nHost example\n'; // chmod 0600
+const _scriptDoc = '# script 1248\n\necho hello\n'; // chmod 0755
+const _canaryDoc = 'canary 1248 untouched\n'; // secret.md.part → canary.txt
 
 /// Null when identical; otherwise a line naming the sizes and the first
 /// mismatching offset.
@@ -425,6 +435,101 @@ void main() {
           original,
         );
       }
+
+      // Phase C (#1248): a save keeps the file's MODE and never writes
+      // through a symlink `.part`. The oracle is the server's own `stat`/`cat`
+      // over a throwaway exec connection — not the app's SFTP code.
+      Future<String> serverExec(String cmd) async {
+        final c = SSHClient(
+          await SSHSocket.connect('127.0.0.1', 2222),
+          username: 'testuser',
+          onPasswordRequest: () => 'testpass',
+        );
+        try {
+          return utf8.decode(await c.run(cmd)).trim();
+        } finally {
+          c.close();
+        }
+      }
+
+      for (final (name, text) in const [
+        ('secret.md', _secretDoc),
+        ('script.md', _scriptDoc),
+      ]) {
+        await tester.pageBack();
+        expect(
+          await _pumpUntil(
+            tester,
+            () => find.byKey(Key('file-entry-$name')).evaluate().isNotEmpty,
+          ),
+          isTrue,
+          reason: '$name not listed after returning to the browser',
+        );
+        await openInViewer(name);
+        await tester.tap(find.byKey(const Key('markdown-edit-toggle')));
+        await tester.pump(const Duration(milliseconds: 500));
+        final editor = find.byKey(const Key('markdown-viewer-editor'));
+        expect(editor, findsOneWidget, reason: '$name edit mode never opened');
+        const appended = 'appended 1248\n';
+        await tester.enterText(editor, '$text$appended');
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.tap(find.byKey(const Key('markdown-viewer-save')));
+        expect(
+          await _pumpUntil(
+            tester,
+            () =>
+                find
+                    .byKey(const Key('markdown-viewer-editor'))
+                    .evaluate()
+                    .isEmpty ||
+                find
+                    .byKey(const Key('markdown-viewer-save-error'))
+                    .evaluate()
+                    .isNotEmpty,
+            maxSlices: 240,
+          ),
+          isTrue,
+          reason: '$name Save never settled',
+        );
+        checkEq(
+          'C $name Save reported no error',
+          find.byKey(const Key('markdown-viewer-save-error')).evaluate().isEmpty,
+          true,
+        );
+        check(
+          'C $name saved bytes == original + edit',
+          await downloadToDisk('$_root/$name'),
+          utf8.encode('$text$appended'),
+        );
+      }
+
+      final modes = await serverExec(
+        "cd $_root && stat -c '%a %F %n' secret.md script.md",
+      );
+      debugPrint('EDIT1227 #1248 server stat: $modes');
+      checkEq(
+        'C secret.md is still 0600 regular file',
+        modes.contains('600 regular file secret.md'),
+        true,
+      );
+      checkEq(
+        'C script.md is still 0755 regular file',
+        modes.contains('755 regular file script.md'),
+        true,
+      );
+      checkEq(
+        'C canary behind the symlink .part is untouched',
+        await serverExec('cat $_root/canary.txt'),
+        _canaryDoc.trim(),
+      );
+      checkEq(
+        'C no secret.md.part left behind',
+        await serverExec(
+          "test -e $_root/secret.md.part -o -L $_root/secret.md.part "
+          "&& echo present || echo absent",
+        ),
+        'absent',
+      );
 
       debugPrint(
         'EDIT1227 SUMMARY passed=${passes.length} failed=${failures.length}',
