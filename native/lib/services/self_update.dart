@@ -352,13 +352,24 @@ class UpdateChecker {
 
     final http.Response response;
     try {
-      response = await client.get(manifestUrl).timeout(timeout);
+      // Redirects are NOT followed (see the header): the same-host rule only
+      // means something if the manifest really came from [manifestUrl].
+      final request = http.Request('GET', manifestUrl)..followRedirects = false;
+      response = await client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(timeout);
     } on TimeoutException {
       return UpdateCheckResult.unreachable(
         'timed out after ${timeout.inSeconds}s',
       );
     } catch (e) {
       return UpdateCheckResult.unreachable(_describe(e));
+    }
+    if (response.statusCode >= 300 && response.statusCode < 400) {
+      return UpdateCheckResult.unreachable(
+        'redirect refused (HTTP ${response.statusCode})',
+      );
     }
     if (response.statusCode != 200) {
       return UpdateCheckResult.unreachable('HTTP ${response.statusCode}');

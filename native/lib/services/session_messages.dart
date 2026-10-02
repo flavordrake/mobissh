@@ -193,8 +193,13 @@ enum SshTaskEventKind {
   /// after a reconnect re-opens the shell (#619). The UI gates the
   /// run-on-connect "initial command" on THIS, not the bare `connected` state,
   /// so a slow host's shell can't be raced ahead of by the command bytes
-  /// (which `_handleInput` would otherwise drop to scrollback).
+  /// (which `_handleInput` would otherwise drop).
   shellReady,
+
+  /// Input reached the task while the session had no open shell, so it was
+  /// dropped (#1229). Never echoed into scrollback: it may be a password.
+  /// The UI shows "input not sent" until the next [shellReady].
+  inputNotSent,
 
   // --- SFTP (#559) ---
   /// A directory listing result (entries for one path).
@@ -1268,6 +1273,8 @@ sealed class SshTaskEvent {
         return const SshTaskReadyEvent();
       case SshTaskEventKind.shellReady:
         return SshShellReadyEvent(sessionId: sessionId);
+      case SshTaskEventKind.inputNotSent:
+        return SshInputNotSentEvent(sessionId: sessionId);
       case SshTaskEventKind.sftpListing:
         final rawEntries = (json['entries'] as List)
             .map((e) => SftpEntry.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -1605,13 +1612,25 @@ class SshTaskReadyEvent extends SshTaskEvent {
 /// and its output subscription is wired. The UI proxy turns this into a
 /// `shellReady` stream tick that the run-on-connect initial command gates on —
 /// sending the command on the bare `connected` STATE raced ahead of the shell
-/// on slow hosts (ra-server), and `_handleInput` dropped the bytes to
-/// scrollback instead of the (not-yet-open) shell.
+/// on slow hosts (ra-server), and `_handleInput` dropped the bytes instead of
+/// sending them to the (not-yet-open) shell.
 class SshShellReadyEvent extends SshTaskEvent {
   const SshShellReadyEvent({required String sessionId}) : super(sessionId);
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.shellReady;
+
+  @override
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};
+}
+
+/// Task → UI: input for [sessionId] arrived with no open shell and was
+/// dropped (#1229). Carries no bytes on purpose.
+class SshInputNotSentEvent extends SshTaskEvent {
+  const SshInputNotSentEvent({required String sessionId}) : super(sessionId);
+
+  @override
+  SshTaskEventKind get kind => SshTaskEventKind.inputNotSent;
 
   @override
   Map<String, dynamic> toJson() => {'kind': kind.name, 'sessionId': sessionId};

@@ -232,6 +232,26 @@ void main() {
       expect(r.reason, contains('404'));
     });
 
+    test('a 30x is refused, never followed (#1252)', () async {
+      // The mock plays a server that redirects: a client that follows
+      // redirects gets the (followed) manifest, one that does not gets the 302.
+      final r = await checker(
+        client: MockClient((req) async {
+          if (req.followRedirects) {
+            return http.Response(jsonEncode(manifestJson()), 200);
+          }
+          return http.Response(
+            '',
+            302,
+            headers: {'location': 'https://evil.example.com/m.json'},
+          );
+        }),
+      ).check();
+      expect(r.kind, UpdateCheckKind.unreachable);
+      expect(r.reason, contains('redirect'));
+      expect(r.reason, contains('302'));
+    });
+
     test('timeout → unreachable', () async {
       final c = UpdateChecker(
         client: MockClient((_) => Completer<http.Response>().future),

@@ -21,6 +21,7 @@ import 'package:dartssh2/dartssh2.dart';
 
 import '../storage/profiles_store.dart';
 import '../storage/secrets_store.dart';
+import 'key_parse_error.dart';
 import 'ssh_connect_params.dart';
 import 'ssh_session.dart';
 
@@ -404,7 +405,8 @@ JumpHopConnector sshJumpHopConnector({
       } catch (e) {
         throw JumpHopError(
           '${hop.host}:${hop.port}',
-          'could not load the stored private key ($e)',
+          // #1252: never the exception text — it can quote the key.
+          keyParseFailureMessage(e),
         );
       }
     }

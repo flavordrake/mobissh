@@ -11,6 +11,7 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobissh/diagnostics/connect_trace.dart';
 import 'package:mobissh/ssh/host_key_store.dart';
 import 'package:mobissh/ssh/ssh_connect_params.dart';
 import 'package:mobissh/ssh/ssh_session.dart';
@@ -101,6 +102,48 @@ void main() {
         );
 
         await sub.cancel();
+        await controller.dispose();
+      },
+    );
+
+    test(
+      'a malformed PEM never leaks key material into the error or log (#1252)',
+      () async {
+        // A key body with one bad base64 character: the decoder's exception
+        // text quotes the source around it, i.e. the private key itself.
+        const chunk = 'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAAB';
+        const pem =
+            '-----BEGIN OPENSSH PRIVATE KEY-----\n'
+            '$chunk\n'
+            'AAAAMwAAAAtzc2gtZWQyNTUxOQAAACD!3WTO0K9fVR2bVcRxdXlpgQ6a5Hc7nmn\n'
+            '-----END OPENSSH PRIVATE KEY-----\n';
+        final controller = SshSessionController(
+          socketOpener: (host, port, {timeout}) async =>
+              throw Exception('no socket for an unparseable key'),
+        );
+
+        await controller.connect(
+          SshConnectParams(
+            host: 'h',
+            port: 22,
+            username: 'u',
+            auth: SshAuth.key(Uint8List.fromList(utf8.encode(pem))),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        final error = controller.data.error ?? '';
+        expect(controller.data.state, SshSessionState.failed);
+        expect(error, startsWith("Couldn't read the private key: "));
+        final log = connectLogSnapshot().join('\n');
+        for (final text in [error, log]) {
+          // Any 16-char slice of the key body is key material.
+          for (var i = 0; i + 16 <= chunk.length; i += 8) {
+            expect(text, isNot(contains(chunk.substring(i, i + 16))));
+          }
+          expect(text, isNot(contains('3WTO0K9f')));
+        }
+
         await controller.dispose();
       },
     );

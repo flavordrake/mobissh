@@ -1171,11 +1171,10 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     final sessionData =
         ref.watch(sessionDataProvider(widget.sessionId)).valueOrNull ??
         const SshSessionData();
-    final sessionState = sessionData.state;
 
     return Column(
       children: [
-        if (_isDisconnected(sessionState)) _disconnectBanner(sessionData),
+        if (_showBanner(sessionData)) _disconnectBanner(sessionData),
         if (shellAsync.hasError)
           Container(
             width: double.infinity,
@@ -1233,7 +1232,7 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
         const SshSessionData();
     return Column(
       children: [
-        if (_isDisconnected(sessionData.state)) _disconnectBanner(sessionData),
+        if (_showBanner(sessionData)) _disconnectBanner(sessionData),
         Expanded(child: GhosttyTerminalView(sessionId: widget.sessionId)),
       ],
     );
@@ -1243,6 +1242,7 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
   /// action (#1235).
   Widget _disconnectBanner(SshSessionData data) => _DisconnectBanner(
     state: data.state,
+    inputNotSent: data.inputNotSent,
     review: HostKeyReviewAction(
       sessionId: widget.sessionId,
       data: data,
@@ -1252,6 +1252,11 @@ class _SessionTerminalBodyState extends ConsumerState<_SessionTerminalBody>
     ),
   );
 }
+
+/// The banner shows for a dropped session, and also while typed input is being
+/// dropped for lack of a shell (#1229) — that can happen in `connected`.
+bool _showBanner(SshSessionData data) =>
+    _isDisconnected(data.state) || data.inputNotSent;
 
 /// True when [state] is a "was-live-then-dropped" lifecycle state that warrants
 /// a disconnect indicator (#624). Pre-first-connect states
@@ -1277,9 +1282,16 @@ bool _isDisconnected(SshSessionState state) {
 /// session is no longer live (#624). Distinct copy for reconnecting vs. fully
 /// disconnected so the user knows whether the app is auto-retrying.
 class _DisconnectBanner extends StatelessWidget {
-  const _DisconnectBanner({required this.state, required this.review});
+  const _DisconnectBanner({
+    required this.state,
+    required this.inputNotSent,
+    required this.review,
+  });
 
   final SshSessionState state;
+
+  /// #1229: typed input was dropped (no shell) — say so, persistently.
+  final bool inputNotSent;
 
   /// #1235 Review action; renders nothing unless the failure is a CHANGED key.
   final Widget review;
@@ -1289,7 +1301,9 @@ class _DisconnectBanner extends StatelessWidget {
     final reconnecting =
         state == SshSessionState.reconnecting ||
         state == SshSessionState.softDisconnected;
-    final text = reconnecting ? 'Disconnected — reconnecting…' : 'Disconnected';
+    final text = inputNotSent
+        ? 'Not connected — input not sent'
+        : (reconnecting ? 'Disconnected — reconnecting…' : 'Disconnected');
     return Container(
       key: const Key('terminal-disconnect-banner'),
       width: double.infinity,

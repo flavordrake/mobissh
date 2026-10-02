@@ -704,6 +704,17 @@ class SshSessionProxy {
         // The task side opened the PTY shell (#619). Tick the shell-ready
         // stream so the run-on-connect command fires now that stdin is wired.
         if (!_shellReadyCtrl.isClosed) _shellReadyCtrl.add(null);
+        // #1229: a live shell again — input goes through from here on.
+        if (_data.inputNotSent) {
+          _data = _data.copyWith(inputNotSent: false);
+          if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
+        }
+      case SshInputNotSentEvent():
+        // #1229: the task dropped input (no shell). Persistent until shellReady.
+        if (!_data.inputNotSent) {
+          _data = _data.copyWith(inputNotSent: true);
+          if (!_dataCtrl.isClosed) _dataCtrl.add(_data);
+        }
       case SshTaskReadyEvent():
         // Task-global readiness signal (#539). Per-session proxies ignore it —
         // the UI-side gateway already consumed it to flush buffered commands.

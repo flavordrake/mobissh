@@ -123,5 +123,30 @@ void main() {
       await _pump(tester);
       expect(find.byKey(const Key('terminal-disconnect-banner')), findsNothing);
     });
+
+    // #1229: typed input reached the task while no shell was open, so it was
+    // dropped. The state can still read `connected`; the banner must say so
+    // and stay until a shell is open again.
+    testWidgets('input dropped with no shell shows "input not sent" until '
+        'the shell is ready (#1229)', (tester) async {
+      final s = await _setup(tester);
+      _emitState(s.pair, s.entry.id, SshSessionState.connected.name);
+      await _pump(tester);
+      expect(find.byKey(const Key('terminal-disconnect-banner')), findsNothing);
+
+      s.pair.taskSide.send(
+        SshInputNotSentEvent(sessionId: s.entry.id).toJson(),
+      );
+      await _pump(tester);
+      expect(
+        find.byKey(const Key('terminal-disconnect-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('Not connected — input not sent'), findsOneWidget);
+
+      s.pair.taskSide.send(SshShellReadyEvent(sessionId: s.entry.id).toJson());
+      await _pump(tester);
+      expect(find.byKey(const Key('terminal-disconnect-banner')), findsNothing);
+    });
   });
 }
