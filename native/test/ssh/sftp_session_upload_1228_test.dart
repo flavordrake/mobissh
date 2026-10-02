@@ -63,6 +63,7 @@ class _FakeSftpServer {
     this.posixRename = true,
     this.failRename = false,
     this.dropWritesAtOrAbove,
+    this.beforeOpen,
   }) {
     _controller = SSHChannelController(
       localId: 1,
@@ -87,11 +88,33 @@ class _FakeSftpServer {
   /// about having stored the bytes, so the post-write size check must catch it.
   final int? dropWritesAtOrAbove;
 
+  /// #1248: runs on the server just before an OPEN of a path is served — lets
+  /// a test swap a symlink in between the client's lstat/remove and its open.
+  final void Function(_FakeSftpServer server, String path)? beforeOpen;
+
   late final SSHChannelController _controller;
   late final SftpClient client;
 
   /// path → content. Directories are not modelled; only files.
   final files = <String, Uint8List>{};
+
+  /// #1248: path → permission bits of a regular file (default [_umaskMode],
+  /// the mode a fresh create gets). Moves with the file on rename.
+  final modes = <String, int>{};
+
+  /// #1248: path → owning uid (default [_me]). The server runs as [_me], not
+  /// root: a chown to any other uid is EPERM, like a real sftp-server.
+  final owners = <String, int>{};
+
+  /// #1248: path → target of a symlink (one level). OPEN/STAT/SETSTAT follow
+  /// it; LSTAT/REMOVE/RENAME act on the link itself; an EXCLUSIVE create of a
+  /// link's name fails (O_CREAT|O_EXCL refuses even a dangling link).
+  final links = <String, String>{};
+
+  static const _umaskMode = 420; // 0644
+  static const _me = 1000;
+
+  int modeOf(String path) => modes[path] ?? _umaskMode;
 
   /// Every request the client sent, one line each, in order.
   final ops = <String>[];
@@ -114,13 +137,57 @@ class _FakeSftpServer {
 
   void _ok(int requestId) => _status(requestId, SftpStatusCode.ok, 'ok');
 
-  void _attrsFor(int requestId, String path) {
-    final content = files[path];
+  void _attrsFor(int requestId, String path, {bool follow = true}) {
+    final link = links[path];
+    if (link != null && !follow) {
+      _send(SftpAttrsPacket(
+        requestId,
+        SftpFileAttrs(
+          size: link.length,
+          mode: const SftpFileMode.value(41471), // 0120777 symlink
+          userID: _me,
+          groupID: _me,
+        ),
+      ));
+      return;
+    }
+    final real = link ?? path;
+    final content = files[real];
     if (content == null) {
       _status(requestId, SftpStatusCode.noSuchFile, 'No such file');
       return;
     }
-    _send(SftpAttrsPacket(requestId, SftpFileAttrs(size: content.length)));
+    _send(SftpAttrsPacket(
+      requestId,
+      SftpFileAttrs(
+        size: content.length,
+        mode: SftpFileMode.value(32768 | modeOf(real)), // 0100000 | perms
+        userID: owners[real] ?? _me,
+        groupID: _me,
+      ),
+    ));
+  }
+
+  /// SETSTAT / FSETSTAT on the (already link-resolved) [path].
+  void _setStat(int requestId, String path, SftpFileAttrs a, String verb) {
+    if (!files.containsKey(path)) {
+      _status(requestId, SftpStatusCode.noSuchFile, 'No such file');
+      return;
+    }
+    final uid = a.userID;
+    if (uid != null) {
+      ops.add('$verb $path uid=$uid');
+      if (uid != (owners[path] ?? _me) || uid != _me) {
+        _status(requestId, SftpStatusCode.permissionDenied, 'Permission denied');
+        return;
+      }
+    }
+    final mode = a.mode;
+    if (mode != null) {
+      ops.add('$verb $path mode=${(mode.value & 4095).toRadixString(8)}');
+      modes[path] = mode.value & 4095;
+    }
+    _ok(requestId);
   }
 
   String _pathOf(Uint8List handle) {
@@ -133,18 +200,31 @@ class _FakeSftpServer {
       _status(requestId, SftpStatusCode.failure, 'Failure');
       return;
     }
+    final link = links[from];
     final content = files[from];
-    if (content == null) {
+    if (content == null && link == null) {
       _status(requestId, SftpStatusCode.noSuchFile, 'No such file');
       return;
     }
-    if (!clobber && files.containsKey(to)) {
+    if (!clobber && (files.containsKey(to) || links.containsKey(to))) {
       // The standard SSH_FXP_RENAME must not overwrite (OpenSSH says Failure).
       _status(requestId, SftpStatusCode.failure, 'Failure');
       return;
     }
-    files.remove(from);
-    files[to] = content;
+    // rename(2) moves the NAME: a link stays a link, a file keeps its mode.
+    files.remove(to);
+    modes.remove(to);
+    owners.remove(to);
+    links.remove(to);
+    if (link != null) {
+      links[to] = links.remove(from)!;
+    } else {
+      files[to] = files.remove(from)!;
+      final m = modes.remove(from);
+      if (m != null) modes[to] = m;
+      final o = owners.remove(from);
+      if (o != null) owners[to] = o;
+    }
     _ok(requestId);
   }
 
@@ -162,11 +242,18 @@ class _FakeSftpServer {
         ]));
       case SftpOpenPacket.packetType:
         final p = SftpOpenPacket.decode(payload);
+        beforeOpen?.call(this, p.path);
         ops.add('open ${p.path} flags=${p.flags}');
         final create = p.flags & SftpFileOpenMode.create.flag != 0;
         final truncate = p.flags & SftpFileOpenMode.truncate.flag != 0;
         final exclusive = p.flags & SftpFileOpenMode.exclusive.flag != 0;
-        final exists = files.containsKey(p.path);
+        if (exclusive && links.containsKey(p.path)) {
+          _status(p.requestId, SftpStatusCode.failure, 'Failure');
+          return;
+        }
+        // open(2) without O_NOFOLLOW follows a link to its target.
+        final path = links[p.path] ?? p.path;
+        final exists = files.containsKey(path);
         if (!exists && !create) {
           _status(p.requestId, SftpStatusCode.noSuchFile, 'No such file');
           return;
@@ -175,9 +262,9 @@ class _FakeSftpServer {
           _status(p.requestId, SftpStatusCode.failure, 'Failure');
           return;
         }
-        if (!exists || truncate) files[p.path] = Uint8List(0);
+        if (!exists || truncate) files[path] = Uint8List(0);
         final id = _nextHandle++;
-        _handles[id] = p.path;
+        _handles[id] = path;
         _send(SftpHandlePacket(
           p.requestId,
           Uint8List(4)..buffer.asByteData().setUint32(0, id),
@@ -218,7 +305,7 @@ class _FakeSftpServer {
       case SftpLStatPacket.packetType:
         final p = SftpLStatPacket.decode(payload);
         ops.add('lstat ${p.path}');
-        _attrsFor(p.requestId, p.path);
+        _attrsFor(p.requestId, p.path, follow: false);
       case SftpFStatPacket.packetType:
         final p = SftpFStatPacket.decode(payload);
         final path = _pathOf(p.handle);
@@ -229,11 +316,22 @@ class _FakeSftpServer {
       case SftpRemovePacket.packetType:
         final p = SftpRemovePacket.decode(payload);
         ops.add('remove ${p.filename}');
-        if (files.remove(p.filename) == null) {
+        // unlink(2) removes a link itself, never its target.
+        if (links.remove(p.filename) == null &&
+            files.remove(p.filename) == null) {
           _status(p.requestId, SftpStatusCode.noSuchFile, 'No such file');
           return;
         }
+        modes.remove(p.filename);
+        owners.remove(p.filename);
         _ok(p.requestId);
+      case SftpSetStatPacket.packetType:
+        final p = SftpSetStatPacket.decode(payload);
+        final path = links[p.path] ?? p.path;
+        _setStat(p.requestId, path, p.attributes, 'setstat');
+      case SftpFSetStatPacket.packetType:
+        final p = SftpFSetStatPacket.decode(payload);
+        _setStat(p.requestId, _pathOf(p.handle), p.attributes, 'fsetstat');
       case SftpRenamePacket.packetType:
         final p = SftpRenamePacket.decode(payload);
         ops.add('rename ${p.oldPath} ${p.newPath}');
@@ -289,11 +387,13 @@ void main() {
     bool posixRename = true,
     bool failRename = false,
     int? dropWritesAtOrAbove,
+    void Function(_FakeSftpServer server, String path)? beforeOpen,
   }) {
     final s = _FakeSftpServer(
       posixRename: posixRename,
       failRename: failRename,
       dropWritesAtOrAbove: dropWritesAtOrAbove,
+      beforeOpen: beforeOpen,
     );
     addTearDown(s.dispose);
     return s;
@@ -448,7 +548,9 @@ void main() {
       expect(s.files[dest], want);
       expect(s.files[dest]!.length, n);
       expect(lowestWrite(s, part), 0);
-      expect(opsNamed(s, 'remove'), isEmpty);
+      // #1248: a restart removes the stale `.part` and creates it EXCLUSIVELY
+      // (never truncate-open a name that could be a link). Only `.part` goes.
+      expect(opsNamed(s, 'remove').toList(), ['remove $part']);
     });
 
     test('.part already holds the whole file (cut before the rename) → no '
@@ -669,5 +771,190 @@ void main() {
       await session.upload('~/.ssh/config', want);
       expect(s.files['$_home/.ssh/config'], want);
     });
+  });
+
+  // #1248 (release blocker, regression from #1228): the `.part` got the
+  // server's default mode and the rename made it the file's mode (0600
+  // `~/.ssh/config` → 0644, refused by OpenSSH; scripts lost +x); and a
+  // pre-existing symlink `.part` was followed, writing the bytes to its target.
+  group('#1248 — the destination\'s mode survives the publish', () {
+    /// Index of the first op matching [prefix] (-1: none).
+    int firstOp(_FakeSftpServer s, String prefix) =>
+        s.ops.indexWhere((o) => o.startsWith(prefix));
+
+    test('upload: a 0600 file stays 0600, and the .part is chmodded BEFORE '
+        'any byte is written (a secret is never staged world-readable)',
+        () async {
+      final s = serve();
+      s.files[dest] = _other(5000);
+      s.modes[dest] = 384; // 0600
+      final want = _formula(32769);
+
+      await DartSshSftpSession(s.client).upload(dest, want);
+
+      expect(s.files[dest], want);
+      expect(s.modeOf(dest).toRadixString(8), '600');
+      final chmod = firstOp(s, 'fsetstat $part mode=600');
+      expect(chmod, isNonNegative, reason: 'the .part handle gets the mode');
+      expect(chmod, lessThan(firstOp(s, 'write $part')));
+    });
+
+    test('uploadFile: a 0755 file stays 0755', () async {
+      final s = serve();
+      s.files[dest] = _other(5000);
+      s.modes[dest] = 493; // 0755
+      final want = _formula(94915);
+
+      await DartSshSftpSession(s.client)
+          .uploadFile(await localFile(want), dest, onProgress: (_, _) {});
+
+      expect(s.files[dest], want);
+      expect(s.modeOf(dest).toRadixString(8), '755');
+    });
+
+    test('uploadFile RESUME of a verified .part: 0600 still survives', () async {
+      const n = 94915;
+      final s = serve();
+      final want = _formula(n);
+      s.files[dest] = _other(5000);
+      s.modes[dest] = 384;
+      s.files[part] = Uint8List.sublistView(want, 0, 40000);
+
+      await DartSshSftpSession(s.client)
+          .uploadFile(await localFile(want), dest, onProgress: (_, _) {});
+
+      expect(s.files[dest], want);
+      expect(lowestWrite(s, part), 40000, reason: 'still a resume');
+      expect(s.modeOf(dest).toRadixString(8), '600');
+    });
+
+    test('uploadFile whose .part already holds everything (no writes): 0700 '
+        'still survives', () async {
+      const n = 32769;
+      final s = serve();
+      final want = _formula(n);
+      s.files[dest] = _other(5000);
+      s.modes[dest] = 448; // 0700
+      s.files[part] = Uint8List.fromList(want);
+
+      await DartSshSftpSession(s.client)
+          .uploadFile(await localFile(want), dest, onProgress: (_, _) {});
+
+      expect(s.files[dest], want);
+      expect(opsNamed(s, 'write'), isEmpty);
+      expect(s.modeOf(dest).toRadixString(8), '700');
+    });
+
+    test('a NEW destination keeps the server default mode', () async {
+      final s = serve();
+      await DartSshSftpSession(s.client).upload(dest, _formula(1000));
+      expect(s.modeOf(dest).toRadixString(8), '644');
+    });
+
+    test('a destination owned by another user: the chown is refused (EPERM, '
+        'ignored), the mode is still preserved and the save succeeds',
+        () async {
+      final s = serve();
+      s.files[dest] = _other(5000);
+      s.modes[dest] = 416; // 0640
+      s.owners[dest] = 0;
+      final want = _formula(1000);
+
+      await DartSshSftpSession(s.client).upload(dest, want);
+
+      expect(s.files[dest], want);
+      expect(s.modeOf(dest).toRadixString(8), '640');
+      expect(firstOp(s, 'fsetstat $part uid=0'), isNonNegative,
+          reason: 'ownership is attempted');
+    });
+  });
+
+  group('#1248 — a symlink .part is never written through', () {
+    const canary = '$_home/canary';
+
+    test('upload: a pre-existing symlink .part is removed (the link, not its '
+        'target), the target is unchanged, the destination is correct',
+        () async {
+      final s = serve();
+      final canaryBytes = _other(777);
+      s.files[canary] = Uint8List.fromList(canaryBytes);
+      s.links[part] = canary;
+      final want = _formula(32769);
+
+      await DartSshSftpSession(s.client).upload(dest, want);
+
+      expect(s.files[canary], canaryBytes, reason: 'written through the link');
+      expect(s.files[dest], want);
+      expect(s.links, isEmpty);
+      expect(opsNamed(s, 'remove').toList(), ['remove $part']);
+    });
+
+    test('uploadFile fresh: a symlink .part is removed, never followed',
+        () async {
+      final s = serve();
+      final canaryBytes = _other(777);
+      s.files[canary] = Uint8List.fromList(canaryBytes);
+      s.links[part] = canary;
+      final want = _formula(94915);
+
+      await DartSshSftpSession(s.client)
+          .uploadFile(await localFile(want), dest, onProgress: (_, _) {});
+
+      expect(s.files[canary], canaryBytes);
+      expect(s.files[dest], want);
+      expect(s.links, isEmpty);
+    });
+
+    test('uploadFile RESUME: a symlink .part whose target IS a valid source '
+        'prefix is not resumed (never read, never appended to)', () async {
+      const n = 94915;
+      final s = serve();
+      final want = _formula(n);
+      final canaryBytes = Uint8List.fromList(want.sublist(0, 40000));
+      s.files[canary] = Uint8List.fromList(canaryBytes);
+      s.links[part] = canary;
+
+      await DartSshSftpSession(s.client)
+          .uploadFile(await localFile(want), dest, onProgress: (_, _) {});
+
+      expect(s.files[canary], canaryBytes, reason: 'appended through the link');
+      expect(s.files[dest], want);
+      expect(s.links, isEmpty);
+      expect(lowestWrite(s, part), 0, reason: 'a link is not a resumable .part');
+      expect(s.ops.where((o) => o == 'open $part flags=1'), isEmpty,
+          reason: 'the link was opened for the resume read-back');
+    });
+
+    for (final viaFile in [false, true]) {
+      test('${viaFile ? 'uploadFile' : 'upload'}: a symlink swapped in at the '
+          'open makes the EXCLUSIVE create fail loudly; target and '
+          'destination untouched', () async {
+        final s = serve(beforeOpen: (srv, path) {
+          if (path == part) srv.links[part] = canary;
+        });
+        final canaryBytes = _other(777);
+        final original = _other(5000);
+        s.files[canary] = Uint8List.fromList(canaryBytes);
+        s.files[dest] = Uint8List.fromList(original);
+        final want = _formula(32769);
+        final session = DartSshSftpSession(s.client);
+
+        final run = viaFile
+            ? session.uploadFile(await localFile(want), dest,
+                onProgress: (_, _) {})
+            : session.upload(dest, want);
+
+        await expectLater(
+          run,
+          throwsA(isA<UploadStagingException>()
+              .having((e) => e.partPath, 'partPath', part)
+              .having((e) => e.toString(), 'message', contains(part))),
+        );
+        expect(s.files[canary], canaryBytes);
+        expect(s.files[dest], original);
+        expect(opsNamed(s, 'write'), isEmpty);
+        expect(opsNamed(s, 'posix-rename'), isEmpty);
+      });
+    }
   });
 }
