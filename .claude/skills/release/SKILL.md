@@ -18,6 +18,16 @@ The only version touchpoint is the `version:` line in `native/pubspec.yaml`
 (`-dev` → `-rc.N` → final) is a manual edit before shipping. Nothing else carries a
 version (`server/package.json` is not part of the release).
 
+## Step 0: Owner-deferred release blockers
+
+Before anything else, list open issues whose title contains `RELEASE BLOCKER`:
+
+```bash
+scripts/gh-ops.sh search "RELEASE BLOCKER in:title is:open"
+```
+
+Any hit must be resolved, or the owner must explicitly waive it, before tagging. Stop and WARN the owner by name of the issue; never skip it silently. Owner directive (2026-10-02, #1261 unreachable-code cleanup): "defer for next tag but warn me before I try and skip it again".
+
 ## Step 1: Decide what this release is
 
 Read the current pubspec version and the commits since the last `native-v*` tag:
