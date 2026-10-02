@@ -697,6 +697,7 @@ class SshSessionProxy {
             keyType: event.keyType,
             fingerprint: event.fingerprint,
             formatChanged: event.formatChanged,
+            storedFingerprint: event.storedFingerprint,
           ),
         );
         if (!_dataCtrl.isClosed) _dataCtrl.add(_data);

@@ -1263,6 +1263,7 @@ sealed class SshTaskEvent {
           keyType: json['keyType'] as String,
           fingerprint: json['fingerprint'] as String,
           formatChanged: json['formatChanged'] as bool? ?? false,
+          storedFingerprint: json['storedFingerprint'] as String?,
         );
       case SshTaskEventKind.ready:
         return const SshTaskReadyEvent();
@@ -1556,6 +1557,7 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
     required this.keyType,
     required this.fingerprint,
     this.formatChanged = false,
+    this.storedFingerprint,
   }) : super(sessionId);
 
   final String host;
@@ -1566,6 +1568,10 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
   /// The saved entry is a legacy MD5 that can't be compared — render the
   /// one-time re-confirm prompt, not the first-contact one (#1226).
   final bool formatChanged;
+
+  /// The saved (legacy) fingerprint the re-confirm replaces, shown next to the
+  /// offered one (#1249). Null on a first-contact prompt.
+  final String? storedFingerprint;
 
   @override
   SshTaskEventKind get kind => SshTaskEventKind.hostKeyChallenge;
@@ -1579,6 +1585,7 @@ class SshHostKeyChallengeEvent extends SshTaskEvent {
     'keyType': keyType,
     'fingerprint': fingerprint,
     'formatChanged': formatChanged,
+    if (storedFingerprint != null) 'storedFingerprint': storedFingerprint,
   };
 }
 
