@@ -78,41 +78,26 @@ Build a concise issue body. No filler.
 
 ## Step 3: Check for recent test artifacts
 
-Check for recent test artifacts in either test results directory. If the report JSON
-was modified within 30 minutes (`stat -c %Y` vs `date +%s`), include relevant evidence:
+Check for recent artifacts (modified within 30 minutes: `stat -c %Y` vs `date +%s`) and
+include relevant evidence:
 
-**Appium tests** (primary):
-1. **test-results/uploads/**: bug-report bundles from the app (screenshots, rings)
-2. **test-history/integration-baseline/**: archived integration-suite reports per run
+1. **test-results/uploads/**: bug-report bundles from the app (screenshot, telemetry rings)
+2. **test-results/emulator-shots/**: emulator screenshots taken with `scripts/emu-shot.sh`
+3. **/tmp/mobissh/logs/**: `native-integration-suite.log` and logcat dumps from `scripts/emu-log.sh`
 
-**Legacy CDP emulator tests**:
-1. **test-results/emulator/report.json**: pass/fail summary, failed test names and errors
-2. **test-results/emulator/frames/**: frame filenames that relate to the issue
-3. **test-results/emulator/recording.mp4**: existence and timestamp
-
-**Both paths**:
-4. **Per-test screenshots**: check `test-results/*-android-emulator/` for relevant PNGs
-
-If a recording exists but no frames have been extracted (no `frames/` directory or it's
-empty), run `scripts/review-recording.sh` to generate uniform frame samples. This
-is useful when the issue relates to visual behavior that screenshots alone don't capture.
+For a long-press repro recording, `scripts/assemble-repro.sh` turns the frame burst
+into reviewable frames.
 
 Only include artifacts clearly connected to the issue. If nothing is recent or relevant,
 skip this section entirely.
 
-## Step 4: Add @claude bot task (optional)
+## Step 4: Suggested scope (optional)
 
-If the issue is actionable (bug with clear reproduction, feature with clear scope), append:
-
-```
-@claude <Specific instruction for what to investigate or implement.
-Reference relevant files, test commands, or prior issues.>
-```
-
-Do NOT add `@claude` for research issues (`spike`), things needing real-device validation
-(`device`), or vague requests that need scoping. The `/delegate` skill handles enriching
-issues with full delegation context and applying the `bot` label -- this step is just a
-lightweight hint for obviously bot-ready issues.
+If the issue is actionable (bug with clear reproduction, feature with clear scope), add a
+short `## Suggested scope` section: the files likely involved, the test command, related
+issues. Do NOT add `@claude` mentions; bot work is dispatched by `/delegate` and
+`/develop` to local agents. Skip this for research issues (`spike`), things needing
+real-device validation (`device`), or vague requests that need scoping.
 
 ## Step 5: Duplicate check and file
 
@@ -139,12 +124,12 @@ Filed while working on <context> (<branch>).
 
 ## Test Evidence
 <Only if recent artifacts exist (Step 3). Otherwise omit this section entirely.>
-- Run: <pass/fail summary from report.json>
-- Failed: <test names and error snippets>
-- Frames: <relevant filenames from frames/ or review/>
-- Recording: test-results/emulator/recording.mp4 (<timestamp>)
+- Run: <suite verdict / failed test names and error snippets>
+- Screenshots: <relevant paths from test-results/emulator-shots/ or the bug report>
+- Bug report: <test-results/uploads/ bundle, if any>
 
-@claude <Specific bot instructions, if actionable (Step 4).>
+## Suggested scope
+<If actionable (Step 4). Otherwise omit.>
 ```
 
 Write the composed body to a temp file, then file:

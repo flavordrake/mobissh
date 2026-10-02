@@ -1,5 +1,7 @@
 # Chunked SFTP Upload: Research Findings and Recommended Architecture
 
+> History: written against the retired PWA (xterm.js, the WebSocket bridge, `src/`, Playwright/Appium), which #1205 removed. Read "current" here as "current when written"; the native app is the product (see README.md and developer.md).
+
 Research for issue #229: replacing the single-message `sftp_upload` with a chunked,
 progress-reporting, cancellable, resumable upload protocol over the existing WebSocket.
 

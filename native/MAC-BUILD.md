@@ -37,6 +37,16 @@ fallback, but that needs Remote Login enabled on the Mac.
 
 ## Kick one off locally
 
+The current path drives the Mac over the hub capability and ssh, and pulls the zip back:
+
+```sh
+scripts/mac-build-via-hub.sh           # hub find + acquire, ssh build, scp the zip back
+# then run the publish command it prints:
+scripts/publish-native-macos.sh --from <zip> --version … --stamp … --commit … --sha256 …
+```
+
+The older directive path in the table above still works when the Mac is not reachable over ssh:
+
 ```sh
 scripts/dispatch-mac-build.sh          # sends the build directive to the Mac
 hub inbox                              # watch for the Mac's `done:` reply
@@ -62,9 +72,6 @@ The server serves `mobissh-native-macos*.zip` + `macos-latest.json` from
 `native-dist/` (`isNativeDistArtifact` in `server/index.js`). The bundle is
 **unsigned**: the page tells the user to right-click → Open past Gatekeeper.
 
-## First-run status
+## Prerequisites
 
-`scripts/mac/*` (including the build script) have never executed on a real Mac —
-they are `bash -n`-validated only. The Mac must first satisfy the prereqs in
-`scripts/mac/README.md` (full Xcode, Flutter ≥ 3.44, `flutter doctor` clean).
-Expect first-contact fixes on the first real build.
+The Mac must satisfy `scripts/mac/README.md` (full Xcode, Flutter ≥ 3.44, `flutter doctor` clean). The pipeline has produced real builds: the `native-v0.1.11` GitHub release carries a macOS zip.

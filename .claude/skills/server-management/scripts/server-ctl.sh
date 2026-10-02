@@ -13,13 +13,11 @@
 #
 # Environment:
 #   PORT          -- server port (default: 8081)
-#   BASE_PATH     -- URL base path (default: none)
 #   HEALTH_TIMEOUT -- seconds to wait for health (default: 10)
 
 set -euo pipefail
 
 PORT="${PORT:-8081}"
-BASE_PATH="${BASE_PATH:-}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-10}"
 SERVER_CMD="node server/index.js"
 LOGFILE="/tmp/mobissh-server-${PORT}.log"
@@ -122,7 +120,6 @@ cmd_start() {
 
   log "Starting server on port ${PORT}..."
   local env_args="PORT=${PORT}"
-  [[ -n "$BASE_PATH" ]] && env_args="${env_args} BASE_PATH=${BASE_PATH}"
 
   nohup bash -c "${env_args} ${SERVER_CMD}" > "$LOGFILE" 2>&1 &
   local pid=$!

@@ -1,6 +1,6 @@
 # Per-profile browser for extracted links — spec
 
-Status: draft, 2026-09-19. Owner-requested: *"add a setting to control default browser to open extracted links per profile (eg open work nvdev links in prisma and other links in Chrome)"*.
+Status: shipped in +189 (#1196, #1197). Multi-browser behaviour is proven against the fake only; device validation owed. Owner-requested: *"add a setting to control default browser to open extracted links per profile (eg open work nvdev links in prisma and other links in Chrome)"*.
 
 ## Goal
 

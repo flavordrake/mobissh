@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Use when the user says "delegate", "assign bot work", "dispatch issues", "triage open issues", "send to bot", or explicitly "/delegate". Scans open GitHub issues, classifies which are bot-delegatable, enriches them with design direction and context, and assigns via @claude comments. Analyzes prior bot failures and decomposes large issues.
+description: Use when the user says "delegate", "assign bot work", "dispatch issues", "triage open issues", "send to bot", or explicitly "/delegate". Scans open GitHub issues, classifies which are bot-delegatable, enriches them with design direction and context, and dispatches them to local develop agents. Analyzes prior bot failures and decomposes large issues.
 ---
 
 # Bot Work Delegation
@@ -10,8 +10,8 @@ description: Use when the user says "delegate", "assign bot work", "dispatch iss
 > **Process reference:** `.claude/process.md` defines the label taxonomy, workflow states,
 > and conventions that this skill must follow.
 
-Scan open issues, classify delegatability, enrich with direction, and assign to the Claude
-bot via `@claude` comments. For issues with prior failed attempts, analyze what went wrong,
+Scan open issues, classify delegatability, enrich with direction, and dispatch to local
+develop agents (`/develop`, `bot/issue-N` branches). For issues with prior failed attempts, analyze what went wrong,
 decompose if needed, and re-delegate with tighter constraints.
 
 This is the **upstream** complement to `/integrate` (which handles the downstream: gate,
@@ -49,18 +49,18 @@ agent's job is coordination, research, prototyping, and synthesis -- not data fe
 
 Spawn a `general-purpose` agent in **foreground** with the prompt from
 `.claude/agents/delegate-scout.md`. Custom subagent_types are broken in file-based
-discovery (see `.claude/rules/agents.md`). Use `model: "sonnet"`.
+discovery (see `.claude/rules/agents.md`). Do not pass a `model` parameter.
 The scout runs discovery, classification, failure analysis, and body fetching, then
 returns a summary with file paths.
 
-The scout runs these scripts and writes results to /tmp:
+The scout runs these scripts, which write to `$MOBISSH_TMPDIR` (default `/tmp/mobissh`):
 
 ```bash
-scripts/delegate-discover.sh --out /tmp/delegate-data.json
-scripts/delegate-classify.sh --data /tmp/delegate-data.json > /tmp/delegate-classified.json
+scripts/delegate-discover.sh
+scripts/delegate-classify.sh
 ```
 
-This produces `/tmp/delegate-classified.json` with every open issue classified into:
+This produces `$MOBISSH_TMPDIR/delegate-classified.json` with every open issue classified into:
 
 - **delegate** -- clear scope, bot-ready, no prior attempts
 - **already-attempted** -- has bot branches, needs failure analysis before re-delegation
@@ -78,7 +78,7 @@ for all subsequent phases.
 For each `already-attempted` issue, launch parallel Task agents:
 
 ```bash
-scripts/delegate-failure-analysis.sh <issue-number> --data /tmp/delegate-data.json
+scripts/delegate-failure-analysis.sh <issue-number> --data /tmp/mobissh/delegate-data.json
 ```
 
 Each outputs JSON with: `failure_type`, `signals`, `diff_sample`, `filenames`, `attempts`.
@@ -150,8 +150,8 @@ For each cluster, the agent must:
 If the gap requires a design decision the agent can make:
 
 1. Read the code, understand the options
-2. Sketch the approach (in the delegation comment, not as code)
-3. Specify the exact function signatures, CSS class names, HTML structure
+2. Sketch the approach (in the develop brief, not as code)
+3. Specify the exact function signatures, widget keys, provider names
 4. The bot implements to spec; it doesn't design
 
 If the gap requires research the agent cannot resolve:
@@ -176,9 +176,9 @@ coupled issues produces conflicting PRs or redundant changes.
 **How to merge:**
 1. Pick the broadest issue as the **primary** (or create a new umbrella issue)
 2. Close the others with `Merged into #N for combined delegation`
-3. Build a single `@claude` comment that addresses all merged concerns
+3. Build a single develop brief that addresses all merged concerns
 4. Acceptance criteria = union of all individual issue criteria
-5. The delegation comment must reference all merged issue numbers so the bot
+5. The brief must reference all merged issue numbers so the bot
    closes them all on merge
 
 **When NOT to merge:**
@@ -197,10 +197,11 @@ The output of gap analysis is:
 - Which issues need a new umbrella issue that captures the real gap
 - Which issues to close (superseded by newer issues or already fixed)
 
-## Phase 4: Compose delegation comments
+## Phase 4: Compose develop briefs
 
-For each issue approved for delegation, build a `@claude` comment.
-The comment IS the bot's entire instruction set -- it has no other context.
+For each issue approved for delegation, build a develop brief: the prompt the
+`/develop` agent receives alongside `.claude/agents/develop.md`. It is the agent's only
+issue-specific context.
 
 ### Label management
 
@@ -221,14 +222,14 @@ When composing a delegation, also prepare label changes per `.claude/process.md`
 relevant. The bot should only touch these files.
 
 **Acceptance criteria** -- Numbered list. Each independently verifiable. Prefer criteria
-that map to existing test assertions or can be checked with grep/tsc/eslint.
+that map to existing test assertions or can be checked with grep or `scripts/native-fast-gate.sh`.
 
 **Context** -- Code snippets from the current main branch. API signatures the bot will
 need. Patterns from adjacent code to follow. This section prevents the bot from inventing
 its own patterns. Read the actual source files to produce this -- do not guess.
 
 **Do NOT** -- Hard constraints:
-- No inline styles (CSS classes only) -- CLAUDE.md rule
+- No inline styles in `public/` HTML (CSS classes only)
 - No new abstractions for one-time operations
 - No extended timeouts or `pumpAndSettle` sleeps to paper over a race
 - No changes outside scope list
@@ -243,8 +244,6 @@ scripts/native-fast-gate.sh
 ### Template
 
 ```
-@claude
-
 **Objective:** <one sentence>
 
 **Files in scope:**
@@ -282,8 +281,6 @@ the UX changed (outdated assertions, not flaky tests). This is a second pass on 
 issue -- the feature code is already on main, only test code needs updating.
 
 ```
-@claude
-
 **Objective:** Update the tests to match the new UX from #{issue}.
 
 **Files in scope:**
@@ -319,7 +316,7 @@ and merged.
 
 ### Quality gate
 
-Before posting, verify each comment against:
+Before dispatching, verify each brief against:
 - Objective is one sentence, unambiguous
 - Every file in scope actually exists (you read it)
 - Context snippets are from current main, not stale
@@ -366,8 +363,8 @@ so the user sees decomposition details alongside other classifications.
 
 For each approved sub-issue from the decomposition:
 
-1. Write body to `/tmp/sub-issue-{parent}_{letter}.md` with full `@claude` delegation
-   instructions embedded
+1. Write body to `/tmp/sub-issue-{parent}_{letter}.md` with the full develop brief
+   embedded
 2. File: `scripts/gh-file-issue.sh --title "feat: <parent> -- <sub-concern>" --label bot --label "<type>" --body-file /tmp/sub-issue-{parent}_{letter}.md`
 3. For blocked sub-issues: `scripts/gh-ops.sh labels N --add blocked` and
    `scripts/gh-ops.sh comment N --body "Blocked by #A -- needs A's changes on main first"`
@@ -415,15 +412,14 @@ add context, or skip issues.
 
 ### Execution mode: Local develop agents
 
-Delegation now spawns local develop agents (`.claude/agents/develop.md`) instead of
-posting `@claude` comments for the remote GitHub bot. This eliminates the GitHub Actions
-dependency and provides faster, more reliable execution.
+Delegation spawns local develop agents (`.claude/agents/develop.md`), each in its own
+worktree on a `bot/issue-N` branch.
 
 For each approved issue, use the `/develop` skill:
 - Single issue: `/develop N`
-- Batch: `/develop 3,9,16` (max 3 parallel agents)
+- Batch: `/develop 3,9,16` (max 4 parallel agents)
 
-The develop agent handles: branch creation, implementation, rebase from main, test gate,
+The develop agent handles: branch creation, implementation, merge from main, test gate,
 PR creation, and issue comments. See `.claude/skills/develop/SKILL.md` for details.
 
 ### Label and housekeeping operations
@@ -436,13 +432,13 @@ scripts/gh-ops.sh comment N --body "text"        # comment on issue
 scripts/gh-ops.sh comment N --body-file /tmp/f.md # comment from file
 scripts/gh-ops.sh labels N --add X --rm Y         # add/remove labels
 scripts/gh-ops.sh close N                         # close issue
-scripts/gh-ops.sh search "query"                  # search issues
+scripts/gh-ops.sh search "query"                  # search open issues (never PRs)
 scripts/gh-ops.sh version                         # code + server version
 scripts/gh-ops.sh delegate N [--label L]          # label + audit comment + prune
 scripts/gh-ops.sh integrate PR ISSUE              # merge PR, close issue, pull main
-scripts/gh-ops.sh pr-create --head B --title T --body B --label L  # create PR
+scripts/gh-ops.sh pr-create --head B --title T --body-file F --label L  # create PR
 scripts/gh-ops.sh pr-close N --comment "reason"   # close PR with comment
-scripts/gh-ops.sh fetch-issues                    # fetch all open issues
+scripts/gh-ops.sh fetch-issues N1,N2              # fetch issue bodies to one file
 ```
 
 Common operations:
@@ -485,11 +481,8 @@ Common operations:
 
 ### Audit trail
 
-Post a delegation comment on each issue before spawning the agent:
-```bash
-scripts/gh-ops.sh comment N --body "Delegated to local develop agent. Branch: bot/issue-N"
-```
-This preserves the audit trail that `@claude` comments previously provided.
+`scripts/gh-ops.sh delegate N` posts the audit comment ("Delegated to local develop
+agent. Branch: bot/issue-N") before the agent is spawned.
 
 Report:
 ```
@@ -537,15 +530,15 @@ involves judgment calls.
 
 These come from real project history. They are not suggestions -- they are hard rules.
 
-**Bot over-engineers by default.** Every delegation comment must include explicit scope
+**Bot over-engineers by default.** Every develop brief must include explicit scope
 boundaries. "Only touch X and Y" is mandatory. Without it, the bot adds abstractions,
 refactors adjacent code, and "improves" beyond scope.
 
 **Bot CAN run the fast gate** (via `scripts/native-fast-gate.sh`). For initial
-feature work, the fast gate (tsc + eslint + unit) is sufficient. For test-fixup passes
-where the bot must update test assertions to match new UX, include headless in the
-verify step. The distinction: feature passes verify with fast gate only; test-fixup
-passes verify with fast gate + headless.
+feature work, the fast gate (rule + infra tests, analyze, flutter unit) is sufficient
+unless the change is integration-sensitive (`.claude/rules/testing.md`). For test-fixup
+passes that touch device tests, include the on-emulator tier
+(`scripts/with-fleet-emulator.sh -- scripts/native-integration-suite.sh`) in the verify step.
 
 **Previous failure context is gold.** The bot has no memory of its own branches. When
 re-delegating, include exactly what the prior attempt got wrong and why.
@@ -569,8 +562,8 @@ will conflict with the first two otherwise.
 
 **Bot can and should research.** Issues labeled `spike` that need research (API behavior,
 protocol details, browser compatibility) are delegatable as research tasks. The bot
-compiles findings into a `docs/` markdown file with source references. The delegation
-comment should specify exact research questions and require the bot to distinguish
+compiles findings into a `docs/` markdown file with source references. The brief
+should specify exact research questions and require the bot to distinguish
 facts from speculation. Only flag as human-only if research requires real-device testing,
 proprietary access, or judgment calls the bot can't make.
 
@@ -579,7 +572,8 @@ proprietary access, or judgment calls the bot can't make.
 - No open issues -- report "No open issues to delegate"
 - All issues human-only -- report classification, suggest which to tackle manually
 - Issue has no body -- classify as human-only (needs scoping first)
-- @claude comment already exists -- check if stale. If prior attempt failed, post new
-  comment with updated direction. If branch is fresh (< 24h), skip (work in progress).
+- `bot/issue-N` already exists (`git ls-remote origin bot/issue-N`) -- check if stale. If the
+  prior attempt failed, re-delegate with updated direction. If the branch is fresh (< 24h),
+  skip (work in progress).
 - Issue was filed by the bot -- treat identically to human-filed issues
 - Rate limiting -- pause, retry, report to user

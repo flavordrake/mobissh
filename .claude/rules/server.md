@@ -15,9 +15,9 @@ It includes Tailscale and serves via `tailscale serve` — no separate nginx nee
 - Git hash is baked into the image at build time (`/app/.git-hash`). No git required in container.
 - The container handles its own Tailscale connection. User accesses via HTTPS on the Tailscale endpoint.
 
-## Local server (legacy, headless tests only)
+## Local server (headless/infra use only)
 
-`scripts/server-ctl.sh` (start/stop/restart/ensure/status) manages a local Node.js process on port 8081.
+`scripts/server-ctl.sh` (start/stop/restart/ensure/status) manages a local copy of the server: a Node.js process on port 8081.
 It serves `public/` (the install page + the root redirect) and the approval/feedback
 routes. NOT for user-facing testing — use the prod container.
 Never raw `kill`, `lsof -t`, or `node server/index.js`.
@@ -36,7 +36,7 @@ shared bridge network named `mobissh`.
 ## Key rules
 
 - Before asking the user to test anything: `scripts/container-ctl.sh ensure`.
-- `server-ctl.sh` is for headless Playwright tests only, not production.
+- `server-ctl.sh` is for headless/infra use only, not production or user testing.
 - Git hash is baked at build time. Stale container = stale code. Use `container-ctl.sh status` to check.
-- `Cache-Control: no-store` on all static responses and service worker network-first.
+- `Cache-Control: no-store` on all static responses.
 - Never use `localhost` to reach Docker containers. Use Docker DNS (`test-sshd:22`, not `localhost:2222`).

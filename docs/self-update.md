@@ -1,6 +1,6 @@
 # In-app self-update (sideloaded Android) — spec
 
-Status: approved by owner 2026-09-27. Modelled on opsurface's self-update (`~/workspace/opsurface/lib/update/`), hardened where opsurface is weak.
+Status: shipped in +192 (#1214, #1215, #1216). Modelled on opsurface's self-update (`~/workspace/opsurface/lib/update/`), hardened where opsurface is weak.
 
 ## Goal
 

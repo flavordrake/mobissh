@@ -52,34 +52,17 @@ Branch diverges from main, merge conflicts at integration time.
 
 ## Test Failures
 
-### Type errors from cherry-pick
-HISTORICAL (#1205 retired the PWA build): compiled JS in `public/modules/` was gitignored, so after checkout you had to run `npx tsc` to
-regenerate. Stale compiled JS causes runtime errors that don't match source.
+### Widget test assertion fails, then a debug print shows it settled
+Futures backed by the task gateway or SharedPreferences escape `testWidgets`' fake
+clock; `pump()` never drains them. Tick `tester.runAsync` first. Fixed delays are
+load-sensitive flakes: poll with a bounded timeout instead of sleeping longer.
 
-### Playwright: element not visible
-Usually means the UI state is wrong, not that the test is broken. Check:
-- Is a modal blocking the element?
-- Is the keyboard covering it?
-- Is the element in a hidden panel?
-
-### Playwright: timeout waiting for selector
-- Check selector is correct (DOM may have changed)
-- Use `page.locator()` not `page.waitForSelector()`
-- Check if element is in a different iframe or shadow DOM
-
-### Vitest: module not found
-- Check import extensions (must be `.js` not `.ts`)
-- Check that `vi.stubGlobal()` runs before dynamic import
-- Check the runner config for path aliases
-
-## CSS Regressions
-- Never use `!important` — fix specificity instead
-- Check all three test projects (pixel-7, iphone-14, chromium)
-- Mobile layout bugs often come from `vh` vs `dvh` or missing safe-area-insets
+### Headless green, broken on device
+The fast gate excludes `native/integration_test/`. Changes to the session state
+machine, connect/auth, reconnect, SFTP or the isolate IPC need the on-emulator tier
+(`.claude/rules/testing.md`).
 
 ## Security
-- NEVER store passwords/keys in localStorage — use the vault
-- NEVER log sensitive data to console
-- NEVER send credentials over ws:// (only wss://)
-- The vault uses 600k PBKDF2 iterations — don't reduce this
-- AES-GCM requires unique IVs — always generate fresh `crypto.getRandomValues(new Uint8Array(12))`
+- NEVER store passwords/keys in SharedPreferences or plain files — use `secrets_store.dart`
+- NEVER log sensitive data (telemetry rings and bug reports leave the device)
+- AES-GCM requires unique nonces — never reuse one across encryptions

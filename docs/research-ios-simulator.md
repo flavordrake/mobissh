@@ -1,5 +1,7 @@
 # iOS Simulator Testing Setup Research
 
+> History: written against the retired PWA (xterm.js, the WebSocket bridge, `src/`, Playwright/Appium), which #1205 removed. Read "current" here as "current when written"; the native app is the product (see README.md and developer.md).
+
 Research spike for issue #9: iOS Simulator testing parallel to the Android emulator approach.
 
 ## 1. Tools Needed

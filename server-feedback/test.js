@@ -20,6 +20,10 @@ const http = require('http');
 
 const TMP_UPLOADS = fs.mkdtempSync(path.join(os.tmpdir(), 'mobissh-feedback-test-'));
 process.env.UPLOADS_DIR = TMP_UPLOADS;
+// The guard (server/feedback-guard.js, #1115) rejects every upload without the
+// shared key, so the round-trips below send it.
+const TEST_KEY = 'test-feedback-key';
+process.env.MOBISSH_FEEDBACK_KEY = TEST_KEY;
 
 const { server } = require('./index.js');
 const store = require('../server/feedback-store.js');
@@ -40,7 +44,7 @@ function post(route, body, headers) {
   return new Promise((resolve, reject) => {
     const req = http.request(baseUrl + route, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(headers || {}) },
+      headers: { 'Content-Type': 'application/json', 'X-MobiSSH-Key': TEST_KEY, ...(headers || {}) },
     }, (res) => {
       let out = '';
       res.on('data', (c) => { out += c; });

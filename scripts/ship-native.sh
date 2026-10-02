@@ -78,6 +78,10 @@ source "$(dirname "$0")/lib/next-build-version.sh"
 # mid-build leaves a bumped pubspec with no artifact (2026-09-13).
 source "$(dirname "$0")/lib/disk-guard.sh"
 disk_guard "ship-native"
+# Fleet doc-drift standard (#1240): a ship refuses to go out with docs that
+# name missing paths or scripts nothing documents. Before the bump, like the
+# disk preflight, so a refusal leaves pubspec untouched.
+"$(dirname "$0")/doc-drift.sh" --block
 read_version() { grep -E '^version:' | head -1 | awk '{print $2}'; }
 
 CUR_VERSION="$(read_version < "$PUBSPEC")"

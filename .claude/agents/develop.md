@@ -21,13 +21,12 @@ They are in `.claude/skills/develop/reference/`:
 
 | File | Contents |
 |---|---|
-| `project-context.md` | Architecture, module map, DI pattern, boot sequence |
-| `typescript.md` | Strict mode, import conventions, type patterns, common mistakes |
-| `testing.md` | Test pyramid, Vitest/Playwright patterns, fixture usage, pitfalls |
-| `eslint-resolution.md` | Lint rule fixes, config structure, semgrep rules |
-| `ux-design.md` | CSS custom properties, mobile-first layout, theme system, touch targets |
+| `project-context.md` | Native app layout (`native/lib/`), flterm/libghostty, isolate gateway, server role |
+| `ux-design.md` | The retired PWA's UX rules — history, but still the spec the native app duplicates |
 | `git-integration.md` | Branch naming, merge strategy, small diff techniques |
 | `lessons-learned.md` | Real failure patterns from project history — read this carefully |
+
+Test gates and the integration-test contract are in `.claude/rules/testing.md`.
 
 **Read `lessons-learned.md` and `project-context.md` FIRST.** They prevent the most
 common failure modes (over-engineering, scope creep, wrong approach).
@@ -71,7 +70,7 @@ main-repo absolute path either; that gates main's code, not your changes.
    .claude/skills/develop/reference/project-context.md
    .claude/skills/develop/reference/lessons-learned.md
    ```
-   Plus the topic-specific reference relevant to your issue (typescript.md, testing.md, etc.)
+   Plus `.claude/rules/testing.md`, and `ux-design.md` for UI work.
 4. Create and switch to branch:
    ```bash
    git checkout -b bot/issue-{N} origin/main
@@ -205,9 +204,9 @@ Write findings to the TRACE (not stdout — the TRACE is the artifact):
   - If false positive: log as "accepted — {rationale}"
 
 **Do NOT block on findings.** The agent's job is to capture them in the TRACE,
-not necessarily resolve them. If a finding is trivially fixable (e.g., missing
-escHtml), fix it in this cycle. If it requires architectural discussion (e.g.,
-innerHTML pattern), log it and continue.
+not necessarily resolve them. If a finding is trivially fixable (e.g., a secret
+reaching a log line), fix it in this cycle. If it requires architectural discussion,
+log it and continue.
 
 The orchestrator harvests security findings from TRACEs and can optionally
 spawn an additional development cycle focused on addressing them, or aggregate
@@ -257,10 +256,9 @@ Check:
 - Lines changed < 200? If not, you're over-engineering.
 - Files changed <= 5? If not, scope creep.
 - Every changed file is in scope?
-- No inline styles, no `force: true` test hacks?
+- No skipped tests or fixed-delay sleeps added to make a test pass?
 - **New tests exist and went from fail→pass?**
 - **Existing tests updated where behavior changed?**
-- Import extensions use `.js`? Types use `import type`?
 
 **7. Evaluate**
 - All tests green + self-review clean → Commit
@@ -414,14 +412,12 @@ TDD_ANALYSIS: <bug-fix|feature|refactor> / <full|smoketest|exploratory>
 - NEVER force-push. Always merge from main, never rebase.
 - NEVER skip tests or use --no-verify.
 - NEVER modify files outside the stated scope without explaining why.
-- NEVER add inline styles — use CSS classes and custom properties.
-- NEVER add `force: true` or extended timeouts to Playwright tests.
-- NEVER store sensitive data in plaintext (localStorage, console.log, etc.)
+- NEVER add inline styles to HTML in `public/` — use CSS classes.
+- NEVER add extended timeouts or fixed sleeps to make a test pass — poll with a bounded timeout.
+- NEVER store or log sensitive data in plaintext (SharedPreferences, debugPrint, telemetry); secrets go through `secrets_store.dart`.
 - Keep diffs small. If your change exceeds 200 lines, you're over-engineering.
 - If cycle 1 produces >5 file changes, stop and report scope concern in failure summary.
 - Read existing code patterns before writing. Match the style.
 - The commit message references the issue number with (#N).
 - Tests are NOT optional. A PR without test coverage for its changes is not integration-ready.
-- Use `.js` extensions in all TypeScript imports.
-- Use `import type` for type-only imports.
 - Merge from main before every test run to minimize integration delta.

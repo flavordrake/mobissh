@@ -1,5 +1,7 @@
 # Research: TUI Coding Agent Rendering/Input Issues Through xterm.js
 
+> History: written against the retired PWA (xterm.js, the WebSocket bridge, `src/`, Playwright/Appium), which #1205 removed. Read "current" here as "current when written"; the native app is the product (see README.md and developer.md).
+
 Issue: #7
 Date: 2026-03-08
 Status: Research spike (no code changes)

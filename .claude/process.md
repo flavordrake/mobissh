@@ -29,10 +29,10 @@ with GitHub issues and PRs.
 
 | Label | Color | Applied by | Meaning |
 |---|---|---|---|
-| `bot` | `1d76db` | `/delegate` | Bot assigned via `@claude` comment, work expected |
+| `bot` | `1d76db` | `/delegate` | Delegated to a local develop agent, work expected |
 | `divergence` | `e99695` | `/integrate` | Bot attempted but failed; needs re-scoping or human intervention |
 
-Lifecycle: `/delegate` applies `bot` when posting `@claude` comment. `/integrate` swaps
+Lifecycle: `/delegate` applies `bot` (`scripts/gh-ops.sh delegate N`). `/integrate` swaps
 `bot` -> `divergence` on failure. `/delegate` swaps `divergence` -> `bot` on re-delegation
 with new direction.
 
@@ -78,8 +78,8 @@ comment linking the earlier one) or determine they're actually independent (remo
 ### `spike` means research-first, not human-only
 
 An issue labeled `spike` needs investigation before code. The research itself may be
-bot-delegatable if it has concrete goals (e.g., "read the xterm.js ImageAddon source and
-document which escape sequences it handles"). The bot can do web research, code analysis,
+bot-delegatable if it has concrete goals (e.g., "read the libghostty image-protocol source
+and document which escape sequences it handles"). The bot can do web research, code analysis,
 and API investigation. What it cannot do is form subjective UX judgments or test on
 physical devices.
 
@@ -87,17 +87,22 @@ physical devices.
 
 Applied when acceptance criteria cannot be verified by the fast gate alone.
 `/integrate` must not merge `device`-labeled PRs without emulator or manual validation.
-`/delegate` includes `device` in the delegation comment so the bot knows its PR will
+`/delegate` includes `device` in the develop brief so the agent knows its PR will
 face additional scrutiny.
 
 ### Bot delegation lifecycle
 
+Bot work is done by LOCAL develop agents (`/develop N`, `.claude/agents/develop.md`),
+each in its own git worktree, on a `bot/issue-{N}` branch managed by
+`scripts/bot-branch.sh {create|commit|pr|ship} N`. The `@claude` GitHub Action
+(`.github/workflows/claude.yml`) still exists but is not part of this lifecycle.
+
 ```
 open issue
-  -> /delegate classifies as bot-ready
-  -> /delegate posts @claude comment, applies `bot` label
-  -> bot creates branch claude/issue-{N}-{date}-{time}
-  -> /integrate discovers branch, runs fast gate
+  -> /delegate classifies as bot-ready, applies `bot` label (gh-ops.sh delegate N)
+  -> /develop N spawns a develop agent in a worktree
+  -> agent creates bot/issue-{N}, gates in its worktree, pushes, opens a PR
+  -> /integrate discovers the PR, runs scripts/integrate-gate.sh
   -> fast gate pass -> human reviews UX/approach
     -> UX approved, headless tests need updating -> test-fixup pass (see below)
     -> UX approved, tests pass -> merge, close issue
@@ -113,11 +118,11 @@ When a bot PR passes the fast gate but headless tests fail because the UX change
 
 1. `/integrate` reviews the feature, approves the UX approach
 2. We merge the feature to main (or the bot merges from main)
-3. `/delegate` posts a **test-fixup** `@claude` comment on the same issue:
+3. A **test-fixup** develop agent is spawned on the same issue with a brief:
    - Objective: merge from main, run headless tests, fix failures to match new UX
    - Scope: test files only -- no application code changes
    - Verify: `scripts/native-fast-gate.sh`
-4. Bot creates a new branch, fixes test assertions, runs full gate including headless
+4. The agent fixes test assertions on a fresh branch and runs the gate
 5. `/integrate` validates the test-fixup branch (headless must pass)
 
 This is NOT a re-delegation (no `divergence` label swap). The feature was approved;
@@ -157,7 +162,7 @@ Always push the branch — the user reviews to provide guidance or rethink the a
 
 ### Delegation template requirements
 
-Every `@claude` comment must include:
+Every develop brief must include:
 
 1. **Objective** -- one sentence, what to achieve
 2. **Files in scope** -- explicit list of files to touch (verified to exist)
@@ -167,23 +172,25 @@ Every `@claude` comment must include:
 6. **Test expectations** -- what tests should be written (smoketest, regression, behavior)
 7. **Verify** -- exact command sequence: `scripts/native-fast-gate.sh`
 
-The bot's entire instruction set is this comment. It has no other context, no memory of
-prior attempts, and no access to conversation history.
+The agent's instruction set is this brief plus `.claude/agents/develop.md`. It has no
+memory of prior attempts beyond what the brief and `memory/bot-attempts.md` give it.
 
 ### Context freshness in delegation
 
-The bot checks out from main HEAD at pickup time. It operates in a single shot: no
-mid-task rebase, no monitoring of main during execution. To mitigate drift:
+The worktree is created from HEAD at spawn time (commit infra changes first). To
+mitigate drift:
 
-- Delegation comments include rebase-before-commit instruction when relevant
+- Briefs include a rebase-before-commit instruction when relevant
 - Overlapping modules are sequenced, not delegated concurrently
 - `/delegate` detects file overlap across issues and applies `conflict` for resolution
 
 ### PR merge conventions
 
-`/integrate` merges with `--squash --delete-branch`. For orphaned branches (no PR),
-create a PR first with `--label bot`, then merge. This ensures every bot contribution
-has a PR record.
+`/integrate` merges with `scripts/gh-ops.sh integrate PR N`, which defaults to a merge
+commit (`--merge`; `--squash`/`--rebase` override) and refuses integration-sensitive PRs
+unless `--integration-verified` is passed after the on-emulator suite ran. For orphaned
+branches (no PR), create a PR first with `--label bot`, then merge. This ensures every
+bot contribution has a PR record.
 
 ### Issue closing
 
@@ -216,7 +223,7 @@ Run once to set up the repo (idempotent):
 
 ```bash
 # New labels
-gh label create bot --description "Bot assigned via @claude" --color "1d76db"
+gh label create bot --description "Delegated to a local develop agent" --color "1d76db"
 gh label create divergence --description "Bot attempted, needs re-scoping" --color "e99695"
 gh label create composite --description "Needs decomposition into sub-issues" --color "d4c5f9"
 gh label create spike --description "Next step is research, not code" --color "fbca04"
