@@ -116,7 +116,7 @@ class _FakeTarget implements FileDownloadTarget {
 }
 
 /// Injectable text fetcher: returns canned text without touching SFTP.
-class _CannedTextFetcher implements TextFileFetcher {
+class _CannedTextFetcher extends TextFileFetcher {
   _CannedTextFetcher(this.text);
   final String text;
   SftpEntry? lastEntry;

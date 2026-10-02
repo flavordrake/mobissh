@@ -348,6 +348,98 @@ void main() {
       await h.settle();
       expect(h.requests, isEmpty);
     });
+
+    // #1227 item 2: `allowMalformed: true` turned every non-UTF-8 byte into
+    // U+FFFD and a Save then wrote the replacement chars over the server's
+    // bytes — including lines the user never touched. The file may still be
+    // VIEWED (lossy), but it must not be EDITABLE.
+    test('#1227 Latin-1 bytes: fetch() still views (lossy); fetchContent() '
+        'marks the file read-only with the explanation', () async {
+      const latin1 = [0x63, 0x61, 0x66, 0xE9, 0x0A]; // "café\n" in Latin-1
+      final f = fetcher.fetchContent(h.sid, _txtEntry);
+      await h.awaitRequests(1);
+      final rid0 = h.requests[0].requestId;
+      h.chunk(rid0, latin1, 0, total: 5);
+      h.done(rid0, 5);
+      final content = await f;
+      expect(content.text, 'caf�\n', reason: 'viewing stays lossy');
+      expect(content.editable, isFalse);
+      expect(content.readOnlyReason, notUtf8ReadOnlyMessage);
+
+      final v = fetcher.fetch(h.sid, _txtEntry);
+      await h.awaitRequests(2);
+      final rid1 = h.requests[1].requestId;
+      h.chunk(rid1, latin1, 0, total: 5);
+      h.done(rid1, 5);
+      expect(await v, 'caf�\n', reason: 'the read-only viewers still open it');
+    });
+
+    test('#1227 BOM + CRLF + 4-byte emoji + CJK round-trips: editable, the '
+        'BOM is kept out of the text but remembered', () async {
+      final f = fetcher.fetchContent(h.sid, _txtEntry);
+      await h.awaitRequests(1);
+      final rid = h.requests.single.requestId;
+      const body = '# T\r\n\r\ncafé ✓ 日本語 🎉\r\n';
+      final src = Uint8List.fromList([0xEF, 0xBB, 0xBF, ...utf8.encode(body)]);
+      h.chunk(rid, src, 0, total: src.length);
+      h.done(rid, src.length);
+      final content = await f;
+      expect(content.editable, isTrue);
+      expect(content.hasBom, isTrue);
+      expect(content.text, body, reason: 'CRLF preserved, BOM not in the text');
+      expect(utf8.encode('﻿${content.text}'), src,
+          reason: 'BOM + text re-encodes to the original bytes exactly');
+    });
+  });
+
+  group('decodeTextFile (#1227 strict round-trip)', () {
+    TextFileContent d(List<int> b) => decodeTextFile(Uint8List.fromList(b));
+
+    test('every malformed sequence class is viewable but NOT editable', () {
+      final cases = <String, List<int>>{
+        'Latin-1 é': [0x63, 0x61, 0x66, 0xE9],
+        'lone continuation byte': [0x41, 0x80, 0x42],
+        'truncated 3-byte sequence': [0x41, 0xE2, 0x82],
+        'overlong NUL': [0xC0, 0x80],
+        'encoded surrogate': [0xED, 0xA0, 0x80],
+        'stray 0xFF': [0x41, 0xFF],
+      };
+      for (final e in cases.entries) {
+        final c = d(e.value);
+        expect(c.editable, isFalse, reason: e.key);
+        expect(c.readOnlyReason, notUtf8ReadOnlyMessage, reason: e.key);
+        expect(c.text, isNotEmpty, reason: '${e.key}: still viewable');
+      }
+    });
+
+    test('valid UTF-8 (ASCII, 2/3/4-byte, CRLF, interior U+FEFF) is editable '
+        'and re-encodes byte-exact', () {
+      const text = 'a\r\nré ✓ 日本語 🎉 ﻿ mid\n';
+      final c = d(utf8.encode(text));
+      expect(c.editable, isTrue);
+      expect(c.readOnlyReason, isNull);
+      expect(c.hasBom, isFalse);
+      expect(c.text, text);
+      expect(utf8.encode(c.text), utf8.encode(text));
+    });
+
+    test('a leading BOM is remembered and kept out of the text', () {
+      final c = d([0xEF, 0xBB, 0xBF, 0x41, 0x0D, 0x0A]);
+      expect(c.hasBom, isTrue);
+      expect(c.text, 'A\r\n');
+      expect(c.editable, isTrue);
+      final bomOnly = d([0xEF, 0xBB, 0xBF]);
+      expect(bomOnly.hasBom, isTrue);
+      expect(bomOnly.text, '');
+      expect(bomOnly.editable, isTrue);
+    });
+
+    test('an empty file is editable', () {
+      final c = d(const []);
+      expect(c.editable, isTrue);
+      expect(c.hasBom, isFalse);
+      expect(c.text, '');
+    });
   });
 
   group('ProxySftpImageFetcher', () {

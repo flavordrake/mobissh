@@ -10,11 +10,21 @@
 //   up_hole.bin.part   65,536 formula bytes with 32,768..49,151 zeroed
 //   up_hole2.bin.part  65,536 formula bytes with 16,384..32,767 zeroed
 //
-// dartssh2's writeBytes sends each 64 KiB chunk as concurrent 16 KiB writes, so
-// a cut upload can leave a `.part` whose SIZE spans never-written bytes.
-// `uploadFile` resumes from the `.part` size and publishes the hole. The
-// result must equal the formula and the `.part` must be gone. Known red until
-// #1228 is fixed (BASELINE.manifest).
+// dartssh2 pipelines 16 KiB writes, so a cut upload can leave a `.part` whose
+// SIZE spans never-written bytes. `uploadFile` used to resume from the `.part`
+// size and publish the hole. Since the #1228 fix a `.part` is resumed only when
+// its content is read back and found equal to the source prefix; the result
+// must equal the formula and the `.part` must be gone.
+//
+// Further #1228 cases on the same session:
+//   - a stale `.part` with DIFFERENT content (an edited same-name file) →
+//     the published file equals the NEW source exactly (no splice);
+//   - the whole-file `sftpUpload` (the editor save path, #1227) over an
+//     existing file → exact content, server size == n, no `.part` left;
+//   - a FORCED rename failure: the destination is a non-empty DIRECTORY, so
+//     posix-rename of the `.part` over it fails → the upload reports an
+//     error, the directory and its child are intact, and the complete `.part`
+//     is kept (never deleted to make room).
 //
 //   byte i = (i * 31 + i ~/ 251) & 0xff  (shared with the setup script)
 //
@@ -86,6 +96,8 @@ String? _requestIdOf(SshTaskEvent e) => switch (e) {
   SftpDownloadDoneEvent() => e.requestId,
   SftpUploadDoneEvent() => e.requestId,
   SftpListingEvent() => e.requestId,
+  SftpMkdirDoneEvent() => e.requestId,
+  SftpCreateFileDoneEvent() => e.requestId,
   _ => null,
 };
 
@@ -108,6 +120,30 @@ Future<T> _await<T extends SshTaskEvent>(
   expect(settled, isTrue, reason: '$requestId never settled');
   expect(err, isNull, reason: '$requestId errored: ${err?.message}');
   return done!;
+}
+
+/// The mirror of [_await]: the request must END IN AN ERROR (the forced
+/// rename-failure case). Returns the error's message.
+Future<String> _awaitError(
+  WidgetTester tester,
+  SessionEntry entry,
+  String requestId,
+  void Function() send,
+) async {
+  SftpUploadDoneEvent? done;
+  SftpErrorEvent? err;
+  final sub = entry.proxy.sftpEvents.listen((e) {
+    if (e is SftpUploadDoneEvent && e.requestId == requestId) done = e;
+    if (e is SftpErrorEvent && e.requestId == requestId) err = e;
+  });
+  send();
+  final settled =
+      await _pumpUntil(tester, () => done != null || err != null, maxSlices: 240);
+  await sub.cancel();
+  expect(settled, isTrue, reason: '$requestId never settled');
+  expect(done, isNull,
+      reason: '$requestId reported SUCCESS although the publish must fail');
+  return err!.message;
 }
 
 void main() {
@@ -237,8 +273,141 @@ void main() {
         );
       }
 
+      // Stale `.part` with DIFFERENT content: seed it through the whole-file
+      // upload (which itself publishes atomically), then upload the formula
+      // over it. The result must be the NEW source, byte for byte — no splice.
+      {
+        const n = 94915;
+        const name = 'stale.bin';
+        final want = _formula(n);
+        final stale = Uint8List(65536);
+        for (var i = 0; i < stale.length; i++) {
+          stale[i] = (i * 17 + 5) & 0xff;
+        }
+        final seedId = 'it1228#seed${seq++}';
+        await _await<SftpUploadDoneEvent>(
+          tester,
+          entry,
+          seedId,
+          () => entry.proxy.sftpUpload(
+            requestId: seedId,
+            path: '$_root/$name.part',
+            bytes: stale,
+          ),
+        );
+        final seeded = await serverSize(_root, '$name.part');
+        record('$name stale .part seeded',
+            seeded == stale.length ? null : '$name.part seed size $seeded');
+        final src = File('${local.path}/src_$name');
+        await src.writeAsBytes(want, flush: true);
+        final id = 'it1228#ups${seq++}';
+        await _await<SftpUploadDoneEvent>(
+          tester,
+          entry,
+          id,
+          () => entry.proxy.sftpUploadFile(
+            requestId: id,
+            localPath: src.path,
+            remotePath: '$_root/$name',
+          ),
+        );
+        final size = await serverSize(_root, name);
+        record('$name server size',
+            size == n ? null : '$name server size: got $size, want $n');
+        final part = await serverSize(_root, '$name.part');
+        record('$name .part removed',
+            part == null ? null : '$name .part still present ($part bytes)');
+        final got = await downloadToDisk('$_root/$name');
+        record('$name readback (stale head must not survive)',
+            _diff('$name readback', got, want));
+      }
+
+      // Whole-file upload (the editor save, #1227) over an existing file:
+      // atomic `.part` → verify → rename. Exact content, no `.part` left.
+      {
+        const n = 32769;
+        const name = 'whole.bin';
+        final want = _formula(n);
+        final first = Uint8List(5000)..fillRange(0, 5000, 0x41);
+        for (final (label, bytes) in [('old', first), ('new', want)]) {
+          final id = 'it1228#upw$label${seq++}';
+          await _await<SftpUploadDoneEvent>(
+            tester,
+            entry,
+            id,
+            () => entry.proxy.sftpUpload(
+              requestId: id,
+              path: '$_root/$name',
+              bytes: bytes,
+            ),
+          );
+        }
+        final size = await serverSize(_root, name);
+        record('$name server size',
+            size == n ? null : '$name server size: got $size, want $n');
+        final part = await serverSize(_root, '$name.part');
+        record('$name no .part',
+            part == null ? null : '$name .part left behind ($part bytes)');
+        final got = await downloadToDisk('$_root/$name');
+        record('$name readback', _diff('$name readback', got, want));
+      }
+
+      // FORCED rename failure: the destination is a non-empty directory, so
+      // the server refuses to rename the `.part` over it. The upload must
+      // report an error, the directory + its child must be intact, and the
+      // complete `.part` must still be there (never deleted to make room).
+      {
+        const n = 32769;
+        const name = 'asdir.bin';
+        final want = _formula(n);
+        final mk = 'it1228#mkdir${seq++}';
+        await _await<SftpMkdirDoneEvent>(
+          tester,
+          entry,
+          mk,
+          () => entry.proxy.sftpMkdir(requestId: mk, path: '$_root/$name'),
+        );
+        final cf = 'it1228#touch${seq++}';
+        await _await<SftpCreateFileDoneEvent>(
+          tester,
+          entry,
+          cf,
+          () => entry.proxy.sftpCreateFile(
+            requestId: cf,
+            path: '$_root/$name/keep',
+          ),
+        );
+        final src = File('${local.path}/src_$name');
+        await src.writeAsBytes(want, flush: true);
+        final id = 'it1228#upd${seq++}';
+        final message = await _awaitError(
+          tester,
+          entry,
+          id,
+          () => entry.proxy.sftpUploadFile(
+            requestId: id,
+            localPath: src.path,
+            remotePath: '$_root/$name',
+          ),
+        );
+        debugPrint('HOLE1228 forced rename failure surfaced as: $message');
+        record(
+          '$name error names both paths',
+          message.contains('$_root/$name.part') &&
+                  message.contains('replace $_root/$name ')
+              ? null
+              : '$name error message does not name the .part: $message',
+        );
+        final kept = await serverSize('$_root/$name', 'keep');
+        record('$name original (dir child) intact',
+            kept == null ? '$name/keep is gone — the original was lost' : null);
+        final part = await serverSize(_root, '$name.part');
+        record('$name complete .part kept',
+            part == n ? null : '$name.part: got $part bytes, want $n');
+      }
+
       expect(failures, isEmpty,
-          reason: 'resume over a holed .part published wrong bytes:\n'
+          reason: '#1228 upload correctness failures:\n'
               '${failures.join('\n')}');
 
       final notifier = container.read(sessionsProvider.notifier);
