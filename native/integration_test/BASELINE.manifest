@@ -33,7 +33,7 @@
 #   elsewhere | <file>_test.dart       | <the runner that owns it>
 # No field may contain a `|`. Every known-red needs BOTH an issue and a reason.
 
-accepted  | 20260920T155254Z | expect=81 | known-red=11 | elsewhere=1
+accepted  | 20260920T155254Z | expect=82 | known-red=10 | elsewhere=1
 
 # --- not this suite's to run ------------------------------------------------
 # Cross-checked against the test's own `// Runner:` header: a test declares its
@@ -42,14 +42,12 @@ accepted  | 20260920T155254Z | expect=81 | known-red=11 | elsewhere=1
 # unresolvable, so it was a permanent fake red.
 elsewhere | desktop_smoke_test.dart | scripts/desktop-smoke.sh
 
-# --- known red, each with the issue that owns it (11) -----------------------
-# G7 REAL PRODUCT BUGS (4) — these stay red until the product is fixed. Do NOT
+# --- known red, each with the issue that owns it (10) -----------------------
+# G7 REAL PRODUCT BUGS (3) — these stay red until the product is fixed. Do NOT
 # reclassify one to make a number look better; the baseline attributed them.
 known-red | attention_notification_post_test.dart | #1188 | OSC 9 lands inside #851's 1500ms reconnect-replay window, so the attention post is suppressed
 known-red | sftp_favorites_test.dart | #948 | regression guard for an open bug: reopening favorites while the cwd IS the favorite renders favorites-empty
 known-red | golden_flow_tui_test.dart | #1200 | the gutter long-press-drag produces no Clipboard.setData at all; mechanism undetermined
-# #1228 PRODUCT BUG — split out of the #1225 round-trip test on the same fixture.
-known-red | sftp_resume_hole_1228_test.dart | #1228 | uploadFile resumes from a .part's SIZE, so a lost concurrent 16 KiB write inside it is published as a hole of zeros
 # G4 STALE (3) — assert the fork's BAKED highlight background, which #1074 removed
 # on purpose when the wash became a live widget layer. Behaviour is fine; the
 # observation point moved. Re-point at GhosttyWashLayer / DetectionStyleResolver.
@@ -64,7 +62,7 @@ known-red | mermaid_markdown_render_test.dart | #1201 | seeds the fixture before
 known-red | profile_color_picker_1030_test.dart | #1101 | G6b: ensureVisible races the keyboard animation and warnIfMissed:false swallows the miss
 known-red | wrap_join_copy_test.dart | #1101 | G6b: anchors the gutter band at 5% of box height, which is viewport row 1 at this device's geometry, so the head row is outside it
 
-# --- expected to pass (81) --------------------------------------------------
+# --- expected to pass (82) --------------------------------------------------
 # Every one of these passed on clean main against the fleet device. Any of them
 # going red in a PR is signal about the PR.
 expect    | active_session_reconnect_test.dart
@@ -133,6 +131,7 @@ expect    | service_outlives_ui_reconnect_test.dart
 expect    | sftp_browse_smoke_test.dart
 expect    | sftp_bytes_roundtrip_1225_test.dart
 expect    | sftp_create_file_1222_test.dart
+expect    | sftp_resume_hole_1228_test.dart
 expect    | sftp_upload_roundtrip_test.dart
 expect    | sftp_upload_test.dart
 expect    | shell_bytes_smoke_test.dart
