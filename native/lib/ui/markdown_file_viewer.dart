@@ -20,6 +20,10 @@
 //     write chain from #892). A failed save leaves a PERSISTENT inline error
 //     with Retry (never a vanishing toast) and keeps the buffer; leaving the
 //     route with unsaved edits prompts first (#842 capture-before-clear).
+//     #1227: a file whose bytes don't survive a strict UTF-8 round-trip opens
+//     READ-ONLY — Edit is disabled and a persistent banner says why, because a
+//     Save would rewrite bytes the user never touched. A leading BOM is kept
+//     out of the buffer and written back on Save; CRLF passes through as is.
 //
 // State is per-route (sessionId + entry) — no global viewer state, so multiple
 // sessions don't share preview state.
@@ -98,6 +102,14 @@ class _MarkdownFileViewerScreenState
   /// a vanishing toast is not acceptable for an action the user must re-take.
   String? _saveError;
 
+  /// #1227: non-null when the bytes don't round-trip through strict UTF-8 —
+  /// the file is viewable but Edit is disabled, with this text as the banner.
+  String? _readOnlyReason;
+
+  /// #1227: the file began with a UTF-8 BOM. It is not in [_content] (Dart's
+  /// decoder drops it); Save writes it back so the bytes stay exact.
+  bool _hasBom = false;
+
   /// #1197 R10: a link inside a viewed file opens in the browser chosen for
   /// the session the file was opened over — same rule, same seam as a link
   /// extracted from that session's terminal. An injected [openLink] (tests)
@@ -132,7 +144,7 @@ class _MarkdownFileViewerScreenState
   Future<void> _fetch() async {
     final fetcher = ref.read(textFileFetcherProvider);
     try {
-      final text = await fetcher.fetch(
+      final loaded = await fetcher.fetchContent(
         widget.sessionId,
         widget.entry,
         onProgress: (received, total) {
@@ -145,7 +157,9 @@ class _MarkdownFileViewerScreenState
       );
       if (!mounted) return;
       setState(() {
-        _content = text;
+        _content = loaded.text;
+        _readOnlyReason = loaded.readOnlyReason;
+        _hasBom = loaded.hasBom;
         _phase = _Phase.ready;
       });
     } catch (e) {
@@ -192,9 +206,14 @@ class _MarkdownFileViewerScreenState
       _saveError = null;
     });
     try {
+      // #1227: U+FEFF encodes to EF BB BF — the BOM the file arrived with.
       await ref
           .read(textFileWriterProvider)
-          .write(widget.sessionId, widget.entry.path, text);
+          .write(
+            widget.sessionId,
+            widget.entry.path,
+            _hasBom ? '﻿$text' : text,
+          );
       if (!mounted) return;
       setState(() {
         _content = text;
@@ -316,7 +335,9 @@ class _MarkdownFileViewerScreenState
               tooltip: _raw ? 'Show rendered' : 'Show raw source',
               onPressed: _toggleRaw,
             ),
-          // #859: the third view mode — edit the source in place.
+          // #859: the third view mode — edit the source in place. #1227:
+          // disabled (the banner below the bar says why) when the bytes
+          // would not survive a round-trip through the editor.
           if (_phase == _Phase.ready)
             IconButton(
               key: const Key('markdown-edit-toggle'),
@@ -324,7 +345,7 @@ class _MarkdownFileViewerScreenState
                 _editing ? Icons.edit_off_outlined : Icons.edit_outlined,
               ),
               tooltip: _editing ? 'Stop editing' : 'Edit',
-              onPressed: _toggleEdit,
+              onPressed: _readOnlyReason == null ? _toggleEdit : null,
             ),
           // #855: one-tap return to the terminal (collapses the whole
           // browser/viewer stack) — conventional top-right close, rightmost.
@@ -356,7 +377,7 @@ class _MarkdownFileViewerScreenState
             onRetry: () => unawaited(_save()),
           );
         }
-        return _raw
+        final document = _raw
             ? _RawContent(text: text)
             : _RenderedContent(
                 text: text,
@@ -364,7 +385,54 @@ class _MarkdownFileViewerScreenState
                 sessionId: widget.sessionId,
                 mdPath: widget.entry.path,
               );
+        final reason = _readOnlyReason;
+        if (reason == null) return document;
+        // #1227: the explanation sits right under the (disabled) Edit action
+        // and stays as long as the document does — never a toast.
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _ReadOnlyBanner(reason: reason),
+            Expanded(child: document),
+          ],
+        );
     }
+  }
+}
+
+/// Persistent "why can't I edit this" banner (#1227), pinned under the AppBar
+/// where the disabled Edit action is.
+class _ReadOnlyBanner extends StatelessWidget {
+  const _ReadOnlyBanner({required this.reason});
+
+  final String reason;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      key: const Key('markdown-viewer-edit-disabled'),
+      color: theme.colorScheme.secondaryContainer,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(
+        children: [
+          Icon(
+            Icons.edit_off_outlined,
+            size: 18,
+            color: theme.colorScheme.onSecondaryContainer,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              reason,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSecondaryContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

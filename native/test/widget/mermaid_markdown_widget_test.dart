@@ -39,7 +39,7 @@ SshSessionController _stubControllerFactory() {
   );
 }
 
-class _CannedTextFetcher implements TextFileFetcher {
+class _CannedTextFetcher extends TextFileFetcher {
   _CannedTextFetcher(this.text);
   final String text;
 
