@@ -41,6 +41,7 @@ function maxImageDecodedBytes() {
 const MAX_BYTE_EVENTS = 8192;
 const MAX_SCROLL_EVENTS = 8192;
 const MAX_SENT_SGR_EVENTS = 8192;
+const MAX_TERM_REPLY_EVENTS = 8192;
 
 /** The routes this store handles (also used by the prod proxy gate). */
 const FEEDBACK_ROUTES = [
@@ -208,7 +209,7 @@ function saveNativeCrash(rawBody, reportDir) {
 
 /** Save a bug-report payload. Returns the meta object written to disk. */
 function saveBugReport(data, reportDir) {
-  const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, sentSgrTrace, grid, frameStats } = data;
+  const { screenshot, frames, logs, title, comment, userAgent, url, version, connectLog, gestureLog, byteTrace, scrollTrace, sentSgrTrace, grid, frameStats, settings, source, lifecycleLog, controlModeTrace, detectionGeom, termReplyTrace } = data;
   const ts = stampNow();
   fs.mkdirSync(reportDir, { recursive: true });
 
@@ -330,6 +331,21 @@ function saveBugReport(data, reportDir) {
     console.log(`[bug-report] sent-SGR trace: ${sentSgrTraceFile} (${sentSgrTraceEventCount} events)`);
   }
 
+  // #1210: the terminal auto-reply trace (DA/DSR/CPR answers, {tMs,b64,kind})
+  // — a sidecar like the sent-SGR trace; the count rides in the meta.
+  let termReplyTraceFile = '';
+  let termReplyTraceEventCount = 0;
+  if (Array.isArray(termReplyTrace) && termReplyTrace.length > 0) {
+    const capped = termReplyTrace.slice(-MAX_TERM_REPLY_EVENTS);
+    termReplyTraceEventCount = capped.length;
+    termReplyTraceFile = `${ts}-bug-report.term-reply-trace.json`;
+    fs.writeFileSync(
+      path.join(reportDir, termReplyTraceFile),
+      JSON.stringify({ termReplyTrace: capped }, null, 2),
+    );
+    console.log(`[bug-report] term-reply trace: ${termReplyTraceFile} (${termReplyTraceEventCount} events)`);
+  }
+
   // Save metadata
   const meta = {
     title: title || `Bug report ${ts}`,
@@ -357,6 +373,16 @@ function saveBugReport(data, reportDir) {
     // silently dropped, which is why the stall reports carried no frame timing
     // even once the app had it. Stored verbatim (numbers only).
     frameStats: (frameStats && typeof frameStats === 'object') ? frameStats : null,
+    // #1257: non-secret settings snapshot (the app sends an allowlist of UI
+    // prefs + feature flags) so a settings cleanup can rest on usage data.
+    settings: (settings && typeof settings === 'object' && !Array.isArray(settings)) ? settings : null,
+    // #1210: fields the app already sent that this allowlist used to drop.
+    source: typeof source === 'string' ? source : '',
+    lifecycleLog: Array.isArray(lifecycleLog) ? lifecycleLog : [],
+    controlModeTrace: Array.isArray(controlModeTrace) ? controlModeTrace : [],
+    detectionGeom: (detectionGeom && typeof detectionGeom === 'object') ? detectionGeom : null,
+    termReplyTraceFile,
+    termReplyTraceEventCount,
   };
   fs.writeFileSync(path.join(reportDir, `${ts}-bug-report.json`), JSON.stringify(meta, null, 2));
   console.log(`[bug-report] saved: "${meta.title}"`);

@@ -149,8 +149,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('diagnostics-section')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('connection-audit-button')),
+      find.byKey(const ValueKey('share-feedback-button')),
       findsOneWidget,
+    );
+    // #1257: Connection audit is experimental — hidden until the flag is on.
+    expect(
+      find.byKey(const ValueKey('connection-audit-button')),
+      findsNothing,
     );
   });
 }
