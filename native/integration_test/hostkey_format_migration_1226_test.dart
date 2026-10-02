@@ -12,7 +12,8 @@
 //      which owns the HostKeyStore) starts. A fresh install per test file
 //      guarantees nothing else is stored.
 //   2. Connect → the RE-CONFIRM dialog appears (not "Trust + connect", not a
-//      CHANGED failure), showing a SHA256 fingerprint. Confirm → live shell.
+//      CHANGED failure), showing a SHA256 fingerprint AND the stored MD5 with
+//      the ssh-keygen commands to check it (#1249). Confirm → live shell.
 //   3. Disconnect, reconnect the saved tile → NO prompt of any kind, shell.
 //
 // Run: scripts/with-fleet-emulator.sh -- scripts/integration-subset.sh \
@@ -41,7 +42,10 @@ const _slice = Duration(milliseconds: 500);
 /// What a pre-#1226 install stored: hex of a 16-byte MD5.
 const _legacyMd5 = '0123456789abcdef0123456789abcdef';
 
-typedef _Seen = ({bool reconfirm, bool plainTrust, bool sha256});
+/// [_legacyMd5] as the re-confirm shows it (#1249): the `ssh-keygen -E md5` form.
+const _legacyMd5Shown = 'MD5:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef';
+
+typedef _Seen = ({bool reconfirm, bool plainTrust, bool sha256, bool storedMd5});
 
 /// Pump until the terminal mounts, recording (and optionally confirming) any
 /// host-key prompt on the way.
@@ -52,6 +56,7 @@ Future<(bool, _Seen)> _connectAndWatch(
   var reconfirm = false;
   var plainTrust = false;
   var sha256 = false;
+  var storedMd5 = false;
   var connected = false;
   for (var i = 0; i < 80; i++) {
     await tester.pump(_slice);
@@ -63,6 +68,12 @@ Future<(bool, _Seen)> _connectAndWatch(
           find.textContaining('SHA256:').evaluate().isNotEmpty) {
         sha256 = true;
       }
+      // #1249: the OLD key and the commands to check both on the server.
+      if (find.text(_legacyMd5Shown).evaluate().isNotEmpty &&
+          find.textContaining('ssh-keygen -l -E md5 -f').evaluate().isNotEmpty &&
+          find.textContaining('the OLD fingerprint on the server').evaluate().isNotEmpty) {
+        storedMd5 = true;
+      }
       if (confirm) {
         await tester.tap(confirmBtn.first);
         await tester.pump(const Duration(milliseconds: 300));
@@ -73,7 +84,15 @@ Future<(bool, _Seen)> _connectAndWatch(
       break;
     }
   }
-  return (connected, (reconfirm: reconfirm, plainTrust: plainTrust, sha256: sha256));
+  return (
+    connected,
+    (
+      reconfirm: reconfirm,
+      plainTrust: plainTrust,
+      sha256: sha256,
+      storedMd5: storedMd5,
+    ),
+  );
 }
 
 Future<bool> _shellBytes(WidgetTester tester, ProviderContainer c) async {
@@ -132,6 +151,9 @@ void main() {
         reason: 'not the first-contact prompt — that would hide the history');
     expect(first.sha256, isTrue,
         reason: 'the re-confirm names the older format and shows SHA256:<b64>');
+    expect(first.storedMd5, isTrue,
+        reason: '#1249: the re-confirm shows the stored MD5 and the verify '
+            'commands, so the user can match the OLD key on the server');
     expect(await _shellBytes(tester, container), isTrue,
         reason: 'no shell bytes after confirming');
 
