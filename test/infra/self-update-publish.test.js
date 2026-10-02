@@ -41,6 +41,55 @@ function runGen(args) {
   return spawnSync('bash', [GEN, ...args], { encoding: 'utf8' });
 }
 
+// #1258: "What's new" is the TOP `## ` section of native-release-notes.md.
+const TOP_SECTION = [
+  '## v0.1.13+199 (2026-10-02) — fewer taps to update',
+  '- **Updates are ready before you tap.** On Wi-Fi the next build downloads first. (#1258)',
+  '- Second bullet.',
+].join('\n');
+const RELEASE_NOTES_FIXTURE = [
+  '# MobiSSH native — release notes',
+  '',
+  'Curated preamble, not part of any section.',
+  '',
+  TOP_SECTION,
+  '',
+  '## v0.1.12 (2026-09-19) — older',
+  '- Older bullet.',
+  '',
+].join('\n');
+
+describe('#1258 release-notes-top.sh', () => {
+  const TOP = path.join(REPO_ROOT, 'scripts/release-notes-top.sh');
+
+  it('prints only the top section, without trailing blank lines', () => {
+    const f = path.join(tmpdir('top'), 'notes.md');
+    fs.writeFileSync(f, RELEASE_NOTES_FIXTURE);
+    const r = spawnSync('bash', [TOP, f], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `${TOP_SECTION}\n`);
+  });
+
+  it('prints nothing (exit 0) for a file with no section or no file', () => {
+    const f = path.join(tmpdir('top-none'), 'notes.md');
+    fs.writeFileSync(f, '# title\n\npreamble\n');
+    const r = spawnSync('bash', [TOP, f], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '');
+    const missing = spawnSync('bash', [TOP, f + '.nope'], { encoding: 'utf8' });
+    assert.equal(missing.status, 0, missing.stderr);
+    assert.equal(missing.stdout, '');
+  });
+
+  it('the repo release notes have a top section to publish', () => {
+    const r = spawnSync('bash', [TOP, path.join(REPO_ROOT, 'native-release-notes.md')],
+      { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^## /);
+    assert.equal((r.stdout.match(/^## /gm) || []).length, 1);
+  });
+});
+
 describe('A1 gen-android-latest-json.sh (R1)', () => {
   it('writes the pinned contract for the published stamped APK', () => {
     const dist = tmpdir('gen');
@@ -104,6 +153,30 @@ describe('A1 gen-android-latest-json.sh (R1)', () => {
     assert.ok(!fs.existsSync(path.join(dist, 'android-latest.json')));
   });
 
+  it('#1258: NOTES_FILE puts the top release-notes section into notes', () => {
+    const dist = tmpdir('gen-notesfile');
+    const stamped = `mobissh-native-${VERSION}-n.apk`;
+    fs.writeFileSync(path.join(dist, stamped), 'x');
+    const notesFile = path.join(tmpdir('notes'), 'native-release-notes.md');
+    fs.writeFileSync(notesFile, RELEASE_NOTES_FIXTURE);
+    const r = runGen([dist, stamped, VERSION, HOST, 'ship(native): subject', notesFile]);
+    assert.equal(r.status, 0, r.stderr);
+    const m = JSON.parse(fs.readFileSync(path.join(dist, 'android-latest.json'), 'utf8'));
+    assert.equal(m.notes, TOP_SECTION);
+  });
+
+  it('#1258: a notes file with no section falls back to the NOTES line', () => {
+    const dist = tmpdir('gen-notesfile-empty');
+    const stamped = `mobissh-native-${VERSION}-e.apk`;
+    fs.writeFileSync(path.join(dist, stamped), 'x');
+    const notesFile = path.join(tmpdir('notes-empty'), 'native-release-notes.md');
+    fs.writeFileSync(notesFile, '# MobiSSH native — release notes\n\nPreamble only.\n');
+    const r = runGen([dist, stamped, VERSION, HOST, 'ship(native): subject\nmore', notesFile]);
+    assert.equal(r.status, 0, r.stderr);
+    const m = JSON.parse(fs.readFileSync(path.join(dist, 'android-latest.json'), 'utf8'));
+    assert.equal(m.notes, 'ship(native): subject');
+  });
+
   it('replaces the manifest by rename from a temp in the same dir', () => {
     const src = fs.readFileSync(GEN, 'utf8');
     assert.match(src, /mktemp[^\n]*\$\{?DIST/);
@@ -123,6 +196,8 @@ function makeSandbox() {
   };
   w('scripts/native-release-apk.sh', fs.readFileSync(RELEASE), 0o755);
   if (fs.existsSync(GEN)) w('scripts/gen-android-latest-json.sh', fs.readFileSync(GEN), 0o755);
+  const top = path.join(REPO_ROOT, 'scripts/release-notes-top.sh');
+  if (fs.existsSync(top)) w('scripts/release-notes-top.sh', fs.readFileSync(top), 0o755);
   w('scripts/flutter-cmd.sh', [
     '#!/usr/bin/env bash',
     'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
@@ -187,6 +262,17 @@ describe('A1 native-release-apk.sh (R1, R2, R4)', () => {
     assert.match(path.basename(apk), /^mobissh-native-0\.1\.12-rc\.4\+191-.*\.apk$/);
     assert.equal(m.sha256, sha256(apk));
     assert.equal(m.notes, 'ship(native): sandbox notes');
+  });
+
+  it('#1258: publishes the top section of native-release-notes.md as notes', () => {
+    const root = makeSandbox();
+    fs.writeFileSync(path.join(root, 'native-release-notes.md'), RELEASE_NOTES_FIXTURE);
+    const key = path.join(root, 'key.properties');
+    fs.writeFileSync(key, 'storeFile=x\n');
+    const r = runRelease(root, key);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const m = JSON.parse(fs.readFileSync(path.join(root, 'dist', 'android-latest.json'), 'utf8'));
+    assert.equal(m.notes, TOP_SECTION);
   });
 });
 

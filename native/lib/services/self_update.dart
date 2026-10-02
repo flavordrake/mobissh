@@ -219,6 +219,13 @@ abstract class UpdatePlatform {
   /// R10 verify, then R11 hand-off. One call so a hand-off can never happen
   /// without the verification.
   Future<UpdateHandoffResult> verifyAndInstall(String path);
+
+  /// R14: true only on an unmetered network (Wi-Fi), where a ~30 MB
+  /// pre-download is fine. False when unknown.
+  Future<bool> isUnmetered();
+
+  /// R15: "install unknown apps" is granted. False when unknown.
+  Future<bool> canInstallPackages();
 }
 
 const String updatesChannelName = 'mobissh/updates';
@@ -269,6 +276,22 @@ class ChannelUpdatePlatform implements UpdatePlatform {
         status: UpdateHandoffStatus.error,
         reason: '$e',
       );
+    }
+  }
+
+  @override
+  Future<bool> isUnmetered() => _flag('isUnmetered');
+
+  @override
+  Future<bool> canInstallPackages() => _flag('canInstallPackages');
+
+  Future<bool> _flag(String method) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      return await channel.invokeMethod<bool>(method) == true;
+    } catch (e) {
+      debugPrint('update: $method unavailable ($e)');
+      return false;
     }
   }
 }
@@ -426,16 +449,20 @@ enum UpdateStage {
   /// The system installer has the APK; the rest is its dialog.
   handedOff,
 
-  /// "Install unknown apps" must be granted first (R11) — persistent.
+  /// "Install unknown apps" must be granted first (R11) — persistent. The
+  /// verified file is kept; coming back with the grant continues (R15).
   needsPermission,
   failed,
+
+  /// R14: downloaded + sha256-verified ahead of the tap; Install hands off.
+  ready,
 }
 
 /// Shown persistently (banner + Settings) when R11 sent the user to the grant
 /// screen — never a vanishing toast.
 const String kNeedsInstallPermissionMessage =
-    'Allow MobiSSH to install unknown apps in the screen that just opened, '
-    'then tap Install again.';
+    'Allow MobiSSH to install unknown apps in the screen that just opened. '
+    'The install continues when you come back.';
 
 @immutable
 class UpdateProgress {
@@ -477,17 +504,64 @@ final RegExp _apkName = RegExp(r'^mobissh-update-(\d+)\.apk$');
 
 /// Downloads, verifies and hands off one build.
 class UpdateInstaller {
-  UpdateInstaller({required this.client, required this.platform});
+  UpdateInstaller({
+    required this.client,
+    required this.platform,
+    this.onHandoff,
+  });
 
   final http.Client client;
   final UpdatePlatform platform;
+
+  /// R16: runs just BEFORE the hand-off — once the user taps Update the
+  /// installer replaces this process, so the "What's new" notes are saved
+  /// first. A failure here never blocks the install.
+  final Future<void> Function(UpdateManifest manifest)? onHandoff;
 
   /// Guard against a hostile or broken server streaming forever into memory.
   /// Release APKs are ~30 MB.
   static const int maxApkBytes = 256 * 1024 * 1024;
 
-  Stream<UpdateProgress> install(UpdateManifest manifest) async* {
-    File? written;
+  Future<File> _apkFile(UpdateManifest manifest) async {
+    final dir = await platform.updatesDir();
+    return File('${dir.path}/mobissh-update-${manifest.build}.apk');
+  }
+
+  /// True when the file for [manifest] is already in the updates directory
+  /// AND its sha256 still matches. A file that no longer matches is deleted.
+  Future<bool> _storedMatches(UpdateManifest manifest) async {
+    final apk = await _apkFile(manifest);
+    try {
+      if (!apk.existsSync()) return false;
+      final digest = _hex((await Sha256().hash(await apk.readAsBytes())).bytes);
+      if (digest == manifest.sha256) return true;
+      apk.deleteSync();
+    } catch (e) {
+      debugPrint('update: stored ${apk.path} unusable ($e)');
+    }
+    return false;
+  }
+
+  /// R14: download, verify and write [manifest]'s APK ahead of the tap, only
+  /// on an unmetered network. [UpdateStage.ready] when the verified file is in
+  /// place; [UpdateProgress.idle] otherwise, so Install downloads as before.
+  Future<UpdateProgress> prefetch(UpdateManifest manifest) async {
+    if (!await platform.isUnmetered()) return UpdateProgress.idle;
+    if (await _storedMatches(manifest)) {
+      return const UpdateProgress(stage: UpdateStage.ready);
+    }
+    var last = UpdateProgress.idle;
+    await for (final p in _download(manifest)) {
+      last = p;
+    }
+    if (last.stage == UpdateStage.ready) return last;
+    debugPrint('update: pre-download failed (${last.message})');
+    return UpdateProgress.idle;
+  }
+
+  /// R8: stream into memory, verify the sha256, and only then write. Ends
+  /// with [UpdateStage.ready] or [UpdateStage.failed].
+  Stream<UpdateProgress> _download(UpdateManifest manifest) async* {
     try {
       final request = http.Request('GET', manifest.url)
         // The manifest's same-host rule is checked on `url`; a redirect would
@@ -533,17 +607,38 @@ class UpdateInstaller {
         return;
       }
 
-      final dir = await platform.updatesDir();
-      await dir.create(recursive: true);
-      final apk = File('${dir.path}/mobissh-update-${manifest.build}.apk');
-      written = apk;
+      final apk = await _apkFile(manifest);
+      await apk.parent.create(recursive: true);
       await apk.writeAsBytes(bytes, flush: true);
+      yield const UpdateProgress(stage: UpdateStage.ready);
+    } catch (e) {
+      yield UpdateProgress(stage: UpdateStage.failed, message: '$e');
+    }
+  }
 
+  Stream<UpdateProgress> install(UpdateManifest manifest) async* {
+    // R14/R15: a stored file (pre-downloaded, or kept across the permission
+    // grant) is re-hashed right here, so nothing swapped in since its download
+    // can reach the hand-off. No match → a fresh download.
+    if (!await _storedMatches(manifest)) {
+      await for (final p in _download(manifest)) {
+        if (p.stage == UpdateStage.ready) break;
+        yield p;
+        if (p.stage == UpdateStage.failed) return;
+      }
+    }
+    File? leftover = await _apkFile(manifest);
+    try {
       yield const UpdateProgress(stage: UpdateStage.handingOff);
-      final result = await platform.verifyAndInstall(apk.path);
+      try {
+        await onHandoff?.call(manifest);
+      } catch (e) {
+        debugPrint('update: could not save the pending notes ($e)');
+      }
+      final result = await platform.verifyAndInstall(leftover.path);
       switch (result.status) {
         case UpdateHandoffStatus.launched:
-          written = null; // the installer reads it now; R12 removes it later
+          leftover = null; // the installer reads it now; R12 removes it later
           yield UpdateProgress(
             stage: UpdateStage.handedOff,
             message: 'Follow the Android installer to finish.',
@@ -555,6 +650,9 @@ class UpdateInstaller {
             message: 'Refused: ${result.reason}',
           );
         case UpdateHandoffStatus.needsPermission:
+          // R15: keep the verified file; the resume after the grant hands it
+          // off (re-verified above) with no second download.
+          leftover = null;
           yield const UpdateProgress(
             stage: UpdateStage.needsPermission,
             message: kNeedsInstallPermissionMessage,
@@ -568,14 +666,15 @@ class UpdateInstaller {
     } catch (e) {
       yield UpdateProgress(stage: UpdateStage.failed, message: '$e');
     } finally {
-      // R12: anything not handed to the installer is removed at once (the
-      // platform already deleted a refused file; this makes it certain).
-      final leftover = written;
-      if (leftover != null) {
+      // R12: anything not handed to the installer (or kept for the grant) is
+      // removed at once (the platform already deleted a refused file; this
+      // makes it certain).
+      final file = leftover;
+      if (file != null) {
         try {
-          if (leftover.existsSync()) leftover.deleteSync();
+          if (file.existsSync()) file.deleteSync();
         } catch (e) {
-          debugPrint('update: could not remove ${leftover.path} ($e)');
+          debugPrint('update: could not remove ${file.path} ($e)');
         }
       }
     }

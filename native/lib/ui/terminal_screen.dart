@@ -47,6 +47,7 @@ import 'host_key_review.dart';
 import 'keybar.dart';
 import 'session_menu.dart';
 import 'session_route_details.dart';
+import 'update_banner.dart';
 import 'url_action_overlay.dart';
 
 /// Minimum horizontal travel (logical px) before a drag on the session bar is
@@ -242,6 +243,8 @@ class TerminalScreen extends ConsumerWidget {
       body: SafeArea(
         child: Stack(
           children: [
+            // #1258: one-time "Update B available" snackbar over a session.
+            const UpdateSessionOffer(),
             // The terminal + chrome column.
             Column(
               children: [

@@ -58,6 +58,8 @@ class FakeUpdatePlatform implements UpdatePlatform {
   final Directory dir;
   UpdateHandoffResult handoff;
   final List<String> handedOff = <String>[];
+  bool unmetered = true;
+  bool canInstall = true;
 
   /// Snapshot of the file the platform was handed, taken at hand-off time.
   List<int>? bytesAtHandoff;
@@ -65,6 +67,12 @@ class FakeUpdatePlatform implements UpdatePlatform {
   @override
   Future<UpdateCapabilities> capabilities() async =>
       UpdateCapabilities(supported: supported, abi: abi);
+
+  @override
+  Future<bool> isUnmetered() async => unmetered;
+
+  @override
+  Future<bool> canInstallPackages() async => canInstall;
 
   @override
   Future<Directory> updatesDir() async => dir;
@@ -373,8 +381,8 @@ void main() {
       expect(apks(), isEmpty);
     });
 
-    test('needs unknown-sources permission → persistent stage, file removed',
-        () async {
+    test('needs unknown-sources permission → persistent stage, verified file '
+        'KEPT for the resume after the grant (R15)', () async {
       final platform = FakeUpdatePlatform(
         dir: updates,
         handoff: const UpdateHandoffResult(
@@ -388,7 +396,126 @@ void main() {
       ).install(m).toList();
       expect(stages.last.stage, UpdateStage.needsPermission);
       expect(stages.last.message, contains('install unknown apps'));
+      expect(apks().map((f) => f.uri.pathSegments.last),
+          <String>['mobissh-update-192.apk']);
+    });
+
+    test('a stored verified file is re-verified and handed off with NO HTTP '
+        'request (R14/R15)', () async {
+      final platform = FakeUpdatePlatform(dir: updates);
+      final m = await manifestFor(apkBytes);
+      updates.createSync(recursive: true);
+      File('${updates.path}/mobissh-update-192.apk').writeAsBytesSync(apkBytes);
+      var requests = 0;
+      final stages = await UpdateInstaller(
+        client: MockClient((_) async {
+          requests++;
+          return http.Response('', 500);
+        }),
+        platform: platform,
+      ).install(m).toList();
+      expect(requests, 0);
+      expect(stages.where((s) => s.stage == UpdateStage.downloading), isEmpty);
+      expect(stages.last.stage, UpdateStage.handedOff);
+      expect(platform.bytesAtHandoff, apkBytes);
+    });
+
+    test('a stored file whose sha256 no longer matches is deleted and '
+        're-fetched before any hand-off', () async {
+      final platform = FakeUpdatePlatform(dir: updates);
+      final m = await manifestFor(apkBytes);
+      updates.createSync(recursive: true);
+      final swapped = List<int>.of(apkBytes)..[7] ^= 0xff;
+      File('${updates.path}/mobissh-update-192.apk').writeAsBytesSync(swapped);
+      var requests = 0;
+      final stages = await UpdateInstaller(
+        client: MockClient.streaming((req, _) async {
+          requests++;
+          return http.StreamedResponse(Stream.value(apkBytes), 200,
+              contentLength: apkBytes.length);
+        }),
+        platform: platform,
+      ).install(m).toList();
+      expect(requests, 1);
+      expect(stages.last.stage, UpdateStage.handedOff);
+      expect(platform.bytesAtHandoff, apkBytes,
+          reason: 'the swapped file must never reach the installer');
+    });
+
+    test('verify failure on a re-fetch → no hand-off, nothing left', () async {
+      final platform = FakeUpdatePlatform(dir: updates);
+      final m = await manifestFor(apkBytes);
+      updates.createSync(recursive: true);
+      File('${updates.path}/mobissh-update-192.apk').writeAsStringSync('junk');
+      final stages = await UpdateInstaller(
+        client: streaming(List<int>.of(apkBytes)..[3] ^= 0xff),
+        platform: platform,
+      ).install(m).toList();
+      expect(stages.last.stage, UpdateStage.failed);
+      expect(platform.handedOff, isEmpty);
       expect(apks(), isEmpty);
+    });
+
+    test('pending notes are saved BEFORE the hand-off', () async {
+      final platform = FakeUpdatePlatform(dir: updates);
+      final m = await manifestFor(apkBytes);
+      final events = <String>[];
+      final installer = UpdateInstaller(
+        client: streaming(apkBytes),
+        platform: platform,
+        onHandoff: (manifest) async => events.add('saved ${manifest.build}'),
+      );
+      await for (final p in installer.install(m)) {
+        if (p.stage == UpdateStage.handedOff) {
+          events.add('handed off ${platform.handedOff.length}');
+        }
+      }
+      expect(events, <String>['saved 192', 'handed off 1']);
+    });
+
+    // R14 pre-download (nested: shares apkBytes / manifestFor).
+    test('unmetered → downloads, verifies, writes, no hand-off → ready',
+        () async {
+      final platform = FakeUpdatePlatform(dir: updates)..unmetered = true;
+      final p = await UpdateInstaller(
+        client: MockClient.streaming((req, _) async =>
+            http.StreamedResponse(Stream.value(apkBytes), 200)),
+        platform: platform,
+      ).prefetch(await manifestFor(apkBytes));
+      expect(p.stage, UpdateStage.ready);
+      expect(platform.handedOff, isEmpty);
+      expect(File('${updates.path}/mobissh-update-192.apk').readAsBytesSync(),
+          apkBytes);
+    });
+
+    test('metered → NO request, nothing written, stays idle', () async {
+      final platform = FakeUpdatePlatform(dir: updates)..unmetered = false;
+      var requests = 0;
+      final p = await UpdateInstaller(
+        client: MockClient((_) async {
+          requests++;
+          return http.Response('', 200);
+        }),
+        platform: platform,
+      ).prefetch(await manifestFor(apkBytes));
+      expect(p.stage, UpdateStage.idle);
+      expect(requests, 0);
+      expect(updates.existsSync(), isFalse);
+    });
+
+    test('sha mismatch → nothing written, idle (Install downloads as before)',
+        () async {
+      final platform = FakeUpdatePlatform(dir: updates);
+      final p = await UpdateInstaller(
+        client: MockClient.streaming((req, _) async => http.StreamedResponse(
+            Stream.value(List<int>.of(apkBytes)..[0] ^= 1), 200)),
+        platform: platform,
+      ).prefetch(await manifestFor(apkBytes));
+      expect(p.stage, UpdateStage.idle);
+      expect(
+        updates.existsSync() ? updates.listSync() : const <FileSystemEntity>[],
+        isEmpty,
+      );
     });
 
     test('progress WITH Content-Length reports a fraction', () async {

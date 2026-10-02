@@ -2,10 +2,12 @@ package com.flavordrake.mobissh.mobissh
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.pm.Signature
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -40,6 +42,8 @@ class UpdatesChannel(private val activity: Activity) {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "capabilities" -> result.success(capabilities())
+                    "isUnmetered" -> result.success(isUnmetered())
+                    "canInstallPackages" -> result.success(canInstallPackages())
                     "verifyAndInstall" -> {
                         val path = call.argument<String>("path")
                         if (path.isNullOrEmpty()) {
@@ -100,6 +104,25 @@ class UpdatesChannel(private val activity: Activity) {
             "abi" to (Build.SUPPORTED_ABIS.firstOrNull() ?: ""),
         )
     }
+
+    /**
+     * #1258 R14: pre-download only on an unmetered network (Wi-Fi). Platform
+     * info, so no connectivity plugin. Unknown → metered (no pre-download).
+     */
+    private fun isUnmetered(): Boolean {
+        return try {
+            val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE)
+            (cm as ConnectivityManager).isActiveNetworkMetered.not()
+        } catch (err: Throwable) {
+            Log.w(tag, "isUnmetered failed", err)
+            false
+        }
+    }
+
+    /** #1258 R15: "install unknown apps" is granted (always true before O). */
+    private fun canInstallPackages(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            activity.packageManager.canRequestPackageInstalls()
 
     private class Verdict(val accepted: Boolean, val reason: String) {
         companion object {
